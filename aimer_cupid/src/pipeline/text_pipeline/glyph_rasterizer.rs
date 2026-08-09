@@ -5,6 +5,7 @@ use std::sync::{Arc, OnceLock};
 
 use aimer_utils::time_cost;
 use hashbrown::{HashMap, HashSet};
+
 use skrifa::MetadataProvider;
 use skrifa::instance::{LocationRef, Size};
 use swash::FontRef;
@@ -193,7 +194,7 @@ fn load_system_font(family: &str) -> Option<Vec<u8>> {
         system_fonts: true,
     });
     let family = collection.family_by_name(family)?;
-    let font = family.fonts().next()?;
+    let font = family.default_font()?; // or family.fonts().first()?
     Some(font.load(None)?.data().to_vec())
 }
 
@@ -207,7 +208,6 @@ fn load_system_font(family: &str) -> Option<Vec<u8>> {
 #[allow(dead_code)]
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 pub(crate) fn load_system_font_path(family: &str) -> Option<PathBuf> {
-
     crate::text_pipeline::apple_fonts::system_font_path(family)
 }
 
@@ -1211,7 +1211,7 @@ impl GlyphRasterizer {
                                 offset_y: 0.0,
                                 advance_width: fallback_advance,
                                 is_color: true,
-                                })
+                            })
                     })
                 } else {
                     let record = time_cost!("   |-SelectFontForRasterize", || {
@@ -1716,10 +1716,7 @@ mod tests {
                 subpixel_y: 3,
                 ..key
             },
-            GlyphKey {
-                weight: 300,
-                ..key
-            },
+            GlyphKey { weight: 300, ..key },
         ] {
             assert_ne!(compact_glyph_key_hash(distinct_key), expected);
         }
