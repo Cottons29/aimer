@@ -5,12 +5,30 @@ use aimer_widget::{Drawable, Element, LayoutElement};
 
 use crate::ScrollAxis;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
+use crate::scrollable::cache_extent::cache_rect;
 use crate::scrollable::recovery_end::finish_overscroll_recovery;
 
 fn snap_scroll_offset(offset: Vec2d) -> Vec2d {
     Vec2d {
         x: offset.x.round(),
         y: offset.y.round(),
+    }
+}
+
+/// How far the visible content moved since the previous drawn frame, in the
+/// child's coordinates.
+///
+/// The content is translated by the negated scroll offset, so the visible
+/// rectangle travels opposite to it. `None` — the first frame — is no travel:
+/// there is nothing yet to measure against, and a viewport that has never
+/// moved has no direction to lead toward.
+fn visible_travel(previous: Option<Vec2d>, offset: Vec2d) -> Vec2d {
+    match previous {
+        Some(previous) => Vec2d {
+            x: previous.x - offset.x,
+            y: previous.y - offset.y,
+        },
+        None => Vec2d::ZERO,
     }
 }
 
@@ -136,7 +154,24 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
         }
-        child_ctx.visible_rect = Some((-offset_x, -offset_y, viewport_w, viewport_h));
+        // The child is asked to materialize more than fits on screen. Handing
+        // down the exact viewport makes every consumer of `visible_rect` cull
+        // to it, which puts a line's whole cost — build, layout, shaping,
+        // highlighting, glyph rasterization — on the single frame its edge
+        // crosses the boundary, and that frame is the pause the user feels.
+        // The extra content is still clipped on the GPU by the viewport clip
+        // set above, so it costs nothing to draw.
+        let travel = visible_travel(self.ctrl.last_drawn_offset.get(), snapped_offset);
+        self.ctrl.last_drawn_offset.set(Some(snapped_offset));
+        child_ctx.visible_rect = Some(cache_rect(
+            self.ctrl.axis,
+            Vec2d {
+                x: -offset_x,
+                y: -offset_y,
+            },
+            (viewport_w, viewport_h),
+            travel,
+        ));
 
         // Draw child content
         self.child.draw(&child_ctx);
@@ -174,6 +209,25 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_first_frame_has_no_direction_to_lead_toward() {
+        let travel = visible_travel(None, Vec2d { x: 3.0, y: 40.0 });
+
+        assert_eq!(travel, Vec2d::ZERO);
+    }
+
+    #[test]
+    fn scrolling_toward_the_content_end_moves_the_visible_rect_forward() {
+        // Scrolling down translates the content up, i.e. to a more negative
+        // offset, while the visible rectangle moves down the content.
+        let travel = visible_travel(
+            Some(Vec2d { x: 0.0, y: -100.0 }),
+            Vec2d { x: 0.0, y: -140.0 },
+        );
+
+        assert_eq!(travel.y, 40.0);
+    }
 
     #[test]
     fn scroll_translation_snaps_scaled_offsets_to_physical_pixels() {

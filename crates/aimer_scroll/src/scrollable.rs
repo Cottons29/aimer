@@ -1,3 +1,4 @@
+pub mod cache_extent;
 pub mod constants;
 pub mod controller;
 pub mod device_contact;
@@ -485,6 +486,7 @@ impl<W: Widget + 'static> ScrollableState<W> {
             on_scroll_end: RefCell::new(Callback::default()),
             on_scroll: RefCell::new(Callback::default()),
             last_reported_offset: Cell::new(None),
+            last_drawn_offset: Cell::new(None),
             overscroll_hold: Cell::new(None),
             direct_overscroll_hold: Cell::new(false),
             highest_overscroll_offset: Default::default(),

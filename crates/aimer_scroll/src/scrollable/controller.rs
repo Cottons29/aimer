@@ -178,6 +178,18 @@ pub struct ScrollState {
     /// establishes the baseline (so the initial render never fires
     /// `on_scroll`).
     pub(crate) last_reported_offset: Cell<Option<Vec2d>>,
+    /// Visual offset the previous frame was drawn with, or `None` before the
+    /// first draw.
+    ///
+    /// Its delta is how far the viewport travelled in one frame, which is what
+    /// biases the cache extent toward the direction of travel (see
+    /// [`cache_window`](crate::scrollable::cache_extent::cache_window)). Taken
+    /// from the drawn offset rather than from
+    /// [`pointer_velocity`](Self::pointer_velocity) because every way the
+    /// viewport moves — drag, wheel, momentum, bézier fling, spring-back,
+    /// `animate_to` — ends up there, while only some of them go through a
+    /// velocity.
+    pub(crate) last_drawn_offset: Cell<Option<Vec2d>>,
     /// Instant when a wheel / trackpad gesture first crossed a scroll boundary,
     /// or `None` when no recovery grace period is active.
     ///
@@ -226,6 +238,7 @@ impl ScrollState {
         self.is_scrolling.set(prev.is_scrolling.get());
         self.last_reported_offset
             .set(prev.last_reported_offset.get());
+        self.last_drawn_offset.set(prev.last_drawn_offset.get());
         self.overscroll_hold.set(prev.overscroll_hold.get());
         self.overscroll_source.set(prev.overscroll_source.get());
         self.direct_overscroll_hold
@@ -1572,6 +1585,7 @@ impl ScrollState {
             on_scroll_end: RefCell::new(Callback::default()),
             on_scroll: RefCell::new(Callback::default()),
             last_reported_offset: Cell::new(None),
+            last_drawn_offset: Cell::new(None),
             overscroll_hold: Cell::new(None),
             direct_overscroll_hold: Cell::new(false),
             highest_overscroll_offset: Cell::new(Vec2d::ZERO),

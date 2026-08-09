@@ -64,6 +64,31 @@ enum AppRoute {
 > (tuple) fields, and `{field}` for named struct fields — **not** the `:id`
 > style. A variant with no `#[route(...)]` defaults to `/<variant_lowercase>`.
 
+### 4.1.3 Using `#[derive(Router)]`
+
+`#[derive(Router)]` generates exactly the same `parse`, `format`, `name`,
+`resolve_named` and `Widget` implementations as `#[widget(Router)]`, with the
+same `#[route]`, `#[routes]`, `#[shell]` and `#[redirect]` attributes. The
+difference is only in how it is written: an attribute macro *replaces* the enum
+it is applied to, whereas a derive is expanded beside the enum you wrote, so
+the definition stays yours and sits in the same `derive` list as `Clone` and
+`Debug`.
+
+```rust
+#[derive(Clone, Debug, PartialEq, Router)]
+enum AppRoute {
+    #[route("/")]
+    Home,
+    #[route("/profile/{name}", name = "profile")]
+    Profile { name: String },
+}
+```
+
+The same pairing exists for widgets: `#[derive(StatelessWidget)]` and
+`#[derive(StatefulWidget)]` are the derive forms of `#[widget(Stateless)]` and
+`#[widget(Stateful)]`. Pick whichever reads better — they generate identical
+code.
+
 ## 4.2 Mapping the Route to a Widget
 
 To make the router work, you need to implement the `Router` trait for your route `enum`. This trait connects each route variant to the specific `Widget` that should be displayed.

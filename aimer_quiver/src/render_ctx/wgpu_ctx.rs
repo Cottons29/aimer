@@ -111,6 +111,16 @@ pub mod render_ctx {
             );
             encode.finish(FramePhase::Encode);
 
+            // A frame prepares text beyond the viewport edges so a line is
+            // ready before it scrolls in, and stops when its budget runs out.
+            // What it stopped short of is invisible, so this frame is correct
+            // as it stands — but nothing else will ask for the rest, and the
+            // arrival frame would pay for it. One more frame finishes it while
+            // the user is still reading.
+            if self.renderer.has_postponed_text_preparation() {
+                aimer_events::window::request_animation_frame();
+            }
+
             let present = PhaseTimer::start();
             self.gpu.end_frame(surface);
             present.finish(FramePhase::Present);
