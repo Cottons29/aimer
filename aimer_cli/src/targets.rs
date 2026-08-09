@@ -46,6 +46,47 @@ impl MigrateTarget {
     }
 }
 
+impl Targets {
+    /// The desktop target matching the host operating system, if the host is a
+    /// desktop platform the CLI can build for locally.
+    ///
+    /// Only Windows and Linux are reported here: macOS goes through its own
+    /// Xcode-driven leg, which is not interchangeable with the portable desktop
+    /// bundle.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // On a Linux host:
+    /// assert_eq!(Targets::host_desktop(), Some(Targets::Linux));
+    /// ```
+    #[inline]
+    pub fn host_desktop() -> Option<Targets> {
+        #[cfg(target_os = "windows")]
+        {
+            Some(Targets::Windows)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Some(Targets::Linux)
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        {
+            None
+        }
+    }
+
+    /// Whether this target is one of the portable desktop targets, i.e. Windows
+    /// or Linux.
+    ///
+    /// macOS is deliberately excluded — it is packaged as an `.app` through
+    /// Xcode rather than as a portable bundle folder.
+    #[inline]
+    pub fn is_desktop(self) -> bool {
+        matches!(self, Targets::Windows | Targets::Linux)
+    }
+}
+
 impl TryFrom<&str> for Targets {
     type Error = Box<dyn Error>;
 
@@ -198,6 +239,38 @@ mod tests {
         assert_eq!(Targets::Ios, Targets::Ios);
         assert_ne!(Targets::Ios, Targets::IosSimulator);
         assert_ne!(Targets::Macos, Targets::Windows);
+    }
+
+    // ── Desktop helpers ──────────────────────────────────────────────
+
+    #[test]
+    fn only_windows_and_linux_are_desktop_targets() {
+        assert!(Targets::Windows.is_desktop());
+        assert!(Targets::Linux.is_desktop());
+        for other in [
+            Targets::Macos,
+            Targets::Android,
+            Targets::AndroidSimulator,
+            Targets::Ios,
+            Targets::IosSimulator,
+            Targets::Web,
+            Targets::Terminated,
+        ] {
+            assert!(!other.is_desktop(), "{other} must not be a desktop target");
+        }
+    }
+
+    #[test]
+    fn the_host_desktop_target_matches_the_host_os() {
+        let host = Targets::host_desktop();
+        #[cfg(target_os = "windows")]
+        assert_eq!(host, Some(Targets::Windows));
+        #[cfg(target_os = "linux")]
+        assert_eq!(host, Some(Targets::Linux));
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        assert_eq!(host, None);
+        // Whatever it resolves to, it is always a desktop target.
+        assert!(host.is_none_or(Targets::is_desktop));
     }
 
     // ── MigrateTarget ────────────────────────────────────────────────

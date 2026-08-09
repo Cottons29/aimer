@@ -168,7 +168,7 @@ mod tests {
             "old files should be removed"
         );
         assert!(
-            linux_dir.join("app.desktop").exists(),
+            linux_dir.join("demo-app.desktop").exists(),
             "new scaffold should be generated"
         );
     }

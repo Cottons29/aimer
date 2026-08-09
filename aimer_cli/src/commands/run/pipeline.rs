@@ -10,6 +10,7 @@ use crate::commands::run::Device;
 use crate::commands::run::android::AndroidRunner;
 use crate::commands::run::cargo_build::{CargoBuildTarget, cargo_command, wait_for_child};
 use crate::commands::run::console::{RunnerEvent, Status};
+use crate::commands::run::desktop::DesktopRunner;
 use crate::commands::run::helpers::set_status;
 use crate::commands::run::ios::IosRunner;
 use crate::commands::run::macos::MacosRunner;
@@ -137,6 +138,8 @@ pub fn runner_for(target: Targets) -> Option<Box<dyn Runner>> {
         Targets::Ios => Some(Box::new(IosRunner::device())),
         Targets::IosSimulator => Some(Box::new(IosRunner::simulator())),
         Targets::Android | Targets::AndroidSimulator => Some(Box::new(AndroidRunner::new())),
+        Targets::Windows => Some(Box::new(DesktopRunner::new(Targets::Windows))),
+        Targets::Linux => Some(Box::new(DesktopRunner::new(Targets::Linux))),
         _ => None,
     }
 }
@@ -371,6 +374,8 @@ mod tests {
             Targets::IosSimulator,
             Targets::Android,
             Targets::AndroidSimulator,
+            Targets::Windows,
+            Targets::Linux,
         ] {
             assert!(runner_for(target).is_some(), "{target}");
         }

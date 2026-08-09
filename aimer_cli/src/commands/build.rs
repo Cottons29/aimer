@@ -3,8 +3,9 @@ use std::process::Command;
 
 use anyhow::{Context, bail};
 
+use crate::commands::assemble::ensure_host_desktop;
 use crate::commands::run::web::{configure_trunk, find_llvm_ar};
-use crate::config::AimerManifest;
+use crate::config::{AimerManifest, resolve_package_name};
 use crate::errors::AimerError;
 use crate::targets::Targets;
 
@@ -114,8 +115,12 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
             c
         }
         Targets::Windows | Targets::Linux => {
+            // Host build: the desktop bundle ships a real executable, and
+            // cargo's default triple is the one it will be launched on.
+            ensure_host_desktop(target)?;
             let mut c = Command::new("cargo");
-            c.arg("build").arg("--lib");
+            c.arg("build")
+                .args(["--bin", &resolve_package_name(Path::new("."))]);
             if release {
                 c.arg("--release");
             }
@@ -129,4 +134,49 @@ fn build_command(target: Targets, release: bool) -> anyhow::Result<Command> {
         .stderr(std::process::Stdio::inherit());
 
     Ok(cmd)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The arguments `build_command` passes for `target`, as lossy strings.
+    fn args_of(target: Targets, release: bool) -> anyhow::Result<Vec<String>> {
+        Ok(build_command(target, release)?
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect())
+    }
+
+    #[test]
+    fn a_desktop_build_asks_cargo_for_the_application_binary() {
+        let Some(host) = Targets::host_desktop() else {
+            return;
+        };
+        let args = args_of(host, false).expect("host desktop build");
+        assert!(args.contains(&"--bin".to_string()), "{args:?}");
+        assert!(!args.contains(&"--lib".to_string()), "{args:?}");
+        assert!(!args.contains(&"--release".to_string()), "{args:?}");
+
+        let release = args_of(host, true).expect("host desktop release build");
+        assert!(release.contains(&"--release".to_string()), "{release:?}");
+    }
+
+    #[test]
+    fn a_desktop_build_for_another_os_is_refused() {
+        for target in [Targets::Windows, Targets::Linux] {
+            if Targets::host_desktop() == Some(target) {
+                continue;
+            }
+            let err = args_of(target, false).expect_err("cross-OS desktop build");
+            let message = err.to_string();
+            assert!(message.contains(&target.to_string()), "{message}");
+            assert!(message.contains(std::env::consts::OS), "{message}");
+        }
+    }
+
+    #[test]
+    fn terminated_is_not_buildable() {
+        assert!(build_command(Targets::Terminated, false).is_err());
+    }
 }

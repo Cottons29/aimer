@@ -1,6 +1,7 @@
 pub mod android;
 pub(crate) mod cargo_build;
 pub(crate) mod cargo_message;
+pub mod desktop;
 pub(crate) mod helpers;
 pub mod ios;
 pub mod macos;
@@ -47,6 +48,18 @@ fn fetch_devices() -> Vec<Device> {
             name: "macOS Desktop".to_string(),
             target: Targets::Macos,
             id: "local".to_string(),
+        },
+        #[cfg(target_os = "windows")]
+        Device {
+            name: "Windows Desktop".to_string(),
+            target: Targets::Windows,
+            id: "windows".to_string(),
+        },
+        #[cfg(target_os = "linux")]
+        Device {
+            name: "Linux Desktop".to_string(),
+            target: Targets::Linux,
+            id: "linux".to_string(),
         },
         Device {
             name: "Web Browser".to_string(),
@@ -315,6 +328,14 @@ fn resolve_device(target: Option<String>, device: Option<String>) -> anyhow::Res
                 });
             }
         }
+        // The host desktop is always present, so `--device windows|linux` is
+        // accepted by its platform name as well as by its device id.
+        if let Some(host) = Targets::host_desktop()
+            && id == host.to_string()
+            && let Some(device) = devices.iter().find(|d| d.target == host)
+        {
+            return Ok(device.clone());
+        }
         return devices
             .into_iter()
             .find(|d| d.id == id && d.target != Terminated)
@@ -546,6 +567,41 @@ mod tests {
         assert!(has_macos, "Missing macOS Desktop device");
         assert!(has_web, "Missing Web Browser device");
         assert!(has_quit, "Missing Quit device");
+    }
+
+    #[test]
+    fn fetch_devices_exposes_the_host_desktop() {
+        let Some(host) = Targets::host_desktop() else {
+            return;
+        };
+        let devices = fetch_devices();
+        let device = devices
+            .iter()
+            .find(|d| d.target == host)
+            .expect("a device for the host desktop");
+        assert_eq!(device.id, host.to_string());
+    }
+
+    #[test]
+    fn the_host_desktop_resolves_without_the_picker() {
+        let Some(host) = Targets::host_desktop() else {
+            return;
+        };
+        let by_device = resolve_device(None, Some(host.to_string())).expect("--device <host>");
+        assert_eq!(by_device.target, host);
+
+        let by_target = resolve_device(Some(host.to_string()), None).expect("--target <host>");
+        assert_eq!(by_target.target, host);
+    }
+
+    #[test]
+    fn a_desktop_target_of_another_os_has_no_device() {
+        for target in [Targets::Windows, Targets::Linux] {
+            if Targets::host_desktop() == Some(target) {
+                continue;
+            }
+            assert!(resolve_device(Some(target.to_string()), None).is_err());
+        }
     }
 
     #[test]

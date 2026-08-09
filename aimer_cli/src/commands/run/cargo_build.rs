@@ -14,6 +14,12 @@ use crate::commands::run::utilities::LogStyling;
 
 pub enum CargoBuildTarget {
     Darwin,
+    /// Windows/Linux host build of the application binary.
+    ///
+    /// Desktop apps are launched as a real executable rather than linked into
+    /// a platform shell, so this is the one leg that asks cargo for a `--bin`
+    /// instead of `--lib`.
+    Desktop { bin_name: String },
     Ios { rust_target: String },
     IosSim { rust_target: String },
     Android { rust_target: String },
@@ -69,6 +75,15 @@ pub fn cargo_command(target: &CargoBuildTarget, release: bool) -> Command {
             let mut c = Command::new("cargo");
             c.arg("build")
                 .args(["--target", "aarch64-apple-darwin", "--lib"])
+                .arg(cargo_message::MESSAGE_FORMAT);
+            c
+        }
+        CargoBuildTarget::Desktop { bin_name } => {
+            // No `--target`: the desktop bundle is a host build, so cargo's
+            // default triple is exactly the one the bundle is launched on.
+            let mut c = Command::new("cargo");
+            c.arg("build")
+                .args(["--bin", bin_name])
                 .arg(cargo_message::MESSAGE_FORMAT);
             c
         }
@@ -425,6 +440,9 @@ mod tests {
             CargoBuildTarget::Android {
                 rust_target: "aarch64-linux-android".to_string(),
             },
+            CargoBuildTarget::Desktop {
+                bin_name: "my_app".to_string(),
+            },
         ] {
             let args = cargo_args(&target, false);
             assert!(!args.contains(&"--release".to_string()), "{args:?}");
@@ -440,6 +458,9 @@ mod tests {
             },
             CargoBuildTarget::Android {
                 rust_target: "aarch64-linux-android".to_string(),
+            },
+            CargoBuildTarget::Desktop {
+                bin_name: "my_app".to_string(),
             },
         ] {
             let args = cargo_args(&target, true);
@@ -480,6 +501,9 @@ mod tests {
             CargoBuildTarget::Ios {
                 rust_target: "aarch64-apple-ios".to_string(),
             },
+            CargoBuildTarget::Desktop {
+                bin_name: "my_app".to_string(),
+            },
         ] {
             let args = cargo_args(&target, true);
             assert!(
@@ -487,6 +511,29 @@ mod tests {
                 "{args:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_desktop_build_asks_cargo_for_the_application_binary() {
+        let args = cargo_args(
+            &CargoBuildTarget::Desktop {
+                bin_name: "my-cool-app".to_string(),
+            },
+            false,
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "build".to_string(),
+                "--bin".to_string(),
+                "my-cool-app".to_string(),
+                cargo_message::MESSAGE_FORMAT.to_string(),
+            ]
+        );
+        // A host build: cargo's default triple is the one the bundle runs on.
+        assert!(!args.iter().any(|a| a == "--target"), "{args:?}");
+        assert!(!args.iter().any(|a| a == "--lib"), "{args:?}");
     }
 
     #[test]
@@ -701,6 +748,12 @@ mod tests {
         assert!(
             CargoBuildTarget::IosSim {
                 rust_target: "aarch64-apple-ios-sim".to_string()
+            }
+            .speaks_cargo_json()
+        );
+        assert!(
+            CargoBuildTarget::Desktop {
+                bin_name: "my_app".to_string()
             }
             .speaks_cargo_json()
         );

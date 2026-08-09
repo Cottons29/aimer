@@ -17,7 +17,7 @@ pub fn create(dir: &Path, name: &str, _group: &str) {
     fs::write(
         web_dir.join("index.html"),
         include_str!("../../../templates/web/index.html.template")
-            .replace("${app_title}", project_name),
+            .replace("${app_title}", project_name).replace("${bin_name}", name),
     )
     .unwrap();
 

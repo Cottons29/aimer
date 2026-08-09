@@ -1,6 +1,14 @@
 use std::fs;
 use std::path::Path;
 
+/// Scaffold `builds/windows/` for a new project.
+///
+/// Both files are consumed by
+/// [`package_desktop`](crate::commands::assemble::package_desktop), which copies
+/// them into the portable bundle: the icon as `app.ico` and the manifest as
+/// `<exe>.manifest`, the name the Windows loader reads as an external manifest.
+/// Embedding either one into the PE header would need `rc.exe`, so they ship
+/// next to the executable instead.
 pub fn create(dir: &Path, name: &str, group: &str) {
     fs::create_dir_all(dir.join("builds/windows")).unwrap();
     fs::write(

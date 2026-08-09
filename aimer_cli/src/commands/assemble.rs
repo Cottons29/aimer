@@ -61,7 +61,10 @@ pub fn execute(platform: String, release: bool) -> anyhow::Result<()> {
             package_android(&pkg_name, &plan, release, &reporter)?
         }
         Targets::Web => assemble_web(release, &reporter)?,
-        Targets::Windows | Targets::Linux => assemble_desktop(target, release, &reporter)?,
+        Targets::Windows | Targets::Linux => {
+            build_desktop(target, &pkg_name, release, &reporter)?;
+            package_desktop(target, &pkg_name, release, &reporter)?
+        }
         Targets::Terminated => bail!("'terminated' is not an assemblable platform"),
     };
 
@@ -252,6 +255,66 @@ pub(crate) fn macos_app_path(pkg_name: &str, release: bool) -> String {
         xcode_configuration(release),
         pkg_name
     )
+}
+
+/// Fail unless `target` is the desktop platform of the host.
+///
+/// The desktop leg is a host build: cargo compiles for the default triple and
+/// the bundle is laid out for the operating system it was produced on. Asking
+/// for the other desktop platform can therefore only ever yield an artifact
+/// that cannot run, so it is rejected up front instead.
+///
+/// # Errors
+///
+/// Returns an error naming both the requested target and the host when they do
+/// not match, or when the host is not a desktop platform at all.
+pub(crate) fn ensure_host_desktop(target: Targets) -> anyhow::Result<()> {
+    match Targets::host_desktop() {
+        Some(host) if host == target => Ok(()),
+        _ => bail!(
+            "cross-compiling to {target} from {} is not supported; \
+             build desktop targets on a matching host",
+            std::env::consts::OS
+        ),
+    }
+}
+
+/// The portable desktop bundle of `pkg_name`, relative to the project root.
+///
+/// The bundle is a plain folder — executable, staged assets and the platform
+/// scaffold files side by side — so it can be zipped and handed over as is.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(
+///     desktop_bundle_path(Targets::Linux, "my_app", false),
+///     "builds/linux/bundle/debug/my_app"
+/// );
+/// ```
+pub(crate) fn desktop_bundle_path(target: Targets, pkg_name: &str, release: bool) -> String {
+    format!(
+        "builds/{target}/bundle/{}/{pkg_name}",
+        profile_name(release)
+    )
+}
+
+/// The executable cargo produces for a host build of `pkg_name`.
+///
+/// Cargo names the default binary after the package, dashes included, so the
+/// raw package name is used here rather than [`lib_name_of`].
+pub(crate) fn desktop_exe_path(pkg_name: &str, release: bool) -> String {
+    format!(
+        "target/{}/{pkg_name}{}",
+        profile_name(release),
+        std::env::consts::EXE_SUFFIX
+    )
+}
+
+/// The file name the executable carries inside the bundle.
+#[inline]
+pub(crate) fn desktop_exe_name(pkg_name: &str) -> String {
+    format!("{pkg_name}{}", std::env::consts::EXE_SUFFIX)
 }
 
 /// Remove `path` if it exists, so a stale executable or asset can never be
@@ -587,26 +650,169 @@ fn assemble_web(release: bool, reporter: &dyn Reporter) -> anyhow::Result<String
     Ok("builds/web/dist".to_string())
 }
 
-/// Build the desktop (Windows/Linux) library. No platform installer template
-/// exists yet, so this compiles the artifact and reports its directory.
-fn assemble_desktop(
+/// Compile the application binary for the host desktop.
+///
+/// Unlike every other platform the desktop leg builds a `--bin` rather than a
+/// `--lib`: there is no platform shell to link the library into, the compiled
+/// executable *is* the app.
+pub(crate) fn build_desktop(
     target: Targets,
+    pkg_name: &str,
     release: bool,
     reporter: &dyn Reporter,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<()> {
+    ensure_host_desktop(target)?;
     let mut cargo = Command::new("cargo");
-    cargo.arg("build").arg("--lib");
+    cargo.arg("build").args(["--bin", pkg_name]);
     if release {
         cargo.arg("--release");
     }
     reporter.run(
         cargo,
         Step::new(StepKind::Cargo, format!("cargo build for {target}")),
-    )?;
+    )
+}
 
-    let artifact = format!("target/{}", profile_name(release));
-    reporter.stage_assets(&format!("{artifact}/assets"))?;
-    Ok(artifact)
+/// Stage the executable, the registered assets and the platform scaffold files
+/// into the portable bundle, returning its path.
+///
+/// Shared by `aimer assemble windows|linux` and the desktop leg of the
+/// `aimer run` pipeline. The bundle is rebuilt from scratch every time, so a
+/// stale executable can never be launched after a failed build.
+pub(crate) fn package_desktop(
+    target: Targets,
+    pkg_name: &str,
+    release: bool,
+    reporter: &dyn Reporter,
+) -> anyhow::Result<String> {
+    ensure_host_desktop(target)?;
+    package_desktop_in(Path::new("."), target, pkg_name, release, reporter)
+}
+
+/// [`package_desktop`], rooted at `root` instead of the current directory and
+/// without the host check.
+///
+/// The returned bundle path stays relative to `root`, which is what the console
+/// and the assemble summary print. Only the layout is decided here, so the
+/// staging can be exercised for either desktop platform from any host.
+pub(crate) fn package_desktop_in(
+    root: &Path,
+    target: Targets,
+    pkg_name: &str,
+    release: bool,
+    reporter: &dyn Reporter,
+) -> anyhow::Result<String> {
+    let bundle = desktop_bundle_path(target, pkg_name, release);
+    let bundle_dir = root.join(&bundle);
+    clean_bundle(&bundle_dir.to_string_lossy())?;
+    std::fs::create_dir_all(&bundle_dir)
+        .with_context(|| format!("creating {}", bundle_dir.display()))?;
+
+    let src = root.join(desktop_exe_path(pkg_name, release));
+    let dest = bundle_dir.join(desktop_exe_name(pkg_name));
+    // `fs::copy` carries the permission bits over, so the copy stays executable.
+    std::fs::copy(&src, &dest).with_context(|| {
+        format!(
+            "copying executable '{}' -> '{}'",
+            src.display(),
+            dest.display()
+        )
+    })?;
+    reporter.note(format!("Copied executable to {}", dest.display()));
+
+    copy_desktop_extras(root, target, pkg_name, &bundle_dir, reporter)?;
+
+    // The runtime looks assets up next to the executable, so the bundle root is
+    // exactly where they have to land.
+    reporter.stage_assets(&bundle)?;
+    Ok(bundle)
+}
+
+/// Copy the platform scaffold files of `target` into the bundle.
+///
+/// Linux gets its icon and a desktop entry whose `Exec`/`Icon` lines name the
+/// bundled binary; Windows gets its icon and the manifest under the
+/// `<exe>.manifest` name the loader picks up as an external manifest. A scaffold
+/// file that was never generated is reported and skipped rather than failing the
+/// bundle — the executable alone is still runnable.
+fn copy_desktop_extras(
+    root: &Path,
+    target: Targets,
+    pkg_name: &str,
+    bundle_dir: &Path,
+    reporter: &dyn Reporter,
+) -> anyhow::Result<()> {
+    let scaffold = root.join(format!("builds/{target}"));
+    match target {
+        Targets::Linux => {
+            copy_extra(&scaffold.join("app.png"), &bundle_dir.join("app.png"), reporter)?;
+            let entry = [
+                scaffold.join(format!("{pkg_name}.desktop")),
+                scaffold.join("app.desktop"),
+            ]
+            .into_iter()
+            .find(|p| p.exists());
+            if let Some(entry) = entry {
+                let contents = std::fs::read_to_string(&entry)
+                    .with_context(|| format!("reading {}", entry.display()))?;
+                let dest = bundle_dir.join(format!("{pkg_name}.desktop"));
+                std::fs::write(&dest, retarget_desktop_entry(&contents, pkg_name))
+                    .with_context(|| format!("writing {}", dest.display()))?;
+                reporter.note(format!("Copied desktop entry to {}", dest.display()));
+            } else {
+                reporter.note(format!(
+                    "warning: no desktop entry in {}; skipping",
+                    scaffold.display()
+                ));
+            }
+        }
+        Targets::Windows => {
+            copy_extra(&scaffold.join("app.ico"), &bundle_dir.join("app.ico"), reporter)?;
+            copy_extra(
+                &scaffold.join("app.manifest"),
+                &bundle_dir.join(format!("{}.manifest", desktop_exe_name(pkg_name))),
+                reporter,
+            )?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Copy one optional scaffold file, reporting a missing source instead of
+/// failing.
+fn copy_extra(src: &Path, dest: &Path, reporter: &dyn Reporter) -> anyhow::Result<()> {
+    if !src.exists() {
+        reporter.note(format!(
+            "warning: scaffold file '{}' not found; skipping",
+            src.display()
+        ));
+        return Ok(());
+    }
+    std::fs::copy(src, dest)
+        .with_context(|| format!("copying '{}' -> '{}'", src.display(), dest.display()))?;
+    reporter.note(format!("Copied {}", dest.display()));
+    Ok(())
+}
+
+/// Point the `Exec` and `Icon` lines of a desktop entry at the bundled binary.
+///
+/// The scaffolded entry describes the project as it sits in the repository; in
+/// the bundle the executable lives next to the entry, so both keys become the
+/// package name.
+fn retarget_desktop_entry(contents: &str, pkg_name: &str) -> String {
+    let mut out = String::with_capacity(contents.len());
+    for line in contents.lines() {
+        if line.starts_with("Exec=") {
+            out.push_str(&format!("Exec={pkg_name}"));
+        } else if line.starts_with("Icon=") {
+            out.push_str("Icon=app");
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
 }
 
 /// JDK feature releases the Android scaffold builds with, most preferred first.
@@ -732,6 +938,232 @@ mod tests {
         assert_eq!(
             macos_app_path("my_app", true),
             "builds/macos/build/Release/my_app.app"
+        );
+    }
+
+    // ── Desktop bundles ──────────────────────────────────────────────
+
+    #[test]
+    fn desktop_bundle_path_follows_the_platform_and_profile() {
+        assert_eq!(
+            desktop_bundle_path(Targets::Linux, "my_app", false),
+            "builds/linux/bundle/debug/my_app"
+        );
+        assert_eq!(
+            desktop_bundle_path(Targets::Windows, "my_app", true),
+            "builds/windows/bundle/release/my_app"
+        );
+    }
+
+    #[test]
+    fn desktop_exe_path_keeps_the_package_name_verbatim() {
+        // Cargo names the default binary after the package, dashes included.
+        let path = desktop_exe_path("my-cool-app", false);
+        assert_eq!(
+            path,
+            format!("target/debug/my-cool-app{}", std::env::consts::EXE_SUFFIX)
+        );
+        assert!(desktop_exe_path("my-cool-app", true).starts_with("target/release/"));
+    }
+
+    /// A project tree with a compiled binary and the Linux scaffold in place.
+    fn desktop_project(pkg_name: &str) -> tempfile::TempDir {
+        let root = tempfile::tempdir().expect("temp project");
+        let target_dir = root.path().join("target/debug");
+        std::fs::create_dir_all(&target_dir).unwrap();
+        std::fs::write(
+            target_dir.join(desktop_exe_name(pkg_name)),
+            b"#!/bin/sh\ntrue\n",
+        )
+        .unwrap();
+        root
+    }
+
+    /// Write the Linux scaffold `create::linux` generates for `pkg_name`.
+    fn linux_scaffold(root: &Path, pkg_name: &str) {
+        let dir = root.join("builds/linux");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{pkg_name}.desktop")),
+            "[Desktop Entry]\nName=Demo\nExec=aimer_app\nIcon=aimer\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("app.png"), b"png").unwrap();
+    }
+
+    #[test]
+    fn packaging_stages_the_executable_and_the_linux_scaffold() {
+        let pkg = "my_app";
+        let project = desktop_project(pkg);
+        linux_scaffold(project.path(), pkg);
+        let reporter = SpyReporter::new();
+
+        let bundle =
+            package_desktop_in(project.path(), Targets::Linux, pkg, false, &reporter).unwrap();
+
+        assert_eq!(bundle, "builds/linux/bundle/debug/my_app");
+        let dir = project.path().join(&bundle);
+        assert!(dir.join(desktop_exe_name(pkg)).is_file());
+        assert!(dir.join("app.png").is_file());
+        let entry = std::fs::read_to_string(dir.join("my_app.desktop")).unwrap();
+        assert!(entry.contains("Exec=my_app"), "{entry}");
+        assert!(!entry.contains("aimer_app"), "{entry}");
+        assert!(entry.contains("Name=Demo"), "{entry}");
+        // The assets land next to the executable, where the runtime looks.
+        assert!(
+            reporter
+                .notes
+                .lock()
+                .unwrap()
+                .contains(&format!("staged {bundle}"))
+        );
+    }
+
+    #[test]
+    fn packaging_stages_the_windows_scaffold_next_to_the_executable() {
+        let pkg = "my_app";
+        let project = desktop_project(pkg);
+        let dir = project.path().join("builds/windows");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("app.ico"), b"ico").unwrap();
+        std::fs::write(dir.join("app.manifest"), b"<assembly/>").unwrap();
+        let reporter = SpyReporter::new();
+
+        let bundle =
+            package_desktop_in(project.path(), Targets::Windows, pkg, false, &reporter).unwrap();
+
+        let bundle_dir = project.path().join(&bundle);
+        assert!(bundle_dir.join("app.ico").is_file());
+        // Windows reads an external manifest named after the executable.
+        assert!(
+            bundle_dir
+                .join(format!("{}.manifest", desktop_exe_name(pkg)))
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn packaging_keeps_a_dashed_package_name() {
+        let pkg = "my-cool-app";
+        let project = desktop_project(pkg);
+        let reporter = SpyReporter::new();
+
+        let bundle =
+            package_desktop_in(project.path(), Targets::Linux, pkg, false, &reporter).unwrap();
+
+        assert!(
+            project
+                .path()
+                .join(&bundle)
+                .join(desktop_exe_name(pkg))
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn packaging_removes_a_stale_bundle_first() {
+        let pkg = "my_app";
+        let project = desktop_project(pkg);
+        let bundle = project
+            .path()
+            .join(desktop_bundle_path(Targets::Linux, pkg, false));
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("stale.txt"), b"old").unwrap();
+        let reporter = SpyReporter::new();
+
+        package_desktop_in(project.path(), Targets::Linux, pkg, false, &reporter).unwrap();
+
+        assert!(!bundle.join("stale.txt").exists());
+        assert!(bundle.join(desktop_exe_name(pkg)).is_file());
+    }
+
+    #[test]
+    fn packaging_without_a_compiled_binary_names_the_missing_executable() {
+        let project = tempfile::tempdir().unwrap();
+        let reporter = SpyReporter::new();
+
+        let err = package_desktop_in(project.path(), Targets::Linux, "my_app", false, &reporter)
+            .expect_err("no compiled binary");
+
+        assert!(err.to_string().contains("copying executable"), "{err}");
+    }
+
+    #[test]
+    fn packaging_survives_a_project_without_scaffold_files() {
+        let pkg = "my_app";
+        let project = desktop_project(pkg);
+        let reporter = SpyReporter::new();
+
+        let bundle =
+            package_desktop_in(project.path(), Targets::Linux, pkg, false, &reporter).unwrap();
+
+        assert!(
+            project
+                .path()
+                .join(&bundle)
+                .join(desktop_exe_name(pkg))
+                .is_file()
+        );
+        assert!(
+            reporter
+                .notes
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|n| n.contains("warning:"))
+        );
+    }
+
+    #[test]
+    fn a_desktop_build_for_another_os_is_refused() {
+        let reporter = SpyReporter::new();
+        for target in [Targets::Windows, Targets::Linux] {
+            if Targets::host_desktop() == Some(target) {
+                continue;
+            }
+            let err = build_desktop(target, "my_app", false, &reporter)
+                .expect_err("cross-OS desktop build");
+            let message = err.to_string();
+            assert!(message.contains(&target.to_string()), "{message}");
+            assert!(message.contains(std::env::consts::OS), "{message}");
+            assert!(package_desktop(target, "my_app", false, &reporter).is_err());
+        }
+        // Nothing was run and nothing was written for a refused target.
+        assert!(reporter.steps.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_desktop_build_asks_cargo_for_the_application_binary() {
+        let Some(host) = Targets::host_desktop() else {
+            return;
+        };
+        let reporter = SpyReporter::new();
+        build_desktop(host, "my-cool-app", true, &reporter).unwrap();
+
+        let steps = reporter.steps.lock().unwrap();
+        let (step, args) = steps.first().expect("a cargo step");
+        assert_eq!(step.kind, StepKind::Cargo);
+        assert_eq!(
+            args,
+            &vec![
+                "build".to_string(),
+                "--bin".to_string(),
+                "my-cool-app".to_string(),
+                "--release".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn retargeting_a_desktop_entry_points_at_the_bundled_binary() {
+        let entry = retarget_desktop_entry(
+            "[Desktop Entry]\nName=Demo\nExec=aimer_app\nIcon=aimer\nType=Application\n",
+            "my_app",
+        );
+
+        assert_eq!(
+            entry,
+            "[Desktop Entry]\nName=Demo\nExec=my_app\nIcon=app\nType=Application\n"
         );
     }
 
