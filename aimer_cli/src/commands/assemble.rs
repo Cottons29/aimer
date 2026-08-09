@@ -304,11 +304,13 @@ pub(crate) fn desktop_bundle_path(target: Targets, pkg_name: &str, release: bool
 /// Cargo names the default binary after the package, dashes included, so the
 /// raw package name is used here rather than [`lib_name_of`].
 pub(crate) fn desktop_exe_path(pkg_name: &str, release: bool) -> String {
+    let project_path = get_project_root(true).unwrap_or(PathBuf::new()).display().to_string();
     format!(
-        "target/{}/{pkg_name}{}",
+        "{project_path}/target/{}/{pkg_name}{}",
         profile_name(release),
         std::env::consts::EXE_SUFFIX
     )
+
 }
 
 /// The file name the executable carries inside the bundle.
@@ -959,9 +961,10 @@ mod tests {
     fn desktop_exe_path_keeps_the_package_name_verbatim() {
         // Cargo names the default binary after the package, dashes included.
         let path = desktop_exe_path("my-cool-app", false);
+        let expected = std::env::current_dir().unwrap().join(format!("target/debug/my-cool-app{}", std::env::consts::EXE_SUFFIX));
         assert_eq!(
-            path,
-            format!("target/debug/my-cool-app{}", std::env::consts::EXE_SUFFIX)
+            path,expected
+
         );
         assert!(desktop_exe_path("my-cool-app", true).starts_with("target/release/"));
     }

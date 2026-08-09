@@ -37,3 +37,6 @@ tempfile.workspace = true
 
 [build-dependencies]
 chrono.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+

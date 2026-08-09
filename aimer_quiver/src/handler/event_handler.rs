@@ -676,9 +676,14 @@ impl WindowEventHandler {
         phase: TouchPhase,
         app: &mut AimerApplicationHandler<W>,
     ) {
+        const DELTA_MULTIPLY: f64 = if cfg!(target_os = "windows") {
+            4.5
+        } else {
+           1.0
+        };
         let (scroll_delta, kind) = Self::normalize_wheel_delta(delta, app.window_scale);
         if app.widget_root.is_some() {
-            let delta = PhysicalPosition::new(scroll_delta.x as f64, scroll_delta.y as f64);
+            let delta = PhysicalPosition::new(scroll_delta.x  as f64 * DELTA_MULTIPLY, scroll_delta.y as f64 * DELTA_MULTIPLY);
             match kind {
                 aimer_events::element::ScrollDeltaKind::Pixel => {
                     app.scroll_smoother.on_pixel_delta(delta, phase);

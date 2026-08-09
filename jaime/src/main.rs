@@ -82,13 +82,13 @@ fn main() {
     // panic_recovery::start_panic_recovery_example()
     // start_custom_animated_theme_example()
     // start_system_theme_example()
-    // system_theme::start_system_theme_example();
+    system_theme::start_system_theme_example();
     // test_text()
     // start_loading_animation_example()
     // floating::start_floating_example();
     // file_drop_zone::start_file_drop_zone_example()
     // drag_and_drop::start_drag_and_drop_example();
-    selectable_text::start_selectable_text_example();
+    // selectable_text::start_selectable_text_example();
     // text_area_example::start_text_area_example();
     // text_field_example::start_text_field_example();
 }

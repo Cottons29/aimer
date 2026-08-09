@@ -26,6 +26,11 @@ impl Command for EnableButtonMouseCapture {
     fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
         f.write_str("\x1B[?1000h\x1B[?1002h\x1B[?1015h\x1B[?1006h")
     }
+
+    #[cfg(target_os = "windows")]
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// Undo [`EnableButtonMouseCapture`], in reverse order.
@@ -35,6 +40,11 @@ pub struct DisableButtonMouseCapture;
 impl Command for DisableButtonMouseCapture {
     fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
         f.write_str("\x1B[?1006l\x1B[?1015l\x1B[?1002l\x1B[?1000l")
+    }
+
+    #[cfg(target_os = "windows")]
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
