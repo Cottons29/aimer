@@ -2,9 +2,8 @@
 use std::collections::HashMap;
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
 use std::collections::HashSet;
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{LazyLock, RwLock};
 use std::sync::{Arc, OnceLock};
@@ -73,28 +72,54 @@ pub(crate) enum FontData {
 static MAPPED_FONT_FILES: LazyLock<RwLock<HashMap<PathBuf, Arc<memmap2::Mmap>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
+/// Returns the mapping of `path` if one has already been published, without
+/// creating it.
+///
+/// This is the half of the cache a caller wants when a mapping is worth
+/// *reusing* but not worth *retaining*: probing a candidate font answers a
+/// yes/no question and is usually a no, so publishing every file it touches
+/// would grow a cache that never evicts by the whole installed font set.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn cached_font_file(path: &Path) -> Option<Arc<memmap2::Mmap>> {
+    MAPPED_FONT_FILES.read().ok()?.get(path).cloned()
+}
+
+/// Publishes `mapping` as the process-wide mapping of `path` and returns the
+/// mapping callers will observe from now on.
+///
+/// A concurrent caller may have published the same file meanwhile. Keeping the
+/// entry that is already there guarantees one mapping per file, which is what
+/// makes pointer identity of the bytes meaningful — so the returned handle is
+/// the published one, which is not necessarily the argument.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn publish_font_file(path: &Path, mapping: Arc<memmap2::Mmap>) -> Arc<memmap2::Mmap> {
+    let Ok(mut cache) = MAPPED_FONT_FILES.write() else {
+        return mapping;
+    };
+    cache.entry(path.to_path_buf()).or_insert(mapping).clone()
+}
+
+/// Maps `path` read-only without consulting or filling the shared cache.
+///
+/// Returns `None` when the file cannot be opened or mapped.
+fn map_font_file(path: &Path) -> Option<Arc<memmap2::Mmap>> {
+    let file = std::fs::File::open(path).ok()?;
+    // SAFETY: the read-only mapping owns its file-backed virtual memory region
+    // and remains valid independently of the `File` handle.
+    Some(Arc::new(unsafe { memmap2::Mmap::map(&file).ok()? }))
+}
+
 /// Returns the shared read-only mapping of `path`, creating it on first use.
 ///
 /// Returns `None` when the file cannot be opened or mapped; failures are not
 /// cached, so a font that becomes readable later is picked up.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn mapped_font_file(path: &Path) -> Option<Arc<memmap2::Mmap>> {
-    if let Ok(cache) = MAPPED_FONT_FILES.read()
-        && let Some(mapping) = cache.get(path)
-    {
-        return Some(mapping.clone());
+    if let Some(mapping) = cached_font_file(path) {
+        return Some(mapping);
     }
 
-    let file = std::fs::File::open(path).ok()?;
-    // SAFETY: the read-only mapping owns its file-backed virtual memory region
-    // and remains valid independently of the `File` handle.
-    let mapping = Arc::new(unsafe { memmap2::Mmap::map(&file).ok()? });
-
-    // A concurrent caller may have mapped the same file meanwhile. Keeping the
-    // entry that is already published guarantees one mapping per file, which is
-    // what makes pointer identity of the bytes meaningful.
-    let mut cache = MAPPED_FONT_FILES.write().ok()?;
-    Some(cache.entry(path.to_path_buf()).or_insert(mapping).clone())
+    Some(publish_font_file(path, map_font_file(path)?))
 }
 
 impl AsRef<[u8]> for FontData {
@@ -161,16 +186,15 @@ impl FontRecord {
     }
 
     /// Probe the font with each `probes` codepoint; accept on the first match.
-    /// `accept_color` allows color fonts to be admitted to the chain even when
-    /// none of the probes are present (the typical case for emoji fonts whose
-    /// cmap maps emoji codepoints — which is what callers should pass here, but
-    /// we keep the option to make tests easier).
-    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+    ///
+    /// This is [`any_probe_is_mapped`] applied to an already-parsed face. The
+    /// two must stay the same predicate: the fallback chain builder uses the
+    /// standalone form as a gate in front of the parse, and a gate that
+    /// rejected a face this accepts would silently drop it from the chain.
+    #[cfg_attr(any(target_os = "ios", target_os = "macos"), allow(dead_code))]
     fn probes_match(face: &FontRef<'_>, probes: &[char]) -> bool {
         let charmap = face.charmap();
-        probes
-            .iter()
-            .any(|&codepoint| charmap.map(codepoint).is_some())
+        any_probe_is_mapped(|codepoint| charmap.map(codepoint).map(|id| id.to_u32()), probes)
     }
 
     /// Retain shared in-memory data or hand out the process-wide memory map of
@@ -230,6 +254,34 @@ pub fn advance_width_from_face(
     let face = font_ref(bytes, collection_index)?;
     face.glyph_metrics(Size::new(font_size), LocationRef::default())
         .advance_width(GlyphId::new(glyph_id as u32))
+}
+
+/// Advances of `glyph_ids`, in order, from one reading of the face.
+///
+/// Metrics are a property of the face at a size, not of a glyph: obtaining
+/// them parses the face and its horizontal metrics tables, and the result then
+/// answers for every glyph. Asking per glyph — as
+/// [`advance_width_from_face`] does — repeats that reading once per glyph,
+/// which is why a run of glyphs asks here instead.
+///
+/// An element is `None` where the face has no advance for that glyph, which is
+/// what tells the caller the face cannot draw it. Returns `None` only when the
+/// face itself cannot be read.
+pub fn advance_widths_from_face(
+    bytes: &[u8],
+    collection_index: u32,
+    glyph_ids: impl IntoIterator<Item = u16>,
+    font_size: f32,
+) -> Option<Vec<Option<f32>>> {
+    let face = font_ref(bytes, collection_index)?;
+    let metrics = face.glyph_metrics(Size::new(font_size), LocationRef::default());
+
+    Some(
+        glyph_ids
+            .into_iter()
+            .map(|glyph_id| metrics.advance_width(GlyphId::new(u32::from(glyph_id))))
+            .collect(),
+    )
 }
 
 /// A probe group: one script / category with the codepoints used to verify
@@ -305,14 +357,8 @@ static PROBE_GROUPS: &[ProbeGroup] = &[
 /// no direct outline (e.g., some older pan-Unicode fonts for certain CJK
 /// ranges).
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
-fn font_data_matches_probes(
-    data: &[u8],
-    ci: u32,
-    probes: &[char],
-    hint_color: bool,
-) -> Option<bool> {
-    let face = font_ref(data, ci)?;
-    if !FontRecord::probes_match(&face, probes) {
+fn face_matches_probes(face: &FontRef<'_>, probes: &[char], hint_color: bool) -> Option<bool> {
+    if !FontRecord::probes_match(face, probes) {
         return None;
     }
 
@@ -384,77 +430,200 @@ fn build_fallback_chain(_next_id: FontId) -> Vec<FontRecord> {
     Vec::new()
 }
 
+/// Returns a mapping of `path` suitable for *probing* a candidate face: the
+/// shared one when the pipeline has already published it, a private one
+/// otherwise.
+///
+/// Reusing the published mapping is what makes a warm cache free — a font the
+/// application already renders with is not opened again — while a candidate
+/// that is only being examined stays out of a cache that never evicts.
+#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+fn probe_font_file(path: &Path) -> Option<Arc<memmap2::Mmap>> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(mapping) = cached_font_file(path) {
+        return Some(mapping);
+    }
+
+    map_font_file(path)
+}
+
+/// Hands the mapping a probe created over to the shared cache, so the face's
+/// first render — and every metric query after it — finds the file already
+/// mapped instead of paying for another `open` plus `mmap`.
+///
+/// Only worth calling for a face that has actually been accepted into the
+/// chain; see [`probe_font_file`].
+#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+fn retain_probed_font_file(path: &Path, mapping: Arc<memmap2::Mmap>) {
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = publish_font_file(path, mapping);
+    #[cfg(target_arch = "wasm32")]
+    let _ = (path, mapping);
+}
+
+/// Returns whether `lookup` — a font's character map — maps any of `probes`.
+///
+/// This is the cheap half of face selection. Answering it needs nothing but a
+/// `cmap` subtable, which the platform font enumerator has already located for
+/// every installed face, whereas the full probe in `face_matches_probes`
+/// needs the face parsed: a table directory walk plus, for the groups it does
+/// not reject outright, glyph metrics and color table lookups. Since the full
+/// probe starts by requiring exactly this condition, using it as a gate rejects
+/// no face the chain would have accepted while sparing the parse for the
+/// overwhelming majority of faces, which cover none of the scripts still
+/// wanted.
+///
+/// `lookup` is called at most once per probe and stops at the first hit.
+#[cfg_attr(any(target_os = "ios", target_os = "macos"), allow(dead_code))]
+fn any_probe_is_mapped(mut lookup: impl FnMut(char) -> Option<u32>, probes: &[char]) -> bool {
+    probes
+        .iter()
+        .any(|&codepoint| lookup(codepoint).is_some())
+}
+
+/// Claims the highest-priority group slot that is still open and whose probes
+/// the offered face satisfies, returning the slot index and the color flag the
+/// probe reported.
+///
+/// `open[i]` tells whether group `i` still needs a face; `probe` is only ever
+/// called for open slots, at most once each, and never again once a slot has
+/// been claimed. That is what keeps chain construction linear in the number of
+/// faces: a single face is parsed once and offered to every group that still
+/// wants one, instead of every group re-scanning every face.
+///
+/// The scan runs in slot order, so a face able to serve several scripts is
+/// spent on the most important one — matching the priority encoded in the
+/// group table.
+#[cfg_attr(any(target_os = "ios", target_os = "macos"), allow(dead_code))]
+fn first_open_match(
+    open: &[bool],
+    mut probe: impl FnMut(usize) -> Option<bool>,
+) -> Option<(usize, bool)> {
+    open.iter()
+        .enumerate()
+        .filter(|&(_, is_open)| *is_open)
+        .find_map(|(group, _)| probe(group).map(|is_color| (group, is_color)))
+}
+
 /// Build the fallback chain dynamically from Fontique's platform font sources.
 ///
-/// For each `ProbeGroup` we walk all font faces in order and add the first
-/// face that satisfies the group's probes.  A font face is never added twice
-/// (deduped by a stable key).  The result is a flat `Vec<FontRecord>` ordered
-/// by probe group priority.
+/// Every face the platform exposes is visited exactly once: its bytes are
+/// mapped once, parsed at most once, and offered to the probe groups that are
+/// still unfilled via [`first_open_match`]. Faces that match nothing are
+/// recorded as seen so a second family listing the same file costs nothing.
 ///
-/// This function uses `db.with_face_data()` to access the raw bytes of each
-/// candidate face so it works uniformly for both on-disk (file-backed) and
-/// in-memory (WASM-embedded or iOS binary-blob) sources.
+/// A face is only parsed when its character map — which the enumerator has
+/// already indexed, so consulting it needs no parse — reports coverage of a
+/// script still missing from the chain. Most installed faces cover none, so
+/// most are dismissed on the character map alone.
+///
+/// The previous shape — one full sweep of the font set per probe group — made
+/// the cost `groups x faces`: a face rejected by the first group was re-opened,
+/// re-mapped and re-parsed for each of the remaining ones, and groups with no
+/// installed font (Yi, Cherokee, Mongolian on a typical desktop) always paid
+/// for a complete scan. On a distribution shipping several hundred font files
+/// that is tens of thousands of redundant parses, run synchronously on the
+/// thread rasterizing the frame.
+///
+/// The result is a flat `Vec<FontRecord>` ordered by probe group priority, with
+/// ids assigned consecutively from `next_id`.
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
 fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
     let mut collection = Collection::new(CollectionOptions {
         shared: false,
         system_fonts: !cfg!(target_arch = "wasm32"),
     });
-    let mut fallbacks: Vec<FontRecord> = Vec::new();
-    let mut seen_ids = HashSet::new();
     let family_names: Vec<String> = collection.family_names().map(str::to_owned).collect();
 
-    for group in PROBE_GROUPS {
-        'family_loop: for family_name in &family_names {
-            let Some(family) = collection.family_by_name(family_name) else {
+    let mut slots: Vec<Option<FontRecord>> = (0..PROBE_GROUPS.len()).map(|_| None).collect();
+    let mut open = vec![true; PROBE_GROUPS.len()];
+    let mut open_count = PROBE_GROUPS.len();
+    let mut seen_ids = HashSet::new();
+
+    'families: for family_name in &family_names {
+        let Some(family) = collection.family_by_name(family_name) else {
+            continue;
+        };
+        for font_info in family.fonts() {
+            let source_id = font_info.source().id();
+            let ci = font_info.index();
+            if !seen_ids.insert((source_id, ci)) {
+                continue;
+            }
+
+            // The mapping used for probing is the shared one whenever the file
+            // is already published, and a private one otherwise: the cache
+            // never evicts, so filling it from a sweep of the entire font set
+            // would pin one mapping per installed font. Only the face that
+            // ends up in the chain is handed over to the cache, below.
+            let probe_mapping = match font_info.source().kind() {
+                SourceKind::Path(path) => match probe_font_file(path.as_ref()) {
+                    Some(mapping) => Some(mapping),
+                    None => continue,
+                },
+                SourceKind::Memory(_) => None,
+            };
+            let (data, record_bytes, record_path): (&[u8], _, _) = match font_info.source().kind() {
+                SourceKind::Path(path) => (
+                    probe_mapping.as_ref().map_or(&[][..], |mapping| &mapping[..]),
+                    None,
+                    Some(Arc::new(path.as_ref().to_path_buf())),
+                ),
+                SourceKind::Memory(bytes) => {
+                    (bytes.as_ref(), Some(Arc::from(bytes.as_ref())), None)
+                }
+            };
+
+            // The character map is the cheap gate in front of the parse: the
+            // enumerator already located the `cmap` subtable of every face, so
+            // asking it whether a script is present at all costs a bounds check
+            // and a lookup, while `font_ref` walks the table directory. A face
+            // covering none of the scripts still wanted — which is nearly every
+            // installed face, once the common ones are placed — is therefore
+            // rejected without ever being parsed.
+            let Some(charmap) = font_info.charmap_index().charmap(data) else {
                 continue;
             };
-            for font_info in family.fonts() {
-                let source_id = font_info.source().id();
-                let ci = font_info.index();
-                if seen_ids.contains(&(source_id, ci)) {
-                    continue;
+
+            let mut parsed = None;
+            let Some((group, is_color)) = first_open_match(&open, |group| {
+                let group = &PROBE_GROUPS[group];
+                if !any_probe_is_mapped(|codepoint| charmap.map(codepoint), group.probes) {
+                    return None;
                 }
+                let face = parsed.get_or_insert_with(|| font_ref(data, ci)).as_ref()?;
+                face_matches_probes(face, group.probes, group.hint_color)
+            }) else {
+                continue;
+            };
 
-                let is_color = match font_info.source().kind() {
-                    SourceKind::Path(path) => {
-                        let file = match std::fs::File::open(path.as_ref()) {
-                            Ok(file) => file,
-                            Err(_) => continue,
-                        };
-                        let data = match unsafe { memmap2::Mmap::map(&file) } {
-                            Ok(data) => data,
-                            Err(_) => continue,
-                        };
-                        font_data_matches_probes(&data, ci, group.probes, group.hint_color)
-                    }
-                    SourceKind::Memory(data) => {
-                        font_data_matches_probes(data.as_ref(), ci, group.probes, group.hint_color)
-                    }
-                };
-                let Some(is_color) = is_color else {
-                    continue;
-                };
-
-                let (record_bytes, record_path) = match font_info.source().kind() {
-                    SourceKind::Path(path) => (None, Some(Arc::new(path.as_ref().to_path_buf()))),
-                    SourceKind::Memory(data) => (Some(Arc::from(data.as_ref())), None),
-                };
-                let id = next_id + fallbacks.len() as FontId;
-                fallbacks.push(FontRecord {
-                    id,
-                    bytes: record_bytes,
-                    collection_index: ci,
-                    path: record_path,
-                    is_color,
-                });
-                seen_ids.insert((source_id, ci));
-                break 'family_loop;
+            slots[group] = Some(FontRecord {
+                id: next_id,
+                bytes: record_bytes,
+                collection_index: ci,
+                path: record_path.clone(),
+                is_color,
+            });
+            if let (Some(path), Some(mapping)) = (record_path, probe_mapping) {
+                retain_probed_font_file(path.as_path(), mapping);
+            }
+            open[group] = false;
+            open_count -= 1;
+            if open_count == 0 {
+                break 'families;
             }
         }
     }
 
-    fallbacks
+    slots
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .map(|(index, record)| FontRecord {
+            id: next_id + index as FontId,
+            ..record
+        })
+        .collect()
 }
 
 pub fn shared_fallback_chain() -> Vec<FontRecord> {
@@ -466,7 +635,10 @@ pub fn shared_fallback_chain() -> Vec<FontRecord> {
 /// Skrifa, avoiding eager whole-font parsing during warmup. Safe to call
 /// from any thread; the inner `OnceLock` is also used by
 /// `GlyphRasterizer::ensure_fallbacks`.
-#[allow(dead_code)]
+#[cfg_attr(
+    any(target_os = "ios", target_os = "macos", target_arch = "wasm32"),
+    allow(dead_code)
+)]
 pub fn warm_fallbacks() {
     let start = aimer_utils::AnimInstant::now();
     let chain = shared_fallback_chain();
@@ -476,17 +648,71 @@ pub fn warm_fallbacks() {
     info!("warm_fallbacks() took {} ms", start.elapsed().as_millis());
 }
 
+/// Reports whether the caller is the one that has to run the warm-up.
+///
+/// The warm-up is process-wide work guarded by an `OnceLock`, so a second
+/// runner would not repeat it — it would *block* on the first one. Claiming
+/// the flag before spawning keeps that blocked thread from existing at all,
+/// and the swap makes the claim atomic, so racing callers cannot both see an
+/// unclaimed flag.
+#[cfg_attr(
+    any(target_os = "ios", target_os = "macos", target_arch = "wasm32"),
+    allow(dead_code)
+)]
+fn claim_warm_up(started: &AtomicBool) -> bool {
+    !started.swap(true, Ordering::Relaxed)
+}
+
+/// Starts building the platform fallback chain on a background thread, at most
+/// once per process.
+///
+/// The chain is otherwise built by the first glyph that no loaded face covers,
+/// on whichever thread happens to be rasterizing — so the frame that first
+/// shows CJK, emoji or any other uncovered script pays for a sweep of the
+/// installed font set. Doing it ahead of time off the UI thread means that
+/// frame finds the chain already built.
+///
+/// This is a no-op where no chain is built: Apple platforms resolve fallbacks
+/// per codepoint through the system instead (see
+/// [`system_fallback`](crate::text_pipeline::system_fallback)), and wasm has no
+/// threads to spare the UI one.
+#[inline]
+pub fn warm_fallbacks_in_background() {
+    #[cfg(not(any(target_os = "ios", target_os = "macos", target_arch = "wasm32")))]
+    {
+        static STARTED: AtomicBool = AtomicBool::new(false);
+        if !claim_warm_up(&STARTED) {
+            return;
+        }
+
+        // A failure to spawn is not worth failing startup over: the chain is
+        // still built lazily on first miss, exactly as it was before.
+        if std::thread::Builder::new()
+            .name("cupid-font-warmup".into())
+            .spawn(warm_fallbacks)
+            .is_err()
+        {
+            info!("warm_fallbacks() could not be started off the UI thread");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
     #[cfg(not(target_arch = "wasm32"))]
     use std::sync::Arc;
 
     use skrifa::MetadataProvider;
+
+    use super::{any_probe_is_mapped, claim_warm_up, first_open_match};
     
     #[cfg(not(target_arch = "wasm32"))]
-    use super::{FontData, FontRecord, font_ref};
+    use super::{
+        FontData, FontRecord, cached_font_file, font_ref, mapped_font_file, publish_font_file,
+    };
 
     const TEST_FONT: &[u8] = include_bytes!("../../../fonts/JetBrainsMono-Regular.ttf");
 
@@ -565,6 +791,51 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn a_path_is_only_cached_once_a_mapping_has_been_published() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+
+        assert!(
+            cached_font_file(&path).is_none(),
+            "a file nothing has mapped yet must not be reported as cached"
+        );
+
+        let mapped = mapped_font_file(&path).expect("readable file should map");
+
+        assert_eq!(
+            cached_font_file(&path)
+                .expect("a mapping handed out by `mapped_font_file` is published")
+                .as_ptr(),
+            mapped.as_ptr(),
+            "the lookup must return the very mapping that was published"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn publishing_a_second_mapping_keeps_the_one_already_shared() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let shared = mapped_font_file(&path).expect("readable file should map");
+
+        let file = std::fs::File::open(&path).expect("readable file should open");
+        // SAFETY: read-only mapping of a file that stays valid for the test.
+        let private = Arc::new(unsafe { memmap2::Mmap::map(&file) }.expect("file should map"));
+        assert_ne!(
+            private.as_ptr(),
+            shared.as_ptr(),
+            "a private mapping is a distinct region"
+        );
+
+        let published = publish_font_file(&path, private);
+
+        assert_eq!(
+            published.as_ptr(),
+            shared.as_ptr(),
+            "publishing must hand back the mapping already in use, so pointer identity holds"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn mapping_an_unreadable_path_fails_without_poisoning_the_cache() {
         let missing = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fonts/does-not-exist.ttf");
         let record = FontRecord {
@@ -588,5 +859,128 @@ mod tests {
             is_color: false,
         };
         assert!(readable.glyph_index('A').is_some());
+    }
+
+    #[test]
+    fn a_face_claims_the_highest_priority_group_it_still_fits() {
+        let open = [false, true, true];
+
+        let claimed = first_open_match(&open, |group| (group >= 1).then_some(group == 2));
+
+        assert_eq!(claimed, Some((1, false)));
+    }
+
+    #[test]
+    fn a_face_matching_nothing_open_claims_no_group() {
+        let open = [false, true, true];
+
+        let claimed = first_open_match(&open, |group| (group == 0).then_some(false));
+
+        assert!(claimed.is_none());
+    }
+
+    #[test]
+    fn the_cheap_gate_stops_at_the_first_mapped_probe() {
+        let mut looked_up = Vec::new();
+
+        let mapped = any_probe_is_mapped(
+            |codepoint| {
+                looked_up.push(codepoint);
+                (codepoint == '漢').then_some(42)
+            },
+            &['你', '漢', '한'],
+        );
+
+        assert!(mapped);
+        assert_eq!(
+            looked_up,
+            vec!['你', '漢'],
+            "the gate must answer as soon as one probe is mapped"
+        );
+    }
+
+    #[test]
+    fn the_cheap_gate_rejects_a_character_map_covering_no_probe() {
+        assert!(!any_probe_is_mapped(|_| None, &['你', '漢', '한']));
+        assert!(
+            !any_probe_is_mapped(|_| Some(7), &[]),
+            "a group without probes cannot be satisfied"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_cheap_gate_agrees_with_the_full_face_probe() {
+        let face = font_ref(TEST_FONT, 0).expect("bundled test font should parse");
+        let charmap = face.charmap();
+
+        for probes in [
+            &['A', 'B'][..],         // covered by the bundled monospace face
+            &['你', '漢', '한'][..], // not covered by it
+        ] {
+            let gate = any_probe_is_mapped(
+                |codepoint| charmap.map(codepoint).map(|id| id.to_u32()),
+                probes,
+            );
+
+            assert_eq!(
+                gate,
+                FontRecord::probes_match(&face, probes),
+                "the gate must admit exactly the faces the full probe accepts"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_first_claim_starts_the_warm_up() {
+        let started = AtomicBool::new(false);
+
+        assert!(
+            claim_warm_up(&started),
+            "the first caller is the one that must do the work"
+        );
+        assert!(!claim_warm_up(&started));
+        assert!(!claim_warm_up(&started));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn concurrent_claims_start_the_warm_up_exactly_once() {
+        let started = AtomicBool::new(false);
+        let claims = std::sync::atomic::AtomicUsize::new(0);
+
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    if claim_warm_up(&started) {
+                        claims.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+            }
+        });
+
+        assert_eq!(
+            claims.load(Ordering::Relaxed),
+            1,
+            "racing callers must not each spawn a chain build"
+        );
+    }
+
+    #[test]
+    fn each_open_group_is_probed_at_most_once_and_filled_ones_never_are() {
+        let open = [true, false, true, true];
+        let mut probed = Vec::new();
+
+        let claimed = first_open_match(&open, |group| {
+            probed.push(group);
+            (group == 2).then_some(true)
+        });
+
+        assert_eq!(claimed, Some((2, true)));
+        assert_eq!(
+            probed,
+            vec![0, 2],
+            "probing must stop at the claimed group and skip already filled ones"
+        );
     }
 }

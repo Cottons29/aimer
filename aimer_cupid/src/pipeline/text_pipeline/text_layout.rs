@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 
-use aimer_utils::time_cost;
 use swash::text::{Codepoint, Script};
 use unicode_bidi::BidiInfo;
 use unicode_linebreak::{BreakOpportunity, linebreaks};
@@ -242,12 +241,12 @@ pub(crate) fn line_break_opportunities(text: &str) -> Vec<bool> {
 /// identifies a writing system, so both are reported as `None` and left to the
 /// run they are surrounded by.
 fn cluster_script(cluster: &str) -> Option<Script> {
-    cluster.chars().find_map(|codepoint| {
-        match codepoint.script() {
+    cluster
+        .chars()
+        .find_map(|codepoint| match codepoint.script() {
             Script::Common | Script::Inherited | Script::Unknown => None,
             script => Some(script),
-        }
-    })
+        })
 }
 
 /// Reports whether `cluster` may join a shaping run of script `run_script`,
@@ -802,20 +801,14 @@ pub fn shape_text_styled(
     // the whole paragraph is announced before a single one is resolved.
     rasterizer.begin_script_run(text);
 
-    let (ascent, _descent, line_gap) = time_cost!("text_layout::LayoutText - line_metrics", {
-        rasterizer.line_metrics_for_family(font_size, font_family, font_weight, font_style)
-    });
+    let (ascent, _descent, line_gap) = rasterizer.line_metrics_for_family(font_size, font_family, font_weight, font_style);
     let line_height = ascent - _descent + line_gap;
 
-    let graphemes: Vec<(usize, &str)> = time_cost!("text_layout::LayoutText - text.graphemes", {
-        text.grapheme_indices(true).collect()
-    });
+    let graphemes: Vec<(usize, &str)> = text.grapheme_indices(true).collect();
 
-    let can_break_before = time_cost!("text_layout::LayoutText - line break opportunities", {
-        line_break_opportunities(text)
-    });
+    let can_break_before = line_break_opportunities(text);
 
-    let clusters = time_cost!("text_layout::LayoutText - shape runs", {
+    let clusters = {
         let mut clusters = Vec::with_capacity(graphemes.len());
         let mut grapheme_index = 0;
 
@@ -900,7 +893,7 @@ pub fn shape_text_styled(
         }
 
         clusters
-    });
+    };
 
     rasterizer.end_script_run();
 
@@ -945,101 +938,74 @@ pub fn layout_shaped_text(
     let mut pen_y = origin_y;
     let mut line_index = 0;
 
-    // Word-wrap state: the last cluster on this line that a line is allowed to
-    // start at (UAX #14), so the line breaks there instead of mid-word.  When
-    // the line holds no break opportunity at all — a single word, or a URL,
-    // wider than max_width — we fall back to character-level wrapping so text
-    // never overflows.
     let mut last_break_glyph_idx: usize = usize::MAX;
     let mut last_break_pen_x: f32 = origin_x;
 
-    time_cost!("text_layout::LayoutText - positioned shaped clusters", {
-        for cluster in &shaped_text.clusters {
-            if cluster.text == "\n" {
-                pen_x = origin_x;
+    for cluster in &shaped_text.clusters {
+        if cluster.text == "\n" {
+            pen_x = origin_x;
+            pen_y += line_height;
+            line_index += 1;
+            last_break_glyph_idx = usize::MAX;
+            continue;
+        }
+
+        if cluster.can_break_before {
+            last_break_glyph_idx = glyphs.len();
+            last_break_pen_x = pen_x;
+        }
+
+        if max_width > 0.0 && pen_x + cluster.width > origin_x + max_width && pen_x > origin_x {
+            if last_break_glyph_idx != usize::MAX {
+                let wrap_offset = last_break_pen_x - origin_x;
+
+                let moved_width = pen_x - last_break_pen_x;
+                for glyph in &mut glyphs[last_break_glyph_idx..] {
+                    glyph.x -= wrap_offset;
+                    glyph.line_x -= wrap_offset;
+                    glyph.y += line_height;
+                    glyph.line_index += 1;
+                }
+
+                pen_x = if last_break_glyph_idx < glyphs.len() {
+                    origin_x + moved_width
+                } else {
+                    origin_x
+                };
                 pen_y += line_height;
                 line_index += 1;
                 last_break_glyph_idx = usize::MAX;
-                continue;
-            }
-
-            // Remember where this line could have been broken.  The pen is
-            // recorded *before* the cluster is placed, so a trailing space
-            // stays on the line it terminates.
-            if cluster.can_break_before {
-                last_break_glyph_idx = glyphs.len();
-                last_break_pen_x = pen_x;
-            }
-
-            if max_width > 0.0 && pen_x + cluster.width > origin_x + max_width && pen_x > origin_x {
-                if last_break_glyph_idx != usize::MAX {
-                    // Move everything placed after the break opportunity down to
-                    // a new line, keeping those glyphs (they must not be
-                    // discarded) and shifting them to the left margin.
-                    let wrap_offset = last_break_pen_x - origin_x;
-                    // Width of the already-placed glyphs that belong to the
-                    // overflowing word (everything after the break).
-                    let moved_width = pen_x - last_break_pen_x;
-                    for glyph in &mut glyphs[last_break_glyph_idx..] {
-                        glyph.x -= wrap_offset;
-                        glyph.line_x -= wrap_offset;
-                        glyph.y += line_height;
-                        glyph.line_index += 1;
-                    }
-                    // Continue the new line right after the moved glyphs so the
-                    // current cluster is appended (not overlapped) below.  A
-                    // break at the current cluster moves nothing and simply
-                    // restarts at the margin.
-                    pen_x = if last_break_glyph_idx < glyphs.len() {
-                        origin_x + moved_width
-                    } else {
-                        origin_x
-                    };
-                    pen_y += line_height;
-                    line_index += 1;
-                    last_break_glyph_idx = usize::MAX;
-                    // Fall through to the normal emit path below, which places
-                    // the current cluster at the updated pen position.
-                } else {
-                    // No break opportunity on this line (a word wider than
-                    // max_width) — fall back to character-level wrapping.
-                    pen_x = origin_x;
-                    pen_y += line_height;
-                    line_index += 1;
-                }
-            }
-
-            for &(glyph_key, advance, x_offset, y_offset) in &cluster.glyphs {
-                // Only the glyph's pixel box is needed here, never its bitmap.
-                // Reading it from the shared metrics cache keeps a re-layout —
-                // every frame of a window resize triggers one — off the
-                // rasterization path.
-                let rg = time_cost!("GlyphMetrics", || rasterizer
-                    .metrics_for_key(glyph_key, font_size));
-                if rg.width > 0 && rg.height > 0 {
-                    let gx = pen_x + rg.offset_x + x_offset;
-                    // pen_y is the baseline; offset_y (ymin) is distance from baseline to
-                    // bottom of the glyph bitmap, so top of bitmap = baseline - offset_y - height.
-                    let gy = pen_y - rg.offset_y - rg.height as f32 + y_offset;
-
-                    glyphs.push(PositionedGlyph {
-                        codepoint: cluster.base_codepoint,
-                        glyph_key,
-                        line_index,
-                        line_x: pen_x - origin_x,
-                        advance,
-                        x: gx,
-                        y: gy,
-                        width: rg.width,
-                        height: rg.height,
-                        font_size,
-                    });
-                }
-
-                pen_x += advance;
+            } else {
+                pen_x = origin_x;
+                pen_y += line_height;
+                line_index += 1;
             }
         }
-    });
+
+        for &(glyph_key, advance, x_offset, y_offset) in &cluster.glyphs {
+            let rg = rasterizer.metrics_for_key(glyph_key, font_size);
+            if rg.width > 0 && rg.height > 0 {
+                let gx = pen_x + rg.offset_x + x_offset;
+
+                let gy = pen_y - rg.offset_y - rg.height as f32 + y_offset;
+
+                glyphs.push(PositionedGlyph {
+                    codepoint: cluster.base_codepoint,
+                    glyph_key,
+                    line_index,
+                    line_x: pen_x - origin_x,
+                    advance,
+                    x: gx,
+                    y: gy,
+                    width: rg.width,
+                    height: rg.height,
+                    font_size,
+                });
+            }
+
+            pen_x += advance;
+        }
+    }
     glyphs
 }
 

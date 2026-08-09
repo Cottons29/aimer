@@ -1,4 +1,4 @@
-struct Viewport {
+ struct Viewport {
     size: vec2<f32>,
     surface_is_srgb: f32,
     _pad: f32,

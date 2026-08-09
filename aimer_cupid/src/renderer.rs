@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aimer_utils::{debug, time_cost};
+use aimer_utils::debug;
 
 use crate::custom_pipeline::{CustomPipeline, CustomPipelineSlot, RenderContext};
 use crate::draw_cmd::{DrawCommand, DrawList};
@@ -280,6 +280,19 @@ impl Renderer {
 
     pub fn clear_svg_resources(&mut self) {
         self.svg_pipeline.clear_resources();
+    }
+
+    /// Whether the frame just rendered left text unprepared for lack of time.
+    ///
+    /// Only text that could not reach a pixel this frame is ever left behind —
+    /// a scroll viewport prepares beyond its own edges so a line is ready
+    /// before it scrolls in, and a frame spends only what it can spare on
+    /// that. What did not fit is not lost, but it is not ready either: the
+    /// caller is expected to schedule another frame, which is where it is
+    /// picked up.
+    #[inline]
+    pub fn has_postponed_text_preparation(&self) -> bool {
+        self.text_pipeline.has_postponed_preparation()
     }
 
     pub fn preload_text(
@@ -821,17 +834,15 @@ impl Renderer {
         }
 
         if !self.text_requests.is_empty() || !self.decoration_requests.is_empty() {
-            time_cost!("TextRenderRequest", || {
-                self.text_pipeline.prepare(
-                    device,
-                    queue,
-                    width,
-                    height,
-                    is_srgb,
-                    &self.text_requests,
-                    &self.decoration_requests,
-                )
-            })
+            self.text_pipeline.prepare(
+                device,
+                queue,
+                width,
+                height,
+                is_srgb,
+                &self.text_requests,
+                &self.decoration_requests,
+            );
         }
 
         self.svg_pipeline

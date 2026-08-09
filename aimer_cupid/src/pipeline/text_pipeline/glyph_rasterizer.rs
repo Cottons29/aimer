@@ -1,9 +1,11 @@
+mod glyph_run;
+
+use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 #[allow(unused)]
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use aimer_utils::time_cost;
 use hashbrown::{HashMap, HashSet};
 
 use skrifa::MetadataProvider;
@@ -13,11 +15,12 @@ use swash::scale::image::Content;
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::Format;
 
+pub(super) use self::glyph_run::{GlyphRun, glyph_runs};
 use super::text_layout::FontId;
 use crate::font::{FontFamily, FontRegistry, FontStyle, FontWeight, bundled_monospace_bytes};
 use crate::text_pipeline::font_resolver::{
-    FontData, FontRecord, SharedFontRecord, advance_width_from_face, font_ref,
-    shared_fallback_chain,
+    FontData, FontRecord, SharedFontRecord, advance_width_from_face, advance_widths_from_face,
+    font_ref, shared_fallback_chain,
 };
 use crate::text_pipeline::glyph_metrics::{self, GlyphMetrics};
 use crate::text_pipeline::glyph_outline::rasterize_outline_glyph;
@@ -128,30 +131,134 @@ impl GlyphKey {
     }
 }
 
-fn rasterize_swash_glyph(
-    record: &FontRecord,
-    glyph_id: u16,
-    font_size: f32,
-) -> Option<RasterizedGlyph> {
-    let data = time_cost!("   |-MapSwashFontData", || record.data())?;
-    let data = data.as_ref();
-    let font = FontRef::from_index(data, record.collection_index as usize)?;
-    let mut context = ScaleContext::new();
-    let mut scaler = context.builder(font).size(font_size).hint(true).build();
-    let image = Render::new(&[Source::Outline])
-        .format(Format::Alpha)
-        .render(&mut scaler, glyph_id)?;
-    let advance_width =
-        advance_width_from_face(data, record.collection_index, glyph_id, font_size)?;
+thread_local! {
+    /// The scaling context this thread renders every glyph through.
+    ///
+    /// A [`ScaleContext`] is not scratch space: it owns the caches swash
+    /// builds its scalers from, and the costly one is the hinting cache. An
+    /// entry there is a `HintingInstance`, whose construction *interprets* the
+    /// face's `fpgm` and `prep` bytecode programs — thousands of instructions
+    /// — and the result then serves every glyph of that face at that size. A
+    /// context that lives for one glyph is destroyed before a second glyph can
+    /// use it, which turns per-face work into per-glyph work: a freshly
+    /// scrolled paragraph or code block re-runs the same programs once per
+    /// glyph, and the interpreter dominates the frame.
+    ///
+    /// It is per thread rather than per rasterizer because it is `!Sync` while
+    /// glyph preparation runs on several threads, and because the caches are
+    /// then shared by every rasterizer a thread drives.
+    static SCALE_CONTEXT: RefCell<ScaleContext> = RefCell::new(new_scale_context());
+}
 
-    Some(RasterizedGlyph {
-        bitmap: image.data,
-        width: image.placement.width,
-        height: image.placement.height,
-        offset_x: image.placement.left as f32,
-        offset_y: (image.placement.top - image.placement.height as i32) as f32,
-        advance_width,
-        is_color: false,
+#[cfg(test)]
+thread_local! {
+    /// Counts the contexts built on the current thread, to prove the one above
+    /// is built once and not once per glyph.
+    static SCALE_CONTEXTS_CREATED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+
+    /// Counts the scalers built on the current thread, to prove a run of
+    /// glyphs is drawn through one of them.
+    static SCALERS_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn scale_contexts_created_here() -> usize {
+    SCALE_CONTEXTS_CREATED.get()
+}
+
+fn new_scale_context() -> ScaleContext {
+    #[cfg(test)]
+    SCALE_CONTEXTS_CREATED.set(SCALE_CONTEXTS_CREATED.get() + 1);
+
+    // Swash holds one parsed table proxy per face here, evicted least-recently
+    // used. A page mixes body, headings, bold, monospace and whatever fallback
+    // faces its scripts pull in, so the default of eight faces is raised to
+    // keep a realistic working set resident instead of re-parsing on every
+    // alternation.
+    ScaleContext::with_max_entries(16)
+}
+
+/// The identity `record`'s face is offered to swash's caches under.
+///
+/// Swash keys both its face cache and its hinting cache by an identifier it
+/// mints itself unless one is supplied — and it mints a *fresh* one for every
+/// [`FontRef`], so leaving the identity to swash would make every glyph a miss
+/// however long the context lives.
+///
+/// The face id and its index within the collection name the face; the length
+/// of its bytes stands beside them because those ids are not minted in one
+/// place — [`GlyphRasterizer::register_font_bytes`] numbers a runtime face
+/// from the chain the rasterizer holds — so two rasterizers can hand the same
+/// id to different faces. The caches are shared by the whole thread and a
+/// collision there would serve one face's parsed tables for another's glyphs,
+/// which the length makes vanishingly unlikely for a cost of nothing.
+#[inline]
+fn scaler_id(record: &FontRecord, data: &[u8]) -> [u64; 2] {
+    let face = (u64::from(record.id) << 32) | u64::from(record.collection_index);
+    [face, data.len() as u64]
+}
+
+/// Draws every glyph of `glyph_ids` from `record` at `font_size`.
+///
+/// The face is mapped, parsed and turned into a scaler once for the whole
+/// slice, and the advances come from a single reading of its metrics. That
+/// setup costs about as much as drawing half a dozen glyphs, so paying it per
+/// glyph — as drawing one at a time must — is a third of the cost of
+/// rasterizing a page of fresh text.
+///
+/// The returned vector is parallel to `glyph_ids`; an element is `None` where
+/// swash could not draw that glyph, leaving it to the caller's own fallbacks.
+fn rasterize_swash_run(
+    record: &FontRecord,
+    glyph_ids: &[u16],
+    font_size: f32,
+) -> Vec<Option<RasterizedGlyph>> {
+    let Some(data) = record.data() else {
+        return vec![None; glyph_ids.len()];
+    };
+    let data = data.as_ref();
+    let advances = advance_widths_from_face(
+        data,
+        record.collection_index,
+        glyph_ids.iter().copied(),
+        font_size,
+    );
+    let Some((font, advances)) =
+        FontRef::from_index(data, record.collection_index as usize).zip(advances)
+    else {
+        return vec![None; glyph_ids.len()];
+    };
+
+    let sources = [Source::Outline];
+    SCALE_CONTEXT.with_borrow_mut(|context| {
+        let mut scaler = context
+            .builder_with_id(font, scaler_id(record, data))
+            .size(font_size)
+            .hint(true)
+            .build();
+        #[cfg(test)]
+        SCALERS_BUILT.set(SCALERS_BUILT.get() + 1);
+        let mut render = Render::new(&sources);
+        let render = render.format(Format::Alpha);
+
+        glyph_ids
+            .iter()
+            .zip(advances)
+            .map(|(glyph_id, advance_width)| {
+                let advance_width = advance_width?;
+                let image = render.render(&mut scaler, *glyph_id)?;
+
+                Some(RasterizedGlyph {
+                    bitmap: image.data,
+                    width: image.placement.width,
+                    height: image.placement.height,
+                    offset_x: image.placement.left as f32,
+                    offset_y: (image.placement.top - image.placement.height as i32) as f32,
+                    advance_width,
+                    is_color: false,
+                })
+            })
+            .collect()
     })
 }
 
@@ -225,13 +332,18 @@ fn rasterize_color_glyph(
 ) -> Option<RasterizedGlyph> {
     let data = record.data()?;
     let font = FontRef::from_index(data.as_ref(), record.collection_index as usize)?;
-    let mut context = ScaleContext::new();
-    let mut scaler = context.builder(font).size(font_size).hint(true).build();
-    let image = Render::new(&[
-        Source::ColorBitmap(StrikeWith::BestFit),
-        Source::ColorOutline(0),
-    ])
-    .render(&mut scaler, glyph_id)?;
+    let image = SCALE_CONTEXT.with_borrow_mut(|context| {
+        let mut scaler = context
+            .builder_with_id(font, scaler_id(record, data.as_ref()))
+            .size(font_size)
+            .hint(true)
+            .build();
+        Render::new(&[
+            Source::ColorBitmap(StrikeWith::BestFit),
+            Source::ColorOutline(0),
+        ])
+        .render(&mut scaler, glyph_id)
+    })?;
     if image.content != Content::Color {
         return None;
     }
@@ -403,8 +515,24 @@ impl GlyphPreparationContext {
         &mut self.rasterizer
     }
 
-    pub(super) fn prepare_glyph(&mut self, key: GlyphKey, font_size: f32) -> RasterizedGlyph {
-        self.rasterizer.rasterize_bitmap_key(key, font_size).clone()
+    /// Rasterizes a whole run and hands back every glyph it produced.
+    ///
+    /// A run is the unit of glyph preparation because the face behind it is
+    /// then resolved, mapped and scaled once instead of once per glyph.
+    /// Coverage that was released to stay within the cache budget is drawn
+    /// again, since the renderer asking for a run needs the bitmaps.
+    pub(super) fn prepare_glyph_run(&mut self, run: &GlyphRun) -> Vec<(GlyphKey, RasterizedGlyph)> {
+        self.rasterizer.discard_partial_bitmaps(&run.keys);
+        self.rasterizer.rasterize_run(&run.keys, run.font_size);
+
+        run.keys
+            .iter()
+            .filter_map(|key| {
+                self.rasterizer
+                    .cached_glyph_for_commit(*key)
+                    .map(|glyph| (*key, glyph))
+            })
+            .collect()
     }
 }
 
@@ -1171,85 +1299,51 @@ impl GlyphRasterizer {
     }
 
     pub fn rasterize_key(&mut self, key: GlyphKey, font_size: f32) -> &RasterizedGlyph {
-        let is_cached = self.cache.contains_key(&key);
-        // Check if we need to load fallbacks for this glyph.
-        if !is_cached && key.font_id != self.primary.id {
-            // debug!("----------------------------------------------------------------------------");
-            time_cost!("FallbackFont", || self.ensure_fallbacks())
+        self.rasterize_run(&[key], font_size);
+
+        self.cache.get(&key).expect("glyph was just inserted")
+    }
+
+    /// Rasterizes and caches every glyph of `keys` that is not cached yet.
+    ///
+    /// The keys must all name the same face and be drawn at `font_size` —
+    /// which is what [`group_into_runs`] produces — because the face is
+    /// resolved, mapped and turned into a scaler once for the whole slice
+    /// rather than once per glyph. Duplicate keys are drawn once.
+    pub(super) fn rasterize_run(&mut self, keys: &[GlyphKey], font_size: f32) {
+        let mut pending: Vec<GlyphKey> = Vec::with_capacity(keys.len());
+        for key in keys {
+            if !self.cache.contains_key(key) && !pending.contains(key) {
+                pending.push(*key);
+            }
         }
-        if !is_cached {
-            // #[cfg(debug_assertions)]
-            // debug!("----------------------------------------------------------------------------");
-            let is_color = time_cost!("SelectingFontColor", || self
-                .select_font_for_key(key)
-                .is_color);
+        let Some(first) = pending.first().copied() else {
+            return;
+        };
+        debug_assert!(
+            pending.iter().all(|key| key.font_id == first.font_id),
+            "one scaler draws one face"
+        );
 
-            let glyph = time_cost!("   |-RasterizingLogic", {
-                if is_color {
-                    let record_snapshot = time_cost!("       |-RecordSnapshot", || self
-                        .select_font_for_key(key)
-                        .clone());
-                    let fallback_advance = record_snapshot
-                        .advance_width_for_glyph(key.glyph_id, font_size)
-                        .unwrap_or(font_size * 0.5);
-                    time_cost!("       |-RasterizeColorGlyph", || {
-                        rasterize_color_glyph(&record_snapshot, key.glyph_id, font_size)
-                            .or_else(|| {
-                                rasterize_platform_glyph(
-                                    &record_snapshot,
-                                    key.glyph_id,
-                                    font_size,
-                                    key.weight,
-                                    fallback_advance,
-                                )
-                            })
-                            .unwrap_or_else(|| RasterizedGlyph {
-                                bitmap: Vec::new(),
-                                width: 0,
-                                height: 0,
-                                offset_x: 0.0,
-                                offset_y: 0.0,
-                                advance_width: fallback_advance,
-                                is_color: true,
-                            })
-                    })
-                } else {
-                    let record = time_cost!("   |-SelectFontForRasterize", || {
-                        self.select_font_for_key(key)
-                    });
-                    let fallback_advance = time_cost!("   |-FallbackAdvance", || {
-                        record
-                            .advance_width_for_glyph(key.glyph_id, font_size)
-                            .unwrap_or(0.0)
-                    });
-                    let record_snapshot = time_cost!("   |-RecordSnapshot", || record.clone());
-                    time_cost!("   |-RasterizeSwashGlyph", || {
-                        rasterize_swash_glyph(&record_snapshot, key.glyph_id, font_size)
-                            .or_else(|| {
-                                rasterize_outline_glyph(&record_snapshot, key.glyph_id, font_size)
-                            })
-                            .or_else(|| {
-                                rasterize_platform_glyph(
-                                    &record_snapshot,
-                                    key.glyph_id,
-                                    font_size,
-                                    key.weight,
-                                    fallback_advance,
-                                )
-                            })
-                            .unwrap_or_else(|| RasterizedGlyph {
-                                bitmap: Vec::new(),
-                                width: 0,
-                                height: 0,
-                                offset_x: 0.0,
-                                offset_y: 0.0,
-                                advance_width: fallback_advance,
-                                is_color: false,
-                            })
-                    })
-                }
-            });
+        if first.font_id < SYSTEM_FALLBACK_ID_BASE
+            && self.font_record_by_id(first.font_id).is_none()
+        {
+            self.ensure_fallbacks()
+        }
+        self.ensure_system_fallback_loaded(first.font_id);
 
+        let prepared = {
+            let record = self
+                .font_record_by_id(first.font_id)
+                .unwrap_or(&self.primary);
+            if record.is_color {
+                Self::draw_color_run(record, &pending, font_size)
+            } else {
+                Self::draw_run(record, &pending, font_size)
+            }
+        };
+
+        for (key, glyph) in prepared {
             #[cfg(test)]
             {
                 self.rasterize_call_count += 1;
@@ -1258,19 +1352,122 @@ impl GlyphRasterizer {
             glyph_metrics::store(key, &glyph);
             self.insert_cached_glyph(key, glyph);
         }
+    }
 
-        self.cache.get(&key).expect("glyph was just inserted")
+    /// Draws `pending` from a face Cupid decodes itself.
+    ///
+    /// Swash draws the run in one pass; a glyph it declines falls through to
+    /// Cupid's own outline rasterizer and then to the platform, and an empty
+    /// coverage with the face's advance is the last resort so that a glyph the
+    /// face cannot draw still occupies its width.
+    fn draw_run(
+        record: &FontRecord,
+        pending: &[GlyphKey],
+        font_size: f32,
+    ) -> Vec<(GlyphKey, RasterizedGlyph)> {
+        let glyph_ids = pending.iter().map(|key| key.glyph_id).collect::<Vec<_>>();
+
+        rasterize_swash_run(record, &glyph_ids, font_size)
+            .into_iter()
+            .zip(pending)
+            .map(|(drawn, key)| {
+                let glyph = drawn
+                    .or_else(|| rasterize_outline_glyph(record, key.glyph_id, font_size))
+                    .or_else(|| {
+                        let fallback_advance = record
+                            .advance_width_for_glyph(key.glyph_id, font_size)
+                            .unwrap_or(0.0);
+                        rasterize_platform_glyph(
+                            record,
+                            key.glyph_id,
+                            font_size,
+                            key.weight,
+                            fallback_advance,
+                        )
+                        .or(Some(RasterizedGlyph {
+                            bitmap: Vec::new(),
+                            width: 0,
+                            height: 0,
+                            offset_x: 0.0,
+                            offset_y: 0.0,
+                            advance_width: fallback_advance,
+                            is_color: false,
+                        }))
+                    })
+                    .expect("the last resort always yields a glyph");
+
+                (*key, glyph)
+            })
+            .collect()
+    }
+
+    /// Draws `pending` from a color face.
+    ///
+    /// Color strikes are bitmaps rather than outlines, so there is no scaler to
+    /// share: each glyph is decoded on its own. Half the em is the advance an
+    /// emoji falls back to, which is what a square strike occupies.
+    fn draw_color_run(
+        record: &FontRecord,
+        pending: &[GlyphKey],
+        font_size: f32,
+    ) -> Vec<(GlyphKey, RasterizedGlyph)> {
+        pending
+            .iter()
+            .map(|key| {
+                let fallback_advance = record
+                    .advance_width_for_glyph(key.glyph_id, font_size)
+                    .unwrap_or(font_size * 0.5);
+                let glyph = rasterize_color_glyph(record, key.glyph_id, font_size)
+                    .or_else(|| {
+                        rasterize_platform_glyph(
+                            record,
+                            key.glyph_id,
+                            font_size,
+                            key.weight,
+                            fallback_advance,
+                        )
+                    })
+                    .unwrap_or_else(|| RasterizedGlyph {
+                        bitmap: Vec::new(),
+                        width: 0,
+                        height: 0,
+                        offset_x: 0.0,
+                        offset_y: 0.0,
+                        advance_width: fallback_advance,
+                        is_color: true,
+                    });
+
+                (*key, glyph)
+            })
+            .collect()
     }
 
     pub fn rasterize_bitmap_key(&mut self, key: GlyphKey, font_size: f32) -> &RasterizedGlyph {
-        if self
-            .cache
-            .get(&key)
-            .is_some_and(|glyph| glyph.width > 0 && glyph.height > 0 && glyph.bitmap.is_empty())
-        {
-            self.cache.remove(&key);
-        }
+        self.discard_partial_bitmaps(std::slice::from_ref(&key));
         self.rasterize_key(key, font_size)
+    }
+
+    /// Forgets cached entries whose coverage was released.
+    ///
+    /// A glyph whose bitmap was dropped to stay within the cache budget keeps
+    /// its metrics, so it still answers as cached — but a caller that needs the
+    /// coverage would get nothing. Dropping the entry makes the next
+    /// rasterization draw it again.
+    fn discard_partial_bitmaps(&mut self, keys: &[GlyphKey]) {
+        for key in keys {
+            if self
+                .cache
+                .get(key)
+                .is_some_and(|glyph| glyph.width > 0 && glyph.height > 0 && glyph.bitmap.is_empty())
+            {
+                self.cache.remove(key);
+            }
+        }
+    }
+
+    /// A copy of the cached glyph `key` names, for handing to the renderer.
+    fn cached_glyph_for_commit(&self, key: GlyphKey) -> Option<RasterizedGlyph> {
+        self.cache.get(&key).cloned()
     }
 
     pub fn release_bitmap(&mut self, key: GlyphKey) {
@@ -1371,22 +1568,29 @@ impl GlyphRasterizer {
         GlyphMetrics::from(self.rasterize_key(key, font_size))
     }
 
+    /// Rasterizes every glyph `text` needs and hands back its coverage.
+    ///
+    /// The glyphs are drawn in runs sharing a face, so a paragraph pays for
+    /// reading and scaling each face once rather than once per character.
     pub fn preload_text(&mut self, text: &str, font_size: f32) -> Vec<(GlyphKey, RasterizedGlyph)> {
         // A glyph preloaded under a different face than the one shaping picks is
         // a wasted rasterization, so the warm-up sees the run too.
         self.begin_script_run(text);
-        let mut glyphs = Vec::new();
-        for c in text.chars() {
-            if c.is_control() {
-                continue;
-            }
-
-            let key = self.glyph_key_for_codepoint(c, font_size);
-            let glyph = self.rasterize_bitmap_key(key, font_size).clone();
-            glyphs.push((key, glyph));
-        }
+        let keys = text
+            .chars()
+            .filter(|codepoint| !codepoint.is_control())
+            .map(|codepoint| self.glyph_key_for_codepoint(codepoint, font_size))
+            .collect::<Vec<_>>();
         self.end_script_run();
-        glyphs
+
+        for run in glyph_runs(keys.iter().map(|key| (*key, font_size)).collect()) {
+            self.discard_partial_bitmaps(&run.keys);
+            self.rasterize_run(&run.keys, run.font_size);
+        }
+
+        keys.into_iter()
+            .filter_map(|key| self.cached_glyph_for_commit(key).map(|glyph| (key, glyph)))
+            .collect()
     }
 
     pub fn advance_width(&mut self, codepoint: char, font_size: f32) -> f32 {
@@ -1733,6 +1937,136 @@ mod tests {
         assert_fast_set(&rasterizer.unsupported_codepoints);
         assert_fast_map(&rasterizer.font_bytes_cache);
         assert_fast_map(&rasterizer.shaper_data_cache);
+    }
+
+    #[test]
+    fn one_scaler_context_serves_every_glyph_a_thread_rasterizes() {
+        std::thread::spawn(|| {
+            let mut rasterizer = GlyphRasterizer::primary_only();
+            for codepoint in "the quick brown fox jumps over the lazy dog".chars() {
+                let key = rasterizer.glyph_key_for_codepoint(codepoint, 18.0);
+                rasterizer.rasterize_key(key, 18.0);
+            }
+
+            assert_eq!(
+                scale_contexts_created_here(),
+                1,
+                "a context per glyph rebuilds the hinting instance for every glyph"
+            );
+        })
+        .join()
+        .expect("the rasterizing thread should not panic");
+    }
+
+    #[test]
+    fn a_face_reaches_the_scaler_under_a_stable_identity() {
+        let primary = primary_font_record();
+        let data = primary.data().expect("the primary font should be readable");
+        let monospace = monospace_font_record();
+        let monospace_data = monospace
+            .data()
+            .expect("the bundled monospace font should be readable");
+
+        assert_eq!(
+            scaler_id(&primary, data.as_ref()),
+            scaler_id(&primary_font_record(), data.as_ref()),
+            "the same face must key the scaler caches the same way every time"
+        );
+        assert_ne!(
+            scaler_id(&primary, data.as_ref()),
+            scaler_id(&monospace, monospace_data.as_ref())
+        );
+
+        let first = FontRef::from_index(data.as_ref(), 0).expect("the primary font should parse");
+        let second = FontRef::from_index(data.as_ref(), 0).expect("the primary font should parse");
+        assert_ne!(
+            first.key.value(),
+            second.key.value(),
+            "swash mints a fresh key per font reference, so the identity cannot be left to it"
+        );
+    }
+
+    #[test]
+    fn a_run_is_drawn_through_a_single_scaler() {
+        std::thread::spawn(|| {
+            let mut rasterizer = GlyphRasterizer::primary_only();
+            let keys = "the quick brown fox"
+                .chars()
+                .map(|codepoint| rasterizer.glyph_key_for_codepoint(codepoint, 18.0))
+                .collect::<Vec<_>>();
+            let before = SCALERS_BUILT.get();
+
+            rasterizer.rasterize_run(&keys, 18.0);
+
+            assert_eq!(
+                SCALERS_BUILT.get() - before,
+                1,
+                "a scaler per glyph re-reads the face and its metrics for every glyph"
+            );
+        })
+        .join()
+        .expect("the rasterizing thread should not panic");
+    }
+
+    #[test]
+    fn a_run_draws_the_same_glyphs_as_drawing_them_one_by_one() {
+        let text = "Aimer 123 {}();";
+        let mut alone = GlyphRasterizer::new();
+        let mut together = GlyphRasterizer::new();
+        let keys = text
+            .chars()
+            .map(|codepoint| alone.glyph_key_for_codepoint(codepoint, 15.0))
+            .collect::<Vec<_>>();
+
+        together.rasterize_run(&keys, 15.0);
+
+        for key in &keys {
+            let expected = alone.rasterize_key(*key, 15.0).clone();
+            let actual = together
+                .cached_glyph(*key)
+                .expect("a run rasterizes every key it is given");
+            assert_eq!(actual.bitmap, expected.bitmap, "coverage must not change");
+            assert_eq!(
+                (actual.width, actual.height),
+                (expected.width, expected.height)
+            );
+            assert_eq!(
+                (actual.offset_x, actual.offset_y),
+                (expected.offset_x, expected.offset_y)
+            );
+            assert_eq!(actual.advance_width, expected.advance_width);
+            assert_eq!(actual.is_color, expected.is_color);
+        }
+    }
+
+    #[test]
+    fn a_run_draws_a_repeated_glyph_once() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let key = rasterizer.glyph_key_for_codepoint('e', 16.0);
+
+        rasterizer.rasterize_run(&[key, key, key], 16.0);
+
+        assert_eq!(
+            rasterizer.rasterize_call_count(),
+            1,
+            "the same glyph drawn twice is coverage computed twice"
+        );
+    }
+
+    #[test]
+    fn glyphs_a_run_leaves_out_are_still_cached_from_before() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let key = rasterizer.glyph_key_for_codepoint('m', 20.0);
+        rasterizer.rasterize_key(key, 20.0);
+        let before = rasterizer.rasterize_call_count();
+
+        rasterizer.rasterize_run(&[key], 20.0);
+
+        assert_eq!(
+            rasterizer.rasterize_call_count(),
+            before,
+            "a cached glyph must not be drawn again"
+        );
     }
 
     #[test]
@@ -2170,6 +2504,24 @@ mod tests {
         }
     }
 
+    /// The one glyph a worker prepares when handed a run holding only `key`.
+    fn prepared_glyph(
+        worker: &mut GlyphPreparationContext,
+        key: GlyphKey,
+        font_size: f32,
+    ) -> RasterizedGlyph {
+        let run = GlyphRun {
+            font_size,
+            keys: vec![key],
+        };
+
+        worker
+            .prepare_glyph_run(&run)
+            .pop()
+            .expect("a run yields the glyph it was given")
+            .1
+    }
+
     #[test]
     fn worker_context_preserves_fallback_resolution() {
         let mut renderer = GlyphRasterizer::new();
@@ -2190,7 +2542,7 @@ mod tests {
         let mut worker = GlyphPreparationContext::new(renderer.font_snapshot());
         let key = renderer.glyph_key_for_codepoint('A', 20.0);
         let expected = renderer.rasterize_key(key, 20.0).clone();
-        let actual = worker.prepare_glyph(key, 20.0);
+        let actual = prepared_glyph(&mut worker, key, 20.0);
 
         assert!(!actual.is_color);
         assert_eq!(
@@ -2206,7 +2558,7 @@ mod tests {
         let mut worker = GlyphPreparationContext::new(renderer.font_snapshot());
         let key = renderer.glyph_key_for_codepoint('😀', 32.0);
         let expected = renderer.rasterize_key(key, 32.0).clone();
-        let actual = worker.prepare_glyph(key, 32.0);
+        let actual = prepared_glyph(&mut worker, key, 32.0);
 
         assert_eq!(actual.is_color, expected.is_color);
         assert_eq!(
@@ -2226,7 +2578,7 @@ mod tests {
 
         let mut worker = GlyphPreparationContext::new(renderer.font_snapshot());
         let key = worker.rasterizer_mut().glyph_key_for_codepoint('A', 16.0);
-        let glyph = worker.prepare_glyph(key, 16.0);
+        let glyph = prepared_glyph(&mut worker, key, 16.0);
         assert!(glyph.width > 0);
         assert!(glyph.height > 0);
         assert!(!glyph.bitmap.is_empty());
@@ -2349,6 +2701,25 @@ mod tests {
         );
         assert_eq!(key.font_id, monospace);
         assert!(rasterizer.rasterize_key(key, 16.0).width > 0);
+    }
+
+    #[test]
+    fn rasterizing_a_known_face_does_not_build_the_fallback_chain() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let key = rasterizer.glyph_key_for_family_codepoint(
+            'M',
+            16.0,
+            FontFamily::MONOSPACE,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+
+        rasterizer.rasterize_key(key, 16.0);
+
+        assert!(
+            rasterizer.fallbacks.is_none(),
+            "a face the rasterizer already owns needs no system fallback chain"
+        );
     }
 
     #[test]

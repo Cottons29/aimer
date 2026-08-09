@@ -1,4 +1,3 @@
-use aimer_utils::time_cost;
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{GlyphId, MetadataProvider};
@@ -99,15 +98,12 @@ pub(crate) fn rasterize_outline_glyph(
     glyph_id: u16,
     font_size: f32,
 ) -> Option<RasterizedGlyph> {
-    let data = time_cost!("   |-MapFontData", || record.data())?;
+    let data = record.data()?;
     let data = data.as_ref();
-    let face = time_cost!("   |-ParseFontFace", || font_ref(
-        data,
-        record.collection_index
-    ))?;
-    let glyph = time_cost!("   |-SelectGlyph", || GlyphId::new(glyph_id as u32));
+    let face = font_ref(data, record.collection_index)?;
+    let glyph = GlyphId::new(glyph_id as u32);
     let metrics = face.glyph_metrics(Size::unscaled(), LocationRef::default());
-    let bbox = time_cost!("   |-ComputeGlyphBoundingBox", || metrics.bounds(glyph))?;
+    let bbox = metrics.bounds(glyph)?;
     let units_per_em = f32::from(
         face.metrics(Size::unscaled(), LocationRef::default())
             .units_per_em,

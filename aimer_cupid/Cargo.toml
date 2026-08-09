@@ -9,7 +9,7 @@ path = "src/bin.rs"
 name = "cupid"
 
 [dependencies]
-aimer_utils = { workspace = true, features = [] }
+aimer_utils = { workspace = true, features = ["time-cost"] }
 aimer_color.workspace = true
 
 

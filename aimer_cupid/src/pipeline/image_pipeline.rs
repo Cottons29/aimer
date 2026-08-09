@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::ShaderSource;
+use wgpu::{include_wgsl, ShaderSource};
 
 use crate::utilities::TextureId;
 
