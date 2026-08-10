@@ -77,7 +77,6 @@ fn stateless_widget_impl(item_struct: &ItemStruct) -> TokenStream {
                 // immutable configuration, like Flutter's).
                 let __rebuild_source = ::std::clone::Clone::clone(self);
                 let __rebuild = move |ctx: &aimer::widget::base::BuildContext| -> aimer::widget::AnyElement {
-                    use widget::StatelessWidget;
                     let child_widget = __rebuild_source.build(ctx);
                     aimer::widget::Widget::to_element(&child_widget, ctx)
                 };
