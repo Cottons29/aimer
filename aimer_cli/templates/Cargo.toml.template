@@ -8,4 +8,4 @@ path="src/main.rs"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-aimer = {git="https://github.com/Cottons29/aimer.git", branch = "main"}
+aimer = {git="https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-1"}

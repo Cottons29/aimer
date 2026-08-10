@@ -55,7 +55,7 @@ const TOOLS: &[Tool] = &[
     Tool {
         bin: "llvm-ar",
         probe: &["--version"],
-        purpose: "Web (for building markdown syntax highlight)"
+        purpose: "Web (optional for building markdown syntax highlight)"
     },
     #[cfg(target_os = "linux")]
     Tool {
@@ -98,7 +98,7 @@ pub fn ensure_tool(bin: &str, probe: &[&str]) -> Result<(), AimerError> {
 pub fn execute() -> anyhow::Result<()> {
     println!(
         "{}",
-        "Checking your Aimer development environment...\n".bold()
+        "Checking your Aimer development environment...".bold()
     );
 
     let mut missing = 0;
