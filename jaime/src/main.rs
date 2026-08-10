@@ -62,7 +62,7 @@ use crate::test_animation::TestFadingAnimation;
 fn main() {
     // test_text();
     // stateful_2::start_my_list();
-    // start_counter();
+    start_counter();
     // AimerApp::start(Container::new().child(Row::new().children([
     //     Expanded::new().child(TestFadingAnimation),
     //     Expanded::new().child(TestFadingAnimation),
@@ -93,6 +93,8 @@ fn main() {
     // text_field_example::start_text_field_example();
 }
 
+
+
 #[allow(unused)]
 fn test_text() {
     AimerApp::start(
@@ -101,8 +103,8 @@ fn test_text() {
             .axis(ScrollAxis::Vertical)
             .child(Container::new()
                 .padding(LayoutSpacing::all(12).top(50))
-        .child(Text::new(
-r#"
+                .child(Text::new(
+                    r#"
 你好吗
 English — Hello / Hi               Khmer — សួស្តី (Suosdei)               French — BonjourEnglish — Hello / Hi
 Spanish — Hola                            Portuguese — Olá                          Italian — Ciao
@@ -123,14 +125,14 @@ Zulu — Sawubona                           Afrikaans — Hallo                 
 Latin — Salve                             Hawaiian — Aloha                          Māori — Kia ora
 អរគុណ 你哈皮  With State 你好 きみなと  👉
 "#
-        )
-            .text_style(TextStyle::new()
-                .text_overflow(TextOverflow::Clip)
-                .font_size(16)
-                .color(Colors::White)
-                .font_weight(FontWeight::Thin))
-        )
-    )
+                )
+                    .text_style(TextStyle::new()
+                        .text_overflow(TextOverflow::Clip)
+                        .font_size(16)
+                        .color(Colors::White)
+                        .font_weight(FontWeight::Thin))
+                )
+            )
     )
 }
 
@@ -500,4 +502,3 @@ mod text_editing_example_tests {
         assert_eq!(Widget::debug_name(&example), "TextAreaExample");
     }
 }
-   

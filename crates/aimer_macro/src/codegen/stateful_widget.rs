@@ -54,7 +54,7 @@ fn stateful_widget_impl(item_struct: &ItemStruct) -> TokenStream {
 
     let key_method = if has_key {
         quote! {
-            fn key(&self) -> Option<widget::key::Key> {
+            fn key(&self) -> Option<aimer::widget::key::Key> {
                 self.key.clone()
             }
         }
@@ -63,11 +63,11 @@ fn stateful_widget_impl(item_struct: &ItemStruct) -> TokenStream {
     };
 
     quote! {
-        impl #impl_generics widget::Widget for #struct_name #ty_generics #where_clause {
+        impl #impl_generics aimer::widget::Widget for #struct_name #ty_generics #where_clause {
             #key_method
 
-            fn to_element(&self, ctx: &widget::base::BuildContext) -> widget::AnyElement {
-                widget::StatefulElement::from_widget(self, ctx, stringify!(#struct_name), #key_pass)
+            fn to_element(&self, ctx: &widget::base::BuildContext) -> aimer::widget::AnyElement {
+                aimer::widget::StatefulElement::from_widget(self, ctx, stringify!(#struct_name), #key_pass)
             }
             fn debug_name(&self) -> &'static str {
                 stringify!(#struct_name)
@@ -90,7 +90,7 @@ mod tests {
         .to_string();
 
         assert!(output.contains("StatefulElement :: from_widget"));
-        assert!(output.contains("widget :: AnyElement"));
+        assert!(output.contains("aimer :: widget :: AnyElement"));
         assert!(!output.contains("StatefulElement :: new_with_name"));
         assert!(!output.contains("Box < dyn widget :: Element >"));
     }
@@ -106,7 +106,7 @@ mod tests {
         .to_string();
 
         assert!(!output.contains("struct CounterWidget"));
-        assert!(output.contains("impl widget :: Widget for CounterWidget"));
+        assert!(output.contains("impl aimer :: widget :: Widget for CounterWidget"));
     }
 
     #[test]
@@ -121,10 +121,10 @@ mod tests {
         let derived = derive_stateful_widget(item).to_string();
 
         let (_, attribute_impl) = attribute
-            .split_once("impl widget :: Widget")
+            .split_once("impl aimer :: widget :: Widget")
             .expect("the attribute form implements Widget");
         let (_, derived_impl) = derived
-            .split_once("impl widget :: Widget")
+            .split_once("impl aimer :: widget :: Widget")
             .expect("the derive implements Widget");
         assert_eq!(attribute_impl, derived_impl);
     }

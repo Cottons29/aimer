@@ -100,9 +100,6 @@ fn transitioned_page(key: &'static str, child: AnyWidget) -> AnimatedSwitcher<An
 impl Router for AppRouter {
     #[track_caller]
     fn build(&self, _ctx: &BuildContext) -> AnyWidget {
-        // Every route renders inside the same persistent app shell (header +
-        // content area). Only the shell's `Outlet` child — the page below —
-        // changes as we navigate.
 
         #[cfg(test)]
         ROUTE_BUILDS.with(|builds| builds.borrow_mut().push(self.clone()));

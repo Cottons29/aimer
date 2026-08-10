@@ -3,7 +3,7 @@ use std::time::Duration;
 use aimer::animation::Curve;
 use aimer::router::Outlet;
 use aimer::style::{AnimatedTheme, Theme, ThemeData};
-use aimer::{BuildContext, Widget, widget, *};
+use aimer::{BuildContext, widget, *};
 
 use crate::components::header::HeaderSection;
 

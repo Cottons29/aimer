@@ -1,12 +1,7 @@
 use aimer::router::NavigatorController;
 use aimer::style::{FontWeight, LayoutSpacing, TextOverflow, TextStyle, Theme, ThemeData};
-use aimer::{
-    AnyWidget, AsyncBuilder, AsyncSnapshot, BoxAlignment, BuildContext, Color, Column, Container,
-    Expanded, Key, MarkdownTheme, MarkdownViewer, Row, ScrollAxis, Scrollable, SizedBox,
-    StatelessWidget, Text, Widget, ZeroSizedBox, widget,
-};
+use aimer::{widget, AnyWidget, AsyncBuilder, AsyncSnapshot, BoxAlignment, BuildContext, Color, Column, Container, Expanded, Key, MarkdownTheme, MarkdownViewer, Row, ScrollAxis, Scrollable, SizedBox, StatelessWidget, Text, Widget, ZeroSizedBox};
 
-use crate::aimer_widget;
 use crate::blog_store::{BlogDetail, fetch_blog_detail};
 use crate::components::BlogBackButton;
 use crate::components::loading_indicator::build_loading_indicator;

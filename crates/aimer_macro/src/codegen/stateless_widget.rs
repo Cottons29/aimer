@@ -10,7 +10,7 @@ use syn::{ItemStruct, parse2};
 /// compiler reports the syntax error on the user's own tokens rather than on
 /// tokens this macro invented.
 ///
-/// [`StatelessWidget::build`]: https://docs.rs/aimer_widget
+/// [`StatelessWidget::build`]: https://docs.rs/aimer::widget
 pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
     let item_struct = match parse2::<ItemStruct>(input.clone()) {
         Ok(s) => s,
@@ -58,7 +58,7 @@ fn stateless_widget_impl(item_struct: &ItemStruct) -> TokenStream {
 
     let key_method = if has_key {
         quote! {
-            fn key(&self) -> Option<aimer_widget::key::Key> {
+            fn key(&self) -> Option<aimer::widget::key::Key> {
                 self.key.clone()
             }
         }
@@ -67,21 +67,21 @@ fn stateless_widget_impl(item_struct: &ItemStruct) -> TokenStream {
     };
 
     quote! {
-        impl #impl_generics aimer_widget::Widget for #struct_name #ty_generics #where_clause {
+        impl #impl_generics aimer::widget::Widget for #struct_name #ty_generics #where_clause {
             #key_method
 
-            fn to_element(&self, ctx: &aimer_widget::base::BuildContext) -> aimer_widget::AnyElement {
+            fn to_element(&self, ctx: &aimer::widget::base::BuildContext) -> aimer::widget::AnyElement {
                 // Capture an owned copy of the widget so the element can re-run
                 // `build()` (re-reading `MediaQuery`) when marked dirty on resize.
                 // This requires the widget to be `Clone` (widgets are cheap,
                 // immutable configuration, like Flutter's).
                 let __rebuild_source = ::std::clone::Clone::clone(self);
-                let __rebuild = move |ctx: &aimer_widget::base::BuildContext| -> aimer_widget::AnyElement {
+                let __rebuild = move |ctx: &aimer::widget::base::BuildContext| -> aimer::widget::AnyElement {
                     use widget::StatelessWidget;
                     let child_widget = __rebuild_source.build(ctx);
-                    aimer_widget::Widget::to_element(&child_widget, ctx)
+                    aimer::widget::Widget::to_element(&child_widget, ctx)
                 };
-                aimer_widget::Element::boxed(aimer_widget::StatelessElement::from_builder(
+                aimer::widget::Element::boxed(aimer::widget::StatelessElement::from_builder(
                     ctx,
                     __rebuild,
                     #key_pass,
@@ -109,9 +109,9 @@ mod tests {
         })
         .to_string();
 
-        assert!(output.contains("aimer_widget :: AnyElement"));
-        assert!(output.contains("aimer_widget :: Element :: boxed"));
-        assert!(!output.contains("Box < dyn aimer_widget :: Element >"));
+        assert!(output.contains("aimer :: widget :: AnyElement"));
+        assert!(output.contains("aimer :: widget :: Element :: boxed"));
+        assert!(!output.contains("Box < dyn aimer::widget :: Element >"));
         assert!(!output.contains("Box :: new"));
     }
 
@@ -128,7 +128,7 @@ mod tests {
         .to_string();
 
         assert!(!output.contains("struct GeneratedWidget"));
-        assert!(output.contains("impl aimer_widget :: Widget for GeneratedWidget"));
+        assert!(output.contains("impl aimer :: widget :: Widget for GeneratedWidget"));
     }
 
     #[test]
@@ -144,10 +144,10 @@ mod tests {
         let derived = derive_stateless_widget(item).to_string();
 
         let (_, attribute_impl) = attribute
-            .split_once("impl aimer_widget :: Widget")
+            .split_once("impl aimer :: widget :: Widget")
             .expect("the attribute form implements Widget");
         let (_, derived_impl) = derived
-            .split_once("impl aimer_widget :: Widget")
+            .split_once("impl aimer :: widget :: Widget")
             .expect("the derive implements Widget");
         assert_eq!(attribute_impl, derived_impl);
     }

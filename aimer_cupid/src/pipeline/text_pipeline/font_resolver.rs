@@ -229,7 +229,7 @@ impl FontRecord {
     /// whose glyph data Cupid cannot decode.
     #[cfg(any(target_os = "ios", target_os = "macos"))]
     #[inline]
-    pub(crate) fn path(&self) -> Option<&std::path::Path> {
+    pub(crate) fn path(&self) -> Option<&Path> {
         self.path.as_ref().map(|path| path.as_path())
     }
 

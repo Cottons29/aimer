@@ -125,7 +125,7 @@ Container!(
         "Hello World!",
         text_align: TextAlign::MidCenter,
     )
-)
+);
 ```
 
 And it was, in daily use, miserable. An error anywhere inside a macro highlights the whole macro; you get a wall of red
@@ -138,11 +138,14 @@ So Aimer moved to the builder pattern:
 
 ```rust
 Container::new()
-.child(
-Text::new("Hello World!")
-.text_align(TextAlign::MidCenter)
-.text_style(TextStyle::new().color(Color::BLACK)
-),
+  .child(
+    Text::new("Hello World!"
+      .text_align(TextAlign::MidCenter)
+      .text_style(
+        TextStyle::new()
+          .color(Color::BLACK)
+    )
+  ),
 )
 ```
 

@@ -247,7 +247,7 @@ fn take_routing(item_enum: &mut ItemEnum) -> Result<TokenStream, syn::Error> {
                             if path == #prefix || path.starts_with(#prefix_slash) {
                                 let rem = &path[#prefix.len()..];
                                 let rem = if rem.is_empty() { "/" } else { rem };
-                                if let Some(child) = <#child_ty as router::Route>::parse(rem) {
+                                if let Some(child) = <#child_ty as aimer::router::Route>::parse(rem) {
                                     return Some(Self::#variant_name(child));
                                 }
                             }
@@ -302,7 +302,7 @@ fn take_routing(item_enum: &mut ItemEnum) -> Result<TokenStream, syn::Error> {
                         #(#path_replaces)*
                         let mut __q: Vec<(String, String)> = Vec::new();
                         #(#query_pushes)*
-                        s.push_str(&router::format_query_string(&__q));
+                        s.push_str(&aimer::router::format_query_string(&__q));
                         s
                     },
                 });
@@ -393,7 +393,7 @@ fn take_routing(item_enum: &mut ItemEnum) -> Result<TokenStream, syn::Error> {
                     redirect_arms.push(quote! { #pat => #guard_path(self, ctx), });
                 }
             } else if let Some(to) = &redirect_to {
-                redirect_arms.push(quote! { #pat => <Self as router::Route>::parse(#to), });
+                redirect_arms.push(quote! { #pat => <Self as aimer::router::Route>::parse(#to), });
             }
         }
 
@@ -506,9 +506,9 @@ fn take_routing(item_enum: &mut ItemEnum) -> Result<TokenStream, syn::Error> {
     };
 
     Ok(quote! {
-        impl router::Route for #enum_name {
+        impl aimer::router::Route for #enum_name {
             fn parse(full_path: &str) -> Option<#enum_name> {
-                let (path, __query) = router::split_path_query(full_path);
+                let (path, __query) = aimer::router::split_path_query(full_path);
                 let _ = &__query;
                 #(#parse_arms)*
                 None
@@ -544,7 +544,7 @@ fn take_routing(item_enum: &mut ItemEnum) -> Result<TokenStream, syn::Error> {
 
         impl aimer::widget::Widget for #enum_name {
             fn to_element(&self, ctx: &aimer::widget::base::BuildContext) -> aimer::widget::AnyElement {
-                router::Router::build(self, ctx).to_element(ctx)
+                aimer::router::Router::build(self, ctx).to_element(ctx)
             }
         }
     })
@@ -581,8 +581,10 @@ mod tests {
         })
         .to_string();
 
+        // eprintln!("{}", generated);
+
         assert!(!generated.contains("enum TestRouter"));
-        assert!(generated.contains("impl router :: Route for TestRouter"));
+        assert!(generated.contains("impl aimer :: router :: Route for TestRouter"));
         assert!(generated.contains("impl aimer :: widget :: Widget for TestRouter"));
     }
 
@@ -603,10 +605,10 @@ mod tests {
         let derived = RouterCodegen::derive(item).to_string();
 
         let (_, attribute_impls) = attribute
-            .split_once("impl router :: Route")
+            .split_once("impl aimer :: router :: Route")
             .expect("the attribute form implements Route");
         let (_, derived_impls) = derived
-            .split_once("impl router :: Route")
+            .split_once("impl aimer :: router :: Route")
             .expect("the derive implements Route");
         assert_eq!(attribute_impls, derived_impls);
     }

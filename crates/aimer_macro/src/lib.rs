@@ -19,10 +19,9 @@ use crate::unique_key::UniqueKeyInput;
 /// `android_main`), and WebAssembly (via `#[wasm_bindgen]`).
 ///
 /// # Usage
-/// ```rust,ignore
-/// use aimer::aimer_main;
+/// ```rust.ignore
 ///
-/// #[aimer_main::main]
+/// #[aimer::main]
 /// fn main() {
 ///     // application setup
 /// }
