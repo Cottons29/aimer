@@ -443,6 +443,26 @@ mod tests {
     }
 
     #[test]
+    fn the_consuming_conversion_blog_is_published() {
+        let store = BlogStore::embedded().expect("published blog content must be valid");
+        let summary = store
+            .0
+            .blogs
+            .iter()
+            .find(|blog| blog.id == "consuming-widget-to-element")
+            .expect("the consuming conversion blog must be indexed");
+
+        assert_eq!(summary.title, "Widgets Now Give Their Fields Away");
+        assert_eq!(summary.author, "Cottons29");
+        assert!(summary.tags.iter().any(|tag| tag == "Widget"));
+
+        let markdown = store.0.entries["consuming-widget-to-element"].markdown;
+        assert!(markdown.contains("# Widgets Now Give Their Fields Away"));
+        assert!(markdown.contains("fn to_element(self, ctx: &BuildContext) -> AnyElement"));
+        assert!(markdown.contains("ChildBuilder"));
+    }
+
+    #[test]
     fn embedded_content_is_sorted_newest_first() {
         let store = BlogStore::embedded().unwrap();
         let times: Vec<&str> = store
@@ -453,6 +473,6 @@ mod tests {
             .collect();
 
         assert!(times.windows(2).all(|pair| pair[0] >= pair[1]));
-        assert_eq!(store.0.blogs.first().unwrap().id, "reason-and-why-creating-aimer");
+        assert_eq!(store.0.blogs.first().unwrap().id, "consuming-widget-to-element");
     }
 }

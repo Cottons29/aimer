@@ -69,7 +69,7 @@ struct CustomAnimatedThemeExampleState {
 impl StatefulWidget for CustomAnimatedThemeExample {
     type State = CustomAnimatedThemeExampleState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         CustomAnimatedThemeExampleState {
             is_dark: false,
             updater: StateUpdater::empty(),

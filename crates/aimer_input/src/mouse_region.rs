@@ -135,7 +135,7 @@ impl<W> MouseRegion<W> {
 }
 
 impl<W: Widget + 'static> Widget for MouseRegion<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         RawMouseRegion {
             on_hover_enter: self.on_hover_enter.clone(),
@@ -373,7 +373,7 @@ mod tests {
     struct TestWidget;
 
     impl Widget for TestWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             panic!("not needed for builder tests")
         }
     }

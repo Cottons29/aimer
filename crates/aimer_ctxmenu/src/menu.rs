@@ -302,12 +302,13 @@ impl ContextMenu {
 }
 
 impl Widget for ContextMenu {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let content = match &self.child {
+    fn to_element(mut self, ctx: &BuildContext) -> AnyElement {
+        let style = self.style.clone();
+        let content = match self.child.take() {
             Some(child) => child.to_element(ctx),
             None => self.rows().to_element(ctx),
         };
-        RawContextMenuPanel::element(content, self.style.clone())
+        RawContextMenuPanel::element(content, style)
     }
 
     fn debug_name(&self) -> &'static str {

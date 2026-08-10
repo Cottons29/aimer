@@ -5,10 +5,27 @@ thread_local! {
     static NEXT_FOCUS_REQUEST: Cell<u64> = const { Cell::new(0) };
 }
 
+/// An imperative focus change recorded on a [`FocusNode`], tagged with the
+/// order in which it was made.
+///
+/// Requests are resolved in issue order, so the newest request of a frame wins
+/// regardless of where its node sits in the tree.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum FocusRequest {
+pub enum FocusRequest {
+    /// The node asked to become the focus owner.
     Focus(u64),
+    /// The node asked to relinquish focus.
     Unfocus(u64),
+}
+
+impl FocusRequest {
+    /// Returns the issue order of this request.
+    #[inline]
+    pub const fn order(self) -> u64 {
+        match self {
+            Self::Focus(order) | Self::Unfocus(order) => order,
+        }
+    }
 }
 
 struct FocusNodeState {
@@ -27,6 +44,16 @@ struct FocusNodeState {
 /// Focus nodes are intentionally UI-thread-local. Cloning a node creates
 /// another handle to the same focus state; it does not create another focus
 /// target.
+///
+/// ```
+/// use aimer_focus::FocusNode;
+///
+/// let node = FocusNode::new();
+/// assert!(!node.has_focus());
+///
+/// node.request_focus();
+/// assert!(node.request().is_some());
+/// ```
 #[derive(Clone)]
 pub struct FocusNode {
     state: Rc<FocusNodeState>,
@@ -70,23 +97,40 @@ impl FocusNode {
         self.state.focused.get()
     }
 
+    /// Returns the pending request recorded on this node, if any.
+    ///
+    /// This is framework plumbing: the focus manager reads pending requests
+    /// while resolving the focus owner for a frame.
     #[inline]
-    pub(crate) fn request(&self) -> Option<FocusRequest> {
+    pub fn request(&self) -> Option<FocusRequest> {
         self.state.request.get()
     }
 
+    /// Drops the pending request recorded on this node.
+    ///
+    /// This is framework plumbing, called once a request has been taken into
+    /// account so it is never applied twice.
     #[inline]
-    pub(crate) fn clear_request(&self) {
+    pub fn clear_request(&self) {
         self.state.request.set(None);
     }
 
+    /// Records whether this node owns keyboard focus.
+    ///
+    /// This is framework plumbing: ownership is decided by the focus manager,
+    /// which keeps the flag on every node it hands focus to or takes it from.
     #[inline]
-    pub(crate) fn set_focused(&self, focused: bool) {
+    pub fn set_focused(&self, focused: bool) {
         self.state.focused.set(focused);
     }
 
+    /// Returns whether both handles refer to the same focus target.
+    ///
+    /// Identity is by shared state, not by value: cloning a node yields a
+    /// handle that compares equal here, while a separately constructed node
+    /// never does.
     #[inline]
-    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
+    pub fn ptr_eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.state, &other.state)
     }
 }
@@ -109,7 +153,13 @@ fn next_focus_request() -> u64 {
     })
 }
 
+/// Returns the number of focus requests made on this thread so far.
+///
+/// The counter only ever grows, so comparing it against a previously observed
+/// value tells the framework whether any node asked for a focus change since
+/// then. An idle frame therefore costs a single integer comparison instead of a
+/// tree walk.
 #[inline]
-pub(crate) fn focus_request_generation() -> u64 {
+pub fn focus_request_generation() -> u64 {
     NEXT_FOCUS_REQUEST.with(Cell::get)
 }

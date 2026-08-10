@@ -1,6 +1,6 @@
 mod async_builder;
 pub mod components;
-pub mod focus;
+pub mod focus_scope;
 pub mod key;
 pub mod layout_cache;
 pub mod page_storage;
@@ -47,9 +47,11 @@ pub type AnyElement = aimer_rubick::Rubick<dyn Element, 1>;
 /// owner itself at nine words. Larger or over-aligned widgets transparently
 /// take one pooled heap block.
 ///
-/// `Deref` and `AsRef` expose the stored widget as `dyn Widget`, and
-/// [`aimer_rubick::Rubick::is_inline`] and [`aimer_rubick::Rubick::is_heap`]
-/// report the selected mode.
+/// `Deref` and `AsRef` expose the stored widget as [`DynWidget`], the
+/// object-safe half of [`Widget`], and [`aimer_rubick::Rubick::is_inline`] and
+/// [`aimer_rubick::Rubick::is_heap`] report the selected mode. The conversion
+/// itself consumes the handle: [`AnyWidgetExt::into_element`] moves the widget
+/// out of this storage, so the erased path copies no more than the direct one.
 ///
 /// Moving an inline `AnyWidget` changes the address of its concrete widget. The
 /// owner does not provide implicit unsizing or a stable-address guarantee;
@@ -62,7 +64,7 @@ pub type AnyElement = aimer_rubick::Rubick<dyn Element, 1>;
 /// struct Badge;
 ///
 /// impl Widget for Badge {
-///     fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+///     fn to_element(self, _ctx: &BuildContext) -> AnyElement {
 ///         unreachable!("this example only erases the widget")
 ///     }
 /// }
@@ -70,7 +72,7 @@ pub type AnyElement = aimer_rubick::Rubick<dyn Element, 1>;
 /// let widget = Badge.boxed();
 /// assert!(widget.is_inline());
 /// ```
-pub type AnyWidget = aimer_rubick::Rubick<dyn Widget, 8>;
+pub type AnyWidget = aimer_rubick::Rubick<dyn DynWidget, 8>;
 
 // #[cfg(debug_assertions)]
 pub mod inspector_overlay {
@@ -100,7 +102,14 @@ pub use crate::components::element::{
 pub use crate::components::event_element::{
     CaptureRequest, EventElement, EventResult, FollowUp, PointerKey,
 };
-pub use crate::focus::FocusNode;
+/// Keyboard focus lives in its own crate; it is re-exported here so
+/// `aimer_widget::focus::*` keeps naming the focus system.
+pub use aimer_focus as focus;
+pub use aimer_focus::{
+    FocusCandidate, FocusManager, FocusNode, FocusTrap, FocusTrapId, FocusTransition,
+    active_focus_trap,
+};
+pub use crate::focus_scope::FocusScope;
 pub use crate::components::layout_element::LayoutElement;
 pub use crate::components::rebuildable::Rebuildable;
 pub use crate::components::visitor_element::VisitorElement;
@@ -128,7 +137,8 @@ pub use crate::pointer_claim::{
     release_pointer,
 };
 pub use crate::safe_area::{SafeAreaInsets, safe_area_insets, set_safe_area_insets};
-pub use crate::widget::Widget;
+pub use crate::widget::{AnyWidgetExt, DynWidget, Widget};
+pub use crate::widget::child_builder::ChildBuilder;
 pub use crate::widget::stateful::{State, StateUpdater, StatefulElement, StatefulWidget};
 pub use crate::widget::stateless::{NamedWidget, StatelessElement, StatelessWidget};
 pub use crate::window_metrics::{WindowMetrics, notify_window_metrics_changed};

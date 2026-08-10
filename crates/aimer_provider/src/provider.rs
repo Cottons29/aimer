@@ -9,8 +9,9 @@ use std::rc::{Rc, Weak};
 use aimer_utils::PanicHelper;
 use aimer_widget::base::{BuildConsumer, BuildContext, ResolvedSize, Size, Vec2d, WindowHandle};
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
-    RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, LayoutElement,
+    Rebuildable, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget,
+    VisitorElement, Widget,
 };
 
 struct Subscriber<T> {
@@ -362,7 +363,16 @@ impl ProviderContext for BuildContext<'_> {
 pub struct Provider<T, W = RequiredChild> {
     create: Option<Rc<dyn Fn() -> T>>,
     handle: Option<ProviderHandle<T>>,
-    child: Rc<W>,
+    // `W` is a type-state marker only: the child itself is erased into a
+    // [`ChildBuilder`], and `Provider<T, RequiredChild>` stays a non-widget
+    // because `RequiredChild` is not a `Widget`. Before [`Provider::child`] is
+    // called the slot holds [`ChildBuilder::required`], a placeholder that
+    // allocates nothing and reports the missing child as an error widget, so
+    // [`Provider::new`] stays as cheap as the `create` and `handle` slots next
+    // to it. The marker keeps that placeholder unreachable from any completed
+    // widget.
+    child: ChildBuilder,
+    marker: PhantomData<W>,
 }
 
 /// An alias for [`Provider`] used when the provided value is updated directly.
@@ -370,11 +380,13 @@ pub type NotifierProvider<T, W = RequiredChild> = Provider<T, W>;
 
 impl<T> Provider<T> {
     /// Creates an unconfigured provider.
+    #[inline]
     pub fn new() -> Self {
         Self {
             create: None,
             handle: None,
-            child: Rc::new(RequiredChild),
+            child: ChildBuilder::required(),
+            marker: PhantomData,
         }
     }
 }
@@ -387,23 +399,31 @@ impl<T> Default for Provider<T> {
 
 impl<T, W> Provider<T, W> {
     /// Sets the initializer called once when the provider state is created.
+    #[inline]
     pub fn create(mut self, create: impl Fn() -> T + 'static) -> Self {
         self.create = Some(Rc::new(create));
         self
     }
 
     /// Uses an existing handle instead of creating a new provider value.
+    #[inline]
     pub fn handle(mut self, handle: ProviderHandle<T>) -> Self {
         self.handle = Some(handle);
         self
     }
 
     /// Attaches the descendant widget subtree and produces a valid widget.
-    pub fn child<C: Widget>(self, child: C) -> Provider<T, C> {
+    ///
+    /// The child is stored as a [`ChildBuilder`], so the provider can build the
+    /// same subtree again on every one of its rebuilds while keeping the key
+    /// and the debug name the child was written with.
+    #[inline]
+    pub fn child<C: Widget + 'static>(self, child: C) -> Provider<T, C> {
         Provider {
             create: self.create,
             handle: self.handle,
-            child: Rc::new(child),
+            child: ChildBuilder::from_widget(child),
+            marker: PhantomData,
         }
     }
 
@@ -413,6 +433,7 @@ impl<T, W> Provider<T, W> {
     /// This is equivalent to calling [`Provider::child`] followed by
     /// [`Widget::boxed`]. Use it when different code paths must return one
     /// [`AnyWidget`] type.
+    #[inline]
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget
     where
         T: 'static,
@@ -424,13 +445,17 @@ impl<T, W> Provider<T, W> {
 #[doc(hidden)]
 pub struct ProviderState<T, W> {
     handle: ProviderHandle<T>,
-    child: Rc<W>,
+    child: ChildBuilder,
+    // The child is erased, so `W` survives here only to keep one `State` impl
+    // per provider type; without it `ProviderState<T>` would implement
+    // `State<Provider<T, W>>` for every `W` and no call could be inferred.
+    marker: PhantomData<W>,
 }
 
 impl<T: 'static, W: Widget + 'static> StatefulWidget for Provider<T, W> {
     type State = ProviderState<T, W>;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         let handle = self.handle.clone().unwrap_or_else(|| {
             let create = self.create.as_ref().unwrap_or_else(|| {
                 panic!(
@@ -443,6 +468,7 @@ impl<T: 'static, W: Widget + 'static> StatefulWidget for Provider<T, W> {
         ProviderState {
             handle,
             child: self.child.clone(),
+            marker: PhantomData,
         }
     }
 }
@@ -463,7 +489,7 @@ impl<T: 'static, W: Widget + 'static> State<Provider<T, W>> for ProviderState<T,
 }
 
 impl<T: 'static, W: Widget + 'static> Widget for Provider<T, W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, type_name::<Provider<T>>(), None)
             .0
             .boxed()
@@ -474,16 +500,14 @@ impl<T: 'static, W: Widget + 'static> Widget for Provider<T, W> {
     }
 }
 
-struct ProviderScope<T, W> {
+struct ProviderScope<T> {
     handle: ProviderHandle<T>,
-    child: Rc<W>,
+    child: ChildBuilder,
 }
 
-impl<T: 'static, W: Widget + 'static> Widget for ProviderScope<T, W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let child = ctx.with_state(Provided(self.handle.clone()), |ctx| {
-            self.child.to_element(ctx)
-        });
+impl<T: 'static> Widget for ProviderScope<T> {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let child = ctx.with_state(Provided(self.handle.clone()), |ctx| self.child.build(ctx));
         ProviderElement {
             handle: self.handle.clone(),
             child,
@@ -579,16 +603,22 @@ impl<T: 'static> Rebuildable for ProviderElement<T> {
 pub struct StoreProvider<T, A, W = RequiredChild> {
     create: Option<Rc<dyn Fn() -> T>>,
     reducer: Option<Rc<StoreReducer<T, A>>>,
-    child: Rc<W>,
+    // Same shape as [`Provider`]: the child is erased into a [`ChildBuilder`],
+    // `W` only marks whether one was attached, and the un-attached slot holds
+    // the allocation-free [`ChildBuilder::required`] placeholder.
+    child: ChildBuilder,
+    marker: PhantomData<W>,
 }
 
 impl<T, A> StoreProvider<T, A> {
     /// Creates an unconfigured store provider.
+    #[inline]
     pub fn new() -> Self {
         Self {
             create: None,
             reducer: None,
-            child: Rc::new(RequiredChild),
+            child: ChildBuilder::required(),
+            marker: PhantomData,
         }
     }
 }
@@ -601,21 +631,28 @@ impl<T, A> Default for StoreProvider<T, A> {
 
 impl<T, A, W> StoreProvider<T, A, W> {
     /// Sets the initializer called once when the store state is created.
+    #[inline]
     pub fn create(mut self, create: impl Fn() -> T + 'static) -> Self {
         self.create = Some(Rc::new(create));
         self
     }
     /// Sets the reducer used to apply dispatched actions.
+    #[inline]
     pub fn reducer(mut self, reducer: impl Fn(&mut T, A) + 'static) -> Self {
         self.reducer = Some(Rc::new(reducer));
         self
     }
     /// Attaches the descendant widget subtree and produces a valid widget.
-    pub fn child<C: Widget>(self, child: C) -> StoreProvider<T, A, C> {
+    ///
+    /// The child is stored as a [`ChildBuilder`], so the store can build the
+    /// same subtree again on every one of its rebuilds.
+    #[inline]
+    pub fn child<C: Widget + 'static>(self, child: C) -> StoreProvider<T, A, C> {
         StoreProvider {
             create: self.create,
             reducer: self.reducer,
-            child: Rc::new(child),
+            child: ChildBuilder::from_widget(child),
+            marker: PhantomData,
         }
     }
 
@@ -625,6 +662,7 @@ impl<T, A, W> StoreProvider<T, A, W> {
     /// This is equivalent to calling [`StoreProvider::child`] followed by
     /// [`Widget::boxed`]. Use it when different code paths must return one
     /// [`AnyWidget`] type.
+    #[inline]
     pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget
     where
         T: Clone + 'static,
@@ -638,14 +676,16 @@ impl<T, A, W> StoreProvider<T, A, W> {
 pub struct StoreState<T, A, W> {
     handle: ProviderHandle<T>,
     reducer: Rc<StoreReducer<T, A>>,
-    child: Rc<W>,
+    child: ChildBuilder,
+    // See [`ProviderState`]: kept only so the `State` impl stays unique.
+    marker: PhantomData<W>,
 }
 
 impl<T: Clone + 'static, A: 'static, W: Widget + 'static> StatefulWidget
     for StoreProvider<T, A, W>
 {
     type State = StoreState<T, A, W>;
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         let create = self.create.as_ref().unwrap_or_else(|| {
             panic!(
                 "StoreProvider::<{}>::create must be called before child",
@@ -662,6 +702,7 @@ impl<T: Clone + 'static, A: 'static, W: Widget + 'static> StatefulWidget
             handle: ProviderHandle::new(create()),
             reducer: reducer.clone(),
             child: self.child.clone(),
+            marker: PhantomData,
         }
     }
 }
@@ -684,7 +725,7 @@ impl<T: Clone + 'static, A: 'static, W: Widget + 'static> State<StoreProvider<T,
 }
 
 impl<T: Clone + 'static, A: 'static, W: Widget + 'static> Widget for StoreProvider<T, A, W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, type_name::<StoreProvider<T, A>>(), None)
             .0
             .boxed()
@@ -695,14 +736,14 @@ impl<T: Clone + 'static, A: 'static, W: Widget + 'static> Widget for StoreProvid
     }
 }
 
-struct StoreScope<T, A, W> {
+struct StoreScope<T, A> {
     handle: ProviderHandle<T>,
     reducer: Rc<StoreReducer<T, A>>,
-    child: Rc<W>,
+    child: ChildBuilder,
 }
 
-impl<T: Clone + 'static, A: 'static, W: Widget + 'static> Widget for StoreScope<T, A, W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+impl<T: Clone + 'static, A: 'static> Widget for StoreScope<T, A> {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let handle = self.handle.clone();
         let reducer = self.reducer.clone();
         let dispatcher = StoreDispatcher(Rc::new(move |action| {
@@ -710,7 +751,7 @@ impl<T: Clone + 'static, A: 'static, W: Widget + 'static> Widget for StoreScope<
             handle.update(|state| reducer(state, action));
         }));
         let child = ctx.with_state(Provided(self.handle.clone()), |ctx| {
-            ctx.with_state(dispatcher.clone(), |ctx| self.child.to_element(ctx))
+            ctx.with_state(dispatcher.clone(), |ctx| self.child.build(ctx))
         });
         StoreElement {
             handle: self.handle.clone(),
@@ -843,7 +884,7 @@ mod tests {
     }
 
     impl Widget for ReadingWidget {
-        fn to_element(&self, context: &BuildContext) -> AnyElement {
+        fn to_element(self, context: &BuildContext) -> AnyElement {
             self.observed
                 .set(ProviderContext::read::<Counter>(context).count);
             Leaf.boxed()
@@ -853,8 +894,67 @@ mod tests {
     struct LeafWidget;
 
     impl Widget for LeafWidget {
-        fn to_element(&self, _context: &BuildContext) -> AnyElement {
+        fn to_element(self, _context: &BuildContext) -> AnyElement {
             Leaf.boxed()
+        }
+    }
+
+    /// Counts how many times the provider asked for its subtree, and records
+    /// the value that was in scope on every one of those builds.
+    struct ProbeWidget {
+        builds: Rc<Cell<usize>>,
+        observed: Rc<RefCell<Vec<usize>>>,
+    }
+
+    impl Widget for ProbeWidget {
+        fn to_element(self, context: &BuildContext) -> AnyElement {
+            self.builds.set(self.builds.get() + 1);
+            self.observed
+                .borrow_mut()
+                .push(ProviderContext::read::<Counter>(context).count);
+            Leaf.boxed()
+        }
+
+        fn key(&self) -> Option<aimer_widget::Key> {
+            Some(aimer_widget::Key::Static("probe"))
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "ProbeWidget"
+        }
+    }
+
+    /// A child that rebuilds itself, the way a derived widget does.
+    ///
+    /// It counts its conversions apart from its builds, because those are now
+    /// two different things: a provider that rebuilds reuses its child's element
+    /// (one conversion) and asks the subtree inside it to build again (one build
+    /// per rebuild), which is how a new provided value reaches it.
+    struct RebuildingProbe {
+        conversions: Rc<Cell<usize>>,
+        observed: Rc<RefCell<Vec<usize>>>,
+    }
+
+    impl Widget for RebuildingProbe {
+        fn to_element(self, context: &BuildContext) -> AnyElement {
+            self.conversions.set(self.conversions.get() + 1);
+            let observed = self.observed;
+            aimer_widget::Element::boxed(aimer_widget::StatelessElement::from_builder(
+                context,
+                move |ctx| {
+                    observed
+                        .borrow_mut()
+                        .push(ProviderContext::read::<Counter>(ctx).count);
+                    let _ = ctx;
+                    Leaf.boxed()
+                },
+                None,
+                "RebuildingProbe",
+            ))
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "RebuildingProbe"
         }
     }
 
@@ -883,7 +983,7 @@ mod tests {
     impl StatefulWidget for WatchingWidget {
         type State = WatchingState;
 
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             WatchingState {
                 builds: self.builds.clone(),
                 handle: self.handle.clone(),
@@ -908,7 +1008,7 @@ mod tests {
     }
 
     impl Widget for WatchingWidget {
-        fn to_element(&self, context: &BuildContext) -> AnyElement {
+        fn to_element(self, context: &BuildContext) -> AnyElement {
             StatefulElement::new_with_name(self, context, "WatchingWidget", None)
                 .0
                 .boxed()
@@ -918,7 +1018,7 @@ mod tests {
     impl StatefulWidget for MultiSelectorWidget {
         type State = MultiSelectorState;
 
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             MultiSelectorState {
                 builds: self.builds.clone(),
                 handle: self.handle.clone(),
@@ -939,7 +1039,7 @@ mod tests {
     }
 
     impl Widget for MultiSelectorWidget {
-        fn to_element(&self, context: &BuildContext) -> AnyElement {
+        fn to_element(self, context: &BuildContext) -> AnyElement {
             StatefulElement::new_with_name(self, context, "MultiSelectorWidget", None)
                 .0
                 .boxed()
@@ -1194,6 +1294,60 @@ mod tests {
     }
 
     #[test]
+    fn provider_supplies_its_value_on_every_build_of_the_child() {
+        let conversions = Rc::new(Cell::new(0));
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let handle = ProviderHandle::new(Counter {
+            count: 3,
+            label: "provided",
+        });
+        let provider = Provider::<Counter>::new()
+            .handle(handle.clone())
+            .child(RebuildingProbe {
+                conversions: conversions.clone(),
+                observed: observed.clone(),
+            });
+        let context = context();
+        let state = provider.create_state();
+
+        let _first = state.build(&context).to_element(&context);
+        handle.update(|counter| counter.count = 4);
+        let second = state.build(&context).to_element(&context);
+        second.rebuild_if_dirty(&context);
+
+        assert_eq!(
+            conversions.get(),
+            1,
+            "a rebuilt provider reuses its child's element instead of rebuilding \
+             the subtree from the widget"
+        );
+        assert_eq!(
+            observed.borrow().as_slice(),
+            [3, 4],
+            "every build of the child sees the value that is in scope"
+        );
+    }
+
+    #[test]
+    fn provider_keeps_the_identity_of_its_child() {
+        let provider = Provider::<Counter>::new()
+            .create(Counter::default)
+            .child(ProbeWidget {
+                builds: Rc::new(Cell::new(0)),
+                observed: Rc::new(RefCell::new(Vec::new())),
+            });
+
+        let state = provider.create_state();
+
+        assert_eq!(
+            Widget::key(&state.child),
+            Some(aimer_widget::Key::Static("probe")),
+            "reconciliation matches the child on its own key, not on its holder"
+        );
+        assert_eq!(Widget::debug_name(&state.child), "ProbeWidget");
+    }
+
+    #[test]
     fn provider_owned_value_is_dropped_with_its_element() {
         struct Droppable(Rc<Cell<usize>>);
         impl Drop for Droppable {
@@ -1203,7 +1357,7 @@ mod tests {
         }
         struct Child;
         impl Widget for Child {
-            fn to_element(&self, _context: &BuildContext) -> AnyElement {
+            fn to_element(self, _context: &BuildContext) -> AnyElement {
                 Leaf.boxed()
             }
         }

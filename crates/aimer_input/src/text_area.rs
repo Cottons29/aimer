@@ -308,7 +308,7 @@ impl StatefulWidget for TextArea {
     type State = TextFieldState;
 
     #[inline]
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         self.field.create_state_with_config(self.config())
     }
 }
@@ -340,8 +340,9 @@ impl Widget for TextArea {
     }
 
     #[inline]
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "TextArea", self.key())
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let __key = Widget::key(&self);
+        StatefulElement::new_with_name(self, ctx, "TextArea", __key)
             .0
             .boxed()
     }
@@ -411,6 +412,7 @@ mod tests {
             .padding(LayoutSpacing::default())
             .key("notes");
 
+        let key = Widget::key(&area);
         let state = area.create_state();
         let config = state.config();
         assert_eq!(config.controller.value().text(), "first\nsecond");
@@ -420,6 +422,6 @@ mod tests {
         assert_eq!(config.max_length, Some(20));
         assert!(!config.enable);
         assert!(config.read_only);
-        assert_eq!(Widget::key(&area), Some(Key::Value("notes".to_owned())));
+        assert_eq!(key, Some(Key::Value("notes".to_owned())));
     }
 }

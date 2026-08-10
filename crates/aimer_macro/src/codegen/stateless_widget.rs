@@ -70,20 +70,19 @@ fn stateless_widget_impl(item_struct: &ItemStruct) -> TokenStream {
         impl #impl_generics aimer::widget::Widget for #struct_name #ty_generics #where_clause {
             #key_method
 
-            fn to_element(&self, ctx: &aimer::widget::base::BuildContext) -> aimer::widget::AnyElement {
-                // Capture an owned copy of the widget so the element can re-run
-                // `build()` (re-reading `MediaQuery`) when marked dirty on resize.
-                // This requires the widget to be `Clone` (widgets are cheap,
-                // immutable configuration, like Flutter's).
-                let __rebuild_source = ::std::clone::Clone::clone(self);
+            fn to_element(self, ctx: &aimer::widget::base::BuildContext) -> aimer::widget::AnyElement {
+                // The element keeps *this* widget — not a copy of it — so it can
+                // re-run `build()` (re-reading `MediaQuery`) when marked dirty on
+                // resize. Each rebuild describes a fresh child widget, which the
+                // consuming conversion then eats, so nothing here needs `Clone`.
+                let __key = #key_pass;
                 let __rebuild = move |ctx: &aimer::widget::base::BuildContext| -> aimer::widget::AnyElement {
-                    let child_widget = __rebuild_source.build(ctx);
-                    aimer::widget::Widget::to_element(&child_widget, ctx)
+                    aimer::widget::Widget::to_element(self.build(ctx), ctx)
                 };
                 aimer::widget::Element::boxed(aimer::widget::StatelessElement::from_builder(
                     ctx,
                     __rebuild,
-                    #key_pass,
+                    __key,
                     #struct_name_str,
                 ))
             }
@@ -112,6 +111,25 @@ mod tests {
         assert!(output.contains("aimer :: widget :: Element :: boxed"));
         assert!(!output.contains("Box < dyn aimer::widget :: Element >"));
         assert!(!output.contains("Box :: new"));
+    }
+
+    #[test]
+    fn a_generated_widget_is_never_cloned() {
+        // The element owns the widget it was built from, so a rebuild re-runs
+        // the original. A widget therefore does not have to be `Clone` — which
+        // it had to be while the conversion only borrowed it.
+        let output = derive_stateless_widget(quote! {
+            struct NotCloneWidget {
+                buffer: Vec<u8>,
+            }
+        })
+        .to_string();
+
+        assert!(
+            !output.contains("clone"),
+            "a rebuild source must not be copied out of the widget"
+        );
+        assert!(output.contains("self . build (ctx)"));
     }
 
     #[test]

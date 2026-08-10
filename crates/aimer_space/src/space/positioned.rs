@@ -164,7 +164,7 @@ impl<W: Widget + 'static> Positioned<W> {
 }
 
 impl<W: Widget> Widget for Positioned<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         RawPositionedElement {
             child,

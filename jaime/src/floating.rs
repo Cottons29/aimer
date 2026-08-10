@@ -46,7 +46,7 @@ pub struct FloatingShowcaseState {
 impl StatefulWidget for FloatingShowcase {
     type State = FloatingShowcaseState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         FloatingShowcaseState {
             menu_anchor: AnchorHandle::new(),
             tooltip_anchor: AnchorHandle::new(),

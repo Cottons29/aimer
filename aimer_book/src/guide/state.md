@@ -23,7 +23,7 @@ struct CounterState {
 impl StatefulWidget for Counter {
     type State = CounterState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         CounterState { count: 0, updater: StateUpdater::empty() }
     }
 }

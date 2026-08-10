@@ -69,7 +69,7 @@ impl AppShellState {
 impl StatefulWidget for AppShell {
     type State = AppShellState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         AppShellState {
             active_tab: self.active_tab,
             theme_mode: WebsiteThemeMode::Light,

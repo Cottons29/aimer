@@ -93,7 +93,7 @@ mod tests {
     impl StatefulWidget for ButtonLike {
         type State = ButtonLikeState;
 
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             ButtonLikeState {
                 index: self.index,
                 selected: self.selected,
@@ -105,7 +105,7 @@ mod tests {
     }
 
     impl Widget for ButtonLike {
-        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
             // Bare stateful with the default "Unknown" name, exactly like
             // `TextButton::to_element`. The surrounding `NamedWidget` then
             // wraps it in a `StatelessElement("ButtonLike")`.
@@ -161,7 +161,7 @@ mod tests {
     impl StatefulWidget for TabWidget {
         type State = TabState;
 
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             TabState {
                 index: 0,
                 observer: self.observer.clone(),
@@ -173,7 +173,7 @@ mod tests {
     }
 
     impl Widget for TabWidget {
-        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
             StatefulElement::new_with_name(self, ctx, "TabWidget", None)
                 .0
                 .boxed()

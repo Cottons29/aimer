@@ -36,8 +36,8 @@ mod test {
     use aimer::aimer_quiver::winit::event::WindowEvent;
     use aimer::quiver::winit::dpi::PhysicalSize;
     use aimer::router::Navigator;
-    use aimer::{AimerApp, Widget};
-
+    use aimer::{AimerApp, Container, Widget, ZeroSizedBox};
+    use aimer::style::BoxDecoration;
     use crate::TEST_STATE_UPDATED;
     use crate::blog_store::{BlogDetail, cache_blog_detail};
     use crate::router::{AppRouter, take_route_builds};
@@ -96,4 +96,10 @@ mod test {
             );
         }
     }
+    #[test]
+    fn i_want_know() {
+        eprintln!("Size of Container: {}", size_of::<Container<ZeroSizedBox>>());
+        eprintln!("Size of BoxDecoration: {}", size_of::<BoxDecoration>());
+    }
+
 }

@@ -160,7 +160,7 @@ mod tests {
     /// the dummy `BuildContext` is safe.
     struct EmptyWidget;
     impl Widget for EmptyWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             EmptyLeaf.boxed()
         }
         fn debug_name(&self) -> &'static str {
@@ -183,24 +183,22 @@ mod tests {
 
     /// Adapts an already-constructed `AnyElement` into a `Widget` so a
     /// `State::build` (which must return `impl Widget`) can hand back a subtree
-    /// that was assembled directly from elements. `to_element` is called once
-    /// per build; the element is taken out on that call.
+    /// that was assembled directly from elements.
+    ///
+    /// The element is simply moved out on conversion: `Widget::to_element`
+    /// consumes the widget, so the type system already guarantees the single
+    /// hand-over this adapter needs — no cell and no run-time guard.
     struct ElementWidget {
-        element: RefCell<Option<AnyElement>>,
+        element: AnyElement,
     }
     impl ElementWidget {
         fn new(element: AnyElement) -> Self {
-            Self {
-                element: RefCell::new(Some(element)),
-            }
+            Self { element }
         }
     }
     impl Widget for ElementWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             self.element
-                .borrow_mut()
-                .take()
-                .expect("ElementWidget::to_element called more than once")
         }
         fn debug_name(&self) -> &'static str {
             "ElementWidget"
@@ -225,7 +223,7 @@ mod tests {
     }
     impl StatefulWidget for CounterWidget {
         type State = CounterState;
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             CounterState {
                 counter: 1,
                 observer: self.observer.clone(),
@@ -258,7 +256,7 @@ mod tests {
     impl StatefulWidget for CounterParentWidget {
         type State = CounterParentState;
 
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             CounterParentState {
                 observer: self.observer.clone(),
                 updater: StateUpdater::new(),
@@ -276,7 +274,7 @@ mod tests {
                 observer: self.observer.clone(),
             };
             let (child, _) = StatefulElement::new_with_name(
-                &widget,
+                widget,
                 ctx,
                 "Counter",
                 Some(Key::Static("nested-counter")),
@@ -300,7 +298,7 @@ mod tests {
     impl StatefulWidget for BuildRecordingCounterWidget {
         type State = BuildRecordingCounterState;
 
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             BuildRecordingCounterState {
                 counter: 0,
                 builds: self.builds.clone(),
@@ -336,7 +334,7 @@ mod tests {
     impl StatefulWidget for BuildRecordingParentWidget {
         type State = BuildRecordingParentState;
 
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             BuildRecordingParentState {
                 builds: self.builds.clone(),
                 child_updater: self.child_updater.clone(),
@@ -356,7 +354,7 @@ mod tests {
                 updater: self.child_updater.clone(),
             };
             let (element, _) = StatefulElement::new_with_name(
-                &child,
+                child,
                 ctx,
                 "BuildRecordingCounter",
                 Some(Key::Static("build-recording-counter")),
@@ -386,7 +384,7 @@ mod tests {
     impl StatefulWidget for ConfigWidget {
         type State = ConfigState;
 
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             ConfigState {
                 config_label: self.label,
                 runtime: 0,
@@ -568,7 +566,7 @@ mod tests {
     }
     impl StatefulWidget for NestedButtonWidget {
         type State = NestedButtonState;
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             NestedButtonState {
                 updater: StateUpdater::new(),
             }
@@ -595,7 +593,7 @@ mod tests {
     }
     impl StatefulWidget for DrawCounterWidget {
         type State = DrawCounterState;
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             DrawCounterState {
                 counter: 1,
                 drawn: self.drawn.clone(),
@@ -618,7 +616,7 @@ mod tests {
             }
             .boxed();
             let (button, _ctor) =
-                StatefulElement::new_with_name(&NestedButtonWidget, ctx, "NestedButton", None);
+                StatefulElement::new_with_name(NestedButtonWidget, ctx, "NestedButton", None);
             let row: AnyElement = DrawRow(vec![leaf, button.boxed()]).boxed();
             ElementWidget::new(DrawWrapper(row).boxed())
         }
@@ -635,7 +633,7 @@ mod tests {
             drawn: drawn.clone(),
             live_updater: live_updater.clone(),
         };
-        let (root, _ctor) = StatefulElement::new_with_name(&widget, &ctx, "DrawCounter", None);
+        let (root, _ctor) = StatefulElement::new_with_name(widget, &ctx, "DrawCounter", None);
 
         // First frame: the initial state (counter = 1) is drawn.
         root.draw(&ctx);
@@ -668,7 +666,7 @@ mod tests {
             observer: observer.clone(),
         };
         let (old_stateful, old_updater) = StatefulElement::new_with_name(
-            &old_widget,
+            old_widget,
             &ctx,
             "Counter",
             Some(Key::Static("responsive-counter")),
@@ -681,7 +679,7 @@ mod tests {
             observer: observer.clone(),
         };
         let (new_stateful, _) = StatefulElement::new_with_name(
-            &new_widget,
+            new_widget,
             &ctx,
             "Counter",
             Some(Key::Static("responsive-counter")),
@@ -705,17 +703,19 @@ mod tests {
         let observer = Rc::new(Cell::new(0usize));
         let key = Some(Key::Static("transition-retained-counter"));
 
-        let widget = CounterWidget {
+        // Each element is built from its own widget: the conversion consumes
+        // the configuration, and the three copies are interchangeable anyway.
+        let widget = || CounterWidget {
             observer: observer.clone(),
         };
         let (stale_stateful, _) =
-            StatefulElement::new_with_name(&widget, &ctx, "Counter", key.clone());
+            StatefulElement::new_with_name(widget(), &ctx, "Counter", key.clone());
         let (live_stateful, live_updater) =
-            StatefulElement::new_with_name(&widget, &ctx, "Counter", key.clone());
+            StatefulElement::new_with_name(widget(), &ctx, "Counter", key.clone());
         live_updater.set_state(|state| state.counter = 7);
         live_stateful.rebuild_if_dirty(&ctx);
 
-        let (replacement, _) = StatefulElement::new_with_name(&widget, &ctx, "Counter", key);
+        let (replacement, _) = StatefulElement::new_with_name(widget(), &ctx, "Counter", key);
         let old_tree = Branches(vec![stale_stateful.boxed(), live_stateful.boxed()]);
         let new_tree = Wrapper(replacement.boxed());
         carry_child_state(&old_tree, &new_tree, &ctx);
@@ -737,7 +737,7 @@ mod tests {
             child_updater: child_updater.clone(),
         };
         let (parent, parent_updater) =
-            StatefulElement::new_with_name(&parent_widget, &ctx, "BuildRecordingParent", None);
+            StatefulElement::new_with_name(parent_widget, &ctx, "BuildRecordingParent", None);
 
         child_updater
             .borrow()
@@ -761,18 +761,20 @@ mod tests {
         let ctx = dummy_build_context();
         let observer = Rc::new(Cell::new(0usize));
         let key = Some(Key::Static("transition-retained-counter"));
-        let widget = CounterWidget {
+        // Each element is built from its own widget: the conversion consumes
+        // the configuration, and the three copies are interchangeable anyway.
+        let widget = || CounterWidget {
             observer: observer.clone(),
         };
 
         let (stale_stateful, _) =
-            StatefulElement::new_with_name(&widget, &ctx, "Counter", key.clone());
+            StatefulElement::new_with_name(widget(), &ctx, "Counter", key.clone());
         let (live_stateful, live_updater) =
-            StatefulElement::new_with_name(&widget, &ctx, "Counter", key.clone());
+            StatefulElement::new_with_name(widget(), &ctx, "Counter", key.clone());
         live_updater.set_state(|state| state.counter = 7);
         live_stateful.rebuild_if_dirty(&ctx);
 
-        let (replacement, _) = StatefulElement::new_with_name(&widget, &ctx, "Counter", key);
+        let (replacement, _) = StatefulElement::new_with_name(widget(), &ctx, "Counter", key);
         carry_child_state(&live_stateful, &replacement, &ctx);
         assert_eq!(observer.get(), 7);
         assert!(
@@ -792,17 +794,19 @@ mod tests {
     fn keyed_state_is_restored_after_a_stale_parent_is_adopted() {
         let ctx = dummy_build_context();
         let observer = Rc::new(Cell::new(0usize));
-        let parent_widget = CounterParentWidget {
+        // The stale and the replacement parent describe the same configuration,
+        // but each conversion consumes the widget it is given.
+        let parent_widget = || CounterParentWidget {
             observer: observer.clone(),
         };
         let (stale_parent, _) =
-            StatefulElement::new_with_name(&parent_widget, &ctx, "CounterParent", None);
+            StatefulElement::new_with_name(parent_widget(), &ctx, "CounterParent", None);
 
         let counter_widget = CounterWidget {
             observer: observer.clone(),
         };
         let (live_counter, live_updater) = StatefulElement::new_with_name(
-            &counter_widget,
+            counter_widget,
             &ctx,
             "Counter",
             Some(Key::Static("nested-counter")),
@@ -811,7 +815,7 @@ mod tests {
         live_counter.rebuild_if_dirty(&ctx);
 
         let (replacement_parent, _) =
-            StatefulElement::new_with_name(&parent_widget, &ctx, "CounterParent", None);
+            StatefulElement::new_with_name(parent_widget(), &ctx, "CounterParent", None);
         let old_tree = Branches(vec![stale_parent.boxed(), live_counter.boxed()]);
         let new_tree = Wrapper(replacement_parent.boxed());
         carry_child_state(&old_tree, &new_tree, &ctx);
@@ -832,7 +836,7 @@ mod tests {
             observer: observer.clone(),
         };
         let (old_stateful, old_updater) = StatefulElement::new_with_name(
-            &old_widget,
+            old_widget,
             &ctx,
             "Counter",
             Some(Key::Static("responsive-counter")),
@@ -844,7 +848,7 @@ mod tests {
             observer: observer.clone(),
         };
         let (new_stateful, _) = StatefulElement::new_with_name(
-            &new_widget,
+            new_widget,
             &ctx,
             "Counter",
             Some(Key::Static("responsive-counter")),
@@ -876,7 +880,7 @@ mod tests {
             observer: observer.clone(),
         };
         let (old_stateful, old_updater) = StatefulElement::new_with_name(
-            &old_widget,
+            old_widget,
             &ctx,
             "Counter",
             Some(Key::Static("responsive-counter")),
@@ -888,7 +892,7 @@ mod tests {
             observer: observer.clone(),
         };
         let (new_stateful, _) = StatefulElement::new_with_name(
-            &new_widget,
+            new_widget,
             &ctx,
             "Counter",
             Some(Key::Static("responsive-counter")),
@@ -924,7 +928,7 @@ mod tests {
             live_updater: live_updater.clone(),
         };
         let (old_stateful, old_updater) = StatefulElement::new_with_name(
-            &old_widget,
+            old_widget,
             &ctx,
             "Config",
             Some(Key::Static("moving-config")),
@@ -940,7 +944,7 @@ mod tests {
             live_updater,
         };
         let (new_stateful, _) = StatefulElement::new_with_name(
-            &new_widget,
+            new_widget,
             &ctx,
             "Config",
             Some(Key::Static("moving-config")),
@@ -982,7 +986,7 @@ mod tests {
             observer: observer.clone(),
         };
         let (old_stateful, old_updater) = StatefulElement::new_with_name(
-            &old_widget,
+            old_widget,
             &ctx,
             "Counter",
             Some(Key::Static("visual-counter")),
@@ -994,7 +998,7 @@ mod tests {
             observer: observer.clone(),
         };
         let (new_stateful, _) = StatefulElement::new_with_name(
-            &new_widget,
+            new_widget,
             &ctx,
             "Counter",
             Some(Key::Static("visual-counter")),
@@ -1023,7 +1027,7 @@ mod tests {
             observer: observer.clone(),
         };
         let (old_stateful, old_updater) = StatefulElement::new_with_name(
-            &old_widget,
+            old_widget,
             &ctx,
             "Counter",
             Some(Key::Static("old-counter")),
@@ -1035,7 +1039,7 @@ mod tests {
             observer: observer.clone(),
         };
         let (new_stateful, _) = StatefulElement::new_with_name(
-            &new_widget,
+            new_widget,
             &ctx,
             "Counter",
             Some(Key::Static("new-counter")),
@@ -1078,7 +1082,7 @@ mod tests {
     }
     impl StatefulWidget for SwitcherMock {
         type State = SwitcherMockState;
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             SwitcherMockState {
                 child_key: self.child_key,
                 transitions: self.transitions.clone(),
@@ -1104,8 +1108,9 @@ mod tests {
         fn key(&self) -> Option<Key> {
             Some(Key::Static("route-switcher"))
         }
-        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-            StatefulElement::new_with_name(self, ctx, "AnimatedSwitcher", self.key())
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            let __key = Widget::key(&self);
+            StatefulElement::new_with_name(self, ctx, "AnimatedSwitcher", __key)
                 .0
                 .boxed()
         }
@@ -1117,7 +1122,7 @@ mod tests {
         transitions: Rc<Cell<usize>>,
     }
     impl Widget for OutletMock {
-        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
             let slot = ctx
                 .get_state::<RouteKeySlot>()
                 .expect("Shell must insert RouteKeySlot");
@@ -1152,7 +1157,7 @@ mod tests {
     }
     impl StatefulWidget for NavMock {
         type State = NavMockState;
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             NavMockState {
                 route: 0,
                 transitions: self.transitions.clone(),
@@ -1171,7 +1176,7 @@ mod tests {
             // Frame: a stateful header sibling + a content area holding the
             // Outlet, wrapped in container-like elements as in `AppShell`.
             let header = StatefulElement::new_with_name(
-                &CounterWidget {
+                CounterWidget {
                     observer: self.header_observer.clone(),
                 },
                 ctx,
@@ -1197,7 +1202,7 @@ mod tests {
         let header_observer = Rc::new(Cell::new(0usize));
 
         let (nav, updater) = StatefulElement::new_with_name(
-            &NavMock {
+            NavMock {
                 transitions: transitions.clone(),
                 header_observer: header_observer.clone(),
             },
@@ -1242,7 +1247,7 @@ mod tests {
     }
     impl StatefulWidget for ProviderWidget {
         type State = ProviderState;
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             ProviderState {
                 updater: StateUpdater::new(),
             }
@@ -1256,7 +1261,7 @@ mod tests {
             // Provide the inherited value *before* building the child subtree —
             // exactly what `NavigatorState::build` does with its controller.
             ctx.insert_state(ProvidedValue);
-            let (consumer, _u) = StatefulElement::new(&ConsumerWidget, ctx);
+            let (consumer, _u) = StatefulElement::new(ConsumerWidget, ctx);
             ElementWidget::new(consumer.boxed())
         }
     }
@@ -1272,7 +1277,7 @@ mod tests {
     }
     impl StatefulWidget for ConsumerWidget {
         type State = ConsumerState;
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             ConsumerState {
                 updater: StateUpdater::new(),
             }
@@ -1309,7 +1314,7 @@ mod tests {
     fn provider_reprovides_inherited_state_before_children_rebuild_on_resize() {
         // Initial build: provider inserts the value, the consumer reads it.
         let ctx = dummy_build_context();
-        let (provider, _u) = StatefulElement::new(&ProviderWidget, &ctx);
+        let (provider, _u) = StatefulElement::new(ProviderWidget, &ctx);
 
         // Simulate a resize: dirty the whole subtree, then rebuild it against a
         // brand-new context whose inherited_states map is empty (a new frame).
@@ -1344,7 +1349,7 @@ mod tests {
         impl StatefulWidget for ResizeCounterWidget {
             type State = ResizeCounterState;
 
-            fn create_state(&self) -> Self::State {
+            fn create_state(self) -> Self::State {
                 ResizeCounterState {
                     counter: 1,
                     observer: self.observer.clone(),
@@ -1664,7 +1669,7 @@ mod tests {
                 live_updater,
             };
             let (stateful, _updater) =
-                StatefulElement::new_with_name(&counter_widget, ctx, "Counter", None);
+                StatefulElement::new_with_name(counter_widget, ctx, "Counter", None);
 
             FakeContainer::new(
                 FakeStack::new(vec![
@@ -1855,7 +1860,7 @@ mod tests {
         impl StatefulWidget for TabButtonWidget {
             type State = TabButtonState;
 
-            fn create_state(&self) -> Self::State {
+            fn create_state(self) -> Self::State {
                 TabButtonState {
                     index: self.index,
                     selected: self.selected,
@@ -1909,7 +1914,7 @@ mod tests {
                 // ("TextButton") because the names differ. Reproduce that exact
                 // wrapper so reconciliation takes the same path.
                 let (stateful, _updater) =
-                    StatefulElement::new_with_name(&widget, ctx, "Unknown", None);
+                    StatefulElement::new_with_name(widget, ctx, "Unknown", None);
                 let wrapped = StatelessElement::wrapper(stateful.boxed(), None, "TextButton");
                 children.push(wrapped.boxed());
             }

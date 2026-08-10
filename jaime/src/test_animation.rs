@@ -20,7 +20,7 @@ pub struct SameLookingSectionState {
 impl StatefulWidget for TestFadingAnimation {
     type State = SameLookingSectionState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         // The framework preserves the live state across parent rebuilds
         // (e.g. a window resize) by adopting it during reconciliation, so the
         // selected tab survives without any manual persistence — this only

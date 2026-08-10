@@ -95,7 +95,7 @@ impl<T: Widget> Animated<T> {
 }
 
 impl<T: Widget + 'static> Widget for Animated<T> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child_element = self.child.to_element(ctx);
 
         let controller = self.controller.clone();

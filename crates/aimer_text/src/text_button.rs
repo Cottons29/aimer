@@ -151,7 +151,7 @@ impl TextButton {
 }
 
 impl Widget for TextButton {
-    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
         RawTextButton {
             widget: self.clone(),
             hovered: Cell::new(false),

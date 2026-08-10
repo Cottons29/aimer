@@ -23,6 +23,7 @@ pub mod web_overscroll;
 pub mod web_recovery_end;
 
 use std::cell::{Cell, RefCell};
+use std::marker::PhantomData;
 use std::rc::Rc;
 
 use aimer_attribute::CacheBounds;
@@ -32,8 +33,8 @@ use aimer_macro::key;
 use aimer_utils::callback::Callback;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, AnyWidget, Element, Key, RequiredChild, State, StateUpdater, StatefulElement,
-    StatefulWidget, Widget,
+    AnyElement, AnyWidget, ChildBuilder, Element, Key, RequiredChild, State, StateUpdater,
+    StatefulElement, StatefulWidget, Widget,
 };
 use controller::ScrollState;
 pub use controller::{DragMode, ScrollController};
@@ -72,7 +73,9 @@ pub use crate::scrollable::scroll_bar::*;
 ///                                                                SizedBox::new().height(200)]));
 /// ```
 pub struct Scrollable<W = RequiredChild> {
-    pub child: Rc<W>,
+    /// The scrolling content, kept as a builder because the viewport rebuilds
+    /// itself on every offset change and needs the same content each time.
+    pub child: ChildBuilder,
     pub scroll_behavior: ScrollBehavior,
     pub key_scroll_strength: f32,
     pub axis: ScrollAxis,
@@ -94,6 +97,13 @@ pub struct Scrollable<W = RequiredChild> {
     /// Defaults to [`OverscrollSources::WEB_DEFAULT`] and is ignored
     /// everywhere else. See [`Scrollable::web_overscroll`].
     pub web_overscroll: OverscrollSources,
+    /// Records which child type completed the builder without storing it.
+    ///
+    /// The content itself is erased into [`ChildBuilder`], but the parameter
+    /// has to survive so that a viewport without content stays
+    /// `Scrollable<RequiredChild>` — a type that is deliberately not a
+    /// [`Widget`].
+    marker: PhantomData<W>,
 }
 
 impl Default for Scrollable {
@@ -111,7 +121,7 @@ impl Scrollable {
     #[inline]
     pub fn new() -> Self {
         Self {
-            child: Rc::new(RequiredChild),
+            child: ChildBuilder::required(),
             scroll_behavior: ScrollBehavior::default(),
             axis: ScrollAxis::default(),
             vertical_scroll_bar: Some(ScrollBar::default()),
@@ -120,6 +130,7 @@ impl Scrollable {
             key_scroll_strength: 50f32,
             controller: None,
             web_overscroll: OverscrollSources::WEB_DEFAULT,
+            marker: PhantomData,
         }
     }
 
@@ -130,9 +141,9 @@ impl Scrollable {
     /// enables both default scroll bars, generates a storage key, and has no
     /// external controller.
     #[inline]
-    pub fn with_child<W: Widget>(child: W) -> Scrollable<W> {
+    pub fn with_child<W: Widget + 'static>(child: W) -> Scrollable<W> {
         Scrollable {
-            child: Rc::new(child),
+            child: ChildBuilder::from_widget(child),
             scroll_behavior: ScrollBehavior::default(),
             axis: ScrollAxis::default(),
             vertical_scroll_bar: Some(ScrollBar::default()),
@@ -141,6 +152,7 @@ impl Scrollable {
             controller: None,
             key_scroll_strength: 50f32,
             web_overscroll: OverscrollSources::WEB_DEFAULT,
+            marker: PhantomData,
         }
     }
 
@@ -251,10 +263,10 @@ impl Scrollable {
     /// child's concrete type. Use [`Scrollable::box_child`] when different
     /// branches need one erased return type.
     #[inline]
-    pub fn child<W: Widget>(self, child: W) -> Scrollable<W> {
+    pub fn child<W: Widget + 'static>(self, child: W) -> Scrollable<W> {
         Scrollable {
             key_scroll_strength: self.key_scroll_strength,
-            child: Rc::new(child),
+            child: ChildBuilder::from_widget(child),
             scroll_behavior: self.scroll_behavior,
             axis: self.axis,
             key: self.key,
@@ -262,6 +274,7 @@ impl Scrollable {
             vertical_scroll_bar: self.vertical_scroll_bar,
             horizontal_scroll_bar: self.horizontal_scroll_bar,
             web_overscroll: self.web_overscroll,
+            marker: PhantomData,
         }
     }
 
@@ -283,7 +296,7 @@ impl Scrollable {
 /// controller through [`State::adopt_config_from`] while preserving the current
 /// offset and any in-flight drag or animation state.
 pub struct ScrollableState<W: Widget + 'static> {
-    child: Rc<W>,
+    child: ChildBuilder,
     scroll_behavior: ScrollBehavior,
     key_scroll_strength: f32,
     axis: ScrollAxis,
@@ -294,12 +307,16 @@ pub struct ScrollableState<W: Widget + 'static> {
     web_overscroll: OverscrollSources,
     scroll_state: RefCell<Option<Rc<ScrollState>>>,
     refresh_scroll_state: Cell<bool>,
+    /// Keeps one state type per child type, exactly as the previous typed
+    /// child field did, so a viewport whose content type changes starts from a
+    /// fresh scroll engine instead of adopting another viewport's state.
+    marker: PhantomData<W>,
 }
 
 impl<W: Widget + 'static> StatefulWidget for Scrollable<W> {
     type State = ScrollableState<W>;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         ScrollableState {
             key_scroll_strength: self.key_scroll_strength,
             child: self.child.clone(),
@@ -312,12 +329,13 @@ impl<W: Widget + 'static> StatefulWidget for Scrollable<W> {
             web_overscroll: self.web_overscroll,
             scroll_state: RefCell::new(None),
             refresh_scroll_state: Cell::new(false),
+            marker: PhantomData,
         }
     }
 }
 
 impl<W: Widget + 'static> Widget for Scrollable<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, "Scrollable", None)
             .0
             .boxed()
@@ -547,21 +565,21 @@ fn same_scroll_behavior(current: ScrollBehavior, new: ScrollBehavior) -> bool {
         && current.friction == new.friction
 }
 
-struct ScrollableFrame<W: Widget + 'static> {
-    child: Rc<W>,
+struct ScrollableFrame {
+    child: ChildBuilder,
     ctrl: Rc<ScrollState>,
     vertical_scroll_bar: Option<ScrollBar>,
     horizontal_scroll_bar: Option<ScrollBar>,
 }
 
-impl<W: Widget + 'static> Widget for ScrollableFrame<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+impl Widget for ScrollableFrame {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let mut child_ctx = ctx.clone();
         match self.ctrl.axis {
             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
         }
-        let child = self.child.to_element(&child_ctx);
+        let child = self.child.build(&child_ctx);
 
         RawScrollableContainer {
             child,
@@ -577,13 +595,74 @@ impl<W: Widget + 'static> Widget for ScrollableFrame<W> {
 
 #[cfg(test)]
 mod tests {
-    use aimer_widget::{ErrorWidget, State, StatefulWidget};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use aimer_attribute::size::ResolvedSize;
+    use aimer_widget::base::WindowHandle;
+    use aimer_widget::{AnyElement, ErrorWidget, State, StatefulWidget, Widget};
 
     use super::{
-        OverscrollSource, OverscrollSources, ScrollAxis, Scrollable, resolved_overscroll_sources,
+        BuildContext, OverscrollSource, OverscrollSources, ScrollAxis, Scrollable,
+        resolved_overscroll_sources,
     };
 
     fn assert_stateful_widget<W: StatefulWidget>() {}
+
+    /// Content that reports how often it was asked for an element.
+    struct Probe {
+        builds: Rc<Cell<usize>>,
+    }
+
+    impl Widget for Probe {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            self.builds.set(self.builds.get() + 1);
+            ErrorWidget::new("probe").to_element(ctx)
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "Probe"
+        }
+    }
+
+    fn context() -> BuildContext<'static> {
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        BuildContext::new(
+            canvas,
+            ResolvedSize::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        )
+    }
+
+    /// A viewport rebuilds itself on every offset change, and each of those
+    /// rebuilds has to reach the scrolling content again — reusing its element,
+    /// so a nested scroll offset or text selection survives a scroll frame.
+    #[tokio::test]
+    async fn every_rebuild_reaches_the_same_content() {
+        let builds = Rc::new(Cell::new(0));
+        let state = Scrollable::new()
+            .child(Probe {
+                builds: Rc::clone(&builds),
+            })
+            .create_state();
+        let ctx = context();
+
+        state.build(&ctx).to_element(&ctx);
+        state.build(&ctx).to_element(&ctx);
+
+        assert_eq!(
+            builds.get(),
+            1,
+            "scrolling must reuse the content, not rebuild it"
+        );
+    }
 
     #[test]
     fn a_native_viewport_bounces_for_every_device() {

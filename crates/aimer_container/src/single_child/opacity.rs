@@ -67,7 +67,7 @@ impl Default for Opacity {
 }
 
 impl<W: Widget + 'static> Widget for Opacity<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawOpacity {
             child: self.child.to_element(ctx),
             opacity: normalized_opacity(self.opacity),

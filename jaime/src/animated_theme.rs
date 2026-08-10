@@ -25,7 +25,7 @@ pub struct AnimatedThemeExampleState {
 impl StatefulWidget for AnimatedThemeExample {
     type State = AnimatedThemeExampleState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         AnimatedThemeExampleState {
             is_dark: false,
             updater: StateUpdater::empty(),

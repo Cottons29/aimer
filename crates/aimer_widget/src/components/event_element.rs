@@ -241,6 +241,23 @@ pub trait EventElement: VisitorElement {
         false
     }
 
+    /// Returns whether this element confines keyboard focus to its subtree.
+    ///
+    /// A trapping element is a *focus scope*: while it is in the tree, only the
+    /// focusable targets inside it are offered to the focus manager, so `Tab`
+    /// cycles within it and nothing outside it can be given focus. That is what
+    /// a dialog rendered inline needs — a target that is never offered can
+    /// neither be reached nor focused, which is the whole of the confinement.
+    ///
+    /// The innermost trapping element wins, and the owner displaced when the
+    /// scope appeared is restored once it leaves the tree. Overlays that own
+    /// their own dispatch root, such as `aimer_modal`, confine focus with a
+    /// [`FocusTrap`](crate::focus::FocusTrap) instead, because their content is
+    /// not part of the tree they cover.
+    fn traps_focus(&self) -> bool {
+        false
+    }
+
     /// Called when a pointer event hits this element.
     /// Return the independent effects produced while handling it.
     fn on_event(&self, _event: &ElementEvent) -> EventResult {

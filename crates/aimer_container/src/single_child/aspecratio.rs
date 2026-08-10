@@ -92,7 +92,7 @@ impl Default for AspectRatio {
 }
 
 impl<W: Widget> Widget for AspectRatio<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawAspectRatio {
             child: self.child.to_element(ctx),
             aspect_ratio: self.aspect_ratio.abs(),

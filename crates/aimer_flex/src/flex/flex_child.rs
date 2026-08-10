@@ -90,7 +90,7 @@ impl Expanded {
 }
 
 impl<W: Widget + 'static> Widget for Expanded<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawExpanded {
             child: self.child.to_element(ctx),
             flex: self.flex.max(0.0),

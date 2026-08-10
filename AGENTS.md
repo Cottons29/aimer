@@ -45,6 +45,7 @@ This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `e
 | `crates/aimer_utils`     | Shared utilities.                                                |
 | `crates/aimer_animation` | Animation controllers, curves, tweens, keyframes.                |
 | `crates/aimer_events`    | Event system.                                                    |
+| `crates/aimer_focus`     | Keyboard focus ownership and confinement (`FocusNode`, `FocusManager`, `FocusTrap`). |
 | `crates/aimer_router`    | Navigation / routing.                                            |
 | `crates/aimer_inspector` | Widget inspector (unstable).                                     |
 | `crates/aimer_assets`    | Asset loading.                                                   |
@@ -85,6 +86,10 @@ This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `e
   big Rust File.
 - **Avoid Using Third Party If Possible** It's would be good if some small feature can be implemented in local crate.
 - **Apply Zero-Copy Principle if Possible** It's another way to avoid allocation and increase overall performance.
+- **Move your fields in `to_element`, never clone them** `Widget::to_element(self, ctx)` consumes the widget, and the
+  widget is dropped right after the call, so a `.clone()` there is a per-frame allocation nobody reads. A widget that
+  rebuilds *itself* (a button on hover, a viewport on scroll) keeps its child in a `ChildBuilder`, which retains the
+  child's element instead of asking for the widget twice.
 - **In a crate the file should be tidy into their related folder if possible** It's make each crate are look
   organized and easy to maintain rather than a crate/src is full of Rust source file, prefer no mod.rs.
 - **Use `pub use aimer_xxxx as xxxx` when re-export in aimer crate** It makes the Api look clean.
@@ -300,8 +305,15 @@ impl MyWidget {
 
 
 impl<W: Widget + 'static> Widget for MyWidget<W> {
-    fn to_element(self) -> AnyWidget {
-        // implementation here
+    // `to_element` **consumes** the widget: a widget is a short-lived
+    // description and the element it produces is the retained side, so move the
+    // fields into the element instead of cloning them.
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        RawMyWidget {
+            size: self.size,
+            child: self.child.to_element(ctx),
+        }
+        .boxed()
     }
 }
 

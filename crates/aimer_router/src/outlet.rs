@@ -41,7 +41,7 @@ pub struct Outlet;
 
 impl Widget for Outlet {
     #[track_caller]
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let caller = Location::caller();
         let slot = ctx.get_state::<OutletSlot>().unwrap_or_else(|| {
             panic!(

@@ -203,7 +203,7 @@ impl<T, C> DragTarget<T, C> {
 }
 
 impl<T: 'static> Widget for DragTarget<T, HasChild> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::from_widget(self, ctx, "DragTarget", None)
     }
 
@@ -225,7 +225,7 @@ pub struct DragTargetLiveState<T> {
 impl<T: 'static> StatefulWidget for DragTarget<T, HasChild> {
     type State = DragTargetLiveState<T>;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         DragTargetLiveState {
             id: next_target_id(),
             hover: DragTargetState::default(),
@@ -307,7 +307,7 @@ struct TargetGate<T> {
 }
 
 impl<T: 'static> Widget for TargetGate<T> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawDragTarget {
             child: self.child.to_element(ctx),
             logic: self.logic.clone(),

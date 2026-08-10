@@ -8,6 +8,7 @@ use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
 use aimer_macro::Rebuildable;
 use aimer_widget::base::BuildContext;
+use aimer_widget::focus::FocusTrap;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventDispatcher, EventElement, EventResult, LayoutElement,
     PointerKey, RequiredChild, VisitorElement, Widget, broadcast_event,
@@ -244,7 +245,7 @@ impl ModalHost {
 }
 
 impl<W: Widget + 'static> Widget for ModalHost<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawModalHost {
             child: self.child.to_element(ctx),
             overlay: RawModalOverlay::default(),
@@ -453,6 +454,21 @@ struct HostedModal {
     animation: Option<ModalAnimation>,
     timeline: Rc<RefCell<ModalTimeline>>,
     dispatcher: RefCell<EventDispatcher>,
+    focus_trap: RefCell<Option<FocusTrap>>,
+}
+
+impl HostedModal {
+    /// Stops confining keyboard focus to this entry.
+    ///
+    /// Called when dismissal begins rather than when the entry is finally
+    /// dropped: an exit animation is the modal leaving, so the application
+    /// underneath gets its focus owner back while the content fades out instead
+    /// of a few hundred milliseconds later. Releasing twice is harmless, and the
+    /// guard is dropped with the entry in any case, so an entry can never leave
+    /// focus confined to itself after it is gone.
+    fn release_focus_trap(&self) {
+        drop(self.focus_trap.borrow_mut().take());
+    }
 }
 
 fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
@@ -615,18 +631,26 @@ fn process_commands(ctx: &BuildContext) -> bool {
                     }
                     let timeline = Rc::new(RefCell::new(ModalTimeline::new(animation.is_some())));
                     let element = build(ctx, id, timeline.clone());
+                    // A modal is a mode: while it is presented it owns the
+                    // keyboard, and the tree it covers — which dispatches
+                    // separately, and cannot see this content at all — owns
+                    // nothing until the trap is released.
+                    let focus_trap = FocusTrap::acquire();
+                    let dispatcher = EventDispatcher::new().with_focus_trap(focus_trap.id());
                     entries.push(HostedModal {
                         id,
                         element,
                         animation,
                         timeline,
-                        dispatcher: RefCell::new(EventDispatcher::new()),
+                        dispatcher: RefCell::new(dispatcher),
+                        focus_trap: RefCell::new(Some(focus_trap)),
                     });
                     opened = true;
                 }
                 ModalCommand::Dismiss(id) => {
                     if let Some(entry) = entries.iter().find(|entry| entry.id == id) {
                         cancel_hosted_entry(entry);
+                        entry.release_focus_trap();
                         entry
                             .timeline
                             .borrow_mut()
@@ -636,6 +660,7 @@ fn process_commands(ctx: &BuildContext) -> bool {
                 ModalCommand::DismissTop => {
                     if let Some(entry) = entries.last() {
                         cancel_hosted_entry(entry);
+                        entry.release_focus_trap();
                         entry
                             .timeline
                             .borrow_mut()
@@ -700,6 +725,7 @@ mod tests {
     use aimer_events::element::ElementEvent;
     use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
     use aimer_widget::base::BuildContext;
+    use aimer_widget::focus::{FocusNode, FocusTrap, active_focus_trap};
     use aimer_widget::{
         CaptureRequest, Drawable, Element, EventDispatcher, EventElement, EventResult,
         LayoutElement, PointerKey, Rebuildable, VisitorElement,
@@ -707,6 +733,91 @@ mod tests {
 
     use super::{HostedModal, ModalId, ModalTimeline, dispatch_hosted_event};
     use crate::ModalAnimation;
+
+    /// Builds an entry that confines focus, as `process_commands` does.
+    fn trapping_entry(element: aimer_widget::AnyElement) -> HostedModal {
+        let focus_trap = FocusTrap::acquire();
+        let dispatcher = EventDispatcher::new().with_focus_trap(focus_trap.id());
+        HostedModal {
+            id: ModalId(1),
+            element,
+            animation: None,
+            timeline: Rc::new(RefCell::new(ModalTimeline::new(false))),
+            dispatcher: RefCell::new(dispatcher),
+            focus_trap: RefCell::new(Some(focus_trap)),
+        }
+    }
+
+    struct FocusableModalContent {
+        node: FocusNode,
+    }
+
+    impl VisitorElement for FocusableModalContent {
+        fn debug_name(&self) -> &'static str {
+            "FocusableModalContent"
+        }
+    }
+
+    impl EventElement for FocusableModalContent {
+        fn focus_node(&self) -> Option<&FocusNode> {
+            Some(&self.node)
+        }
+    }
+
+    impl LayoutElement for FocusableModalContent {}
+    impl Drawable for FocusableModalContent {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for FocusableModalContent {}
+
+    #[test]
+    fn a_hosted_entry_confines_focus_until_it_is_dismissed() {
+        let entry = trapping_entry(CapturingModalElement {
+            events: Rc::new(Cell::new(0)),
+        }
+        .boxed());
+
+        assert_eq!(
+            active_focus_trap(),
+            entry.dispatcher.borrow().focus_trap(),
+            "the entry dispatches inside the region it traps"
+        );
+
+        entry.release_focus_trap();
+        assert_eq!(active_focus_trap(), None);
+
+        entry.release_focus_trap();
+        assert_eq!(active_focus_trap(), None, "releasing twice is harmless");
+    }
+
+    #[test]
+    fn a_dropped_entry_stops_confining_focus() {
+        let entry = trapping_entry(
+            CapturingModalElement {
+                events: Rc::new(Cell::new(0)),
+            }
+            .boxed(),
+        );
+
+        drop(entry);
+
+        assert_eq!(active_focus_trap(), None);
+    }
+
+    #[test]
+    fn content_of_the_trapping_entry_still_takes_focus() {
+        let node = FocusNode::new();
+        let entry = trapping_entry(FocusableModalContent { node: node.clone() }.boxed());
+
+        node.request_focus();
+        let _ = dispatch_hosted_event(&entry, Vec2d::default(), &ElementEvent::Cancel);
+
+        assert!(
+            node.has_focus(),
+            "a modal confines focus to itself, not away from itself"
+        );
+        assert!(entry.dispatcher.borrow().focused().is_some());
+    }
 
     struct CapturingModalElement {
         events: Rc<Cell<usize>>,
@@ -745,16 +856,12 @@ mod tests {
     #[test]
     fn hosted_modal_routes_capture_outside_until_up() {
         let events = Rc::new(Cell::new(0));
-        let entry = HostedModal {
-            id: ModalId(1),
-            element: CapturingModalElement {
+        let entry = trapping_entry(
+            CapturingModalElement {
                 events: events.clone(),
             }
             .boxed(),
-            animation: None,
-            timeline: Rc::new(RefCell::new(ModalTimeline::new(false))),
-            dispatcher: RefCell::new(EventDispatcher::new()),
-        };
+        );
         let pointer = PointerKey::new(PointerSource::Touch, 4);
         let down = dispatch_hosted_event(
             &entry,

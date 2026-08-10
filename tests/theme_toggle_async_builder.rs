@@ -108,8 +108,8 @@ impl Router for TestRoute {
 }
 
 impl Widget for TestRoute {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        Router::build(self, ctx).to_element(ctx)
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        Router::build(&self, ctx).to_element(ctx)
     }
 }
 
@@ -126,7 +126,7 @@ struct AppShellState {
 impl StatefulWidget for AppShell {
     type State = AppShellState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         AppShellState { dark: false }
     }
 }
@@ -150,7 +150,7 @@ impl State<AppShell> for AppShellState {
 }
 
 impl Widget for AppShell {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, "AppShell", None)
             .0
             .boxed()
@@ -166,7 +166,7 @@ impl Widget for AppShell {
 struct ThemedFrame;
 
 impl Widget for ThemedFrame {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatelessElement::from_builder(
             ctx,
             move |ctx| {
@@ -201,7 +201,7 @@ impl Widget for ThemedFrame {
 struct BlogListPage;
 
 impl Widget for BlogListPage {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatelessElement::from_builder(
             ctx,
             move |ctx| {
@@ -257,7 +257,7 @@ fn blog_list_content(snapshot: &AsyncSnapshot<u32, String>) -> AnyWidget {
 struct LearnPage;
 
 impl Widget for LearnPage {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatelessElement::from_builder(
             ctx,
             move |ctx| {
@@ -316,7 +316,7 @@ impl Marker {
 }
 
 impl Widget for Marker {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         MarkerElement {
             label: self.label,
             child: SizedBox::new().height(self.height).to_element(ctx),

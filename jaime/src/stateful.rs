@@ -44,7 +44,7 @@ pub struct CounterState {
 impl StatefulWidget for CounterWidget {
     type State = CounterState;
 
-    fn create_state(&self) -> CounterState {
+    fn create_state(self) -> CounterState {
         CounterState {
             count: self.initial_count,
             updater: StateUpdater::empty(),

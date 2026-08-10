@@ -91,7 +91,7 @@ where
 {
     type State = ImplicitAnimatedState<T>;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         ImplicitAnimatedState {
             target: self.value.clone(),
             current: Rc::new(LocalCell::new(self.value.clone())),
@@ -113,8 +113,9 @@ where
         self.widget_key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "ImplicitAnimatedBuilder", self.key())
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let __key = Widget::key(&self);
+        StatefulElement::new_with_name(self, ctx, "ImplicitAnimatedBuilder", __key)
             .0
             .boxed()
     }
@@ -184,7 +185,7 @@ struct ImplicitAnimatedFrame<T: Animatable + Clone + 'static> {
 }
 
 impl<T: Animatable + Clone + 'static> Widget for ImplicitAnimatedFrame<T> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let value = self.current.with(Clone::clone);
         let child = (self.builder)(&value, ctx);
         ImplicitAnimatedElement {
@@ -311,7 +312,7 @@ mod tests {
     }
 
     impl Widget for TestWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             TestElement.boxed()
         }
     }

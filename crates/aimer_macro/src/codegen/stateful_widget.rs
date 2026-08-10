@@ -66,8 +66,11 @@ fn stateful_widget_impl(item_struct: &ItemStruct) -> TokenStream {
         impl #impl_generics aimer::widget::Widget for #struct_name #ty_generics #where_clause {
             #key_method
 
-            fn to_element(&self, ctx: &widget::base::BuildContext) -> aimer::widget::AnyElement {
-                aimer::widget::StatefulElement::from_widget(self, ctx, stringify!(#struct_name), #key_pass)
+            fn to_element(self, ctx: &widget::base::BuildContext) -> aimer::widget::AnyElement {
+                // The key is read before the widget is handed over, because the
+                // element takes it by value and moves its props into the state.
+                let __key = #key_pass;
+                aimer::widget::StatefulElement::from_widget(self, ctx, stringify!(#struct_name), __key)
             }
             fn debug_name(&self) -> &'static str {
                 stringify!(#struct_name)

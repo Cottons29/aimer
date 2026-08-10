@@ -1,20 +1,57 @@
-use std::rc::Rc;
-
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_attribute::size::ResolvedSize;
 
 use crate::base::BuildContext;
 use crate::{AnyElement, AnyWidget};
 
+pub mod child_builder;
 mod recovery;
 pub mod stateful;
 pub mod stateless;
 
+/// A configuration value that produces exactly one element.
+///
+/// # Consuming conversion
+///
+/// [`Widget::to_element`] takes `self` by value, because a widget is the
+/// short-lived side of the tree: it is created inside a `build`, converted on
+/// the next line, and dropped immediately afterwards, while the [`AnyElement`]
+/// it produced is retained across frames. Nothing reads the widget after the
+/// conversion, so an implementation should **move** its fields into the element
+/// rather than clone them — a decorated container therefore costs no allocation
+/// per build, and a widget does not have to be [`Clone`] at all.
+///
+/// # Example
+///
+/// ```
+/// use aimer_widget::base::BuildContext;
+/// use aimer_widget::{AnyElement, Widget};
+///
+/// // Deliberately not `Clone`: nothing copies a widget.
+/// struct Label(String);
+///
+/// impl Widget for Label {
+///     fn to_element(self, ctx: &BuildContext) -> AnyElement {
+///         // The string is moved into the element that keeps it.
+///         aimer_widget::ErrorWidget::new(&self.0).to_element(ctx)
+///     }
+/// }
+///
+/// let widget = Label(String::from("Aimer")).boxed();
+/// assert!(widget.is_inline());
+/// ```
 pub trait Widget {
     fn key(&self) -> Option<crate::key::Key> {
         None
     }
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement;
+
+    /// Consumes this widget and produces its element.
+    ///
+    /// The widget is gone once this returns, so an implementation moves its
+    /// fields into the element instead of cloning them.
+    fn to_element(self, ctx: &BuildContext) -> AnyElement
+    where
+        Self: Sized;
 
     fn debug_name(&self) -> &'static str {
         "Unknown"
@@ -40,27 +77,117 @@ pub trait Widget {
     }
 }
 
+/// The object-safe half of [`Widget`].
+///
+/// A consuming `fn to_element(self, ..)` cannot appear in a vtable: `dyn Widget`
+/// has no size, so it cannot be passed by value. The erased handle still has to
+/// convert whatever it holds, which leaves one way out — move the concrete value
+/// out of its storage behind the erasure, then call the concrete method on the
+/// moved value. [`DynWidget::to_element_in_place`] performs that move, because
+/// it is implemented for every *sized* `W: Widget` and therefore knows the type
+/// `dyn Widget` has forgotten.
+///
+/// This trait is an implementation detail of the erasure and is never written by
+/// hand: the blanket implementation below covers every widget.
+#[doc(hidden)]
+pub trait DynWidget: 'static {
+    /// Moves the widget out of `self` and converts it.
+    ///
+    /// # Safety
+    ///
+    /// The pointee is left uninitialized and must never be read or dropped
+    /// again. The only caller is [`AnyWidgetExt::into_element`], which marks the
+    /// storage vacant before this runs.
+    unsafe fn to_element_in_place(&mut self, ctx: &BuildContext) -> AnyElement;
+
+    /// Forwards [`Widget::key`].
+    ///
+    /// The forwarding methods are named apart from the ones they forward to, so
+    /// that a widget reached through an [`AnyWidget`] never makes a plain
+    /// `widget.key()` ambiguous at a call site that has both traits in scope.
+    fn dyn_key(&self) -> Option<crate::key::Key>;
+
+    /// Forwards [`Widget::debug_name`].
+    fn dyn_debug_name(&self) -> &'static str;
+
+    /// Forwards [`Widget::text_content`].
+    fn dyn_text_content(&self) -> Option<&str>;
+}
+
+impl<W: Widget + 'static> DynWidget for W {
+    #[inline]
+    unsafe fn to_element_in_place(&mut self, ctx: &BuildContext) -> AnyElement {
+        // SAFETY: The caller marked the storage vacant, so this bit copy is the
+        // single remaining owner of the widget and the value is never dropped
+        // in place. The borrow is exclusive, so nothing observes the
+        // uninitialized bytes left behind.
+        let widget = unsafe { std::ptr::read(self as *mut W) };
+        widget.to_element(ctx)
+    }
+
+    #[inline]
+    fn dyn_key(&self) -> Option<crate::key::Key> {
+        Widget::key(self)
+    }
+
+    #[inline]
+    fn dyn_debug_name(&self) -> &'static str {
+        Widget::debug_name(self)
+    }
+
+    #[inline]
+    fn dyn_text_content(&self) -> Option<&str> {
+        Widget::text_content(self)
+    }
+}
+
 // SAFETY: The template is `null::<W>()` coerced to the target, so it carries
 // exactly `W`'s vtable and a null data address.
-unsafe impl<W: Widget + 'static> aimer_rubick::ErasedFrom<W> for dyn Widget {
-    const TEMPLATE: *const Self = std::ptr::null::<W>() as *const dyn Widget;
+unsafe impl<W: DynWidget> aimer_rubick::ErasedFrom<W> for dyn DynWidget {
+    const TEMPLATE: *const Self = std::ptr::null::<W>() as *const dyn DynWidget;
+}
+
+/// Builds the element of an erased widget.
+///
+/// [`AnyWidget`] is a type alias for an [`aimer_rubick::Rubick`] owner, so the
+/// conversion arrives as an extension trait rather than an inherent method.
+pub trait AnyWidgetExt {
+    /// Consumes this handle and builds the widget's element.
+    ///
+    /// The widget is moved out of its storage, converted, and the storage is
+    /// returned to the pool. Nothing is cloned, and the widget's destructor runs
+    /// exactly once — inside [`Widget::to_element`], on whatever that method
+    /// chooses not to keep — including when the conversion unwinds.
+    fn into_element(self, ctx: &BuildContext) -> AnyElement;
+}
+
+impl AnyWidgetExt for AnyWidget {
+    #[inline]
+    fn into_element(self, ctx: &BuildContext) -> AnyElement {
+        // SAFETY: `take` installs the vacant operation table before the closure
+        // runs and releases the pooled block afterwards, on both the normal and
+        // the unwinding path. The closure moves the widget out exactly once and
+        // never drops it in place, which is the contract `take` requires.
+        unsafe { self.take(|widget| (*widget).to_element_in_place(ctx)) }
+    }
 }
 
 impl Widget for AnyWidget {
     fn key(&self) -> Option<crate::key::Key> {
-        self.as_ref().key()
+        self.as_ref().dyn_key()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        self.as_ref().to_element(ctx)
+    #[inline]
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        self.into_element(ctx)
     }
 
     fn debug_name(&self) -> &'static str {
-        self.as_ref().debug_name()
+        self.as_ref().dyn_debug_name()
     }
 
     fn text_content(&self) -> Option<&str> {
-        self.as_ref().text_content()
+        self.as_ref().dyn_text_content()
     }
 
     /// Returns this owner unchanged.
@@ -76,36 +203,6 @@ impl Widget for AnyWidget {
     {
         self
     }
-}
-
-impl Widget for Box<dyn Widget> {
-    fn key(&self) -> Option<crate::key::Key> {
-        self.as_ref().key()
-    }
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        self.as_ref().to_element(ctx)
-    }
-    fn debug_name(&self) -> &'static str {
-        self.as_ref().debug_name()
-    }
-    // fn text_content(&self) -> Option<&str> {
-    //     self.as_ref().text_content()
-    // }
-}
-
-impl Widget for Rc<dyn Widget> {
-    fn key(&self) -> Option<crate::key::Key> {
-        self.as_ref().key()
-    }
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        self.as_ref().to_element(ctx)
-    }
-    fn debug_name(&self) -> &'static str {
-        self.as_ref().debug_name()
-    }
-    // fn text_content(&self) -> Option<&str> {
-    //     self.as_ref().text_content()
-    // }
 }
 
 /// Draw a colored bounding box + label at the current canvas transform origin.
@@ -167,6 +264,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+    use crate::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement};
 
     /// Payload bytes an [`AnyWidget`] holds without allocating.
     const WIDGET_CAPACITY: usize = AnyWidget::INLINE_CAPACITY;
@@ -174,7 +272,7 @@ mod tests {
     struct StorageWidget<const N: usize>([u8; N]);
 
     impl<const N: usize> Widget for StorageWidget<N> {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             panic!("storage contract test does not build an element")
         }
 
@@ -192,8 +290,8 @@ mod tests {
         assert!(heap.is_heap());
 
         let owners = std::hint::black_box([inline, heap]);
-        assert_eq!(owners[0].debug_name(), "StorageWidget");
-        assert_eq!(owners[1].debug_name(), "StorageWidget");
+        assert_eq!(Widget::debug_name(&owners[0]), "StorageWidget");
+        assert_eq!(Widget::debug_name(&owners[1]), "StorageWidget");
     }
 
     #[test]
@@ -226,17 +324,17 @@ mod tests {
             inline.is_inline(),
             "re-erasing must not wrap the owner in another owner"
         );
-        assert_eq!(inline.debug_name(), "StorageWidget");
+        assert_eq!(Widget::debug_name(&inline), "StorageWidget");
 
         // A heap payload keeps its allocation across owner moves, so its
         // address proves that no second erasure took place.
         let heap = StorageWidget([0; WIDGET_CAPACITY + 1]).boxed();
-        let address = heap.as_ref() as *const dyn Widget as *const u8;
+        let address = heap.as_ref() as *const dyn DynWidget as *const u8;
         let heap = heap.boxed();
 
         assert!(heap.is_heap());
         assert_eq!(
-            heap.as_ref() as *const dyn Widget as *const u8,
+            heap.as_ref() as *const dyn DynWidget as *const u8,
             address,
             "the payload must not be re-erased into a new allocation"
         );
@@ -254,7 +352,7 @@ mod tests {
     }
 
     impl<const N: usize> Widget for DroppingWidget<N> {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             panic!("drop contract test does not build an element")
         }
     }
@@ -279,5 +377,232 @@ mod tests {
         }
 
         assert_eq!(drops.get(), 2);
+    }
+
+    /// Records its own destruction, so a test can count how many times the
+    /// value behind an erased widget is destroyed.
+    struct DropRecorder {
+        drops: Rc<Cell<usize>>,
+    }
+
+    impl Drop for DropRecorder {
+        fn drop(&mut self) {
+            self.drops.set(self.drops.get() + 1);
+        }
+    }
+
+    fn recorder(drops: &Rc<Cell<usize>>) -> DropRecorder {
+        DropRecorder {
+            drops: Rc::clone(drops),
+        }
+    }
+
+    /// A widget that is deliberately neither [`Clone`] nor [`Copy`], so the
+    /// conversion has no way to reproduce it: whatever the element ends up
+    /// holding must be the very value that was erased.
+    struct Moved {
+        recorder: DropRecorder,
+        label: String,
+        observed: Rc<Cell<*const u8>>,
+    }
+
+    /// Keeps the widget's fields alive, which is all the ownership tests ask of
+    /// an element.
+    struct MovedElement {
+        _recorder: DropRecorder,
+        _label: String,
+    }
+
+    impl VisitorElement for MovedElement {
+        fn debug_name(&self) -> &'static str {
+            "MovedElement"
+        }
+    }
+
+    impl Drawable for MovedElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl EventElement for MovedElement {}
+    impl LayoutElement for MovedElement {}
+    impl Rebuildable for MovedElement {}
+
+    impl Widget for Moved {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            self.observed.set(self.label.as_ptr());
+            MovedElement {
+                _recorder: self.recorder,
+                _label: self.label,
+            }
+            .boxed()
+        }
+    }
+
+    /// A widget too wide for inline storage, so its payload is pooled.
+    struct Wide {
+        recorder: DropRecorder,
+        _bytes: [usize; 8],
+    }
+
+    impl Widget for Wide {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            MovedElement {
+                _recorder: self.recorder,
+                _label: String::new(),
+            }
+            .boxed()
+        }
+    }
+
+    /// A widget whose conversion fails *after* the move has happened, which is
+    /// the only window in which the value is owned by neither its storage nor
+    /// its element.
+    #[cfg(panic = "unwind")]
+    struct Failing {
+        _recorder: DropRecorder,
+    }
+
+    #[cfg(panic = "unwind")]
+    impl Widget for Failing {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            panic!("exercise an unwind out of to_element");
+        }
+    }
+
+    /// Address of the payload behind an erased widget.
+    fn payload_address(widget: &AnyWidget) -> *const u8 {
+        widget.as_ref() as *const dyn DynWidget as *const u8
+    }
+
+    fn context() -> BuildContext<'static> {
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        BuildContext::new(
+            canvas,
+            Default::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            crate::base::WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        )
+    }
+
+    #[tokio::test]
+    async fn building_an_erased_widget_moves_it_instead_of_copying_it() {
+        let drops = Rc::new(Cell::new(0));
+        let observed = Rc::new(Cell::new(std::ptr::null()));
+        let widget = Moved {
+            recorder: recorder(&drops),
+            label: String::from("Aimer"),
+            observed: Rc::clone(&observed),
+        };
+        let buffer = widget.label.as_ptr();
+
+        let element = widget.boxed().into_element(&context());
+
+        assert_eq!(element.debug_name(), "MovedElement");
+        assert_eq!(
+            observed.get(),
+            buffer,
+            "the string buffer travelled through the erasure without being copied"
+        );
+        assert_eq!(
+            drops.get(),
+            0,
+            "the widget's fields were moved into the element, not copied and destroyed"
+        );
+    }
+
+    #[tokio::test]
+    async fn building_a_pooled_widget_returns_its_block() {
+        let drops = Rc::new(Cell::new(0));
+        let widget = Wide {
+            recorder: recorder(&drops),
+            _bytes: [0; 8],
+        }
+        .boxed();
+        assert!(widget.is_heap(), "the fixture must exercise pooled storage");
+        let block = payload_address(&widget);
+
+        let element = widget.into_element(&context());
+        assert_eq!(element.debug_name(), "MovedElement");
+
+        let rebuilt = Wide {
+            recorder: recorder(&drops),
+            _bytes: [0; 8],
+        }
+        .boxed();
+
+        assert_eq!(
+            payload_address(&rebuilt),
+            block,
+            "a consumed widget must hand its block back to the pool"
+        );
+        assert_eq!(drops.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_built_widget_is_destroyed_exactly_once() {
+        let drops = Rc::new(Cell::new(0));
+        let element = Moved {
+            recorder: recorder(&drops),
+            label: String::from("built"),
+            observed: Rc::new(Cell::new(std::ptr::null())),
+        }
+        .boxed()
+        .into_element(&context());
+
+        assert_eq!(drops.get(), 0, "the element owns the moved value");
+        drop(element);
+        assert_eq!(drops.get(), 1, "the moved value is destroyed exactly once");
+    }
+
+    #[cfg(panic = "unwind")]
+    #[tokio::test]
+    async fn a_panicking_conversion_destroys_the_widget_exactly_once() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        let drops = Rc::new(Cell::new(0));
+        let ctx = context();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            Failing {
+                _recorder: recorder(&drops),
+            }
+            .boxed()
+            .into_element(&ctx)
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(
+            drops.get(),
+            1,
+            "the moved widget is destroyed by the unwind and never again by its storage"
+        );
+    }
+
+    #[tokio::test]
+    async fn nested_handles_collapse_into_one_element() {
+        let drops = Rc::new(Cell::new(0));
+        let widget = Moved {
+            recorder: recorder(&drops),
+            label: String::from("nested"),
+            observed: Rc::new(Cell::new(std::ptr::null())),
+        }
+        .boxed()
+        .boxed();
+
+        let element = widget.into_element(&context());
+
+        assert_eq!(element.debug_name(), "MovedElement");
+        assert_eq!(drops.get(), 0);
+        drop(element);
+        assert_eq!(
+            drops.get(),
+            1,
+            "re-erasing must not add a second owner of the same value"
+        );
     }
 }

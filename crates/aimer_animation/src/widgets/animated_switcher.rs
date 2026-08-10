@@ -1,5 +1,5 @@
 use std::cell::UnsafeCell;
-use std::rc::Rc;
+use std::marker::PhantomData;
 use std::time::Duration;
 
 use aimer_attribute::position::Vec2d;
@@ -7,8 +7,8 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, Key, LayoutElement, Rebuildable,
-    State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
+    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -42,29 +42,40 @@ fn request_next_frame() {
 ///                           ErrorWidget::new("Current page")).child_key("current-page");
 /// ```
 pub struct AnimatedSwitcher<T: Widget + 'static> {
-    pub child: Rc<T>,
+    /// The subtree to show, kept as a builder because a cross-fade rebuilds it
+    /// once per frame, for as long as the fade lasts.
+    pub child: ChildBuilder,
     pub duration: Duration,
     pub curve: Curve,
     /// Optional separate curve for the outgoing child. Defaults to `curve`.
     pub switch_out_curve: Option<Curve>,
     transition_key: Option<Key>,
     widget_key: Option<Key>,
+    /// The child's type, which the builder erases.
+    ///
+    /// The switcher's state is bound to it, so switchers that show different
+    /// kinds of child stay distinct types and never reconcile onto each
+    /// other's state.
+    marker: PhantomData<T>,
 }
 
-impl<T: Widget> AnimatedSwitcher<T> {
+impl<T: Widget + 'static> AnimatedSwitcher<T> {
     /// Creates a switcher with the incoming `curve` and transition `duration`.
     ///
     /// The outgoing child uses the same curve unless
     /// [`with_switch_out_curve`](Self::with_switch_out_curve) is called. The
-    /// child's own [`Widget::key`] is used as its identity by default.
+    /// child's own [`Widget::key`] is used as its identity by default; the
+    /// builder the child is stored in reports that key as its own.
+    #[inline]
     pub fn new(duration: Duration, curve: Curve, child: T) -> Self {
         Self {
-            child: Rc::new(child),
+            child: ChildBuilder::from_widget(child),
             duration,
             curve,
             switch_out_curve: None,
             transition_key: None,
             widget_key: None,
+            marker: PhantomData,
         }
     }
 
@@ -72,6 +83,7 @@ impl<T: Widget> AnimatedSwitcher<T> {
     ///
     /// If omitted, the incoming [`curve`](Self::curve) is used for both
     /// directions.
+    #[inline]
     pub fn with_switch_out_curve(mut self, curve: Curve) -> Self {
         self.switch_out_curve = Some(curve);
         self
@@ -79,6 +91,7 @@ impl<T: Widget> AnimatedSwitcher<T> {
 
     /// Sets the child identity used to decide whether a transition is needed.
     /// This is useful when the child widget itself does not expose a key.
+    #[inline]
     pub fn child_key(mut self, key: impl Into<Key>) -> Self {
         self.transition_key = Some(key.into());
         self
@@ -88,6 +101,7 @@ impl<T: Widget> AnimatedSwitcher<T> {
     ///
     /// This is independent of [`child_key`](Self::child_key), which controls
     /// whether the children cross-fade.
+    #[inline]
     pub fn key(mut self, key: impl Into<Key>) -> Self {
         self.widget_key = Some(key.into());
         self
@@ -97,7 +111,7 @@ impl<T: Widget> AnimatedSwitcher<T> {
 impl<T: Widget + 'static> StatefulWidget for AnimatedSwitcher<T> {
     type State = AnimatedSwitcherState<T>;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         let in_controller = AnimationController::new(self.duration, self.curve);
         in_controller.set_value(1.0);
         AnimatedSwitcherState {
@@ -113,6 +127,7 @@ impl<T: Widget + 'static> StatefulWidget for AnimatedSwitcher<T> {
                 self.switch_out_curve.unwrap_or(self.curve),
             ),
             updater: StateUpdater::empty(),
+            marker: PhantomData,
         }
     }
 }
@@ -122,8 +137,9 @@ impl<T: Widget + 'static> Widget for AnimatedSwitcher<T> {
         self.widget_key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "AnimatedSwitcher", self.key())
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let __key = Widget::key(&self);
+        StatefulElement::new_with_name(self, ctx, "AnimatedSwitcher", __key)
             .0
             .boxed()
     }
@@ -131,8 +147,8 @@ impl<T: Widget + 'static> Widget for AnimatedSwitcher<T> {
 
 #[doc(hidden)]
 pub struct AnimatedSwitcherState<T: Widget + 'static> {
-    current_child: Rc<T>,
-    old_child: Option<Rc<T>>,
+    current_child: ChildBuilder,
+    old_child: Option<ChildBuilder>,
     child_key: Option<Key>,
     duration: Duration,
     curve: Curve,
@@ -140,6 +156,7 @@ pub struct AnimatedSwitcherState<T: Widget + 'static> {
     in_controller: AnimationController,
     out_controller: AnimationController,
     updater: StateUpdater<Self>,
+    marker: PhantomData<T>,
 }
 
 impl<T: Widget + 'static> State<AnimatedSwitcher<T>> for AnimatedSwitcherState<T> {
@@ -184,18 +201,18 @@ impl<T: Widget + 'static> State<AnimatedSwitcher<T>> for AnimatedSwitcherState<T
     }
 }
 
-struct AnimatedSwitcherFrame<T: Widget + 'static> {
-    current_child: Rc<T>,
-    old_child: Option<Rc<T>>,
+struct AnimatedSwitcherFrame {
+    current_child: ChildBuilder,
+    old_child: Option<ChildBuilder>,
     in_controller: AnimationController,
     out_controller: AnimationController,
 }
 
-impl<T: Widget + 'static> Widget for AnimatedSwitcherFrame<T> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+impl Widget for AnimatedSwitcherFrame {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         AnimatedSwitcherElement {
-            current_child: self.current_child.to_element(ctx),
-            old_child: UnsafeCell::new(self.old_child.as_ref().map(|child| child.to_element(ctx))),
+            current_child: self.current_child.build(ctx),
+            old_child: UnsafeCell::new(self.old_child.as_ref().map(|child| child.build(ctx))),
             in_controller: self.in_controller.clone(),
             out_controller: self.out_controller.clone(),
         }
@@ -315,7 +332,7 @@ mod tests {
             Some(Key::Value(self.0.to_owned()))
         }
 
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             panic!("not needed for state lifecycle tests")
         }
     }
@@ -369,6 +386,166 @@ mod tests {
         assert!(!current.out_controller.is_animating());
     }
 
+    // ─── Both children are *built* again on every frame of a transition ────
+    //
+    // A cross-fade paints two subtrees, and the switcher rebuilds itself on
+    // each frame of it, so each of those frames has to reach both the outgoing
+    // and the incoming child again. Holding the children as values would let
+    // the first frame consume them; the retained child the switcher stores
+    // instead keeps them reachable, and reaches the *same* element every time
+    // rather than building another one — which is why these tests count
+    // children in the tree instead of counting builds.
+    mod reaches_both_children {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        use aimer_attribute::size::ResolvedSize;
+        use aimer_widget::ErrorWidget;
+        use aimer_widget::base::WindowHandle;
+
+        use super::*;
+
+        /// A child that counts how many times it was asked for an element.
+        struct Probe {
+            key: &'static str,
+            builds: Rc<Cell<usize>>,
+        }
+
+        impl Widget for Probe {
+            fn key(&self) -> Option<Key> {
+                Some(Key::Static(self.key))
+            }
+
+            fn to_element(self, ctx: &BuildContext) -> AnyElement {
+                self.builds.set(self.builds.get() + 1);
+                ErrorWidget::new("probe").to_element(ctx)
+            }
+
+            fn debug_name(&self) -> &'static str {
+                "Probe"
+            }
+        }
+
+        fn context() -> BuildContext<'static> {
+            let canvas = {
+                let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+                aimer_canvas::Canvas::new(inner)
+            };
+            BuildContext::new(
+                canvas,
+                ResolvedSize::default(),
+                1.0,
+                Default::default(),
+                Default::default(),
+                WindowHandle::headless(Default::default(), 1.0),
+                tokio::runtime::Handle::current(),
+            )
+        }
+
+        fn switcher(key: &'static str, builds: &Rc<Cell<usize>>) -> AnimatedSwitcher<Probe> {
+            switcher_lasting(Duration::from_millis(100), key, builds)
+        }
+
+        fn switcher_lasting(
+            duration: Duration,
+            key: &'static str,
+            builds: &Rc<Cell<usize>>,
+        ) -> AnimatedSwitcher<Probe> {
+            AnimatedSwitcher::new(
+                duration,
+                Curve::Linear,
+                Probe {
+                    key,
+                    builds: Rc::clone(builds),
+                },
+            )
+        }
+
+        /// Returns how many probes a tree reaches.
+        ///
+        /// A probe is counted where the walk runs out of children: a retained
+        /// child is reached through a proxy that reports the child's own name,
+        /// so only the leaf itself is the child, and its holders are the path
+        /// to it.
+        fn probe_count(element: &dyn aimer_widget::Element) -> usize {
+            let mut children = 0;
+            let mut probes = 0;
+            element.visit_children(&mut |child| {
+                children += 1;
+                probes += probe_count(child);
+            });
+            if children == 0 {
+                return usize::from(element.debug_name() == "ErrorWidget");
+            }
+            probes
+        }
+
+        #[tokio::test]
+        async fn every_frame_of_a_transition_reaches_the_outgoing_and_incoming_child() {
+            test_frame_requester::install();
+            test_frame_requester::reset();
+            let ctx = context();
+            let outgoing = Rc::new(Cell::new(0));
+            let incoming = Rc::new(Cell::new(0));
+
+            let mut current = switcher("home", &outgoing).create_state();
+            current.adopt_config_from(&switcher("docs", &incoming).create_state());
+
+            assert!(
+                current.out_controller.is_animating(),
+                "a changed child key has to start the cross-fade"
+            );
+
+            for frame in 1..=3 {
+                let tree = current.build(&ctx).to_element(&ctx);
+
+                assert_eq!(
+                    probe_count(tree.as_ref()),
+                    2,
+                    "frame {frame} of the cross-fade must reach both children"
+                );
+                assert_eq!(
+                    (outgoing.get(), incoming.get()),
+                    (1, 1),
+                    "frame {frame} must reuse those children, not rebuild them"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn a_finished_transition_stops_reaching_the_outgoing_child() {
+            test_frame_requester::install();
+            test_frame_requester::reset();
+            let ctx = context();
+            let outgoing = Rc::new(Cell::new(0));
+            let incoming = Rc::new(Cell::new(0));
+
+            let quick = Duration::from_millis(1);
+            let mut current = switcher_lasting(quick, "home", &outgoing).create_state();
+            current.adopt_config_from(&switcher_lasting(quick, "docs", &incoming).create_state());
+
+            // Run the fade to its end: the first tick starts the clock, the
+            // second one arrives after the duration has elapsed.
+            current.out_controller.tick(AnimInstant::now());
+            std::thread::sleep(Duration::from_millis(10));
+            current.out_controller.tick(AnimInstant::now());
+            assert!(!current.out_controller.is_animating());
+
+            let tree = current.build(&ctx).to_element(&ctx);
+
+            assert_eq!(
+                probe_count(tree.as_ref()),
+                1,
+                "once the fade is over the outgoing child leaves the tree"
+            );
+            assert_eq!(
+                (outgoing.get(), incoming.get()),
+                (0, 1),
+                "a child that never reached a frame is never built, and one that                  did is built once"
+            );
+        }
+    }
+
     // ─── End-to-end draw test: a keyed switcher across a "route" change ────
     //
     // Reproduces the website router: a top-level stateful widget rebuilds a
@@ -414,7 +591,7 @@ mod tests {
             drawn: Rc<RefCell<Vec<&'static str>>>,
         }
         impl Widget for RecordingPage {
-            fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+            fn to_element(self, _ctx: &BuildContext) -> AnyElement {
                 RecordingLeaf {
                     label: self.label,
                     drawn: self.drawn.clone(),
@@ -442,7 +619,7 @@ mod tests {
         }
         impl StatefulWidget for RouterMock {
             type State = RouterMockState;
-            fn create_state(&self) -> Self::State {
+            fn create_state(self) -> Self::State {
                 RouterMockState {
                     route: 0,
                     drawn: self.drawn.clone(),
@@ -511,7 +688,7 @@ mod tests {
             let drawn: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
 
             let (router, updater) = StatefulElement::new_with_name(
-                &RouterMock {
+                RouterMock {
                     drawn: drawn.clone(),
                 },
                 &ctx,

@@ -106,12 +106,11 @@ impl SizedBox {
 }
 
 impl<W: Widget + 'static> Widget for SizedBox<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child = self
             .child
-            .as_ref()
             .map(|child| child.to_element(ctx))
-            .unwrap_or(ZeroSizedBox.to_element(ctx));
+            .unwrap_or_else(|| ZeroSizedBox.to_element(ctx));
         RawSizedBox {
             width: self.width,
             height: self.height,

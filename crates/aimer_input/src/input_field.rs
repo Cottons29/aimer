@@ -139,7 +139,7 @@ pub struct TextField {
 impl StatefulWidget for TextField {
     type State = TextFieldState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         self.create_state_with_config(self.config())
     }
 }
@@ -149,8 +149,9 @@ impl Widget for TextField {
         self.widget_key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "TextField", self.key())
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let __key = Widget::key(&self);
+        StatefulElement::new_with_name(self, ctx, "TextField", __key)
             .0
             .boxed()
     }

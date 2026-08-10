@@ -1,12 +1,13 @@
 use std::cell::Cell;
 use std::future::Future;
+use std::marker::PhantomData;
 use std::rc::Rc;
 
 use aimer_container::Container;
 use aimer_style::BoxDecoration;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    AnyElement, AnyWidget, Key, RequiredChild, State, StateUpdater, StatefulElement,
+    AnyElement, AnyWidget, ChildBuilder, Key, RequiredChild, State, StateUpdater, StatefulElement,
     StatefulWidget, Widget,
 };
 
@@ -50,8 +51,16 @@ pub struct Button<W = RequiredChild> {
     pub on_right_press: VoidCallback,
     pub decoration: BoxDecoration,
     pub is_disabled: bool,
-    child: Rc<W>,
+    /// The subtree inside the button, kept as a builder because the button
+    /// rebuilds itself on hover and press and needs the same child each time.
+    child: ChildBuilder,
     widget_key: Option<Key>,
+    /// Records which child type completed the builder without storing it.
+    ///
+    /// The child itself is erased into [`ChildBuilder`], but the parameter has
+    /// to survive so that a button without a child stays
+    /// `Button<RequiredChild>` — a type that is deliberately not a [`Widget`].
+    marker: PhantomData<W>,
 }
 
 /// Mounted state used internally by [`Button`].
@@ -72,7 +81,11 @@ pub struct ButtonState<W: Widget + 'static> {
     pub decoration: BoxDecoration,
     current_state: Rc<Cell<PointerState>>,
     state_updater: StateUpdater<Self>,
-    child: Rc<W>,
+    child: ChildBuilder,
+    /// Keeps one state type per child type, exactly as the previous typed
+    /// child field did, so a button whose child type changes is rebuilt from
+    /// scratch rather than adopting the state of a different button.
+    marker: PhantomData<W>,
 }
 
 impl Default for Button {
@@ -91,8 +104,9 @@ impl Button {
             on_right_press: VoidCallback::default(),
             decoration: BoxDecoration::default(),
             is_disabled: false,
-            child: Rc::new(RequiredChild),
+            child: ChildBuilder::required(),
             widget_key: None,
+            marker: PhantomData,
         }
     }
 }
@@ -218,7 +232,7 @@ impl<W> Button<W> {
     /// Builder settings made before this call are preserved. A button without a
     /// child is only an intermediate builder and does not implement
     /// [`Widget`].
-    pub fn child<C: Widget>(self, child: C) -> Button<C> {
+    pub fn child<C: Widget + 'static>(self, child: C) -> Button<C> {
         Button {
             on_press: self.on_press,
             on_long_press: self.on_long_press,
@@ -226,8 +240,9 @@ impl<W> Button<W> {
             on_right_press: self.on_right_press,
             decoration: self.decoration,
             is_disabled: self.is_disabled,
-            child: Rc::new(child),
+            child: ChildBuilder::from_widget(child),
             widget_key: self.widget_key,
+            marker: PhantomData,
         }
     }
 
@@ -246,7 +261,7 @@ impl<W> Button<W> {
 impl<W: Widget + 'static> StatefulWidget for Button<W> {
     type State = ButtonState<W>;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         ButtonState {
             is_hover: false,
             is_pressed: false,
@@ -259,6 +274,7 @@ impl<W: Widget + 'static> StatefulWidget for Button<W> {
             current_state: Rc::new(Cell::new(PointerState::Outside)),
             child: self.child.clone(),
             is_disabled: self.is_disabled,
+            marker: PhantomData,
         }
     }
 }
@@ -268,8 +284,9 @@ impl<W: Widget + 'static> Widget for Button<W> {
         self.widget_key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "Button", self.key())
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let __key = Widget::key(&self);
+        StatefulElement::new_with_name(self, ctx, "Button", __key)
             .0
             .boxed()
     }
@@ -317,9 +334,7 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
         if self.is_disabled {
             decor.background_color = Option::from(Color::BLACK.with_opacity(120));
         }
-        let child = Container::new()
-            .box_decoration(decor)
-            .child(child as Rc<dyn Widget>);
+        let child = Container::new().box_decoration(decor).child(child);
 
         if self.is_disabled {
             return child.boxed();
@@ -384,9 +399,70 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
 
 #[cfg(test)]
 mod tests {
-    use aimer_widget::{Key, Widget};
+    use std::cell::Cell;
+    use std::rc::Rc;
 
-    use super::Button;
+    use aimer_attribute::size::ResolvedSize;
+    use aimer_widget::base::WindowHandle;
+    use aimer_widget::{AnyElement, ErrorWidget, Key, State, StatefulWidget, Widget};
+
+    use super::{Button, BuildContext};
+
+    /// A child that reports how often it was asked for an element.
+    struct Probe {
+        builds: Rc<Cell<usize>>,
+    }
+
+    impl Widget for Probe {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            self.builds.set(self.builds.get() + 1);
+            ErrorWidget::new("probe").to_element(ctx)
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "Probe"
+        }
+    }
+
+    fn context() -> BuildContext<'static> {
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        BuildContext::new(
+            canvas,
+            ResolvedSize::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        )
+    }
+
+    /// A button rebuilds itself whenever the pointer enters, leaves, presses or
+    /// releases it, and every one of those rebuilds has to reach the same child
+    /// again — reusing its element rather than building another one, so the
+    /// child's own state survives a hover.
+    #[tokio::test]
+    async fn every_rebuild_reaches_the_same_child() {
+        let builds = Rc::new(Cell::new(0));
+        let state = Button::new()
+            .child(Probe {
+                builds: Rc::clone(&builds),
+            })
+            .create_state();
+        let ctx = context();
+
+        state.build(&ctx).to_element(&ctx);
+        state.build(&ctx).to_element(&ctx);
+
+        assert_eq!(
+            builds.get(),
+            1,
+            "a hover or a press must reuse the child, not rebuild it"
+        );
+    }
 
     #[test]
     fn explicit_key_sets_reconciliation_identity() {

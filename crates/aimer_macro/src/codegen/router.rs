@@ -543,8 +543,8 @@ fn take_routing(item_enum: &mut ItemEnum) -> Result<TokenStream, syn::Error> {
         }
 
         impl aimer::widget::Widget for #enum_name {
-            fn to_element(&self, ctx: &aimer::widget::base::BuildContext) -> aimer::widget::AnyElement {
-                aimer::router::Router::build(self, ctx).to_element(ctx)
+            fn to_element(self, ctx: &aimer::widget::base::BuildContext) -> aimer::widget::AnyElement {
+                aimer::router::Router::build(&self, ctx).to_element(ctx)
             }
         }
     })

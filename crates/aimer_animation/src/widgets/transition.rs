@@ -38,7 +38,7 @@ impl<T: Widget> FadeTransition<T> {
 }
 
 impl<T: Widget + 'static> Widget for FadeTransition<T> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         let controller = self.opacity.clone();
         let animating = Cell::new(self.opacity.is_animating());
@@ -167,7 +167,7 @@ impl<T: Widget> SlideTransition<T> {
 }
 
 impl<T: Widget + 'static> Widget for SlideTransition<T> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         let controller = self.position.clone();
         let animating = Cell::new(self.position.is_animating());
@@ -285,7 +285,7 @@ impl<T: Widget> ScaleTransition<T> {
 }
 
 impl<T: Widget + 'static> Widget for ScaleTransition<T> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         let controller = self.scale.clone();
         let animating = Cell::new(self.scale.is_animating());
@@ -400,7 +400,7 @@ impl<T: Widget> RotationTransition<T> {
 }
 
 impl<T: Widget + 'static> Widget for RotationTransition<T> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         let controller = self.turns.clone();
         let animating = Cell::new(self.turns.is_animating());
@@ -521,7 +521,7 @@ mod tests {
     }
 
     impl Widget for TestWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             TestElement.boxed()
         }
     }

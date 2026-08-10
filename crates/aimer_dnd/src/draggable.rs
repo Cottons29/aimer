@@ -214,13 +214,12 @@ impl<W> Draggable<W> {
 }
 
 impl<W: Widget + 'static> Widget for Draggable<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawDraggable {
-            child: self.child.to_element(ctx),
             child_when_dragging: self
                 .child_when_dragging
-                .as_ref()
                 .map(|child| child.to_element(ctx)),
+            child: self.child.to_element(ctx),
             payload: self.payload.clone(),
             feedback: self.feedback.clone(),
             start_mode: self.start_mode,

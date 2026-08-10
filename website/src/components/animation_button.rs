@@ -60,7 +60,7 @@ pub struct AnimatedPlatformButtonListState {
 impl StatefulWidget for AnimatedPlatformButtonList {
     type State = AnimatedPlatformButtonListState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         AnimatedPlatformButtonListState {
             selected_index: self.selected_index,
             compact: self.compact,

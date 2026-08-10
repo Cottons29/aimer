@@ -588,7 +588,7 @@ mod tests {
     struct Counting(Rc<Cell<usize>>);
 
     impl Widget for Counting {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             self.0.set(self.0.get() + 1);
             let unused = Rc::new(Cell::new(0));
             CountingChild::boxed_new(10.0, 20.0, &unused, &unused)

@@ -336,7 +336,7 @@ impl<R: Route> NavigatorController<R> {
 
 impl<R: Route> StatefulWidget for Navigator<R> {
     type State = NavigatorState<R>;
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         NavigatorState::<R> {
             history: vec![self.initial_route.clone()],
             updater: StateUpdater::empty(),
@@ -346,7 +346,7 @@ impl<R: Route> StatefulWidget for Navigator<R> {
 }
 
 impl<R: Route> Widget for Navigator<R> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let (child, updater) = StatefulElement::new(self, ctx);
         NavigatorElement {
             controller: navigator_controller(updater),
@@ -423,7 +423,7 @@ mod tests {
     struct NavigatorLookupWidget;
 
     impl Widget for NavigatorLookupWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             NavigatorLookupElement.boxed()
         }
     }

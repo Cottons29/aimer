@@ -13,7 +13,7 @@ pub fn start_color_sync() {
 }
 
 impl Widget for ColorSync {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         self.build(ctx).to_element(ctx)
     }
 }

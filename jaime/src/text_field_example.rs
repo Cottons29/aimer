@@ -31,7 +31,7 @@ impl Default for TextFieldExample {
 }
 
 impl Widget for TextFieldExample {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         Container::new()
             .color(Colors::White.into())
             .padding(LayoutSpacing::all(Spacing::Px(32)))

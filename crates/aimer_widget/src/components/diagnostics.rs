@@ -55,11 +55,11 @@ impl ErrorWidget {
 }
 
 impl Widget for ErrorWidget {
-    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
         #[cfg(not(debug_assertions))]
         aimer_utils::log::error(&self.message);
         ErrorElement {
-            message: self.message.clone(),
+            message: self.message,
         }
         .boxed()
     }
@@ -170,12 +170,11 @@ impl<W: Widget + 'static> OverflowIndicator<W> {
 }
 
 impl<W: Widget + 'static> Widget for OverflowIndicator<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let child = self.child.to_element(ctx);
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let label = self
             .label
-            .clone()
             .unwrap_or_else(|| self.child.debug_name().to_string());
+        let child = self.child.to_element(ctx);
         RawOverflowIndicator {
             child,
             label,

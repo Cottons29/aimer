@@ -44,7 +44,7 @@ pub struct BlogBackButtonState {
 impl StatefulWidget for BlogBackButton {
     type State = BlogBackButtonState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         Self::State {
             is_hover: false,
             on_click: self.on_click.clone(),

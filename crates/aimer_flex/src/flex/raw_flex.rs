@@ -175,8 +175,8 @@ impl<W: Widget + 'static> Flex<W> {
 }
 
 impl<W: Widget + 'static> Widget for Flex<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let elements = self.children.iter().map(|c| c.to_element(ctx)).collect();
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let elements = self.children.into_iter().map(|c| c.to_element(ctx)).collect();
         RawFlex {
             direction: self.direction,
             vertical_alignment: self.vertical_alignment,

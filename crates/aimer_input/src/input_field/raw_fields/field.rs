@@ -167,7 +167,7 @@ impl RawTextFieldWidget {
 }
 
 impl Widget for RawTextFieldWidget {
-    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
         RawTextField::new(
             self.config.clone(),
             self.caret.clone(),

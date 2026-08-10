@@ -54,7 +54,7 @@ impl Shell {
 }
 
 impl Widget for Shell {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let slot = OutletSlot::new(self.child_builder.clone());
         let child = ctx.with_state(slot.clone(), |ctx| self.frame.to_element(ctx));
         ShellElement { slot, child }.boxed()
@@ -338,7 +338,7 @@ impl<R: 'static> StatefulShellController<R> {
 
 impl<R: Route> StatefulWidget for StatefulShell<R> {
     type State = StatefulShellState<R>;
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         StatefulShellState::<R> {
             branches: self.branches.clone(),
             active: self.active,
@@ -350,7 +350,7 @@ impl<R: Route> StatefulWidget for StatefulShell<R> {
 }
 
 impl<R: Route> Widget for StatefulShell<R> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let (el, _) = StatefulElement::new(self, ctx);
         el.boxed()
     }
@@ -370,7 +370,7 @@ mod tests {
     }
 
     impl Widget for DeferredOutletWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             DeferredOutletElement {
                 child_built: self.child_built.clone(),
             }

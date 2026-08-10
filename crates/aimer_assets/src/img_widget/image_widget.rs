@@ -94,7 +94,7 @@ impl Image {
 }
 
 impl Widget for Image {
-    fn to_element(&self, _: &BuildContext) -> AnyElement {
+    fn to_element(self, _: &BuildContext) -> AnyElement {
         RawImageWidget {
             source: ImageSource::File(self.path.clone()),
             size: Size {

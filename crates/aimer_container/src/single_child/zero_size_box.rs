@@ -41,7 +41,7 @@ impl LayoutElement for ZeroSizedBox {
 impl Rebuildable for ZeroSizedBox {}
 
 impl Widget for ZeroSizedBox {
-    fn to_element(&self, _: &BuildContext) -> AnyElement {
+    fn to_element(self, _: &BuildContext) -> AnyElement {
         Element::boxed(ZeroSizedBox)
     }
 }

@@ -260,7 +260,7 @@ pub fn stateless_widget_derive(input: TokenStream) -> TokenStream {
 /// impl StatefulWidget for Counter {
 ///     type State = CounterState;
 ///
-///     fn create_state(&self) -> CounterState {
+///     fn create_state(self) -> CounterState {
 ///         CounterState { count: self.initial_count }
 ///     }
 /// }

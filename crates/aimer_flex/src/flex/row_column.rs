@@ -160,8 +160,8 @@ impl Column {
 }
 
 impl<W: Widget + 'static> Widget for Column<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let children = EagerChildren(self.children.iter().map(|c| c.to_element(ctx)).collect());
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let children = EagerChildren(self.children.into_iter().map(|c| c.to_element(ctx)).collect());
         RawFlex {
             direction: LayoutDirection::Column,
             vertical_alignment: self.vertical_alignment,
@@ -346,8 +346,8 @@ impl Row {
 // }
 
 impl<W: Widget + 'static> Widget for Row<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let children = EagerChildren(self.children.iter().map(|c| c.to_element(ctx)).collect());
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let children = EagerChildren(self.children.into_iter().map(|c| c.to_element(ctx)).collect());
         RawFlex {
             direction: LayoutDirection::Row,
             vertical_alignment: self.vertical_alignment,

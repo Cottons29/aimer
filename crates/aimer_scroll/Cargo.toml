@@ -15,5 +15,7 @@ hashbrown.workspace = true
 
 
 [dev-dependencies]
+aimer_canvas.workspace = true
 aimer_container.workspace = true
 aimer_flex.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

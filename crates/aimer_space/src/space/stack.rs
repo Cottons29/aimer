@@ -93,8 +93,8 @@ impl Stack {
 }
 
 impl Widget for Stack {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let children = self.children.iter().map(|c| c.to_element(ctx)).collect();
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let children = self.children.into_iter().map(|c| c.to_element(ctx)).collect();
         RawStackElement {
             children,
             direction: self.direction,

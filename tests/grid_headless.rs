@@ -16,7 +16,7 @@ struct SizeProbeElement {
 }
 
 impl Widget for SizeProbe {
-    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
         SizeProbeElement {
             observed: self.observed.clone(),
         }

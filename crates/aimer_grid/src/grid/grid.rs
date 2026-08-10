@@ -234,7 +234,7 @@ impl<W: Widget + 'static> Grid<W> {
 }
 
 impl<W: Widget + 'static> Widget for Grid<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let placements = self
             .children
             .iter()
@@ -253,7 +253,7 @@ impl<W: Widget + 'static> Widget for Grid<W> {
 
         let children = self
             .children
-            .iter()
+            .into_iter()
             .map(|item| RawGridItem {
                 child: item.child.to_element(ctx),
                 placement: item.placement,

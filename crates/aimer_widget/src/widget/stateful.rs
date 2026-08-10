@@ -340,7 +340,12 @@ pub trait StatefulWidget: Sized {
         self
     }
 
-    fn create_state(&self) -> Self::State;
+    /// Consumes this widget and creates the state it configures.
+    ///
+    /// The widget is gone once this returns — its element keeps the state
+    /// instead — so an implementation moves its props into the state rather than
+    /// cloning them.
+    fn create_state(self) -> Self::State;
 }
 
 pub trait State<W: StatefulWidget> {
@@ -465,7 +470,7 @@ impl StatefulElement {
     /// panics to this widget subtree in unwind-enabled builds.
     #[doc(hidden)]
     pub fn from_widget<W: StatefulWidget + 'static>(
-        widget: &W,
+        widget: W,
         ctx: &BuildContext,
         debug_name: &'static str,
         key: Option<crate::key::Key>,
@@ -484,7 +489,7 @@ impl StatefulElement {
     /// Create a new StatefulElement from a StatefulWidget.
     /// Returns the element and a StateUpdater that can be used in callbacks.
     pub fn new_with_name<W: StatefulWidget + 'static>(
-        widget: &W,
+        widget: W,
         ctx: &BuildContext,
         debug_name: &'static str,
         key: Option<crate::key::Key>,
@@ -497,7 +502,7 @@ impl StatefulElement {
     }
 
     pub fn new<W: StatefulWidget + 'static>(
-        widget: &W,
+        widget: W,
         ctx: &BuildContext,
     ) -> (Self, StateUpdater<W::State>)
     where
@@ -508,7 +513,7 @@ impl StatefulElement {
     }
 
     fn try_new_with_identity<W: StatefulWidget + 'static>(
-        widget: &W,
+        widget: W,
         ctx: &BuildContext,
         debug_name: &'static str,
         key: Option<crate::key::Key>,
@@ -597,7 +602,7 @@ impl StatefulElement {
                         Err(diagnostic) => return diagnostic.into_error_element(),
                     };
                 recover_operation(debug_name, BuildPhase::ToElement, || {
-                    Widget::to_element(&child_widget, ctx)
+                    Widget::to_element(child_widget, ctx)
                 })
                 .unwrap_or_else(|diagnostic| diagnostic.into_error_element())
             })
@@ -610,7 +615,7 @@ impl StatefulElement {
                 let child_widget =
                     recover_operation(debug_name, BuildPhase::Build, || s.build(ctx))?;
                 recover_operation(debug_name, BuildPhase::ToElement, || {
-                    Widget::to_element(&child_widget, ctx)
+                    Widget::to_element(child_widget, ctx)
                 })
             })?
         };
@@ -818,6 +823,19 @@ fn find_keyed_stateful<'a>(
         })
 }
 
+/// Reports whether two element references name the same element.
+///
+/// Compares the data addresses only: a retained child is reached through two
+/// different proxies, so the vtable halves of the two fat pointers are the ones
+/// that may differ while the element behind them is one and the same.
+#[inline]
+fn same_element(left: &dyn Element, right: &dyn Element) -> bool {
+    std::ptr::eq(
+        left as *const dyn Element as *const (),
+        right as *const dyn Element as *const (),
+    )
+}
+
 fn element_children(element: &dyn Element) -> smallvec::SmallVec<[&dyn Element; 8]> {
     let mut children: smallvec::SmallVec<[&dyn Element; 8]> = smallvec::SmallVec::new();
     element.event_children(&mut |child| children.push(child));
@@ -842,6 +860,9 @@ fn element_children(element: &dyn Element) -> smallvec::SmallVec<[&dyn Element; 
 /// scrollable containers — which hide children from event dispatch but expose
 /// them for layout — still get their nested stateful state carried across.
 pub(crate) fn carry_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    if same_element(old, new) {
+        return;
+    }
     carry_keyed_child_state(old, new, ctx);
     carry_unkeyed_child_state(old, new, ctx);
 }
@@ -935,6 +956,11 @@ fn carry_matching_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildC
 
 /// Hands one compatible pair over, then continues into their children.
 fn carry_matching_state(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    // A retained child appears in both trees, so a pair can be one element
+    // twice over; it has nothing to hand to itself.
+    if same_element(old, new) {
+        return;
+    }
     new.with_rebuild_context(ctx, &mut |ctx| {
         adopt_runtime_state(old, new);
 
@@ -976,6 +1002,13 @@ fn adopt_runtime_state(old: &dyn Element, new: &dyn Element) {
 }
 
 fn carry_unkeyed_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
+    // A retained child is placed into the old and the new tree alike, so the
+    // pairing walk can arrive with the same element on both sides. Nothing can
+    // be carried from an element into itself, and descending would carry
+    // everything below it twice.
+    if same_element(old, new) {
+        return;
+    }
     new.with_rebuild_context(ctx, &mut |ctx| {
         carry_unkeyed_child_state_in_context(old, new, ctx)
     });
@@ -1039,6 +1072,12 @@ impl StatefulElement {
     /// `StatefulElement` (with `current_index: 0`) would shadow the live
     /// one (with `current_index: 2`).
     pub(crate) fn adopt_state_from(&self, old: &StatefulElement, ctx: &BuildContext) {
+        // A retained child reaches the walk from both trees, so the element it
+        // is asked to adopt from can be itself. Its state never left, and the
+        // borrows below would collide with themselves.
+        if std::ptr::eq(self, old) {
+            return;
+        }
         // Safety: called only from `update_from_widget` during single-threaded
         // reconciliation, before the new element is visible to any other code.
         unsafe {
@@ -1403,7 +1442,7 @@ mod tests {
     impl StatefulWidget for InnerProbe {
         type State = InnerProbeState;
 
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             let id = self.next_id.get();
             self.next_id.set(id + 1);
             InnerProbeState {
@@ -1423,7 +1462,7 @@ mod tests {
     }
 
     impl Widget for InnerProbe {
-        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
             StatefulElement::from_widget(self, ctx, "InnerProbe", None)
         }
     }
@@ -1431,7 +1470,7 @@ mod tests {
     struct LeafProbe;
 
     impl Widget for LeafProbe {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             TestLeaf.boxed()
         }
     }
@@ -1445,11 +1484,13 @@ mod tests {
     }
 
     impl Widget for ProbePage {
-        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-            let inner = self.inner.clone();
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            let inner = self.inner;
             StatelessElement::from_builder(
                 ctx,
-                move |ctx| inner.to_element(ctx),
+                // The builder may run again on every rebuild, so each build
+                // needs its own copy of the widget the conversion consumes.
+                move |ctx| inner.clone().to_element(ctx),
                 None,
                 self.name,
             )
@@ -1474,7 +1515,7 @@ mod tests {
     impl StatefulWidget for KeyedOuter {
         type State = KeyedOuterState;
 
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             KeyedOuterState {
                 page: self.page.clone(),
             }
@@ -1494,7 +1535,7 @@ mod tests {
     }
 
     impl Widget for KeyedOuter {
-        fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
             StatefulElement::from_widget(
                 self,
                 ctx,
@@ -1523,7 +1564,7 @@ mod tests {
     impl StatefulWidget for EventProbeWidget {
         type State = EventProbeState;
 
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             EventProbeState {
                 events: self.events.clone(),
             }
@@ -1541,7 +1582,7 @@ mod tests {
     }
 
     impl Widget for EventProbeChild {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             EventProbeElement {
                 events: self.events.clone(),
             }
@@ -1572,7 +1613,7 @@ mod tests {
     fn stateful_generated_child_receives_each_routed_event_once() {
         let events = Rc::new(Cell::new(0));
         let element = StatefulElement::from_widget(
-            &EventProbeWidget {
+            EventProbeWidget {
                 events: events.clone(),
             },
             &dummy_build_context(),
@@ -1670,7 +1711,7 @@ mod tests {
     }
 
     impl Widget for LifecycleChild {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             if self.panic_in_to_element {
                 panic!("child conversion failed");
             }
@@ -1681,7 +1722,7 @@ mod tests {
     impl StatefulWidget for LifecycleWidget {
         type State = LifecycleState;
 
-        fn create_state(&self) -> Self::State {
+        fn create_state(self) -> Self::State {
             if self.phase == PanicPhase::CreateState {
                 panic!("state creation failed");
             }
@@ -1730,7 +1771,7 @@ mod tests {
     fn assert_initial_phase_recovers(phase: PanicPhase) {
         let context = dummy_build_context();
         let element = StatefulElement::from_widget(
-            &lifecycle_widget(phase),
+            lifecycle_widget(phase),
             &context,
             "LifecycleWidget",
             None,
@@ -1771,7 +1812,7 @@ mod tests {
         let updater_slot = widget.updater.clone();
         let mutation_attempts = Rc::new(Cell::new(0));
         let observed_attempts = mutation_attempts.clone();
-        let element = StatefulElement::from_widget(&widget, &context, "LifecycleWidget", None);
+        let element = StatefulElement::from_widget(widget, &context, "LifecycleWidget", None);
         let updater = updater_slot.borrow().as_ref().unwrap().clone();
         updater.set_state(move |_| {
             observed_attempts.set(observed_attempts.get() + 1);
@@ -1794,7 +1835,7 @@ mod tests {
         let widget = lifecycle_widget(PanicPhase::None);
         let updater_slot = widget.updater.clone();
         let builds = widget.builds.clone();
-        let element = StatefulElement::from_widget(&widget, &context, "LifecycleWidget", None);
+        let element = StatefulElement::from_widget(widget, &context, "LifecycleWidget", None);
         updater_slot
             .borrow()
             .as_ref()
@@ -1817,7 +1858,7 @@ mod tests {
         let _scope = KeyedStateScope::enter();
         let key = crate::Key::Value("panic-recovery-key".to_owned());
         let live = StatefulElement::from_widget(
-            &lifecycle_widget(PanicPhase::None),
+            lifecycle_widget(PanicPhase::None),
             &context,
             "LifecycleWidget",
             Some(key.clone()),
@@ -1825,7 +1866,7 @@ mod tests {
         assert_eq!(live.debug_name(), "LifecycleWidget");
 
         let recovered = StatefulElement::from_widget(
-            &lifecycle_widget(PanicPhase::AdoptConfig),
+            lifecycle_widget(PanicPhase::AdoptConfig),
             &context,
             "LifecycleWidget",
             Some(key),
@@ -1857,7 +1898,7 @@ mod tests {
         let context = dummy_build_context();
         let visits = Rc::new(RefCell::new(Vec::new()));
         let nested = StatefulElement::from_widget(
-            &lifecycle_widget(PanicPhase::None),
+            lifecycle_widget(PanicPhase::None),
             &context,
             "NestedLifecycleWidget",
             None,
@@ -1871,7 +1912,7 @@ mod tests {
         }
 
         let outer = StatefulElement::from_widget(
-            &lifecycle_widget(PanicPhase::None),
+            lifecycle_widget(PanicPhase::None),
             &context,
             "OuterLifecycleWidget",
             None,
@@ -1895,7 +1936,7 @@ mod tests {
         let context = dummy_build_context();
         let visits = Rc::new(RefCell::new(Vec::new()));
         let outer = StatefulElement::from_widget(
-            &lifecycle_widget(PanicPhase::None),
+            lifecycle_widget(PanicPhase::None),
             &context,
             "OuterLifecycleWidget",
             None,

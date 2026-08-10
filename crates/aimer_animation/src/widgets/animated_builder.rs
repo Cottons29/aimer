@@ -59,7 +59,7 @@ impl AnimatedBuilder {
 }
 
 impl Widget for AnimatedBuilder {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let curved_value = self.controller.curve().transform(self.controller.value());
         let child = (self.builder)(curved_value, ctx);
         let window = ctx.window.clone();

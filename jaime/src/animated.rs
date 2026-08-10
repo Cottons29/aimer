@@ -36,7 +36,7 @@ impl Drop for ListItem {
 
 impl StatefulWidget for MyAnimatedList {
     type State = MyListState;
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         MyListState {
             list: vec![],
             updater: StateUpdater::empty(),

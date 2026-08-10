@@ -64,8 +64,8 @@ impl Route for AppRouter {
 }
 
 impl Widget for AppRouter {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        Router::build(self, ctx).to_element(ctx)
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        Router::build(&self, ctx).to_element(ctx)
     }
 }
 

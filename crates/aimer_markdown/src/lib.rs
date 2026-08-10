@@ -159,7 +159,7 @@ impl MarkdownViewer {
 }
 
 impl Widget for MarkdownViewer {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let document = parse_document(self.source.clone());
         let content = match document.as_ref() {
             Ok(document) => renderer::render_document(

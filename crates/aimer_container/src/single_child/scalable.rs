@@ -32,7 +32,7 @@ impl Scalable {
 }
 
 impl<W: Widget + 'static> Widget for Scalable<W> {
-    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
         todo!()
     }
 }

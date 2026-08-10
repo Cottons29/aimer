@@ -145,7 +145,7 @@ impl Container {
 }
 
 impl<W: Widget> Widget for Container<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
         RawContainer {
             width: self.width,
@@ -153,7 +153,7 @@ impl<W: Widget> Widget for Container<W> {
             child,
             padding: self.padding,
             margin: self.margin,
-            box_decoration: self.box_decoration.clone(),
+            box_decoration: self.box_decoration,
             cache: LayoutCache::new(),
             debug_name: "Container",
             bounds: std::cell::Cell::new(None),
@@ -714,5 +714,131 @@ impl<T: Element> LayoutElement for RawContainer<T> {
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.bounds.get()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    use aimer_widget::base::WindowHandle;
+    use super::*;
+    use crate::SizedBox;
+
+    /// Counts every call that reaches the system allocator on this thread.
+    ///
+    /// The count is what makes the migration's claim checkable: a widget hands
+    /// its fields to its element instead of copying them, so a warm rebuild of a
+    /// decorated tree must not reach the allocator at all.
+    struct RecordingAllocator;
+
+    thread_local! {
+        static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    // SAFETY: Every method forwards to `System` unchanged; the counter only
+    // observes the call.
+    unsafe impl GlobalAlloc for RecordingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            record();
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(pointer, layout) };
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            record();
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            record();
+            unsafe { System.realloc(pointer, layout, new_size) }
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: RecordingAllocator = RecordingAllocator;
+
+    fn record() {
+        let _ = ALLOCATIONS.try_with(|count| count.set(count.get() + 1));
+    }
+
+    fn allocations() -> usize {
+        ALLOCATIONS.with(Cell::get)
+    }
+
+    fn context() -> BuildContext<'static> {
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        BuildContext::new(
+            canvas,
+            ResolvedSize::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        )
+    }
+
+    /// A decoration owning a shadow list, the field this migration is about.
+    fn shadowed() -> BoxDecoration {
+        BoxDecoration {
+            box_shadow: vec![BoxShadow::default(), BoxShadow::default()],
+            ..BoxDecoration::default()
+        }
+    }
+
+    #[test]
+    fn the_counter_counts() {
+        let before = allocations();
+        let allocated = vec![0u8; 64];
+
+        assert!(
+            allocations() > before,
+            "a test asserting zero allocations is worthless if nothing is counted"
+        );
+        drop(allocated);
+    }
+
+    #[tokio::test]
+    async fn converting_a_decorated_container_adds_no_allocation() {
+        let ctx = context();
+
+        // Warm the pooled element storage the way a running application does:
+        // the first frames pay for their blocks, the steady state reuses them.
+        for _ in 0..4 {
+            drop(
+                Container::new()
+                    .box_decoration(shadowed())
+                    .child(SizedBox::new())
+                    .to_element(&ctx),
+            );
+        }
+
+        let before_decoration = allocations();
+        let decoration = shadowed();
+        let describing = allocations() - before_decoration;
+
+        let before_build = allocations();
+        drop(
+            Container::new()
+                .box_decoration(decoration)
+                .child(SizedBox::new())
+                .to_element(&ctx),
+        );
+        let building = allocations() - before_build;
+
+        assert_eq!(
+            building, describing,
+            "the conversion must hand the shadow list to the element, not copy \
+             it: building a container costs exactly what describing it costs"
+        );
     }
 }

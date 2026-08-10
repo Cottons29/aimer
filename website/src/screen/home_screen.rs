@@ -22,8 +22,7 @@ use crate::TEST_STATE_UPDATED;
 
 pub static SHOW_ICON: AtomicBool = AtomicBool::new(true);
 
-#[widget(Stateful)]
-#[derive(Clone)]
+#[derive(Clone, StatefulWidget)]
 pub struct HomePage;
 
 impl HomePage {
@@ -40,7 +39,7 @@ pub struct HomePageState {
 impl StatefulWidget for HomePage {
     type State = HomePageState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         HomePageState {
             controller: ScrollController::new(),
             updater: StateUpdater::new(),

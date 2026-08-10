@@ -58,7 +58,7 @@ impl Probe {
 }
 
 impl Widget for Probe {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let source = self.clone();
         StatelessElement::from_builder(
             ctx,

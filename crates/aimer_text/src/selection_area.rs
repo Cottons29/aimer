@@ -112,7 +112,7 @@ impl<W> SelectionArea<W> {
 }
 
 impl<W: Widget + 'static> Widget for SelectionArea<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let session = SelectionSession::new(
             ctx.window.clone(),
             selection_coordinator(ctx),

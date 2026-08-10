@@ -633,6 +633,74 @@ mod tests {
     }
 
     #[test]
+    fn take_moves_the_value_out_and_drops_it_exactly_once() {
+        let drops = Rc::new(Cell::new(0));
+        let owner = Rubick::new(DropValue::<0> {
+            drops: Rc::clone(&drops),
+            bytes: [],
+        });
+        assert!(owner.is_inline());
+
+        // SAFETY: The consumer moves the value out exactly once.
+        let value = unsafe { owner.take(|target| target.read()) };
+        assert_eq!(drops.get(), 0, "taking must not run the destructor");
+
+        drop(value);
+        assert_eq!(drops.get(), 1);
+    }
+
+    #[test]
+    fn take_returns_a_heap_block_to_the_pool() {
+        let drops = Rc::new(Cell::new(0));
+        let owner = Rubick::new(DropValue::<INLINE_CAPACITY> {
+            drops: Rc::clone(&drops),
+            bytes: [0; INLINE_CAPACITY],
+        });
+        assert!(owner.is_heap());
+        let block = (&*owner) as *const DropValue<INLINE_CAPACITY> as *const u8;
+
+        // SAFETY: The consumer moves the value out exactly once.
+        let value = unsafe { owner.take(|target| target.read()) };
+        drop(value);
+        assert_eq!(drops.get(), 1);
+
+        let recycled = Rubick::new(DropValue::<INLINE_CAPACITY> {
+            drops: Rc::clone(&drops),
+            bytes: [0; INLINE_CAPACITY],
+        });
+        assert_eq!(
+            (&*recycled) as *const DropValue<INLINE_CAPACITY> as *const u8,
+            block,
+            "a taken block must go back to its free list instead of leaking"
+        );
+    }
+
+    #[test]
+    fn take_does_not_drop_twice_when_the_consumer_unwinds() {
+        let drops = Rc::new(Cell::new(0));
+        let result = catch_unwind(AssertUnwindSafe({
+            let drops = Rc::clone(&drops);
+            move || {
+                let owner = Rubick::new(DropValue::<INLINE_CAPACITY> {
+                    drops,
+                    bytes: [0; INLINE_CAPACITY],
+                });
+                // SAFETY: The consumer moves the value out exactly once; the
+                // moved value is then dropped by the unwind.
+                unsafe {
+                    owner.take(|target| -> () {
+                        let _moved = target.read();
+                        panic!("exercise unwind out of take");
+                    })
+                }
+            }
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(drops.get(), 1, "the moved value is destroyed by the unwind");
+    }
+
+    #[test]
     fn test_fixture_uses_heap_payload_bytes() {
         let value = DropValue::<3> {
             drops: Rc::new(Cell::new(0)),

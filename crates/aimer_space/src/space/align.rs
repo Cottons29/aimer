@@ -85,7 +85,7 @@ impl Align {
 }
 
 impl<W: Widget + 'static> Widget for Align<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawAlign {
             child: self.child.to_element(ctx),
             layer: self.layer,

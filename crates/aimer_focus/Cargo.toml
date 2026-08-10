@@ -1,0 +1,9 @@
+[package]
+name = "aimer_focus"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+
+[dependencies]
+smallvec.workspace = true
+hashbrown.workspace = true

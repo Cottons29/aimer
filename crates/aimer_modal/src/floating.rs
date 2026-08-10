@@ -239,7 +239,7 @@ impl<W: Widget + 'static> Floating<W> {
     }
 
     fn to_raw_element(
-        &self,
+        self,
         ctx: &BuildContext,
         id: Option<ModalId>,
         timeline: Rc<RefCell<ModalTimeline>>,
@@ -289,7 +289,7 @@ impl<W: Widget + 'static> Floating<W> {
 }
 
 impl<W: Widget + 'static> Widget for Floating<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         self.to_raw_element(
             ctx,
             None,

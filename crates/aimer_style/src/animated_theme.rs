@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::marker::PhantomData;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -6,9 +7,9 @@ use aimer_animation::{AnimInstant, AnimationController, Curve};
 use aimer_provider::{Provider, ProviderHandle};
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
-    AnyElement, AnyWidget, Brightness, Drawable, Element, EventElement, Key, LayoutElement,
-    Rebuildable, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget,
-    StatelessElement, VisitorElement, Widget, platform_brightness,
+    AnyElement, AnyWidget, Brightness, ChildBuilder, Drawable, Element, EventElement, Key,
+    LayoutElement, Rebuildable, RequiredChild, State, StateUpdater, StatefulElement,
+    StatefulWidget, StatelessElement, VisitorElement, Widget, platform_brightness,
 };
 
 use crate::{Theme, ThemeData, ThemeMode, ThemeSelection};
@@ -79,11 +80,32 @@ fn request_next_frame() {
 ///     AnimatedTheme::new().data(ThemeData::dark()).child(child)
 /// }
 /// ```
+///
+/// # A theme without a subtree is not a widget
+///
+/// Supplying a theme to nobody is a mistake worth catching at compile time, so
+/// the descendant subtree is part of the type: only [`AnimatedTheme::child`]
+/// produces something a parent can build.
+///
+/// ```compile_fail
+/// use aimer_style::AnimatedTheme;
+/// use aimer_widget::Widget;
+///
+/// // error: the trait bound `RequiredChild: Widget` is not satisfied
+/// let _ = AnimatedTheme::new().boxed();
+/// ```
 pub struct AnimatedTheme<W = RequiredChild, T = ThemeData> {
     selection: ThemeSelection<T>,
     duration: Duration,
     curve: Curve,
-    child: Rc<W>,
+    child: ChildBuilder,
+    // `W` names the child only to keep the type-state: `RequiredChild` does not
+    // implement `Widget`, so `AnimatedTheme<RequiredChild, T>` cannot satisfy the
+    // bound on the `Widget` impl below and a theme without a subtree stays
+    // unbuildable. The subtree itself is erased into the `ChildBuilder`, which
+    // holds `ChildBuilder::required` until `child` attaches one — a placeholder
+    // that allocates nothing and reports the mistake if it is ever built.
+    marker: PhantomData<W>,
 }
 
 impl AnimatedTheme {
@@ -97,7 +119,8 @@ impl AnimatedTheme {
             selection: ThemeSelection::adaptive(ThemeData::light(), ThemeData::dark()),
             duration: Duration::from_millis(200),
             curve: Curve::Linear,
-            child: Rc::new(RequiredChild),
+            child: ChildBuilder::required(),
+            marker: PhantomData,
         }
     }
 }
@@ -119,6 +142,7 @@ impl<W, T: Clone> Clone for AnimatedTheme<W, T> {
             duration: self.duration,
             curve: self.curve,
             child: self.child.clone(),
+            marker: PhantomData,
         }
     }
 }
@@ -137,6 +161,7 @@ impl<W, T> AnimatedTheme<W, T> {
             duration: self.duration,
             curve: self.curve,
             child: self.child,
+            marker: PhantomData,
         }
     }
 
@@ -159,6 +184,7 @@ impl<W, T> AnimatedTheme<W, T> {
             duration: self.duration,
             curve: self.curve,
             child: self.child,
+            marker: PhantomData,
         }
     }
 
@@ -199,13 +225,18 @@ impl<W, T> AnimatedTheme<W, T> {
     }
 
     /// Attaches the descendant widget subtree and produces a valid widget.
+    ///
+    /// The subtree is stored as a [`ChildBuilder`], so the theme can build it
+    /// again on every tick of a transition without the caller having to describe
+    /// it more than once.
     #[inline]
-    pub fn child<C: Widget>(self, child: C) -> AnimatedTheme<C, T> {
+    pub fn child<C: Widget + 'static>(self, child: C) -> AnimatedTheme<C, T> {
         AnimatedTheme {
             selection: self.selection,
             duration: self.duration,
             curve: self.curve,
-            child: Rc::new(child),
+            child: ChildBuilder::from_widget(child),
+            marker: PhantomData,
         }
     }
 
@@ -235,7 +266,7 @@ struct ResolvedTheme<T> {
     data: T,
     duration: Duration,
     curve: Curve,
-    child: Rc<dyn Widget>,
+    child: ChildBuilder,
     key: Option<Key>,
 }
 
@@ -244,8 +275,9 @@ impl<T: Theme> Widget for ResolvedTheme<T> {
         self.key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "AnimatedTheme", self.key())
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let __key = Widget::key(&self);
+        StatefulElement::new_with_name(self, ctx, "AnimatedTheme", __key)
             .0
             .boxed()
     }
@@ -289,7 +321,7 @@ pub struct AnimatedThemeState<T: Theme> {
     current: Rc<RefCell<T>>,
     duration: Duration,
     curve: Curve,
-    child: Rc<dyn Widget>,
+    child: ChildBuilder,
     controller: AnimationController,
     transition: Rc<RefCell<ThemeTransition<T>>>,
     handle: ProviderHandle<T>,
@@ -298,7 +330,7 @@ pub struct AnimatedThemeState<T: Theme> {
 impl<T: Theme> StatefulWidget for ResolvedTheme<T> {
     type State = AnimatedThemeState<T>;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         AnimatedThemeState {
             target: self.data.clone(),
             current: Rc::new(RefCell::new(self.data.clone())),
@@ -386,6 +418,8 @@ impl<W: Widget + 'static, T: Theme> AnimatedTheme<W, T> {
             data: self.selection.resolve(brightness),
             duration: self.duration,
             curve: self.curve,
+            // `W: Widget` on this impl is only satisfiable through `child`, so a
+            // theme that reaches this point always carries a subtree.
             child: self.child.clone(),
             key,
         }
@@ -393,7 +427,7 @@ impl<W: Widget + 'static, T: Theme> AnimatedTheme<W, T> {
 }
 
 impl<W: Widget + 'static, T: Theme> Widget for AnimatedTheme<W, T> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         // Resolving the appearance always happens in this one place, whether the
         // system is followed or overridden. Both answers therefore hang under
         // the same element, and an application that flips between them keeps the
@@ -421,14 +455,14 @@ impl<W: Widget + 'static, T: Theme> Widget for AnimatedTheme<W, T> {
 
 struct AnimatedThemeFrame<T: Theme> {
     current: Rc<RefCell<T>>,
-    child: Rc<dyn Widget>,
+    child: ChildBuilder,
     controller: AnimationController,
     transition: Rc<RefCell<ThemeTransition<T>>>,
     handle: ProviderHandle<T>,
 }
 
 impl<T: Theme> Widget for AnimatedThemeFrame<T> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child = Provider::new()
             .handle(self.handle.clone())
             .child(self.child.clone())
@@ -540,11 +574,14 @@ impl<T: Theme> LayoutElement for AnimatedThemeElement<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use aimer_animation::Animatable;
     use aimer_color::prelude::Color;
+    use aimer_widget::ErrorWidget;
+    use aimer_widget::base::WindowHandle;
 
     use super::*;
 
@@ -572,7 +609,7 @@ mod tests {
     struct TestWidget;
 
     impl Widget for TestWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             panic!("not needed for state lifecycle tests")
         }
     }
@@ -751,6 +788,116 @@ mod tests {
         assert_eq!(state.controller.duration(), Duration::from_millis(400));
         assert!(state.controller.is_animating());
         assert_eq!(*state.current.borrow(), theme(0));
+    }
+
+    /// A child that rebuilds itself, the way a derived widget does.
+    ///
+    /// Conversions and builds are counted apart, because a theme tick reuses the
+    /// child's element — so its state and GPU resources survive the transition —
+    /// and asks the subtree inside it to build again, which is how the
+    /// interpolated theme reaches it.
+    struct Probe {
+        conversions: Rc<Cell<usize>>,
+        builds: Rc<Cell<usize>>,
+    }
+
+    impl Widget for Probe {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            self.conversions.set(self.conversions.get() + 1);
+            let builds = self.builds;
+            aimer_widget::Element::boxed(aimer_widget::StatelessElement::from_builder(
+                ctx,
+                move |ctx| {
+                    builds.set(builds.get() + 1);
+                    ErrorWidget::new("probe").to_element(ctx)
+                },
+                Some(Key::Static("probe")),
+                "Probe",
+            ))
+        }
+
+        fn key(&self) -> Option<Key> {
+            Some(Key::Static("probe"))
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "Probe"
+        }
+    }
+
+    fn context() -> BuildContext<'static> {
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        BuildContext::new(
+            canvas,
+            ResolvedSize::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        )
+    }
+
+    fn frame_of(state: &AnimatedThemeState<ThemeData>, ctx: &BuildContext) {
+        let frame = <AnimatedThemeState<ThemeData> as State<ResolvedTheme<ThemeData>>>::build(
+            state, ctx,
+        )
+        .to_element(ctx);
+        // A tick places the retained child again, which marks the subtree
+        // inside it for rebuild; the rebuild pass is what a running frame does
+        // next.
+        frame.rebuild_if_dirty(ctx);
+    }
+
+    #[tokio::test]
+    async fn a_light_dark_flip_animates_and_rebuilds_the_child_on_every_tick() {
+        let conversions = Rc::new(Cell::new(0));
+        let builds = Rc::new(Cell::new(0));
+        let themed = AnimatedTheme::new()
+            .adaptive(theme(0), theme(200))
+            .duration(Duration::from_millis(200))
+            .child(Probe {
+                conversions: conversions.clone(),
+                builds: builds.clone(),
+            });
+        let ctx = context();
+
+        let mut state = themed.resolved(Brightness::Light, None).create_state();
+        frame_of(&state, &ctx);
+        assert_eq!(builds.get(), 1, "the first build reaches the child subtree");
+
+        let flipped = themed.resolved(Brightness::Dark, None).create_state();
+        <AnimatedThemeState<ThemeData> as State<ResolvedTheme<ThemeData>>>::adopt_config_from(
+            &mut state, &flipped,
+        );
+
+        assert!(
+            state.controller.is_animating(),
+            "a light/dark flip crosses into the other theme instead of snapping"
+        );
+        assert_eq!(
+            *state.current.borrow(),
+            theme(0),
+            "the transition starts from the theme on screen"
+        );
+
+        for tick in 2..=4 {
+            frame_of(&state, &ctx);
+            assert_eq!(
+                builds.get(),
+                tick,
+                "a theme tick rebuilds the child subtree instead of losing it"
+            );
+        }
+
+        assert_eq!(
+            conversions.get(),
+            1,
+            "the child's element is reused across the whole transition"
+        );
     }
 
     #[test]

@@ -53,7 +53,7 @@ impl Counting {
 }
 
 impl Widget for Counting {
-    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
         self.counters.built.set(self.counters.built.get() + 1);
         CountingChild::boxed_new(
             10.0,
@@ -111,7 +111,7 @@ fn scrolled_context(offset: f32) -> BuildContext<'static> {
 struct Leaf(f32);
 
 impl Widget for Leaf {
-    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
         LeafElement { height: self.0 }.boxed()
     }
 }
@@ -159,7 +159,7 @@ struct StatefulRowWidget {
 impl StatefulWidget for StatefulRowWidget {
     type State = RowState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         RowState {
             item: self.item,
             counter: 0,
@@ -192,9 +192,9 @@ struct StatefulRow {
 }
 
 impl Widget for StatefulRow {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let (element, _) = StatefulElement::new_with_name(
-            &StatefulRowWidget {
+            StatefulRowWidget {
                 item: self.item,
                 seen: self.seen.clone(),
                 updaters: self.updaters.clone(),

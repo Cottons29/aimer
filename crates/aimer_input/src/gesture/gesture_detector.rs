@@ -178,7 +178,7 @@ impl<W> GestureDetector<W> {
 }
 
 impl<W: Widget + 'static> Widget for GestureDetector<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawGestureDetector {
             child: self.child.to_element(ctx),
             cached_bounds: CacheBounds::new(),
@@ -439,7 +439,7 @@ mod tests {
     struct TestWidget;
 
     impl Widget for TestWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             panic!("not needed for builder tests")
         }
     }

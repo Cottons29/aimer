@@ -145,7 +145,7 @@ impl ContextMenuRows {
 }
 
 impl Widget for ContextMenuRows {
-    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
         RawContextMenuRows {
             items: self.items.clone(),
             shape: self.shape,

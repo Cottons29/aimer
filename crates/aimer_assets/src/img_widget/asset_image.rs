@@ -107,14 +107,14 @@ impl AssetImage {
 }
 
 impl Widget for AssetImage {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawImageWidget {
             source: ImageSource::Asset(self.key.clone()),
             size: Size::new(self.width, self.height),
             fit: self.fit,
             keep_aspect_ratio: self.fit != BoxFit::Fill,
-            error_element: self.error_widget.as_ref().map(|w| w.to_element(ctx)),
-            loading_element: self.loading_widget.as_ref().map(|w| w.to_element(ctx)),
+            error_element: self.error_widget.map(|w| w.to_element(ctx)),
+            loading_element: self.loading_widget.map(|w| w.to_element(ctx)),
             cache: LayoutCache::new(),
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),

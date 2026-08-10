@@ -1,0 +1,28 @@
+[package]
+name = "aimer_laboratory"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+publish = false
+description = "Isolated experiments for Aimer's core ownership model, published nowhere and depended on by nothing"
+
+[dependencies]
+aimer_rubick.workspace = true
+
+# Only the benchmarks in `examples/` need a framework; the crate itself keeps
+# using nothing but the ownership primitive, so nothing here reaches the
+# library or the tests.
+#
+# `production_widget_benchmark` builds the *same* widget tree with the shipping
+# consuming conversion and with the borrowing conversion as it was before the
+# migration. The pre-migration framework no longer exists in this working tree,
+# so it is taken from the branch it was released on and renamed; both packages
+# are called `aimer`, and cargo keeps them apart because their sources differ.
+[dev-dependencies]
+aimer = { path = ".." }
+aimer_canvas.workspace = true
+aimer_legacy = { package = "aimer", git = "https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-1" }
+aimer_canvas_legacy = { package = "aimer_canvas", git = "https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-1" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

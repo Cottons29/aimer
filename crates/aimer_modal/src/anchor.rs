@@ -156,7 +156,7 @@ impl<W> Anchor<W> {
 }
 
 impl<W: Widget + 'static> Widget for Anchor<W> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawAnchor {
             child: self.child.to_element(ctx),
             handle: self.handle.clone(),

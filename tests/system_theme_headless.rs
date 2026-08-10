@@ -41,7 +41,7 @@ impl Probe {
 }
 
 impl Widget for Probe {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let source = self.clone();
         StatelessElement::from_builder(
             ctx,
@@ -86,7 +86,7 @@ struct ThemeSwitchState {
 impl StatefulWidget for ThemeSwitch {
     type State = ThemeSwitchState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         ThemeSwitchState {
             mode: self.initial,
             probe: self.probe.clone(),
@@ -108,7 +108,7 @@ impl State<ThemeSwitch> for ThemeSwitchState {
 }
 
 impl Widget for ThemeSwitch {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, "ThemeSwitch", None)
             .0
             .boxed()

@@ -88,8 +88,8 @@ impl Router for HomeRoute {
 }
 
 impl Widget for HomeRoute {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        Router::build(self, ctx).to_element(ctx)
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        Router::build(&self, ctx).to_element(ctx)
     }
 }
 
@@ -106,7 +106,7 @@ struct AppShellState {
 impl StatefulWidget for AppShell {
     type State = AppShellState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         AppShellState { dark: false }
     }
 }
@@ -130,7 +130,7 @@ impl State<AppShell> for AppShellState {
 }
 
 impl Widget for AppShell {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, "AppShell", None)
             .0
             .boxed()
@@ -146,7 +146,7 @@ impl Widget for AppShell {
 struct ThemedFrame;
 
 impl Widget for ThemedFrame {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatelessElement::from_builder(
             ctx,
             move |ctx| {
@@ -183,7 +183,7 @@ struct HomePageState;
 impl StatefulWidget for HomePage {
     type State = HomePageState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         HomePageState
     }
 }
@@ -209,7 +209,7 @@ impl State<HomePage> for HomePageState {
 }
 
 impl Widget for HomePage {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::new_with_name(self, ctx, "HomePage", None)
             .0
             .boxed()
@@ -236,7 +236,7 @@ struct SectionState {
 impl StatefulWidget for SelectionSection {
     type State = SectionState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         SectionState {
             current_index: 0,
             state: StateUpdater::new(),
@@ -280,8 +280,9 @@ impl Widget for SelectionSection {
         self.key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "SelectionSection", self.key())
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let __key = Widget::key(&self);
+        StatefulElement::new_with_name(self, ctx, "SelectionSection", __key)
             .0
             .boxed()
     }
@@ -306,7 +307,7 @@ impl Marker {
 }
 
 impl Widget for Marker {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         MarkerElement {
             index: self.index,
             child: SizedBox::new().height(80).to_element(ctx),

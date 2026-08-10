@@ -47,7 +47,7 @@ pub struct FileDropShowcaseState {
 impl StatefulWidget for FileDropShowcase {
     type State = FileDropShowcaseState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         FileDropShowcaseState {
             images: (Vec::new(), 0),
             anything: (Vec::new(), 0),

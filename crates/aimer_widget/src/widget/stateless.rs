@@ -5,6 +5,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 
 use crate::base::*;
+use crate::widget::AnyWidgetExt;
 use crate::widget::recovery::{BuildPhase, build_or_error};
 use crate::widget::stateful::{RebuildCallBack, SyncChild};
 use crate::{
@@ -41,8 +42,8 @@ impl NamedWidget {
 }
 
 impl Widget for NamedWidget {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let child = self.inner.to_element(ctx);
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let child = self.inner.into_element(ctx);
         if child.debug_name() == self.name {
             return child;
         }

@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
+use aimer_focus::{FocusCandidate, FocusCandidates, FocusManager, FocusNode, FocusTrapId};
 use aimer_rubick::ErasedFrom;
 use smallvec::SmallVec;
 use hashbrown::{HashMap, HashSet};
@@ -17,7 +18,6 @@ use crate::components::event_element::{
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 pub(crate) use crate::components::visitor_element::VisitorElement;
-use crate::focus::{FocusNode, FocusRequest, focus_request_generation};
 use crate::pointer_claim;
 use crate::{AnyElement, Drawable, Key};
 
@@ -218,6 +218,10 @@ impl<E: Element + 'static> EventElement for ElementNode<E> {
         self.element.autofocus()
     }
 
+    fn traps_focus(&self) -> bool {
+        self.element.traps_focus()
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         self.element.on_event(event)
     }
@@ -344,6 +348,10 @@ impl EventElement for AnyElement {
         self.as_ref().autofocus()
     }
 
+    fn traps_focus(&self) -> bool {
+        self.as_ref().traps_focus()
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         self.as_ref().on_event(event)
     }
@@ -460,6 +468,10 @@ impl EventElement for Box<dyn Element> {
 
     fn autofocus(&self) -> bool {
         self.as_ref().autofocus()
+    }
+
+    fn traps_focus(&self) -> bool {
+        self.as_ref().traps_focus()
     }
 
     fn on_event(&self, event: &ElementEvent) -> EventResult {
@@ -643,16 +655,8 @@ pub struct EventDispatcher {
     paths: HashMap<ElementId, ElementPath>,
     indexed_generation: u64,
     indexed_root: Option<ElementId>,
-    focused: Option<FocusOwner>,
-    focus_indexed_generation: u64,
-    focus_indexed_root: Option<ElementId>,
-    focus_request_generation: u64,
-    autofocus_seen: HashSet<ElementId>,
-}
-
-struct FocusOwner {
-    id: ElementId,
-    node: FocusNode,
+    focus_scope: Option<ElementId>,
+    focus: FocusManager<ElementId>,
 }
 
 impl Default for EventDispatcher {
@@ -670,12 +674,44 @@ impl EventDispatcher {
             paths: HashMap::new(),
             indexed_generation: u64::MAX,
             indexed_root: None,
-            focused: None,
-            focus_indexed_generation: u64::MAX,
-            focus_indexed_root: None,
-            focus_request_generation: 0,
-            autofocus_seen: HashSet::new(),
+            focus_scope: None,
+            focus: FocusManager::new(),
         }
+    }
+
+    /// Places the focus of this dispatcher inside `trap`.
+    ///
+    /// A dispatch root that is presented *over* the application — a modal, whose
+    /// content is not part of the tree it covers — belongs to the region its
+    /// [`FocusTrap`](crate::focus::FocusTrap) confines. Focus is then granted
+    /// here only while that region is the innermost trapping one, so the
+    /// application underneath owns nothing while the overlay is up and gets its
+    /// owner back when the trap is released.
+    #[inline]
+    pub fn with_focus_trap(mut self, trap: FocusTrapId) -> Self {
+        self.focus.set_trap(Some(trap));
+        self
+    }
+
+    /// Returns the region this dispatcher grants focus in, if it is confined.
+    #[inline]
+    pub fn focus_trap(&self) -> Option<FocusTrapId> {
+        self.focus.trap()
+    }
+
+    /// Returns the element that currently owns keyboard focus, if any.
+    #[inline]
+    pub fn focused(&self) -> Option<ElementId> {
+        self.focus.focused()
+    }
+
+    /// Returns the element whose subtree keyboard focus is confined to, if any.
+    ///
+    /// This is the innermost element of the last indexed tree that reported
+    /// [`EventElement::traps_focus`].
+    #[inline]
+    pub fn focus_scope(&self) -> Option<ElementId> {
+        self.focus_scope
     }
 
     /// Dispatches one event using persistent capture state.
@@ -751,7 +787,20 @@ impl EventDispatcher {
         }
 
         if event.is_focus_directed() {
-            return focus_result.merge(self.dispatch_to_focused(root, event));
+            let focused_result = self.dispatch_to_focused(root, event);
+            if focused_result.is_consumed() || !self.focus.is_suspended() {
+                return focus_result.merge(focused_result);
+            }
+
+            // Focus is trapped elsewhere, so this tree owns none of it. The
+            // trapping region is presented by an element of this tree — an
+            // overlay host dispatching into its own root — so the event is
+            // routed to reach it, which is the only way typed text arrives at
+            // the field inside a modal.
+            let outcome = dispatch_routed_event(root, pos, event);
+            return focus_result
+                .merge(focused_result)
+                .merge(outcome.result.without_capture_request().without_follow_up());
         }
 
         if matches!(event, ElementEvent::KeyInput { .. }) {
@@ -776,7 +825,9 @@ impl EventDispatcher {
 
         let outcome = dispatch_routed_event(root, pos, event);
         self.apply_capture_request(outcome.result.capture_request(), outcome.capture_owner);
-        let pointer_focus_result = if matches!(event, ElementEvent::PointerDown(_)) {
+        let pointer_focus_result = if matches!(event, ElementEvent::PointerDown(_))
+            && self.press_may_move_focus(root, outcome.focus_owner.as_ref())
+        {
             self.transition_focus(root, outcome.focus_owner.clone())
         } else {
             EventResult::ignored()
@@ -896,132 +947,123 @@ impl EventDispatcher {
         }
 
         self.paths.clear();
+        self.focus_scope = None;
         let mut path = Vec::new();
-        index_element_paths(root, &mut path, &mut self.paths);
+        index_element_paths(root, &mut path, &mut self.paths, &mut self.focus_scope);
         self.captures
             .retain(|_, owner| self.paths.contains_key(owner));
-        self.autofocus_seen
-            .retain(|owner| self.paths.contains_key(owner));
+        let paths = &self.paths;
+        self.focus.retain_history(|owner| paths.contains_key(owner));
         self.indexed_generation = generation;
         self.indexed_root = root_id;
     }
 
+    /// Resolves the focus owner for this frame, notifying both sides of a
+    /// change.
+    ///
+    /// The decision itself belongs to [`FocusManager`]: this method only walks
+    /// the tree for candidates and turns the reported transition into element
+    /// events. A frame in which neither the tree nor any node asked for a change
+    /// stops at the manager's gate, so no traversal happens at all.
     fn synchronize_focus(&mut self, root: &dyn Element) -> EventResult {
-        let request_generation = focus_request_generation();
-        if self.focus_indexed_generation == self.indexed_generation
-            && self.focus_indexed_root == self.indexed_root
-            && self.focus_request_generation == request_generation
-        {
+        let Some(request_generation) = self
+            .focus
+            .begin_synchronization(self.indexed_generation, self.indexed_root)
+        else {
             return EventResult::ignored();
-        }
+        };
 
-        let mut candidates: SmallVec<[FocusCandidate; 16]> = SmallVec::new();
-        collect_focus_candidates(root, &mut candidates);
-
-        let mut target = self.focused.as_ref().and_then(|focused| {
-            candidates
-                .iter()
-                .find(|candidate| {
-                    candidate.id == focused.id && candidate.node.ptr_eq(&focused.node)
-                })
-                .cloned()
-        });
-        if target.is_none() {
-            for candidate in &candidates {
-                if candidate.autofocus && self.autofocus_seen.insert(candidate.id) && target.is_none()
-                {
-                    target = Some(candidate.clone());
-                }
-            }
-        }
-        let mut requests: SmallVec<[(u64, FocusRequest, FocusCandidate); 16]> = SmallVec::new();
-        for candidate in &candidates {
-            if let Some(request) = candidate.node.request() {
-                let order = match request {
-                    FocusRequest::Focus(order) | FocusRequest::Unfocus(order) => order,
-                };
-                requests.push((order, request, candidate.clone()));
-                candidate.node.clear_request();
-            }
-        }
-        requests.sort_unstable_by_key(|(order, _, _)| *order);
-        for (_, request, candidate) in requests {
-            match request {
-                FocusRequest::Focus(_) => target = Some(candidate),
-                FocusRequest::Unfocus(_) => {
-                    if target
-                        .as_ref()
-                        .is_some_and(|target| target.node.ptr_eq(&candidate.node))
-                    {
-                        target = None;
-                    }
-                }
-            }
-        }
+        self.focus.set_scope(self.focus_scope);
+        let candidates = self.collect_candidates(root);
+        let target = self.focus.resolve(&candidates);
 
         let result = self.transition_focus(root, target);
-        self.focus_indexed_generation = self.indexed_generation;
-        self.focus_indexed_root = self.indexed_root;
-        self.focus_request_generation = request_generation;
+        self.focus.mark_synchronized(
+            self.indexed_generation,
+            self.indexed_root,
+            request_generation,
+        );
         result
     }
 
+    /// Gathers the focusable targets focus may be given to this frame.
+    ///
+    /// A trapping scope confines focus by omission: the walk starts at the scope
+    /// instead of the root, so every target outside it is simply never offered —
+    /// neither to [`FocusManager::resolve`] nor to traversal. A scope whose
+    /// element can no longer be resolved has left the tree, and the whole tree is
+    /// offered again.
+    fn collect_candidates(&self, root: &dyn Element) -> FocusCandidates<ElementId> {
+        let scope = self
+            .focus_scope
+            .and_then(|scope| self.resolve_owner(root, scope))
+            .unwrap_or(root);
+        let mut candidates = FocusCandidates::new();
+        collect_focus_candidates(scope, &mut candidates);
+        candidates
+    }
+
+    /// Returns whether a press is allowed to change who owns focus.
+    ///
+    /// A press reaches whatever is under it, including the tree behind an inline
+    /// dialog, so it is the one way focus could leave a trapping scope without
+    /// ever being offered by [`Self::collect_candidates`]. While a scope traps,
+    /// a press therefore only moves focus when it landed on a target the scope
+    /// contains: a press anywhere else — the dialog's own chrome as much as the
+    /// application behind it — leaves the scope's owner alone rather than
+    /// blurring it, which is what a press on a dialog's title bar should do.
+    ///
+    /// Without a scope every press decides focus, as it always has, and the
+    /// check is one comparison against `None`.
+    fn press_may_move_focus(
+        &self,
+        root: &dyn Element,
+        target: Option<&FocusCandidate<ElementId>>,
+    ) -> bool {
+        if self.focus_scope.is_none() {
+            return true;
+        }
+        let Some(target) = target else {
+            return false;
+        };
+        self.collect_candidates(root)
+            .iter()
+            .any(|candidate| candidate.is_attached_to(target.id, &target.node))
+    }
+
+    /// Hands focus to `target` and delivers the resulting notifications.
+    ///
+    /// The losing element only hears about it while the node it reported is
+    /// still the one attached to its identity; a node that left the tree with
+    /// its element has nothing to notify.
     fn transition_focus(
         &mut self,
         root: &dyn Element,
-        target: Option<FocusCandidate>,
+        target: Option<FocusCandidate<ElementId>>,
     ) -> EventResult {
-        if self.focused.as_ref().is_some_and(|focused| {
-            target.as_ref().is_some_and(|target| {
-                focused.id == target.id && focused.node.ptr_eq(&target.node)
-            })
-        }) {
-            return EventResult::ignored();
-        }
-
+        let transition = self.focus.transition(target);
         let mut result = EventResult::ignored();
-        if let Some(focused) = self.focused.take() {
-            focused.node.set_focused(false);
-            if let Some(target) = self.resolve_owner(root, focused.id)
-                && target
-                    .focus_node()
-                    .is_some_and(|node| node.ptr_eq(&focused.node))
-            {
-                result = result.merge(target.on_event(&ElementEvent::FocusLost));
-            }
+
+        if let Some(lost) = transition.lost
+            && let Some(element) = self.resolve_owner(root, lost.id)
+            && element
+                .focus_node()
+                .is_some_and(|node| node.ptr_eq(&lost.node))
+        {
+            result = result.merge(element.on_event(&ElementEvent::FocusLost));
         }
-        if let Some(target) = target {
-            target.node.set_focused(true);
-            if let Some(element) = self.resolve_owner(root, target.id) {
-                result = result.merge(element.on_event(&ElementEvent::FocusGained));
-            }
-            self.focused = Some(FocusOwner {
-                id: target.id,
-                node: target.node,
-            });
+        if let Some(gained) = transition.gained
+            && let Some(element) = self.resolve_owner(root, gained.id)
+        {
+            result = result.merge(element.on_event(&ElementEvent::FocusGained));
         }
         result
     }
 
     fn traverse_focus(&mut self, root: &dyn Element, reverse: bool) -> Option<EventResult> {
-        let mut candidates: SmallVec<[FocusCandidate; 16]> = SmallVec::new();
-        collect_focus_candidates(root, &mut candidates);
-        if candidates.is_empty() {
-            return None;
-        }
-
-        let current = self.focused.as_ref().and_then(|focused| {
-            candidates.iter().position(|candidate| {
-                candidate.id == focused.id && candidate.node.ptr_eq(&focused.node)
-            })
-        });
-        let next = match (current, reverse) {
-            (Some(0), true) | (None, true) => candidates.len() - 1,
-            (Some(index), true) => index - 1,
-            (Some(index), false) => (index + 1) % candidates.len(),
-            (None, false) => 0,
-        };
-        Some(self.transition_focus(root, Some(candidates[next].clone())))
+        let candidates = self.collect_candidates(root);
+        let target = self.focus.traverse(&candidates, reverse)?;
+        Some(self.transition_focus(root, Some(target)))
     }
 
     fn dispatch_to_focused(
@@ -1029,7 +1071,7 @@ impl EventDispatcher {
         root: &dyn Element,
         event: &ElementEvent,
     ) -> EventResult {
-        let Some(focused) = self.focused.as_ref() else {
+        let Some(focused) = self.focus.owner() else {
             return EventResult::ignored();
         };
         let Some(target) = self.resolve_owner(root, focused.id) else {
@@ -1120,26 +1162,16 @@ impl EventDispatcher {
 struct RoutedEventResult {
     result: EventResult,
     capture_owner: Option<ElementId>,
-    focus_owner: Option<FocusCandidate>,
+    focus_owner: Option<FocusCandidate<ElementId>>,
 }
 
-#[derive(Clone)]
-struct FocusCandidate {
-    id: ElementId,
-    node: FocusNode,
-    autofocus: bool,
-}
-
+/// Gathers every focusable attachment of the tree, in traversal order.
 fn collect_focus_candidates(
     element: &dyn Element,
-    candidates: &mut SmallVec<[FocusCandidate; 16]>,
+    candidates: &mut FocusCandidates<ElementId>,
 ) {
     if let (Some(id), Some(node)) = (element.element_id(), element.focus_node()) {
-        candidates.push(FocusCandidate {
-            id,
-            node: node.clone(),
-            autofocus: element.autofocus(),
-        });
+        candidates.push(FocusCandidate::new(id, node.clone(), element.autofocus()));
     }
     for child in structural_children(element) {
         collect_focus_candidates(child, candidates);
@@ -1156,17 +1188,29 @@ fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
     }
 }
 
+/// Indexes every identified element by its root-relative path, reporting the
+/// innermost focus scope on the way.
+///
+/// The scope is discovered here rather than by a walk of its own because this
+/// walk already visits the whole tree once per structural generation. Each
+/// trapping element seen overwrites the previous one, so the last of them in
+/// depth-first order wins — which is the innermost scope of the deepest
+/// trapping branch, and for siblings the one presented last.
 fn index_element_paths(
     element: &dyn Element,
     path: &mut Vec<usize>,
     paths: &mut HashMap<ElementId, ElementPath>,
+    scope: &mut Option<ElementId>,
 ) {
     if let Some(id) = element.element_id() {
         paths.insert(id, ElementPath(path.clone().into_boxed_slice()));
+        if element.traps_focus() {
+            *scope = Some(id);
+        }
     }
     for (index, child) in structural_children(element).iter().copied().enumerate() {
         path.push(index);
-        index_element_paths(child, path, paths);
+        index_element_paths(child, path, paths, scope);
         path.pop();
     }
 }
@@ -1239,11 +1283,7 @@ fn dispatch_routed_event_inner<'a>(
         if focus_owner.is_none()
             && let (Some(id), Some(node)) = (root.element_id(), root.focus_node())
         {
-            focus_owner = Some(FocusCandidate {
-                id,
-                node: node.clone(),
-                autofocus: root.autofocus(),
-            });
+            focus_owner = Some(FocusCandidate::new(id, node.clone(), root.autofocus()));
         }
         if capture_owner.is_none() && !matches!(own_result.capture_request(), CaptureRequest::None)
         {
@@ -1382,6 +1422,7 @@ mod tests {
     use aimer_rubick::INLINE_CAPACITY;
 
     use super::*;
+    use crate::focus::FocusTrap;
     use crate::{FocusNode, Key};
 
     struct DowncastableElement;
@@ -2885,6 +2926,341 @@ mod tests {
         assert!(backward.is_consumed());
         assert!(first_node.has_focus());
         assert!(!second_node.has_focus());
+    }
+
+    struct FocusScopeElement {
+        children: Vec<AnyElement>,
+        traps: Cell<bool>,
+    }
+
+    impl VisitorElement for FocusScopeElement {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            for child in &self.children {
+                visitor(child.as_ref());
+            }
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "FocusScopeElement"
+        }
+    }
+
+    impl EventElement for FocusScopeElement {
+        fn traps_focus(&self) -> bool {
+            self.traps.get()
+        }
+    }
+
+    impl LayoutElement for FocusScopeElement {}
+    impl Drawable for FocusScopeElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for FocusScopeElement {
+        fn option_any(&self) -> Option<&dyn Any> {
+            Some(self)
+        }
+    }
+
+    fn focusable(node: &FocusNode) -> AnyElement {
+        FocusTestElement {
+            node: node.clone(),
+            lifecycle: Rc::new(RefCell::new(Vec::new())),
+            autofocus: false,
+        }
+        .boxed()
+    }
+
+    fn tab(dispatcher: &mut EventDispatcher, root: &dyn Element) -> EventResult {
+        dispatcher.dispatch(
+            root,
+            Vec2d::default(),
+            &ElementEvent::KeyInput {
+                key: NamedKey::Tab,
+                action: KeyAction::Pressed,
+                modifiers: Modifiers::default(),
+            },
+        )
+    }
+
+    #[test]
+    fn tab_inside_a_trapping_scope_never_leaves_it() {
+        let outside = FocusNode::new();
+        let first = FocusNode::new();
+        let second = FocusNode::new();
+        let root = IdentityBranch(vec![
+            focusable(&outside),
+            FocusScopeElement {
+                children: vec![focusable(&first), focusable(&second)],
+                traps: Cell::new(true),
+            }
+            .boxed(),
+        ])
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        advance_element_tree_generation();
+
+        first.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+        assert!(first.has_focus());
+
+        assert!(tab(&mut dispatcher, root.as_ref()).is_consumed());
+        assert!(second.has_focus());
+
+        // Wrapping at the end of the scope returns to its first target rather
+        // than escaping into the tree behind it.
+        assert!(tab(&mut dispatcher, root.as_ref()).is_consumed());
+        assert!(first.has_focus());
+        assert!(!outside.has_focus());
+    }
+
+    #[test]
+    fn a_trapping_scope_takes_focus_away_from_the_tree_behind_it() {
+        let outside = FocusNode::new();
+        let inside = FocusNode::new();
+        let scope = FocusScopeElement {
+            children: vec![focusable(&inside)],
+            traps: Cell::new(false),
+        }
+        .boxed();
+        let root = IdentityBranch(vec![focusable(&outside), scope]).boxed();
+        let mut dispatcher = EventDispatcher::new();
+        advance_element_tree_generation();
+
+        outside.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+        assert!(outside.has_focus());
+
+        set_scope_traps(root.as_ref(), true);
+        advance_element_tree_generation();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+
+        assert!(!outside.has_focus());
+        assert_eq!(dispatcher.focused(), None);
+
+        // Only the scope is reachable now.
+        assert!(tab(&mut dispatcher, root.as_ref()).is_consumed());
+        assert!(inside.has_focus());
+    }
+
+    #[test]
+    fn leaving_a_trapping_scope_restores_the_focus_it_displaced() {
+        let outside = FocusNode::new();
+        let inside = FocusNode::new();
+        let outside_lifecycle = Rc::new(RefCell::new(Vec::new()));
+        let root = IdentityBranch(vec![
+            FocusTestElement {
+                node: outside.clone(),
+                lifecycle: outside_lifecycle.clone(),
+                autofocus: false,
+            }
+            .boxed(),
+            FocusScopeElement {
+                children: vec![focusable(&inside)],
+                traps: Cell::new(false),
+            }
+            .boxed(),
+        ])
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        advance_element_tree_generation();
+
+        outside.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+        assert!(outside.has_focus());
+
+        set_scope_traps(root.as_ref(), true);
+        advance_element_tree_generation();
+        inside.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+        assert!(inside.has_focus());
+
+        set_scope_traps(root.as_ref(), false);
+        advance_element_tree_generation();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+
+        assert!(outside.has_focus());
+        assert!(!inside.has_focus());
+        assert_eq!(&*outside_lifecycle.borrow(), &["focus", "blur", "focus"]);
+    }
+
+    #[test]
+    fn a_trap_elsewhere_suspends_the_tree_and_releases_tab_to_it() {
+        let node = FocusNode::new();
+        let lifecycle = Rc::new(RefCell::new(Vec::new()));
+        let root = IdentityBranch(vec![
+            FocusTestElement {
+                node: node.clone(),
+                lifecycle: lifecycle.clone(),
+                autofocus: false,
+            }
+            .boxed(),
+            focusable(&FocusNode::new()),
+        ])
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        advance_element_tree_generation();
+
+        node.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+        assert!(node.has_focus());
+
+        let trap = FocusTrap::acquire();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+
+        assert!(!node.has_focus());
+        assert_eq!(dispatcher.focused(), None);
+        assert!(
+            !tab(&mut dispatcher, root.as_ref()).is_consumed(),
+            "a suspended tree must pass Tab on to the trapping region"
+        );
+        assert_eq!(dispatcher.focused(), None);
+
+        drop(trap);
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+
+        assert!(node.has_focus());
+        assert_eq!(&*lifecycle.borrow(), &["focus", "blur", "focus"]);
+    }
+
+    #[test]
+    fn text_reaches_a_nested_dispatch_root_while_the_tree_is_suspended() {
+        let node = FocusNode::new();
+        let events = Rc::new(Cell::new(0));
+        let outside_events = Rc::new(Cell::new(0));
+        let root = IdentityBranch(vec![
+            FocusKeyElement {
+                node: node.clone(),
+                bounds: (Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 }),
+                key_events: events.clone(),
+                consume_keys: Rc::new(Cell::new(true)),
+            }
+            .boxed(),
+            routed_leaf(
+                (Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 }),
+                outside_events.clone(),
+                false,
+                false,
+            ),
+        ])
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        advance_element_tree_generation();
+        node.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+
+        let text = ElementEvent::TextInput {
+            text: "a".to_string(),
+            action: KeyAction::Pressed,
+            modifiers: Modifiers::default(),
+        };
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &text);
+        assert_eq!(events.get(), 1);
+        assert_eq!(outside_events.get(), 0);
+
+        let _trap = FocusTrap::acquire();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &text);
+
+        assert_eq!(events.get(), 1, "the suspended field must not receive text");
+        assert_eq!(
+            outside_events.get(),
+            1,
+            "text must be routed so an overlay host can hand it to its own root"
+        );
+    }
+
+    #[test]
+    fn a_press_outside_a_trapping_scope_does_not_take_focus_out_of_it() {
+        let inside = FocusNode::new();
+        let outside = FocusNode::new();
+        let root = IdentityBranch(vec![
+            PressableFocusElement {
+                node: outside.clone(),
+                bounds: (Vec2d { x: 20.0, y: 20.0 }, Vec2d { x: 30.0, y: 30.0 }),
+            }
+            .boxed(),
+            FocusScopeElement {
+                children: vec![
+                    PressableFocusElement {
+                        node: inside.clone(),
+                        bounds: (Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 }),
+                    }
+                    .boxed(),
+                ],
+                traps: Cell::new(true),
+            }
+            .boxed(),
+        ])
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        advance_element_tree_generation();
+
+        inside.request_focus();
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+        assert!(inside.has_focus());
+
+        let pos = Vec2d { x: 25.0, y: 25.0 };
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            pos,
+            &ElementEvent::PointerDown(PointerInfo::mouse(pos, PointerButton::Primary)),
+        );
+
+        assert!(!outside.has_focus(), "a press escaped the trapping scope");
+        assert!(inside.has_focus());
+
+        // A press on nothing focusable at all leaves the scope's owner alone
+        // instead of blurring it from outside.
+        let empty = Vec2d { x: 50.0, y: 50.0 };
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            empty,
+            &ElementEvent::PointerDown(PointerInfo::mouse(empty, PointerButton::Primary)),
+        );
+
+        assert!(inside.has_focus());
+    }
+
+    struct PressableFocusElement {
+        node: FocusNode,
+        bounds: (Vec2d, Vec2d),
+    }
+
+    impl VisitorElement for PressableFocusElement {
+        fn debug_name(&self) -> &'static str {
+            "PressableFocusElement"
+        }
+    }
+
+    impl EventElement for PressableFocusElement {
+        fn focus_node(&self) -> Option<&FocusNode> {
+            Some(&self.node)
+        }
+    }
+
+    impl LayoutElement for PressableFocusElement {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some(self.bounds)
+        }
+    }
+
+    impl Drawable for PressableFocusElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for PressableFocusElement {}
+
+    /// Flips the trapping flag of the scope in `root`, as a rebuild would.
+    fn set_scope_traps(root: &dyn Element, traps: bool) {
+        let mut found = false;
+        root.visit_children(&mut |child| {
+            if let Some(scope) = child
+                .option_any()
+                .and_then(|any| any.downcast_ref::<FocusScopeElement>())
+            {
+                scope.traps.set(traps);
+                found = true;
+            }
+        });
+        assert!(found, "the tree under test has no focus scope");
     }
 
     struct FocusKeyElement {

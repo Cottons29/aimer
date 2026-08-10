@@ -1,5 +1,5 @@
 use std::cell::{Cell, UnsafeCell};
-use std::sync::Arc;
+use std::marker::PhantomData;
 use std::time::Duration;
 
 use aimer_attribute::position::Vec2d;
@@ -7,8 +7,8 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, Key, LayoutElement, Rebuildable,
-    State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
+    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -120,7 +120,9 @@ impl Animatable for Rgba {
 ///                                                           .child_key("profile-card");
 /// ```
 pub struct MorphTransition<T: Widget + 'static> {
-    pub child: Arc<T>,
+    /// The morphing content, kept as a builder because a cross-fade places the
+    /// same content again on every frame of the transition.
+    pub child: ChildBuilder,
     pub duration: Duration,
     pub curve: Curve,
     /// Optional background color to morph. If set, the color transitions
@@ -128,6 +130,9 @@ pub struct MorphTransition<T: Widget + 'static> {
     pub background_color: Option<Rgba>,
     transition_key: Option<Key>,
     widget_key: Option<Key>,
+    /// Records which child type completed this transition without storing it,
+    /// so one `State` impl stays paired with one child type.
+    marker: PhantomData<T>,
 }
 
 impl<T: Widget> MorphTransition<T> {
@@ -138,12 +143,13 @@ impl<T: Widget> MorphTransition<T> {
     /// changes. The child's own [`Widget::key`] is the default identity.
     pub fn new(duration: Duration, curve: Curve, child: T) -> Self {
         Self {
-            child: Arc::new(child),
+            child: ChildBuilder::from_widget(child),
             duration,
             curve,
             background_color: None,
             transition_key: None,
             widget_key: None,
+            marker: PhantomData,
         }
     }
 
@@ -178,17 +184,20 @@ impl<T: Widget> MorphTransition<T> {
 impl<T: Widget + 'static> StatefulWidget for MorphTransition<T> {
     type State = MorphTransitionState<T>;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         MorphTransitionState {
-            current_child: self.child.clone(),
+            child_key: self
+                .transition_key
+                .or_else(|| Widget::key(&self.child)),
+            current_child: self.child,
             old_child: None,
-            child_key: self.transition_key.clone().or_else(|| self.child.key()),
             duration: self.duration,
             curve: self.curve,
             current_color: self.background_color,
             old_color: None,
             controller: AnimationController::new(self.duration, self.curve),
             updater: StateUpdater::empty(),
+            marker: PhantomData,
         }
     }
 }
@@ -198,8 +207,9 @@ impl<T: Widget + 'static> Widget for MorphTransition<T> {
         self.widget_key.clone()
     }
 
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        StatefulElement::new_with_name(self, ctx, "MorphTransition", self.key())
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let __key = Widget::key(&self);
+        StatefulElement::new_with_name(self, ctx, "MorphTransition", __key)
             .0
             .boxed()
     }
@@ -207,8 +217,8 @@ impl<T: Widget + 'static> Widget for MorphTransition<T> {
 
 #[doc(hidden)]
 pub struct MorphTransitionState<T: Widget + 'static> {
-    current_child: Arc<T>,
-    old_child: Option<Arc<T>>,
+    current_child: ChildBuilder,
+    old_child: Option<ChildBuilder>,
     child_key: Option<Key>,
     duration: Duration,
     curve: Curve,
@@ -216,6 +226,7 @@ pub struct MorphTransitionState<T: Widget + 'static> {
     old_color: Option<Rgba>,
     controller: AnimationController,
     updater: StateUpdater<Self>,
+    marker: PhantomData<T>,
 }
 
 impl<T: Widget + 'static> State<MorphTransition<T>> for MorphTransitionState<T> {
@@ -261,19 +272,19 @@ impl<T: Widget + 'static> State<MorphTransition<T>> for MorphTransitionState<T> 
     }
 }
 
-struct MorphTransitionFrame<T: Widget + 'static> {
-    current_child: Arc<T>,
-    old_child: Option<Arc<T>>,
+struct MorphTransitionFrame {
+    current_child: ChildBuilder,
+    old_child: Option<ChildBuilder>,
     current_color: Option<Rgba>,
     old_color: Option<Rgba>,
     controller: AnimationController,
 }
 
-impl<T: Widget + 'static> Widget for MorphTransitionFrame<T> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
-        let current_child = self.current_child.to_element(ctx);
+impl Widget for MorphTransitionFrame {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let current_child = self.current_child.build(ctx);
         let current_size = current_child.computed_size(ctx);
-        let old_child = self.old_child.as_ref().map(|child| child.to_element(ctx));
+        let old_child = self.old_child.map(|child| child.build(ctx));
         let old_size = old_child
             .as_ref()
             .map(|child| child.computed_size(ctx))
@@ -283,7 +294,7 @@ impl<T: Widget + 'static> Widget for MorphTransitionFrame<T> {
         MorphTransitionElement {
             current_child: SyncChild::new(current_child),
             old_child: SyncChild(UnsafeCell::new(old_child)),
-            controller: self.controller.clone(),
+            controller: self.controller,
             window: ctx.window.clone(),
             old_snapshot: LocalCell::new(LayoutSnapshot {
                 size: (old_size.width, old_size.height),
@@ -625,7 +636,7 @@ mod tests {
             Some(Key::Value(self.0.to_owned()))
         }
 
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             panic!("not needed for state lifecycle tests")
         }
     }

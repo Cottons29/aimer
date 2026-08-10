@@ -65,7 +65,7 @@ pub struct DragBoardState {
 impl StatefulWidget for DragBoard {
     type State = DragBoardState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         DragBoardState {
             cards: vec![
                 Card {

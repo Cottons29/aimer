@@ -107,11 +107,11 @@ impl Widget for Text {
     ///
     /// The lookup is a single `TypeId` probe, so a tree without a region pays
     /// nothing for selection.
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         if ctx.get_state::<SelectionScope>().is_some() {
             return RawSelectableText::new(
                 ctx,
-                self.text.clone(),
+                self.text,
                 self.text_style,
                 self.text_align,
                 DEFAULT_SELECTION_COLOR,
@@ -119,7 +119,7 @@ impl Widget for Text {
             .boxed();
         }
         RawTextWidget {
-            text: self.text.clone(),
+            text: self.text,
             text_style: self.text_style,
             text_align: self.text_align,
             cache: LayoutCache::new(),

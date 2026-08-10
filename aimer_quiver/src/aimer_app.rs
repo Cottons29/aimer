@@ -1015,7 +1015,7 @@ mod tests {
     }
 
     impl Widget for RecordingWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             self.builds.fetch_add(1, Ordering::SeqCst);
             RecordingElement {
                 cancels: self.cancels.clone(),
@@ -1056,7 +1056,7 @@ mod tests {
     }
 
     impl Widget for PreeditWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             PreeditElement {
                 preedits: self.preedits.clone(),
                 focus_node: FocusNode::new(),
@@ -1319,7 +1319,7 @@ mod tests {
     }
 
     impl Widget for CapturingWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             CapturingElement {
                 events: self.events.clone(),
             }
@@ -1408,7 +1408,7 @@ mod tests {
     }
 
     impl Widget for ScrollRecordingWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             ScrollRecordingElement {
                 events: self.events.clone(),
             }
@@ -1581,7 +1581,7 @@ mod tests {
     struct CursorWidget;
 
     impl Widget for CursorWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             CursorElement.boxed()
         }
     }
@@ -1714,7 +1714,7 @@ mod tests {
     }
 
     impl Widget for AnimatingWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             AnimatingElement {
                 frames: self.frames.clone(),
             }
@@ -1798,7 +1798,7 @@ mod tests {
     struct RedrawWidget;
 
     impl Widget for RedrawWidget {
-        fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             RedrawElement.boxed()
         }
     }

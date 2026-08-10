@@ -65,6 +65,7 @@ pub fn execute(project_name: &str) -> anyhow::Result<()> {
     tracing::debug!("current_dir : {}", current_dir.display());
     println!("Creating project '{}'", project_name);
 
+    let app_name = prompt_abortable!(Text::new("App name:"));
     let description = prompt_abortable!(Text::new("Description:"));
     let version = prompt_abortable!(Text::new("Version:").with_default("0.1.0"));
     let author = prompt_abortable!(Text::new("Author:"));

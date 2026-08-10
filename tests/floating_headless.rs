@@ -20,7 +20,7 @@ struct PositionProbeElement {
 }
 
 impl Widget for PositionProbe {
-    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
         PositionProbeElement {
             observed: self.observed.clone(),
             size: ResolvedSize {

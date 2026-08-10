@@ -32,7 +32,7 @@ pub struct SystemThemeExampleState {
 impl StatefulWidget for SystemThemeExample {
     type State = SystemThemeExampleState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         SystemThemeExampleState {
             // The default: whatever the user told the operating system.
             mode: ThemeMode::System,

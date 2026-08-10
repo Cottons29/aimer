@@ -238,7 +238,7 @@ impl Svg {
 }
 
 impl Widget for Svg {
-    fn to_element(&self, _ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
         RawSvg {
             document: self.document.clone(),
             width: self.width,
@@ -462,7 +462,7 @@ impl SvgAsset {
 }
 
 impl Widget for SvgAsset {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let loader = SvgLoader::new(SvgSource::Asset(self.key.clone()));
         let background_loader = loader.clone();
         let window = ctx.window.clone();
@@ -488,14 +488,8 @@ impl Widget for SvgAsset {
             hover_styles: self.hover_styles.clone(),
             pressed_styles: self.pressed_styles.clone(),
             callbacks: self.callbacks.clone(),
-            loading_element: self
-                .loading_widget
-                .as_ref()
-                .map(|widget| widget.to_element(ctx)),
-            error_element: self
-                .error_widget
-                .as_ref()
-                .map(|widget| widget.to_element(ctx)),
+            loading_element: self.loading_widget.map(|widget| widget.to_element(ctx)),
+            error_element: self.error_widget.map(|widget| widget.to_element(ctx)),
             svg_element: UnsafeCell::new(None),
         }
         .boxed()

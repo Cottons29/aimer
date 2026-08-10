@@ -17,6 +17,11 @@ pub use aimer_dnd::{
     Draggable, DropZone, FileDrop,
 };
 pub use aimer_flex::*;
+pub use aimer_focus as focus;
+pub use aimer_focus::{
+    FocusCandidate, FocusManager, FocusNode, FocusTrap, FocusTrapId, FocusTransition,
+    active_focus_trap,
+};
 pub use aimer_grid::*;
 pub use aimer_input::button::Button;
 pub use aimer_input::callback::{AsyncCallback, RawInnerCallback};

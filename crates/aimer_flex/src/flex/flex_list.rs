@@ -353,7 +353,7 @@ where
     W: Widget + 'static,
     F: Fn(&T) -> W + 'static,
 {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawFlex {
             direction: self.direction,
             vertical_alignment: self.vertical_alignment,

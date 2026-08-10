@@ -6,6 +6,7 @@ mod pool;
 mod storage;
 pub mod test;
 
+use std::alloc::Layout;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
@@ -282,6 +283,72 @@ impl<T: ?Sized + 'static, const WORDS: usize> Rubick<T, WORDS> {
         self.replace_parts(value, ErasedTable::<U, T, WORDS>::REF);
     }
 
+    /// Moves the owned value out of this owner through `consume`.
+    ///
+    /// An owner is the only thing keeping its payload alive, so a caller that
+    /// wants the value itself — rather than a borrow of it — has no way to get
+    /// it out: the payload is erased, and [`Drop`] would destroy it. This
+    /// method opens exactly that door for one call. It hands `consume` a
+    /// pointer to the initialized target, expects the value to be moved out of
+    /// it, and then returns heap storage to the pool without running the
+    /// concrete destructor.
+    ///
+    /// The storage is marked vacant *before* `consume` runs, so an unwind out
+    /// of it can never drop the moved value a second time, and the block is
+    /// released on both the normal and the unwinding path. This is what makes
+    /// the operation different from [`std::ptr::read`] followed by
+    /// [`std::mem::forget`], which would leak one pooled block per heap-mode
+    /// owner.
+    ///
+    /// # Safety
+    ///
+    /// `consume` must move the value out of the pointer exactly once, for
+    /// example with [`std::ptr::read`], and must not drop it in place. The
+    /// pointee is uninitialized once `consume` returns.
+    ///
+    /// The owner must be direct — built with [`Rubick::new`] or
+    /// [`Rubick::erase`]. A [`Rubick::new_projected`] owner stores its
+    /// adapters next to the value, and moving the value alone would abandon
+    /// them; debug builds assert this.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use aimer_rubick::Rubick;
+    ///
+    /// let owner = Rubick::new(String::from("Aimer"));
+    /// // SAFETY: The closure moves the string out exactly once.
+    /// let name: String = unsafe { owner.take(|value| value.read()) };
+    ///
+    /// assert_eq!(name, "Aimer");
+    /// ```
+    #[inline]
+    pub unsafe fn take<R>(mut self, consume: impl FnOnce(*mut T) -> R) -> R {
+        debug_assert!(
+            self.is_direct(),
+            "a projected owner stores adapters beside its value, so the value cannot be moved out alone"
+        );
+
+        let operations = self.operations;
+        let data = self.data_mut();
+        // From here the owner owns storage rather than a value, so its own
+        // destructor is a no-op and cannot reach the moved-out payload.
+        self.operations = Operations::VACANT_REF;
+
+        let block = PooledBlock {
+            data,
+            layout: operations.layout,
+            heap_class: operations.heap_class,
+            pooled: !operations.inline,
+        };
+        // SAFETY: `self` is owned here, so no other borrow of the payload
+        // exists, and the projection describes the value stored at `data`.
+        let target = unsafe { operations.projection.exclusive(data) };
+        let result = consume(target);
+        drop(block);
+        result
+    }
+
     /// Returns `true` when the concrete storage is embedded in this owner.
     ///
     /// Inline does not necessarily mean stack allocated. For example, an inline
@@ -406,6 +473,34 @@ impl<T: ?Sized + 'static, const WORDS: usize> Rubick<T, WORDS> {
         } else {
             // SAFETY: Heap mode always initializes the pointer word.
             unsafe { self.storage.pointer() }
+        }
+    }
+}
+
+/// Returns a heap-mode block to the pool once its value has been moved out.
+///
+/// [`Rubick::take`] holds one of these across the caller-supplied move, so the
+/// block is recycled even when that move unwinds.
+struct PooledBlock {
+    data: *mut u8,
+    layout: Layout,
+    heap_class: u8,
+    pooled: bool,
+}
+
+impl Drop for PooledBlock {
+    #[inline]
+    fn drop(&mut self) {
+        if self.pooled {
+            // SAFETY: The block came from the pool with this exact class and
+            // layout, and its value has been moved out by the consumer.
+            unsafe {
+                pool::deallocate(
+                    NonNull::new_unchecked(self.data),
+                    self.heap_class,
+                    self.layout,
+                )
+            };
         }
     }
 }

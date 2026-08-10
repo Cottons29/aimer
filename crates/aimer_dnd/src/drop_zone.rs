@@ -180,7 +180,7 @@ fn matches_extensions(extensions: Option<&[String]>, path: &Path) -> bool {
 }
 
 impl Widget for DropZone<HasChild> {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         StatefulElement::from_widget(self, ctx, "DropZone", None)
     }
 
@@ -205,7 +205,7 @@ pub struct DropZoneLiveState {
 impl StatefulWidget for DropZone<HasChild> {
     type State = DropZoneLiveState;
 
-    fn create_state(&self) -> Self::State {
+    fn create_state(self) -> Self::State {
         DropZoneLiveState {
             id: crate::target::next_target_id(),
             hover: DragTargetState::default(),
@@ -299,7 +299,7 @@ struct DropZoneGate {
 }
 
 impl Widget for DropZoneGate {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawDropZone {
             child: self.child.to_element(ctx),
             logic: self.logic.clone(),

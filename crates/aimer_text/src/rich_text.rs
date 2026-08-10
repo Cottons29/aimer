@@ -151,7 +151,7 @@ impl RichText {
 }
 
 impl Widget for RichText {
-    fn to_element(&self, ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let spans = self.span.flatten(&self.text_style);
         let plain_text: Rc<str> = spans
             .iter()
