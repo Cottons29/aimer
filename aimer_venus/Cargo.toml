@@ -1,0 +1,23 @@
+[package]
+name = "aimer_venus"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+description = "Aimer's UI-thread async runtime: frame-aligned, non-Send task scheduling with an offload pool for blocking work"
+repository = "https://github.com/Cottons29/aimer"
+license = "MIT"
+readme = "README.md"
+keywords = ["gui", "async", "runtime", "scheduler"]
+categories = ["asynchronous", "gui"]
+
+# Venus sits underneath the widget tree, so it depends on nothing from the
+# framework. A monotonic clock is the only thing it cannot implement itself:
+# `std::time::Instant` panics in the browser.
+[dependencies]
+web-time.workspace = true
+
+# The integration spec times a microtask drain, and a test binary cannot reach
+# the library's own dependencies.
+[dev-dependencies]
+web-time.workspace = true
+

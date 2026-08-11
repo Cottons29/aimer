@@ -60,6 +60,8 @@ pub use aimer_svg::{
     SvgSource, SvgStyle, SvgTransform,
 };
 pub use aimer_text::{RichText, SelectionArea, SpanStyle, Text, TextButton, TextSpan};
+pub use aimer_venus as venus;
+pub use aimer_venus::{TaskScope, Venus, yield_if_over_budget, yield_now};
 pub use aimer_widget::base::BuildContext;
 pub use aimer_widget::{self, Key, State, StatefulWidget, StatelessWidget, Widget, *};
 

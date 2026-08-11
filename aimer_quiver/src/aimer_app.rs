@@ -12,6 +12,7 @@ use aimer_events::text_editing::TextEditingDelta;
 use aimer_inspector::InspectorAppHandle;
 use aimer_modal::ModalHost;
 use aimer_utils::info;
+use aimer_venus::Venus;
 use aimer_widget::Widget;
 use aimer_widget::base::WindowHandle;
 #[cfg(not(target_arch = "wasm32"))]
@@ -80,6 +81,28 @@ fn complete_frame_ready_request(pending: &AtomicBool) {
 
 pub(crate) fn frame_ready_delivered() {
     complete_frame_ready_request(&FRAME_READY_PENDING);
+}
+
+/// Asks the event loop for the frame that continues whatever is unfinished.
+///
+/// The request goes through the loop as a `FrameReady` user event rather than
+/// straight to the window, because iOS coalesces a synchronous
+/// `request_redraw()` issued from inside the draw cycle, and because that is
+/// the one path a thread that is *not* the UI thread may take — which is what
+/// makes this usable both as the widget tree's frame requester and as the
+/// runtime's notifier when a worker finishes while the loop is parked.
+fn request_frame_ready() {
+    if !try_begin_frame_ready_request(&FRAME_READY_PENDING) {
+        return;
+    }
+    let sent = EVENT_PROXY.get().is_some_and(|proxy| {
+        proxy
+            .send_event(AimerNativePlatformEvent::FrameReady)
+            .is_ok()
+    });
+    if !sent {
+        complete_frame_ready_request(&FRAME_READY_PENDING);
+    }
 }
 
 #[cfg(target_os = "ios")]
@@ -462,6 +485,9 @@ pub struct HeadlessAimerApp<W: Widget + 'static> {
     /// The frame requester that was installed for this thread before this
     /// application took it over, put back when the application is dropped.
     previous_frame_requester: Option<std::rc::Rc<dyn Fn()>>,
+    /// The UI-thread runtime that was installed for this thread before this
+    /// application took it over, put back when the application is dropped.
+    previous_runtime: Option<std::rc::Rc<Venus>>,
 }
 
 impl<W: Widget + 'static> HeadlessAimerApp<W> {
@@ -479,6 +505,14 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 
         #[cfg(not(target_arch = "wasm32"))]
         let async_runtime = Runtime::new().expect("Failed to create async runtime");
+
+        // A headless application is the UI thread for as long as it lives, so
+        // its runtime is the one a callback deep in the tree reaches for. The
+        // one that was installed before is remembered rather than overwritten,
+        // because a test may well be running an application inside another.
+        let venus = Venus::new();
+        let previous_runtime = Venus::uninstall();
+        venus.install();
 
         let window = WindowHandle::headless(options.size, scale_factor);
         let mut headless = Self {
@@ -512,6 +546,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 inspector_redraw_frames: Cell::new(0),
                 start_up_frames: Cell::new(0),
                 active_touch_id: None,
+                venus,
                 file_drag: crate::handler::file_drag::FileDrag::new(),
             },
             canvas: aimer_canvas::InnerCanvas::new(),
@@ -526,6 +561,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             previous_frame_requester: aimer_events::window::set_thread_redraw_requester(
                 move || window.request_redraw(),
             ),
+            previous_runtime,
         };
 
         // The windowed application runs its setup the moment the platform loop
@@ -575,6 +611,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         self.app
             .frame_drawer(window)
             .draw(&self.canvas, width, height);
+
+        self.app.end_frame();
 
         crate::first_frame::notify_first_frame_presented(true);
     }
@@ -676,6 +714,15 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     pub fn take_redraw_request(&self) -> bool {
         self.window.take_redraw_request()
     }
+
+    /// The UI-thread runtime this application's frames are scheduled by.
+    ///
+    /// A test drives asynchronous work the way the application does: spawn on
+    /// this, then render a frame.
+    #[inline]
+    pub fn venus(&self) -> &std::rc::Rc<Venus> {
+        &self.app.venus
+    }
 }
 
 impl<W: Widget + 'static> Drop for HeadlessAimerApp<W> {
@@ -683,6 +730,10 @@ impl<W: Widget + 'static> Drop for HeadlessAimerApp<W> {
     /// gone, so a later one — or none at all — receives them instead.
     fn drop(&mut self) {
         aimer_events::window::restore_thread_redraw_requester(self.previous_frame_requester.take());
+        Venus::uninstall();
+        if let Some(previous) = self.previous_runtime.take() {
+            previous.install();
+        }
     }
 }
 
@@ -872,19 +923,7 @@ fn start_event_loop(
     // `FrameReady` is delivered via `user_event` after the current frame, which
     // schedules the next redraw safely even on platforms (iOS) that coalesce a
     // synchronous `request_redraw()` issued from inside the draw cycle.
-    aimer_events::window::set_redraw_requester(|| {
-        if !try_begin_frame_ready_request(&FRAME_READY_PENDING) {
-            return;
-        }
-        let sent = EVENT_PROXY.get().is_some_and(|proxy| {
-            proxy
-                .send_event(AimerNativePlatformEvent::FrameReady)
-                .is_ok()
-        });
-        if !sent {
-            complete_frame_ready_request(&FRAME_READY_PENDING);
-        }
-    });
+    aimer_events::window::set_redraw_requester(request_frame_ready);
 
     const DEFAULT_INSPECTOR_PORT: &str = env!("DEFAULT_INSPECTOR_PORT");
     const DEFAULT_INSPECTOR_ADDRESS: &str = env!("DEFAULT_INSPECTOR_ADDRESS");
@@ -897,6 +936,15 @@ fn start_event_loop(
     aimer_utils::debug!("Creating async runtime...");
     #[cfg(not(target_arch = "wasm32"))]
     let async_runtime = Runtime::new().expect("Failed to create async runtime");
+
+    // The runtime the frames are scheduled by, installed for this thread so a
+    // handler deep in the tree reaches it without anyone handing it down. A
+    // worker finishing while the loop is parked wakes it through the same
+    // request the widget tree uses — the only thing a task on another thread is
+    // allowed to do to this one.
+    let venus = Venus::new();
+    venus.install();
+    venus.set_notifier(request_frame_ready);
 
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
     let inspector = InspectorAppHandle::connect(
@@ -938,6 +986,7 @@ fn start_event_loop(
         inspector_redraw_frames: Cell::new(0),
         start_up_frames: Cell::new(255),
         active_touch_id: None,
+        venus,
         file_drag: crate::handler::file_drag::FileDrag::new(),
     };
 
@@ -954,6 +1003,8 @@ fn start_event_loop(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -1046,6 +1097,160 @@ mod tests {
             aimer_widget::EventResult::ignored()
         }
     }
+
+    /// Reads a value at draw time, the way a widget reads the state it was
+    /// built from.
+    ///
+    /// The two cells are `Rc`, not `Arc`: a Venus task is polled on the UI
+    /// thread and may hold exactly this kind of handle, which is the property
+    /// these tests exist to pin.
+    struct ObservingWidget {
+        source: Rc<Cell<i32>>,
+        observed: Rc<Cell<i32>>,
+    }
+
+    impl Widget for ObservingWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            ObservingElement {
+                source: self.source,
+                observed: self.observed,
+            }
+            .boxed()
+        }
+    }
+
+    struct ObservingElement {
+        source: Rc<Cell<i32>>,
+        observed: Rc<Cell<i32>>,
+    }
+
+    impl Drawable for ObservingElement {
+        fn draw(&self, _ctx: &BuildContext) {
+            self.observed.set(self.source.get());
+        }
+    }
+    impl LayoutElement for ObservingElement {}
+    impl Rebuildable for ObservingElement {}
+    impl VisitorElement for ObservingElement {
+        fn debug_name(&self) -> &'static str {
+            "ObservingElement"
+        }
+    }
+    impl EventElement for ObservingElement {}
+
+    /// The property the whole runtime exists for: an effect produced by a
+    /// resolved future is visible to *this* frame's build, not the next one.
+    #[test]
+    fn a_microtask_lands_before_the_frame_it_was_spawned_for() {
+        let source = Rc::new(Cell::new(0));
+        let observed = Rc::new(Cell::new(-1));
+        let mut app = AimerApp::start_headless(ObservingWidget {
+            source: source.clone(),
+            observed: observed.clone(),
+        });
+        app.render_frame();
+        assert_eq!(observed.get(), 0, "the first frame drew the initial state");
+
+        let mutated = source.clone();
+        app.venus().spawn(async move {
+            aimer_venus::yield_now().await;
+            mutated.set(7);
+        });
+
+        app.render_frame();
+
+        assert_eq!(observed.get(), 7);
+    }
+
+    /// Background work is spent on the slack a frame has left, so it must run
+    /// after the tree was drawn and never before it.
+    #[test]
+    fn idle_work_runs_in_the_slack_after_the_build() {
+        let order = Rc::new(RefCell::new(Vec::new()));
+        let drawn = order.clone();
+        let mut app = AimerApp::start_headless(OrderedWidget { order: drawn });
+
+        let idled = order.clone();
+        app.venus().spawn_idle(async move {
+            idled.borrow_mut().push("idle");
+        });
+
+        app.render_frame();
+
+        assert_eq!(*order.borrow(), vec!["build", "idle"]);
+    }
+
+    /// A handler eleven elements deep was never handed a spawner, and must
+    /// still be able to spawn: the application installs its runtime for the
+    /// thread it draws on.
+    #[test]
+    fn an_application_installs_its_runtime_for_the_thread_it_draws_on() {
+        let mut app = AimerApp::start_headless(RecordingWidget {
+            builds: Arc::new(AtomicUsize::new(0)),
+            cancels: Arc::new(AtomicUsize::new(0)),
+        });
+
+        let ran = Rc::new(Cell::new(false));
+        let flag = ran.clone();
+        let spawned = aimer_venus::spawn_local(async move { flag.set(true) });
+
+        assert!(spawned.is_some(), "no runtime was installed for the thread");
+        app.render_frame();
+        assert!(ran.get(), "the frame never drained what was spawned");
+    }
+
+    /// A task that is not finished has to bring the loop back, or the frame it
+    /// is waiting for never arrives.
+    #[test]
+    fn unfinished_work_asks_for_another_frame() {
+        let mut app = AimerApp::start_headless(RecordingWidget {
+            builds: Arc::new(AtomicUsize::new(0)),
+            cancels: Arc::new(AtomicUsize::new(0)),
+        });
+        app.render_frame();
+        app.take_redraw_request();
+
+        // Idle work that outlives its budget is the ordinary case: it is sliced
+        // across frames, so each frame owes the next one.
+        app.venus().spawn_idle(async move {
+            loop {
+                aimer_venus::yield_now().await;
+            }
+        });
+
+        app.render_frame();
+
+        assert!(app.take_redraw_request());
+    }
+
+    /// Records the order the frame phases ran in, from inside the build.
+    struct OrderedWidget {
+        order: Rc<RefCell<Vec<&'static str>>>,
+    }
+
+    impl Widget for OrderedWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            OrderedElement { order: self.order }.boxed()
+        }
+    }
+
+    struct OrderedElement {
+        order: Rc<RefCell<Vec<&'static str>>>,
+    }
+
+    impl Drawable for OrderedElement {
+        fn draw(&self, _ctx: &BuildContext) {
+            self.order.borrow_mut().push("build");
+        }
+    }
+    impl LayoutElement for OrderedElement {}
+    impl Rebuildable for OrderedElement {}
+    impl VisitorElement for OrderedElement {
+        fn debug_name(&self) -> &'static str {
+            "OrderedElement"
+        }
+    }
+    impl EventElement for OrderedElement {}
 
     /// Records the composition the platform reported, the way a text field
     /// paints it.

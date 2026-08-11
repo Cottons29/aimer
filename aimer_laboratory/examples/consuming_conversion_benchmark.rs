@@ -82,13 +82,16 @@
 //! magnitude, and it is what a hover, a scroll frame, and a theme tick actually
 //! cost now.
 //!
-//! The widgets above are stand-ins, and one of these readings does not survive
-//! contact with the real ones. `production_widget_benchmark.rs` duels the
-//! shipping framework against the released pre-migration one, where a
-//! `Container` is 512 bytes against this same eight-word budget: it is therefore
-//! *always* pooled, and the decorated tree comes out a wash rather than 10–16%
-//! faster. That is the third reading above — the inline budget is the tunable —
-//! confirmed on a widget nobody wrote for a benchmark.
+//! The widgets above are stand-ins, and the third reading is the one that was
+//! worth chasing on the real ones. `production_widget_benchmark.rs` duels the
+//! shipping framework against the released pre-migration one, and when it was
+//! first run a `Container` was 512 bytes against this same eight-word budget:
+//! always pooled, so the decorated tree came out a wash rather than 10–16%
+//! faster and the plain tree came out 40% *slower*. Packing a color into one
+//! word then took `BoxDecoration` from 336 to 192 bytes and `Container` from 512
+//! to 352, and both scenarios flipped to the consuming side. So the tunable is
+//! the payload against the budget, exactly as the third reading says — and it is
+//! tunable from either end.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;

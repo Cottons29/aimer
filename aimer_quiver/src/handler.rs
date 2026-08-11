@@ -27,10 +27,12 @@ use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_inspector::InspectorOverlay;
+use aimer_venus::Venus;
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{AnyElement, EventDispatcher, EventResult, Widget};
 use std::any::Any;
 use std::cell::Cell;
+use std::rc::Rc;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 use winit::application::ApplicationHandler;
@@ -109,6 +111,12 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub(crate) startup_resources: Vec<Box<dyn Any>>,
     pub start_up_frames: Cell<u8>,
     pub active_touch_id: Option<u64>,
+    /// The UI-thread runtime this application's frames are scheduled by.
+    ///
+    /// Held here rather than reached for through [`Venus::current`] because a
+    /// frame drives the runtime it owns: a second window on a second thread is
+    /// a second application, and it must drive its own.
+    pub venus: Rc<Venus>,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
@@ -172,6 +180,10 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     /// windowed loop and the headless application so a frame costs the same
     /// work in both.
     pub(crate) fn begin_frame(&mut self) {
+        // The budget starts here, because everything after this point is spent
+        // out of this frame's time.
+        self.venus.begin_frame();
+
         // A browser never reports the end of a scroll, so the gesture is closed
         // here once its stream has gone quiet — before this frame's step is
         // dispatched, so the terminating phase rides along with it.
@@ -194,6 +206,32 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
         #[cfg(debug_assertions)]
         self.poll_inspector_frames();
+
+        // Animation ticks first, so the values the tree is about to be built
+        // from are this frame's; then every resolved effect, drained to
+        // exhaustion. Both happen after the input above and before the build
+        // below, which is the whole contract: a `set_state` from a future that
+        // resolved is visible to *this* frame, not the next one.
+        self.venus.run_frame_tasks();
+        self.venus.run_microtasks();
+    }
+
+    /// The bookkeeping every frame does once the tree has been drawn.
+    ///
+    /// Whatever the frame has left over is spent on background work — image
+    /// decode, glyph rasterisation, prefetch — and not a microsecond more; a
+    /// frame that overran leaves nothing behind and the next one spends
+    /// nothing. Work still waiting when the slack runs out asks for the frame
+    /// that continues it, which is what keeps a sliced task moving without a
+    /// timer.
+    pub(crate) fn end_frame(&mut self) {
+        let budget = self.venus.idle_budget();
+        self.venus.run_idle(&budget);
+        self.venus.end_frame();
+
+        if self.venus.has_ready_work() {
+            self.request_animation_frame();
+        }
     }
 
     /// Keeps the inspector overlay repainting for a few frames after it is
@@ -686,6 +724,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
         #[cfg(debug_assertions)]
         self.broadcast_inspector_snapshot();
+
+        self.end_frame();
     }
 }
 

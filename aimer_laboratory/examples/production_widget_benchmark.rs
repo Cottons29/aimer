@@ -33,15 +33,21 @@
 //!
 //! # Observed
 //!
-//! Release profile, Apple silicon, repeated runs in agreement:
+//! Release profile, Apple silicon, repeated runs in agreement. The borrowing
+//! side is the released framework and cannot change; the consuming side is this
+//! working tree, so the table is re-read whenever something structural moves.
 //!
 //! | scenario | borrowing | consuming | verdict |
 //! |---|---|---|---|
-//! | `SizedBox` leaf, 40 bytes | 19.6 ns, 0 allocs | 9.1 ns, 0 allocs | 52–54% faster |
-//! | decorated `Container` tree, per node | 95 ns, 3 allocs | 105 ns, 2 allocs | within noise |
-//! | plain `Container` tree, per node | 46.7 ns, 1 alloc | 65.1 ns, 1 alloc | 40% slower |
-//! | `Column` child, per child | 14.8 ns, 0.05 allocs | 15.8 ns, 0.03 allocs | 7% slower |
-//! | `Button` dirty rebuild, per frame | 4834 ns, 109 allocs | 3162 ns, 46 allocs | 35% faster |
+//! | `SizedBox` leaf | 9.5 ns, 0 allocs | 5.2 ns, 0 allocs | 45% faster |
+//! | decorated `Container` tree, per node | 78 ns, 3 allocs | 59 ns, 1 alloc | 24–30% faster |
+//! | plain `Container` tree, per node | 40.4 ns, 1 alloc | 38.7 ns, 0 allocs | 4% faster |
+//! | `Column` child, per child | 12.8 ns, 0.05 allocs | 12.7 ns, 0.03 allocs | within noise |
+//! | `Button` dirty rebuild, per frame | 5041 ns, 109 allocs | 3280 ns, 44 allocs | 35% faster |
+//!
+//! Compare timings across scenarios rather than across runs: the absolute
+//! numbers move with the machine, and only the ratios and the allocation counts
+//! have been stable across runs.
 //!
 //! Four readings, in ascending order of importance.
 //!
@@ -51,33 +57,35 @@
 //! child underneath is converted the same way on both sides, so this scenario is
 //! really the container result diluted by sixty-four leaves.
 //!
-//! **Where a clone was removed, the copy ate the saving.** The decorated tree
-//! drops one allocation per node — the shadow list, the archetype of the whole
-//! migration — and still lands inside the noise. The sibling benchmark measured
-//! the same scenario 10–16% *faster* on stand-in widgets; the difference is
-//! entirely the payload, and that is the finding this benchmark exists for.
+//! **Widget size decides the conversion, and the payload was the fix.** An
+//! erased widget reserves 64 bytes inline; a payload past that lives in a pooled
+//! block, and the consuming conversion has to copy it *out* of that block before
+//! the concrete `to_element` runs, where the borrowing one read its fields where
+//! they already were. When this benchmark was first written a `Container` was
+//! **512 bytes**, the plain tree came out 40% *slower* consuming, and the
+//! decorated tree — the scenario the migration was designed for — landed inside
+//! the noise. That was a payload problem, not a signature problem: two thirds of
+//! a `Container` was its inline `BoxDecoration`, and two thirds of *that* was
+//! eight colors carrying HSLA components. Storing a color as one packed word
+//! took `BoxDecoration` from 336 to 192 bytes, `Container` from 512 to 352,
+//! `SizedBox` from 40 to 24, and every scenario above flipped to the consuming
+//! side.
 //!
-//! **Widget size, not the signature, decides the conversion.** An erased widget
-//! reserves 64 bytes inline. A `SizedBox` leaf is 40 bytes, stays in the handle,
-//! and converts **half as expensively** consuming, because the value is read out
-//! in one move instead of field by field through a reference. A real
-//! `Container` is **512 bytes** — eight times the budget — so it always lives in
-//! a pooled block, and the consuming conversion copies all 512 bytes out of that
-//! block before the concrete `to_element` runs. That copy costs about 18 ns per
-//! node and is the entire regression. The knobs are therefore the inline budget
-//! of [`aimer::AnyWidget`] and the size of the widget structs themselves
-//! (`Container` is mostly an inline `BoxDecoration`), neither of which is a
-//! question about `self` versus `&self`.
+//! **The allocation counts show where that went.** A container element also
+//! shrank below 512 bytes, the largest class `aimer_rubick`'s pool serves, so it
+//! is now recycled instead of allocated and freed per node per frame: the plain
+//! tree pays 0 allocations against 1, and the decorated tree 1 against 3. This
+//! is the reading worth carrying forward — a widget or element that crosses
+//! either threshold, the 64-byte inline budget or the 512-byte pooled class,
+//! costs far more than any signature choice.
 //!
-//! **The retained child is what the migration bought.** A dirty-marked frame
+//! **The retained child is still the biggest number.** A dirty-marked frame
 //! under a `Button` — a hover, a press, a scroll offset, a resize — costs a
-//! third less time and 63 fewer allocations, because the child element is placed
-//! again instead of being built again. That is the scenario a user feels, it is
-//! the largest absolute number on the table, and it outweighs the per-node
-//! conversion regression as long as a tree is rebuilt more often than it is
-//! created. The allocation count also shows the limitation the migration left
-//! open: 46 allocations per frame is not zero, because a re-placed retained
-//! child is still marked needs-rebuild and its own build closures run again.
+//! third less time and 65 fewer allocations, because the child element is placed
+//! again instead of being built again. That is the scenario a user feels, and the
+//! allocation count also shows the limitation the migration left open: 44
+//! allocations per frame is not zero, because a re-placed retained child is
+//! still marked needs-rebuild and its own build closures run again.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;

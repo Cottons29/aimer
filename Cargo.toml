@@ -13,6 +13,7 @@ categories = ["development-tools", "gui"]
 [dependencies]
 aimer_attribute.workspace = true
 aimer_rubick.workspace = true
+aimer_venus.workspace = true
 aimer_widget.workspace = true
 aimer_color.workspace = true
 aimer_container.workspace = true
@@ -63,8 +64,12 @@ members = [
     "aimer_quiver",
     "aimer_cli",
     "aimer_cupid",
+    "aimer_rubick",
+    "aimer_venus",
+    "jaime",
+    # An isolated workbench: it uses workspace crates but nothing depends on it.
+    "aimer_laboratory",
     "crates/aimer_widget",
-    "crates/aimer_rubick",
     "crates/aimer_container",
     "crates/aimer_flex",
     "crates/aimer_grid",
@@ -84,7 +89,6 @@ members = [
     "crates/aimer_style",
     "crates/aimer_text",
     "crates/aimer_macro",
-    "jaime",
     "crates/aimer_provider",
     "crates/aimer_sdk",
     "website_backend",
@@ -92,15 +96,18 @@ members = [
     "crates/aimer_svg",
     "crates/aimer_native",
     "crates/aimer_modal",
-    "crates/aimer_dnd"
-, "crates/aimer_ffi_utils", "crates/aimer_ctxmenu",
-    # An isolated workbench: it uses workspace crates but nothing depends on it.
-    "aimer_laboratory"]
+    "crates/aimer_dnd",
+    "crates/aimer_ffi_utils",
+    "crates/aimer_ctxmenu",
+]
 
 
 [workspace.dependencies]
+aimer_cupid = { path = "aimer_cupid" }
+aimer_rubick = { path = "aimer_rubick" }
+aimer_venus = { path = "aimer_venus" }
+aimer_quiver = { path = "aimer_quiver" }
 aimer_canvas = { path = "crates/aimer_canvas" }
-aimer_rubick = { path = "crates/aimer_rubick" }
 aimer_animation = { path = "crates/aimer_animation" }
 aimer_input = { path = "crates/aimer_input" }
 aimer_container = { path = "crates/aimer_container" }
@@ -108,26 +115,24 @@ aimer_flex = { path = "crates/aimer_flex" }
 aimer_grid = { path = "crates/aimer_grid" }
 aimer_scroll = { path = "crates/aimer_scroll" }
 aimer_space = { path = "crates/aimer_space" }
-aimer_quiver = { path = "aimer_quiver" }
 aimer_widget = { path = "crates/aimer_widget" }
 aimer_color = { path = "crates/aimer_color" }
 aimer_attribute = { path = "crates/aimer_attribute" }
 aimer_utils = { path = "crates/aimer_utils" }
 aimer_events = { path = "crates/aimer_events" }
 aimer_focus = { path = "crates/aimer_focus" }
+aimer_text = { path = "crates/aimer_text" }
 aimer_router = { path = "crates/aimer_router" }
 aimer_inspector = { path = "crates/aimer_inspector" }
-aimer_cupid = { path = "aimer_cupid" }
 aimer_assets = { path = "crates/aimer_assets" }
 aimer_style = { path = "crates/aimer_style" }
-aimer_text = { path = "crates/aimer_text" }
 aimer_macro = { path = "crates/aimer_macro" }
 aimer_provider = { path = "crates/aimer_provider" }
 aimer_svg = { path = "crates/aimer_svg" }
 aimer_markdown = { path = "crates/aimer_markdown" }
 aimer_modal = { path = "crates/aimer_modal" }
 aimer_dnd = { path = "crates/aimer_dnd" }
-aimer_native = {path = "crates/aimer_native"}
+aimer_native = { path = "crates/aimer_native" }
 aimer_ctxmenu = { path = "crates/aimer_ctxmenu" }
 
 #############
@@ -223,6 +228,14 @@ worker-macros = { version = "0.8.5", default-features = false }
 # replaces. Optimizing this one crate keeps debug builds of an application fast
 # without touching the debuggability of application code.
 [profile.dev.package.aimer_rubick]
+opt-level = 3
+
+# `aimer_venus` schedules every asynchronous task in an application, inside a
+# frame that is 8.3 ms long at 120 Hz. Its slab indexing, its generational id
+# checks and its waker are the same kind of thin abstraction as `aimer_rubick`'s:
+# free once inlined, and a measurable per-task cost at `opt-level = 0`. Debug
+# builds of an application should not pay a microsecond per microtask.
+[profile.dev.package.aimer_venus]
 opt-level = 3
 
 [profile.release]
