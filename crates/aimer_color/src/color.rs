@@ -1,45 +1,76 @@
 pub mod basic_color;
-pub mod color_trait;
 
 use basic_color::Colors;
-/// Represents a color in one of the formats supported by Aimer.
+use std::fmt;
+
+/// The form a color is stored and drawn in: one machine word of packed ARGB.
 ///
-/// `Color` can store explicit RGB/RGBA channels, packed hexadecimal values,
-/// grayscale values, HSL/HSLA components, named colors from [`Colors`], or a
-/// transparent color. Conversions to packed ARGB values are provided through
-/// [`ColorMixer::to_u32`].
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Color {
-    /// Red, Green, Blue, Alpha (0-255)
-    Rgba(u8, u8, u8, u8),
+/// The channels are laid out as `0xAARRGGBB`, the order every Aimer paint
+/// command and GPU pipeline already expects, so a stored color reaches the
+/// renderer without a conversion.
+///
+/// This is the *storage* half of the color vocabulary. [`Color`] is the
+/// *authoring* half: it names the ways a human writes a color down — RGB,
+/// hexadecimal, grayscale, HSL, a value from [`Colors`] — and resolves each of
+/// them to a `PrimitiveColor` at construction time. A retained widget or
+/// element therefore never carries an unresolved color description, and a style
+/// struct pays four bytes per color instead of the twenty an
+/// HSLA-carrying enum would cost.
+///
+/// # Examples
+///
+/// ```
+/// use aimer_color::prelude::{Color, PrimitiveColor};
+///
+/// let packed: PrimitiveColor = Color::Rgb(0x11, 0x22, 0x33).as_u32();
+/// assert_eq!(packed, 0xFF112233);
+/// assert_eq!(Color::from_primitive(packed), Color::Hex(0x112233));
+/// ```
+pub type PrimitiveColor = u32;
 
-    /// Red, Green, Blue (alpha = 255)
-    Rgb(u8, u8, u8),
-
-    /// Hex color like 0xRRGGBB
-    Hex(u32),
-
-    /// Hex with alpha like 0xRRGGBBAA
-    HexA(u32),
-
-    /// Grayscale + alpha
-    Grayscale(u8, u8),
-
-    /// Grayscale (alpha = 255)
-    Gray8(u8),
-
-    /// HSL color model
-    Hsl(f32, f32, f32), // (hue 0-360, sat 0-1, light 0-1)
-
-    /// HSLA
-    Hsla(f32, f32, f32, f32),
-
-    /// Named colors (nice for theming)
-    Basic(Colors),
-
-    /// Fully transparent
-    Transparent,
-}
+/// A color, stored as a single packed [`PrimitiveColor`].
+///
+/// `Color` is written the way a color is thought about — explicit RGB/RGBA
+/// channels, a packed hexadecimal literal, a grayscale value, HSL/HSLA
+/// components, or a named color from [`Colors`] — and each of those forms is
+/// resolved to packed ARGB the moment it is constructed. The value that ends up
+/// in a `BoxDecoration`, a `TextStyle` or a draw command is therefore always
+/// four bytes wide and always ready for the renderer.
+///
+/// Because the representation is canonical, two colors written differently but
+/// meaning the same thing compare equal, and `Color` is [`Eq`] and [`Hash`]:
+///
+/// ```
+/// use aimer_color::prelude::Color;
+///
+/// assert_eq!(Color::Rgb(255, 0, 0), Color::Hex(0xFF0000));
+/// assert_eq!(Color::Rgb(255, 0, 0), Color::Basic(aimer_color::prelude::Colors::Red));
+/// ```
+///
+/// The trade the canonical form makes is that a color does not remember *how*
+/// it was written: a named color is indistinguishable from its RGBA value once
+/// constructed, and an HSL color is stored as the RGB it resolves to.
+///
+/// # Constructors
+///
+/// The constructors are deliberately named after the color models they accept
+/// rather than in `snake_case`, so a color reads as one vocabulary regardless of
+/// the model it came from, and so a call site written against the older
+/// representation keeps its shape:
+///
+/// ```
+/// use aimer_color::prelude::Color;
+///
+/// let from_channels = Color::Rgba(0x0A, 0x14, 0x1E, 0x80);
+/// let from_hex = Color::HexA(0x0A141E80);
+/// let from_hsl = Color::Hsl(0.0, 1.0, 0.5);
+///
+/// assert_eq!(from_channels, from_hex);
+/// assert_eq!(from_hsl, Color::RED);
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[repr(transparent)]
+pub struct Color(PrimitiveColor);
 
 impl Color {
     pub const RED: Self = Color::Hex(0xFFFF0000);
@@ -54,9 +85,126 @@ impl Color {
     pub const ORANGE: Self = Color::Hex(0xFFFFA500);
     pub const PURPLE: Self = Color::Hex(0xFF800080);
     pub const BROWN: Self = Color::Hex(0xFFA52A2A);
+
+    /// A fully transparent color.
+    ///
+    /// Every channel is zero, which is also [`Color::default`].
+    #[allow(non_upper_case_globals)]
+    pub const Transparent: Self = Color(0x00000000);
+}
+
+/// The color models a [`Color`] can be written in.
+///
+/// Each constructor resolves its arguments to packed ARGB immediately, so they
+/// are interchangeable: the result carries no trace of the model it came from.
+#[allow(non_snake_case)]
+impl Color {
+    /// Red, green, blue and alpha channels, each `0..=255`.
+    #[inline]
+    pub const fn Rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Color(((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32))
+    }
+
+    /// Red, green and blue channels, fully opaque.
+    #[inline]
+    pub const fn Rgb(r: u8, g: u8, b: u8) -> Self {
+        Self::Rgba(r, g, b, 0xFF)
+    }
+
+    /// A packed `0xRRGGBB` literal, fully opaque.
+    ///
+    /// Anything above the low three bytes is ignored, so both `0xFF0000` and
+    /// `0xFFFF0000` describe red.
+    #[inline]
+    pub const fn Hex(rgb: u32) -> Self {
+        Color(0xFF000000 | (rgb & 0x00FFFFFF))
+    }
+
+    /// A packed `0xRRGGBBAA` literal, alpha last.
+    #[inline]
+    pub const fn HexA(rgba: u32) -> Self {
+        Color(rgba.rotate_right(8))
+    }
+
+    /// One gray level applied to all three channels, plus an alpha channel.
+    #[inline]
+    pub const fn Grayscale(value: u8, a: u8) -> Self {
+        Self::Rgba(value, value, value, a)
+    }
+
+    /// One gray level applied to all three channels, fully opaque.
+    #[inline]
+    pub const fn Gray8(value: u8) -> Self {
+        Self::Grayscale(value, 0xFF)
+    }
+
+    /// Hue in `0..360`, saturation and lightness in `0.0..=1.0`, fully opaque.
+    #[inline]
+    pub const fn Hsl(h: f32, s: f32, l: f32) -> Self {
+        let (r, g, b) = Self::hsl_to_rgb(h, s, l);
+
+        Self::Rgb(r, g, b)
+    }
+
+    /// Hue in `0..360`, saturation, lightness and alpha in `0.0..=1.0`.
+    #[inline]
+    pub const fn Hsla(h: f32, s: f32, l: f32, a: f32) -> Self {
+        let (r, g, b) = Self::hsl_to_rgb(h, s, l);
+
+        Self::Rgba(r, g, b, float_to_channel(a * 255.0))
+    }
+
+    /// A named color from the [`Colors`] palette.
+    #[inline]
+    pub const fn Basic(named: Colors) -> Self {
+        Color(named.as_u32())
+    }
 }
 
 impl Color {
+    /// Wraps an already packed ARGB value.
+    ///
+    /// This is the inverse of [`Color::as_u32`] and the entry point for a value
+    /// that arrives from a file, a platform API or a GPU buffer already in
+    /// `0xAARRGGBB` order.
+    #[inline]
+    pub const fn from_primitive(primitive: PrimitiveColor) -> Self {
+        Color(primitive)
+    }
+
+    /// Returns the red channel, `0..=255`.
+    #[inline]
+    pub const fn red(self) -> u8 {
+        ((self.0 >> 16) & 0xFF) as u8
+    }
+
+    /// Returns the green channel, `0..=255`.
+    #[inline]
+    pub const fn green(self) -> u8 {
+        ((self.0 >> 8) & 0xFF) as u8
+    }
+
+    /// Returns the blue channel, `0..=255`.
+    #[inline]
+    pub const fn blue(self) -> u8 {
+        (self.0 & 0xFF) as u8
+    }
+
+    /// Returns the alpha channel, `0..=255`, where `0` is fully transparent.
+    #[inline]
+    pub const fn alpha(self) -> u8 {
+        ((self.0 >> 24) & 0xFF) as u8
+    }
+
+    /// Returns the four channels in `(red, green, blue, alpha)` order.
+    ///
+    /// This replaces destructuring the color, which the packed representation
+    /// no longer allows.
+    #[inline]
+    pub const fn to_rgba(self) -> (u8, u8, u8, u8) {
+        self.to_rgba_components()
+    }
+
     pub const fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
         let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
         let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
@@ -83,59 +231,23 @@ impl Color {
         )
     }
 
-    pub const fn as_u32(&self) -> u32 {
-        match *self {
-            Color::Rgba(r, g, b, a) => {
-                ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-            }
-            Color::Rgb(r, g, b) => {
-                ((0xFFu32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-            }
-            Color::Hex(rgb) => 0xFF000000 | (rgb & 0xFFFFFF),
-            Color::HexA(rgba) => {
-                let r = (rgba >> 24) & 0xFF;
-                let g = (rgba >> 16) & 0xFF;
-                let b = (rgba >> 8) & 0xFF;
-                let a = rgba & 0xFF;
-                (a << 24) | (r << 16) | (g << 8) | b
-            }
-            Color::Grayscale(v, a) => {
-                ((a as u32) << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32)
-            }
-            Color::Gray8(v) => (0xFF << 24) | ((v as u32) << 16) | ((v as u32) << 8) | (v as u32),
-            Color::Basic(named) => named.as_u32(),
-            Color::Hsl(h, s, l) => {
-                let (r, g, b) = Self::hsl_to_rgb(h, s, l);
-                (0xFF << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-            }
-            Color::Hsla(h, s, l, a) => {
-                let (r, g, b) = Self::hsl_to_rgb(h, s, l);
-                let alpha = (a * 255.0).round() as u8;
-                ((alpha as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-            }
-            Color::Transparent => 0x00000000,
-        }
+    /// Returns the packed ARGB value this color is stored as.
+    ///
+    /// The result is a [`PrimitiveColor`] in `0xAARRGGBB` order and the call is
+    /// a plain field read: the packing happened when the color was constructed.
+    #[inline]
+    pub const fn as_u32(&self) -> PrimitiveColor {
+        self.0
     }
 
     /// Returns this color with its alpha channel replaced by `opacity`.
     ///
     /// `opacity` is interpreted as an 8-bit alpha value, where `0` is fully
-    /// transparent and `255` is fully opaque. Color channels are preserved and
-    /// non-RGBA variants are converted to an alpha-capable representation when
-    /// needed.
+    /// transparent and `255` is fully opaque. The color channels are preserved
+    /// exactly.
+    #[inline]
     pub const fn with_opacity(self, opacity: u8) -> Self {
-        match self {
-            Color::Rgba(r, g, b, _) => Color::Rgba(r, g, b, opacity),
-            Color::Rgb(r, g, b) => Color::Rgba(r, g, b, opacity),
-            Color::Hex(rgb) => Color::HexA(((rgb & 0xFFFFFF) << 8) | (opacity as u32)),
-            Color::HexA(rgba) => Color::HexA((rgba & 0xFFFFFF00) | (opacity as u32)),
-            Color::Grayscale(v, _) => Color::Grayscale(v, opacity),
-            Color::Gray8(v) => Color::Grayscale(v, opacity),
-            Color::Hsl(h, s, l) => Color::Hsla(h, s, l, opacity as f32 / 255.0),
-            Color::Hsla(h, s, l, _) => Color::Hsla(h, s, l, opacity as f32 / 255.0),
-            Color::Basic(named) => Color::Basic(named.alpha(opacity)),
-            Color::Transparent => Color::Rgba(0, 0, 0, opacity),
-        }
+        Color((self.0 & 0x00FFFFFF) | ((opacity as u32) << 24))
     }
 
     /// Scales the brightness of this color by `strength`.
@@ -303,10 +415,28 @@ const fn luminance(r: u8, g: u8, b: u8) -> f32 {
     0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32
 }
 
-#[allow(clippy::derivable_impls)]
-impl Default for Color {
-    fn default() -> Self {
-        Self::Transparent
+/// Prints the packed value, the only thing a color still knows about itself.
+///
+/// The format is `Color(#AARRGGBB)`, which round-trips through
+/// [`Color::HexA`] read as `0xRRGGBBAA` and is directly comparable to
+/// [`Color::as_u32`].
+impl fmt::Debug for Color {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "Color(#{:08X})", self.0)
+    }
+}
+
+impl From<PrimitiveColor> for Color {
+    #[inline]
+    fn from(value: PrimitiveColor) -> Self {
+        Self::from_primitive(value)
+    }
+}
+
+impl From<Color> for PrimitiveColor {
+    #[inline]
+    fn from(value: Color) -> Self {
+        value.as_u32()
     }
 }
 
@@ -437,5 +567,64 @@ mod tests {
     #[test]
     fn grayscale_sets_rgb_to_luminance() {
         assert_eq!(Color::Rgb(100, 150, 200).grayscale().as_u32(), 0xFF8D8D8D);
+    }
+
+    #[test]
+    fn a_color_is_one_packed_word() {
+        assert_eq!(size_of::<Color>(), size_of::<PrimitiveColor>());
+        assert_eq!(size_of::<Color>(), 4);
+        assert_eq!(align_of::<Color>(), align_of::<PrimitiveColor>());
+    }
+
+    #[test]
+    fn every_model_resolves_to_the_same_packed_value() {
+        let red = Color::Rgb(255, 0, 0);
+
+        assert_eq!(red, Color::Rgba(255, 0, 0, 255));
+        assert_eq!(red, Color::Hex(0xFF0000));
+        assert_eq!(red, Color::HexA(0xFF0000FF));
+        assert_eq!(red, Color::Hsl(0.0, 1.0, 0.5));
+        assert_eq!(red, Color::Hsla(0.0, 1.0, 0.5, 1.0));
+        assert_eq!(red, Color::Basic(Colors::Red));
+        assert_eq!(red, Color::RED);
+
+        let gray = Color::Gray8(0x40);
+
+        assert_eq!(gray, Color::Grayscale(0x40, 0xFF));
+        assert_eq!(gray, Color::Rgb(0x40, 0x40, 0x40));
+    }
+
+    #[test]
+    fn a_packed_value_round_trips() {
+        let packed: PrimitiveColor = 0x80123456;
+
+        assert_eq!(Color::from_primitive(packed).as_u32(), packed);
+        assert_eq!(Color::from(packed), Color::HexA(0x12345680));
+        assert_eq!(PrimitiveColor::from(Color::Hex(0x123456)), 0xFF123456);
+    }
+
+    #[test]
+    fn channels_are_readable_without_destructuring() {
+        let color = Color::Rgba(0x0A, 0x14, 0x1E, 0x80);
+
+        assert_eq!(color.red(), 0x0A);
+        assert_eq!(color.green(), 0x14);
+        assert_eq!(color.blue(), 0x1E);
+        assert_eq!(color.alpha(), 0x80);
+        assert_eq!(color.to_rgba(), (0x0A, 0x14, 0x1E, 0x80));
+    }
+
+    #[test]
+    fn the_default_color_is_transparent() {
+        assert_eq!(Color::default(), Color::Transparent);
+        assert_eq!(Color::default().as_u32(), 0x00000000);
+    }
+
+    #[test]
+    fn debug_prints_the_packed_value() {
+        assert_eq!(
+            format!("{:?}", Color::Rgba(0x0A, 0x14, 0x1E, 0x80)),
+            "Color(#800A141E)"
+        );
     }
 }

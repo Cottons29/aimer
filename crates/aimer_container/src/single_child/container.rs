@@ -836,9 +836,36 @@ mod tests {
         let building = allocations() - before_build;
 
         assert_eq!(
-            building, describing,
-            "the conversion must hand the shadow list to the element, not copy \
-             it: building a container costs exactly what describing it costs"
+            describing, 1,
+            "the shadow list is the one allocation a decorated container costs, \
+             and it is paid when the decoration is described"
+        );
+        assert_eq!(
+            building, 0,
+            "the conversion must hand the shadow list to the element rather than \
+             copy it, and must find its element block in the pool: a warm build \
+             of a decorated container reaches the allocator zero times"
+        );
+    }
+
+    /// A container's element has to fit the largest class the `aimer_rubick`
+    /// pool serves — 512 bytes — or every build allocates it from the global
+    /// allocator and every drop frees it again, because an oversized payload is
+    /// unpooled and can never be recycled.
+    ///
+    /// The element is dominated by its [`BoxDecoration`], which is dominated by
+    /// its eight border and outline colors. That is why a color is stored as one
+    /// packed word: with a color wide enough to carry HSLA components this
+    /// element measured 576 bytes and spilled out of the pool.
+    #[test]
+    fn a_container_element_fits_a_pooled_block() {
+
+        eprintln!("Container Size : {}", size_of::<Container>());
+
+        assert!(
+            size_of::<RawContainer<AnyElement>>() <= 512,
+            "a container element grew past the largest pooled class: {} bytes",
+            size_of::<RawContainer<AnyElement>>()
         );
     }
 }

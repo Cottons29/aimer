@@ -189,3 +189,40 @@ impl BoxDecoration {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style::border::BorderSlice;
+
+    /// A decoration is copied into every element that carries one, so its width
+    /// is a per-node cost on every build. Eight of its bytes-per-color slots
+    /// come from the four border and four outline sides, which is why a color
+    /// is stored packed: at four bytes per color a slice fits in two words and
+    /// the whole decoration in 192 bytes, where a color carrying HSLA
+    /// components would have made it 336.
+    ///
+    /// These numbers are asserted rather than described so that widening a
+    /// color, a stroke or a radius shows up here instead of in a frame budget.
+    #[test]
+    fn a_decoration_stores_its_colors_packed() {
+        assert_eq!(size_of::<Color>(), 4);
+        assert_eq!(size_of::<BorderSlice>(), 16);
+        assert_eq!(size_of::<BoxBorder>(), 4 * size_of::<BorderSlice>());
+        assert_eq!(size_of::<BoxOutline>(), 4 * size_of::<BorderSlice>());
+        assert_eq!(size_of::<BoxDecoration>(), 192);
+    }
+
+    /// Every color model resolves to the same packed value, so a decoration
+    /// written two different ways is the same decoration — which `PartialEq`
+    /// now reports, and which change detection and theme interpolation rely on.
+    #[test]
+    fn decorations_written_differently_compare_equal() {
+        let named = BoxDecoration::new().background_color(Color::Basic(
+            aimer_color::prelude::Colors::Red,
+        ));
+        let hexadecimal = BoxDecoration::new().background_color(Color::Hex(0xFF0000));
+
+        assert_eq!(named, hexadecimal);
+    }
+}
