@@ -11,7 +11,7 @@ use aimer_widget::{
     LayoutElement, PointerKey, Rebuildable, RequiredChild, VisitorElement, Widget,
 };
 
-use crate::callback::{CallbackExecutor, VoidCallback, ambient_spawner};
+use crate::callback::{CallbackExecutor, VoidCallback};
 
 /// Whether a mouse pointer is currently inside a [`MouseRegion`].
 #[derive(Debug, Copy, Clone, Default)]
@@ -181,7 +181,7 @@ impl<E: Element> RawMouseRegion<E> {
     /// [`CallbackExecutor::execute`] this arm did nothing at all, silently.
     #[inline]
     fn execute_void_callback(cb: &VoidCallback) {
-        cb.execute((), &ambient_spawner());
+        cb.execute(());
     }
 
     /// Reconcile the stored hover state with `is_inside`, firing the

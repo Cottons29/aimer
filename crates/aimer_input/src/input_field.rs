@@ -9,7 +9,8 @@ use std::sync::Arc;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{
-    AnyElement, FocusNode, Key, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
+    AnyElement, FocusBehavior, Focusable, FocusNode, Key, State, StateUpdater, StatefulElement,
+    StatefulWidget, Widget,
 };
 
 use crate::input_field::caret::CaretBlink;
@@ -199,13 +200,55 @@ impl TextFieldState {
     }
 
     /// Builds the raw field widget from the current shared state.
+    ///
+    /// Only [`TextFieldState::focusable_field`] mounts this: the raw element is
+    /// never a focus target on its own, so nothing outside builds it bare.
     #[inline]
-    pub(crate) fn raw_widget(&self) -> RawTextFieldWidget {
+    fn raw_widget(&self) -> RawTextFieldWidget {
         RawTextFieldWidget::new(
             self.config.clone(),
             self.caret.clone(),
             self.focus_node.clone(),
         )
+    }
+
+    /// Reads how the field takes part in focus off its configuration.
+    ///
+    /// A disabled field is not a target at all — not by a press, not by `Tab`,
+    /// and a press on it does not take focus from whoever holds it — which is
+    /// [`FocusBehavior::Ignore`]. An enabled field asking to start focused is
+    /// [`FocusBehavior::Auto`], and an ordinary enabled field is focused when it
+    /// is pressed.
+    ///
+    /// Both inputs come from the widget configuration, so they only change when
+    /// the field is rebuilt with a new one: a static behavior says all of this,
+    /// and no [`Focusable::focusable_when`] gate is needed to re-ask per
+    /// traversal.
+    #[inline]
+    fn focus_behavior(&self) -> FocusBehavior {
+        match (self.config.enable, self.config.auto_focus) {
+            (false, _) => FocusBehavior::Ignore,
+            (true, true) => FocusBehavior::Auto,
+            (true, false) => FocusBehavior::OnPress,
+        }
+    }
+
+    /// Builds the field as a focus target of the standard focus mechanism.
+    ///
+    /// The state keeps owning the node and only lends it to the region, so the
+    /// handle handed out by [`TextField::focus_node`] still drives this field:
+    /// `request_focus()` and `unfocus()` on it move the keyboard exactly as they
+    /// did while the field reported the node itself.
+    ///
+    /// The region wraps the raw field, which paints its own decoration and
+    /// padding, so the area a press has to land in to focus the field is exactly
+    /// the area the field covers.
+    #[inline]
+    pub(crate) fn focusable_field(&self) -> Focusable<RawTextFieldWidget> {
+        Focusable::new()
+            .node(self.focus_node.clone())
+            .behavior(self.focus_behavior())
+            .child(self.raw_widget())
     }
 
     /// Returns the caret blink timeline this field paints from.
@@ -228,7 +271,7 @@ impl State<TextField> for TextFieldState {
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
-        self.raw_widget()
+        self.focusable_field()
     }
 }
 
@@ -612,5 +655,249 @@ mod tests {
 
         assert!(state.caret().tick(start + HALF));
         assert!(!state.caret().is_visible());
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    //! What focus has to do for a field, asserted on the whole widget.
+    //!
+    //! A field is focused by a press, focused and blurred by code through the
+    //! node an application supplies, and claims the keyboard on arrival when it
+    //! autofocuses; while it owns focus, typed text and committed phrases reach
+    //! its controller. None of that depends on *which* element of the field
+    //! offers the focus node, so these tests drive the built widget the way the
+    //! framework does — build the element, let the dispatcher resolve focus,
+    //! read the controller — rather than poking the raw element, and they hold
+    //! whether the offer is made by the field itself or by an enclosing
+    //! [`Focusable`] region.
+    //!
+    //! [`Focusable`]: aimer_widget::Focusable
+
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use aimer_attribute::position::Vec2d;
+    use aimer_events::element::{ElementEvent, KeyAction, Modifiers};
+    use aimer_events::pointer::{PointerButton, PointerInfo};
+    use aimer_widget::{
+        AnyElement, Drawable, Element, EventDispatcher, FocusNode, VisitorElement,
+    };
+
+    use super::*;
+    use crate::input_field::raw_fields::test_support::dummy_build_context;
+
+    /// The extent the field is built and drawn at.
+    const FIELD_WIDTH: f32 = 200.0;
+    const FIELD_HEIGHT: f32 = 40.0;
+
+    /// A point the drawn field covers.
+    const INSIDE: Vec2d = Vec2d { x: 20.0, y: 12.0 };
+
+    /// Builds `field` and draws it once, so the element has the bounds a press
+    /// is resolved against.
+    ///
+    /// Nothing reaches a GPU; the draw exists because the field caches its
+    /// hit-test rectangle while painting, which is where a real frame puts it.
+    fn drawn(field: TextField) -> (AnyElement, BuildContext<'static>) {
+        let ctx = dummy_build_context(FIELD_WIDTH, FIELD_HEIGHT);
+        let element = field.to_element(&ctx);
+        element.draw(&ctx);
+        (element, ctx)
+    }
+
+    /// Presses at `pos`, the way a mouse would.
+    fn press(dispatcher: &mut EventDispatcher, root: &AnyElement, pos: Vec2d) {
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            pos,
+            &ElementEvent::PointerDown(PointerInfo::mouse(pos, PointerButton::Primary)),
+        );
+    }
+
+    /// Types `text` the way a platform input method commits a phrase.
+    fn commit(dispatcher: &mut EventDispatcher, root: &AnyElement, text: &str) {
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            INSIDE,
+            &ElementEvent::TextInput {
+                text: text.to_owned(),
+                action: KeyAction::Pressed,
+                modifiers: Modifiers::default(),
+            },
+        );
+    }
+
+    /// Pumps one frame of focus resolution without touching the field.
+    ///
+    /// Focus is settled while an event is dispatched, so a node that asked for
+    /// focus — or a region that autofocuses — only becomes the owner once
+    /// something is delivered.
+    fn settle(dispatcher: &mut EventDispatcher, root: &AnyElement) {
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+    }
+
+    /// Names every element of `root` that offers itself as a focus target.
+    fn focus_targets(root: &AnyElement) -> Vec<&'static str> {
+        fn walk(element: &dyn Element, names: &mut Vec<&'static str>) {
+            if element.focus_node().is_some() {
+                names.push(VisitorElement::debug_name(element));
+            }
+            element.visit_children(&mut |child| walk(child, names));
+        }
+
+        let mut names = Vec::new();
+        walk(root.as_ref(), &mut names);
+        names
+    }
+
+    /// A field is one focus target, offered by one element of it.
+    ///
+    /// The same node offered at two depths would be gathered twice in a single
+    /// traversal, and every rule that reads tree order — `Tab` above all — would
+    /// then have to guess which of the two it meant. The element that makes the
+    /// offer is named here so that moving the offer stays a deliberate change:
+    /// wrapping the field in [`Focusable`] turns this into `["Focusable"]`, and
+    /// the field itself must stop offering the node in the same breath.
+    ///
+    /// [`Focusable`]: aimer_widget::Focusable
+    #[test]
+    fn the_field_is_offered_exactly_once_as_a_focus_target() {
+        let (element, _ctx) = drawn(TextField::new());
+
+        assert_eq!(focus_targets(&element), ["Focusable"]);
+    }
+
+    /// A press on the field focuses it, and what is typed afterwards reaches
+    /// the controller.
+    ///
+    /// This is the pair a field lives by, and the press half is the fragile
+    /// one: the field consumes the press that lands on it, so whatever offers
+    /// its focus node has to be reached by that same press.
+    #[test]
+    fn a_press_focuses_the_field_and_typed_text_reaches_its_controller() {
+        let controller = TextEditingController::new();
+        let node = FocusNode::new();
+        let (element, _ctx) = drawn(
+            TextField::new()
+                .controller(controller.clone())
+                .focus_node(node.clone()),
+        );
+        let mut dispatcher = EventDispatcher::new();
+
+        press(&mut dispatcher, &element, INSIDE);
+        assert!(node.has_focus(), "a press must focus the field it landed on");
+
+        commit(&mut dispatcher, &element, "你好");
+
+        assert_eq!(controller.text(), "你好");
+    }
+
+    /// Pressing a field that already holds focus changes nothing about its
+    /// focus.
+    ///
+    /// Every click inside a field is a caret placement, and there are many of
+    /// them in a row while text is being edited. If such a click blurred the
+    /// field before focusing it again, each one would report a focus edge that
+    /// did not happen — `on_blur` then `on_focus` — and, worse, the blur tears
+    /// down the platform input method mid-composition, so a phrase being
+    /// composed would be dropped by a click meant to move the caret. So the
+    /// second press must leave the counts where the first one put them.
+    #[test]
+    fn pressing_a_field_that_already_holds_focus_reports_no_further_edge() {
+        let node = FocusNode::new();
+        let focuses = Rc::new(Cell::new(0));
+        let blurs = Rc::new(Cell::new(0));
+        let (element, _ctx) = drawn(
+            TextField::new()
+                .focus_node(node.clone())
+                .on_focus({
+                    let focuses = Rc::clone(&focuses);
+                    move |_: String| focuses.set(focuses.get() + 1)
+                })
+                .on_blur({
+                    let blurs = Rc::clone(&blurs);
+                    move |_: String| blurs.set(blurs.get() + 1)
+                }),
+        );
+        let mut dispatcher = EventDispatcher::new();
+
+        press(&mut dispatcher, &element, INSIDE);
+        assert_eq!((focuses.get(), blurs.get()), (1, 0), "the first press focuses");
+
+        press(&mut dispatcher, &element, INSIDE);
+        press(&mut dispatcher, &element, INSIDE);
+
+        assert!(node.has_focus(), "the field keeps the focus it was given");
+        assert_eq!((focuses.get(), blurs.get()), (1, 0));
+    }
+
+    /// A disabled field is not a target at all: pressing it neither focuses it
+    /// nor takes focus from whoever holds it.
+    #[test]
+    fn a_disabled_field_is_not_a_focus_target() {
+        let node = FocusNode::new();
+        let (element, _ctx) = drawn(TextField::new().enable(false).focus_node(node.clone()));
+        let mut dispatcher = EventDispatcher::new();
+
+        press(&mut dispatcher, &element, INSIDE);
+
+        assert!(!node.has_focus());
+        assert!(focus_targets(&element).is_empty());
+    }
+
+    /// An autofocusing field claims the keyboard as soon as it is in the tree,
+    /// without anybody pointing at it.
+    #[test]
+    fn an_auto_focus_field_claims_focus_when_it_appears() {
+        let node = FocusNode::new();
+        let (element, _ctx) = drawn(TextField::new().auto_focus(true).focus_node(node.clone()));
+        let mut dispatcher = EventDispatcher::new();
+
+        settle(&mut dispatcher, &element);
+
+        assert!(node.has_focus());
+    }
+
+    /// The node stays the application's to drive: [`TextField::focus_node`]
+    /// hands out a handle, and focusing or blurring it moves the keyboard
+    /// without anything being pressed.
+    ///
+    /// Each edge is also reported exactly once. The callbacks fire on the focus
+    /// notifications the field is delivered, so a notification repeated while
+    /// nothing changed — a frame that resolves focus again, an offer made twice
+    /// — would call them again.
+    #[test]
+    fn a_supplied_node_focuses_and_blurs_the_field_and_reports_each_edge_once() {
+        let controller = TextEditingController::new();
+        let node = FocusNode::new();
+        let focuses = Rc::new(Cell::new(0));
+        let blurs = Rc::new(Cell::new(0));
+        let (element, _ctx) = drawn(
+            TextField::new()
+                .controller(controller.clone())
+                .focus_node(node.clone())
+                .on_focus({
+                    let focuses = Rc::clone(&focuses);
+                    move |_: String| focuses.set(focuses.get() + 1)
+                })
+                .on_blur({
+                    let blurs = Rc::clone(&blurs);
+                    move |_: String| blurs.set(blurs.get() + 1)
+                }),
+        );
+        let mut dispatcher = EventDispatcher::new();
+
+        node.request_focus();
+        settle(&mut dispatcher, &element);
+        settle(&mut dispatcher, &element);
+        commit(&mut dispatcher, &element, "hi");
+        node.unfocus();
+        settle(&mut dispatcher, &element);
+        settle(&mut dispatcher, &element);
+
+        assert_eq!(controller.text(), "hi");
+        assert_eq!((focuses.get(), blurs.get()), (1, 1));
+        assert!(!node.has_focus());
     }
 }

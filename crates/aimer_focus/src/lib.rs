@@ -47,11 +47,13 @@
 //! ```
 #![deny(missing_docs)]
 
+mod focusable;
 mod manager;
 mod node;
 mod scope;
 mod traversal;
 
+pub use crate::focusable::{FocusBehavior, FocusCallback, FocusGate};
 pub use crate::manager::{FocusManager, FocusOwner, FocusSync, FocusTransition};
 pub use crate::node::{FocusNode, FocusRequest, focus_request_generation};
 pub use crate::scope::{FocusTrap, FocusTrapId, active_focus_trap, focus_trap_generation};

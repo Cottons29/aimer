@@ -1,6 +1,7 @@
 mod async_builder;
 pub mod components;
 pub mod focus_scope;
+pub mod focusable;
 pub mod key;
 pub mod layout_cache;
 pub mod page_storage;
@@ -106,10 +107,11 @@ pub use crate::components::event_element::{
 /// `aimer_widget::focus::*` keeps naming the focus system.
 pub use aimer_focus as focus;
 pub use aimer_focus::{
-    FocusCandidate, FocusManager, FocusNode, FocusTrap, FocusTrapId, FocusTransition,
-    active_focus_trap,
+    FocusBehavior, FocusCallback, FocusCandidate, FocusManager, FocusNode, FocusTrap, FocusTrapId,
+    FocusTransition, active_focus_trap,
 };
 pub use crate::focus_scope::FocusScope;
+pub use crate::focusable::{Focusable, FocusableState, RawFocusable};
 pub use crate::components::layout_element::LayoutElement;
 pub use crate::components::rebuildable::Rebuildable;
 pub use crate::components::visitor_element::VisitorElement;

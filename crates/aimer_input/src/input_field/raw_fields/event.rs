@@ -5,14 +5,6 @@ impl VisitorElement for RawTextField {
 }
 
 impl EventElement for RawTextField {
-    fn focus_node(&self) -> Option<&FocusNode> {
-        self.enable.then_some(&self.focus_node)
-    }
-
-    fn autofocus(&self) -> bool {
-        self.enable && self.auto_focus
-    }
-
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         let active_before = self.mouse_held.get();
         let consumed = (|| {
@@ -82,6 +74,12 @@ impl EventElement for RawTextField {
                     {
                         ime_trace!("delta out: rejected as stale");
                         return false;
+                    }
+                    if !delta.replacement_text.is_empty() {
+                        // Text just arrived, so the keyboard that produced it
+                        // is the one currently up: this is the only moment its
+                        // language describes what the field holds.
+                        self.capture_input_language();
                     }
                     let before = self.controller.value();
                     let Some(adapted) = adapt_native_delta(&before, delta) else {
@@ -522,13 +520,21 @@ mod focus_tests {
 
     use aimer_attribute::position::Vec2d;
     use aimer_events::element::ElementEvent;
-    use aimer_widget::{Element, EventDispatcher, FocusNode};
+    use aimer_widget::{Element, EventDispatcher, FocusNode, RawFocusable};
 
     use super::test_support::{commit, field_config};
     use super::{RawTextField, TextFieldCallback};
     use crate::input_field::caret::CaretBlink;
     use crate::TextEditingController as TextFieldController;
 
+    /// A focused field routes what is typed into its controller, and reports
+    /// each focus edge exactly once.
+    ///
+    /// The element is wrapped in [`RawFocusable`] here because the node is
+    /// offered by the focus region the field's state builds around it, never by
+    /// the element itself; the region is what the state's `focusable_field()`
+    /// mounts, so this exercises the same path a real field takes while staying
+    /// at the raw element the rest of this module tests.
     #[test]
     fn focus_node_routes_text_and_emits_each_lifecycle_callback_once() {
         let controller = TextFieldController::new();
@@ -541,7 +547,11 @@ mod focus_tests {
         config.on_focus = TextFieldCallback::from(move |_| focus_count.set(focus_count.get() + 1));
         let blur_count = blurs.clone();
         config.on_blur = TextFieldCallback::from(move |_| blur_count.set(blur_count.get() + 1));
-        let field = RawTextField::new(config, CaretBlink::new(), node.clone()).boxed();
+        let field = RawFocusable::new(
+            node.clone(),
+            RawTextField::new(config, CaretBlink::new(), node.clone()).boxed(),
+        )
+        .boxed();
         let mut dispatcher = EventDispatcher::new();
 
         node.request_focus();
@@ -594,10 +604,12 @@ mod native_delta_tests {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
+    use aimer_cupid::font::TextLanguage;
     use aimer_events::element::ElementEvent;
     use aimer_events::text_editing::{NativeTextRange, TextEditingDelta};
     use aimer_widget::EventElement;
 
+    use super::simulate_keyboard_language;
     use super::test_support::{commit, focused_field};
     use crate::TextEditingController as TextFieldController;
     use crate::input_field::raw_fields::TextFieldCallback;
@@ -654,6 +666,81 @@ mod native_delta_tests {
 
         assert_eq!(controller.value().text(), "A👩‍💻B");
         assert_eq!(field.cursor.offset(), 1);
+    }
+
+    #[test]
+    fn a_delta_typed_on_a_chinese_keyboard_teaches_the_field_its_language() {
+        let controller = TextFieldController::new();
+        let field = focused_field(controller.clone());
+        assert_eq!(controller.input_language(), None);
+
+        simulate_keyboard_language(Some("zh-Hans"));
+        assert!(field
+            .on_event(&native_delta(
+                &field,
+                controller.revision(),
+                (0, 0),
+                "你好",
+                (2, 2),
+                None,
+            ))
+            .is_consumed());
+
+        assert_eq!(controller.input_language(), Some(TextLanguage::Chinese));
+        simulate_keyboard_language(None);
+    }
+
+    #[test]
+    fn a_delta_typed_on_a_latin_keyboard_never_erases_the_learned_language() {
+        let controller = TextFieldController::new();
+        let field = focused_field(controller.clone());
+
+        simulate_keyboard_language(Some("zh-Hans"));
+        assert!(field
+            .on_event(&native_delta(&field, controller.revision(), (0, 0), "你好", (2, 2), None))
+            .is_consumed());
+        simulate_keyboard_language(Some("en-US"));
+        assert!(field
+            .on_event(&native_delta(&field, controller.revision(), (2, 2), "!", (3, 3), None))
+            .is_consumed());
+
+        assert_eq!(controller.value().text(), "你好!");
+        assert_eq!(controller.input_language(), Some(TextLanguage::Chinese));
+        simulate_keyboard_language(None);
+    }
+
+    #[test]
+    fn a_delta_reported_without_a_language_leaves_the_learned_one_alone() {
+        let controller = TextFieldController::new();
+        let field = focused_field(controller.clone());
+
+        simulate_keyboard_language(Some("ja-JP"));
+        assert!(field
+            .on_event(&native_delta(&field, controller.revision(), (0, 0), "あ", (1, 1), None))
+            .is_consumed());
+        simulate_keyboard_language(None);
+        assert!(field
+            .on_event(&native_delta(&field, controller.revision(), (1, 1), "!", (2, 2), None))
+            .is_consumed());
+
+        assert_eq!(controller.input_language(), Some(TextLanguage::Japanese));
+    }
+
+    #[test]
+    fn the_learned_language_outlives_focus_and_rebuilds() {
+        let controller = TextFieldController::new();
+        let field = focused_field(controller.clone());
+        simulate_keyboard_language(Some("zh-Hans"));
+        assert!(field
+            .on_event(&native_delta(&field, controller.revision(), (0, 0), "你好", (2, 2), None))
+            .is_consumed());
+        simulate_keyboard_language(None);
+
+        assert!(field.on_event(&ElementEvent::FocusLost).is_consumed());
+        drop(field);
+        let rebuilt = focused_field(controller.clone());
+
+        assert_eq!(rebuilt.controller.input_language(), Some(TextLanguage::Chinese));
     }
 
     #[test]

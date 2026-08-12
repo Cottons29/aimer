@@ -116,7 +116,7 @@
     /// Drawing a field needs a canvas for text measurement and a window handle
     /// for the platform calls it makes while focused. Nothing reaches a GPU:
     /// the canvas measures with the font backend and records the draw calls.
-    pub(super) fn dummy_build_context(width: f32, height: f32) -> BuildContext<'static> {
+    pub(crate) fn dummy_build_context(width: f32, height: f32) -> BuildContext<'static> {
         let canvas = {
             let leaked: &'static InnerCanvas = Box::leak(Box::new(InnerCanvas::new()));
             Canvas::new(leaked)

@@ -64,4 +64,4 @@ include!("raw_fields/layout.rs");
 
 /// Fixtures shared by the test modules living beside the logic they cover.
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;

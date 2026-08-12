@@ -15,7 +15,9 @@
 //! offset the `ScrollController` reports.
 
 use aimer::quiver::winit::dpi::PhysicalPosition;
-use aimer::quiver::winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
+use aimer::quiver::winit::event::{
+    DeviceId, ElementState, MouseButton, Touch, TouchPhase, WindowEvent,
+};
 use aimer::{
     AnyWidget, BoxAlignment, Column, Container, ScrollAxis, ScrollController, Scrollable,
     SelectionArea, SizedBox, Text, Widget,
@@ -107,6 +109,55 @@ fn drag_up<W: Widget + 'static>(app: &mut HeadlessApp<W>, x: f64, from: f64, to:
         move_to(app, x, from + step * index as f64);
     }
     release(app);
+}
+
+/// Drags a finger from `(x, from)` to `(x, to)`, in the phases a touch screen
+/// reports.
+fn touch_drag_up<W: Widget + 'static>(app: &mut HeadlessApp<W>, x: f64, from: f64, to: f64) {
+    let contact = |phase, y| {
+        WindowEvent::Touch(Touch {
+            device_id: DeviceId::dummy(),
+            phase,
+            location: PhysicalPosition::new(x, y),
+            force: None,
+            id: 0,
+        })
+    };
+    app.send_window_event(contact(TouchPhase::Started, from));
+    app.render_frame();
+    let steps = 8;
+    let step = (to - from) / steps as f64;
+    for index in 1..=steps {
+        app.send_window_event(contact(TouchPhase::Moved, from + step * index as f64));
+        app.render_frame();
+    }
+    app.send_window_event(contact(TouchPhase::Ended, to));
+    app.render_frame();
+}
+
+/// A finger dragged over selectable text scrolls the page.
+///
+/// A finger press means too many things to act on, so the text records it and
+/// takes the *pointer* — the only way an enclosing view can tell it the gesture
+/// is gone — while claiming nothing, which leaves that view free to take the
+/// drag. Both halves matter: claiming here would make a page refuse to scroll
+/// wherever there is text on it, and taking nothing would leave the recorded
+/// press to ripen into a selection several frames after the finger has left the
+/// glass.
+#[test]
+fn a_finger_dragged_over_selectable_text_scrolls_the_page() {
+    let controller = ScrollController::new();
+    let mut app = AimerApp::start_headless(selectable_page(&controller));
+    app.render_frame();
+    app.render_frame();
+    assert!(controller.max_extent().y > 0.0);
+
+    touch_drag_up(&mut app, 40.0, PRESS_Y, RELEASE_Y);
+
+    assert!(
+        controller.offset().y > 0.0,
+        "a finger that travels over text is scrolling, not selecting"
+    );
 }
 
 #[test]

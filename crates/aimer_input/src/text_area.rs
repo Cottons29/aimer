@@ -329,7 +329,7 @@ impl State<TextArea> for TextFieldState {
 
     #[inline]
     fn build(&self, _: &BuildContext) -> impl Widget {
-        self.raw_widget()
+        self.focusable_field()
     }
 }
 

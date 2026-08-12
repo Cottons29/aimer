@@ -9,8 +9,12 @@ use aimer_attribute::{Bounds, Vec2d};
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
 use aimer_style::{TextAlign, TextOverflow, TextStyle};
-use aimer_widget::EventElement;
+use aimer_utils::AnimInstant;
 use aimer_widget::base::WindowHandle;
+use aimer_widget::{
+    CaptureRequest, Element, EventDispatcher, EventElement, PointerKey, Rebuildable,
+    is_pointer_claimed, release_all_pointers,
+};
 
 use super::selected;
 use crate::paragraph::Paragraph;
@@ -514,6 +518,139 @@ fn dragging_a_knob_that_sits_over_the_glyphs_adjusts_the_selection_instead_of_re
     assert!(grab.is_consumed(), "the knob takes the press");
     assert_eq!(selected(&texts[0]), Some(0..5), "the start stayed put");
     assert_eq!(selected(&texts[1]), Some(0..3), "the end moved on");
+}
+
+/// A finger press is ambiguous, so the text takes the *pointer* without taking
+/// the *gesture*: owning the pointer is the only way it hears an enclosing
+/// scrollable take the gesture away, while leaving the gesture unclaimed is what
+/// lets that scrollable take it at all.
+#[test]
+fn a_finger_press_takes_the_pointer_but_not_the_gesture() {
+    // Nothing is on the glass when a gesture begins, whatever earlier gestures
+    // of this thread left behind.
+    release_all_pointers();
+    let (_session, texts) = region_texts(&["first", "second"]);
+    let pointer = PointerKey::new(PointerSource::Touch, 0);
+
+    let press = texts[0].on_event(&ElementEvent::PointerDown(touch_at(25.0, 10.0, 0)));
+
+    assert!(
+        !press.is_consumed(),
+        "the press must go on reaching the region behind the text"
+    );
+    assert_eq!(
+        press.capture_request(),
+        CaptureRequest::Capture(pointer),
+        "owning the pointer is how the text is told the gesture was taken from it"
+    );
+    assert!(
+        !is_pointer_claimed(pointer),
+        "a press that may still turn out to be a scroll must not speak for the gesture"
+    );
+}
+
+/// The gesture a scroll view takes over.
+///
+/// A press inside a `Scrollable` could be a tap, a hold, or the start of a
+/// scroll, so the view arms a pending drag and — once the finger has travelled
+/// past the drag threshold — takes the gesture by cancelling the pointer of
+/// whichever element owns it. That call reaches the owner of the pointer and
+/// nobody else, so a text that recorded the press without taking the pointer is
+/// never told: its hold goes on ripening and turns into a selection on some
+/// later frame, from a finger that left the glass long ago.
+#[test]
+fn a_scroll_view_that_takes_the_gesture_puts_the_hold_out() {
+    let window = WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 200), 1.0);
+    let session = SelectionSession::new(
+        window.clone(),
+        Rc::new(SelectionCoordinator::default()),
+        DEFAULT_SELECTION_COLOR,
+    );
+    let plain = "first second";
+    // Erased, as the tree stores it: an element carries the identity a capture
+    // is recorded against only once it has been.
+    let root = RawSelectableText::painted(
+        &session,
+        &window,
+        Rc::from(plain),
+        character_regions(plain, 0.0),
+        character_bounds(plain, 0.0),
+    )
+    .boxed();
+    let text = root
+        .option_any()
+        .and_then(|element| element.downcast_ref::<RawSelectableText>())
+        .expect("the erased element is the selectable text");
+    text.slot().stamp();
+    session.begin_frame();
+    let finger = touch_at(25.0, 10.0, 0);
+    let pointer = PointerKey::new(finger.source, finger.id);
+
+    let mut dispatcher = EventDispatcher::new();
+    let _ = dispatcher.dispatch(root.as_ref(), finger.pos, &ElementEvent::PointerDown(finger));
+    // The finger travelled: the scroll view wins the drag and takes the gesture
+    // from whoever owns the pointer, exactly as `aimer_scroll` does.
+    let _ = dispatcher.cancel_pointer(root.as_ref(), pointer);
+
+    text.touch_hold.backdate(TOUCH_SELECTION_HOLD);
+    assert_eq!(
+        text.touch_hold.poll_stationary(AnimInstant::now()),
+        None,
+        "the gesture is the scroll view's, so no frame may turn the hold into a selection"
+    );
+    assert_eq!(session.selected_text(), "");
+}
+
+/// The gesture that never ends.
+///
+/// A release is not guaranteed to arrive: a scroll view that has taken over one
+/// finger swallows the lift of another, and an element torn down mid-gesture
+/// never hears one at all. Touch identities are reused, so the next press of
+/// "finger 0" would look like the press that opened that gesture — and a press
+/// mistaken for its own gesture dismisses nothing, which is a selection that can
+/// never be got rid of. The claim the framework drops the moment a pointer goes
+/// up tells the two apart.
+#[test]
+fn a_gesture_whose_finger_left_the_glass_no_longer_owns_the_pointer() {
+    let (session, texts) = region_texts(&["first", "second"]);
+    let pointer = PointerKey::new(PointerSource::Touch, 0);
+    let _ = texts[0].on_event(&ElementEvent::PointerDown(touch_at(25.0, 10.0, 0)));
+    texts[0].touch_hold.backdate(TOUCH_SELECTION_HOLD);
+    let _ = texts[0].on_event(&ElementEvent::PointerMove(touch_at(25.0, 10.0, 0)));
+    assert_eq!(
+        session.active_pointer(),
+        Some(pointer),
+        "the hold opened a gesture the finger owns"
+    );
+
+    release_all_pointers();
+
+    assert_eq!(
+        session.active_pointer(),
+        None,
+        "a gesture whose claim is gone is a gesture whose finger is gone"
+    );
+}
+
+/// Tapping is how a touch platform dismisses a selection — and inside a scroll
+/// view the text is the only thing a tap ever lands on, so waiting for a press
+/// elsewhere would leave the highlight up for good.
+#[test]
+fn a_finger_press_dismisses_the_selection_it_lands_on() {
+    let (session, texts) = region_texts(&["first", "second"]);
+    let _ = texts[0].on_event(&ElementEvent::PointerDown(touch_at(25.0, 10.0, 0)));
+    texts[0].touch_hold.backdate(TOUCH_SELECTION_HOLD);
+    let _ = texts[0].on_event(&ElementEvent::PointerUp(touch_at(25.0, 10.0, 0)));
+    assert_eq!(session.selected_text(), "first", "the hold selected a word");
+
+    let _ = texts[0].on_event(&ElementEvent::PointerDown(touch_at(25.0, 10.0, 0)));
+
+    assert_eq!(
+        session.selected_text(),
+        "",
+        "the tap that follows a selection drops it"
+    );
+    assert_eq!(selected(&texts[0]), None);
 }
 
 #[test]

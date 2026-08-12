@@ -122,8 +122,12 @@ impl<W> Button<W> {
 
     /// Registers an asynchronous callback for a completed primary tap.
     ///
-    /// The closure must return a `Future` (e.g. an `async` block).
-    /// The future is spawned by the framework's executor.
+    /// The closure must return a `Future` (e.g. an `async` block). The future
+    /// runs on Aimer's UI-thread runtime, before the next build phase, so
+    /// neither it nor its captures have to be [`Send`] — a handler may `await`
+    /// while holding a `StateUpdater`, a controller, or any other `Rc` the tree
+    /// handed it. Work that *blocks* rather than awaits belongs on
+    /// `Venus::offload`, which runs it on a worker thread.
     ///
     /// **Note**: Since async closures capture state, they implement `FnOnce`.
     /// The closure is taken on first invocation — subsequent presses produce
@@ -131,8 +135,8 @@ impl<W> Button<W> {
     /// before the async block or use `Rc<RefCell<...>>`.
     pub fn on_press_async<F, Fut>(mut self, on_press: F) -> Self
     where
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        F: FnOnce() -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
     {
         self.on_press = VoidCallback::from_async(on_press);
         self
@@ -153,8 +157,8 @@ impl<W> Button<W> {
     /// first invocation.
     pub fn on_long_press_async<F, Fut>(mut self, on_long_press: F) -> Self
     where
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        F: FnOnce() -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
     {
         self.on_long_press = VoidCallback::from_async(on_long_press);
         self
@@ -175,8 +179,8 @@ impl<W> Button<W> {
     /// first invocation.
     pub fn on_double_press_async<F, Fut>(mut self, on_double_press: F) -> Self
     where
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        F: FnOnce() -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
     {
         self.on_double_press = VoidCallback::from_async(on_double_press);
         self
@@ -196,8 +200,8 @@ impl<W> Button<W> {
     /// first invocation.
     pub fn on_right_press_async<F, Fut>(mut self, on_right_press: F) -> Self
     where
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        F: FnOnce() -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
     {
         self.on_right_press = VoidCallback::from_async(on_right_press);
         self
@@ -462,6 +466,39 @@ mod tests {
             1,
             "a hover or a press must reuse the child, not rebuild it"
         );
+    }
+
+    /// An asynchronous press handler may keep an [`Rc`] from the element tree
+    /// across an `await`, and its effect lands on the runtime that owns the
+    /// frame.
+    ///
+    /// This is the whole reason the async path moved off a thread pool: a
+    /// handler that cannot capture a `StateUpdater` cannot change anything a
+    /// user would see. The bound is easy to re-tighten by accident, so it is
+    /// pinned here rather than left to a compile that happens to still work.
+    #[tokio::test]
+    async fn an_async_press_handler_may_hold_tree_state_across_an_await() {
+        use aimer_utils::callback::CallbackExecutor;
+        use aimer_venus::Venus;
+
+        let venus = Venus::new();
+        venus.install();
+
+        let presses = Rc::new(Cell::new(0));
+        let counted = Rc::clone(&presses);
+        let button = Button::new()
+            .child(aimer_widget::ErrorWidget::new("button"))
+            .on_press_async(move || async move {
+                aimer_venus::yield_now().await;
+                counted.set(counted.get() + 1);
+            });
+
+        button.on_press.execute(());
+        while venus.task_count() > 0 {
+            venus.run_microtasks();
+        }
+
+        assert_eq!(presses.get(), 1);
     }
 
     #[test]

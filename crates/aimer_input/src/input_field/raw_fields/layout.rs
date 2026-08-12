@@ -16,6 +16,15 @@ impl Drawable for RawTextField {
             self.sync_cursor_from_controller();
         }
         ctx.canvas.save();
+        // Han is unified, so the ideographs a field holds do not say whether
+        // they want a Chinese or a Japanese face: `你好` is covered by both and
+        // would keep whichever the system prefers until `吗` — written only in
+        // Chinese — is typed, at which point the word already on screen
+        // changes typeface. The field knows better, because it remembers the
+        // keyboard it was typed on, and says so before it draws or measures a
+        // single glyph: the caret is placed from the same advances.
+        ctx.canvas
+            .set_text_language(self.controller.input_language());
 
         let (box_width, box_height) = self.compute_dimensions(ctx);
         let scale = ctx.scale;
@@ -505,6 +514,9 @@ impl Drawable for RawTextField {
 
         ctx.canvas.clear_clip();
         ctx.canvas.restore(); // clip + translate
+        // The language belongs to this field alone, so the widgets drawn after
+        // it are judged on their own characters again.
+        ctx.canvas.set_text_language(None);
         ctx.canvas.restore(); // outer save
 
         // Drive the caret from the frame clock: advance the shared blink

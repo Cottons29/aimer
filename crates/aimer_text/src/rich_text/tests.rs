@@ -954,14 +954,32 @@ fn wrapping_uses_parent_width_when_constraint_is_unbounded() {
 #[test]
 fn a_standalone_selectable_text_holds_the_focus_while_it_holds_a_selection() {
     let text = selectable_raw_text(LinkCallback::default());
+    let session = text.session();
 
-    assert!(text.focus_node().is_none(), "nothing is selected yet");
+    assert!(!session.is_focused(), "nothing is selected yet");
 
     let _ = text.on_event(&ElementEvent::PointerDown(mouse_press(2.0, 5.0)));
     let _ = text.on_event(&ElementEvent::PointerMove(mouse_press(18.0, 5.0)));
 
     assert!(selected(&text).is_some());
-    assert!(text.focus_node().is_some());
+    assert!(session.is_focused());
+}
+
+/// The keyboard such a text holds is held for it by the standard focus
+/// attachment, which is asked afresh every time targets are gathered — a
+/// selection begins and ends under the finger, with nothing rebuilding the
+/// paragraph in between.
+#[test]
+fn a_standalone_selectable_text_is_offered_as_a_target_only_while_it_has_a_selection() {
+    let text = selectable_raw_text(LinkCallback::default());
+    let session = text.session();
+    let target = text.focus_target();
+
+    assert!(target.focus_node().is_none(), "nothing is selected yet");
+
+    session.select_all();
+
+    assert!(target.focus_node().is_some());
 }
 
 #[test]
@@ -974,7 +992,7 @@ fn a_standalone_selectable_text_drops_its_selection_when_it_loses_the_focus() {
     let _ = text.on_event(&ElementEvent::FocusLost);
 
     assert_eq!(selected(&text), None);
-    assert!(text.focus_node().is_none());
+    assert!(!text.session().is_focused());
 }
 
 /// Inside a region the selection, and therefore the keyboard, belongs to the
@@ -1005,7 +1023,10 @@ fn a_participant_of_a_region_leaves_the_focus_to_the_region() {
     let _ = text.on_event(&ElementEvent::PointerMove(mouse_press(18.0, 5.0)));
 
     assert!(selected(&text).is_some());
-    assert!(text.focus_node().is_none());
+    assert!(
+        text.focus_target().focus_node().is_none(),
+        "a participant is not wrapped in a focus attachment at all"
+    );
 }
 
 mod region;

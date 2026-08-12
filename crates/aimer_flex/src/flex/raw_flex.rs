@@ -39,6 +39,11 @@ pub struct Flex<W: Widget + 'static = AnyWidget> {
 }
 
 impl Default for Flex {
+    /// Creates an empty flex layout with inherited direction.
+    ///
+    /// Both alignments default to [`BoxAlignment::Start`], gaps to zero, and
+    /// overflow to [`OverflowBehavior::Hidden`]. An empty flex is already a
+    /// valid [`Widget`].
     fn default() -> Self {
         Self::new()
     }
@@ -176,7 +181,11 @@ impl<W: Widget + 'static> Flex<W> {
 
 impl<W: Widget + 'static> Widget for Flex<W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let elements = self.children.into_iter().map(|c| c.to_element(ctx)).collect();
+        let elements = self
+            .children
+            .into_iter()
+            .map(|c| c.to_element(ctx))
+            .collect();
         RawFlex {
             direction: self.direction,
             vertical_alignment: self.vertical_alignment,

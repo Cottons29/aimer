@@ -5,7 +5,7 @@ use std::rc::{Rc, Weak};
 use aimer_attribute::Bounds;
 use aimer_events::pointer::PointerSource;
 use aimer_widget::base::{Color, WindowHandle};
-use aimer_widget::{FocusNode, PointerKey, claim_pointer, release_pointer};
+use aimer_widget::{FocusNode, PointerKey, claim_pointer, is_pointer_claimed, release_pointer};
 
 use crate::selection::handles::HandleSide;
 use crate::selection::selectable::{Selectable, SelectionCoordinator};
@@ -451,9 +451,25 @@ impl SelectionSession {
         self.state.borrow().was_dragged()
     }
 
-    /// The pointer currently dragging the selection.
+    /// The pointer currently dragging the selection, while its gesture is still
+    /// live.
+    ///
+    /// A gesture [claims](aimer_widget::pointer_claim) its pointer for as long as
+    /// it lasts, and the framework drops every claim the moment a pointer goes up
+    /// or an interaction is cancelled — a claim can never outlive the finger that
+    /// made it. A gesture whose claim is gone is therefore a gesture whose finger
+    /// is gone, and this reports none.
+    ///
+    /// That distinction is what keeps a selection dismissable. A release is not
+    /// guaranteed to arrive — a scrollable that has taken over one finger
+    /// swallows the lift of another — and touch identities are reused, so the
+    /// next press of the same finger would look like the press that opened such a
+    /// gesture. Everything that asks this question asks it to tell a press of its
+    /// own gesture from a fresh one, and a fresh press mistaken for its own
+    /// dismisses nothing at all.
     pub fn active_pointer(&self) -> Option<PointerKey> {
-        self.state.borrow().active_pointer()
+        let pointer = self.state.borrow().active_pointer()?;
+        is_pointer_claimed(pointer).then_some(pointer)
     }
 
     /// Restores the selection from before the current gesture.
@@ -483,6 +499,25 @@ impl SelectionSession {
         self.focused.set(false);
         self.focus_node.borrow().unfocus();
         self.window.request_redraw();
+    }
+
+    /// Drops whatever the session holds so a fresh gesture can replace it,
+    /// reporting whether there was anything to drop.
+    ///
+    /// This is what a press means for a selection that is already on screen. The
+    /// answer keeps a press on unselected text from asking for a repaint — or for
+    /// the tree's focus to be resolved again — for nothing, which on a paragraph
+    /// nobody has selected is every press there is.
+    pub fn dismiss(&self) -> bool {
+        let idle = {
+            let state = self.state.borrow();
+            state.selection().is_none() && state.active_pointer().is_none()
+        };
+        if idle {
+            return false;
+        }
+        self.clear();
+        true
     }
 
     /// Selects every participant in the session, in document order.

@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
+use aimer_cupid::font::TextLanguage;
 use aimer_text::TextSelection;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -22,6 +23,7 @@ type AttachmentEntry = (u64, AttachmentCallback);
 struct ControllerCore {
     state: RefCell<ControllerState>,
     next_attachment: Cell<u64>,
+    input_language: Cell<Option<TextLanguage>>,
 }
 
 /// Owns a UI-thread-local editable value and its transaction revision.
@@ -66,7 +68,77 @@ impl TextEditingController {
                     composition_origin: None,
                 }),
                 next_attachment: Cell::new(0),
+                input_language: Cell::new(None),
             }),
+        }
+    }
+
+    /// Returns the language of the keyboard this text was typed with.
+    ///
+    /// Chinese, Japanese and Korean share the Han ideographs but not their
+    /// shapes: the same code point is drawn differently by a Chinese face
+    /// (PingFang) and a Japanese one (Hiragino). Text alone cannot decide
+    /// between them — a run whose every character also exists in Japanese is
+    /// indistinguishable from Japanese — so a Chinese field renders in a
+    /// Japanese face until a simplified-only character lands in it and makes
+    /// the whole field jump to another typeface mid-sentence. The keyboard the
+    /// user typed with is the missing evidence, and this is where a field
+    /// keeps it, to hand to the renderer as the script hint of every run it
+    /// draws.
+    ///
+    /// The value lives on the controller rather than on the element because
+    /// the controller is the retained side of a text field: it survives
+    /// widget rebuilds, and it keeps the language while the field is
+    /// unfocused, when no keyboard exists to ask.
+    ///
+    /// Platforms that do not report a keyboard language answer `None`, which
+    /// leaves the renderer with its content-only heuristic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aimer_input::TextEditingController;
+    ///
+    /// let controller = TextEditingController::with_text("\u{4f60}\u{597d}");
+    /// assert_eq!(controller.input_language(), None);
+    /// ```
+    #[inline]
+    pub fn input_language(&self) -> Option<TextLanguage> {
+        self.core.input_language.get()
+    }
+
+    /// Records the language of the keyboard that produced the latest edit.
+    ///
+    /// `tag` is an IETF language tag as the platform reports it — `"zh-Hans"`,
+    /// `"ja-JP"` — or `None` when the platform has nothing to say. Only a tag
+    /// naming one of the Han-sharing languages
+    /// ([`TextLanguage::from_tag`]) is remembered; everything else, `None`
+    /// included, leaves the previously learned language in place.
+    ///
+    /// The asymmetry is deliberate. A field is typed into with several
+    /// keyboards — the user switches to the Latin one for a name, a URL or a
+    /// digit and back again — and each switch would otherwise erase the only
+    /// evidence of which Han face the text wants. A Latin keyboard writes no
+    /// ideographs, so it can never contradict the Chinese, Japanese or Korean
+    /// keyboard that wrote them; forgetting on its account would make the
+    /// field flip typeface for typing a full stop. The one thing that does
+    /// overrule the memory is another CJK keyboard, which is the user saying
+    /// the field is now in that language.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aimer_input::TextEditingController;
+    ///
+    /// let controller = TextEditingController::new();
+    /// controller.learn_input_language_tag(Some("zh-Hans"));
+    /// controller.learn_input_language_tag(Some("en-US"));
+    /// assert!(controller.input_language().is_some());
+    /// ```
+    #[inline]
+    pub fn learn_input_language_tag(&self, tag: Option<&str>) {
+        if let Some(language) = tag.and_then(TextLanguage::from_tag) {
+            self.core.input_language.set(Some(language));
         }
     }
 
@@ -460,6 +532,71 @@ fn notify_attachments(
 ) {
     for (_, attachment) in attachments {
         attachment(value, revision);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aimer_cupid::font::TextLanguage;
+
+    use super::TextEditingController;
+
+    #[test]
+    fn controller_starts_without_an_input_language() {
+        let controller = TextEditingController::with_text("你好");
+
+        assert_eq!(controller.input_language(), None);
+    }
+
+    #[test]
+    fn a_chinese_keyboard_tag_is_learned() {
+        let controller = TextEditingController::new();
+
+        controller.learn_input_language_tag(Some("zh-Hans"));
+
+        assert_eq!(controller.input_language(), Some(TextLanguage::Chinese));
+    }
+
+    #[test]
+    fn a_latin_keyboard_tag_learns_nothing_and_erases_nothing() {
+        let controller = TextEditingController::new();
+
+        controller.learn_input_language_tag(Some("en-US"));
+        assert_eq!(controller.input_language(), None);
+
+        controller.learn_input_language_tag(Some("zh-Hans"));
+        controller.learn_input_language_tag(Some("en-US"));
+        assert_eq!(controller.input_language(), Some(TextLanguage::Chinese));
+    }
+
+    #[test]
+    fn an_absent_tag_keeps_the_learned_language() {
+        let controller = TextEditingController::new();
+
+        controller.learn_input_language_tag(Some("ja-JP"));
+        controller.learn_input_language_tag(None);
+
+        assert_eq!(controller.input_language(), Some(TextLanguage::Japanese));
+    }
+
+    #[test]
+    fn the_learned_language_is_shared_by_every_clone() {
+        let controller = TextEditingController::new();
+        let rebuilt = controller.clone();
+
+        controller.learn_input_language_tag(Some("ko-KR"));
+
+        assert_eq!(rebuilt.input_language(), Some(TextLanguage::Korean));
+    }
+
+    #[test]
+    fn editing_the_text_never_forgets_the_language() {
+        let controller = TextEditingController::with_text("你好");
+        controller.learn_input_language_tag(Some("zh-Hant"));
+
+        controller.set_text("");
+
+        assert_eq!(controller.input_language(), Some(TextLanguage::Chinese));
     }
 }
 

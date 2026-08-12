@@ -9,7 +9,7 @@ use aimer_events::pointer::PointerSource;
 use aimer_events::window::request_animation_frame;
 use aimer_style::{TextOverflow, TextStyle};
 use aimer_utils::AnimInstant;
-use aimer_utils::callback::{CallbackExecutor, VoidCallback, ambient_spawner};
+use aimer_utils::callback::{CallbackExecutor, VoidCallback};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutCache, LayoutElement,
@@ -340,7 +340,7 @@ impl RawTextButton {
     /// whichever runtime the frame is being built on.
     #[inline]
     fn execute(callback: &VoidCallback) {
-        callback.execute((), &ambient_spawner());
+        callback.execute(());
     }
 
     fn press(&self) {

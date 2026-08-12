@@ -748,7 +748,26 @@ impl EventDispatcher {
             }
             _ => {}
         }
-        result
+        result.merge(self.settle_focus_requests(root))
+    }
+
+    /// Grants the focus a handler asked for while this event was delivered.
+    ///
+    /// Focus is resolved once, before the event is routed, so a handler that
+    /// calls [`FocusNode::request_focus`] — a button focusing the field it
+    /// belongs to — records its wish after the only pass that would have read
+    /// it. Left there, the wish would wait for whatever input happens next: a
+    /// mouse hides that behind the pixel it moves after a click, but a finger
+    /// that taps and lifts sends nothing more, so the field would be focused by
+    /// the *next* tap.
+    ///
+    /// Nothing is walked for an event that asked for nothing:
+    /// [`FocusManager::begin_synchronization`] compares the request counter it
+    /// recorded moments ago, so the common case is a handful of comparisons.
+    #[inline]
+    fn settle_focus_requests(&mut self, root: &dyn Element) -> EventResult {
+        self.synchronize_paths(root);
+        self.synchronize_focus(root)
     }
 
     /// Routes one event, leaving pointer-claim housekeeping to
@@ -1235,6 +1254,30 @@ fn dispatch_routed_event(
     dispatch_routed_event_inner(root, pos, event, &mut children)
 }
 
+/// Whether `pos` lies within `element`'s laid-out bounds.
+///
+/// An element that reports no bounds is taken to be everywhere, which is what
+/// keeps a wrapper that never lays anything out from swallowing the events of
+/// the subtree it stands for.
+#[inline]
+fn contains(element: &dyn Element, pos: Vec2d) -> bool {
+    element.pos_start_end().is_none_or(|(start, end)| {
+        pos.x >= start.x && pos.x <= end.x && pos.y >= start.y && pos.y <= end.y
+    })
+}
+
+/// Offers `element` as the focus target of a press at `pos`, if it is one.
+///
+/// The bounds are only consulted once the element has answered with a node, so
+/// the overwhelming majority of elements — which are not focus targets — cost a
+/// single call.
+#[inline]
+fn focus_candidate_at(element: &dyn Element, pos: Vec2d) -> Option<FocusCandidate<ElementId>> {
+    let node = element.focus_node()?;
+    let id = element.element_id()?;
+    contains(element, pos).then(|| FocusCandidate::new(id, node.clone(), element.autofocus()))
+}
+
 fn dispatch_routed_event_inner<'a>(
     root: &'a dyn Element,
     pos: Vec2d,
@@ -1265,6 +1308,16 @@ fn dispatch_routed_event_inner<'a>(
         }
         if child_outcome.result.is_consumed() {
             children.truncate(start);
+            // The press stopped here, but it landed inside this element all the
+            // same: a control that takes a press for itself still sits within
+            // whatever region encloses it, and that region is what the focus
+            // should move to. Giving up the search here would leave the press
+            // with no target at all — and a press with no target takes the
+            // keyboard away, so clicking a field inside a focusable region
+            // would blur it.
+            if focus_owner.is_none() {
+                focus_owner = focus_candidate_at(root, pos);
+            }
             return RoutedEventResult {
                 result,
                 capture_owner,
@@ -1274,16 +1327,11 @@ fn dispatch_routed_event_inner<'a>(
     }
     children.truncate(start);
 
-    let bounds = root.pos_start_end();
-    let inside = bounds.is_none_or(|(start, end)| {
-        pos.x >= start.x && pos.x <= end.x && pos.y >= start.y && pos.y <= end.y
-    });
+    let inside = contains(root, pos);
     if inside {
         let own_result = root.on_event(event);
-        if focus_owner.is_none()
-            && let (Some(id), Some(node)) = (root.element_id(), root.focus_node())
-        {
-            focus_owner = Some(FocusCandidate::new(id, node.clone(), root.autofocus()));
+        if focus_owner.is_none() {
+            focus_owner = focus_candidate_at(root, pos);
         }
         if capture_owner.is_none() && !matches!(own_result.capture_request(), CaptureRequest::None)
         {
@@ -3357,5 +3405,79 @@ mod tests {
         assert!(consumed_by_fallback.is_consumed());
         assert_eq!(first_events.get(), 2);
         assert_eq!(second_events.get(), 1);
+    }
+
+    /// An element that hands focus to somebody else when pressed, the way a
+    /// button focuses the field it belongs to. It is not focusable itself.
+    struct FocusRequestingElement {
+        requests: FocusNode,
+        bounds: (Vec2d, Vec2d),
+    }
+
+    impl VisitorElement for FocusRequestingElement {
+        fn debug_name(&self) -> &'static str {
+            "FocusRequestingElement"
+        }
+    }
+
+    impl EventElement for FocusRequestingElement {
+        fn on_event(&self, event: &ElementEvent) -> EventResult {
+            if matches!(event, ElementEvent::PointerDown(_)) {
+                self.requests.request_focus();
+                return EventResult::consumed();
+            }
+            EventResult::ignored()
+        }
+    }
+
+    impl LayoutElement for FocusRequestingElement {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some(self.bounds)
+        }
+    }
+    impl Drawable for FocusRequestingElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for FocusRequestingElement {}
+
+    /// A request made while an event is delivered is granted by that event.
+    ///
+    /// Focus is resolved before an event is routed, so a handler's request
+    /// arrives too late for that pass. Leaving it there would mean waiting for
+    /// whatever input comes next: a mouse that moves a pixel hides the delay,
+    /// but a finger that taps and lifts sends nothing more, so the field a
+    /// button focused would only be focused by the *next* tap.
+    #[test]
+    fn focus_requested_while_an_event_is_delivered_is_granted_by_that_event() {
+        let target = FocusNode::new();
+        let button = Vec2d { x: 25.0, y: 25.0 };
+        let root = IdentityBranch(vec![
+            FocusKeyElement {
+                node: target.clone(),
+                bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
+                key_events: Rc::new(Cell::new(0)),
+                consume_keys: Rc::new(Cell::new(true)),
+            }
+            .boxed(),
+            FocusRequestingElement {
+                requests: target.clone(),
+                bounds: (Vec2d { x: 20.0, y: 20.0 }, Vec2d { x: 30.0, y: 30.0 }),
+            }
+            .boxed(),
+        ])
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            button,
+            &ElementEvent::PointerDown(PointerInfo::mouse(button, PointerButton::Primary)),
+        );
+
+        assert!(
+            target.has_focus(),
+            "the press dropped focus and the handler asked for it back, so the \
+             event must not end before that is settled"
+        );
     }
 }

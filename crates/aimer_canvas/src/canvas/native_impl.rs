@@ -4,7 +4,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 use aimer_cupid::canvas::CupidCanvas;
-use aimer_cupid::font::{FontFamily, FontStyle};
+use aimer_cupid::font::{FontFamily, FontStyle, TextLanguage};
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 use aimer_cupid::text_pipeline::TextOverflowMode;
 use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
@@ -597,6 +597,16 @@ impl CanvasRendering for CupidCanvas {
     #[inline]
     fn set_italic(&self, italic: bool) {
         CupidCanvas::set_italic(self, italic);
+    }
+
+    #[inline]
+    fn set_text_language(&self, language: Option<TextLanguage>) {
+        CupidCanvas::set_text_language(self, language);
+    }
+
+    #[inline]
+    fn text_language(&self) -> Option<TextLanguage> {
+        CupidCanvas::text_language(self)
     }
 
     #[inline]

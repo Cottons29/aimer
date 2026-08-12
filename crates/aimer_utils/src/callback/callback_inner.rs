@@ -8,7 +8,14 @@ use std::rc::Rc;
 /// The future resolves to `()` rather than to the callback's return type
 /// because an asynchronous callback is fire-and-forget — it is handed to an
 /// executor and nobody is left holding a channel to receive a value from it.
-type AsyncBody<P> = dyn Fn(P) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+///
+/// It is deliberately **not** [`Send`]. The future is polled by
+/// [`aimer_venus`] on the thread that owns the frame, which is the same thread
+/// that owns the element tree, so a handler may capture a `StateUpdater`, a
+/// controller, or any other [`Rc`] the tree handed it. A `Send` bound here
+/// would have made those captures impossible for no benefit, because the work
+/// has to come back to this thread to mutate anything anyway.
+type AsyncBody<P> = dyn Fn(P) -> Pin<Box<dyn Future<Output = ()>>>;
 
 /// A callback body, in whichever of the two flavours it was registered with.
 ///
@@ -78,8 +85,8 @@ pub struct AsyncCallback<F>(pub F);
 
 impl<P, R, F, Fut> From<AsyncCallback<F>> for RawInnerCallback<P, R>
 where
-    F: FnOnce(P) -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
+    F: FnOnce(P) -> Fut + 'static,
+    Fut: Future<Output = ()> + 'static,
 {
     fn from(callback: AsyncCallback<F>) -> Self {
         let body = RefCell::new(Some(callback.0));

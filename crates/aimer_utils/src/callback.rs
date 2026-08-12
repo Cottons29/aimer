@@ -7,77 +7,24 @@ use std::rc::Rc;
 
 pub use callback_inner::*;
 
-/// Where an asynchronous callback is spawned.
-///
-/// Native builds carry the application's Tokio handle, because a widget deep in
-/// the tree has no way of finding it otherwise. The browser has a single task
-/// queue and needs nothing carried, so the type collapses to a unit and call
-/// sites stop needing `#[cfg]` around a parameter.
-///
-/// See [`CallbackExecutor::execute`] for what happens when the handle is absent.
-#[cfg(not(target_arch = "wasm32"))]
-pub type AsyncSpawner = Option<tokio::runtime::Handle>;
-
-/// Where an asynchronous callback is spawned. See the native definition.
-#[cfg(target_arch = "wasm32")]
-pub type AsyncSpawner = ();
-
-/// A spawner naming no particular runtime, leaving
-/// [`CallbackExecutor::execute`] to fall back to whichever one the caller is
-/// already running inside.
-///
-/// This is what an element that was never handed a handle passes — a link in a
-/// paragraph, a node in an SVG. It is not an error: the ambient runtime is
-/// almost always the one the handle would have named anyway.
-///
-/// # Examples
-///
-/// ```
-/// use aimer_utils::callback::{Callback, CallbackExecutor, ambient_spawner};
-///
-/// let callback = Callback::from(|n: i32| n + 1);
-/// assert_eq!(callback.execute(1, &ambient_spawner()), Some(2));
-/// ```
-#[cfg(not(target_arch = "wasm32"))]
-#[inline]
-pub const fn ambient_spawner() -> AsyncSpawner {
-    None
-}
-
-/// A spawner naming no particular runtime. See the native definition.
-#[cfg(target_arch = "wasm32")]
-#[inline]
-pub const fn ambient_spawner() -> AsyncSpawner {}
-
 /// One invocation of an [`RawInnerCallback::Async`] body, ready to be spawned.
-type SpawnedFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+type SpawnedFuture = Pin<Box<dyn Future<Output = ()>>>;
 
-/// Hands `future` to an executor, and says so out loud when there is none.
+/// Hands `future` to Aimer's runtime, and says so out loud when there is none.
+///
+/// The future becomes a microtask, so its effect is visible to the *build phase
+/// of the frame it was raised in* rather than a frame later. That ordering is
+/// the whole reason a callback no longer carries a runtime handle: a general
+/// purpose executor can promise "soon", but only the thread that owns the
+/// frame can promise "before the next build".
 ///
 /// One policy for the whole framework, which is the point: this used to be
 /// hand-written at every call site, and the copies disagreed — some reached for
 /// the ambient runtime, one silently did nothing at all.
-#[cfg(not(target_arch = "wasm32"))]
-fn spawn(future: SpawnedFuture, spawner: &AsyncSpawner) {
-    if let Some(handle) = spawner {
-        handle.spawn(future);
-        return;
+fn spawn(future: SpawnedFuture) {
+    if aimer_venus::spawn_local(future).is_none() {
+        crate::log::warn("an async callback was discarded: no Venus runtime is installed");
     }
-
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            handle.spawn(future);
-        }
-        Err(_) => crate::log::warn(
-            "an async callback was discarded: no runtime handle was given and none is running",
-        ),
-    }
-}
-
-/// Hands `future` to the browser's task queue. See the native definition.
-#[cfg(target_arch = "wasm32")]
-fn spawn(future: SpawnedFuture, _spawner: &AsyncSpawner) {
-    wasm_bindgen_futures::spawn_local(future);
 }
 
 /// The contract for invoking a callback, however it was registered.
@@ -97,7 +44,7 @@ fn spawn(future: SpawnedFuture, _spawner: &AsyncSpawner) {
 /// ```
 /// use std::rc::Rc;
 ///
-/// use aimer_utils::callback::{CallbackExecutor, RawInnerCallback, ambient_spawner};
+/// use aimer_utils::callback::{CallbackExecutor, RawInnerCallback};
 ///
 /// struct Greeter {
 ///     callback: Option<RawInnerCallback<i32, String>>,
@@ -115,10 +62,7 @@ fn spawn(future: SpawnedFuture, _spawner: &AsyncSpawner) {
 /// let greeter = Greeter {
 ///     callback: Some(RawInnerCallback::Sync(Rc::new(|n| format!("{n} times")))),
 /// };
-/// assert_eq!(
-///     greeter.execute(3, &ambient_spawner()),
-///     Some("3 times".to_owned())
-/// );
+/// assert_eq!(greeter.execute(3), Some("3 times".to_owned()));
 /// ```
 pub trait CallbackExecutor {
     type Args;
@@ -130,17 +74,17 @@ pub trait CallbackExecutor {
     /// Invokes the callback, returning the value a synchronous body produced.
     ///
     /// Returns `None` when nothing was registered, and when the body is
-    /// asynchronous — that value belongs to the executor, not to the caller.
+    /// asynchronous — that value belongs to the runtime, not to the caller.
     ///
-    /// An asynchronous body is spawned on `spawner`'s handle; failing that, on
-    /// whichever runtime the caller is already inside — see
-    /// [`ambient_spawner`]. Only when there is no runtime at all is the work
-    /// discarded, and that is logged rather than passed over in silence.
-    fn execute(&self, args: Self::Args, spawner: &AsyncSpawner) -> Option<Self::Output> {
+    /// An asynchronous body becomes a microtask on the Venus runtime installed
+    /// for this thread, so it runs before the next build phase. Only when no
+    /// runtime is installed at all is the work discarded, and that is logged
+    /// rather than passed over in silence.
+    fn execute(&self, args: Self::Args) -> Option<Self::Output> {
         match self.raw()? {
             RawInnerCallback::Sync(body) => Some(body(args)),
             RawInnerCallback::Async(body) => {
-                spawn(body(args), spawner);
+                spawn(body(args));
                 None
             }
         }
@@ -225,8 +169,8 @@ impl<Args, Return, F: Fn(Args) -> Return + 'static> From<F> for Callback<Args, R
 
 impl<Args, Return, F, Fut> From<AsyncCallback<F>> for Callback<Args, Return>
 where
-    F: FnOnce(Args) -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
+    F: FnOnce(Args) -> Fut + 'static,
+    Fut: Future<Output = ()> + 'static,
 {
     #[inline]
     fn from(callback: AsyncCallback<F>) -> Self {
@@ -261,20 +205,20 @@ pub type VoidParamedFunction<R> = Callback<R, ()>;
 /// use std::cell::Cell;
 /// use std::rc::Rc;
 ///
-/// use aimer_utils::callback::{CallbackExecutor, VoidCallback, ambient_spawner};
+/// use aimer_utils::callback::{CallbackExecutor, VoidCallback};
 ///
 /// let presses = Rc::new(Cell::new(0));
 /// let counted = presses.clone();
 /// let on_press = VoidCallback::from(move || counted.set(counted.get() + 1));
 ///
-/// on_press.execute((), &ambient_spawner());
+/// on_press.execute(());
 /// assert_eq!(presses.get(), 1);
 /// ```
 #[derive(Default, Clone)]
 pub struct VoidCallback(Callback<(), ()>);
 
 impl VoidCallback {
-    /// Registers an `async` closure, to be driven by an executor.
+    /// Registers an `async` closure, to be driven by Aimer's runtime.
     ///
     /// Unlike the `From<F>` impl — which takes an `Fn()` — this accepts an
     /// [`FnOnce`], so the closure may consume what it captured. It is taken on
@@ -282,21 +226,29 @@ impl VoidCallback {
     /// must react to *every* press has to clone its state into the future
     /// rather than move it.
     ///
+    /// Neither the closure nor its future has to be [`Send`], because both are
+    /// polled on the thread that owns the frame. That is what allows a handler
+    /// to `await` while still holding a `StateUpdater` or a controller.
+    ///
     /// # Examples
     ///
     /// ```
+    /// use std::cell::Cell;
+    /// use std::rc::Rc;
+    ///
     /// use aimer_utils::callback::VoidCallback;
     ///
-    /// let payload = vec![1, 2, 3];
+    /// let pressed = Rc::new(Cell::new(false));
+    /// let flag = pressed.clone();
     /// let callback = VoidCallback::from_async(move || async move {
-    ///     let _ = payload.len();
+    ///     flag.set(true);
     /// });
     /// ```
     #[inline]
     pub fn from_async<F, Fut>(f: F) -> Self
     where
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        F: FnOnce() -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
     {
         Self(Callback::from(AsyncCallback(move |()| f())))
     }
@@ -327,29 +279,24 @@ impl CallbackExecutor for VoidCallback {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use aimer_venus::Venus;
 
     use super::*;
 
-    /// Drives a current-thread runtime long enough for whatever was spawned on
-    /// it to reach its first await point and finish.
-    fn settle(runtime: &tokio::runtime::Runtime) {
-        runtime.block_on(async {
-            for _ in 0..4 {
-                tokio::task::yield_now().await;
-            }
-        });
-    }
-
-    fn runtime() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("a current-thread runtime")
+    /// Installs a runtime for this test's thread, the way an event loop does
+    /// for the thread it draws on.
+    ///
+    /// Every test runs on a thread of its own, so the installed runtime is this
+    /// test's alone and nothing has to be torn down between them.
+    fn installed_runtime() -> Rc<Venus> {
+        let venus = Venus::new();
+        venus.install();
+        venus
     }
 
     #[test]
@@ -357,7 +304,7 @@ mod tests {
         let callback = Callback::<i32, i32>::default();
 
         assert_eq!(callback.call(7), None);
-        assert_eq!(callback.execute(7, &ambient_spawner()), None);
+        assert_eq!(callback.execute(7), None);
     }
 
     #[test]
@@ -365,7 +312,7 @@ mod tests {
         let callback = Callback::from(|value: i32| value + 1);
 
         assert_eq!(callback.call(1), Some(2));
-        assert_eq!(callback.execute(1, &ambient_spawner()), Some(2));
+        assert_eq!(callback.execute(1), Some(2));
     }
 
     #[test]
@@ -385,60 +332,77 @@ mod tests {
     // nothing to run synchronously.
     #[test]
     fn call_refuses_an_async_callback_rather_than_running_it() {
-        let ran = Arc::new(AtomicUsize::new(0));
-        let flag = ran.clone();
+        let _venus = installed_runtime();
+        let ran = Rc::new(Cell::new(0));
+        let counted = ran.clone();
         let callback: Callback<(), ()> = AsyncCallback(move |_| {
-            let flag = flag.clone();
-            async move {
-                flag.fetch_add(1, Ordering::SeqCst);
-            }
+            let counted = counted.clone();
+            async move { counted.set(counted.get() + 1) }
         })
         .into();
 
         assert_eq!(callback.call(()), None);
-        assert_eq!(ran.load(Ordering::SeqCst), 0);
+        assert_eq!(ran.get(), 0);
     }
 
+    // The property the whole migration was for: a handler may capture an `Rc`
+    // from the element tree — a `StateUpdater`, a controller — and still hold it
+    // across an await. Under a work-stealing runtime this did not compile.
     #[test]
-    fn an_async_callback_runs_on_the_handle_it_was_given() {
-        let runtime = runtime();
-        let ran = Arc::new(AtomicUsize::new(0));
-        let flag = ran.clone();
-        let callback: Callback<(), ()> = AsyncCallback(move |_| {
-            let flag = flag.clone();
-            async move {
-                flag.fetch_add(1, Ordering::SeqCst);
-            }
-        })
-        .into();
+    fn an_async_callback_may_hold_an_rc_across_an_await() {
+        let venus = installed_runtime();
+        let state = Rc::new(Cell::new(0));
+        let updater = state.clone();
+        let callback = VoidCallback::from_async(move || async move {
+            aimer_venus::yield_now().await;
+            updater.set(updater.get() + 1);
+        });
 
-        assert_eq!(callback.execute((), &Some(runtime.handle().clone())), None);
-        settle(&runtime);
+        assert_eq!(callback.execute(()), None);
+        while venus.task_count() > 0 {
+            venus.run_microtasks();
+        }
 
-        assert_eq!(ran.load(Ordering::SeqCst), 1);
+        assert_eq!(state.get(), 1);
     }
 
-    // The fallback `aimer_svg` and `aimer_text` used to hand-roll: an element
-    // holding no handle of its own still reaches the runtime it is running
-    // inside. Losing this would have made every SVG and link callback a no-op.
+    // An asynchronous handler is a microtask, so its effect lands before the
+    // build phase of the frame it was raised in rather than a frame later.
     #[test]
-    fn an_async_callback_falls_back_to_the_ambient_runtime() {
-        let runtime = runtime();
-        let ran = Arc::new(AtomicUsize::new(0));
-        let flag = ran.clone();
-        let callback = VoidCallback::from_async(move || {
-            let flag = flag.clone();
-            async move {
-                flag.fetch_add(1, Ordering::SeqCst);
-            }
+    fn an_async_callback_lands_before_the_build_of_the_frame_it_was_raised_in() {
+        let venus = installed_runtime();
+        let state = Rc::new(Cell::new(0));
+        let built_with = Rc::new(Cell::new(-1));
+
+        let updater = state.clone();
+        let callback = VoidCallback::from_async(move || async move { updater.set(7) });
+        callback.execute(());
+
+        assert_eq!(state.get(), 0, "nothing runs before the frame drains");
+
+        let read = state.clone();
+        let observed = built_with.clone();
+        venus.drive_frame(|| observed.set(read.get()));
+
+        assert_eq!(built_with.get(), 7);
+    }
+
+    // The reach `aimer_svg` and `aimer_text` used to hand-roll a fallback for:
+    // an element that was handed nothing still finds the runtime, because the
+    // runtime belongs to the thread rather than to whoever passed it down.
+    #[test]
+    fn an_async_callback_reaches_the_runtime_without_being_handed_one() {
+        let venus = installed_runtime();
+        let ran = Rc::new(Cell::new(0));
+        let counted = ran.clone();
+        let callback = VoidCallback::from_async(move || async move {
+            counted.set(counted.get() + 1);
         });
 
-        runtime.block_on(async {
-            callback.execute((), &ambient_spawner());
-        });
-        settle(&runtime);
+        callback.execute(());
+        venus.run_microtasks();
 
-        assert_eq!(ran.load(Ordering::SeqCst), 1);
+        assert_eq!(ran.get(), 1);
     }
 
     // A one-shot body is taken on its first invocation. `Button` documents that
@@ -446,29 +410,27 @@ mod tests {
     // two async constructors disagreed about this before they shared a body.
     #[test]
     fn a_second_invocation_of_a_one_shot_async_callback_does_nothing() {
-        let runtime = runtime();
-        let ran = Arc::new(AtomicUsize::new(0));
-        let flag = ran.clone();
-        let callback = VoidCallback::from_async(move || {
-            let flag = flag.clone();
-            async move {
-                flag.fetch_add(1, Ordering::SeqCst);
-            }
+        let venus = installed_runtime();
+        let ran = Rc::new(Cell::new(0));
+        let counted = ran.clone();
+        let callback = VoidCallback::from_async(move || async move {
+            counted.set(counted.get() + 1);
         });
 
-        let handle = Some(runtime.handle().clone());
-        callback.execute((), &handle);
-        callback.execute((), &handle);
-        settle(&runtime);
+        callback.execute(());
+        callback.execute(());
+        venus.run_microtasks();
 
-        assert_eq!(ran.load(Ordering::SeqCst), 1);
+        assert_eq!(ran.get(), 1);
     }
 
+    // A widget exercised in isolation has no event loop, and losing a task there
+    // must not take the test process with it.
     #[test]
     fn an_async_callback_without_any_runtime_is_dropped_rather_than_panicking() {
         let callback = VoidCallback::from_async(|| async {});
 
-        assert_eq!(callback.execute((), &ambient_spawner()), None);
+        assert_eq!(callback.execute(()), None);
     }
 
     #[test]
@@ -477,9 +439,9 @@ mod tests {
         let counted = calls.clone();
         let callback = VoidCallback::from(move || counted.set(counted.get() + 1));
 
-        callback.execute((), &ambient_spawner());
-        callback.clone().execute((), &ambient_spawner());
-        VoidCallback::default().execute((), &ambient_spawner());
+        callback.execute(());
+        callback.clone().execute(());
+        VoidCallback::default().execute(());
 
         assert_eq!(calls.get(), 2);
     }

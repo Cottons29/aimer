@@ -5,7 +5,7 @@ use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, FocusNode, LayoutElement, PointerKey,
-    Rebuildable, RequiredChild, VisitorElement, Widget,
+    RawFocusable, Rebuildable, RequiredChild, VisitorElement, Widget,
 };
 
 use crate::selection::selectable::{SelectionScope, selection_coordinator};
@@ -121,7 +121,8 @@ impl<W: Widget + 'static> Widget for SelectionArea<W> {
         let child = ctx.with_state(SelectionScope(Rc::clone(&session)), |ctx| {
             self.child.to_element(ctx)
         });
-        SelectionAreaElement::new(session, child).boxed()
+        let region = SelectionAreaElement::new(Rc::clone(&session), child).boxed();
+        focus_target(&session, region)
     }
 
     fn debug_name(&self) -> &'static str {
@@ -129,29 +130,48 @@ impl<W: Widget + 'static> Widget for SelectionArea<W> {
     }
 }
 
+/// Makes `region` the keyboard focus target of the selection `session` holds.
+///
+/// The region is focusable exactly while it holds the selection: the keyboard
+/// belongs to the selection, so there is nothing to focus without one, and a
+/// region nothing was ever selected in stays out of the tab order. That
+/// condition turns over without anything rebuilding the region — a selection
+/// begins and ends under the finger — which is why it is a gate rather than a
+/// [behavior](aimer_widget::FocusBehavior).
+///
+/// Holding the focus is also how the region hears about the presses it is never
+/// offered: routing hit-tests, so a press outside its bounds reaches whatever is
+/// under it and nothing else — but it moves the focus all the same, and
+/// [`SelectionSession::blur`](crate::selection::session::SelectionSession::blur)
+/// answers that. The notification travels back down into the region, so the
+/// element below still handles [`ElementEvent::FocusLost`] itself.
+fn focus_target(session: &Rc<SelectionSession>, region: AnyElement) -> AnyElement {
+    let node = FocusNode::new();
+    session.attach_focus_node(&node);
+    let holder = Rc::clone(session);
+    RawFocusable::new(node, region)
+        .focusable_when(move || holder.is_focused())
+        .boxed()
+}
+
 /// The element produced by [`SelectionArea`].
 ///
 /// It scopes the session over its subtree, owns the region's keyboard shortcuts
 /// and clears the selection on any press that no text of the region took —
 /// whether it landed on the region's own background or outside it entirely.
+///
+/// The keyboard focus that goes with the selection is not this element's: it is
+/// held by the [`RawFocusable`] wrapped around it by [`focus_target`], which is
+/// the same attachment every other focusable region of the framework uses.
 pub struct SelectionAreaElement {
     pub(crate) session: Rc<SelectionSession>,
-    /// The region's keyboard focus, which the session drives: it is asked for
-    /// when a selection starts and given up when the selection is dropped.
-    focus_node: FocusNode,
     pub(crate) child: AnyElement,
 }
 
 impl SelectionAreaElement {
-    /// Builds the region and hands its focus to `session`.
+    /// Builds the region over `session`.
     fn new(session: Rc<SelectionSession>, child: AnyElement) -> Self {
-        let focus_node = FocusNode::new();
-        session.attach_focus_node(&focus_node);
-        Self {
-            session,
-            focus_node,
-            child,
-        }
+        Self { session, child }
     }
 
     fn scoped<R>(&self, ctx: &BuildContext, callback: impl FnOnce(&BuildContext) -> R) -> R {
@@ -225,20 +245,6 @@ impl LayoutElement for SelectionAreaElement {
 }
 
 impl EventElement for SelectionAreaElement {
-    /// The region is focusable exactly while it holds the selection.
-    ///
-    /// The keyboard belongs to the selection, so there is nothing to focus
-    /// without one, and a region nothing was ever selected in stays out of the
-    /// tab order. Holding the focus is also how the region hears about the
-    /// presses it is never offered: routing hit-tests, so a press outside its
-    /// bounds reaches whatever is under it and nothing else — but it moves the
-    /// focus all the same, and
-    /// [`SelectionSession::blur`](crate::selection::session::SelectionSession::blur)
-    /// answers that.
-    fn focus_node(&self) -> Option<&FocusNode> {
-        self.session.is_focused().then_some(&self.focus_node)
-    }
-
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         // The knobs and the callout sit above everything the region drew, so
         // they are offered the event before it can mean anything else.
@@ -456,12 +462,15 @@ mod tests {
 
     /// The region of [`region`] on a page, with a plain element far away from
     /// it standing for everything a press could land on instead.
+    ///
+    /// The region is wrapped exactly as [`SelectionArea::to_element`] wraps it,
+    /// because the focus it needs for these tests is the wrapper's.
     fn page_with_region() -> (AnyElement, Rc<SelectionSession>, Rc<SelectionSlot>) {
         let (region, slot, _geometry) = region();
         let session = Rc::clone(&region.session);
         let page = Page {
             children: vec![
-                region.boxed(),
+                focus_target(&session, region.boxed()),
                 StubChild {
                     bounds: Bounds::new(400.0, 400.0, 100.0, 100.0),
                 }
@@ -495,6 +504,48 @@ mod tests {
             "the press landed outside the region, which is no longer the target of the selection"
         );
         assert!(!session.is_focused());
+    }
+
+    /// The keyboard the region owns is held for it by the attachment around
+    /// it, so a shortcut delivered to the focus owner has to travel back down
+    /// into the region — without that last step the region would own a
+    /// keyboard it never hears.
+    #[test]
+    fn the_region_answers_its_shortcuts_through_the_focus_attachment() {
+        let (page, session, _slot) = page_with_region();
+        session.select_all();
+
+        let mut dispatcher = EventDispatcher::new();
+        // Resolves the focus the selection asked for, without deciding it.
+        let _ = dispatcher.dispatch(
+            page.as_ref(),
+            Vec2d { x: 50.0, y: 50.0 },
+            &ElementEvent::PointerMove(PointerInfo::new(
+                Vec2d { x: 50.0, y: 50.0 },
+                PointerSource::Mouse,
+                0,
+                PointerButton::Primary,
+            )),
+        );
+        // Aimed away from the region, so hit testing cannot deliver it: the
+        // focus is the only route left.
+        let result = dispatcher.dispatch(
+            page.as_ref(),
+            Vec2d { x: 450.0, y: 450.0 },
+            &ElementEvent::KeyInput {
+                key: NamedKey::Other("a".to_owned()),
+                action: KeyAction::Pressed,
+                modifiers: aimer_events::element::Modifiers {
+                    ctrl: true,
+                    ..Default::default()
+                },
+            },
+        );
+
+        assert!(
+            result.is_consumed(),
+            "select-all must reach the region that owns the selection"
+        );
     }
 
     /// The keyboard follows the selection, so a region that has been clicked
@@ -557,15 +608,21 @@ mod tests {
 
     /// Nothing is selected, so nothing is holding the keyboard: the region is
     /// not a stop on the way round the focusable widgets.
+    ///
+    /// The attachment is asked afresh every time targets are gathered, which is
+    /// what lets one answer follow a selection that begins and ends without a
+    /// rebuild.
     #[test]
     fn a_region_that_holds_no_selection_is_not_focusable() {
         let (region, _slot, _geometry) = region();
+        let session = Rc::clone(&region.session);
+        let target = focus_target(&session, region.boxed());
 
-        assert!(region.focus_node().is_none());
+        assert!(target.focus_node().is_none());
 
-        region.session.select_all();
+        session.select_all();
 
-        assert!(region.focus_node().is_some());
+        assert!(target.focus_node().is_some());
     }
 
     #[test]

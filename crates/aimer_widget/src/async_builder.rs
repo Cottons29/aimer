@@ -1,11 +1,12 @@
+mod tokio_context;
+
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::future::Future;
 use std::marker::PhantomData;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use aimer_attribute::{ResolvedSize, Size, Vec2d};
-use crossbeam_channel::{Receiver, Sender, unbounded};
-use futures_util::future::{AbortHandle, Abortable};
+use aimer_venus::{ScopeId, TaskScope, Venus};
 
 use crate::base::BuildContext;
 use crate::widget::AnyWidgetExt;
@@ -41,24 +42,39 @@ pub struct SnapshotBuilder<B, T, E> {
 /// cancels it and starts a new one. The snapshot begins at
 /// [`AsyncSnapshot::Waiting`], then changes exactly once to
 /// [`AsyncSnapshot::Data`] or [`AsyncSnapshot::Error`] for the active request.
-/// Completions from cancelled requests are discarded, and an in-flight future
-/// is aborted when the widget is dropped.
+/// Cancelling destroys the request outright, so a cancelled one has no answer
+/// left to discard, and an in-flight future is dropped when the widget is.
+///
+/// The future is driven by [`aimer_venus`] on the thread that owns the frame,
+/// which has two consequences worth knowing:
+///
+/// - It does **not** have to be [`Send`], so it may capture a `StateUpdater`, a
+///   controller, or anything else the element tree handed out.
+/// - It shares the frame with build, layout and paint. Awaiting I/O is free,
+///   but *blocking* work belongs on
+///   [`Venus::offload`](aimer_venus::Venus::offload), which runs it on a worker
+///   thread and resolves back here.
+///
+/// Futures that create Tokio resources keep working: each poll happens inside
+/// the application's runtime context.
 ///
 /// ```rust
 /// use aimer_widget::{AsyncBuilder, AsyncSnapshot, ErrorWidget, Widget};
 ///
 /// let user_id = 7_u64;
 /// let builder =
-///     AsyncBuilder::new().request_key(user_id)
-///                        .future(move || async move { Ok::<_, &'static str>(user_id) })
-///                        .child(|snapshot| match snapshot {
-///                            AsyncSnapshot::Waiting => ErrorWidget::new("Loading user").boxed(),
-///                            AsyncSnapshot::Data(id) => {
-///                                ErrorWidget::new(format!("User {id}")).boxed()
-///                            }
-///                            AsyncSnapshot::Error(error) => ErrorWidget::new(*error).boxed(),
-///                        });
+///     AsyncBuilder::new()
+///         .request_key(user_id)
+///         .future(move || async move { Ok::<_, &'static str>(user_id) })
+///         .child(|snapshot| match snapshot {
+///             AsyncSnapshot::Waiting => ErrorWidget::new("Loading user").boxed(),
+///             AsyncSnapshot::Data(id) => {
+///                 ErrorWidget::new(format!("User {id}")).boxed()
+///              }
+///             AsyncSnapshot::Error(error) => ErrorWidget::new(*error).boxed()
+///         });
 /// ```
+
 pub struct AsyncBuilder<K = (), F = RequiredChild, B = RequiredChild> {
     request_key: K,
     future_factory: F,
@@ -159,38 +175,36 @@ impl<K, F, T, E> AsyncBuilder<K, FutureFactory<F, T, E>, RequiredChild> {
     }
 }
 
-struct Completion<T, E> {
-    generation: u64,
-    result: Result<T, E>,
-}
-
 struct AsyncRuntimeInner<T, E> {
     snapshot: AsyncSnapshot<T, E>,
-    generation: u64,
     revision: u64,
-    started: bool,
-    abort_handle: Option<AbortHandle>,
+    /// The scope owning the in-flight task, and therefore the only thing that
+    /// has to be dropped to cancel it.
+    ///
+    /// `Some` from the moment the request is launched. That doubles as the
+    /// "already started" flag the launcher reads, so there is one fact about
+    /// whether a request is live rather than two that can disagree.
+    scope: Option<TaskScope>,
 }
 
+/// The state one [`AsyncBuilder`] request is tracked through.
+///
+/// Held behind an [`Rc`] shared by the state object and the element it builds,
+/// and reached from the running task through a [`Weak`] — the task must not keep
+/// this alive, or an unmounted widget's request would outlive the tree that
+/// asked for it.
 struct AsyncRuntime<T, E> {
     inner: RefCell<AsyncRuntimeInner<T, E>>,
-    sender: Sender<Completion<T, E>>,
-    receiver: Receiver<Completion<T, E>>,
 }
 
 impl<T, E> AsyncRuntime<T, E> {
     fn new() -> Self {
-        let (sender, receiver) = unbounded();
         Self {
             inner: RefCell::new(AsyncRuntimeInner {
                 snapshot: AsyncSnapshot::Waiting,
-                generation: 0,
                 revision: 0,
-                started: false,
-                abort_handle: None,
+                scope: None,
             }),
-            sender,
-            receiver,
         }
     }
 
@@ -198,50 +212,43 @@ impl<T, E> AsyncRuntime<T, E> {
         self.inner.borrow().revision
     }
 
+    /// Abandons the current request and returns to the waiting state.
+    ///
+    /// Dropping the scope *is* the cancellation: the task and the future inside
+    /// it are gone, so a reply from the old request cannot arrive late. This is
+    /// what replaced a generation counter that existed only to recognise and
+    /// discard such replies.
     fn reset(&self) {
         let mut inner = self.inner.borrow_mut();
-        if let Some(handle) = inner.abort_handle.take() {
-            handle.abort();
-        }
-        inner.generation = inner.generation.wrapping_add(1);
+        inner.scope = None;
         inner.revision = inner.revision.wrapping_add(1);
         inner.snapshot = AsyncSnapshot::Waiting;
-        inner.started = false;
     }
 
-    fn begin(&self) -> Option<(u64, futures_util::future::AbortRegistration)> {
+    /// Claims the right to launch, returning the scope to spawn into.
+    ///
+    /// `None` when a request is already live, which is what keeps the factory
+    /// invoked at most once per request key however many times the tree is
+    /// rebuilt or redrawn.
+    fn begin(&self, venus: &Venus) -> Option<ScopeId> {
         let mut inner = self.inner.borrow_mut();
-        if inner.started {
+        if inner.scope.is_some() {
             return None;
         }
-        inner.started = true;
-        let generation = inner.generation;
-        let (abort_handle, registration) = AbortHandle::new_pair();
-        inner.abort_handle = Some(abort_handle);
-        Some((generation, registration))
+        let scope = venus.scope();
+        let id = scope.id();
+        inner.scope = Some(scope);
+        Some(id)
     }
 
-    fn poll_completion(&self) {
-        while let Ok(completion) = self.receiver.try_recv() {
-            let mut inner = self.inner.borrow_mut();
-            if completion.generation != inner.generation {
-                continue;
-            }
-            inner.snapshot = match completion.result {
-                Ok(data) => AsyncSnapshot::Data(data),
-                Err(error) => AsyncSnapshot::Error(error),
-            };
-            inner.revision = inner.revision.wrapping_add(1);
-            inner.abort_handle = None;
-        }
-    }
-}
-
-impl<T, E> Drop for AsyncRuntime<T, E> {
-    fn drop(&mut self) {
-        if let Some(handle) = self.inner.get_mut().abort_handle.take() {
-            handle.abort();
-        }
+    /// Records the result of the request that is currently live.
+    fn complete(&self, result: Result<T, E>) {
+        let mut inner = self.inner.borrow_mut();
+        inner.snapshot = match result {
+            Ok(data) => AsyncSnapshot::Data(data),
+            Err(error) => AsyncSnapshot::Error(error),
+        };
+        inner.revision = inner.revision.wrapping_add(1);
     }
 }
 
@@ -253,30 +260,6 @@ pub struct AsyncBuilderState<K, F, B, T, E> {
     runtime: Rc<AsyncRuntime<T, E>>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-impl<K, F, Fut, B, T, E> StatefulWidget
-    for AsyncBuilder<K, FutureFactory<F, T, E>, SnapshotBuilder<B, T, E>>
-where
-    K: Clone + Eq + 'static,
-    F: Fn() -> Fut + 'static,
-    Fut: Future<Output = Result<T, E>> + Send + 'static,
-    B: Fn(&AsyncSnapshot<T, E>) -> AnyWidget + 'static,
-    T: Send + 'static,
-    E: Send + 'static,
-{
-    type State = AsyncBuilderState<K, F, B, T, E>;
-
-    fn create_state(self) -> Self::State {
-        AsyncBuilderState {
-            request_key: self.request_key,
-            future_factory: self.future_factory.factory,
-            snapshot_builder: self.snapshot_builder.builder,
-            runtime: Rc::new(AsyncRuntime::new()),
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 impl<K, F, Fut, B, T, E> StatefulWidget
     for AsyncBuilder<K, FutureFactory<F, T, E>, SnapshotBuilder<B, T, E>>
 where
@@ -299,39 +282,6 @@ where
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-impl<K, F, Fut, B, T, E> State<AsyncBuilder<K, FutureFactory<F, T, E>, SnapshotBuilder<B, T, E>>>
-    for AsyncBuilderState<K, F, B, T, E>
-where
-    K: Clone + Eq + 'static,
-    F: Fn() -> Fut + 'static,
-    Fut: Future<Output = Result<T, E>> + Send + 'static,
-    B: Fn(&AsyncSnapshot<T, E>) -> AnyWidget + 'static,
-    T: Send + 'static,
-    E: Send + 'static,
-{
-    fn init_state(&mut self, _updater: StateUpdater<Self>) {}
-
-    fn adopt_config_from(&mut self, new: &Self) {
-        self.future_factory = new.future_factory.clone();
-        self.snapshot_builder = new.snapshot_builder.clone();
-        if self.request_key != new.request_key {
-            self.request_key = new.request_key.clone();
-            self.runtime.reset();
-        }
-    }
-
-    fn build(&self, _ctx: &BuildContext) -> impl Widget {
-        AsyncFrame {
-            future_factory: self.future_factory.clone(),
-            snapshot_builder: self.snapshot_builder.clone(),
-            runtime: self.runtime.clone(),
-            marker: PhantomData::<fn() -> Fut>,
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 impl<K, F, Fut, B, T, E> State<AsyncBuilder<K, FutureFactory<F, T, E>, SnapshotBuilder<B, T, E>>>
     for AsyncBuilderState<K, F, B, T, E>
 where
@@ -363,34 +313,6 @@ where
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-impl<K, F, Fut, B, T, E> Widget
-    for AsyncBuilder<K, FutureFactory<F, T, E>, SnapshotBuilder<B, T, E>>
-where
-    K: Clone + Eq + 'static,
-    F: Fn() -> Fut + 'static,
-    Fut: Future<Output = Result<T, E>> + Send + 'static,
-    B: Fn(&AsyncSnapshot<T, E>) -> AnyWidget + 'static,
-    T: Send + 'static,
-    E: Send + 'static,
-{
-    fn key(&self) -> Option<Key> {
-        self.widget_key.clone()
-    }
-
-    fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let key = Widget::key(&self);
-        StatefulElement::new_with_name(self, ctx, "AsyncBuilder", key)
-            .0
-            .boxed()
-    }
-
-    fn debug_name(&self) -> &'static str {
-        "AsyncBuilder"
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 impl<K, F, Fut, B, T, E> Widget
     for AsyncBuilder<K, FutureFactory<F, T, E>, SnapshotBuilder<B, T, E>>
 where
@@ -434,33 +356,6 @@ where
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-impl<F, Fut, B, T, E> Widget for AsyncFrame<F, Fut, B, T, E>
-where
-    F: Fn() -> Fut + 'static,
-    Fut: Future<Output = Result<T, E>> + Send + 'static,
-    B: Fn(&AsyncSnapshot<T, E>) -> AnyWidget + 'static,
-    T: Send + 'static,
-    E: Send + 'static,
-{
-    fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        AsyncFrameElement {
-            child: SyncChild(UnsafeCell::new(self.child_element(ctx))),
-            rendered_revision: Cell::new(self.runtime.revision()),
-            future_factory: self.future_factory,
-            snapshot_builder: self.snapshot_builder,
-            runtime: self.runtime,
-            marker: PhantomData::<fn() -> Fut>,
-        }
-        .boxed()
-    }
-
-    fn debug_name(&self) -> &'static str {
-        "AsyncFrame"
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 impl<F, Fut, B, T, E> Widget for AsyncFrame<F, Fut, B, T, E>
 where
     F: Fn() -> Fut + 'static,
@@ -533,33 +428,6 @@ where
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-impl<F, Fut, B, T, E> AsyncFrameElement<F, Fut, B, T, E>
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = Result<T, E>> + Send + 'static,
-    B: Fn(&AsyncSnapshot<T, E>) -> AnyWidget,
-    T: Send + 'static,
-    E: Send + 'static,
-{
-    fn refresh(&self, ctx: &BuildContext) {
-        if let Some((generation, registration)) = self.runtime.begin() {
-            let future = (self.future_factory)();
-            let sender = self.runtime.sender.clone();
-            let window = ctx.window.clone();
-            ctx.async_handle.spawn(async move {
-                if let Ok(result) = Abortable::new(future, registration).await {
-                    let _ = sender.send(Completion { generation, result });
-                    window.request_redraw();
-                }
-            });
-        }
-        self.runtime.poll_completion();
-        self.update_child(ctx);
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 impl<F, Fut, B, T, E> AsyncFrameElement<F, Fut, B, T, E>
 where
     F: Fn() -> Fut,
@@ -569,19 +437,40 @@ where
     E: 'static,
 {
     fn refresh(&self, ctx: &BuildContext) {
-        if let Some((generation, registration)) = self.runtime.begin() {
-            let future = (self.future_factory)();
-            let sender = self.runtime.sender.clone();
-            let window = ctx.window.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                if let Ok(result) = Abortable::new(future, registration).await {
-                    let _ = sender.send(Completion { generation, result });
-                    window.request_redraw();
-                }
-            });
-        }
-        self.runtime.poll_completion();
+        self.launch_if_idle(ctx);
         self.update_child(ctx);
+    }
+
+    /// Starts the request, unless one is already in flight.
+    ///
+    /// The task is a microtask on the runtime that owns this thread's frames,
+    /// so a future that is already resolved reports its result to *this*
+    /// frame's build rather than the next one. It holds the request state only
+    /// weakly: the element and its state own that, and a task outliving them is
+    /// a task whose answer nobody is waiting for.
+    ///
+    /// Nothing is launched when no runtime is installed — a widget exercised in
+    /// isolation simply stays in [`AsyncSnapshot::Waiting`] instead of taking the
+    /// process down.
+    fn launch_if_idle(&self, ctx: &BuildContext) {
+        let Some(venus) = Venus::current() else {
+            return;
+        };
+        let Some(scope) = self.runtime.begin(&venus) else {
+            return;
+        };
+
+        let future = tokio_context::bind(ctx, (self.future_factory)());
+        let runtime = Rc::downgrade(&self.runtime);
+        let window = ctx.window.clone();
+        venus.spawn_in(scope, async move {
+            let result = future.await;
+            let Some(runtime) = Weak::upgrade(&runtime) else {
+                return;
+            };
+            runtime.complete(result);
+            window.request_redraw();
+        });
     }
 }
 
@@ -597,26 +486,6 @@ impl<F, Fut, B, T, E> VisitorElement for AsyncFrameElement<F, Fut, B, T, E> {
 
 impl<F, Fut, B, T, E> EventElement for AsyncFrameElement<F, Fut, B, T, E> {}
 
-#[cfg(not(target_arch = "wasm32"))]
-impl<F, Fut, B, T, E> Rebuildable for AsyncFrameElement<F, Fut, B, T, E>
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = Result<T, E>> + Send + 'static,
-    B: Fn(&AsyncSnapshot<T, E>) -> AnyWidget,
-    T: Send + 'static,
-    E: Send + 'static,
-{
-    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.refresh(ctx);
-        self.current_child().rebuild_if_dirty(ctx);
-    }
-
-    fn mark_needs_rebuild(&self) {
-        self.current_child().mark_needs_rebuild();
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 impl<F, Fut, B, T, E> Rebuildable for AsyncFrameElement<F, Fut, B, T, E>
 where
     F: Fn() -> Fut,
@@ -635,22 +504,6 @@ where
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-impl<F, Fut, B, T, E> Drawable for AsyncFrameElement<F, Fut, B, T, E>
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = Result<T, E>> + Send + 'static,
-    B: Fn(&AsyncSnapshot<T, E>) -> AnyWidget,
-    T: Send + 'static,
-    E: Send + 'static,
-{
-    fn draw(&self, ctx: &BuildContext) {
-        self.refresh(ctx);
-        self.current_child().draw(ctx);
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 impl<F, Fut, B, T, E> Drawable for AsyncFrameElement<F, Fut, B, T, E>
 where
     F: Fn() -> Fut,
@@ -707,41 +560,13 @@ impl<F, Fut, B, T, E> LayoutElement for AsyncFrameElement<F, Fut, B, T, E> {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-#[allow(dead_code)]
-fn async_builder_accepts_local_futures() {
-    struct ProbeWidget;
-
-    impl Widget for ProbeWidget {
-        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
-            unreachable!("compile-time WebAssembly API probe")
-        }
-    }
-
-    let local_value = Rc::new(Cell::new(1_usize));
-    let widget = AsyncBuilder::new()
-        .future(move || {
-            let local_value = local_value.clone();
-            async move { Ok::<_, Rc<()>>(local_value) }
-        })
-        .child(|snapshot| match snapshot {
-            AsyncSnapshot::Waiting | AsyncSnapshot::Data(_) | AsyncSnapshot::Error(_) => {
-                ProbeWidget.boxed()
-            }
-        });
-
-    fn require_widget(_widget: impl Widget) {}
-    require_widget(widget);
-}
-
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use aimer_attribute::ResolvedSize;
+    use aimer_venus::Venus;
 
     use crate::base::{BuildContext, WindowHandle};
     use crate::{
@@ -843,12 +668,20 @@ mod tests {
         }
     }
 
-    fn context() -> BuildContext<'static> {
+    /// A runtime installed for this test's thread, and the context a frame is
+    /// built with — the pair an event loop hands the tree.
+    ///
+    /// Every test runs on a thread of its own, so the installed runtime belongs
+    /// to that test alone and nothing has to be torn down between them.
+    fn context() -> (Rc<Venus>, BuildContext<'static>) {
+        let venus = Venus::new();
+        venus.install();
+
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
             aimer_canvas::Canvas::new(inner)
         };
-        BuildContext::new(
+        let ctx = BuildContext::new(
             canvas,
             ResolvedSize::default(),
             1.0,
@@ -856,7 +689,9 @@ mod tests {
             Default::default(),
             WindowHandle::headless(Default::default(), 1.0),
             tokio::runtime::Handle::current(),
-        )
+        );
+
+        (venus, ctx)
     }
 
     fn contains(element: &dyn Element, name: &'static str) -> bool {
@@ -895,57 +730,108 @@ mod tests {
     /// renders its data and refuses to scroll.
     #[tokio::test]
     async fn a_completed_request_grows_the_measurement_of_a_caching_ancestor() {
+        let (venus, ctx) = context();
         let widget = AsyncBuilder::new()
             .future(|| async { Ok::<_, &'static str>(42_usize) })
             .child(marker);
-        let ctx = context();
         let parent = CachingParent::new(widget.to_element(&ctx));
 
         parent.rebuild_if_dirty(&ctx);
         assert_eq!(parent.content_size(&ctx).height, WAITING_HEIGHT);
 
-        tokio::task::yield_now().await;
+        venus.run_microtasks();
         parent.rebuild_if_dirty(&ctx);
 
         assert_eq!(parent.content_size(&ctx).height, DATA_HEIGHT);
     }
 
+    /// The property the migration to Venus was for: a request that has already
+    /// resolved is drained *before* the build phase, so the frame that observes
+    /// the completion is the frame that renders it — not the one after it.
+    #[tokio::test]
+    async fn a_resolved_request_reaches_the_build_of_the_same_frame() {
+        let (venus, ctx) = context();
+        let widget = AsyncBuilder::new()
+            .future(|| async { Ok::<_, &'static str>(42_usize) })
+            .child(marker);
+        let element = widget.to_element(&ctx);
+
+        // The launch happens inside a build, so the earliest a result can be
+        // seen is the next frame — and it must be seen by that frame's build.
+        element.rebuild_if_dirty(&ctx);
+
+        let rendered_data = venus.drive_frame(|| {
+            element.rebuild_if_dirty(&ctx);
+            contains(element.as_ref(), "Data")
+        });
+
+        assert!(rendered_data);
+    }
+
+    /// A future may hold an [`Rc`] taken from the element tree.
+    ///
+    /// Under the Tokio path this did not compile: the future had to be `Send`,
+    /// which ruled out every handle the tree actually hands out.
+    #[tokio::test]
+    async fn a_future_may_capture_a_handle_from_the_element_tree() {
+        let (venus, ctx) = context();
+        let shared = Rc::new(Cell::new(41_usize));
+        let widget = AsyncBuilder::new()
+            .future(move || {
+                let shared = shared.clone();
+                async move {
+                    aimer_venus::yield_now().await;
+                    Ok::<_, &'static str>(shared.get() + 1)
+                }
+            })
+            .child(marker);
+        let element = widget.to_element(&ctx);
+
+        element.rebuild_if_dirty(&ctx);
+        while venus.task_count() > 0 {
+            venus.run_microtasks();
+        }
+        element.rebuild_if_dirty(&ctx);
+
+        assert!(contains(element.as_ref(), "Data"));
+    }
+
     #[tokio::test]
     async fn launches_once_and_rebuilds_from_waiting_to_data_after_redraw() {
-        let launches = Arc::new(AtomicUsize::new(0));
+        let (venus, ctx) = context();
+        let launches = Rc::new(Cell::new(0));
         let factory_launches = launches.clone();
         let widget = AsyncBuilder::new()
             .request_key(7_u64)
             .future(move || {
-                factory_launches.fetch_add(1, Ordering::SeqCst);
+                factory_launches.set(factory_launches.get() + 1);
                 async { Ok::<_, &'static str>(42_usize) }
             })
             .child(marker);
-        let ctx = context();
         let element = widget.to_element(&ctx);
 
         assert!(contains(element.as_ref(), "Waiting"));
         element.rebuild_if_dirty(&ctx);
-        assert_eq!(launches.load(Ordering::SeqCst), 1);
+        assert_eq!(launches.get(), 1);
 
-        tokio::task::yield_now().await;
+        venus.run_microtasks();
         assert!(ctx.window.take_redraw_request());
         element.rebuild_if_dirty(&ctx);
 
         assert!(contains(element.as_ref(), "Data"));
-        assert_eq!(launches.load(Ordering::SeqCst), 1);
+        assert_eq!(launches.get(), 1);
     }
 
     #[tokio::test]
     async fn renders_typed_errors_with_a_different_widget_type() {
+        let (venus, ctx) = context();
         let widget = AsyncBuilder::new()
             .future(|| async { Err::<usize, _>("failed") })
             .child(marker);
-        let ctx = context();
         let element = widget.to_element(&ctx);
 
         element.rebuild_if_dirty(&ctx);
-        tokio::task::yield_now().await;
+        venus.run_microtasks();
         element.rebuild_if_dirty(&ctx);
 
         assert!(contains(element.as_ref(), "Error"));
@@ -953,45 +839,46 @@ mod tests {
 
     #[tokio::test]
     async fn unchanged_request_identity_does_not_launch_again_during_reconciliation() {
-        let launches = Arc::new(AtomicUsize::new(0));
+        let (venus, ctx) = context();
+        let launches = Rc::new(Cell::new(0));
         let make_widget = || {
             let launches = launches.clone();
             AsyncBuilder::new()
                 .request_key("same")
                 .future(move || {
-                    launches.fetch_add(1, Ordering::SeqCst);
+                    launches.set(launches.get() + 1);
                     async { Ok::<_, &'static str>(1_usize) }
                 })
                 .child(marker)
         };
-        let ctx = context();
         let old = make_widget().to_element(&ctx);
-        tokio::task::yield_now().await;
+        old.rebuild_if_dirty(&ctx);
+        venus.run_microtasks();
         old.rebuild_if_dirty(&ctx);
         let new = make_widget().to_element(&ctx);
 
         crate::widget::stateful::carry_child_state(old.as_ref(), new.as_ref(), &ctx);
 
-        assert_eq!(launches.load(Ordering::SeqCst), 1);
+        assert_eq!(launches.get(), 1);
     }
 
     #[tokio::test]
     async fn changed_request_identity_restarts_once() {
-        let launches = Arc::new(AtomicUsize::new(0));
+        let (venus, ctx) = context();
+        let launches = Rc::new(Cell::new(0));
         let make_widget = |request_key| {
             let launches = launches.clone();
             AsyncBuilder::new()
                 .request_key(request_key)
                 .future(move || {
-                    launches.fetch_add(1, Ordering::SeqCst);
+                    launches.set(launches.get() + 1);
                     async { Ok::<_, &'static str>(1_usize) }
                 })
                 .child(marker)
         };
-        let ctx = context();
         let old = make_widget(1_u64).to_element(&ctx);
         old.rebuild_if_dirty(&ctx);
-        tokio::task::yield_now().await;
+        venus.run_microtasks();
         old.rebuild_if_dirty(&ctx);
         let new = make_widget(2_u64).to_element(&ctx);
 
@@ -999,40 +886,52 @@ mod tests {
         assert!(contains(new.as_ref(), "Waiting"));
         new.rebuild_if_dirty(&ctx);
 
-        assert_eq!(launches.load(Ordering::SeqCst), 2);
+        assert_eq!(launches.get(), 2);
     }
 
+    /// Abandoning a request destroys the task that would have answered it, so
+    /// there is no late reply left to recognise and discard.
+    ///
+    /// This is what a generation counter used to be for: the old design let a
+    /// cancelled request run to completion and filtered its answer out on
+    /// arrival. Cancelling the scope removes the question instead.
     #[test]
-    fn stale_completion_cannot_replace_a_newer_generation() {
-        let runtime = super::AsyncRuntime::<usize, &'static str>::new();
-        let old_generation = runtime.inner.borrow().generation;
+    fn a_reset_leaves_no_task_that_could_answer_late() {
+        let venus = Venus::new();
+        let runtime = Rc::new(super::AsyncRuntime::<usize, &'static str>::new());
+        let scope = runtime.begin(&venus).expect("an idle request may launch");
+        let answering = Rc::downgrade(&runtime);
+        venus.spawn_in(scope, async move {
+            aimer_venus::yield_now().await;
+            if let Some(runtime) = answering.upgrade() {
+                runtime.complete(Ok(1));
+            }
+        });
+        assert_eq!(venus.task_count(), 1);
+
         runtime.reset();
-        runtime
-            .sender
-            .send(super::Completion {
-                generation: old_generation,
-                result: Ok(1),
-            })
-            .unwrap();
+        venus.run_microtasks();
 
-        runtime.poll_completion();
-
+        assert_eq!(venus.task_count(), 0, "the request itself is gone");
         assert!(matches!(
             runtime.inner.borrow().snapshot,
             AsyncSnapshot::Waiting
         ));
     }
 
+    /// An unmounted widget's request is dropped with it, which is the only
+    /// thing keeping a scrolled-away page from finishing work nobody wants.
     #[tokio::test]
     async fn dropping_the_element_cancels_a_pending_future() {
-        struct DropGuard(Arc<AtomicUsize>);
+        struct DropGuard(Rc<Cell<usize>>);
         impl Drop for DropGuard {
             fn drop(&mut self) {
-                self.0.fetch_add(1, Ordering::SeqCst);
+                self.0.set(self.0.get() + 1);
             }
         }
 
-        let drops = Arc::new(AtomicUsize::new(0));
+        let (venus, ctx) = context();
+        let drops = Rc::new(Cell::new(0));
         let future_drops = drops.clone();
         let widget = AsyncBuilder::new()
             .future(move || {
@@ -1043,14 +942,15 @@ mod tests {
                 }
             })
             .child(marker);
-        let ctx = context();
         let element = widget.to_element(&ctx);
 
         element.rebuild_if_dirty(&ctx);
-        tokio::task::yield_now().await;
-        drop(element);
-        tokio::task::yield_now().await;
+        venus.run_microtasks();
+        assert_eq!(drops.get(), 0, "a pending request is still wanted");
 
-        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        drop(element);
+
+        assert_eq!(drops.get(), 1);
+        assert_eq!(venus.task_count(), 0);
     }
 }

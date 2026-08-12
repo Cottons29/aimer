@@ -10,13 +10,13 @@ tokio = { workspace = true, features = ["rt"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = {workspace = true}
-wasm-bindgen-futures.workspace = true
 
 
 [dependencies]
 web-time.workspace = true
 winit.workspace = true
 aimer_events.workspace = true
+aimer_venus.workspace = true
 
 
 

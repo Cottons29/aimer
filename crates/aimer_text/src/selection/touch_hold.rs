@@ -23,7 +23,7 @@ use std::time::Duration;
 use aimer_attribute::position::Vec2d;
 use aimer_native::haptic::{Haptics, ImpactStyle};
 use aimer_utils::AnimInstant;
-use aimer_widget::PointerKey;
+use aimer_widget::{EventResult, PointerKey};
 
 use crate::selection::SelectionPoint;
 use crate::selection::session::{SelectionSession, SelectionSlot};
@@ -246,6 +246,42 @@ pub(crate) fn word_range_at(text: &str, offset: usize) -> std::ops::Range<usize>
     text.split_word_bound_indices()
         .next_back()
         .map_or(offset..offset, |(start, word)| start..start + word.len())
+}
+
+/// Answers a finger landing on `offset` of a selectable text.
+///
+/// The press itself is only recorded — what follows tells a scroll from a hold —
+/// but two things are settled here all the same.
+///
+/// Whatever was selected is dismissed, unless a gesture of this session is still
+/// running. Tapping is how every touch platform drops a selection, and inside a
+/// [`Scrollable`](https://docs.rs/aimer_scroll) the text is the only thing a tap
+/// can land on: a region spanning the whole page is under the finger wherever it
+/// touches, so a press elsewhere — the notification the session otherwise waits
+/// for — never comes.
+///
+/// The pointer is *captured*, and deliberately left unclaimed. A capture decides
+/// only where the events of that pointer go, so an enclosing scrollable is still
+/// free to read the drag that follows as a scroll; and when it does, it cancels
+/// the capture it took the gesture from, which is the one way this text ever
+/// learns that its hold is off. Without it the hold would go on ripening and
+/// select a word on some later frame — a fling still paints them — from a finger
+/// that left the glass long ago, opening a gesture no release will ever close.
+///
+/// The result is left unconsumed, so the press goes on reaching the region
+/// behind the text.
+pub(crate) fn press_touch(
+    session: &Rc<SelectionSession>,
+    gate: &TouchHoldGate,
+    pointer: PointerKey,
+    offset: usize,
+    at: Vec2d,
+) -> EventResult {
+    if session.active_pointer().is_none() {
+        session.dismiss();
+    }
+    gate.press(pointer, offset, at, AnimInstant::now());
+    EventResult::ignored().with_pointer_capture(pointer)
 }
 
 /// Opens the selection a completed hold earned, with the word under the finger

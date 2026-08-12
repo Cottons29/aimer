@@ -45,6 +45,25 @@ func aimer_ios_dismiss_keyboard() {
     }
 }
 
+// The language the software keyboard is typing in, as an IETF tag such as
+// "zh-Hans" or "ja-JP". Han ideographs are shared by Chinese, Japanese and
+// Korean but drawn with different faces, and the text alone cannot say which
+// language it is written in — the keyboard that produced it can, so Rust asks
+// for the tag on every keystroke that carries text. The answer is the value
+// cached by `KeyboardForwarder`, so the call is a memcpy of at most `capacity`
+// bytes; it returns the number of bytes written, or 0 when no keyboard is up
+// or the tag does not fit.
+@_cdecl("aimer_ios_input_language")
+func aimer_ios_input_language(_ buffer: UnsafeMutablePointer<UInt8>?, _ capacity: Int) -> Int {
+    guard let buffer, capacity > 0 else { return 0 }
+    let utf8 = Array(KeyboardForwarder.shared.inputLanguageTag.utf8)
+    guard !utf8.isEmpty, utf8.count <= capacity else { return 0 }
+    utf8.withUnsafeBufferPointer { source in
+        buffer.update(from: source.baseAddress!, count: source.count)
+    }
+    return utf8.count
+}
+
 @_cdecl("aimer_ios_sync_text_state")
 func aimer_ios_sync_text_state(
     _ sessionId: UInt64,
@@ -439,6 +458,26 @@ final class KeyboardForwarder {
     private var observers: [NSObjectProtocol] = []
     private var pendingTextState: RustTextState?
 
+    private var cachedInputLanguage = ""
+
+    /// The `primaryLanguage` of the keyboard currently attached to the hidden
+    /// input view, or an empty string when no keyboard is up.
+    ///
+    /// UIKit answers `textInputMode` only on the main thread, which is where
+    /// every Rust event — and therefore every read of this value — runs; the
+    /// cache exists so a read arriving from anywhere else still gets the tag
+    /// last observed through `UITextInputMode.currentInputModeDidChangeNotification`.
+    var inputLanguageTag: String {
+        if Thread.isMainThread {
+            refreshInputLanguage()
+        }
+        return cachedInputLanguage
+    }
+
+    fileprivate func refreshInputLanguage() {
+        cachedInputLanguage = inputView?.textInputMode?.primaryLanguage ?? ""
+    }
+
     func dismissKeyboard() {
         guard let v = inputView else { return }
         v.resignFirstResponder()
@@ -613,6 +652,17 @@ final class KeyboardForwarder {
                 queue: .main
             ) { [weak self] _ in
                 self?.ensureFirstResponder()
+            })
+
+            // Switching keyboards mid-editing changes the language the next
+            // characters are written in; refreshing the cache here keeps the
+            // tag Rust reads on the following keystroke current.
+            observers.append(center.addObserver(
+                forName: UITextInputMode.currentInputModeDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.refreshInputLanguage()
             })
         }
 

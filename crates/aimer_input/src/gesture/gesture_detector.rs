@@ -22,7 +22,7 @@ use aimer_widget::{
 };
 
 use crate::callback::VoidCallback;
-use crate::gesture::handlers::{AsyncSpawner, GestureHandlers};
+use crate::gesture::handlers::GestureHandlers;
 use crate::gesture::recognize::{poll, recognize};
 use crate::gesture::state::GestureState;
 use crate::gesture::{
@@ -185,10 +185,6 @@ impl<W: Widget + 'static> Widget for GestureDetector<W> {
             window: ctx.window.clone(),
             // One refcount bump, whatever the detector was configured with.
             handlers: self.handlers.clone(),
-            #[cfg(not(target_arch = "wasm32"))]
-            spawner: Some(ctx.async_handle.clone()),
-            #[cfg(target_arch = "wasm32")]
-            spawner: (),
             state: RefCell::new(GestureState::default()),
         }
         .boxed()
@@ -206,7 +202,6 @@ pub struct RawGestureDetector<E: Element> {
     pub(crate) cached_bounds: CacheBounds,
     pub(crate) window: WindowHandle,
     pub(crate) handlers: Rc<GestureHandlers>,
-    pub(crate) spawner: AsyncSpawner,
     /// Interior mutability because `on_event` takes `&self`.
     pub(crate) state: RefCell<GestureState>,
 }
@@ -223,7 +218,7 @@ impl<E: Element> RawGestureDetector<E> {
                 self.handlers.mask(),
             )
         };
-        self.handlers.dispatch_all(output, &self.spawner);
+        self.handlers.dispatch_all(output);
     }
 
     /// Gives the recognizer a chance to report a long press while the pointer is
@@ -244,7 +239,7 @@ impl<E: Element> RawGestureDetector<E> {
         };
 
         if !output.is_empty() {
-            self.handlers.dispatch_all(output, &self.spawner);
+            self.handlers.dispatch_all(output);
             self.window.request_redraw();
         }
     }
@@ -473,10 +468,6 @@ mod tests {
             cached_bounds,
             window: WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0),
             handlers: Rc::new(handlers),
-            #[cfg(not(target_arch = "wasm32"))]
-            spawner: None,
-            #[cfg(target_arch = "wasm32")]
-            spawner: (),
             state: RefCell::new(GestureState::default()),
         }
     }

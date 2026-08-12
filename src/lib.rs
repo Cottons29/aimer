@@ -16,11 +16,13 @@ pub use aimer_dnd::{
     DragAxis, DragOverlay, DragPayload, DragSession, DragStartMode, DragTarget, DragTargetState,
     Draggable, DropZone, FileDrop,
 };
+pub use aimer_events as events;
+pub use aimer_events::element::ElementEvent;
 pub use aimer_flex::*;
 pub use aimer_focus as focus;
 pub use aimer_focus::{
-    FocusCandidate, FocusManager, FocusNode, FocusTrap, FocusTrapId, FocusTransition,
-    active_focus_trap,
+    FocusBehavior, FocusCallback, FocusCandidate, FocusManager, FocusNode, FocusTrap, FocusTrapId,
+    FocusTransition, active_focus_trap,
 };
 pub use aimer_grid::*;
 pub use aimer_input::button::Button;

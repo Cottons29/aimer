@@ -16,7 +16,7 @@ use crate::selection::SelectionPoint;
 use crate::selection::cursor::HoverCursor;
 use crate::selection::selectable::{Selectable, SelectionBinding, TextGeometry};
 use crate::selection::session::{SelectionSession, SelectionSlot};
-use crate::selection::touch_hold::{TouchHold, TouchHoldGate, enter_hold};
+use crate::selection::touch_hold::{TouchHold, TouchHoldGate, enter_hold, press_touch};
 use crate::selection::ui;
 use crate::text_span::ResolvedTextSpan;
 
@@ -231,12 +231,8 @@ impl EventElement for RawSelectableText {
                 };
                 if info.source == PointerSource::Touch {
                     // A finger means a scroll as often as a selection, so the
-                    // press is only remembered — and left unconsumed, so an
-                    // enclosing scrollable can still claim it — until the hold
-                    // has been earned.
-                    self.touch_hold
-                        .press(pointer, offset, pos, AnimInstant::now());
-                    return false.into();
+                    // press is only remembered until the hold has been earned.
+                    return press_touch(&self.session(), &self.touch_hold, pointer, offset, pos);
                 }
                 self.session()
                     .begin(SelectionPoint::new(self.slot(), offset), pointer);

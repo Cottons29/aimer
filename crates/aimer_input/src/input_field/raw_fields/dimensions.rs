@@ -35,6 +35,14 @@ impl RawTextField {
         let content_width = (width - pad_left - pad_right).max(1.0);
         let font_size = self.scaled_font_size(&self.text_style, scale);
         let display = self.display_text();
+        // Wrapping is decided from measured widths, so the measuring pass must
+        // see the same face the drawing pass will: an ideograph measured in a
+        // Japanese face and drawn in a Chinese one wraps a line early or late.
+        // The declaration is put back afterwards because a field measures
+        // itself from inside its own draw as well.
+        let outer_language = ctx.canvas.text_language();
+        ctx.canvas
+            .set_text_language(self.controller.input_language());
         let visual_lines = wrap_visual_lines(&display, content_width, |grapheme| {
             ctx.canvas.measure_text(grapheme, font_size)
         });
@@ -47,6 +55,7 @@ impl RawTextField {
             .canvas
             .measure_text_metrics("", font_size, 0.0)
             .line_height;
+        ctx.canvas.set_text_language(outer_language);
         let desired_height = line_count as f32 * line_height + pad_top + pad_bottom;
         (width, desired_height.min(constraint.max_height))
     }

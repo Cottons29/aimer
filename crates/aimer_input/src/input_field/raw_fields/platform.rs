@@ -10,6 +10,7 @@ mod ios_keyboard {
     }
 
     type VoidFn = unsafe extern "C" fn();
+    type LanguageFn = unsafe extern "C" fn(*mut u8, usize) -> usize;
     type SyncFn = unsafe extern "C" fn(
         u64,
         u64,
@@ -26,6 +27,16 @@ mod ios_keyboard {
     static SHOW_FN: OnceLock<Option<VoidFn>> = OnceLock::new();
     static DISMISS_FN: OnceLock<Option<VoidFn>> = OnceLock::new();
     static SYNC_FN: OnceLock<Option<SyncFn>> = OnceLock::new();
+    static LANGUAGE_FN: OnceLock<Option<LanguageFn>> = OnceLock::new();
+
+    /// Bytes reserved for one language tag read back from UIKit.
+    ///
+    /// `primaryLanguage` is an IETF tag such as `"zh-Hans"`, `"ja-JP"` or the
+    /// longest UIKit ships, `"zh-Hant-HK"`; the tag is read into a stack
+    /// buffer of this size so learning the language of a keystroke allocates
+    /// nothing. A tag that does not fit is reported as absent, which merely
+    /// leaves the field with the language it already knows.
+    pub const LANGUAGE_TAG_CAPACITY: usize = 32;
 
     fn lookup(name: &CStr) -> Option<VoidFn> {
         unsafe {
@@ -56,6 +67,30 @@ mod ios_keyboard {
         let f = DISMISS_FN.get_or_init(|| lookup(c"aimer_ios_dismiss_keyboard"));
         if let Some(f) = f {
             unsafe { f() }
+        }
+    }
+
+    /// Reads the language the software keyboard is currently typing in.
+    ///
+    /// The tag is written into `buffer` by the Swift shim, which caches
+    /// `UITextInputMode.primaryLanguage` of the hidden text view and refreshes
+    /// it whenever UIKit posts an input-mode change, so the call is a memcpy
+    /// of at most [`LANGUAGE_TAG_CAPACITY`] bytes and is cheap enough to make
+    /// per keystroke. `None` means no keyboard is up, the shim is not linked
+    /// into the application, or the tag did not fit.
+    pub fn input_language_tag(buffer: &mut [u8; LANGUAGE_TAG_CAPACITY]) -> Option<&str> {
+        let f = (*LANGUAGE_FN.get_or_init(|| lookup_language(c"aimer_ios_input_language")))?;
+        let written = unsafe { f(buffer.as_mut_ptr(), buffer.len()) };
+        if written == 0 || written > buffer.len() {
+            return None;
+        }
+        std::str::from_utf8(&buffer[..written]).ok()
+    }
+
+    fn lookup_language(name: &CStr) -> Option<LanguageFn> {
+        unsafe {
+            let ptr = dlsym(RTLD_DEFAULT, name.as_ptr());
+            (!ptr.is_null()).then(|| std::mem::transmute::<*mut c_void, LanguageFn>(ptr))
         }
     }
 
@@ -130,7 +165,59 @@ mod android_keyboard {
     }
 }
 
+#[cfg(all(not(target_os = "ios"), test))]
+thread_local! {
+    /// The keyboard language a test pretends the platform is reporting.
+    ///
+    /// No desktop or headless build has a software keyboard to ask, so the
+    /// capture path would be unobservable off a device. This is the seam the
+    /// delta tests drive it through; production builds never compile it.
+    static SIMULATED_KEYBOARD_LANGUAGE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Makes the next captured edit look as if it were typed on `tag`'s keyboard.
+#[cfg(all(not(target_os = "ios"), test))]
+fn simulate_keyboard_language(tag: Option<&str>) {
+    SIMULATED_KEYBOARD_LANGUAGE.with(|simulated| {
+        *simulated.borrow_mut() = tag.map(str::to_owned);
+    });
+}
+
 impl RawTextField {
+    /// Associates the field with the keyboard that produced the current edit.
+    ///
+    /// Han ideographs are shared by Chinese, Japanese and Korean but drawn
+    /// differently by each language's face, and the text alone cannot say
+    /// which one it is written in. The keyboard can: whoever typed 你好 on a
+    /// Chinese keyboard wants a Chinese face, however Japanese the characters
+    /// look. The evidence is therefore collected where the typing arrives —
+    /// the native delta path — and kept on the controller, which is the field
+    /// state that survives rebuilds and blur.
+    ///
+    /// Only the keyboard that actually produced text is asked. A keyboard
+    /// switched mid-editing but never typed with has written nothing to
+    /// render, so the language of the text already in the field stays right;
+    /// listening to `UITextInputCurrentInputModeDidChangeNotification` on this
+    /// side would only relabel text somebody else typed. The Swift shim does
+    /// observe that notification, so its cached tag is already current by the
+    /// time the next keystroke asks for it.
+    ///
+    /// Every platform other than iOS reports nothing, and this compiles away.
+    fn capture_input_language(&self) {
+        #[cfg(target_os = "ios")]
+        {
+            let mut buffer = [0u8; ios_keyboard::LANGUAGE_TAG_CAPACITY];
+            self.controller
+                .learn_input_language_tag(ios_keyboard::input_language_tag(&mut buffer));
+        }
+        #[cfg(all(not(target_os = "ios"), test))]
+        SIMULATED_KEYBOARD_LANGUAGE.with(|simulated| {
+            self.controller
+                .learn_input_language_tag(simulated.borrow().as_deref());
+        });
+    }
+
     /// Mirrors the controller state into the platform text editor.
     ///
     /// The pushed snapshot is also what re-anchors the native delta

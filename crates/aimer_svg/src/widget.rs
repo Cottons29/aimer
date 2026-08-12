@@ -9,7 +9,7 @@ use aimer_cupid::svg::{
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerInfo, PointerSource};
 use aimer_events::window::request_animation_frame;
-use aimer_utils::callback::{Callback, CallbackExecutor, ambient_spawner};
+use aimer_utils::callback::{Callback, CallbackExecutor};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
@@ -710,7 +710,7 @@ impl RawSvg {
             .iter()
             .filter(|rule| rule.selector.matches(node))
         {
-            rule.callback.execute(hit.clone(), &ambient_spawner());
+            rule.callback.execute(hit.clone());
         }
     }
 }

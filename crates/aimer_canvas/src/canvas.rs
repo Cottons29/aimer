@@ -4,6 +4,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 pub use aimer_cupid::canvas::TextMetrics;
+pub use aimer_cupid::font::TextLanguage;
 use aimer_cupid::font::{FontFamily, FontStyle};
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 pub use aimer_cupid::text_pipeline::TextOverflowMode;
@@ -298,6 +299,23 @@ pub trait CanvasRendering: Clone {
     /// Enables/disables synthetic italic for subsequent plain text draws.
     /// Default is a no-op for backends that don't support it.
     fn set_italic(&self, _italic: bool) {}
+    /// Declares the written language of subsequent text draws and
+    /// measurements.
+    ///
+    /// Han is unified: `你好` is drawn by a Japanese face as readily as by a
+    /// Chinese one, so a run of ideographs alone cannot say which it wants and
+    /// keeps whichever the platform prefers — until a character only one
+    /// language writes joins it and the whole word changes typeface. A widget
+    /// that knows the language, such as a text field bound to a keyboard,
+    /// declares it here. Default is a no-op for backends that don't support
+    /// it.
+    fn set_text_language(&self, _language: Option<TextLanguage>) {}
+    /// The language declared by
+    /// [`set_text_language`](CanvasRendering::set_text_language), so a caller
+    /// that declares one for a measuring pass can put back the one it found.
+    fn text_language(&self) -> Option<TextLanguage> {
+        None
+    }
     fn load_image(&self, bytes: &[u8], width: u32, height: u32) -> u32;
     fn load_image_with_id(&self, image_id: u32, bytes: &[u8], width: u32, height: u32);
     fn remove_texture(&self, image_id: u32);
@@ -863,6 +881,22 @@ impl<'a> AimerCanvas<'a> {
     #[inline]
     pub fn restore_alpha(&self) {
         CanvasRendering::restore_alpha(self.inner);
+    }
+
+    /// Declares the written language of subsequent text draws and
+    /// measurements — see
+    /// [`CanvasRendering::set_text_language`](CanvasRendering::set_text_language).
+    #[allow(dead_code)]
+    #[inline]
+    pub fn set_text_language(&self, language: Option<TextLanguage>) {
+        CanvasRendering::set_text_language(self.inner, language);
+    }
+
+    /// The language declared by [`set_text_language`](Self::set_text_language).
+    #[allow(dead_code)]
+    #[inline]
+    pub fn text_language(&self) -> Option<TextLanguage> {
+        CanvasRendering::text_language(self.inner)
     }
 
     /// Enables/disables synthetic italic for subsequent plain text draws.

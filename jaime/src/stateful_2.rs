@@ -92,7 +92,7 @@ impl State<MyList> for MyListState {
                                                 TextField::new()
                                                     .padding(LayoutSpacing::all(Spacing::Px(10)))
                                                     .text_align(TextAlign::MidLeft)
-                                                    .text_style(TextStyle::new().font_weight(FontWeight::Value(1200)))
+                                                    .text_style(TextStyle::new().font_weight(FontWeight::Bolder))
                                                     .controller(self.input_controller.clone())
                                                     .input_type(InputType::Text)
                                                     .on_changed({

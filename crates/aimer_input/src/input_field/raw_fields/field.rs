@@ -121,6 +121,12 @@ pub(crate) struct RawFieldConfig {
     pub text_style: TextStyle,
     pub prompt_style: TextStyle,
     pub text_align: TextAlign,
+    /// Whether the field asks for the keyboard as soon as it is mounted.
+    ///
+    /// Read by the field's state to pick the [`FocusBehavior`] of the focus
+    /// region it wraps the element in, never by the element itself.
+    ///
+    /// [`FocusBehavior`]: aimer_widget::FocusBehavior
     pub auto_focus: bool,
     pub max_lines: Option<usize>,
     pub min_lines: Option<usize>,
@@ -168,12 +174,7 @@ impl RawTextFieldWidget {
 
 impl Widget for RawTextFieldWidget {
     fn to_element(self, _ctx: &BuildContext) -> AnyElement {
-        RawTextField::new(
-            self.config.clone(),
-            self.caret.clone(),
-            self.focus_node.clone(),
-        )
-        .boxed()
+        RawTextField::new(self.config, self.caret, self.focus_node).boxed()
     }
 }
 
@@ -221,7 +222,6 @@ pub(crate) struct RawTextField {
     pub text_style: TextStyle,
     pub prompt_style: TextStyle,
     pub text_align: TextAlign,
-    pub auto_focus: bool,
     pub max_lines: Option<usize>,
     pub min_lines: Option<usize>,
     pub max_length: Option<usize>,
@@ -306,8 +306,12 @@ impl RawTextField {
 
     /// Builds the element for `config`, painting its caret from `caret`.
     ///
-    /// All runtime state starts empty except focus, which honors
-    /// [`RawFieldConfig::auto_focus`].
+    /// All runtime state starts empty, focus included: the element learns it is
+    /// focused from the [`ElementEvent::FocusGained`] the enclosing focus region
+    /// delivers, which is the same notification an autofocused field receives on
+    /// its first frame.
+    ///
+    /// [`ElementEvent::FocusGained`]: aimer_events::element::ElementEvent::FocusGained
     pub(crate) fn new(
         config: RawFieldConfig,
         caret: CaretBlink,
@@ -336,7 +340,6 @@ impl RawTextField {
             text_style: config.text_style,
             prompt_style: config.prompt_style,
             text_align: config.text_align,
-            auto_focus: config.auto_focus,
             max_lines: config.max_lines,
             min_lines: config.min_lines,
             max_length: config.max_length,

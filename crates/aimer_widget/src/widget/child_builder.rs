@@ -398,15 +398,28 @@ impl EventElement for RetainedChildElement {
             .unwrap_or_default()
     }
 
+    /// Offers the retained child's *own* children, not the child itself.
+    ///
+    /// This placement stands in for the child in every way an event cares
+    /// about: it reports the child's identity, its bounds and its focus node,
+    /// and [`Self::on_event`] hands the event straight to it. Yielding the
+    /// child here as well would put it in the walk twice — once on its own
+    /// account and once through this placement — so an event it did not consume
+    /// would be delivered to it two times. Skipping a level keeps the subtree
+    /// below reachable while each element is asked exactly once.
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         if let Some(child) = self.child() {
-            visitor(child);
+            child.event_children(visitor);
         }
     }
 
+    /// Offers the retained child's own children, for the reason given on
+    /// [`Self::event_children`]: this placement is hit-tested with the child's
+    /// bounds and answers with the child's handler, so the child must not also
+    /// be visited in its own right.
     fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         if let Some(child) = self.child() {
-            visitor(child);
+            child.hit_test_children(visitor);
         }
     }
 }
@@ -448,9 +461,54 @@ mod tests {
 
     use super::*;
     use crate::base::WindowHandle;
+    use crate::components::element::broadcast_event;
 
     struct Probe {
         builds: Rc<Cell<usize>>,
+    }
+
+    /// An element that counts the events offered to it and consumes none of
+    /// them, which is the only case where being asked twice is visible.
+    struct Counter {
+        events: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for Counter {
+        fn debug_name(&self) -> &'static str {
+            "Counter"
+        }
+    }
+
+    impl Rebuildable for Counter {}
+
+    impl Drawable for Counter {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl LayoutElement for Counter {}
+
+    impl EventElement for Counter {
+        fn on_event(&self, _event: &ElementEvent) -> EventResult {
+            self.events.set(self.events.get() + 1);
+            EventResult::ignored()
+        }
+    }
+
+    struct Counting {
+        events: Rc<Cell<usize>>,
+    }
+
+    impl Widget for Counting {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            Counter {
+                events: self.events,
+            }
+            .boxed()
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "Counting"
+        }
     }
 
     impl Widget for Probe {
@@ -501,6 +559,26 @@ mod tests {
             1,
             "a parent rebuilding itself must not rebuild its child subtree"
         );
+    }
+
+    /// A placement is the child, not a second element above it.
+    ///
+    /// It reports the child's identity and bounds and forwards to the child's
+    /// handler, so a tree walk that also descended into the child would offer
+    /// the same event to it twice — one tap arriving as two presses in every
+    /// widget built on a retained child.
+    #[tokio::test]
+    async fn a_walk_offers_the_retained_child_one_event_once() {
+        let events = Rc::new(Cell::new(0));
+        let child = ChildBuilder::from_widget(Counting {
+            events: Rc::clone(&events),
+        });
+        let ctx = context();
+        let placement = child.build(&ctx);
+
+        let _ = broadcast_event(placement.as_ref(), &ElementEvent::FocusGained);
+
+        assert_eq!(events.get(), 1, "a placement must not double the child");
     }
 
     #[tokio::test]

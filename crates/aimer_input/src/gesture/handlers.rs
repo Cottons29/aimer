@@ -15,13 +15,6 @@ use crate::gesture::{
     GestureStreamCallback, ScaleCallback, ScaleData, ScrollCallback, ScrollData, SwipeCallback,
 };
 
-/// Where an async callback is spawned.
-///
-/// Re-exported so a detector's handlers and the callbacks they hold name the
-/// same type; the spawning policy itself belongs to the callback, not to
-/// gestures.
-pub use crate::callback::AsyncSpawner;
-
 /// Every handler a [`super::gesture_detector::GestureDetector`] may have, plus
 /// the [`GestureMask`] describing which of them are actually set.
 ///
@@ -83,8 +76,8 @@ impl GestureHandlers {
     /// [`Self::on_gesture`] sees every gesture; the individual handlers are
     /// filters over the same stream, never a parallel path — which is what keeps
     /// the two from disagreeing about what happened.
-    pub fn dispatch(&self, event: GestureEvent, spawner: &AsyncSpawner) {
-        Self::call(&self.on_gesture, event, spawner);
+    pub fn dispatch(&self, event: GestureEvent) {
+        Self::call(&self.on_gesture, event);
 
         match event {
             // Only the main button activates. A secondary click goes to
@@ -92,17 +85,17 @@ impl GestureHandlers {
             // handler only — before the button travelled with the pointer, a
             // right-click fired `on_tap`, which is the bug this replaced.
             GestureEvent::Tap { pointer } => match pointer.button {
-                PointerButton::Primary => Self::call(&self.on_tap, (), spawner),
-                PointerButton::Secondary => Self::call(&self.on_right_tap, (), spawner),
+                PointerButton::Primary => Self::call(&self.on_tap, ()),
+                PointerButton::Secondary => Self::call(&self.on_right_tap, ()),
                 _ => {}
             },
             GestureEvent::DoubleTap { pointer } if pointer.is_primary() => {
-                Self::call(&self.on_double_press, (), spawner)
+                Self::call(&self.on_double_press, ())
             }
             GestureEvent::LongPress { pointer } if pointer.is_primary() => {
-                Self::call(&self.on_long_press, (), spawner)
+                Self::call(&self.on_long_press, ())
             }
-            GestureEvent::DragStart { pointer } => Self::call(&self.on_drag_start, pointer, spawner),
+            GestureEvent::DragStart { pointer } => Self::call(&self.on_drag_start, pointer),
             GestureEvent::DragUpdate {
                 pointer,
                 delta_x,
@@ -114,12 +107,11 @@ impl GestureHandlers {
                     delta_x,
                     delta_y,
                 },
-                spawner,
             ),
-            GestureEvent::DragEnd { .. } => Self::call(&self.on_drag_end, (), spawner),
-            GestureEvent::Swipe { direction, .. } => Self::call(&self.on_swipe, direction, spawner),
+            GestureEvent::DragEnd { .. } => Self::call(&self.on_drag_end, ()),
+            GestureEvent::Swipe { direction, .. } => Self::call(&self.on_swipe, direction),
             GestureEvent::Scroll { delta_x, delta_y } => {
-                Self::call(&self.on_scroll, ScrollData { delta_x, delta_y }, spawner)
+                Self::call(&self.on_scroll, ScrollData { delta_x, delta_y })
             }
             GestureEvent::ScaleUpdate {
                 focal_x,
@@ -134,7 +126,6 @@ impl GestureHandlers {
                     scale,
                     delta_scale,
                 },
-                spawner,
             ),
             // The press and long-press lifecycles, drag cancellation, and the
             // pinch boundaries have no sugar setter of their own: they are read
@@ -145,9 +136,9 @@ impl GestureHandlers {
 
     /// Delivers every gesture a pointer event produced, in order.
     #[inline]
-    pub fn dispatch_all(&self, output: GestureOutput, spawner: &AsyncSpawner) {
+    pub fn dispatch_all(&self, output: GestureOutput) {
         for event in output {
-            self.dispatch(event, spawner);
+            self.dispatch(event);
         }
     }
 
@@ -158,11 +149,11 @@ impl GestureHandlers {
     /// different types that share only that trait. A gesture handler returns
     /// nothing, so there is no synchronous result to pass back on.
     #[inline]
-    fn call<C>(callback: &C, arg: C::Args, spawner: &AsyncSpawner)
+    fn call<C>(callback: &C, arg: C::Args)
     where
         C: CallbackExecutor<Output = ()>,
     {
-        callback.execute(arg, spawner);
+        callback.execute(arg);
     }
 }
 
@@ -220,14 +211,6 @@ mod tests {
 
     use super::*;
     use crate::gesture::SwipeDirection;
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn spawner() -> AsyncSpawner {
-        None
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn spawner() -> AsyncSpawner {}
 
     fn mouse(button: PointerButton) -> PointerInfo {
         PointerInfo::mouse(Vec2d { x: 4.0, y: 4.0 }, button)
@@ -323,7 +306,6 @@ mod tests {
             GestureEvent::Tap {
                 pointer: mouse(PointerButton::Secondary),
             },
-            &spawner(),
         );
 
         assert_eq!(*log.borrow(), vec!["right_tap"]);
@@ -337,7 +319,6 @@ mod tests {
             GestureEvent::Tap {
                 pointer: mouse(PointerButton::Primary),
             },
-            &spawner(),
         );
 
         assert_eq!(*log.borrow(), vec!["tap"]);
@@ -353,7 +334,6 @@ mod tests {
             GestureEvent::Tap {
                 pointer: mouse(PointerButton::Middle),
             },
-            &spawner(),
         );
 
         assert!(log.borrow().is_empty());
@@ -367,10 +347,10 @@ mod tests {
         handlers.set_on_gesture(move |event: GestureEvent| recorded.borrow_mut().push(event));
 
         let pointer = mouse(PointerButton::Primary);
-        handlers.dispatch(GestureEvent::TapDown { pointer }, &spawner());
-        handlers.dispatch(GestureEvent::TapCancel, &spawner());
-        handlers.dispatch(GestureEvent::DragCancel, &spawner());
-        handlers.dispatch(GestureEvent::LongPressStart { pointer }, &spawner());
+        handlers.dispatch(GestureEvent::TapDown { pointer });
+        handlers.dispatch(GestureEvent::TapCancel);
+        handlers.dispatch(GestureEvent::DragCancel);
+        handlers.dispatch(GestureEvent::LongPressStart { pointer });
 
         assert_eq!(
             *seen.borrow(),
@@ -397,7 +377,7 @@ mod tests {
             velocity_y: 0.0,
         });
 
-        handlers.dispatch_all(output, &spawner());
+        handlers.dispatch_all(output);
 
         assert_eq!(*log.borrow(), vec!["drag_end", "swipe"]);
     }
@@ -410,7 +390,6 @@ mod tests {
             GestureEvent::Tap {
                 pointer: mouse(PointerButton::Primary),
             },
-            &spawner(),
         );
     }
 }

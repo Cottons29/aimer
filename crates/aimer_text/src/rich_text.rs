@@ -6,11 +6,11 @@ use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_events::pointer::{PointerButton, PointerSource};
 use aimer_style::{TextAlign, TextOverflow, TextStyle};
 use aimer_utils::AnimInstant;
-use aimer_utils::callback::{Callback, CallbackExecutor, ambient_spawner};
+use aimer_utils::callback::{Callback, CallbackExecutor};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, FocusNode, LayoutElement, PointerKey,
-    VisitorElement, Widget,
+    RawFocusable, VisitorElement, Widget,
 };
 
 use crate::paragraph::{Paragraph, display_color, geometry};
@@ -18,7 +18,7 @@ use crate::selection::SelectionPoint;
 use crate::selection::cursor::HoverCursor;
 use crate::selection::selectable::{Selectable, SelectionBinding, SelectionScope, TextGeometry};
 use crate::selection::session::{SelectionSession, SelectionSlot};
-use crate::selection::touch_hold::{TouchHold, TouchHoldGate, enter_hold};
+use crate::selection::touch_hold::{TouchHold, TouchHoldGate, enter_hold, press_touch};
 use crate::selection::ui;
 use crate::text_span::TextSpan;
 
@@ -183,8 +183,7 @@ impl Widget for RichText {
             touch_hold: TouchHoldGate::new(),
             focus_node: FocusNode::new(),
         }
-        .attached()
-        .boxed()
+        .focus_target()
     }
 }
 
@@ -239,11 +238,38 @@ impl RawRichText {
         Rc::clone(&self.binding.borrow().slot)
     }
 
-    /// Hands this element's focus to the session it owns, and returns it.
+    /// Makes this element the keyboard focus target of the selection it owns.
     ///
     /// Only the owner of a session has a keyboard to give: inside a region the
     /// focus is the region's, and attaching here would take it away from the
-    /// element that can actually answer for the whole selection.
+    /// element that can actually answer for the whole selection — so a
+    /// participant is returned as it is, one element and nothing around it.
+    ///
+    /// A text that owns its selection is focusable exactly while it holds one:
+    /// the keyboard belongs to the selection, and holding it is how such a text
+    /// learns of a press it is never offered, since routing hit-tests and a
+    /// press on another widget goes there and nowhere else. A selection begins
+    /// and ends under the finger without anything rebuilding the paragraph,
+    /// which is why that condition is a gate on the attachment rather than a
+    /// [behavior](aimer_widget::FocusBehavior). The notification travels back
+    /// down, so this element still answers [`ElementEvent::FocusLost`] itself.
+    fn focus_target(self) -> AnyElement {
+        let text = self.attached();
+        if !(text.selectable && text.owns_session()) {
+            return text.boxed();
+        }
+        let session = text.session();
+        let node = text.focus_node.clone();
+        RawFocusable::new(node, text.boxed())
+            .focusable_when(move || session.is_focused())
+            .boxed()
+    }
+
+    /// Hands this element's focus node to the session it owns, and returns it.
+    ///
+    /// The session asks for the focus when a selection starts and gives it up
+    /// when the selection is dropped, so it needs the very node the tree offers
+    /// as this text's target.
     fn attached(self) -> Self {
         if self.selectable && self.owns_session() {
             self.session().attach_focus_node(&self.focus_node);
@@ -282,7 +308,7 @@ impl RawRichText {
     /// whichever runtime the frame is being built on.
     #[inline]
     fn execute_link(&self, target: Rc<str>) {
-        self.on_link.execute(target, &ambient_spawner());
+        self.on_link.execute(target);
     }
 }
 
@@ -330,18 +356,6 @@ impl aimer_widget::Rebuildable for RawRichText {
 }
 
 impl EventElement for RawRichText {
-    /// A text that owns its selection is focusable exactly while it holds one.
-    ///
-    /// Holding the keyboard focus is how such a text learns of a press it is
-    /// never offered: routing hit-tests, so a press on another widget goes
-    /// there and nowhere else, but it moves the focus all the same. Inside a
-    /// [`SelectionArea`] the selection — and with it the keyboard — belongs to
-    /// the region, which is focusable in this text's stead.
-    fn focus_node(&self) -> Option<&FocusNode> {
-        (self.selectable && self.owns_session() && self.binding.borrow().session.is_focused())
-            .then_some(&self.focus_node)
-    }
-
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         let hovered_link = match event {
             ElementEvent::PointerDown(info)
@@ -409,12 +423,15 @@ impl EventElement for RawRichText {
                     if inside && let Some(offset) = geometry.offset_at(pos.x, pos.y) {
                         if info.source == PointerSource::Touch {
                             // A finger means a scroll as often as a selection,
-                            // so the press is only remembered — and left
-                            // unconsumed, so an enclosing scrollable can still
-                            // claim it — until the hold has been earned.
-                            self.touch_hold
-                                .press(pointer, offset, pos, AnimInstant::now());
-                            return false.into();
+                            // so the press is only remembered until the hold has
+                            // been earned.
+                            return press_touch(
+                                &self.session(),
+                                &self.touch_hold,
+                                pointer,
+                                offset,
+                                pos,
+                            );
                         }
                         self.session()
                             .begin(SelectionPoint::new(self.slot(), offset), pointer);

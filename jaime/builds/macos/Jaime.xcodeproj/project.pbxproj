@@ -7,15 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		093271CEB774B51CA3277672 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020104604E249606F8C9CAED /* Cocoa.framework */; };
 		869B3A9B25A7761000BD7BA8 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 869B3A9A25A7761000BD7BA8 /* main.swift */; };
+		093271CEB774B51CA3277672 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020104604E249606F8C9CAED /* Cocoa.framework */; };
 		F1A2B3C4D5E6F7081920A1B2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E2F3A4B5C6D7E8091A2B3C4D /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		020104604E249606F8C9CAED /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		869B3A9A25A7761000BD7BA8 /* main.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
-		D748B9601A3AA05BDAF53561 /* Jaime.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Jaime.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		020104604E249606F8C9CAED /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		D748B9601A3AA05BDAF53561 /* jaime.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = jaime.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2F3A4B5C6D7E8091A2B3C4D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -34,10 +34,19 @@
 		42D9F67E0760F412DF98166F = {
 			isa = PBXGroup;
 			children = (
-				BCE298E721FCDDD500AEEAC0 /* Jaime */,
+				BCE298E721FCDDD500AEEAC0 /* jaime */,
 				A0CAA35B87EA7D492A519F06 /* Products */,
 				474E090F57E886570692359B /* Frameworks */,
 			);
+			sourceTree = "<group>";
+		};
+		BCE298E721FCDDD500AEEAC0 /* jaime */ = {
+			isa = PBXGroup;
+			children = (
+				869B3A9A25A7761000BD7BA8 /* main.swift */,
+				E2F3A4B5C6D7E8091A2B3C4D /* Assets.xcassets */,
+			);
+			path = jaime;
 			sourceTree = "<group>";
 		};
 		474E090F57E886570692359B /* Frameworks */ = {
@@ -51,18 +60,9 @@
 		A0CAA35B87EA7D492A519F06 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				D748B9601A3AA05BDAF53561 /* Jaime.app */,
+				D748B9601A3AA05BDAF53561 /* jaime.app */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		BCE298E721FCDDD500AEEAC0 /* Jaime */ = {
-			isa = PBXGroup;
-			children = (
-				869B3A9A25A7761000BD7BA8 /* main.swift */,
-				E2F3A4B5C6D7E8091A2B3C4D /* Assets.xcassets */,
-			);
-			path = Jaime;
 			sourceTree = "<group>";
 		};
 		CADE8135B13669AF092F471E /* OS X */ = {
@@ -76,9 +76,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		22F13CAB095D78726C4DB483 /* Jaime */ = {
+		22F13CAB095D78726C4DB483 /* jaime */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 63E4EFB6F6DC0ED65FDE05C5 /* Build configuration list for PBXNativeTarget "Jaime" */;
+			buildConfigurationList = 63E4EFB6F6DC0ED65FDE05C5 /* Build configuration list for PBXNativeTarget "jaime" */;
 			buildPhases = (
 				51D43A7EE3F0C76EAFF2075D /* Sources */,
 				85BC754BA4B95E29C9C93860 /* Frameworks */,
@@ -88,9 +88,9 @@
 			);
 			dependencies = (
 			);
-			name = Jaime;
-			productName = Jaime;
-			productReference = D748B9601A3AA05BDAF53561 /* Jaime.app */;
+			name = jaime;
+			productName = jaime;
+			productReference = D748B9601A3AA05BDAF53561 /* jaime.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -102,7 +102,7 @@
 				LastSwiftUpdateCheck = 1600;
 				LastUpgradeCheck = 1600;
 			};
-			buildConfigurationList = DCC6858F12A7F676B7EA90D9 /* Build configuration list for PBXProject "Jaime" */;
+			buildConfigurationList = DCC6858F12A7F676B7EA90D9 /* Build configuration list for PBXProject "jaime" */;
 			compatibilityVersion = "Xcode 3.2";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -111,11 +111,13 @@
 				Base,
 			);
 			mainGroup = 42D9F67E0760F412DF98166F;
+			minimizedProjectReferenceProxies = 0;
+			preferredProjectObjectVersion = 77;
 			productRefGroup = A0CAA35B87EA7D492A519F06 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				22F13CAB095D78726C4DB483 /* Jaime */,
+				22F13CAB095D78726C4DB483 /* jaime */,
 			);
 		};
 /* End PBXProject section */
@@ -191,7 +193,8 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_OPTIMIZATION_LEVEL = "-Owholemodule";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
@@ -262,14 +265,12 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = Jaime/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
+				INFOPLIST_FILE = "jaime/Info.plist";
+				COMBINE_HIDPI_IMAGES = YES;
 				OTHER_LDFLAGS = (
 					"-L$(SRCROOT)/Libraries",
-					"-lJaime",
+					"-ljaime",
 					"-lc++",
 					"-framework",
 					AppKit,
@@ -290,6 +291,7 @@
 					"-framework",
 					Security,
 				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				SDKROOT = macosx;
 			};
 			name = Debug;
@@ -299,14 +301,12 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = Jaime/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
+				INFOPLIST_FILE = "jaime/Info.plist";
+				COMBINE_HIDPI_IMAGES = YES;
 				OTHER_LDFLAGS = (
 					"-L$(SRCROOT)/Libraries",
-					"-lJaime",
+					"-ljaime",
 					"-lc++",
 					"-framework",
 					AppKit,
@@ -327,6 +327,7 @@
 					"-framework",
 					Security,
 				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -334,7 +335,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		63E4EFB6F6DC0ED65FDE05C5 /* Build configuration list for PBXNativeTarget "Jaime" */ = {
+		63E4EFB6F6DC0ED65FDE05C5 /* Build configuration list for PBXNativeTarget "jaime" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				E17238934DC9A44C7CE6482E /* Release */,
@@ -343,7 +344,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		DCC6858F12A7F676B7EA90D9 /* Build configuration list for PBXProject "Jaime" */ = {
+		DCC6858F12A7F676B7EA90D9 /* Build configuration list for PBXProject "jaime" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				7E4C0C46B6A41907AC9B8C5A /* Debug */,

@@ -7,13 +7,13 @@
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
-    <string>com.example.app</string>
+    <string>com.example.jaime</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleDisplayName</key>
-    <string>Jaime</string>
+    <string>jaime</string>
     <key>CFBundleName</key>
-    <string>Jaime</string>
+    <string>jaime</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
