@@ -6,7 +6,7 @@ use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::glyph_rasterizer::{GlyphKey, GlyphPreparationContext, GlyphRasterizer};
-use crate::font::{FontFamily, FontStyle, FontWeight};
+use crate::font::{FontFamily, FontStyle, FontWeight, TextLanguage};
 
 pub type FontId = u32;
 
@@ -129,11 +129,40 @@ pub struct PositionedGlyph {
     pub font_size: f32,
 }
 
+/// One glyph of a shaped cluster, carrying everything positioning needs.
+///
+/// Shaping is the width-independent stage of the text pipeline: its result is
+/// cached across frames and survives a window resize, while positioning runs
+/// again for every new wrapping width. The pixel box measured by the
+/// rasterizer — bitmap size and the offsets from the pen and the baseline —
+/// is a pure function of the glyph key, so it is measured once here, at
+/// shaping time, instead of being looked up per glyph on every re-wrap.
+/// Positioning is thereby pure arithmetic over this struct: it touches no
+/// rasterizer, no cache and no lock.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShapedGlyph {
+    pub key: GlyphKey,
+    /// Horizontal advance of the pen after this glyph.
+    pub advance: f32,
+    /// Horizontal shaping offset relative to the pen position.
+    pub x_offset: f32,
+    /// Vertical shaping offset relative to the baseline.
+    pub y_offset: f32,
+    /// Bitmap width in pixels; zero for blank glyphs such as spaces.
+    pub width: u32,
+    /// Bitmap height in pixels; zero for blank glyphs such as spaces.
+    pub height: u32,
+    /// Offset from the pen position to the left edge of the bitmap.
+    pub offset_x: f32,
+    /// Offset from the baseline to the bottom edge of the bitmap.
+    pub offset_y: f32,
+}
+
 #[derive(Clone)]
 pub struct ShapedCluster {
     pub text: String,
     pub base_codepoint: char,
-    pub glyphs: Vec<(GlyphKey, f32, f32, f32)>,
+    pub glyphs: Vec<ShapedGlyph>,
     pub width: f32,
     /// Whether a line may start at this cluster, per UAX #14.
     ///
@@ -150,6 +179,14 @@ pub struct ShapedCluster {
 pub struct ShapedText {
     pub font_size: f32,
     pub line_height: f32,
+    /// Width of the widest hard-break-separated line, in pixels.
+    ///
+    /// This is the width the text occupies when nothing wraps: positioning at
+    /// any wrapping width the text fits in produces the same glyphs as
+    /// positioning unbounded. The pipeline uses this to share one cached
+    /// layout across every such width, so a window resize re-wraps only the
+    /// text that actually wraps.
+    pub max_line_width: f32,
     pub clusters: Vec<ShapedCluster>,
 }
 
@@ -786,9 +823,18 @@ pub fn shape_text(rasterizer: &mut GlyphRasterizer, text: &str, font_size: f32) 
         FontFamily::SANS_SERIF,
         FontWeight::Normal,
         FontStyle::Normal,
+        None,
     )
 }
 
+/// Shapes `text`, choosing faces for the run as a whole.
+///
+/// `language` names the language the run is written in, for the ideographs
+/// whose face the characters alone cannot settle — see
+/// [`GlyphRasterizer::begin_script_run`]. `None` leaves the run judged on its
+/// own characters, which is all a caller that knows nothing about the text can
+/// offer.
+#[allow(clippy::too_many_arguments)]
 pub fn shape_text_styled(
     rasterizer: &mut GlyphRasterizer,
     text: &str,
@@ -796,10 +842,11 @@ pub fn shape_text_styled(
     font_family: FontFamily,
     font_weight: FontWeight,
     font_style: FontStyle,
+    language: Option<TextLanguage>,
 ) -> ShapedText {
     // Which face an ideograph belongs to depends on the characters beside it, so
     // the whole paragraph is announced before a single one is resolved.
-    rasterizer.begin_script_run(text);
+    rasterizer.begin_script_run(text, language);
 
     let (ascent, _descent, line_gap) = rasterizer.line_metrics_for_family(font_size, font_family, font_weight, font_style);
     let line_height = ascent - _descent + line_gap;
@@ -881,14 +928,19 @@ pub fn shape_text_styled(
                 let source_cluster = run_graphemes
                     .partition_point(|(start, _)| *start - cluster_start <= glyph.cluster)
                     .saturating_sub(1);
+                let metrics = rasterizer.metrics_for_key(glyph.glyph_key, font_size);
                 let cluster = &mut clusters[cluster_output_start + source_cluster];
                 cluster.width += glyph.advance;
-                cluster.glyphs.push((
-                    glyph.glyph_key,
-                    glyph.advance,
-                    glyph.x_offset,
-                    glyph.y_offset,
-                ));
+                cluster.glyphs.push(ShapedGlyph {
+                    key: glyph.glyph_key,
+                    advance: glyph.advance,
+                    x_offset: glyph.x_offset,
+                    y_offset: glyph.y_offset,
+                    width: metrics.width,
+                    height: metrics.height,
+                    offset_x: metrics.offset_x,
+                    offset_y: metrics.offset_y,
+                });
             }
         }
 
@@ -897,14 +949,29 @@ pub fn shape_text_styled(
 
     rasterizer.end_script_run();
 
+    // The widest hard-break line, accumulated the way positioning accumulates
+    // its pen: cluster by cluster, reset at every explicit newline.
+    let mut max_line_width = 0.0_f32;
+    let mut line_width = 0.0_f32;
+    for cluster in &clusters {
+        if cluster.text == "\n" {
+            line_width = 0.0;
+        } else {
+            line_width += cluster.width;
+            max_line_width = max_line_width.max(line_width);
+        }
+    }
+
     ShapedText {
         font_size,
         line_height,
+        max_line_width,
         clusters,
     }
 }
 
 /// Shapes text into an owned result using worker-local CPU preparation state.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn prepare_shaped_text(
     context: &mut GlyphPreparationContext,
     text: &str,
@@ -912,6 +979,7 @@ pub(super) fn prepare_shaped_text(
     font_family: FontFamily,
     font_weight: FontWeight,
     font_style: FontStyle,
+    language: Option<TextLanguage>,
 ) -> ShapedText {
     shape_text_styled(
         context.rasterizer_mut(),
@@ -920,11 +988,11 @@ pub(super) fn prepare_shaped_text(
         font_family,
         font_weight,
         font_style,
+        language,
     )
 }
 
 pub fn layout_shaped_text(
-    rasterizer: &mut GlyphRasterizer,
     shaped_text: &ShapedText,
     origin_x: f32,
     origin_y: f32,
@@ -982,40 +1050,30 @@ pub fn layout_shaped_text(
             }
         }
 
-        for &(glyph_key, advance, x_offset, y_offset) in &cluster.glyphs {
-            let rg = rasterizer.metrics_for_key(glyph_key, font_size);
-            if rg.width > 0 && rg.height > 0 {
-                let gx = pen_x + rg.offset_x + x_offset;
+        for glyph in &cluster.glyphs {
+            if glyph.width > 0 && glyph.height > 0 {
+                let gx = pen_x + glyph.offset_x + glyph.x_offset;
 
-                let gy = pen_y - rg.offset_y - rg.height as f32 + y_offset;
+                let gy = pen_y - glyph.offset_y - glyph.height as f32 + glyph.y_offset;
 
                 glyphs.push(PositionedGlyph {
                     codepoint: cluster.base_codepoint,
-                    glyph_key,
+                    glyph_key: glyph.key,
                     line_index,
                     line_x: pen_x - origin_x,
-                    advance,
+                    advance: glyph.advance,
                     x: gx,
                     y: gy,
-                    width: rg.width,
-                    height: rg.height,
+                    width: glyph.width,
+                    height: glyph.height,
                     font_size,
                 });
             }
 
-            pen_x += advance;
+            pen_x += glyph.advance;
         }
     }
     glyphs
-}
-
-/// Positions shaped text into an owned result using worker-local CPU state.
-pub(super) fn prepare_positioned_text(
-    context: &mut GlyphPreparationContext,
-    shaped_text: &ShapedText,
-    max_width: f32,
-) -> Vec<PositionedGlyph> {
-    layout_shaped_text(context.rasterizer_mut(), shaped_text, 0.0, 0.0, max_width)
 }
 
 /// Simple horizontal text layout with basic line breaking.
@@ -1028,7 +1086,7 @@ pub fn layout_text(
     max_width: f32,
 ) -> Vec<PositionedGlyph> {
     let shaped_text = shape_text(rasterizer, text, font_size);
-    layout_shaped_text(rasterizer, &shaped_text, origin_x, origin_y, max_width)
+    layout_shaped_text(&shaped_text, origin_x, origin_y, max_width)
 }
 
 #[cfg(test)]
@@ -1141,6 +1199,7 @@ mod tests {
             FontFamily::SANS_SERIF,
             FontWeight::Normal,
             FontStyle::Normal,
+            None,
         );
 
         assert_eq!(rasterizer.shape_call_count(), 1);
@@ -1240,8 +1299,92 @@ mod tests {
             .iter()
             .filter(|cluster| cluster_script(&cluster.text) == Some(Script::Khmer))
             .flat_map(|cluster| cluster.glyphs.iter())
-            .map(|(glyph_key, _, _, _)| glyph_key.glyph_id)
+            .map(|glyph| glyph.key.glyph_id)
             .collect()
+    }
+
+    #[test]
+    fn shaping_bakes_the_pixel_box_into_every_glyph() {
+        // The pixel box is a pure function of the glyph key, so shaping — the
+        // width-independent stage that survives a resize — is where it is
+        // measured. Positioning must never need to ask anyone for it again.
+        let mut rasterizer = GlyphRasterizer::new();
+
+        let shaped = shape_text(&mut rasterizer, "Ag ex 你好", 17.0);
+
+        for cluster in &shaped.clusters {
+            for glyph in &cluster.glyphs {
+                let metrics = rasterizer.metrics_for_key(glyph.key, 17.0);
+                assert_eq!(glyph.width, metrics.width);
+                assert_eq!(glyph.height, metrics.height);
+                assert_eq!(glyph.offset_x, metrics.offset_x);
+                assert_eq!(glyph.offset_y, metrics.offset_y);
+            }
+        }
+    }
+
+    #[test]
+    fn positioning_reads_only_the_shaped_text() {
+        // A resize frame re-wraps everything on screen; the wrap must be pure
+        // arithmetic over the cached shaping — no rasterizer, no locks. The
+        // rasterizer is dropped before layout to prove nothing else is read.
+        let mut rasterizer = GlyphRasterizer::new();
+        let shaped = shape_text(&mut rasterizer, "alpha bravo charlie delta", 16.0);
+        drop(rasterizer);
+
+        let unwrapped = layout_shaped_text(&shaped, 0.0, 0.0, 0.0);
+        let full_width = unwrapped
+            .last()
+            .map_or(0.0, |glyph| glyph.line_x + glyph.advance);
+        let wrapped = layout_shaped_text(&shaped, 0.0, 0.0, full_width / 2.0);
+
+        assert!(!wrapped.is_empty());
+        assert!(
+            wrapped.iter().map(|glyph| glyph.line_index).max() > Some(0),
+            "halving the width must wrap the text"
+        );
+        assert_eq!(
+            wrapped.len(),
+            unwrapped.len(),
+            "wrapping must reposition glyphs, not lose them"
+        );
+    }
+
+    #[test]
+    fn shaping_reports_the_widest_hard_break_line() {
+        let mut rasterizer = GlyphRasterizer::new();
+
+        let shaped = shape_text(&mut rasterizer, "long first line\nab", 16.0);
+
+        let first_line_width: f32 = shaped
+            .clusters
+            .iter()
+            .take_while(|cluster| cluster.text != "\n")
+            .map(|cluster| cluster.width)
+            .sum();
+        assert!(first_line_width > 0.0);
+        assert_eq!(shaped.max_line_width, first_line_width);
+    }
+
+    #[test]
+    fn layout_at_a_fitting_width_matches_the_unbounded_layout() {
+        // The wrapping width only matters when the text wraps at it: any
+        // width the widest line fits in must position every glyph exactly
+        // where the unbounded layout does, which is what lets one cached
+        // layout stand in for every such width.
+        let mut rasterizer = GlyphRasterizer::new();
+        let shaped = shape_text(&mut rasterizer, "alpha bravo\ncharlie delta", 16.0);
+
+        let unbounded = layout_shaped_text(&shaped, 0.0, 0.0, 0.0);
+        let fitting = layout_shaped_text(&shaped, 0.0, 0.0, shaped.max_line_width);
+
+        assert!(!unbounded.is_empty());
+        assert_eq!(fitting.len(), unbounded.len());
+        for (fitting, unbounded) in fitting.iter().zip(&unbounded) {
+            assert_eq!(fitting.glyph_key, unbounded.glyph_key);
+            assert_eq!((fitting.x, fitting.y), (unbounded.x, unbounded.y));
+            assert_eq!(fitting.line_index, unbounded.line_index);
+        }
     }
 
     #[test]
@@ -1275,7 +1418,7 @@ mod tests {
         let max_width = 240.0;
 
         let shaped = shape_text(&mut rasterizer, text, font_size);
-        let glyphs = layout_shaped_text(&mut rasterizer, &shaped, 0.0, 0.0, max_width);
+        let glyphs = layout_shaped_text(&shaped, 0.0, 0.0, max_width);
         let widths = positioned_line_widths(&glyphs);
 
         assert!(widths.len() > 1, "the sample must wrap at {max_width}px");
@@ -1294,7 +1437,7 @@ mod tests {
         let text = "alpha bravo charlie delta";
 
         let shaped = shape_text(&mut rasterizer, text, font_size);
-        let single_line = layout_shaped_text(&mut rasterizer, &shaped, 0.0, 0.0, 0.0);
+        let single_line = layout_shaped_text(&shaped, 0.0, 0.0, 0.0);
         let word_width: f32 = shaped
             .clusters
             .iter()
@@ -1306,7 +1449,7 @@ mod tests {
             .map_or(0.0, |glyph| glyph.line_x + glyph.advance)
             / 2.0;
 
-        let glyphs = layout_shaped_text(&mut rasterizer, &shaped, 0.0, 0.0, max_width);
+        let glyphs = layout_shaped_text(&shaped, 0.0, 0.0, max_width);
         let line_count = glyphs
             .iter()
             .map(|glyph| glyph.line_index)
@@ -1341,7 +1484,7 @@ mod tests {
             .clusters
             .iter()
             .filter_map(|cluster| cluster.glyphs.first())
-            .map(|(glyph_key, _, _, _)| glyph_key.font_id)
+            .map(|glyph| glyph.key.font_id)
             .collect();
 
         assert_eq!(shaped.clusters.len(), 3);

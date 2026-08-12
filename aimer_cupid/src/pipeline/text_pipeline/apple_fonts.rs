@@ -37,13 +37,15 @@
 use std::path::PathBuf;
 
 use objc2_core_foundation::{
-    CFCharacterSet, CFData, CFDictionary, CFLocale, CFRange, CFRetained, CFString, CFURL,
+    CFCharacterSet, CFData, CFDictionary, CFLocale, CFNumber, CFRange, CFRetained, CFString, CFURL,
 };
 use objc2_core_graphics::CGFont;
 use objc2_core_text::{
     CTFont, CTFontDescriptor, CTFontUIFontType, kCTFontCharacterSetAttribute,
-    kCTFontURLAttribute,
+    kCTFontTraitsAttribute, kCTFontURLAttribute, kCTFontWeightTrait,
 };
+
+use crate::text_pipeline::font_resolver::REGULAR_WEIGHT;
 
 /// Point size used for the transient `CTFont` instances created here.
 ///
@@ -82,6 +84,78 @@ const CJK_UI_LANGUAGES: [&str; 4] = ["ja", "zh-Hans", "zh-Hant", "ko"];
 /// few entries it stops describing the text on screen and only multiplies
 /// cascade queries.
 const MAX_PREFERRED_LANGUAGES: usize = 4;
+
+/// Anchors of Core Text's normalized weight scale, in `wght` order.
+///
+/// `kCTFontWeightTrait` runs from `-1.0` to `1.0` with `0.0` at regular, and
+/// the spacing is not linear: Apple's own named constants crowd the bold half
+/// of the scale together — `medium` at `0.23` sits nearly as high as `bold` at
+/// `0.40`. These are those constants, paired with the OpenType weights they
+/// correspond to, so a request lands on the face Apple itself would pick.
+const WEIGHT_SCALE: [(u16, f64); 9] = [
+    (100, -0.80),
+    (200, -0.60),
+    (300, -0.40),
+    (400, 0.00),
+    (500, 0.23),
+    (600, 0.30),
+    (700, 0.40),
+    (800, 0.56),
+    (900, 0.62),
+];
+
+/// Converts an OpenType `wght` value to Core Text's normalized weight trait.
+///
+/// Values between two anchors of [`WEIGHT_SCALE`] are interpolated, and values
+/// outside it clamp to the ends: no face is designed beyond `100`–`900`, and
+/// Core Text matches the nearest available weight anyway.
+fn normalized_weight(weight: u16) -> f64 {
+    let (lightest, heaviest) = (WEIGHT_SCALE[0], WEIGHT_SCALE[WEIGHT_SCALE.len() - 1]);
+    let weight = weight.clamp(lightest.0, heaviest.0);
+    let upper = WEIGHT_SCALE
+        .iter()
+        .position(|(anchor, _)| *anchor >= weight)
+        .unwrap_or(WEIGHT_SCALE.len() - 1);
+    let (upper_weight, upper_trait) = WEIGHT_SCALE[upper];
+    if upper_weight == weight {
+        return upper_trait;
+    }
+    let (lower_weight, lower_trait) = WEIGHT_SCALE[upper - 1];
+    let progress = f64::from(weight - lower_weight) / f64::from(upper_weight - lower_weight);
+    lower_trait + (upper_trait - lower_trait) * progress
+}
+
+/// Returns `font` restyled to `weight` on the OpenType `wght` scale.
+///
+/// Every fallback query here starts from the system UI font, and Core Text
+/// answers a cascade query with the face it pairs with *that* font — stroke
+/// weight included. Asked through the regular UI font, the cascade therefore
+/// names `PingFang SC Regular` for a line that asked to be bold, and the text
+/// arrives thin. Asked through the semibold one, it names
+/// `PingFang SC Semibold`, which is the pairing Apple ships.
+///
+/// A request at [`REGULAR_WEIGHT`] returns `font` itself, so the path every
+/// unemphasized line takes gains no work.
+fn font_at_weight(font: CFRetained<CTFont>, weight: u16) -> CFRetained<CTFont> {
+    if weight == REGULAR_WEIGHT {
+        return font;
+    }
+
+    let value = CFNumber::new_f64(normalized_weight(weight));
+    // SAFETY: `kCTFontWeightTrait` is a Core Text constant string, and the
+    // trait it names takes the `CFNumber` paired with it here.
+    let traits = CFDictionary::from_slices(&[unsafe { kCTFontWeightTrait }], &[&*value]);
+    // SAFETY: `kCTFontTraitsAttribute` is a Core Text constant string, and the
+    // attribute it names takes the traits dictionary paired with it here.
+    let attributes =
+        CFDictionary::from_slices(&[unsafe { kCTFontTraitsAttribute }], &[traits.as_opaque()]);
+    // SAFETY: the dictionary holds documented attribute keys paired with the
+    // value types those keys expect.
+    let descriptor = unsafe { CTFontDescriptor::with_attributes(attributes.as_opaque()) };
+    // SAFETY: a size of `0.0` keeps the original font's size and a null matrix
+    // requests the identity transform.
+    unsafe { font.copy_with_attributes(0.0, std::ptr::null(), Some(&descriptor)) }
+}
 
 /// Returns the file the given font was loaded from, if it is backed by one.
 ///
@@ -129,11 +203,14 @@ pub(crate) fn system_font_path(family: &str) -> Option<PathBuf> {
 /// cascade list and returns the first face able to draw the string — the same
 /// decision it makes when rendering text the current font cannot cover.
 ///
+/// The UI font is restyled to `weight` first, so the cascade names the sibling
+/// face Apple pairs with text of that stroke — see [`font_at_weight`].
+///
 /// Returns `None` when `probes` is empty or when the chosen face is not backed
 /// by a file. Note that Core Text never fails outright: if nothing covers the
 /// probes it hands back the current font, so callers must still verify that the
 /// returned face actually contains glyphs for the codepoints they care about.
-pub(crate) fn fallback_font_path_for_probes(probes: &[char]) -> Option<PathBuf> {
+pub(crate) fn fallback_font_path_for_probes(probes: &[char], weight: u16) -> Option<PathBuf> {
     let sample: String = probes.iter().collect();
     // `CFRange` counts UTF-16 code units, not `char`s, so astral-plane probes
     // such as emoji contribute two units each.
@@ -146,6 +223,7 @@ pub(crate) fn fallback_font_path_for_probes(probes: &[char]) -> Option<PathBuf> 
     let sample = CFString::from_str(&sample);
     // SAFETY: a null matrix requests the identity transform.
     let base_font = unsafe { CTFont::with_name(&base_name, LOOKUP_FONT_SIZE, std::ptr::null()) };
+    let base_font = font_at_weight(base_font, weight);
     // SAFETY: the range spans exactly the UTF-16 content of `sample`.
     let fallback = unsafe { base_font.for_string(&sample, CFRange { location: 0, length }) };
 
@@ -165,10 +243,14 @@ pub(crate) fn fallback_font_path_for_probes(probes: &[char]) -> Option<PathBuf> 
 /// 2. every face matching a descriptor built from a character set holding just
 ///    `codepoint`, which is the full set of installed faces covering it.
 ///
+/// Only the cascade answer is weight aware: the catalogue match is the
+/// exhaustive backstop, and narrowing it by weight would drop the only face
+/// covering a codepoint whenever no sibling exists at the requested stroke.
+///
 /// Paths are deduplicated and the list is capped at [`MAX_CANDIDATE_FACES`],
 /// because the caller pays a memory map plus a font parse per candidate it has
 /// to reject.
-pub(crate) fn font_paths_for_codepoint(codepoint: char) -> Vec<PathBuf> {
+pub(crate) fn font_paths_for_codepoint(codepoint: char, weight: u16) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     let mut push = |path: PathBuf| {
         if paths.len() < MAX_CANDIDATE_FACES && !paths.contains(&path) {
@@ -176,7 +258,7 @@ pub(crate) fn font_paths_for_codepoint(codepoint: char) -> Vec<PathBuf> {
         }
     };
 
-    if let Some(preferred) = fallback_font_path_for_probes(&[codepoint]) {
+    if let Some(preferred) = fallback_font_path_for_probes(&[codepoint], weight) {
         push(preferred);
     }
     for path in matching_font_paths_for_codepoint(codepoint) {
@@ -258,12 +340,16 @@ pub(crate) enum SystemFaceSource {
 /// that prefix — the simplified-only tail of a Japanese line — appears only in
 /// the per-character answers.
 ///
+/// Each language's UI font is restyled to `weight` before its cascade is
+/// walked, which is what makes a bold line of Han arrive on `W6`/`Semibold`
+/// rather than on the regular cut — see [`font_at_weight`].
+///
 /// The device's preferred languages are consulted first so the answer blends
 /// with the rest of the interface, then [`CJK_UI_LANGUAGES`] as a backstop.
 /// Sources are deduplicated and capped at [`MAX_CANDIDATE_FACES`]; callers
 /// must still validate coverage, because Core Text hands back the queried font
 /// itself when nothing matches.
-pub(crate) fn language_fallback_sources(required: &[char]) -> Vec<SystemFaceSource> {
+pub(crate) fn language_fallback_sources(required: &[char], weight: u16) -> Vec<SystemFaceSource> {
     let mut sources: Vec<SystemFaceSource> = Vec::new();
     let full: String = required.iter().collect();
     if full.is_empty() {
@@ -288,6 +374,7 @@ pub(crate) fn language_fallback_sources(required: &[char]) -> Vec<SystemFaceSour
         }) else {
             continue;
         };
+        let base = font_at_weight(base, weight);
         for sample in &samples {
             if sources.len() >= MAX_CANDIDATE_FACES {
                 return sources;
@@ -481,9 +568,9 @@ mod tests {
 
     #[test]
     fn font_paths_for_codepoint_lists_the_preferred_face_first() {
-        let preferred =
-            fallback_font_path_for_probes(&['你']).expect("the system always proposes a face");
-        let paths = font_paths_for_codepoint('你');
+        let preferred = fallback_font_path_for_probes(&['你'], REGULAR_WEIGHT)
+            .expect("the system always proposes a face");
+        let paths = font_paths_for_codepoint('你', REGULAR_WEIGHT);
         assert_eq!(paths.first(), Some(&preferred));
     }
 
@@ -492,7 +579,7 @@ mod tests {
         // Han ideographs are carried by many installed faces, so the platform's
         // first pick must not be the only option — rejecting it has to leave
         // something to fall back on.
-        let paths = font_paths_for_codepoint('你');
+        let paths = font_paths_for_codepoint('你', REGULAR_WEIGHT);
         assert!(
             paths.len() > 1,
             "expected alternatives beyond the preferred face, got {paths:?}"
@@ -502,7 +589,7 @@ mod tests {
 
     #[test]
     fn font_paths_for_codepoint_deduplicates_and_stays_bounded() {
-        let paths = font_paths_for_codepoint('！');
+        let paths = font_paths_for_codepoint('！', REGULAR_WEIGHT);
         assert!(paths.len() <= MAX_CANDIDATE_FACES);
         let unique: std::collections::HashSet<_> = paths.iter().collect();
         assert_eq!(unique.len(), paths.len(), "duplicate candidates: {paths:?}");
@@ -510,7 +597,7 @@ mod tests {
 
     #[test]
     fn font_paths_for_codepoint_finds_a_color_emoji_face() {
-        let paths = font_paths_for_codepoint('\u{1F600}');
+        let paths = font_paths_for_codepoint('\u{1F600}', REGULAR_WEIGHT);
         let first = paths.first().expect("emoji must resolve to a font file");
         let name = first
             .file_name()
@@ -518,6 +605,65 @@ mod tests {
             .unwrap_or_default()
             .to_ascii_lowercase();
         assert!(name.contains("emoji"), "expected an emoji face, got {first:?}");
+    }
+
+    // The weight a style asks for is an OpenType `wght` value, while Core Text
+    // matches on a normalized trait whose two halves are scaled differently.
+    // A request that grew heavier must never translate to a lighter trait, or
+    // bold text resolves to a thinner face than regular text does.
+    #[test]
+    fn the_normalized_weight_scale_rises_with_the_opentype_weight() {
+        assert_eq!(normalized_weight(REGULAR_WEIGHT), 0.0);
+
+        let mut previous = f64::NEG_INFINITY;
+        for weight in (100..=900).step_by(50) {
+            let normalized = normalized_weight(weight);
+            assert!(
+                normalized > previous,
+                "wght {weight} did not rise above the weight below it"
+            );
+            assert!(
+                (-1.0..=1.0).contains(&normalized),
+                "wght {weight} left Core Text's normalized range: {normalized}"
+            );
+            previous = normalized;
+        }
+    }
+
+    // Weights outside the designed range are clamped rather than extrapolated:
+    // a trait beyond ±1.0 is not a value Core Text matches against.
+    #[test]
+    fn the_normalized_weight_scale_clamps_outside_the_designed_range() {
+        assert_eq!(normalized_weight(0), normalized_weight(100));
+        assert_eq!(normalized_weight(u16::MAX), normalized_weight(900));
+    }
+
+    // The defect this exists for: a bold line of Han came back on the regular
+    // face because every cascade query started from the regular UI font.
+    #[test]
+    fn a_bold_cascade_proposes_a_face_the_regular_one_does_not() {
+        let required = ['你', '好'];
+        let regular = language_fallback_sources(&required, REGULAR_WEIGHT);
+        let bold = language_fallback_sources(&required, 700);
+        assert!(!bold.is_empty(), "a bold cascade must still name faces");
+
+        let names = |sources: &[SystemFaceSource]| -> Vec<String> {
+            sources
+                .iter()
+                .map(|source| match source {
+                    SystemFaceSource::File(path) => path.display().to_string(),
+                    SystemFaceSource::Data {
+                        postscript_name, ..
+                    } => postscript_name.clone(),
+                })
+                .collect()
+        };
+        let regular = names(&regular);
+        let bold = names(&bold);
+        assert!(
+            bold.iter().any(|face| !regular.contains(face)),
+            "a bold request named only the regular faces: {bold:?}"
+        );
     }
 
     #[test]
@@ -543,7 +689,7 @@ mod tests {
 
     #[test]
     fn fallback_font_path_for_probes_finds_a_color_emoji_face() {
-        let path = fallback_font_path_for_probes(&['\u{1F600}', '\u{1F601}'])
+        let path = fallback_font_path_for_probes(&['\u{1F600}', '\u{1F601}'], REGULAR_WEIGHT)
             .expect("emoji probes must resolve to a font file");
         assert!(path.exists(), "resolved font file does not exist: {path:?}");
         let name = path
@@ -559,14 +705,14 @@ mod tests {
 
     #[test]
     fn fallback_font_path_for_probes_handles_a_cjk_script() {
-        let path = fallback_font_path_for_probes(&['漢', '字'])
+        let path = fallback_font_path_for_probes(&['漢', '字'], REGULAR_WEIGHT)
             .expect("CJK probes must resolve to a font file");
         assert!(path.exists(), "resolved font file does not exist: {path:?}");
     }
 
     #[test]
     fn fallback_font_path_for_probes_rejects_empty_probes() {
-        assert!(fallback_font_path_for_probes(&[]).is_none());
+        assert!(fallback_font_path_for_probes(&[], REGULAR_WEIGHT).is_none());
     }
 
     /// Reports whether any face of `data` has readable glyph data for all of
@@ -599,7 +745,7 @@ mod tests {
     #[test]
     fn language_fallback_sources_offer_a_decodable_simplified_han_face() {
         let required = ['吗', '顶', '这'];
-        let sources = language_fallback_sources(&required);
+        let sources = language_fallback_sources(&required, REGULAR_WEIGHT);
         assert!(!sources.is_empty(), "no cascade proposed any face");
         assert!(
             sources.iter().any(|source| match source {
@@ -613,7 +759,7 @@ mod tests {
 
     #[test]
     fn language_fallback_sources_reject_an_empty_requirement() {
-        assert!(language_fallback_sources(&[]).is_empty());
+        assert!(language_fallback_sources(&[], REGULAR_WEIGHT).is_empty());
     }
 
     // The extraction path for faces without a readable file behind them:

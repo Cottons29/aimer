@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use hashbrown::DefaultHashBuilder;
 
-use crate::font::{FontFamily, FontStyle};
+use crate::font::{FontFamily, FontStyle, TextLanguage};
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextOverflowMode;
 use crate::text_pipeline::text_layout::TextHorizontalAlign;
@@ -109,6 +109,23 @@ pub enum DrawCommand {
     /// Rich text carries italic per span instead, so it is unaffected.
     SetItalic {
         italic: bool,
+    },
+    /// Sets the written language of subsequent text commands.
+    ///
+    /// Han is unified, so a run of ideographs does not say whether it wants a
+    /// Chinese or a Japanese face: `你好` is covered by both and stays on
+    /// whichever the platform's cascade prefers, until a character only one
+    /// language writes is added and the whole word changes typeface. A
+    /// producer that knows better — a text field knows the keyboard it is
+    /// edited with — announces it once here and every text it draws
+    /// afterwards is resolved, shaped and measured in that language, exactly
+    /// as [`SetItalic`] applies to the text after it.
+    ///
+    /// `None` restores the default: the run is judged on its own characters.
+    ///
+    /// [`SetItalic`]: DrawCommand::SetItalic
+    SetTextLanguage {
+        language: Option<TextLanguage>,
     },
     LoadImage {
         bytes: Vec<u8>,
@@ -461,6 +478,13 @@ impl DrawList {
 
     pub fn set_italic(&mut self, italic: bool) {
         self.commands.push(DrawCommand::SetItalic { italic });
+    }
+
+    /// Records the language subsequent text commands are written in — see
+    /// [`DrawCommand::SetTextLanguage`].
+    pub fn set_text_language(&mut self, language: Option<TextLanguage>) {
+        self.commands
+            .push(DrawCommand::SetTextLanguage { language });
     }
 
     pub fn restore_alpha(&mut self) {

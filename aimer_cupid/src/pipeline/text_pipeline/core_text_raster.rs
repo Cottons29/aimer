@@ -577,7 +577,10 @@ mod tests {
     /// The face carrying Simplified Chinese on Apple platforms, whose outlines
     /// live in a private table.
     fn simplified_chinese_face() -> Option<(PathBuf, u32, u16)> {
-        crate::text_pipeline::apple_fonts::font_paths_for_codepoint('吗')
+        crate::text_pipeline::apple_fonts::font_paths_for_codepoint(
+            '吗',
+            crate::text_pipeline::font_resolver::REGULAR_WEIGHT,
+        )
             .into_iter()
             .find_map(|path| {
                 let data = mapped_font_file(&path)?;
@@ -772,7 +775,10 @@ mod tests {
 
     #[test]
     fn draws_color_emoji_as_straight_alpha_rgba() {
-        let path = crate::text_pipeline::apple_fonts::font_paths_for_codepoint('😀')
+        let path = crate::text_pipeline::apple_fonts::font_paths_for_codepoint(
+            '😀',
+            crate::text_pipeline::font_resolver::REGULAR_WEIGHT,
+        )
             .into_iter()
             .next()
             .expect("emoji resolve to a font file");

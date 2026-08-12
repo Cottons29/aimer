@@ -2,8 +2,9 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::{include_wgsl, ShaderSource};
+use wgpu::ShaderSource;
 
+use super::frame_upload::FrameUpload;
 use crate::utilities::TextureId;
 
 fn constrained_texture_size(width: u32, height: u32, max_dimension: u32) -> (u32, u32) {
@@ -216,10 +217,22 @@ pub struct ImagePipeline {
     instance_buffer: wgpu::Buffer,
     instance_policy: InstanceBufferPolicy,
     /// Running write offset (in instances) into `instance_buffer` for the
-    /// current frame. Reset by `begin_frame`. Each `draw_batch` writes its
-    /// instances to a distinct region so that multiple image batches within a
-    /// single render pass do not alias the same buffer memory.
+    /// current frame. Reset by `begin_frame`. Each `draw_batch` draws from a
+    /// distinct region so that multiple image batches within a single render
+    /// pass do not alias the same buffer memory.
     frame_instance_offset: usize,
+    /// Every image instance of the frame, batch after batch, in the exact
+    /// layout the recorded draws expect. Uploaded once by [`end_frame`]
+    /// instead of once per batch.
+    ///
+    /// [`end_frame`]: ImagePipeline::end_frame
+    frame_instances: Vec<ImageInstance>,
+    /// Skips the frame's single upload when the buffer already holds the
+    /// frame's exact bytes — the common case for a static scene.
+    upload: FrameUpload<ImageInstance>,
+    /// The `(width, height, is_srgb)` the viewport uniform was last written
+    /// for, so an unchanged viewport costs no upload at all.
+    last_viewport: Option<(u32, u32, bool)>,
 }
 
 impl ImagePipeline {
@@ -369,6 +382,9 @@ impl ImagePipeline {
             instance_buffer,
             instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
             frame_instance_offset: 0,
+            frame_instances: Vec::new(),
+            upload: FrameUpload::new(),
+            last_viewport: None,
         }
     }
 
@@ -473,6 +489,7 @@ impl ImagePipeline {
         is_srgb: bool,
     ) {
         self.frame_instance_offset = 0;
+        self.frame_instances.clear();
         let previous_capacity = self.instance_policy.capacity();
         self.instance_policy.record_usage(total_instances);
         if self.instance_policy.capacity() != previous_capacity {
@@ -482,18 +499,22 @@ impl ImagePipeline {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            self.upload.invalidate();
         }
 
-        // Write the viewport uniform once per frame instead of per batch.
+        // Write the viewport uniform only when it actually changed.
         #[cfg(target_os = "android")]
         let is_srgb_f32 = 2.0_f32;
         #[cfg(not(target_os = "android"))]
         let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
-        queue.write_buffer(
-            &self.viewport_buffer,
-            0,
-            bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
-        );
+        if self.last_viewport != Some((width, height, is_srgb)) {
+            self.last_viewport = Some((width, height, is_srgb));
+            queue.write_buffer(
+                &self.viewport_buffer,
+                0,
+                bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
+            );
+        }
     }
 
     pub fn upload_image_with_id(
@@ -579,6 +600,14 @@ impl ImagePipeline {
     }
 
     /// Draw a batch of instances with the same texture_id.
+    ///
+    /// Nothing is uploaded here: the batch is appended to the frame's CPU-side
+    /// instance list and the recorded draw references its region of the shared
+    /// buffer — each batch a distinct region, since every `write_buffer` is
+    /// applied on the queue timeline *before* the pass executes. The bytes for
+    /// all batches land together in [`end_frame`]'s single write.
+    ///
+    /// [`end_frame`]: ImagePipeline::end_frame
     pub fn draw_batch(
         &mut self,
         device: &wgpu::Device,
@@ -596,17 +625,20 @@ impl ImagePipeline {
             None => return,
         };
 
-        // Each batch occupies a distinct region of the shared instance buffer so
-        // that multiple image batches recorded into the same render pass do not
-        // overwrite one another. `queue.write_buffer` calls are all applied on
-        // the queue timeline *before* the pass executes, so writing every batch
-        // at offset 0 would make every draw read only the last batch's data.
         let end = self.frame_instance_offset + instances.len();
         if end > self.instance_policy.capacity() {
-            // Fallback safety net: `begin_frame` should have sized the buffer for
-            // the whole frame, but if it was not called, grow without dropping
-            // already-written data by copying nothing (prior draws keep the old
-            // buffer alive via the encoder) and restarting the offset.
+            // Fallback safety net: `begin_frame` sizes the buffer for the whole
+            // frame, so this only runs if it was skipped. The draws already
+            // recorded reference the *old* buffer, which the deferred upload
+            // would never fill — so give it the bytes those draws expect before
+            // switching to a bigger buffer.
+            if !self.frame_instances.is_empty() {
+                queue.write_buffer(
+                    &self.instance_buffer,
+                    0,
+                    bytemuck::cast_slice(&self.frame_instances),
+                );
+            }
             self.instance_policy.grow_to_fit(end);
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("image instance buffer (resized)"),
@@ -614,18 +646,11 @@ impl ImagePipeline {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.frame_instance_offset = 0;
+            self.upload.invalidate();
         }
 
         let byte_offset = (self.frame_instance_offset * size_of::<ImageInstance>()) as u64;
-
-        // Viewport uniform is written once in `begin_frame` — no per-batch write
-        // needed.
-        queue.write_buffer(
-            &self.instance_buffer,
-            byte_offset,
-            bytemuck::cast_slice(instances),
-        );
+        self.frame_instances.extend_from_slice(instances);
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
@@ -634,6 +659,17 @@ impl ImagePipeline {
         pass.draw(0..6, 0..instances.len() as u32);
 
         self.frame_instance_offset = end;
+    }
+
+    /// Uploads the frame's image instances in a single write, or not at all
+    /// when the buffer already holds these exact bytes (a static frame).
+    ///
+    /// Must run after the frame's batches and before the queue submit; a
+    /// `write_buffer` issued here is applied before the submitted pass
+    /// executes, so the draws recorded earlier read the fresh data.
+    pub fn end_frame(&mut self, queue: &wgpu::Queue) {
+        self.upload
+            .upload(queue, &self.instance_buffer, &self.frame_instances);
     }
 }
 

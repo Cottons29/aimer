@@ -137,6 +137,13 @@ pub(crate) fn font_ref(data: &[u8], collection_index: u32) -> Option<FontRef<'_>
     FontRef::from_index(data, collection_index).ok()
 }
 
+/// The OpenType `wght` value of a face that asks for no emphasis.
+///
+/// This is both the weight a face is read as when it declares none and the
+/// weight at which a request is passed through untouched, so the path every
+/// unemphasized line takes does no weight work at all.
+pub(crate) const REGULAR_WEIGHT: u16 = 400;
+
 impl FontRecord {
     pub(crate) fn from_static_bytes(id: FontId, bytes: &'static [u8]) -> Option<Self> {
         font_ref(bytes, 0)?;
@@ -237,6 +244,23 @@ impl FontRecord {
         let data = self.data()?;
         let face = font_ref(data.as_ref(), self.collection_index)?;
         face.charmap().map(codepoint).map(|id| id.to_u32() as u16)
+    }
+
+    /// The `OS/2` weight class this face was designed at.
+    ///
+    /// This is the face's own stroke — `300` for a Hiragino `W3`, `600` for a
+    /// `PingFang Semibold` — as opposed to the weight a style *asks* for. The
+    /// two meet when a face has to be chosen for a run: a bold run wants the
+    /// sibling face designed near the weight it asked for, not the family's
+    /// regular cut emboldened by hand.
+    ///
+    /// Returns `None` for faces that cannot be read or that ship no `OS/2`
+    /// table, which callers comparing designs treat as "unknown" rather than
+    /// as any particular weight.
+    pub(crate) fn design_weight(&self) -> Option<u16> {
+        let data = self.data()?;
+        let face = font_ref(data.as_ref(), self.collection_index)?;
+        Some(face.os2().ok()?.us_weight_class())
     }
 
     pub(crate) fn advance_width_for_glyph(&self, glyph_id: u16, font_size: f32) -> Option<f32> {

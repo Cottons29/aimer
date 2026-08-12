@@ -1,9 +1,9 @@
-use std::cell::{Ref, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::draw_cmd::DrawList;
-use crate::font::{FontFamily, FontStyle, FontWeight};
+use crate::font::{FontFamily, FontStyle, FontWeight, TextLanguage};
 use crate::lru_map::LruMap;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextOverflowMode;
@@ -30,6 +30,10 @@ struct TextMetricsKey {
     font_family: FontFamily,
     font_style: FontStyle,
     font_weight: u16,
+    /// Measured widths depend on the face the run resolves to, which for
+    /// ideographs the language decides — see
+    /// [`CupidCanvas::set_text_language`].
+    language: Option<TextLanguage>,
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +56,14 @@ pub struct CupidCanvas {
     draw_list: Rc<RefCell<DrawList>>,
     rasterizer: Rc<RefCell<GlyphRasterizer>>,
     metrics_cache: Rc<RefCell<LruMap<TextMetricsKey, CachedTextMetrics>>>,
+    /// The language subsequent text is written in — see
+    /// [`CupidCanvas::set_text_language`].
+    ///
+    /// Drawing records the state into the draw list, but measuring answers
+    /// immediately and never reaches the renderer, so the canvas keeps the
+    /// current value here as well: a field that paints its text in a Chinese
+    /// face must not place its caret with a Japanese face's advances.
+    text_language: Rc<Cell<Option<TextLanguage>>>,
 }
 
 impl CupidCanvas {
@@ -60,6 +72,7 @@ impl CupidCanvas {
             draw_list: Rc::new(RefCell::new(DrawList::new())),
             rasterizer: Rc::new(RefCell::new(GlyphRasterizer::new())),
             metrics_cache: Rc::new(RefCell::new(LruMap::new(METRICS_CACHE_CAPACITY))),
+            text_language: Rc::new(Cell::new(None)),
         }
     }
 
@@ -440,6 +453,7 @@ impl CupidCanvas {
             font_family,
             FontWeight::Value(u32::from(font_weight)),
             font_style,
+            self.text_language(),
         )
     }
 
@@ -463,6 +477,7 @@ impl CupidCanvas {
         font_style: FontStyle,
         font_weight: u16,
     ) -> TextMetrics {
+        let language = self.text_language();
         let key = TextMetricsKey {
             text: text.to_string(),
             font_size_tenths: (font_size * 10.0) as u32,
@@ -470,6 +485,7 @@ impl CupidCanvas {
             font_family,
             font_style,
             font_weight,
+            language,
         };
         if let Some(cached) = self.metrics_cache.borrow_mut().get(&key) {
             return cached.metrics;
@@ -478,7 +494,7 @@ impl CupidCanvas {
         let mut rasterizer = self.rasterizer.borrow_mut();
         // Measuring character by character would let an ideograph pick a face the
         // shaping pass rejects, so the run is announced first here too.
-        rasterizer.begin_script_run(text);
+        rasterizer.begin_script_run(text, language);
         let weight = FontWeight::Value(u32::from(font_weight));
         let (ascent, descent, line_gap) =
             rasterizer.line_metrics_for_family(font_size, font_family, weight, font_style);
@@ -580,6 +596,7 @@ impl CupidCanvas {
             font_family,
             font_style,
             font_weight,
+            language: self.text_language(),
         };
         self.measure_text_metrics_styled(
             text,
@@ -793,6 +810,40 @@ impl CupidCanvas {
     /// Enables/disables synthetic italic for subsequent plain text draws.
     pub fn set_italic(&self, italic: bool) {
         self.draw_list.borrow_mut().set_italic(italic);
+    }
+
+    /// Declares the language subsequent text is written in.
+    ///
+    /// Han is unified: `你好` is covered by a Japanese face as readily as by a
+    /// Chinese one, so a run of ideographs alone cannot say which face it
+    /// wants, and it keeps whichever the platform's cascade prefers until a
+    /// character only one language writes joins it — at which point the whole
+    /// word changes typeface. A producer that knows the language says so once
+    /// here, and every text drawn *and measured* afterwards is resolved in it.
+    ///
+    /// The setting is canvas state, like [`set_italic`](Self::set_italic):
+    /// pass `None` to restore the default, where a run is judged on its own
+    /// characters.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use aimer_cupid::canvas::CupidCanvas;
+    /// # use aimer_cupid::font::TextLanguage;
+    /// # let canvas = CupidCanvas::new();
+    /// canvas.set_text_language(Some(TextLanguage::Chinese));
+    /// canvas.draw_text(0.0, 0.0, "你好", 16.0, Default::default(), 400);
+    /// canvas.set_text_language(None);
+    /// ```
+    pub fn set_text_language(&self, language: Option<TextLanguage>) {
+        self.text_language.set(language);
+        self.draw_list.borrow_mut().set_text_language(language);
+    }
+
+    /// The language declared by [`set_text_language`](Self::set_text_language).
+    #[inline]
+    pub fn text_language(&self) -> Option<TextLanguage> {
+        self.text_language.get()
     }
 
     pub fn restore_alpha(&self) {

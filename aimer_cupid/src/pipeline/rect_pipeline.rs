@@ -1,5 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 
+use super::frame_upload::FrameUpload;
 use super::image_pipeline::InstanceBufferPolicy;
 
 #[repr(C)]
@@ -62,15 +63,26 @@ pub struct RectPipeline {
     viewport_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
     instance_policy: InstanceBufferPolicy,
+    /// Every rect instance of the current frame, in draw order. The vector
+    /// only grows during a frame; each flush records a draw over the tail it
+    /// has not covered yet, and [`end_frame`] uploads the whole thing in one
+    /// `write_buffer` — one staging allocation and one blit per frame instead
+    /// of one per z-order split.
+    ///
+    /// [`end_frame`]: RectPipeline::end_frame
     instances: Vec<RectInstance>,
-    /// Number of instances already written to `instance_buffer` during the
-    /// current frame. The pipeline may be flushed multiple times per frame
-    /// (e.g. when an image or custom-pipeline command splits the rect stream),
-    /// so each flush must write to a distinct region of the buffer. Otherwise
-    /// every flush would overwrite offset 0 and, because all `write_buffer`
-    /// uploads are applied before the single queue submit executes, every draw
-    /// call would read the last batch's data — making earlier batches vanish.
+    /// Number of instances already covered by recorded draw calls this frame.
+    /// The pipeline may be flushed multiple times per frame (e.g. when an
+    /// image or custom-pipeline command splits the rect stream); each flush
+    /// draws from a distinct region of the shared buffer so no batch aliases
+    /// another.
     frame_instance_offset: usize,
+    /// Skips the frame's single upload when the buffer already holds the
+    /// frame's exact bytes — the common case for a static scene.
+    upload: FrameUpload<RectInstance>,
+    /// The `(width, height, is_srgb)` the viewport uniform was last written
+    /// for, so an unchanged viewport costs no upload at all.
+    last_viewport: Option<(u32, u32, bool)>,
 }
 
 impl RectPipeline {
@@ -168,6 +180,8 @@ impl RectPipeline {
             instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
             instances: Vec::new(),
             frame_instance_offset: 0,
+            upload: FrameUpload::new(),
+            last_viewport: None,
         }
     }
 
@@ -181,10 +195,29 @@ impl RectPipeline {
         self.frame_instance_offset = 0;
     }
 
-    pub fn begin_frame(&mut self, device: &wgpu::Device) {
+    /// Opens a new frame: sizes the instance buffer for `total_rects`, writes
+    /// the viewport uniform when it changed, and resets the per-frame state.
+    ///
+    /// Sizing the buffer up-front — the renderer knows the frame's full rect
+    /// count from its resolved command list — is what lets the whole frame's
+    /// instances travel in a single upload at [`end_frame`]: no flush can ever
+    /// outgrow the buffer mid-pass, so every recorded draw references the same
+    /// buffer the deferred write lands in.
+    ///
+    /// [`end_frame`]: RectPipeline::end_frame
+    pub fn begin_frame(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        total_rects: usize,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+    ) {
         let previous_capacity = self.instance_policy.capacity();
         self.instance_policy
             .record_usage(self.frame_instance_offset);
+        self.instance_policy.grow_to_fit(total_rects);
         if self.instance_policy.capacity() != previous_capacity {
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("rect instance buffer (resized)"),
@@ -192,7 +225,24 @@ impl RectPipeline {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            self.upload.invalidate();
         }
+
+        // Update the viewport uniform only when it actually changed.
+        // On Android, pass 2.0 to signal shaders to skip sRGB conversion entirely.
+        #[cfg(target_os = "android")]
+        let is_srgb_f32 = 2.0_f32;
+        #[cfg(not(target_os = "android"))]
+        let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
+        if self.last_viewport != Some((width, height, is_srgb)) {
+            self.last_viewport = Some((width, height, is_srgb));
+            queue.write_buffer(
+                &self.viewport_buffer,
+                0,
+                bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
+            );
+        }
+
         self.clear();
     }
 
@@ -200,67 +250,44 @@ impl RectPipeline {
         (self.instance_policy.capacity() * size_of::<RectInstance>()) as u64
     }
 
-    pub fn flush(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        pass: &mut wgpu::RenderPass<'_>,
-        width: u32,
-        height: u32,
-        is_srgb: bool,
-    ) {
-        if self.instances.is_empty() {
+    /// Records a draw call for the rects pushed since the previous flush.
+    ///
+    /// Nothing is uploaded here. The draw references this batch's region of
+    /// the shared instance buffer — batches must not alias, since every
+    /// `write_buffer` is applied on the queue timeline *before* the pass
+    /// executes — and the bytes for all regions land together in
+    /// [`end_frame`]'s single write. A text-heavy frame (rect/text/rect/text
+    /// …) therefore no longer pays a staging allocation and a blit per
+    /// z-order split.
+    ///
+    /// [`end_frame`]: RectPipeline::end_frame
+    pub fn flush(&mut self, pass: &mut wgpu::RenderPass<'_>) {
+        let pending = self.instances.len() - self.frame_instance_offset;
+        if pending == 0 {
             return;
         }
-
-        // Update viewport uniform
-        // On Android, pass 2.0 to signal shaders to skip sRGB conversion entirely.
-        #[cfg(target_os = "android")]
-        let is_srgb_f32 = 2.0_f32;
-        #[cfg(not(target_os = "android"))]
-        let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
-        queue.write_buffer(
-            &self.viewport_buffer,
-            0,
-            bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
+        debug_assert!(
+            self.instances.len() <= self.instance_policy.capacity(),
+            "begin_frame must be told the frame's full rect count"
         );
 
-        let instance_count = self.instances.len();
-        let stride = std::mem::size_of::<RectInstance>();
-        // Write this batch *after* any batches already flushed this frame so that
-        // earlier draw calls keep reading their own data. Reusing offset 0 for
-        // every flush would let the last batch's upload overwrite all earlier
-        // batches before the single queue submit executes.
-        let start_instance = self.frame_instance_offset;
-        let required = start_instance + instance_count;
-
-        // Grow the instance buffer if this frame's accumulated batches no longer
-        // fit. Allocating a new buffer is safe mid-frame: previously recorded
-        // draws keep a reference to the old buffer (with their data intact),
-        // while this and subsequent batches use the new one.
-        if required > self.instance_policy.capacity() {
-            self.instance_policy.grow_to_fit(required);
-            self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("rect instance buffer"),
-                size: (self.instance_policy.capacity() * stride) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-        }
-
-        let byte_offset = (start_instance * stride) as u64;
-        queue.write_buffer(
-            &self.instance_buffer,
-            byte_offset,
-            bytemuck::cast_slice(&self.instances),
-        );
-
+        let byte_offset = (self.frame_instance_offset * size_of::<RectInstance>()) as u64;
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
         pass.set_vertex_buffer(0, self.instance_buffer.slice(byte_offset..));
-        pass.draw(0..6, 0..instance_count as u32);
+        pass.draw(0..6, 0..pending as u32);
 
-        self.frame_instance_offset += instance_count;
-        self.instances.clear();
+        self.frame_instance_offset = self.instances.len();
+    }
+
+    /// Uploads the frame's rect instances in a single write, or not at all
+    /// when the buffer already holds these exact bytes (a static frame).
+    ///
+    /// Must run after the frame's flushes and before the queue submit; a
+    /// `write_buffer` issued here is applied before the submitted pass
+    /// executes, so the draws recorded earlier read the fresh data.
+    pub fn end_frame(&mut self, queue: &wgpu::Queue) {
+        self.upload
+            .upload(queue, &self.instance_buffer, &self.instances);
     }
 }

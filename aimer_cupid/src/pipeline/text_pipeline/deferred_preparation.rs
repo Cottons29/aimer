@@ -125,16 +125,6 @@ pub(crate) fn prepare_ahead_of_view<T>(
     prepared
 }
 
-/// Whether the request at `index` was left for a later frame.
-///
-/// `postponed` is a flag per request, or empty when the frame postponed
-/// nothing — the common case, which is why an out-of-range index answers
-/// "no" instead of panicking.
-#[inline]
-pub(crate) fn is_postponed(postponed: &[bool], index: usize) -> bool {
-    postponed.get(index).copied().unwrap_or(false)
-}
-
 /// The share of a frame still available for work the frame does not owe the
 /// screen.
 ///
@@ -340,21 +330,6 @@ mod tests {
 
         assert_eq!(prepared, PREPARATION_CHUNK);
         assert_eq!(chunks, 2, "the run stops at the chunk that failed");
-    }
-
-    #[test]
-    fn a_frame_that_postponed_nothing_answers_for_every_request() {
-        assert!(!is_postponed(&[], 0));
-        assert!(!is_postponed(&[], 7));
-    }
-
-    #[test]
-    fn only_the_flagged_requests_are_postponed() {
-        let postponed = [false, true, false];
-
-        assert!(!is_postponed(&postponed, 0));
-        assert!(is_postponed(&postponed, 1));
-        assert!(!is_postponed(&postponed, 2));
     }
 
     #[test]

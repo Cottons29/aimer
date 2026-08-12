@@ -17,7 +17,9 @@ use swash::zeno::Format;
 
 pub(super) use self::glyph_run::{GlyphRun, glyph_runs};
 use super::text_layout::FontId;
-use crate::font::{FontFamily, FontRegistry, FontStyle, FontWeight, bundled_monospace_bytes};
+use crate::font::{
+    FontFamily, FontRegistry, FontStyle, FontWeight, TextLanguage, bundled_monospace_bytes,
+};
 use crate::text_pipeline::font_resolver::{
     FontData, FontRecord, SharedFontRecord, advance_width_from_face, advance_widths_from_face,
     font_ref, shared_fallback_chain,
@@ -25,8 +27,8 @@ use crate::text_pipeline::font_resolver::{
 use crate::text_pipeline::glyph_metrics::{self, GlyphMetrics};
 use crate::text_pipeline::glyph_outline::rasterize_outline_glyph;
 use crate::text_pipeline::system_fallback::{
-    SYSTEM_FALLBACK_ID_BASE, ScriptRequirement, fallback_by_id, fallback_for_codepoint,
-    script_probes,
+    SYSTEM_FALLBACK_ID_BASE, ScriptRequirement, WEIGHT_MATCH_TOLERANCE, fallback_by_id,
+    fallback_for_codepoint, script_probes,
 };
 
 /// Embedded primary font (Roboto) — covers Latin and common scripts.
@@ -69,6 +71,13 @@ pub struct RasterizedGlyph {
 /// *platform* draws carry a different weight, because those faces are
 /// variable and honor it — see [`GlyphRasterizer::platform_glyph_weight`].
 pub(crate) const NORMAL_GLYPH_WEIGHT: u16 = 400;
+
+/// OpenType weight from which text reads as emphasized.
+///
+/// Semibold is the first cut a reader takes for bold, and it is the weight
+/// Apple's own UI faces pair with bold text, so the threshold sits there
+/// rather than at `700`.
+pub(crate) const BOLD_WEIGHT_THRESHOLD: u16 = 600;
 
 /// Key for caching rasterized-shaped glyphs.
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
@@ -446,15 +455,6 @@ fn record_outlines_unreadable(record: &FontRecord) -> bool {
         return false;
     };
     face.glyf().is_err() && face.cff().is_err() && face.cff2().is_err()
-}
-
-/// The `OS/2` weight class `record`'s face was designed at.
-fn record_design_weight(record: &FontRecord) -> Option<u16> {
-    use skrifa::raw::TableProvider;
-
-    let data = record.data()?;
-    let face = font_ref(data.as_ref(), record.collection_index)?;
-    Some(face.os2().ok()?.us_weight_class())
 }
 
 #[inline]
@@ -852,10 +852,13 @@ impl GlyphRasterizer {
         family: FontFamily,
         weight: FontWeight,
         style: FontStyle,
+        language: Option<TextLanguage>,
     ) -> f32 {
         // Measuring must choose the same faces the shaping pass will, or the
         // width reported for a mixed CJK line belongs to a font nothing draws.
-        self.begin_script_run(text);
+        // The language travels with it for the same reason: a run drawn in a
+        // Chinese face may not be measured in a Japanese one.
+        self.begin_script_run(text, language);
         let width = text
             .chars()
             .map(|codepoint| {
@@ -952,12 +955,67 @@ impl GlyphRasterizer {
             self.ensure_fallbacks();
         }
 
-        let (font_id, glyph_id, supported) = self.font_and_glyph_for_codepoint(codepoint);
+        // The primary face answers before any weight is computed: it is one
+        // design serving every style, and asking what weight the run wants
+        // would resolve the companion face — a fallback lookup — for text
+        // that needs no fallback at all.
+        if let Some(glyph_id) = self.glyph_index_for_font(self.primary.id, codepoint) {
+            return GlyphKey::new(self.primary.id, glyph_id, font_size);
+        }
+
+        // The face is chosen at the weight the run wants its faces designed
+        // at, so an emphasized line lands on the family's bold cut instead of
+        // its regular one — see [`Self::effective_run_weight`].
+        let run_weight = self.effective_run_weight(weight);
+        let (font_id, glyph_id, supported) =
+            self.font_and_glyph_for_codepoint(codepoint, run_weight);
         if !supported {
             self.unsupported_codepoints.insert(codepoint);
         }
-        let glyph_weight = self.platform_glyph_weight(font_id, weight);
+        let glyph_weight = if self.face_needs_platform_raster(font_id) {
+            run_weight
+        } else {
+            NORMAL_GLYPH_WEIGHT
+        };
         GlyphKey::new(font_id, glyph_id, font_size).weighted(glyph_weight)
+    }
+
+    /// Reports whether `key`'s bitmap still has to be emboldened by hand to
+    /// read as text drawn at `requested`.
+    ///
+    /// Cupid answers a bold style with a bold *face* wherever one exists, and
+    /// falls back to drawing the glyph twice a fraction of an em apart when it
+    /// does not — a face carrying a single design has no other bold to give.
+    /// The choice is per glyph rather than per span because a single line
+    /// reaches its stroke by both routes at once: on iOS a Chinese ideograph
+    /// is drawn by the platform at the run's bold instance while the
+    /// characters beside it come from a face Cupid decodes, and emboldening
+    /// the whole line by hand left the ideograph bolder than its neighbours —
+    /// invisible at the regular weight, where nothing is drawn twice, and
+    /// plain the moment the text turned bold.
+    ///
+    /// A glyph counts as already emphasized when the weight it is *drawn* at
+    /// — the instance a platform face is rendered at, otherwise the design its
+    /// face was cut at — reaches `requested` within
+    /// [`WEIGHT_MATCH_TOLERANCE`], since families ship discrete cuts and a
+    /// request for `700` is commonly answered by a `600` semibold.
+    pub fn glyph_needs_synthetic_bold(&mut self, key: GlyphKey, requested: u16) -> bool {
+        requested >= BOLD_WEIGHT_THRESHOLD
+            && requested.saturating_sub(self.drawn_weight(key)) > WEIGHT_MATCH_TOLERANCE
+    }
+
+    /// The OpenType weight `key`'s bitmap is actually drawn at.
+    ///
+    /// A face only the platform can draw is variable and is rendered at the
+    /// instance the key names; every other face renders the one design it was
+    /// cut at, whatever weight asked for it.
+    fn drawn_weight(&mut self, key: GlyphKey) -> u16 {
+        if self.face_needs_platform_raster(key.font_id) {
+            key.weight
+        } else {
+            self.face_design_weight(key.font_id)
+                .unwrap_or(NORMAL_GLYPH_WEIGHT)
+        }
     }
 
     pub fn font_id_for_codepoint(&mut self, codepoint: char) -> FontId {
@@ -969,14 +1027,24 @@ impl GlyphRasterizer {
             self.ensure_fallbacks();
         }
 
-        let (font_id, _, supported) = self.font_and_glyph_for_codepoint(codepoint);
+        let (font_id, _, supported) =
+            self.font_and_glyph_for_codepoint(codepoint, NORMAL_GLYPH_WEIGHT);
         if !supported {
             self.unsupported_codepoints.insert(codepoint);
         }
         font_id
     }
 
-    fn font_and_glyph_for_codepoint(&mut self, codepoint: char) -> (FontId, u16, bool) {
+    /// The face and glyph drawing `codepoint` for a run designed at `weight`.
+    ///
+    /// `weight` is the OpenType `wght` the run's faces should be *designed*
+    /// at, not the style's raw weight: it already carries the companion
+    /// baseline — see [`Self::effective_run_weight`].
+    fn font_and_glyph_for_codepoint(
+        &mut self,
+        codepoint: char,
+        weight: u16,
+    ) -> (FontId, u16, bool) {
         if let Some(glyph_id) = self.glyph_index_for_font(self.primary.id, codepoint) {
             return (self.primary.id, glyph_id, true);
         }
@@ -988,20 +1056,38 @@ impl GlyphRasterizer {
         // to another face — one word drawn in two typefaces. A face is
         // therefore accepted only when it covers every character of the script
         // standing beside this one.
+        //
+        // A chain face is likewise only taken outright when it is designed
+        // near the weight the run asked for: the regular cut adopted for an
+        // earlier line must not shadow the bold one the platform would name,
+        // which is what left a bold `你好` drawn at the regular stroke while
+        // the `吗` beside it — drawn by the platform at the run's weight —
+        // came out bold.
         let requirement = self.requirement_for(codepoint);
-        if let Some(found) = self.chain_glyph_for_codepoint(codepoint, requirement) {
-            return (found.0, found.1, true);
+        let chain = self.chain_glyph_for_codepoint(codepoint, requirement, weight);
+        if let Some((font_id, glyph_id, true)) = chain {
+            return (font_id, glyph_id, true);
         }
-        if let Some((font_id, glyph_id)) = self.resolve_system_fallback(codepoint, requirement) {
+        if let Some((font_id, glyph_id)) =
+            self.resolve_system_fallback(codepoint, requirement, weight)
+            && (chain.is_none() || self.face_matches_weight(font_id, weight))
+        {
+            return (font_id, glyph_id, true);
+        }
+        // Nothing is designed at the requested weight after all: the face the
+        // chain already draws the run with keeps the line in one typeface,
+        // which matters more than a stroke no installed face offers.
+        if let Some((font_id, glyph_id, _)) = chain {
             return (font_id, glyph_id, true);
         }
         // No installed face covers the script whole — a system carrying only a
         // partial one. Drawing the character in a narrow face still beats a
         // blank box.
         if !requirement.is_empty()
-            && let Some(found) = self.chain_glyph_for_codepoint(codepoint, ScriptRequirement::EMPTY)
+            && let Some((font_id, glyph_id, _)) =
+                self.chain_glyph_for_codepoint(codepoint, ScriptRequirement::EMPTY, weight)
         {
-            return (found.0, found.1, true);
+            return (font_id, glyph_id, true);
         }
         (self.primary.id, 0, false)
     }
@@ -1014,8 +1100,16 @@ impl GlyphRasterizer {
     /// must come from the same Chinese face as its neighbours. Passes holding
     /// the whole string say so here, and every lookup until
     /// [`Self::end_script_run`] is judged against it.
-    pub fn begin_script_run(&mut self, text: &str) {
-        self.script_run = ScriptRequirement::from_run(text);
+    ///
+    /// `language` is what the characters themselves cannot say: Han is
+    /// unified, so a run of ideographs alone leaves Chinese and Japanese faces
+    /// equally entitled to it, and the run silently changes typeface the
+    /// moment a character only one of them carries is typed. Callers who know
+    /// the language — a text field knows the keyboard it is being typed on —
+    /// pass it here; see [`ScriptRequirement::from_run`] for how far it
+    /// reaches.
+    pub fn begin_script_run(&mut self, text: &str, language: Option<TextLanguage>) {
+        self.script_run = ScriptRequirement::from_run(text, language);
         self.run_companion = text.chars().find(|codepoint| is_kana(*codepoint));
     }
 
@@ -1057,6 +1151,20 @@ impl GlyphRasterizer {
         if !self.face_needs_platform_raster(font_id) {
             return NORMAL_GLYPH_WEIGHT;
         }
+        self.effective_run_weight(requested)
+    }
+
+    /// The `wght` value the run's faces should be designed and drawn at.
+    ///
+    /// This is the companion baseline of [`Self::run_companion_weight`] with
+    /// the style's distance from normal carried on top, and it answers two
+    /// questions with one number: which instance a variable platform face is
+    /// rendered at, and which cut of a family the fallback resolver picks for
+    /// the characters Cupid draws itself. Answering them separately is what
+    /// made a bold `你好吗` arrive in two strokes — the platform drew `吗` at
+    /// the bold instance while `你好` stayed on whatever regular face the
+    /// cascade had named.
+    fn effective_run_weight(&mut self, requested: FontWeight) -> u16 {
         let baseline = self
             .run_companion_weight()
             .or_else(|| self.default_companion_weight())
@@ -1103,6 +1211,15 @@ impl GlyphRasterizer {
     /// resolved once per rasterizer; `None` when no face covers kana or the
     /// covering face hides its `OS/2` table.
     fn default_companion_weight(&mut self) -> Option<u16> {
+        // With neither a chain nor the right to build one there is no
+        // companion to pair with: every glyph comes from the primary face, and
+        // probing for kana would only cost a lookup whose answer nothing
+        // reads. Faces handed to the rasterizer directly are a chain all the
+        // same, so on-demand resolution being off does not by itself leave the
+        // run without a companion.
+        if !self.enable_fallbacks && self.fallbacks.as_ref().is_none_or(Vec::is_empty) {
+            return None;
+        }
         if let Some(known) = self.default_companion_weight {
             return known;
         }
@@ -1122,7 +1239,7 @@ impl GlyphRasterizer {
         let weight = self
             .font_record_by_id(font_id)
             .cloned()
-            .and_then(|record| record_design_weight(&record));
+            .and_then(|record| record.design_weight());
         self.design_weight_cache.insert(font_id, weight);
         weight
     }
@@ -1144,12 +1261,22 @@ impl GlyphRasterizer {
     /// draws every character of `requirement`, which is what keeps a face
     /// covering half of a unified script from claiming it. An empty requirement
     /// accepts the first face mapping the codepoint.
+    ///
+    /// Adoption order decides among the faces that qualify, so the first one
+    /// designed near `weight` wins rather than the nearest one anywhere in the
+    /// chain: a face adopted for this very run must not lose the run to a
+    /// stranger whose `OS/2` weight happens to match more exactly. The third
+    /// element of the answer reports whether the face returned is designed
+    /// near `weight` at all; when it is not, the caller asks the platform for
+    /// a better cut before settling for it.
     fn chain_glyph_for_codepoint(
         &mut self,
         codepoint: char,
         requirement: ScriptRequirement,
-    ) -> Option<(FontId, u16)> {
+        weight: u16,
+    ) -> Option<(FontId, u16, bool)> {
         let fallback_count = self.fallbacks.as_ref().map_or(0, Vec::len);
+        let mut first: Option<(FontId, u16)> = None;
         for index in 0..fallback_count {
             let Some(font_id) = self
                 .fallbacks
@@ -1162,11 +1289,39 @@ impl GlyphRasterizer {
             let Some(glyph_id) = self.glyph_index_for_font(font_id, codepoint) else {
                 continue;
             };
-            if self.font_covers_script(font_id, requirement) {
-                return Some((font_id, glyph_id));
+            if !self.font_covers_script(font_id, requirement) {
+                continue;
             }
+            if self.face_matches_weight(font_id, weight) {
+                return Some((font_id, glyph_id, true));
+            }
+            first.get_or_insert((font_id, glyph_id));
         }
-        None
+        first.map(|(font_id, glyph_id)| (font_id, glyph_id, false))
+    }
+
+    /// Reports whether `font_id` can serve a run asking for `weight`.
+    ///
+    /// Families ship discrete cuts, so the test is proximity rather than
+    /// equality — see [`WEIGHT_MATCH_TOLERANCE`]. A face hiding its `OS/2`
+    /// table is read as regular, the weight it is drawn at everywhere else.
+    ///
+    /// A face only the platform can draw is exempt: it is variable — that is
+    /// why no third-party rasterizer reads it — and is *rendered* at the
+    /// instance its key names, so it serves every weight and none of them is
+    /// its design. Judging it by an `OS/2` weight it never publishes read it as
+    /// regular and refused it a bold run, which is what left a bold `你好`
+    /// drawn at the light stroke of whatever decodable face happened to cover
+    /// it while `你好吗` — where the simplified-only `吗` leaves no such face —
+    /// arrived properly bold.
+    fn face_matches_weight(&mut self, font_id: FontId, weight: u16) -> bool {
+        if self.face_needs_platform_raster(font_id) {
+            return true;
+        }
+        self.face_design_weight(font_id)
+            .unwrap_or(NORMAL_GLYPH_WEIGHT)
+            .abs_diff(weight)
+            <= WEIGHT_MATCH_TOLERANCE
     }
 
     /// Reports whether `font_id` draws every character `requirement` demands.
@@ -1199,11 +1354,12 @@ impl GlyphRasterizer {
         &mut self,
         codepoint: char,
         requirement: ScriptRequirement,
+        weight: u16,
     ) -> Option<(FontId, u16)> {
         if !self.enable_fallbacks || self.unsupported_codepoints.contains(&codepoint) {
             return None;
         }
-        let record = fallback_for_codepoint(codepoint, requirement)?;
+        let record = fallback_for_codepoint(codepoint, requirement, weight)?;
         let font_id = record.id;
         self.adopt_fallback(record);
         let glyph_id = self.glyph_index_for_font(font_id, codepoint)?;
@@ -1552,11 +1708,12 @@ impl GlyphRasterizer {
     /// Returns the pixel box of `key` — bitmap size, pen and baseline offsets
     /// and advance — rasterizing only when the glyph has never been measured.
     ///
-    /// Positioning is the only consumer that needs those numbers without the
-    /// coverage bitmap. Because the metrics depend solely on the glyph key,
-    /// they are shared process-wide, so a layout pass running on a freshly
-    /// created worker context — which is what every frame of a window resize
-    /// does — reuses them instead of re-rasterizing the whole page.
+    /// Shaping is the consumer: it bakes these numbers into every
+    /// [`ShapedGlyph`](super::text_layout::ShapedGlyph) so positioning reads
+    /// them as plain fields. Because the metrics depend solely on the glyph
+    /// key, they are shared process-wide — a shaping job running on a freshly
+    /// created worker context reuses what any earlier frame or sibling worker
+    /// measured, and publishes what it had to rasterize itself.
     pub(super) fn metrics_for_key(&mut self, key: GlyphKey, font_size: f32) -> GlyphMetrics {
         if let Some(glyph) = self.cache.get(&key) {
             return GlyphMetrics::from(glyph);
@@ -1565,17 +1722,25 @@ impl GlyphRasterizer {
             return metrics;
         }
 
-        GlyphMetrics::from(self.rasterize_key(key, font_size))
+        let glyph = self.rasterize_key(key, font_size);
+        glyph_metrics::store(key, glyph);
+        GlyphMetrics::from(glyph)
     }
 
     /// Rasterizes every glyph `text` needs and hands back its coverage.
     ///
     /// The glyphs are drawn in runs sharing a face, so a paragraph pays for
     /// reading and scaling each face once rather than once per character.
-    pub fn preload_text(&mut self, text: &str, font_size: f32) -> Vec<(GlyphKey, RasterizedGlyph)> {
+    pub fn preload_text(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        language: Option<TextLanguage>,
+    ) -> Vec<(GlyphKey, RasterizedGlyph)> {
         // A glyph preloaded under a different face than the one shaping picks is
-        // a wasted rasterization, so the warm-up sees the run too.
-        self.begin_script_run(text);
+        // a wasted rasterization, so the warm-up sees the run and its language
+        // too.
+        self.begin_script_run(text, language);
         let keys = text
             .chars()
             .filter(|codepoint| !codepoint.is_control())
@@ -2096,6 +2261,7 @@ mod tests {
     #[cfg(any(target_os = "ios", target_os = "macos"))]
     fn japanese_only_han_face(next_id: FontId) -> FontRecord {
         use crate::text_pipeline::apple_fonts::font_paths_for_codepoint;
+        use crate::text_pipeline::font_resolver::REGULAR_WEIGHT;
 
         let draws = |record: &FontRecord, codepoint: char| {
             record
@@ -2107,7 +2273,7 @@ mod tests {
                 .is_some_and(|glyph_id| glyph_id.to_u32() != 0)
         };
 
-        font_paths_for_codepoint('好')
+        font_paths_for_codepoint('好', REGULAR_WEIGHT)
             .into_iter()
             .flat_map(|path| {
                 (0..8).map(move |collection_index| FontRecord {
@@ -2164,7 +2330,7 @@ mod tests {
         let japanese_id = japanese.id;
         rasterizer.adopt_fallback(japanese);
 
-        rasterizer.begin_script_run("あの時は");
+        rasterizer.begin_script_run("あの時は", None);
         let faces: Vec<(char, FontId)> = "あの時は"
             .chars()
             .map(|codepoint| (codepoint, rasterizer.font_id_for_codepoint(codepoint)))
@@ -2187,7 +2353,7 @@ mod tests {
         let japanese_id = japanese.id;
         rasterizer.adopt_fallback(japanese);
 
-        rasterizer.begin_script_run("你好吗");
+        rasterizer.begin_script_run("你好吗", None);
         let faces: Vec<(char, FontId)> = "你好吗"
             .chars()
             .map(|codepoint| (codepoint, rasterizer.font_id_for_codepoint(codepoint)))
@@ -2228,8 +2394,9 @@ mod tests {
     #[cfg(any(target_os = "ios", target_os = "macos"))]
     fn platform_only_chinese_face(next_id: FontId) -> FontRecord {
         use crate::text_pipeline::apple_fonts::font_paths_for_codepoint;
+        use crate::text_pipeline::font_resolver::REGULAR_WEIGHT;
 
-        font_paths_for_codepoint('吗')
+        font_paths_for_codepoint('吗', REGULAR_WEIGHT)
             .into_iter()
             .flat_map(|path| {
                 (0..32).map(move |collection_index| FontRecord {
@@ -2254,8 +2421,9 @@ mod tests {
     #[cfg(any(target_os = "ios", target_os = "macos"))]
     fn decodable_kana_face(next_id: FontId) -> (FontRecord, u16) {
         use crate::text_pipeline::apple_fonts::font_paths_for_codepoint;
+        use crate::text_pipeline::font_resolver::REGULAR_WEIGHT;
 
-        font_paths_for_codepoint('に')
+        font_paths_for_codepoint('に', REGULAR_WEIGHT)
             .into_iter()
             .flat_map(|path| {
                 (0..8).map(move |collection_index| FontRecord {
@@ -2273,7 +2441,7 @@ mod tests {
                 if !maps_kana || maps_simplified || record_outlines_unreadable(&record) {
                     return None;
                 }
-                let weight = record_design_weight(&record)?;
+                let weight = record.design_weight()?;
                 Some((record, weight))
             })
             .expect("apple systems ship a decodable japanese face")
@@ -2287,14 +2455,18 @@ mod tests {
     #[cfg(any(target_os = "ios", target_os = "macos"))]
     #[test]
     fn a_platform_drawn_ideograph_matches_the_weight_of_the_kana_beside_it() {
-        let mut rasterizer = GlyphRasterizer::new();
+        // The chain is built by hand: `GlyphRasterizer::new()` shares a
+        // process-wide chain that a background warm-up fills asynchronously,
+        // so the companion could resolve to whichever system face happened to
+        // be loaded by then rather than to the face this test adopts.
+        let mut rasterizer = GlyphRasterizer::primary_only();
         let (kana, kana_weight) = decodable_kana_face(rasterizer.next_fallback_font_id());
         rasterizer.adopt_fallback(kana);
         let platform = platform_only_chinese_face(rasterizer.next_fallback_font_id());
         let platform_id = platform.id;
         rasterizer.adopt_fallback(platform);
 
-        rasterizer.begin_script_run("には你好吗");
+        rasterizer.begin_script_run("には你好吗", None);
         let key = rasterizer.glyph_key_for_codepoint('吗', 20.0);
         rasterizer.end_script_run();
 
@@ -2316,18 +2488,22 @@ mod tests {
     #[cfg(any(target_os = "ios", target_os = "macos"))]
     #[test]
     fn a_han_only_run_is_drawn_at_the_weight_kana_would_pair_with() {
-        let mut rasterizer = GlyphRasterizer::new();
+        // The chain is built by hand: `GlyphRasterizer::new()` shares a
+        // process-wide chain that a background warm-up fills asynchronously,
+        // so the companion could resolve to whichever system face happened to
+        // be loaded by then rather than to the face this test adopts.
+        let mut rasterizer = GlyphRasterizer::primary_only();
         let (kana, kana_weight) = decodable_kana_face(rasterizer.next_fallback_font_id());
         rasterizer.adopt_fallback(kana);
         let platform = platform_only_chinese_face(rasterizer.next_fallback_font_id());
         let platform_id = platform.id;
         rasterizer.adopt_fallback(platform);
 
-        rasterizer.begin_script_run("你好吗");
+        rasterizer.begin_script_run("你好吗", None);
         let han_only = rasterizer.glyph_key_for_codepoint('吗', 20.0);
         rasterizer.end_script_run();
 
-        rasterizer.begin_script_run("には你好吗");
+        rasterizer.begin_script_run("には你好吗", None);
         let beside_kana = rasterizer.glyph_key_for_codepoint('吗', 20.0);
         rasterizer.end_script_run();
 
@@ -2349,13 +2525,17 @@ mod tests {
     #[cfg(any(target_os = "ios", target_os = "macos"))]
     #[test]
     fn a_bold_run_addresses_the_platform_face_at_a_bold_instance() {
-        let mut rasterizer = GlyphRasterizer::new();
+        // The chain is built by hand: `GlyphRasterizer::new()` shares a
+        // process-wide chain that a background warm-up fills asynchronously,
+        // so the companion could resolve to whichever system face happened to
+        // be loaded by then rather than to the face this test adopts.
+        let mut rasterizer = GlyphRasterizer::primary_only();
         let (kana, kana_weight) = decodable_kana_face(rasterizer.next_fallback_font_id());
         rasterizer.adopt_fallback(kana);
         let platform = platform_only_chinese_face(rasterizer.next_fallback_font_id());
         rasterizer.adopt_fallback(platform);
 
-        rasterizer.begin_script_run("には你好吗");
+        rasterizer.begin_script_run("には你好吗", None);
         let key = rasterizer.glyph_key_for_family_codepoint(
             '吗',
             20.0,
@@ -2367,6 +2547,312 @@ mod tests {
 
         let expected = kana_weight + (FontWeight::Bold.numeric() - FontWeight::Normal.numeric());
         assert_eq!(key.weight, expected);
+    }
+
+    // The reported defect: bold `你好` arrived at the regular stroke while
+    // bold `你好吗` arrived bold, because only the platform-drawn `吗` was ever
+    // told what weight the run asked for — the faces Cupid decodes itself
+    // were chosen on coverage alone. Bold Han must reach a bolder stroke
+    // whether the simplified-only character stands beside it or not.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_bold_han_run_is_drawn_bolder_whatever_stands_beside_it() {
+        // A face Cupid decodes carries its stroke in its own design and is
+        // keyed at the neutral weight; a face only the platform draws carries
+        // it in the key instead. Both answer the same question.
+        let stroke = |run: &str, weight: FontWeight| {
+            let mut rasterizer = GlyphRasterizer::new();
+            rasterizer.begin_script_run(run, None);
+            let key = rasterizer.glyph_key_for_family_codepoint(
+                '你',
+                20.0,
+                FontFamily::SANS_SERIF,
+                weight,
+                FontStyle::Normal,
+            );
+            rasterizer.end_script_run();
+            if rasterizer.face_needs_platform_raster(key.font_id) {
+                key.weight
+            } else {
+                rasterizer
+                    .face_design_weight(key.font_id)
+                    .unwrap_or(NORMAL_GLYPH_WEIGHT)
+            }
+        };
+
+        let regular = stroke("你好", FontWeight::Normal);
+        for run in ["你好", "你好吗"] {
+            assert!(
+                stroke(run, FontWeight::Bold) > regular,
+                "bold {run:?} was drawn no bolder than regular text"
+            );
+        }
+    }
+
+    // A face only the platform can draw is variable — that is the whole reason
+    // no third-party rasterizer reads it — so it is *rendered* at the instance
+    // the key names and no design weight of its own can disqualify it. Judged
+    // by the `OS/2` weight it does not publish, such a face was read as regular
+    // and refused for a bold run, which handed the run back to whatever lighter
+    // face already covered it.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_face_only_the_platform_draws_answers_any_requested_weight() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let platform = platform_only_chinese_face(rasterizer.next_fallback_font_id());
+        let font_id = platform.id;
+        rasterizer.adopt_fallback(platform);
+
+        for weight in [300, NORMAL_GLYPH_WEIGHT, 600, FontWeight::Bold.numeric(), 900] {
+            assert!(
+                rasterizer.face_matches_weight(font_id, weight),
+                "a variable platform face was refused the weight {weight}"
+            );
+        }
+    }
+
+    // The reported defect in its final shape: bold `你好` came out at the light
+    // stroke while bold `你好吗` came out bold, because `吗` is simplified-only.
+    // With it in the run no Japanese face covers the script, the chain is empty
+    // and the platform face is taken — drawn at the run's bold instance.
+    // Without it the light Japanese cut covers the run, and the platform's bold
+    // answer was refused for publishing no matching design weight, so the run
+    // kept that light cut. One word must not change stroke because a character
+    // was typed beside it.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_bold_han_run_keeps_one_stroke_however_much_of_it_a_light_face_covers() {
+        // The chain is built by hand and system lookups stay off, so the
+        // assertion is about Cupid's choice rather than about which cascade the
+        // host machine's language prefers.
+        let drawn_weight = |run: &str, weight: FontWeight| {
+            let mut rasterizer = GlyphRasterizer::primary_only();
+            let japanese = japanese_only_han_face(rasterizer.next_fallback_font_id());
+            let japanese_id = japanese.id;
+            rasterizer.adopt_fallback(japanese);
+            let platform = platform_only_chinese_face(rasterizer.next_fallback_font_id());
+            rasterizer.adopt_fallback(platform);
+
+            rasterizer.begin_script_run(run, None);
+            let key = rasterizer.glyph_key_for_family_codepoint(
+                '好',
+                20.0,
+                FontFamily::SANS_SERIF,
+                weight,
+                FontStyle::Normal,
+            );
+            rasterizer.end_script_run();
+            (rasterizer.drawn_weight(key), key.font_id == japanese_id)
+        };
+
+        let (light, on_japanese) = drawn_weight("好", FontWeight::Normal);
+        assert!(
+            on_japanese,
+            "regular text must keep the decodable face covering it"
+        );
+        let (short_run, _) = drawn_weight("好", FontWeight::Bold);
+        let (long_run, _) = drawn_weight("好吗", FontWeight::Bold);
+        assert_eq!(
+            short_run, long_run,
+            "the run changed stroke because a simplified-only character was typed beside it"
+        );
+        assert!(
+            short_run > light,
+            "bold han was drawn at the light stroke of the face that happened to cover it"
+        );
+    }
+
+    // Emphasis a face already carries must not be applied a second time. The
+    // platform draws its private faces at the instance the key names, so a
+    // bold run's ideograph arrives genuinely bold; stamping the pipeline's
+    // synthetic stroke on top of it is what left `吗` heavier than the `你好`
+    // beside it, which no reader sees at the regular weight because the
+    // synthetic stroke only runs for bold.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_platform_glyph_drawn_bold_asks_for_no_synthetic_stroke() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let platform = platform_only_chinese_face(rasterizer.next_fallback_font_id());
+        let font_id = platform.id;
+        let glyph_id = platform
+            .glyph_index('吗')
+            .expect("the platform face was chosen for this character");
+        rasterizer.adopt_fallback(platform);
+
+        let bold = FontWeight::Bold.numeric();
+        let drawn_bold = GlyphKey::new(font_id, glyph_id, 20.0).weighted(bold);
+        assert!(
+            !rasterizer.glyph_needs_synthetic_bold(drawn_bold, bold),
+            "a glyph the platform already drew bold was emboldened twice"
+        );
+
+        let drawn_regular = GlyphKey::new(font_id, glyph_id, 20.0).weighted(NORMAL_GLYPH_WEIGHT);
+        assert!(
+            rasterizer.glyph_needs_synthetic_bold(drawn_regular, bold),
+            "a glyph drawn at the regular instance must still be emboldened"
+        );
+    }
+
+    // The reported conflict end to end: a field typed on a Chinese keyboard
+    // holds `你好`, every character of which Japanese writes too, so the run
+    // was covered by the Japanese face the system prefers — and jumped to a
+    // Chinese one the moment `吗`, written only in Chinese, was typed. Saying
+    // which language the text is in must settle the face before the word is
+    // finished, and settle it the same way whatever the reader types next.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_chinese_field_keeps_one_face_while_the_word_is_being_typed() {
+        // The chain is built by hand, with a Japanese face ahead of the
+        // Chinese one and system lookups off: that is the arrangement the
+        // defect needs, and it holds whatever cascade the host machine's
+        // language prefers.
+        let face_of = |run: &str, language| {
+            let mut rasterizer = GlyphRasterizer::primary_only();
+            let japanese = japanese_only_han_face(rasterizer.next_fallback_font_id());
+            let japanese_id = japanese.id;
+            rasterizer.adopt_fallback(japanese);
+            let chinese = platform_only_chinese_face(rasterizer.next_fallback_font_id());
+            rasterizer.adopt_fallback(chinese);
+
+            rasterizer.begin_script_run(run, language);
+            let face = rasterizer.glyph_key_for_family_codepoint(
+                '好',
+                20.0,
+                FontFamily::SANS_SERIF,
+                FontWeight::Normal,
+                FontStyle::Normal,
+            );
+            rasterizer.end_script_run();
+            (face.font_id, japanese_id)
+        };
+
+        let chinese = Some(TextLanguage::Chinese);
+        let (partial_word, japanese_id) = face_of("你好", chinese);
+        let (whole_word, _) = face_of("你好吗", chinese);
+        let (first_character, _) = face_of("你", chinese);
+        assert_eq!(
+            partial_word, whole_word,
+            "the word changed typeface when the next character was typed"
+        );
+        assert_eq!(
+            partial_word, first_character,
+            "the very first character must already sit on the face of the word"
+        );
+        assert_ne!(
+            partial_word, japanese_id,
+            "a field declared chinese was drawn in the japanese face covering the run"
+        );
+    }
+
+    // A Japanese field must not be dragged onto a Chinese face by the same
+    // rule: kanji-only words are ordinary Japanese, and they stay on the face
+    // the kana around them use.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_japanese_field_keeps_the_face_its_kana_use() {
+        let face_of = |run: &str, language| {
+            let mut rasterizer = GlyphRasterizer::primary_only();
+            let japanese = japanese_only_han_face(rasterizer.next_fallback_font_id());
+            rasterizer.adopt_fallback(japanese);
+            let chinese = platform_only_chinese_face(rasterizer.next_fallback_font_id());
+            rasterizer.adopt_fallback(chinese);
+
+            rasterizer.begin_script_run(run, language);
+            let face = rasterizer.glyph_key_for_family_codepoint(
+                '日',
+                20.0,
+                FontFamily::SANS_SERIF,
+                FontWeight::Normal,
+                FontStyle::Normal,
+            );
+            rasterizer.end_script_run();
+            face.font_id
+        };
+
+        let japanese = Some(TextLanguage::Japanese);
+        assert_eq!(
+            face_of("日本語", japanese),
+            face_of("日本語の", japanese),
+            "a kanji word changed typeface when kana were typed after it"
+        );
+    }
+
+    // The reported defect, seen from the pipeline: at the regular weight every
+    // character of a Chinese run rendered alike, and at bold they stopped
+    // agreeing, because the faces behind them reach the requested stroke by
+    // different routes. Whatever route each takes, the run must be emboldened
+    // by hand as a whole or not at all.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_bold_han_run_is_emboldened_by_hand_as_a_whole() {
+        let run = "你好吗";
+        let mut rasterizer = GlyphRasterizer::new();
+        rasterizer.begin_script_run(run, None);
+        let strokes: Vec<(char, bool)> = run
+            .chars()
+            .map(|codepoint| {
+                let key = rasterizer.glyph_key_for_family_codepoint(
+                    codepoint,
+                    20.0,
+                    FontFamily::SANS_SERIF,
+                    FontWeight::Bold,
+                    FontStyle::Normal,
+                );
+                (
+                    codepoint,
+                    rasterizer.glyph_needs_synthetic_bold(key, FontWeight::Bold.numeric()),
+                )
+            })
+            .collect();
+        rasterizer.end_script_run();
+
+        let (_, first) = strokes[0];
+        assert!(
+            strokes.iter().all(|(_, synthetic)| *synthetic == first),
+            "the run was emboldened unevenly: {strokes:?}"
+        );
+    }
+
+    // A face carrying one design cannot answer a bold style on its own, so the
+    // synthetic stroke stays: that is the only bold the primary face has.
+    #[test]
+    fn a_regular_cut_still_asks_for_the_synthetic_stroke_when_bold() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let key = rasterizer.glyph_key_for_family_codepoint(
+            'A',
+            20.0,
+            FontFamily::SANS_SERIF,
+            FontWeight::Bold,
+            FontStyle::Normal,
+        );
+        let design = rasterizer
+            .face_design_weight(key.font_id)
+            .unwrap_or(NORMAL_GLYPH_WEIGHT);
+        assert!(
+            design < BOLD_WEIGHT_THRESHOLD,
+            "this test needs a regular primary face, got a face designed at {design}"
+        );
+        assert!(rasterizer.glyph_needs_synthetic_bold(key, FontWeight::Bold.numeric()));
+    }
+
+    // Below the threshold nothing is emphasized, so no glyph may be drawn
+    // twice — the pass costs an instance per glyph and blurs the stroke.
+    #[test]
+    fn text_below_the_bold_threshold_is_never_drawn_twice() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let key = rasterizer.glyph_key_for_family_codepoint(
+            'A',
+            20.0,
+            FontFamily::SANS_SERIF,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        for weight in [100, NORMAL_GLYPH_WEIGHT, BOLD_WEIGHT_THRESHOLD - 1] {
+            assert!(
+                !rasterizer.glyph_needs_synthetic_bold(key, weight),
+                "unemphasized text at {weight} was drawn twice"
+            );
+        }
     }
 
     // Faces Cupid rasterizes itself render one design regardless of the
@@ -2413,12 +2899,12 @@ mod tests {
     }
 
     #[test]
-    fn positioning_already_measured_glyphs_does_not_rasterize_again() {
-        // Resizing a window re-lays out every visible string at a new wrapping
-        // width on every frame, and each layout job runs in a freshly created
-        // worker context whose bitmap cache starts empty. Positioning only
-        // needs the glyph's bitmap box, which depends solely on the glyph key,
-        // so a glyph measured once must never be rasterized again.
+    fn shaping_already_measured_glyphs_does_not_rasterize_again() {
+        // Shaping bakes each glyph's bitmap box into the shaped clusters, and
+        // each shaping job runs in a freshly created worker context whose
+        // bitmap cache starts empty. The box depends solely on the glyph key,
+        // so a glyph measured once — by any earlier frame or sibling worker —
+        // must never be rasterized again just to be measured.
         let mut renderer = GlyphRasterizer::new();
         let text = "Resize 你好 ជំរាបសួរ mixed العربية text";
         let shaped = shape_text_styled(
@@ -2428,19 +2914,29 @@ mod tests {
             FontFamily::SANS_SERIF,
             FontWeight::Normal,
             FontStyle::Normal,
+            None,
         );
-        let expected = layout_shaped_text(&mut renderer, &shaped, 0.0, 0.0, 200.0);
+        let expected = layout_shaped_text(&shaped, 0.0, 0.0, 200.0);
         assert!(!expected.is_empty());
 
         let mut worker = GlyphPreparationContext::new(renderer.font_snapshot());
         worker.rasterizer_mut().reset_rasterize_call_count();
-        let actual = layout_shaped_text(worker.rasterizer_mut(), &shaped, 0.0, 0.0, 200.0);
+        let reshaped = shape_text_styled(
+            worker.rasterizer_mut(),
+            text,
+            18.0,
+            FontFamily::SANS_SERIF,
+            FontWeight::Normal,
+            FontStyle::Normal,
+            None,
+        );
 
         assert_eq!(
             worker.rasterizer_mut().rasterize_call_count(),
             0,
-            "a resize frame must reuse glyph metrics instead of rasterizing again"
+            "a fresh worker must reuse published glyph metrics instead of rasterizing again"
         );
+        let actual = layout_shaped_text(&reshaped, 0.0, 0.0, 200.0);
         assert_eq!(actual.len(), expected.len());
         for (actual, expected) in actual.iter().zip(&expected) {
             assert_eq!(actual.glyph_key, expected.glyph_key);
@@ -2469,6 +2965,7 @@ mod tests {
             FontFamily::SANS_SERIF,
             FontWeight::Normal,
             FontStyle::Normal,
+            None,
         );
         let actual_shaped = shape_text_styled(
             worker.rasterizer_mut(),
@@ -2477,6 +2974,7 @@ mod tests {
             FontFamily::SANS_SERIF,
             FontWeight::Normal,
             FontStyle::Normal,
+            None,
         );
 
         assert_eq!(actual_shaped.font_size, expected_shaped.font_size);
@@ -2489,9 +2987,8 @@ mod tests {
             assert_eq!(actual.glyphs, expected.glyphs);
         }
 
-        let expected_layout = layout_shaped_text(&mut renderer, &expected_shaped, 0.0, 0.0, 80.0);
-        let actual_layout =
-            layout_shaped_text(worker.rasterizer_mut(), &actual_shaped, 0.0, 0.0, 80.0);
+        let expected_layout = layout_shaped_text(&expected_shaped, 0.0, 0.0, 80.0);
+        let actual_layout = layout_shaped_text(&actual_shaped, 0.0, 0.0, 80.0);
         assert_eq!(actual_layout.len(), expected_layout.len());
         for (actual, expected) in actual_layout.iter().zip(&expected_layout) {
             assert!(actual.glyph_key == expected.glyph_key);
@@ -2747,6 +3244,7 @@ mod tests {
             FontFamily::MONOSPACE,
             FontWeight::Normal,
             FontStyle::Normal,
+            None,
         );
         let shaped_width: f32 = rasterizer
             .shape_cluster_for_family(
@@ -2836,11 +3334,11 @@ mod tests {
     fn preload_text_is_idempotent_for_cached_glyphs() {
         let mut rasterizer = GlyphRasterizer::new();
 
-        rasterizer.preload_text("Hello", 16.0);
+        rasterizer.preload_text("Hello", 16.0, None);
         let cache_len = rasterizer.cache.len();
         let advance_cache_len = rasterizer.advance_cache.len();
 
-        rasterizer.preload_text("Hello", 16.0);
+        rasterizer.preload_text("Hello", 16.0, None);
 
         assert_eq!(rasterizer.cache.len(), cache_len);
         assert_eq!(rasterizer.advance_cache.len(), advance_cache_len);

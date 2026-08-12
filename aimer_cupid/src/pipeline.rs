@@ -1,3 +1,4 @@
+pub(crate) mod frame_upload;
 pub mod image_pipeline;
 pub mod rect_pipeline;
 pub mod svg_pipeline;

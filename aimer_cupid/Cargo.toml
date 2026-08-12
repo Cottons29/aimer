@@ -61,6 +61,9 @@ objc2-core-text = { workspace = true, features = [
     "CTFont",
     "CTFontDescriptor",
     "CTFontManager",
+    # Enables `kCTFontWeightTrait`, which is how a fallback query asks the
+    # cascade for the face a bold or light run should be drawn in.
+    "CTFontTraits",
     # Enables the glyph drawing and bounding-rect entry points, which take
     # Core Graphics types.
     "objc2-core-graphics",

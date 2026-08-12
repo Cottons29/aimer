@@ -5,6 +5,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
+use super::frame_upload::FrameUpload;
 use super::image_pipeline::InstanceBufferPolicy;
 use crate::renderer::SvgRenderItem;
 use crate::svg::{
@@ -83,6 +84,9 @@ pub struct SvgPipeline {
     instances: Vec<SvgInstance>,
     instance_buffer: wgpu::Buffer,
     instance_policy: InstanceBufferPolicy,
+    /// Skips the frame's instance upload when the buffer already holds the
+    /// frame's exact bytes — the common case for a static scene.
+    upload: FrameUpload<SvgInstance>,
     gpu_mesh_bytes: u64,
     usage_clock: u64,
     max_gpu_mesh_bytes: u64,
@@ -149,6 +153,7 @@ impl SvgPipeline {
             instances: Vec::new(),
             instance_buffer,
             instance_policy: InstanceBufferPolicy::new(Self::INITIAL_INSTANCE_CAPACITY),
+            upload: FrameUpload::new(),
             gpu_mesh_bytes: 0,
             usage_clock: 0,
             max_gpu_mesh_bytes: Self::MAX_GPU_MESH_BYTES,
@@ -207,14 +212,12 @@ impl SvgPipeline {
         self.instance_policy.record_usage(self.instances.len());
         if old_capacity != self.instance_policy.capacity() {
             self.instance_buffer = create_instance_buffer(device, self.instance_policy.capacity());
+            self.upload.invalidate();
         }
-        if !self.instances.is_empty() {
-            queue.write_buffer(
-                &self.instance_buffer,
-                0,
-                bytemuck::cast_slice(&self.instances),
-            );
-        }
+        // One write for the whole frame, skipped when the buffer already
+        // holds these exact bytes (a static scene).
+        self.upload
+            .upload(queue, &self.instance_buffer, &self.instances);
         self.evict_gpu_meshes(&frame_meshes);
     }
 

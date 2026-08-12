@@ -48,7 +48,7 @@ fn main() {
         let mut rasterizer = GlyphRasterizer::new();
         let start = Instant::now();
         for size in SIZES {
-            black_box(rasterizer.preload_text(black_box(&text), *size));
+            black_box(rasterizer.preload_text(black_box(&text), *size, None));
         }
         runs += start.elapsed();
     }

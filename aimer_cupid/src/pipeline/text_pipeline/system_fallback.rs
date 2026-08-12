@@ -32,8 +32,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, RwLock};
 
+use crate::font::TextLanguage;
 use crate::text_layout::FontId;
-use crate::text_pipeline::font_resolver::FontRecord;
+use crate::text_pipeline::font_resolver::{FontRecord, REGULAR_WEIGHT};
 
 /// First font id handed out to a dynamically resolved system face.
 ///
@@ -41,6 +42,26 @@ use crate::text_pipeline::font_resolver::FontRecord;
 /// registrations continue from there, so a high base keeps the two ranges from
 /// ever meeting. It stays below the reserved monospace id (`0x7fff_fffe`).
 pub(crate) const SYSTEM_FALLBACK_ID_BASE: FontId = 0x4000_0000;
+
+/// How far a face's design weight may sit from the requested one and still be
+/// treated as the face that weight asked for.
+///
+/// Families ship discrete cuts, so an exact hit is the exception: a request for
+/// `700` on a family topping out at `Semibold` has to accept `600`. One step of
+/// the `wght` scale is wide enough for that neighbour and still narrow enough
+/// that `Regular` never answers for a bold run.
+pub(crate) const WEIGHT_MATCH_TOLERANCE: u16 = 100;
+
+/// How far `record`'s design sits from the weight a run asked for.
+///
+/// A face hiding its `OS/2` table is read as regular: that is the weight a
+/// face without a declared one is drawn at everywhere else in the pipeline.
+fn weight_distance(record: &FontRecord, requested: u16) -> u16 {
+    record
+        .design_weight()
+        .unwrap_or(REGULAR_WEIGHT)
+        .abs_diff(requested)
+}
 
 /// Where a resolved face's bytes come from.
 #[derive(Clone)]
@@ -78,8 +99,9 @@ struct FallbackStore {
     /// so an unresolvable codepoint costs one platform query in total. Keyed by
     /// the requirement as well, because the same character resolves to
     /// different faces depending on the script around it — see
-    /// [`ScriptRequirement`].
-    ids_by_codepoint: HashMap<(char, u64), Option<FontId>>,
+    /// [`ScriptRequirement`] — and by the requested weight, because a bold run
+    /// and a regular one want different faces of the same family.
+    ids_by_codepoint: HashMap<(char, u64, u16), Option<FontId>>,
 }
 
 impl FallbackStore {
@@ -135,14 +157,21 @@ static STORE: LazyLock<RwLock<FallbackStore>> =
 /// codepoint it covers, and a codepoint the platform cannot serve is
 /// remembered as unresolvable so it is never queried again.
 ///
+/// `weight` is the OpenType `wght` the run is drawn at, and it selects among
+/// the family's cuts: a bold line of Han asks for the `Semibold`/`W6` face
+/// Apple pairs with bold UI text instead of the regular one emboldened by
+/// hand. Every weight keeps its own answer, so one run cannot decide the
+/// stroke of the next.
+///
 /// Returns `None` when the platform exposes no per-codepoint font matching
 /// (every target except macOS and iOS today), or when no installed face covers
 /// `codepoint`.
 pub(crate) fn fallback_for_codepoint(
     codepoint: char,
     requirement: ScriptRequirement,
+    weight: u16,
 ) -> Option<FontRecord> {
-    let cache_key = (codepoint, requirement.fingerprint());
+    let cache_key = (codepoint, requirement.fingerprint(), weight);
     if let Ok(store) = STORE.read()
         && let Some(cached) = store.ids_by_codepoint.get(&cache_key)
     {
@@ -158,37 +187,60 @@ pub(crate) fn fallback_for_codepoint(
     // [`ScriptRequirement`] — and only if this crate decodes its glyphs itself:
     // a platform-only face admitted earlier as a last resort must not shadow a
     // decodable face a fresh resolution would find.
+    // A known face is also only reused when it is designed near the weight the
+    // run asked for: the regular cut adopted for an earlier line would
+    // otherwise shadow the bold one a fresh resolution finds, and the emphasis
+    // would be lost to whichever run happened to be drawn first.
     let probes = requirement.as_slice();
     let known: Vec<FontRecord> = STORE.read().ok()?.records.clone();
-    let decodes_script = |record: &FontRecord| {
+    let decodes_script = |record: &&FontRecord| {
         record_decodes_codepoint(record, codepoint) && record_decodes_all(record, probes)
     };
-    if let Some(record) = known.iter().find(|record| decodes_script(record)).cloned() {
-        STORE
-            .write()
-            .ok()?
-            .ids_by_codepoint
-            .insert(cache_key, Some(record.id));
-        return Some(record);
+    let reusable = known
+        .iter()
+        .filter(decodes_script)
+        .min_by_key(|record| weight_distance(record, weight))
+        .filter(|record| weight_distance(record, weight) <= WEIGHT_MATCH_TOLERANCE)
+        .cloned();
+    if let Some(record) = reusable {
+        return settle(cache_key, Some(record.id));
     }
 
     // Resolution touches the file system, so it happens outside the lock. A
     // concurrent resolver may win the race; interning is idempotent, so the
     // duplicate work is wasted but never observable.
-    let resolved = resolve_face_for_codepoint(codepoint, probes);
+    let resolved = resolve_face_for_codepoint(codepoint, probes, weight);
 
+    let font_id = {
+        let mut store = STORE.write().ok()?;
+        resolved.map(|face| store.intern(face)).or_else(|| {
+            // Nothing covers the script as a whole — a platform that offers no
+            // per-character matching, or a system carrying only a partial face.
+            // Drawing the character in a narrow face still beats a blank box.
+            known
+                .iter()
+                .find(|record| record_draws_codepoint(record, codepoint))
+                .map(|record| record.id)
+        })
+    };
+    settle(cache_key, font_id)
+}
+
+/// Records `font_id` as the answer to `cache_key`, keeping any answer already
+/// there, and hands back the face every caller of that key will see.
+///
+/// Two threads missing the same key resolve side by side — the lookup reads
+/// the file system and deliberately does so outside the lock — and they can
+/// legitimately reach different faces: one reuses a face interned in the
+/// meantime while the other asks the platform. Letting the later writer
+/// overwrite the earlier would leave the two callers drawing the same
+/// character in different faces, which is exactly the split a run must never
+/// show. The first answer therefore stands and the loser adopts it; the
+/// duplicated work is wasted but never observable.
+fn settle(cache_key: (char, u64, u16), font_id: Option<FontId>) -> Option<FontRecord> {
     let mut store = STORE.write().ok()?;
-    let font_id = resolved.map(|face| store.intern(face)).or_else(|| {
-        // Nothing covers the script as a whole — a platform that offers no
-        // per-character matching, or a system carrying only a partial face.
-        // Drawing the character in a narrow face still beats a blank box.
-        known
-            .iter()
-            .find(|record| record_draws_codepoint(record, codepoint))
-            .map(|record| record.id)
-    });
-    store.ids_by_codepoint.insert(cache_key, font_id);
-    store.record_by_id(font_id?).cloned()
+    let settled = *store.ids_by_codepoint.entry(cache_key).or_insert(font_id);
+    store.record_by_id(settled?).cloned()
 }
 
 /// Returns a face previously handed out by [`fallback_for_codepoint`].
@@ -281,15 +333,47 @@ impl ScriptRequirement {
         Self::from_chars(script_probes(codepoint).iter().copied())
     }
 
-    /// The distinct characters of `run` belonging to a partly covered script.
+    /// The characters a face must draw to serve `run`, written in `language`.
     ///
-    /// Empty when `run` holds none, which leaves every other script on the
-    /// plain per-character path.
-    pub(crate) fn from_run(run: &str) -> Self {
-        Self::from_chars(
+    /// The run's own characters come first in the sense that matters: a face
+    /// has to draw every ideograph actually being rendered. What they cannot
+    /// settle is *which* language's ideographs those are, because Han is
+    /// unified — `你好` is drawn by a Japanese face as readily as by a Chinese
+    /// one, and stays on whichever the platform's cascade prefers until `吗` is
+    /// typed and no Japanese face covers the run any more. That is the moment a
+    /// word visibly changes typeface mid-typing.
+    ///
+    /// `language` closes that gap with knowledge the text does not carry — on
+    /// iOS the language of the keyboard the field is being typed on. A Chinese
+    /// run therefore also demands [`script_probes`]' simplified-only samples,
+    /// which no Japanese face carries, so the very first character already
+    /// lands on the face the whole word will end on.
+    ///
+    /// The hint never overrules the text: a run carrying kana is Japanese and a
+    /// run carrying hangul is Korean whichever keyboard produced them, and
+    /// neither demands Chinese coverage. Without a hint and without such
+    /// evidence the run is judged on its own characters, which is what every
+    /// caller that knows nothing about the text gets.
+    ///
+    /// Empty when `run` holds no partly covered script, which leaves every
+    /// other script on the plain per-character path.
+    pub(crate) fn from_run(run: &str, language: Option<TextLanguage>) -> Self {
+        let ideographs = || {
             run.chars()
-                .filter(|codepoint| !script_probes(*codepoint).is_empty()),
-        )
+                .filter(|codepoint| !script_probes(*codepoint).is_empty())
+        };
+        let Some(first) = ideographs().next() else {
+            return Self::EMPTY;
+        };
+
+        // The samples are pushed ahead of the run's own characters so a run
+        // longer than the inline array keeps the part that decides the script.
+        let mut requirement = Self::EMPTY;
+        if written_language(run).or(language) == Some(TextLanguage::Chinese) {
+            requirement.extend(script_probes(first).iter().copied());
+        }
+        requirement.extend(ideographs());
+        requirement
     }
 
     /// Reports whether any face satisfies this requirement.
@@ -320,18 +404,43 @@ impl ScriptRequirement {
     /// Collects distinct characters, stopping at [`Self::CAPACITY`].
     fn from_chars(source: impl Iterator<Item = char>) -> Self {
         let mut requirement = Self::EMPTY;
-        for codepoint in source {
-            if requirement.len == Self::CAPACITY {
-                break;
-            }
-            if requirement.as_slice().contains(&codepoint) {
-                continue;
-            }
-            requirement.chars[requirement.len] = codepoint;
-            requirement.len += 1;
-        }
+        requirement.extend(source);
         requirement
     }
+
+    /// Appends the distinct characters of `source`, stopping at
+    /// [`Self::CAPACITY`].
+    fn extend(&mut self, source: impl Iterator<Item = char>) {
+        for codepoint in source {
+            if self.len == Self::CAPACITY {
+                break;
+            }
+            if self.as_slice().contains(&codepoint) {
+                continue;
+            }
+            self.chars[self.len] = codepoint;
+            self.len += 1;
+        }
+    }
+}
+
+/// The language `run` writes itself in, when its own characters say so.
+///
+/// Kana and hangul are written by one language each, so an ideograph standing
+/// among them belongs to that language's word and must keep the face its
+/// neighbours use. Han alone says nothing — that is the question a caller's
+/// hint answers.
+fn written_language(run: &str) -> Option<TextLanguage> {
+    run.chars().find_map(|codepoint| match codepoint as u32 {
+        // Hiragana, katakana, the katakana phonetic extensions and halfwidth
+        // katakana.
+        0x3040..=0x30FF | 0x31F0..=0x31FF | 0xFF66..=0xFF9D => Some(TextLanguage::Japanese),
+        // Hangul syllables, jamo, and the compatibility jamo block.
+        0x1100..=0x11FF | 0x3130..=0x318F | 0xA960..=0xA97F | 0xAC00..=0xD7FF => {
+            Some(TextLanguage::Korean)
+        }
+        _ => None,
+    })
 }
 
 /// Reports whether `record` can draw every character of `required`.
@@ -436,7 +545,11 @@ fn platform_draws_glyph(_record: &FontRecord, _glyph_id: u16) -> bool {
 /// faces do not match the stroke weight of the faces Cupid draws in the same
 /// line, so it is a last resort, never a preference.
 #[cfg(any(target_os = "ios", target_os = "macos"))]
-fn resolve_face_for_codepoint(codepoint: char, probes: &[char]) -> Option<ResolvedFace> {
+fn resolve_face_for_codepoint(
+    codepoint: char,
+    probes: &[char],
+    weight: u16,
+) -> Option<ResolvedFace> {
     use crate::text_pipeline::apple_fonts::{
         SystemFaceSource, fallback_font_path_for_probes, font_paths_for_codepoint,
         language_fallback_sources,
@@ -459,7 +572,7 @@ fn resolve_face_for_codepoint(codepoint: char, probes: &[char]) -> Option<Resolv
             candidates.push(FaceSource::File(path));
         }
     };
-    for source in language_fallback_sources(&required) {
+    for source in language_fallback_sources(&required, weight) {
         match source {
             SystemFaceSource::File(path) => push_path(&mut candidates, path),
             SystemFaceSource::Data {
@@ -475,11 +588,11 @@ fn resolve_face_for_codepoint(codepoint: char, probes: &[char]) -> Option<Resolv
         // Asked about the whole script at once, the platform proposes a face
         // covering all of it rather than the one its language prefers for this
         // single character.
-        if let Some(path) = fallback_font_path_for_probes(&required) {
+        if let Some(path) = fallback_font_path_for_probes(&required, weight) {
             push_path(&mut candidates, path);
         }
     }
-    for path in font_paths_for_codepoint(codepoint) {
+    for path in font_paths_for_codepoint(codepoint, weight) {
         push_path(&mut candidates, path);
     }
 
@@ -491,7 +604,7 @@ fn resolve_face_for_codepoint(codepoint: char, probes: &[char]) -> Option<Resolv
         for accept_platform in [false, true] {
             if let Some(face) = candidates
                 .iter()
-                .find_map(|source| face_drawing(source, &required, accept_platform))
+                .find_map(|source| face_drawing(source, &required, weight, accept_platform))
             {
                 return Some(face);
             }
@@ -501,7 +614,7 @@ fn resolve_face_for_codepoint(codepoint: char, probes: &[char]) -> Option<Resolv
     for accept_platform in [false, true] {
         if let Some(face) = candidates
             .iter()
-            .find_map(|source| face_drawing(source, &[codepoint], accept_platform))
+            .find_map(|source| face_drawing(source, &[codepoint], weight, accept_platform))
         {
             return Some(face);
         }
@@ -522,6 +635,7 @@ fn resolve_face_for_codepoint(codepoint: char, probes: &[char]) -> Option<Resolv
 fn face_drawing(
     source: &FaceSource,
     required: &[char],
+    weight: u16,
     accept_platform: bool,
 ) -> Option<ResolvedFace> {
     match source {
@@ -531,15 +645,19 @@ fn face_drawing(
             // record built from it re-maps the file lazily through
             // `FontRecord::data`.
             let data = unsafe { memmap2::Mmap::map(&file).ok()? };
-            let (collection_index, is_color) =
-                face_in_data_drawing(data.as_ref(), required, |collection_index, glyph_id| {
+            let (collection_index, is_color) = face_in_data_drawing(
+                data.as_ref(),
+                required,
+                weight,
+                |collection_index, glyph_id| {
                     accept_platform
                         && crate::text_pipeline::core_text_raster::draws_glyph(
                             path,
                             collection_index,
                             glyph_id,
                         )
-                })?;
+                },
+            )?;
             Some(ResolvedFace {
                 source: source.clone(),
                 collection_index,
@@ -548,7 +666,7 @@ fn face_drawing(
         }
         FaceSource::Memory { bytes, .. } => {
             let (collection_index, is_color) =
-                face_in_data_drawing(bytes.as_ref(), required, |_, _| false)?;
+                face_in_data_drawing(bytes.as_ref(), required, weight, |_, _| false)?;
             Some(ResolvedFace {
                 source: source.clone(),
                 collection_index,
@@ -558,7 +676,14 @@ fn face_drawing(
     }
 }
 
-/// Returns the first face of `data` whose glyphs cover all of `required`.
+/// Returns the face of `data` covering `required` that `weight` asked for.
+///
+/// A font file is not one face: a collection such as `PingFang.ttc` holds
+/// every cut of the family, and taking the first one that covers the text
+/// always yields the lightest — which is how a bold line of Han ended up
+/// drawn at the regular stroke. Among the covering faces the one designed
+/// closest to `weight` wins, ties going to the earlier face so a request at
+/// the regular weight keeps naming the face it always did.
 ///
 /// A glyph qualifies through a color strike, an outline with a non-empty
 /// bounding box, or — for glyph data this crate cannot decode — through
@@ -567,10 +692,12 @@ fn face_drawing(
 fn face_in_data_drawing(
     data: &[u8],
     required: &[char],
+    weight: u16,
     platform_draws: impl Fn(u32, u16) -> bool,
 ) -> Option<(u32, bool)> {
     use skrifa::MetadataProvider;
     use skrifa::instance::{LocationRef, Size};
+    use skrifa::raw::TableProvider;
 
     use crate::text_pipeline::font_resolver::font_ref;
 
@@ -578,34 +705,44 @@ fn face_in_data_drawing(
         skrifa::raw::FileRef::Collection(collection) => collection.len(),
         skrifa::raw::FileRef::Font(_) => 1,
     };
-    (0..face_count).find_map(|collection_index| {
-        let face = font_ref(data, collection_index)?;
-        let is_color = FontRecord::face_is_color(&face);
-        let draws = |codepoint: &char| {
-            let Some(glyph_id) = face.charmap().map(*codepoint) else {
-                return false;
+    (0..face_count)
+        .filter_map(|collection_index| {
+            let face = font_ref(data, collection_index)?;
+            let is_color = FontRecord::face_is_color(&face);
+            let draws = |codepoint: &char| {
+                let Some(glyph_id) = face.charmap().map(*codepoint) else {
+                    return false;
+                };
+                if glyph_id.to_u32() == 0 {
+                    return false;
+                }
+                let has_outline = face
+                    .glyph_metrics(Size::unscaled(), LocationRef::default())
+                    .bounds(glyph_id)
+                    .is_some();
+                is_color
+                    || has_outline
+                    || platform_draws(collection_index, glyph_id.to_u32() as u16)
             };
-            if glyph_id.to_u32() == 0 {
-                return false;
+            if !required.iter().all(draws) {
+                return None;
             }
-            let has_outline = face
-                .glyph_metrics(Size::unscaled(), LocationRef::default())
-                .bounds(glyph_id)
-                .is_some();
-            is_color
-                || has_outline
-                || platform_draws(collection_index, glyph_id.to_u32() as u16)
-        };
-        if !required.iter().all(draws) {
-            return None;
-        }
-        Some((collection_index, is_color))
-    })
+            let design = face
+                .os2()
+                .map_or(REGULAR_WEIGHT, |os2| os2.us_weight_class());
+            Some((collection_index, is_color, design.abs_diff(weight)))
+        })
+        .min_by_key(|(collection_index, _, distance)| (*distance, *collection_index))
+        .map(|(collection_index, is_color, _)| (collection_index, is_color))
 }
 
 /// Platforms without per-codepoint font matching keep the pre-built chain.
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
-fn resolve_face_for_codepoint(_codepoint: char, _probes: &[char]) -> Option<ResolvedFace> {
+fn resolve_face_for_codepoint(
+    _codepoint: char,
+    _probes: &[char],
+    _weight: u16,
+) -> Option<ResolvedFace> {
     None
 }
 
@@ -613,10 +750,14 @@ fn resolve_face_for_codepoint(_codepoint: char, _probes: &[char]) -> Option<Reso
 mod tests {
     use super::*;
 
+    /// The `wght` value an emphasized run asks its faces to be designed at.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    const BOLD_WEIGHT: u16 = 700;
+
     #[cfg(any(target_os = "ios", target_os = "macos"))]
     #[test]
     fn resolves_a_codepoint_no_probe_group_covers() {
-        let record = fallback_for_codepoint('！', ScriptRequirement::probes('！'))
+        let record = fallback_for_codepoint('！', ScriptRequirement::probes('！'), REGULAR_WEIGHT)
             .expect("fullwidth punctuation must resolve");
         assert!(record.id >= SYSTEM_FALLBACK_ID_BASE);
         assert!(matches!(record.glyph_index('！'), Some(glyph_id) if glyph_id != 0));
@@ -626,13 +767,14 @@ mod tests {
     #[test]
     fn assigns_one_stable_id_per_face() {
         let requirement = ScriptRequirement::probes('你');
-        let first = fallback_for_codepoint('你', requirement).expect("han characters must resolve");
-        let again =
-            fallback_for_codepoint('你', requirement).expect("cached lookups must resolve too");
+        let first = fallback_for_codepoint('你', requirement, REGULAR_WEIGHT)
+            .expect("han characters must resolve");
+        let again = fallback_for_codepoint('你', requirement, REGULAR_WEIGHT)
+            .expect("cached lookups must resolve too");
         assert_eq!(first.id, again.id);
 
-        let shared_face =
-            fallback_for_codepoint('好', requirement).expect("han characters must resolve");
+        let shared_face = fallback_for_codepoint('好', requirement, REGULAR_WEIGHT)
+            .expect("han characters must resolve");
         assert_eq!(
             shared_face.id, first.id,
             "codepoints served by the same file must share one id"
@@ -642,7 +784,7 @@ mod tests {
     #[cfg(any(target_os = "ios", target_os = "macos"))]
     #[test]
     fn exposes_resolved_faces_by_id_for_rasterizing_workers() {
-        let record = fallback_for_codepoint('한', ScriptRequirement::probes('한'))
+        let record = fallback_for_codepoint('한', ScriptRequirement::probes('한'), REGULAR_WEIGHT)
             .expect("hangul must resolve");
         let by_id = fallback_by_id(record.id).expect("a resolved face must be addressable by id");
         assert_eq!(by_id.id, record.id);
@@ -656,7 +798,7 @@ mod tests {
     #[test]
     fn a_japanese_run_requires_only_the_ideographs_it_contains() {
         assert_eq!(
-            ScriptRequirement::from_run("あの時は").as_slice(),
+            ScriptRequirement::from_run("あの時は", None).as_slice(),
             &['時'],
             "a japanese run may not demand chinese-only coverage"
         );
@@ -665,30 +807,99 @@ mod tests {
     #[test]
     fn a_chinese_run_requires_every_ideograph_it_contains() {
         assert_eq!(
-            ScriptRequirement::from_run("你好吗").as_slice(),
+            ScriptRequirement::from_run("你好吗", None).as_slice(),
             &['你', '好', '吗'],
             "a face drawing half of a chinese word may not be accepted for it"
+        );
+    }
+
+    // The reported conflict: `你好` is written in Japanese too, so a run holding
+    // nothing else is covered by a Japanese face and keeps it — until `吗` is
+    // typed, no Japanese face covers the run any more, and the word jumps to
+    // PingFang mid-typing. A run known to be Chinese must demand the samples no
+    // Japanese face carries from the first character on.
+    #[test]
+    fn a_chinese_run_of_shared_han_demands_the_samples_only_chinese_faces_carry() {
+        let requirement = ScriptRequirement::from_run("你好", Some(TextLanguage::Chinese));
+        for drawn in ['你', '好'] {
+            assert!(
+                requirement.as_slice().contains(&drawn),
+                "the characters drawn must stay part of the requirement: {requirement:?}"
+            );
+        }
+        for sample in script_probes('你') {
+            assert!(
+                requirement.as_slice().contains(sample),
+                "a chinese run accepted a face without {sample:?}: {requirement:?}"
+            );
+        }
+    }
+
+    // Kanji standing alone is ordinary Japanese, and demanding Chinese-only
+    // samples for it would take the whole interface off the Japanese face.
+    #[test]
+    fn a_japanese_run_of_shared_han_keeps_only_its_own_ideographs() {
+        assert_eq!(
+            ScriptRequirement::from_run("日本語", Some(TextLanguage::Japanese)).as_slice(),
+            &['日', '本', '語'],
+            "a japanese run may not demand chinese-only coverage"
+        );
+    }
+
+    // The language is a hint about what the characters cannot say, so the
+    // moment they can say it themselves the hint is worth nothing: kana in the
+    // run is Japanese whichever keyboard produced it.
+    #[test]
+    fn the_characters_overrule_the_language_they_were_typed_in() {
+        assert_eq!(
+            ScriptRequirement::from_run("あの時は", Some(TextLanguage::Chinese)).as_slice(),
+            &['時'],
+            "kana in the run must settle the script by itself"
+        );
+        assert_eq!(
+            ScriptRequirement::from_run("한글漢字", Some(TextLanguage::Chinese)).as_slice(),
+            &['漢', '字'],
+            "hangul in the run must settle the script by itself"
+        );
+    }
+
+    // Korean writes hanja with its own faces and shares nothing with the
+    // Chinese samples, so a Korean run is judged on its own characters.
+    #[test]
+    fn a_korean_run_keeps_only_its_own_ideographs() {
+        assert_eq!(
+            ScriptRequirement::from_run("漢字", Some(TextLanguage::Korean)).as_slice(),
+            &['漢', '字']
         );
     }
 
     #[test]
     fn runs_without_ideographs_require_nothing() {
         for run in ["Hello, world!", "あいうえお", "한글", "😀"] {
-            assert!(
-                ScriptRequirement::from_run(run).is_empty(),
-                "{run:?} holds no script a face may cover in part"
-            );
+            for language in [
+                None,
+                Some(TextLanguage::Chinese),
+                Some(TextLanguage::Japanese),
+                Some(TextLanguage::Korean),
+            ] {
+                assert!(
+                    ScriptRequirement::from_run(run, language).is_empty(),
+                    "{run:?} holds no script a face may cover in part"
+                );
+            }
         }
     }
 
     #[test]
     fn a_requirement_keeps_distinct_characters_within_its_capacity() {
-        let repeated = ScriptRequirement::from_run("時時時好");
+        let repeated = ScriptRequirement::from_run("時時時好", None);
         assert_eq!(repeated.as_slice(), &['時', '好']);
 
         let long: String = ('\u{4e00}'..='\u{4e20}').collect();
         assert_eq!(
-            ScriptRequirement::from_run(&long).as_slice().len(),
+            ScriptRequirement::from_run(&long, Some(TextLanguage::Chinese))
+                .as_slice()
+                .len(),
             ScriptRequirement::CAPACITY,
             "a long run must stay within the inline array"
         );
@@ -697,18 +908,23 @@ mod tests {
     #[test]
     fn requirements_are_fingerprinted_by_their_characters() {
         assert_eq!(
-            ScriptRequirement::from_run("あの時は").fingerprint(),
-            ScriptRequirement::from_run("時").fingerprint(),
+            ScriptRequirement::from_run("あの時は", None).fingerprint(),
+            ScriptRequirement::from_run("時", None).fingerprint(),
             "the same demanded characters must share one cache key"
         );
         assert_ne!(
-            ScriptRequirement::from_run("時").fingerprint(),
-            ScriptRequirement::from_run("你好吗").fingerprint(),
+            ScriptRequirement::from_run("時", None).fingerprint(),
+            ScriptRequirement::from_run("你好吗", None).fingerprint(),
             "different demands may not share cached answers"
         );
         assert_ne!(
+            ScriptRequirement::from_run("時", None).fingerprint(),
+            ScriptRequirement::from_run("時", Some(TextLanguage::Chinese)).fingerprint(),
+            "a run claimed by chinese may not reuse the japanese answer"
+        );
+        assert_ne!(
             ScriptRequirement::EMPTY.fingerprint(),
-            ScriptRequirement::from_run("時").fingerprint()
+            ScriptRequirement::from_run("時", None).fingerprint()
         );
     }
 
@@ -740,7 +956,7 @@ mod tests {
             .chars()
             .filter(|codepoint| !script_probes(*codepoint).is_empty())
             .map(|codepoint| {
-                let record = fallback_for_codepoint(codepoint, ScriptRequirement::probes(codepoint))
+                let record = fallback_for_codepoint(codepoint, ScriptRequirement::probes(codepoint), REGULAR_WEIGHT)
                     .expect("han must resolve");
                 (codepoint, record.id, record.collection_index)
             })
@@ -765,12 +981,12 @@ mod tests {
         let required: Vec<char> = std::iter::once('你')
             .chain(script_probes('你').iter().copied())
             .collect();
-        let partial: Vec<_> = font_paths_for_codepoint('你')
+        let partial: Vec<_> = font_paths_for_codepoint('你', REGULAR_WEIGHT)
             .into_iter()
             .filter(|path| {
                 let source = FaceSource::File(path.clone());
-                face_drawing(&source, &['你'], true).is_some()
-                    && face_drawing(&source, &required, true).is_none()
+                face_drawing(&source, &['你'], REGULAR_WEIGHT, true).is_some()
+                    && face_drawing(&source, &required, REGULAR_WEIGHT, true).is_none()
             })
             .collect();
 
@@ -780,7 +996,7 @@ mod tests {
         );
 
         let chosen =
-            resolve_face_for_codepoint('你', script_probes('你')).expect("han must resolve");
+            resolve_face_for_codepoint('你', script_probes('你'), REGULAR_WEIGHT).expect("han must resolve");
         let FaceSource::File(chosen_path) = &chosen.source else {
             return; // A reassembled face is never one of the partial files.
         };
@@ -801,9 +1017,9 @@ mod tests {
     #[test]
     fn han_resolves_to_a_face_cupid_decodes_itself() {
         for run in ["你好吗", "あの時は你好吗"] {
-            let requirement = ScriptRequirement::from_run(run);
+            let requirement = ScriptRequirement::from_run(run, None);
             for codepoint in run.chars().filter(|cp| !script_probes(*cp).is_empty()) {
-                let record = fallback_for_codepoint(codepoint, requirement)
+                let record = fallback_for_codepoint(codepoint, requirement, REGULAR_WEIGHT)
                     .expect("han must resolve");
                 assert!(
                     record_decodes_codepoint(&record, codepoint),
@@ -819,7 +1035,7 @@ mod tests {
     #[test]
     fn the_han_face_draws_the_probes_it_was_chosen_for() {
         let record =
-            fallback_for_codepoint('你', ScriptRequirement::probes('你')).expect("han must resolve");
+            fallback_for_codepoint('你', ScriptRequirement::probes('你'), REGULAR_WEIGHT).expect("han must resolve");
 
         assert!(record_draws_all(&record, script_probes('你')));
     }
@@ -827,7 +1043,7 @@ mod tests {
     #[cfg(any(target_os = "ios", target_os = "macos"))]
     #[test]
     fn detects_color_faces_for_emoji() {
-        let record = fallback_for_codepoint('😀', ScriptRequirement::EMPTY)
+        let record = fallback_for_codepoint('😀', ScriptRequirement::EMPTY, REGULAR_WEIGHT)
             .expect("emoji must resolve");
         assert!(record.is_color, "emoji faces carry color glyph tables");
     }
@@ -836,7 +1052,7 @@ mod tests {
     #[test]
     fn resolved_faces_can_actually_be_rasterized() {
         for codepoint in ['你', '好', '！', '，'] {
-            let record = fallback_for_codepoint(codepoint, ScriptRequirement::probes(codepoint))
+            let record = fallback_for_codepoint(codepoint, ScriptRequirement::probes(codepoint), REGULAR_WEIGHT)
                 .expect("must resolve");
             let glyph_id = record
                 .glyph_index(codepoint)
@@ -846,6 +1062,70 @@ mod tests {
                 "{codepoint:?} resolved to a face without drawable glyph {glyph_id}"
             );
         }
+    }
+
+    // The defect the weight plumbing exists for: a bold line of Han came back
+    // at the regular stroke, because the weight the text asked for never
+    // reached the resolver — it only ever asked the platform about coverage.
+    // Apple pairs every CJK UI face with a bolder sibling, so a bold request
+    // must land on that one instead.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_bold_run_of_han_resolves_to_a_bolder_face() {
+        let requirement = ScriptRequirement::from_run("你好", Some(TextLanguage::Chinese));
+        let regular = fallback_for_codepoint('你', requirement, REGULAR_WEIGHT)
+            .expect("han must resolve at the regular weight");
+        let bold = fallback_for_codepoint('你', requirement, BOLD_WEIGHT)
+            .expect("han must resolve at the bold weight");
+
+        let regular_weight = regular.design_weight().unwrap_or(REGULAR_WEIGHT);
+        let bold_weight = bold.design_weight().unwrap_or(REGULAR_WEIGHT);
+        assert!(
+            bold_weight > regular_weight,
+            "a bold run kept the regular face ({regular_weight} -> {bold_weight}): {:?}",
+            bold.path
+        );
+    }
+
+    // Choosing by weight may not undo the rule it sits on top of: the bolder
+    // face still has to draw the whole script standing beside the character,
+    // or a bold word arrives split across two typefaces again.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn a_bolder_face_still_covers_the_script_it_was_chosen_for() {
+        let requirement = ScriptRequirement::from_run("你好吗", None);
+        for codepoint in "你好吗".chars() {
+            let record = fallback_for_codepoint(codepoint, requirement, BOLD_WEIGHT)
+                .expect("han must resolve at the bold weight");
+            assert!(
+                record_draws_all(&record, requirement.as_slice()),
+                "{codepoint:?} resolved to a face covering only part of its run: {:?}",
+                record.path
+            );
+        }
+    }
+
+    // One cached answer may not serve two weights, or the first run to ask
+    // decides the stroke of every run after it.
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn answers_are_cached_per_requested_weight() {
+        let requirement = ScriptRequirement::probes('你');
+        let regular = fallback_for_codepoint('你', requirement, REGULAR_WEIGHT)
+            .expect("han must resolve at the regular weight");
+        let bold = fallback_for_codepoint('你', requirement, BOLD_WEIGHT)
+            .expect("han must resolve at the bold weight");
+        let again = fallback_for_codepoint('你', requirement, REGULAR_WEIGHT)
+            .expect("a repeated request must resolve too");
+
+        assert_eq!(
+            regular.id, again.id,
+            "a repeated request must hit its own cached answer"
+        );
+        assert_ne!(
+            regular.id, bold.id,
+            "one cache entry may not answer for two weights"
+        );
     }
 
     #[test]

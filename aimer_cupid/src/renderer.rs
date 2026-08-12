@@ -372,6 +372,10 @@ impl Renderer {
         // Canvas-level italic state applied to plain `DrawText` (rich text carries
         // italic per span). Reset each frame; toggled by `SetItalic`.
         let mut current_italic = false;
+        // Canvas-level written language applied to the text after it, which
+        // decides whether a run of Han is drawn in a Chinese or a Japanese
+        // face. Reset each frame; set by `SetTextLanguage`.
+        let mut current_language = None;
 
         for cmd in draw_list.commands() {
             match cmd {
@@ -555,6 +559,7 @@ impl Renderer {
                         font_family: *font_family,
                         font_style: *font_style,
                         font_weight: Some(*font_weight),
+                        language: current_language,
                         italic: current_italic,
                         clip_rect: clip_to_array(self.clip_stack.last()),
                         clip_border_radius: clip_border_radius(self.clip_stack.last()),
@@ -594,6 +599,7 @@ impl Renderer {
                         font_family: crate::font::FontFamily::SANS_SERIF,
                         font_style: crate::font::FontStyle::Normal,
                         font_weight: None,
+                        language: current_language,
                         italic: false,
                         clip_rect: clip_to_array(self.clip_stack.last()),
                         clip_border_radius: clip_border_radius(self.clip_stack.last()),
@@ -679,6 +685,9 @@ impl Renderer {
                 }
                 DrawCommand::SetItalic { italic } => {
                     current_italic = *italic;
+                }
+                DrawCommand::SetTextLanguage { language } => {
+                    current_language = *language;
                 }
                 DrawCommand::DrawImage { rect, texture_id } => {
                     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
@@ -898,17 +907,30 @@ impl Renderer {
             // single pass at the very end, which made it float above every rect
             // regardless of z-order (e.g. a `Stack`'s upper layer could not cover
             // text drawn by a lower layer) — it is now interleaved like the rest.
-            self.rect_pipeline.begin_frame(device);
-
-            // Size the image instance buffer for *all* image instances of this
-            // frame up-front and reset its per-frame write offset, so that each
-            // `draw_batch` writes to a distinct region (multiple image batches in
-            // one pass must not alias the same buffer memory).
-            let total_image_instances = self
-                .resolved
-                .iter()
-                .filter(|cmd| matches!(cmd.kind, ResolvedKind::Image { .. }))
-                .count();
+            //
+            // Size the rect and image instance buffers for *all* instances of
+            // this frame up-front. Each flush/batch then draws from a distinct
+            // region of its shared buffer (batches in one pass must not alias),
+            // and the whole frame's data reaches the GPU in one deferred write
+            // per pipeline at `end_frame` — instead of one `write_buffer` (a
+            // staging allocation plus a blit) per z-order split.
+            let mut total_rect_instances = 0;
+            let mut total_image_instances = 0;
+            for cmd in &self.resolved {
+                match cmd.kind {
+                    ResolvedKind::Rect(_) => total_rect_instances += 1,
+                    ResolvedKind::Image { .. } => total_image_instances += 1,
+                    _ => {}
+                }
+            }
+            self.rect_pipeline.begin_frame(
+                device,
+                queue,
+                total_rect_instances,
+                width,
+                height,
+                is_srgb,
+            );
             self.image_pipeline.begin_frame(
                 device,
                 queue,
@@ -944,8 +966,7 @@ impl Renderer {
                         instance,
                     } => {
                         // Flush any pending rects before switching to images
-                        self.rect_pipeline
-                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        self.rect_pipeline.flush(&mut pass);
 
                         if current_texture_id.is_some() && current_texture_id != Some(*texture_id) {
                             // Flush current image batch for previous texture
@@ -971,8 +992,7 @@ impl Renderer {
                         // Flush everything drawn before this text so the text
                         // lands on top of it, and anything drawn after this text
                         // lands on top of the text.
-                        self.rect_pipeline
-                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        self.rect_pipeline.flush(&mut pass);
                         if let Some(tid) = current_texture_id.take()
                             && !image_batch.is_empty()
                         {
@@ -989,8 +1009,7 @@ impl Renderer {
                     }
                     ResolvedKind::TextDecoration(index) => {
                         let index = *index;
-                        self.rect_pipeline
-                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        self.rect_pipeline.flush(&mut pass);
                         if let Some(tid) = current_texture_id.take()
                             && !image_batch.is_empty()
                         {
@@ -1006,8 +1025,7 @@ impl Renderer {
                         self.text_pipeline.render_decoration(&mut pass, index);
                     }
                     ResolvedKind::Svg(index) => {
-                        self.rect_pipeline
-                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        self.rect_pipeline.flush(&mut pass);
                         if let Some(tid) = current_texture_id.take()
                             && !image_batch.is_empty()
                         {
@@ -1024,8 +1042,7 @@ impl Renderer {
                     }
                     ResolvedKind::Custom { pipeline_index } => {
                         // Flush pending built-in batches to maintain z-order
-                        self.rect_pipeline
-                            .flush(device, queue, &mut pass, width, height, is_srgb);
+                        self.rect_pipeline.flush(&mut pass);
                         if let Some(tid) = current_texture_id.take()
                             && !image_batch.is_empty()
                         {
@@ -1055,9 +1072,16 @@ impl Renderer {
             }
 
             // Flush remaining rects
-            self.rect_pipeline
-                .flush(device, queue, &mut pass, width, height, is_srgb);
+            self.rect_pipeline.flush(&mut pass);
         }
+
+        // The frame's instance data travels in one deferred write per pipeline
+        // (skipped outright when the bytes did not change). `write_buffer` is
+        // applied on the queue timeline before the submitted pass executes, so
+        // the draws recorded above read exactly this data.
+        self.rect_pipeline.end_frame(queue);
+        self.image_pipeline.end_frame(queue);
+
         queue.submit(std::iter::once(encoder.finish()));
         for texture_id in self.textures_to_remove.drain(..) {
             self.image_pipeline.remove_texture(texture_id);

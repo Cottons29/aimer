@@ -45,6 +45,70 @@ impl FontWeight {
     }
 }
 
+/// The written language a run of text belongs to.
+///
+/// Han is unified: a Chinese and a Japanese face each carry the ideographs
+/// their own language writes, and the two sets overlap almost entirely. A run
+/// of ideographs alone therefore does not say which face it wants — `你好` is
+/// covered by a Japanese face as readily as by a Chinese one, while `你好吗`
+/// is not, because `吗` is written only in Chinese. Left to the characters,
+/// one word changes typeface when the next one is typed.
+///
+/// This is what the run cannot tell, supplied by whoever knows it: on iOS the
+/// language of the keyboard the text was typed on, elsewhere whatever the
+/// caller can say. It is a hint and never overrules the text itself — a run
+/// carrying kana is Japanese however it was typed.
+///
+/// # Examples
+///
+/// ```
+/// use aimer_cupid::font::TextLanguage;
+///
+/// // A field bound to a Chinese keyboard keeps its Chinese face even when
+/// // every character it holds is also written in Japanese.
+/// let typed_language = Some(TextLanguage::Chinese);
+/// assert_eq!(typed_language, Some(TextLanguage::Chinese));
+/// ```
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum TextLanguage {
+    /// Chinese, in either script.
+    Chinese,
+    /// Japanese.
+    Japanese,
+    /// Korean.
+    Korean,
+}
+
+impl TextLanguage {
+    /// The language an IETF tag names, when it is one of the Han-sharing three.
+    ///
+    /// Only the primary subtag is read, so `zh-Hans-CN`, `zh_TW` and `zh` all
+    /// answer [`Self::Chinese`]; every other language answers `None`, since a
+    /// language writing no ideographs has no face to disambiguate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aimer_cupid::font::TextLanguage;
+    ///
+    /// assert_eq!(TextLanguage::from_tag("zh-Hans"), Some(TextLanguage::Chinese));
+    /// assert_eq!(TextLanguage::from_tag("ja-JP"), Some(TextLanguage::Japanese));
+    /// assert_eq!(TextLanguage::from_tag("en-US"), None);
+    /// ```
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        let primary = tag
+            .split(|separator| separator == '-' || separator == '_')
+            .next()
+            .unwrap_or_default();
+        match primary.to_ascii_lowercase().as_str() {
+            "zh" | "yue" | "nan" | "hak" | "wuu" => Some(Self::Chinese),
+            "ja" => Some(Self::Japanese),
+            "ko" => Some(Self::Korean),
+            _ => None,
+        }
+    }
+}
+
 /// A lightweight, process-stable handle to a generic or registered font family.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct FontFamily(u64);
