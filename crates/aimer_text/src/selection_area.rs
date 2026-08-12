@@ -193,12 +193,12 @@ impl Drawable for SelectionAreaElement {
     fn draw(&self, ctx: &BuildContext) {
         self.session.begin_frame();
         self.scoped(ctx, |ctx| self.child.draw(ctx));
-        // The knobs belong on top of the whole region, so they are painted
-        // here rather than by whichever text happens to own an endpoint. The
-        // callout is not: it paints through the modal host's overlay, where no
-        // ancestor of this region can clip it.
+        // Neither piece of furniture is painted into this canvas: each knob
+        // hangs outside the line it marks and the callout floats above the
+        // whole selection, so both go through the modal host's overlay, where
+        // no ancestor of this region can clip them.
         ui::track_menu(&self.session);
-        ui::paint_handles(ctx, &self.session);
+        ui::track_handles(&self.session);
     }
 }
 
@@ -239,8 +239,14 @@ impl LayoutElement for SelectionAreaElement {
         self.child.invalidate_layout();
     }
 
+    /// The box its child painted, grown to cover the selection's knobs.
+    ///
+    /// Routing hit-tests, and a knob is drawn *outside* the text it marks, so
+    /// without this the press that grabs one would reach whatever encloses the
+    /// region instead — a `Scrollable`, which reads it as a scroll — and a touch
+    /// selection could never be adjusted.
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.child.pos_start_end()
+        ui::hit_bounds_with_handles(&self.session, self.child.pos_start_end())
     }
 }
 
@@ -336,6 +342,7 @@ mod tests {
 
     use super::*;
     use crate::selection::TextHitRegion;
+    use crate::selection::handles::HandleSide;
     use crate::selection::selectable::{SelectionCoordinator, TextGeometry};
     use crate::selection::session::SelectionSlot;
 
@@ -413,6 +420,15 @@ mod tests {
         ))
     }
 
+    fn touch_press_at(x: f32, y: f32) -> ElementEvent {
+        ElementEvent::PointerDown(PointerInfo::new(
+            Vec2d { x, y },
+            PointerSource::Touch,
+            0,
+            PointerButton::Primary,
+        ))
+    }
+
     #[test]
     fn a_press_outside_the_region_clears_the_selection() {
         let (region, slot, _geometry) = region();
@@ -464,9 +480,17 @@ mod tests {
     /// it standing for everything a press could land on instead.
     ///
     /// The region is wrapped exactly as [`SelectionArea::to_element`] wraps it,
-    /// because the focus it needs for these tests is the wrapper's.
-    fn page_with_region() -> (AnyElement, Rc<SelectionSession>, Rc<SelectionSlot>) {
-        let (region, slot, _geometry) = region();
+    /// because the focus it needs for these tests is the wrapper's. The
+    /// participant's geometry is handed back with it: the session holds it
+    /// weakly, and a dropped one leaves the selection without the carets its
+    /// furniture is placed against.
+    fn page_with_region() -> (
+        AnyElement,
+        Rc<SelectionSession>,
+        Rc<SelectionSlot>,
+        Rc<TextGeometry>,
+    ) {
+        let (region, slot, geometry) = region();
         let session = Rc::clone(&region.session);
         let page = Page {
             children: vec![
@@ -478,7 +502,7 @@ mod tests {
             ],
         }
         .boxed();
-        (page, session, slot)
+        (page, session, slot, geometry)
     }
 
     /// The press that ought to drop a selection is the one the region never
@@ -487,7 +511,7 @@ mod tests {
     /// the *focus* it loses rather than wait for an event that never comes.
     #[test]
     fn a_press_elsewhere_on_the_page_clears_the_selection() {
-        let (page, session, slot) = page_with_region();
+        let (page, session, slot, _geometry) = page_with_region();
         session.select_all();
         assert_eq!(slot.selected_range(), Some(0..1));
 
@@ -506,13 +530,71 @@ mod tests {
         assert!(!session.is_focused());
     }
 
+    /// A knob is furniture of the *selection*, and the selection reaches past
+    /// the glyphs: the start knob hangs above the first line and the end knob
+    /// below the last, both outside the text they mark. Routing hit-tests, so a
+    /// region reporting only the box its child painted is a region whose knobs
+    /// cannot be pressed at all — the press lands on nothing, or on whatever
+    /// encloses the region, and a scroll view takes it as a scroll.
+    #[test]
+    fn a_press_on_a_knob_hanging_outside_the_text_still_grabs_it() {
+        let (page, session, slot, _geometry) = page_with_region();
+        session.select_all();
+        session.ui.set_touch(true);
+        let (start, _) = session
+            .handle_circles()
+            .expect("a touch selection has knobs");
+        assert!(
+            start.center_y < 0.0,
+            "the start knob hangs above the text it marks"
+        );
+
+        let mut dispatcher = EventDispatcher::new();
+        let pos = Vec2d {
+            x: start.center_x,
+            y: start.center_y,
+        };
+        let result = dispatcher.dispatch(page.as_ref(), pos, &touch_press_at(pos.x, pos.y));
+
+        assert!(
+            result.is_consumed(),
+            "the knob takes the press, so nothing enclosing the region can"
+        );
+        assert_eq!(
+            session.ui.dragging().map(|(side, _)| side),
+            Some(HandleSide::Start),
+            "the press grabbed the knob it landed on"
+        );
+        assert_eq!(
+            slot.selected_range(),
+            Some(0..1),
+            "and the selection it is about to adjust survives the press"
+        );
+    }
+
+    /// The widened box is the knobs' and nothing more: a region that reported a
+    /// box of its own making would swallow presses meant for whatever sits
+    /// beside it.
+    #[test]
+    fn a_region_without_knobs_reports_exactly_the_box_its_child_painted() {
+        let (region, _slot, _geometry) = region();
+        region.session.select_all();
+
+        assert!(region.session.handle_circles().is_none(), "a mouse selection");
+        assert_eq!(
+            region.pos_start_end(),
+            region.child.pos_start_end(),
+            "nothing is drawn outside the child, so nothing is claimed outside it"
+        );
+    }
+
     /// The keyboard the region owns is held for it by the attachment around
     /// it, so a shortcut delivered to the focus owner has to travel back down
     /// into the region — without that last step the region would own a
     /// keyboard it never hears.
     #[test]
     fn the_region_answers_its_shortcuts_through_the_focus_attachment() {
-        let (page, session, _slot) = page_with_region();
+        let (page, session, _slot, _geometry) = page_with_region();
         session.select_all();
 
         let mut dispatcher = EventDispatcher::new();
@@ -552,7 +634,7 @@ mod tests {
     /// away from must not answer `Ctrl`/`Cmd` + `A` any more.
     #[test]
     fn a_press_elsewhere_on_the_page_takes_the_keyboard_away_from_the_region() {
-        let (page, session, slot) = page_with_region();
+        let (page, session, slot, _geometry) = page_with_region();
         session.select_all();
 
         let mut dispatcher = EventDispatcher::new();

@@ -12,6 +12,14 @@
 //! than [`TOUCH_SELECTION_SLOP`] does the press become a selection — the same
 //! rule [`aimer_dnd`](https://docs.rs/aimer_dnd) applies to a touch drag.
 //!
+//! Resting is judged against the *text*, not against the window: the press
+//! records where the paragraph was painted, and a paragraph that has since
+//! travelled further than [`TOUCH_SELECTION_SLOP`] gives the press up. A finger
+//! cannot be holding still on content that is moving, and this is what keeps the
+//! scrolls that move a page without ever reporting a finger move — a touch
+//! browser's scroll deltas, momentum, an animation — from selecting a word half
+//! a second in.
+//!
 //! Like the gesture recognizers in `aimer_input`, everything here is pure with
 //! respect to time: nothing reads the clock, so a five-hundred-millisecond
 //! threshold is exercised by handing in an instant rather than by sleeping.
@@ -49,6 +57,7 @@ struct PendingTouch {
     pointer: PointerKey,
     offset: usize,
     at: Vec2d,
+    origin: Vec2d,
     since: AnimInstant,
 }
 
@@ -88,7 +97,7 @@ pub(crate) enum TouchHold {
 /// ```ignore
 /// let gate = TouchHoldGate::new();
 /// let now = AnimInstant::now();
-/// gate.press(pointer, 4, pos, now);
+/// gate.press(pointer, 4, pos, origin, now);
 ///
 /// assert_eq!(gate.poll(pointer, pos, now), TouchHold::Waiting);
 /// assert_eq!(
@@ -113,20 +122,65 @@ impl TouchHoldGate {
 
     /// Records a touch press on `offset` that may become a selection.
     ///
+    /// `origin` is where the text was painted when the finger landed, in
+    /// absolute logical pixels. A hold is a finger resting on a *glyph*, not on
+    /// a place in the window, so the press remembers where that glyph was: the
+    /// frames that follow compare it against the origin they paint at, and a
+    /// paragraph that has since slid — the page it sits in is being scrolled —
+    /// forgets the press. See [`Self::poll_stationary`].
+    ///
     /// The first animation frame is requested here. Each frame that observes a
     /// still-waiting hold requests one successor through
     /// [`Self::poll_stationary`], keeping the application idle outside the
     /// finite hold interval.
     #[inline]
-    pub fn press(&self, pointer: PointerKey, offset: usize, at: Vec2d, now: AnimInstant) {
+    pub fn press(
+        &self,
+        pointer: PointerKey,
+        offset: usize,
+        at: Vec2d,
+        origin: Vec2d,
+        now: AnimInstant,
+    ) {
         self.promoted.set(None);
         self.pending.set(Some(PendingTouch {
             pointer,
             offset,
             at,
+            origin,
             since: now,
         }));
         aimer_events::window::request_animation_frame();
+    }
+
+    /// Forgets a pending press whose text has slid out from under the finger.
+    ///
+    /// `origin` is where the text is painted now. A press further than
+    /// [`TOUCH_SELECTION_SLOP`] from where it was made is not a finger resting
+    /// on a glyph: the content is travelling, and this finger is what is moving
+    /// it. Judging it as a hold instead selects a word half a second into a
+    /// scroll, which is the whole reason every judgement below passes through
+    /// here first.
+    ///
+    /// A cancelled capture is the *other* way a hold ends, and it covers only
+    /// the pages a scroll view moves by winning the finger's drag. Nothing tells
+    /// this text about the rest: a touch browser reports a finger scrolling the
+    /// page as scroll deltas and no pointer moves at all, momentum carries a
+    /// page on by itself, and an animation moves a paragraph for reasons of its
+    /// own. In each of those the press must judge itself.
+    ///
+    /// Costs one read of a [`Cell`] when nothing is pending, which is almost
+    /// always.
+    #[inline]
+    pub fn forget_if_content_moved(&self, origin: Vec2d) {
+        let Some(pending) = self.pending.get() else {
+            return;
+        };
+        let dx = origin.x - pending.origin.x;
+        let dy = origin.y - pending.origin.y;
+        if dx * dx + dy * dy >= TOUCH_SELECTION_SLOP * TOUCH_SELECTION_SLOP {
+            self.pending.set(None);
+        }
     }
 
     /// Forgets whatever was pending, as a cancelled gesture must.
@@ -171,7 +225,13 @@ impl TouchHoldGate {
     /// The completed pointer is remembered until release so lifting at the
     /// original position preserves the selected word. `None` therefore means
     /// either that no hold completed or that the next frame has been requested.
-    pub fn poll_stationary(&self, now: AnimInstant) -> Option<(PointerKey, usize)> {
+    ///
+    /// `origin` is where this frame paints the text, so a press whose paragraph
+    /// has travelled is forgotten here rather than ripening — see
+    /// [`Self::forget_if_content_moved`]. A page scrolling *is* frames, so this
+    /// is where a scroll that never reports a finger move is caught.
+    pub fn poll_stationary(&self, now: AnimInstant, origin: Vec2d) -> Option<(PointerKey, usize)> {
+        self.forget_if_content_moved(origin);
         let pending = self.pending.get()?;
         match self.poll(pending.pointer, pending.at, now) {
             TouchHold::Waiting => {
@@ -268,6 +328,12 @@ pub(crate) fn word_range_at(text: &str, offset: usize) -> std::ops::Range<usize>
 /// select a word on some later frame — a fling still paints them — from a finger
 /// that left the glass long ago, opening a gesture no release will ever close.
 ///
+/// A cancelled capture is not the only way a hold ends, because it is not the
+/// only way a page moves: `origin` — where this text is painted now — is
+/// remembered with the press so the frames that follow can tell that the content
+/// has slid out from under a finger that never moved at all. See
+/// [`TouchHoldGate::poll_stationary`].
+///
 /// The result is left unconsumed, so the press goes on reaching the region
 /// behind the text.
 pub(crate) fn press_touch(
@@ -276,12 +342,26 @@ pub(crate) fn press_touch(
     pointer: PointerKey,
     offset: usize,
     at: Vec2d,
+    origin: Vec2d,
 ) -> EventResult {
     if session.active_pointer().is_none() {
         session.dismiss();
     }
-    gate.press(pointer, offset, at, AnimInstant::now());
+    gate.press(pointer, offset, at, origin, AnimInstant::now());
     EventResult::ignored().with_pointer_capture(pointer)
+}
+
+/// The origin a frame paints at, from the translation its canvas carries.
+///
+/// Logical pixels, to match the bounds a text saves while drawing and the
+/// positions its pointer events arrive in — a press and the frames that judge it
+/// must not disagree because the window is on a retina display.
+#[inline]
+pub(crate) fn frame_origin(abs_x: f32, abs_y: f32, scale: f32) -> Vec2d {
+    Vec2d {
+        x: abs_x / scale,
+        y: abs_y / scale,
+    }
 }
 
 /// Opens the selection a completed hold earned, with the word under the finger
@@ -320,10 +400,43 @@ mod tests {
     }
 
     #[test]
+    fn content_that_slid_under_the_finger_was_a_scroll() {
+        let gate = TouchHoldGate::new();
+        let now = AnimInstant::now();
+        gate.press(pointer(0), 3, at(10.0, 10.0), at(0.0, 0.0), now);
+        gate.backdate(TOUCH_SELECTION_HOLD);
+
+        assert_eq!(
+            gate.poll_stationary(AnimInstant::now(), at(0.0, -TOUCH_SELECTION_SLOP)),
+            None,
+            "the page scrolled out from under the finger, so the press was a scroll"
+        );
+        assert_eq!(
+            gate.poll_stationary(AnimInstant::now(), at(0.0, 0.0)),
+            None,
+            "and a page scrolled back must not bring the forgotten press back with it"
+        );
+    }
+
+    #[test]
+    fn a_page_that_held_still_earns_the_hold() {
+        let gate = TouchHoldGate::new();
+        let now = AnimInstant::now();
+        gate.press(pointer(0), 3, at(10.0, 10.0), at(0.0, 0.0), now);
+        gate.backdate(TOUCH_SELECTION_HOLD);
+
+        assert_eq!(
+            gate.poll_stationary(AnimInstant::now(), at(0.0, -1.0)),
+            Some((pointer(0), 3)),
+            "a page that barely moved is still the page the finger rested on"
+        );
+    }
+
+    #[test]
     fn a_fresh_press_is_not_a_selection_yet() {
         let gate = TouchHoldGate::new();
         let now = AnimInstant::now();
-        gate.press(pointer(0), 3, at(10.0, 10.0), now);
+        gate.press(pointer(0), 3, at(10.0, 10.0), at(0.0, 0.0), now);
 
         assert_eq!(gate.poll(pointer(0), at(10.0, 10.0), now), TouchHold::Waiting);
     }
@@ -332,7 +445,7 @@ mod tests {
     fn resting_long_enough_enters_the_selection_at_the_pressed_offset() {
         let gate = TouchHoldGate::new();
         let now = AnimInstant::now();
-        gate.press(pointer(0), 3, at(10.0, 10.0), now);
+        gate.press(pointer(0), 3, at(10.0, 10.0), at(0.0, 0.0), now);
 
         assert_eq!(
             gate.poll(pointer(0), at(12.0, 10.0), now + TOUCH_SELECTION_HOLD),
@@ -345,7 +458,7 @@ mod tests {
     fn entering_consumes_the_press_so_it_cannot_promote_twice() {
         let gate = TouchHoldGate::new();
         let now = AnimInstant::now();
-        gate.press(pointer(0), 3, at(10.0, 10.0), now);
+        gate.press(pointer(0), 3, at(10.0, 10.0), at(0.0, 0.0), now);
         let later = now + TOUCH_SELECTION_HOLD;
 
         assert_eq!(gate.poll(pointer(0), at(10.0, 10.0), later), TouchHold::Entered(3));
@@ -356,7 +469,7 @@ mod tests {
     fn a_finger_that_wanders_before_the_hold_was_scrolling() {
         let gate = TouchHoldGate::new();
         let now = AnimInstant::now();
-        gate.press(pointer(0), 3, at(10.0, 10.0), now);
+        gate.press(pointer(0), 3, at(10.0, 10.0), at(0.0, 0.0), now);
 
         assert_eq!(
             gate.poll(
@@ -377,7 +490,7 @@ mod tests {
     fn a_wobble_within_the_slop_keeps_the_press_alive() {
         let gate = TouchHoldGate::new();
         let now = AnimInstant::now();
-        gate.press(pointer(0), 3, at(10.0, 10.0), now);
+        gate.press(pointer(0), 3, at(10.0, 10.0), at(0.0, 0.0), now);
 
         assert_eq!(
             gate.poll(pointer(0), at(14.0, 12.0), now + Duration::from_millis(100)),
@@ -389,7 +502,7 @@ mod tests {
     fn another_finger_does_not_promote_this_press() {
         let gate = TouchHoldGate::new();
         let now = AnimInstant::now();
-        gate.press(pointer(0), 3, at(10.0, 10.0), now);
+        gate.press(pointer(0), 3, at(10.0, 10.0), at(0.0, 0.0), now);
 
         assert_eq!(
             gate.poll(pointer(1), at(10.0, 10.0), now + TOUCH_SELECTION_HOLD),
@@ -406,7 +519,7 @@ mod tests {
     fn clearing_forgets_the_press() {
         let gate = TouchHoldGate::new();
         let now = AnimInstant::now();
-        gate.press(pointer(0), 3, at(10.0, 10.0), now);
+        gate.press(pointer(0), 3, at(10.0, 10.0), at(0.0, 0.0), now);
         gate.clear();
 
         assert_eq!(

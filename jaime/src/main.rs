@@ -62,7 +62,7 @@ use crate::test_animation::TestFadingAnimation;
 #[main]
 fn main() {
     // test_text();
-    stateful_2::start_my_list();
+    // stateful_2::start_my_list();
     // start_counter();
     // AimerApp::start(Container::new().child(Row::new().children([
     //     Expanded::new().child(TestFadingAnimation),
@@ -76,7 +76,7 @@ fn main() {
     // start_floating_example();
     // drag_and_drop::start_drag_and_drop_example();
     // file_drop_zone::start_file_drop_zone_example();
-    // start_markdown_example();
+    start_markdown_example();
     // start_panic_recovery_example();
     // test_scroll_and_row();
     // start_svg_test();

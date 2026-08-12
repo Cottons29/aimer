@@ -302,9 +302,20 @@ impl SelectionSession {
     /// Falls back to [`Self::selection_bounds`] when that endpoint's
     /// participant has painted its box but not its glyphs, so a callout is
     /// never lost for want of a caret.
+    ///
+    /// The knob of that endpoint is part of the anchor, because it is part of
+    /// what the callout must not cover: a pill placed against the bare caret
+    /// hangs its gap over the knob standing above it, and the knob — which
+    /// paints above every widget, the callout included — would then sit on top
+    /// of the pill's edge.
     pub fn menu_anchor(&self) -> Option<Bounds> {
-        self.selection_start_caret()
-            .or_else(|| self.selection_bounds())
+        let anchor = self
+            .selection_start_caret()
+            .or_else(|| self.selection_bounds())?;
+        Some(match self.handle_circles() {
+            Some((start, _)) => union_of(anchor, start.circle_bounds()),
+            None => anchor,
+        })
     }
 
     /// The caret rectangle of the first endpoint in document order.

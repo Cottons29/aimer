@@ -594,11 +594,49 @@ fn a_scroll_view_that_takes_the_gesture_puts_the_hold_out() {
 
     text.touch_hold.backdate(TOUCH_SELECTION_HOLD);
     assert_eq!(
-        text.touch_hold.poll_stationary(AnimInstant::now()),
+        // The page itself never moved: this text paints where it did when the
+        // finger landed, so the cancelled capture is the whole of the evidence.
+        text.touch_hold
+            .poll_stationary(AnimInstant::now(), Vec2d::ZERO),
         None,
         "the gesture is the scroll view's, so no frame may turn the hold into a selection"
     );
     assert_eq!(session.selected_text(), "");
+}
+
+/// The page that slid out from under the finger.
+///
+/// A scroll view revokes the press it took the gesture from — but only when the
+/// gesture it took was the finger's *drag*. A page also travels under a finger
+/// that never reported a move: a touch browser scrolls by handing the
+/// application scroll deltas, momentum carries a page on by itself, and an
+/// animation moves a paragraph for reasons of its own. The frames of a text
+/// carried out of view stop coming, too, so the release is the next thing to
+/// judge the press — and by elapsed time alone it is a completed hold, which is
+/// how a scroll ends with a word selected in text the user can no longer see.
+#[test]
+fn a_finger_whose_paragraph_slid_away_selects_nothing_when_it_lifts() {
+    let (session, texts) = region_texts(&["first second", "third"]);
+    let _ = texts[0].on_event(&ElementEvent::PointerDown(touch_at(25.0, 10.0, 0)));
+    texts[0].touch_hold.backdate(TOUCH_SELECTION_HOLD);
+
+    // The page scrolled: this paragraph is painted somewhere else now. Nothing
+    // told the text so — no finger move, no cancelled capture — and no frame of
+    // its own judged the press, because a text carried out of view is not drawn.
+    let geometry = Rc::clone(&texts[0].binding.borrow().geometry);
+    paint_character_grid(&geometry, &texts[0].plain_text, -40.0);
+
+    let _ = texts[0].on_event(&ElementEvent::PointerUp(touch_at(25.0, 10.0, 0)));
+
+    assert_eq!(
+        session.selected_text(),
+        "",
+        "the finger was scrolling, so its release selects nothing"
+    );
+    assert!(
+        !is_pointer_claimed(PointerKey::new(PointerSource::Touch, 0)),
+        "and no gesture was opened for a release to leave behind"
+    );
 }
 
 /// The gesture that never ends.

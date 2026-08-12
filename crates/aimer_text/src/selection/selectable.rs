@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
-use aimer_attribute::{Bounds, CacheBounds};
+use aimer_attribute::{Bounds, CacheBounds, Vec2d};
 use aimer_widget::base::{BuildContext, Color, WindowHandle};
 
 use crate::selection::session::{SelectionSession, SelectionSlot};
@@ -19,6 +19,21 @@ use crate::selection::{TextHitRegion, text_offset_at};
 pub(crate) trait Selectable {
     /// Absolute logical bounds from the last frame, or `None` if never drawn.
     fn painted_bounds(&self) -> Option<Bounds>;
+
+    /// The top-left corner of those bounds, or the origin if never drawn.
+    ///
+    /// A touch press is a finger resting on a *glyph*, so it records this and
+    /// every later judgement compares it against the same corner: a participant
+    /// that has since moved was scrolled out from under the finger, whether or
+    /// not the finger itself ever reported a move. See
+    /// [`TouchHoldGate::forget_if_content_moved`](crate::selection::touch_hold::TouchHoldGate::forget_if_content_moved).
+    #[inline]
+    fn painted_origin(&self) -> Vec2d {
+        self.painted_bounds().map_or(Vec2d::ZERO, |bounds| Vec2d {
+            x: bounds.x,
+            y: bounds.y,
+        })
+    }
 
     /// The offset nearest `(x, y)`, given in absolute logical coordinates.
     fn offset_at(&self, x: f32, y: f32) -> Option<usize>;

@@ -16,7 +16,9 @@ use crate::selection::SelectionPoint;
 use crate::selection::cursor::HoverCursor;
 use crate::selection::selectable::{Selectable, SelectionBinding, TextGeometry};
 use crate::selection::session::{SelectionSession, SelectionSlot};
-use crate::selection::touch_hold::{TouchHold, TouchHoldGate, enter_hold, press_touch};
+use crate::selection::touch_hold::{
+    TouchHold, TouchHoldGate, enter_hold, frame_origin, press_touch,
+};
 use crate::selection::ui;
 use crate::text_span::ResolvedTextSpan;
 
@@ -121,9 +123,6 @@ impl LayoutElement for RawSelectableText {
 
 impl Drawable for RawSelectableText {
     fn draw(&self, ctx: &BuildContext) {
-        if let Some((pointer, offset)) = self.touch_hold.poll_stationary(AnimInstant::now()) {
-            enter_hold(&self.session(), &self.slot(), offset, pointer);
-        }
         let slot = self.slot();
         let geometry_state = self.geometry();
         slot.stamp();
@@ -137,6 +136,15 @@ impl Drawable for RawSelectableText {
             layout.size.height,
         );
         geometry_state.regions.borrow_mut().clear();
+
+        // Where this frame paints tells a resting finger from a page moving
+        // under one, so the hold is polled once the origin is known — and still
+        // before the highlight below, which a promoted hold must paint at once.
+        let origin = frame_origin(abs_x, abs_y, ctx.scale);
+        if let Some((pointer, offset)) = self.touch_hold.poll_stationary(AnimInstant::now(), origin)
+        {
+            enter_hold(&self.session(), &self.slot(), offset, pointer);
+        }
 
         let clipped = self.paragraph.needs_clip();
         if clipped {
@@ -191,6 +199,10 @@ impl EventElement for RawSelectableText {
         }
 
         let geometry = self.geometry();
+        // A press is a finger resting on a glyph, so one whose paragraph has
+        // since slid is no longer a hold and must not be judged as one below.
+        self.touch_hold
+            .forget_if_content_moved(geometry.painted_origin());
         let over_glyphs = event
             .pointer()
             .is_some_and(|info| geometry.hits_glyph(info.x(), info.y()));
@@ -217,9 +229,8 @@ impl EventElement for RawSelectableText {
                 // never touched this text — the tree broadcasts the presses
                 // nobody took — is told apart by the painted bounds first, and
                 // dismisses the selection instead of starting a new one.
-                let inside = geometry
-                    .painted_bounds()
-                    .is_some_and(|bounds| bounds.is_inside(pos.x, pos.y));
+                let painted = geometry.painted_bounds();
+                let inside = painted.is_some_and(|bounds| bounds.is_inside(pos.x, pos.y));
                 let offset = inside.then(|| geometry.offset_at(pos.x, pos.y)).flatten();
                 let Some(offset) = offset else {
                     self.touch_hold.clear();
@@ -231,8 +242,17 @@ impl EventElement for RawSelectableText {
                 };
                 if info.source == PointerSource::Touch {
                     // A finger means a scroll as often as a selection, so the
-                    // press is only remembered until the hold has been earned.
-                    return press_touch(&self.session(), &self.touch_hold, pointer, offset, pos);
+                    // press is only remembered until the hold has been earned —
+                    // together with where this paragraph sat when it landed, the
+                    // one evidence a later frame has that the page has moved on.
+                    return press_touch(
+                        &self.session(),
+                        &self.touch_hold,
+                        pointer,
+                        offset,
+                        pos,
+                        geometry.painted_origin(),
+                    );
                 }
                 self.session()
                     .begin(SelectionPoint::new(self.slot(), offset), pointer);

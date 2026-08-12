@@ -31,33 +31,33 @@ See `README.md` for the current feature milestone and stability markers (`⚠️
 
 This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `edition = "2024"`).
 
-| Path                     | Purpose                                                          |
-|--------------------------|------------------------------------------------------------------|
-| `src/`                   | The umbrella `aimer` crate — re-exports the public API.          |
-| `aimer_cupid/`           | Cupid rendering engine (wgpu, pipelines, text/glyph rasterizer). |
-| `aimer_quiver/`          | Windowing / platform integration layer.                          |
-| `crates/aimer_widget`    | Core widget system, element tree, `BuildContext`.                |
-| `crates/aimer_container` | Layout containers (`Row`, `Column`, `Scrollable`, spacing).      |
-| `crates/aimer_color`     | Color types and named palettes.                                  |
-| `crates/aimer_input`     | Gestures and input fields.                                       |
-| `crates/aimer_canvas`    | Canvas abstractions.                                             |
-| `crates/aimer_attribute` | Shared attributes (dimensions, edges, etc.).                     |
-| `crates/aimer_utils`     | Shared utilities.                                                |
-| `crates/aimer_animation` | Animation controllers, curves, tweens, keyframes.                |
-| `crates/aimer_events`    | Event system.                                                    |
+| Path                     | Purpose                                                                              |
+|--------------------------|--------------------------------------------------------------------------------------|
+| `src/`                   | The umbrella `aimer` crate — re-exports the public API.                              |
+| `aimer_cupid/`           | Cupid rendering engine (wgpu, pipelines, text/glyph rasterizer).                     |
+| `aimer_quiver/`          | Windowing / platform integration layer.                                              |
+| `crates/aimer_widget`    | Core widget system, element tree, `BuildContext`.                                    |
+| `crates/aimer_container` | Layout containers (`Row`, `Column`, `Scrollable`, spacing).                          |
+| `crates/aimer_color`     | Color types and named palettes.                                                      |
+| `crates/aimer_input`     | Gestures and input fields.                                                           |
+| `crates/aimer_canvas`    | Canvas abstractions.                                                                 |
+| `crates/aimer_attribute` | Shared attributes (dimensions, edges, etc.).                                         |
+| `crates/aimer_utils`     | Shared utilities.                                                                    |
+| `crates/aimer_animation` | Animation controllers, curves, tweens, keyframes.                                    |
+| `crates/aimer_events`    | Event system.                                                                        |
 | `crates/aimer_focus`     | Keyboard focus ownership and confinement (`FocusNode`, `FocusManager`, `FocusTrap`). |
-| `crates/aimer_router`    | Navigation / routing.                                            |
-| `crates/aimer_inspector` | Widget inspector (unstable).                                     |
-| `crates/aimer_assets`    | Asset loading.                                                   |
-| `crates/aimer_style`     | Styling primitives.                                              |
-| `crates/aimer_text`      | Text layout / typography.                                        |
-| `crates/aimer_macro`     | Proc-macros (`#[aimer::main]`, widget macros).                   |
-| `crates/aimer_provider`  | Dependency/state provider.                                       |
-| `crates/aimer_sdk`       | SDK aggregation.                                                 |
-| `dev_tools/aimer_cli`    | The `aimer` CLI binary (create/run/build/doctor/...).            |
-| `dev_tools/aimer_lsp`    | Language server tooling.                                         |
-| `jaime/`                 | Internal tooling crate.                                          |
-| `website/`               | Project website (WASM demo).                                     |
+| `crates/aimer_router`    | Navigation / routing.                                                                |
+| `crates/aimer_inspector` | Widget inspector (unstable).                                                         |
+| `crates/aimer_assets`    | Asset loading.                                                                       |
+| `crates/aimer_style`     | Styling primitives.                                                                  |
+| `crates/aimer_text`      | Text layout / typography.                                                            |
+| `crates/aimer_macro`     | Proc-macros (`#[aimer::main]`, widget macros).                                       |
+| `crates/aimer_provider`  | Dependency/state provider.                                                           |
+| `crates/aimer_sdk`       | SDK aggregation.                                                                     |
+| `dev_tools/aimer_cli`    | The `aimer` CLI binary (create/run/build/doctor/...).                                |
+| `dev_tools/aimer_lsp`    | Language server tooling.                                                             |
+| `jaime/`                 | Internal tooling crate.                                                              |
+| `website/`               | Project website (WASM demo).                                                         |
 
 > **Large monorepo note:** subprojects may carry their own nested `AGENTS.md`. When working inside a
 > subproject, read its local `AGENTS.md` first — it takes precedence over this root file for that
@@ -67,6 +67,8 @@ This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `e
 
 ## Golden Rules
 
+- **Never Guess Ask Me Instead**. When meeting a problem, and not sure about the reason or smt else, please ask me
+  instead of guessing.
 - **Performance Critical Project**. This is a GUI framework, therefore performance is very critical thing, make sure the
   logic is lightweight and high performance.
 - **Use CodeGraph to understand code.** It is fast and always safe for reading/navigating the codebase. Prefer it before
@@ -90,11 +92,11 @@ This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `e
   widget is dropped right after the call, so a `.clone()` there is a per-frame allocation nobody reads. A widget that
   rebuilds *itself* (a button on hover, a viewport on scroll) keeps its child in a `ChildBuilder`, which retains the
   child's element instead of asking for the widget twice.
-- **In a crate the file should be tidy into their related folder if possible** It's make each crate are look
-  organized and easy to maintain rather than a crate/src is full of Rust source file, prefer no mod.rs.
+- **In a crate the file should be tidy into their related folder if possible** It's make each crate are look organized
+  and easy to maintain rather than a crate/src is full of Rust source file, prefer no mod.rs.
 - **Use `pub use aimer_xxxx as xxxx` when re-export in aimer crate** It makes the Api look clean.
 
-### In-Crate Tidy Structure Example 
+### In-Crate Tidy Structure Example
 
 ```text
 aimer_input
@@ -313,7 +315,7 @@ impl<W: Widget + 'static> Widget for MyWidget<W> {
             size: self.size,
             child: self.child.to_element(ctx),
         }
-        .boxed()
+            .boxed()
     }
 }
 

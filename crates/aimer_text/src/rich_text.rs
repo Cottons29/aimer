@@ -18,7 +18,9 @@ use crate::selection::SelectionPoint;
 use crate::selection::cursor::HoverCursor;
 use crate::selection::selectable::{Selectable, SelectionBinding, SelectionScope, TextGeometry};
 use crate::selection::session::{SelectionSession, SelectionSlot};
-use crate::selection::touch_hold::{TouchHold, TouchHoldGate, enter_hold, press_touch};
+use crate::selection::touch_hold::{
+    TouchHold, TouchHoldGate, enter_hold, frame_origin, press_touch,
+};
 use crate::selection::ui;
 use crate::text_span::TextSpan;
 
@@ -380,6 +382,11 @@ impl EventElement for RawRichText {
 
         let cursor_claimed = if self.selectable || !self.link_regions.borrow().is_empty() {
             let geometry = self.geometry();
+            // A press is a finger resting on a glyph, so one whose paragraph has
+            // since slid is no longer a hold and must not be judged as one
+            // below.
+            self.touch_hold
+                .forget_if_content_moved(geometry.painted_origin());
             let over_glyphs = event
                 .pointer()
                 .is_some_and(|info| geometry.hits_glyph(info.x(), info.y()));
@@ -417,20 +424,22 @@ impl EventElement for RawRichText {
                     // presses nobody took — must be told apart by its bounds
                     // first, or it would start a selection from a click far
                     // away instead of dismissing the one on screen.
-                    let inside = geometry
-                        .painted_bounds()
-                        .is_some_and(|bounds| bounds.is_inside(pos.x, pos.y));
+                    let painted = geometry.painted_bounds();
+                    let inside = painted.is_some_and(|bounds| bounds.is_inside(pos.x, pos.y));
                     if inside && let Some(offset) = geometry.offset_at(pos.x, pos.y) {
                         if info.source == PointerSource::Touch {
                             // A finger means a scroll as often as a selection,
                             // so the press is only remembered until the hold has
-                            // been earned.
+                            // been earned — together with where this paragraph
+                            // sat when it landed, the one evidence a later frame
+                            // has that the page has moved on.
                             return press_touch(
                                 &self.session(),
                                 &self.touch_hold,
                                 pointer,
                                 offset,
                                 pos,
+                                geometry.painted_origin(),
                             );
                         }
                         self.session()
@@ -585,17 +594,25 @@ impl LayoutElement for RawRichText {
         self.paragraph.invalidate();
     }
 
+    /// The box this text painted, grown to cover the knobs of a selection it
+    /// owns.
+    ///
+    /// A knob is drawn outside the line it marks, and routing hit-tests, so a
+    /// text that claimed only its glyphs would grow knobs no press could reach.
+    /// Inside a region the region claims them instead — it encloses every
+    /// participant, and the knobs of a selection spanning several of them are
+    /// nobody's in particular.
     fn pos_start_end(&self) -> Option<(aimer_attribute::Vec2d, aimer_attribute::Vec2d)> {
-        self.geometry().bounds.pos_start_end()
+        let bounds = self.geometry().bounds.pos_start_end();
+        if !(self.selectable && self.owns_session()) {
+            return bounds;
+        }
+        ui::hit_bounds_with_handles(&self.session(), bounds)
     }
 }
 
 impl Drawable for RawRichText {
     fn draw(&self, ctx: &BuildContext) {
-        if let Some((pointer, offset)) = self.touch_hold.poll_stationary(AnimInstant::now()) {
-            enter_hold(&self.session(), &self.slot(), offset, pointer);
-            self.pressed_link.borrow_mut().take();
-        }
         let slot = self.slot();
         let geometry_state = self.geometry();
         slot.stamp();
@@ -610,6 +627,16 @@ impl Drawable for RawRichText {
         );
         self.link_regions.borrow_mut().clear();
         geometry_state.regions.borrow_mut().clear();
+
+        // Where this frame paints tells a resting finger from a page moving
+        // under one, so the hold is polled once the origin is known — and still
+        // before the highlight below, which a promoted hold must paint at once.
+        let origin = frame_origin(abs_x, abs_y, ctx.scale);
+        if let Some((pointer, offset)) = self.touch_hold.poll_stationary(AnimInstant::now(), origin)
+        {
+            enter_hold(&self.session(), &self.slot(), offset, pointer);
+            self.pressed_link.borrow_mut().take();
+        }
 
         let clipped = self.paragraph.needs_clip();
         if clipped {
@@ -678,14 +705,14 @@ impl Drawable for RawRichText {
             ctx.canvas.restore();
         }
 
-        // Inside a region the knobs are painted once, by the region, on top of
-        // every participant. A standalone text has no region to do it, so it
-        // paints its own. The callout is nobody's to paint: it goes through the
-        // modal host's overlay, clear of every clip.
+        // Inside a region the furniture is kept by the region, on behalf of
+        // every participant. A standalone text has no region to do it. Neither
+        // the knobs nor the callout are painted into this canvas: both go
+        // through the modal host's overlay, clear of every clip.
         if self.selectable && self.owns_session() {
             let session = self.session();
             ui::track_menu(&session);
-            ui::paint_handles(ctx, &session);
+            ui::track_handles(&session);
         }
     }
 }

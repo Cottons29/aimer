@@ -102,21 +102,45 @@ impl HandleCircle {
         )
     }
 
-    /// Reports whether a press at `(x, y)` grabbed this knob.
+    /// The rectangle a press must land in to grab this knob: the knob grown by
+    /// [`HANDLE_TOUCH_SLOP`] and stretched to cover the bar, so a finger aiming
+    /// at the stem still takes the handle rather than starting a new selection.
     ///
-    /// The grabbable area is the knob grown by [`HANDLE_TOUCH_SLOP`] and
-    /// stretched to cover the bar, so a finger aiming at the stem still takes
-    /// the handle rather than starting a new selection.
-    pub fn contains(&self, x: f32, y: f32) -> bool {
+    /// This is the one place the grabbable area is described. A press is tested
+    /// against it by [`Self::contains`], and the element that answers that press
+    /// reports it as part of its own box — routing hit-tests, so a knob outside
+    /// the box its region claims is a knob no press can ever reach. See
+    /// [`grab_span`].
+    #[inline]
+    pub fn grab_bounds(&self) -> Bounds {
         let reach = HANDLE_RADIUS + HANDLE_TOUCH_SLOP;
-        let dx = x - self.center_x;
-        if dx.abs() > reach {
-            return false;
-        }
         let top = self.caret.y.min(self.center_y) - HANDLE_TOUCH_SLOP;
         let bottom = (self.caret.y + self.caret.height).max(self.center_y) + HANDLE_TOUCH_SLOP;
-        y >= top && y <= bottom
+        Bounds::new(self.center_x - reach, top, reach * 2.0, bottom - top)
     }
+
+    /// Reports whether a press at `(x, y)` grabbed this knob.
+    #[inline]
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        self.grab_bounds().is_inside(x, y)
+    }
+}
+
+/// The rectangle both knobs of a selection can be grabbed in.
+///
+/// A selection's furniture reaches past its glyphs — above the first line and
+/// below the last — so the element that answers a press on a knob has to claim
+/// this much. Purely the union of the two [`HandleCircle::grab_bounds`]: the
+/// area between them belongs to the text, which is already claiming it.
+#[inline]
+pub(crate) fn grab_span(start: HandleCircle, end: HandleCircle) -> Bounds {
+    let start = start.grab_bounds();
+    let end = end.grab_bounds();
+    let x = start.x.min(end.x);
+    let y = start.y.min(end.y);
+    let right = (start.x + start.width).max(end.x + end.width);
+    let bottom = (start.y + start.height).max(end.y + end.height);
+    Bounds::new(x, y, right - x, bottom - y)
 }
 
 /// Picks the knob a press grabbed, preferring the nearer one when the two
@@ -176,6 +200,49 @@ mod tests {
         assert_eq!(knob.circle_bounds().x, 21.0 - HANDLE_RADIUS);
         assert_eq!(knob.bar_bounds().width, HANDLE_BAR_WIDTH);
         assert_eq!(knob.bar_bounds().height, 16.0);
+    }
+
+    #[test]
+    fn the_grabbable_rectangle_is_the_area_a_press_is_tested_against() {
+        let knob = HandleCircle::of(caret(20.0, 40.0), HandleSide::Start);
+        let grab = knob.grab_bounds();
+
+        assert!(
+            grab.x < knob.circle_bounds().x,
+            "a fingertip is wider than the dot it aims at"
+        );
+        assert!(grab.y < knob.center_y - HANDLE_RADIUS, "and reaches above it");
+        assert!(
+            grab.y + grab.height >= knob.caret.y + knob.caret.height,
+            "down to the foot of the bar"
+        );
+        for (x, y) in [
+            (grab.x, grab.y),
+            (grab.x + grab.width, grab.y + grab.height),
+            (grab.x, grab.y + grab.height),
+        ] {
+            assert!(knob.contains(x, y), "every corner of it grabs the knob");
+        }
+        assert!(!knob.contains(grab.x - 1.0, knob.center_y), "and nothing outside does");
+    }
+
+    #[test]
+    fn the_grabbable_span_covers_both_knobs_of_a_selection() {
+        let start = HandleCircle::of(caret(20.0, 40.0), HandleSide::Start);
+        let end = HandleCircle::of(caret(80.0, 400.0), HandleSide::End);
+
+        let span = grab_span(start, end);
+
+        assert!(span.is_inside(start.center_x, start.center_y));
+        assert!(span.is_inside(end.center_x, end.center_y));
+        assert!(
+            span.y < 40.0 - HANDLE_RADIUS,
+            "the span reaches above the first line, where the start knob hangs"
+        );
+        assert!(
+            span.y + span.height > 400.0 + 16.0 + HANDLE_RADIUS,
+            "and below the last, where the end knob hangs"
+        );
     }
 
     #[test]

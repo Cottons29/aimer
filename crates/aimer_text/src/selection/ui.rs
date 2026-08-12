@@ -11,13 +11,19 @@
 //! participant, and the region itself, therefore offers each pointer event to
 //! [`intercept`] first and only handles what it gives back.
 //!
-//! **The callout is not painted by the region.** It floats clear of the
-//! selection, which regularly puts it outside the text — and every ancestor
-//! that clips, a `Scrollable` above all, would cut it off there. It is
-//! therefore an [`aimer_ctxmenu::ContextMenu`], presented through the modal
-//! host: placed above every widget, dismissed by an outside press or `Escape`
-//! without this module routing anything. The knobs stay with the text, because
-//! they mark glyphs and are meaningless where the glyphs are not drawn.
+//! **Neither the callout nor the knobs are painted by the region.** Both stand
+//! clear of the selection — the callout floats above it, and each knob hangs
+//! outside the line it marks — so every ancestor that clips, a `Scrollable`
+//! above all, would cut them off. The callout is an
+//! [`aimer_ctxmenu::ContextMenu`] presented through the modal host; the knobs go
+//! through the same host's [`OverlayLayer`], which paints above every widget and
+//! receives no events. See [`track_handles`].
+//!
+//! **What paints outside an element must be claimed by it.** Routing hit-tests,
+//! so a region reporting only the box its text painted is a region whose knobs
+//! cannot be pressed: the press lands on whatever encloses it instead, and a
+//! scroll view reads it as a scroll. Every element that offers events to
+//! [`intercept`] therefore grows its own box by [`hit_bounds_with_handles`].
 //!
 //! **The shape of the callout is the pointer's choice, not the platform's.** A
 //! finger gets the pill floating above the selection; a right-click gets the
@@ -36,11 +42,11 @@ use aimer_attribute::{Bounds, ResolvedSize, Vec2d};
 use aimer_ctxmenu::{ContextMenu, ContextMenuItem, ContextMenuShape};
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
-use aimer_modal::{AnchorHandle, ModalHandle};
+use aimer_modal::{AnchorHandle, ModalHandle, OverlayLayer, OverlayLayerHandle, OverlayPainter};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{EventResult, PointerKey, claim_pointer, release_pointer};
 
-use crate::selection::handles::{HANDLE_RADIUS, HandleCircle, HandleSide, handle_at};
+use crate::selection::handles::{HANDLE_RADIUS, HandleCircle, HandleSide, grab_span, handle_at};
 use crate::selection::selectable::{Selectable, TextGeometry};
 use crate::selection::session::{SelectionSession, SelectionSlot};
 use crate::selection::touch_hold::enter_hold;
@@ -90,6 +96,8 @@ pub(crate) struct SelectionUi {
     anchor: AnchorHandle,
     /// The knob a finger is dragging, and the pointer dragging it.
     dragging: Cell<Option<(HandleSide, PointerKey)>>,
+    /// The overlay layer the knobs paint through, while there are knobs.
+    layer: Cell<Option<OverlayLayerHandle>>,
     /// Whether the current selection was made by a finger, which is what
     /// decides that handles are drawn at all.
     touch: Cell<bool>,
@@ -108,6 +116,7 @@ impl SelectionUi {
             shape: Cell::new(None),
             anchor: AnchorHandle::new(),
             dragging: Cell::new(None),
+            layer: Cell::new(None),
             touch: Cell::new(false),
             session,
         }
@@ -242,6 +251,19 @@ impl SelectionUi {
     #[inline]
     pub fn dragging(&self) -> Option<(HandleSide, PointerKey)> {
         self.dragging.get()
+    }
+}
+
+impl Drop for SelectionUi {
+    /// Takes the knobs' layer down with the session that owned it.
+    ///
+    /// A layer outlives the tree that installed it — that is the point of one —
+    /// so a region removed from the widget tree would otherwise leave its knobs
+    /// painting over whatever replaced it until the next frame noticed.
+    fn drop(&mut self) {
+        if let Some(layer) = self.layer.take() {
+            layer.remove();
+        }
     }
 }
 
@@ -431,13 +453,78 @@ pub(crate) fn track_menu(session: &Rc<SelectionSession>) {
     }
 }
 
-/// Paints the handles of `session` over the subtree that was just drawn.
+/// Keeps the knobs' overlay layer installed for exactly as long as there are
+/// knobs.
 ///
-/// Called from the region's `draw` after its child, so the knobs are above the
-/// text they mark. The callout is *not* painted here: it floats clear of the
-/// selection and would be clipped by any ancestor that clips, so `aimer_ctxmenu`
-/// paints it through an overlay layer instead.
-pub(crate) fn paint_handles(ctx: &BuildContext, session: &Rc<SelectionSession>) {
+/// Called once per frame, beside [`track_menu`]. A knob hangs *outside* the line
+/// it marks — above the first caret, below the last — so painting it into the
+/// text's own layer hands it to every clip the text sits in: inside a
+/// `Scrollable` whose padding is outside its viewport, the clip begins exactly
+/// where the content does and shears the knob in half. The layer paints above
+/// every widget instead, and takes no events, so the press still reaches the
+/// element that reported the knob as part of its box.
+///
+/// Costs one [`Cell`] read per frame once installed.
+pub(crate) fn track_handles(session: &Rc<SelectionSession>) {
+    match (session.handle_circles().is_some(), session.ui.layer.get()) {
+        (true, None) => session
+            .ui
+            .layer
+            .set(Some(OverlayLayer::install(handles_painter(session)))),
+        (false, Some(layer)) => {
+            layer.remove();
+            session.ui.layer.set(None);
+        }
+        _ => {}
+    }
+}
+
+/// The painter the knobs' layer runs, holding its session weakly.
+///
+/// Returning `false` retires the layer, which is how the knobs of a region that
+/// was removed from the tree stop painting even though nothing was there to take
+/// the layer down.
+fn handles_painter(session: &Rc<SelectionSession>) -> OverlayPainter {
+    let session = Rc::downgrade(session);
+    Rc::new(move |ctx: &BuildContext| {
+        let Some(session) = session.upgrade() else {
+            return false;
+        };
+        paint_handles(ctx, &session);
+        true
+    })
+}
+
+/// Grows `bounds` to cover the knobs of `session`, in absolute logical pixels.
+///
+/// The box an element reports is what routing tests a press against, and a knob
+/// is drawn outside the text: without this a press on one reaches whatever
+/// encloses the region — a scroll view, which reads it as a scroll — and the
+/// selection can never be adjusted. `None` already claims everything, and a
+/// selection with no knobs claims nothing extra.
+pub(crate) fn hit_bounds_with_handles(
+    session: &Rc<SelectionSession>,
+    bounds: Option<(Vec2d, Vec2d)>,
+) -> Option<(Vec2d, Vec2d)> {
+    let (from, to) = bounds?;
+    let Some((start, end)) = session.handle_circles() else {
+        return Some((from, to));
+    };
+    let span = grab_span(start, end);
+    Some((
+        Vec2d {
+            x: from.x.min(span.x),
+            y: from.y.min(span.y),
+        },
+        Vec2d {
+            x: to.x.max(span.x + span.width),
+            y: to.y.max(span.y + span.height),
+        },
+    ))
+}
+
+/// Paints the handles of `session`, from inside its overlay layer.
+fn paint_handles(ctx: &BuildContext, session: &Rc<SelectionSession>) {
     let Some((start, end)) = session.handle_circles() else {
         return;
     };
@@ -536,6 +623,11 @@ mod tests {
         ))
     }
 
+    /// Where a pill centred on `anchor` sits, horizontally.
+    fn anchor_center_x(anchor: Bounds) -> f32 {
+        anchor.x + anchor.width * 0.5
+    }
+
     fn release(x: f32, y: f32, source: PointerSource) -> ElementEvent {
         ElementEvent::PointerUp(PointerInfo::new(
             Vec2d { x, y },
@@ -543,6 +635,126 @@ mod tests {
             0,
             PointerButton::Primary,
         ))
+    }
+
+    /// A knob marks a glyph, but it is not *drawn* on one: it hangs outside the
+    /// line, and painting it into the text's own layer puts it behind every clip
+    /// the text sits in. A `Scrollable` clips to its viewport, and a viewport
+    /// whose padding is outside it begins exactly where the content does — so
+    /// the knob, centred on the first caret, loses the half of itself that
+    /// sticks out. It therefore paints where the callout paints: above
+    /// everything, clipped by nothing.
+    #[test]
+    fn the_knobs_are_painted_through_an_overlay_layer_no_ancestor_can_clip() {
+        let (session, slot, _geometry) = session();
+        select(&session, &slot, 2..5);
+
+        track_handles(&session);
+
+        assert!(
+            OverlayLayer::is_installed(),
+            "the knobs paint above every clip, the way the callout does"
+        );
+    }
+
+    #[test]
+    fn a_selection_with_no_knobs_installs_no_layer() {
+        let (session, slot, _geometry) = session();
+        session.begin(
+            SelectionPoint::new(Rc::clone(&slot), 2),
+            PointerKey::new(PointerSource::Mouse, 0),
+        );
+        session.extend_to_position(55.0, 108.0, PointerKey::new(PointerSource::Mouse, 0));
+
+        track_handles(&session);
+
+        assert!(!OverlayLayer::is_installed(), "a mouse selection grows none");
+    }
+
+    #[test]
+    fn clearing_the_selection_takes_the_layer_down_with_the_knobs() {
+        let (session, slot, _geometry) = session();
+        select(&session, &slot, 2..5);
+        track_handles(&session);
+
+        session.clear();
+        track_handles(&session);
+
+        assert!(!OverlayLayer::is_installed());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_layer_paints_a_bar_and_a_knob_for_each_end() {
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+
+        let (session, slot, _geometry) = session();
+        select(&session, &slot, 2..5);
+        let inner = InnerCanvas::new();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a current-thread runtime is available in tests");
+        let ctx = BuildContext::new(
+            Canvas::new(&inner),
+            ResolvedSize {
+                width: 400.0,
+                height: 800.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            window(),
+            runtime.handle().clone(),
+        );
+
+        assert!(handles_painter(&session)(&ctx), "the layer stays installed");
+
+        let tint: aimer_cupid::utilities::Color = HANDLE_COLOR.into();
+        let painted = inner
+            .draw_list()
+            .commands()
+            .iter()
+            .filter(|command| {
+                matches!(command, DrawCommand::FillRect { color, .. }
+                    if color.to_array() == tint.to_array())
+            })
+            .count();
+
+        assert_eq!(painted, 4, "a bar and a knob at each end of the selection");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_layer_retires_with_the_region_it_belongs_to() {
+        use aimer_canvas::{Canvas, InnerCanvas};
+
+        let (session, slot, _geometry) = session();
+        select(&session, &slot, 2..5);
+        let painter = handles_painter(&session);
+        let inner = InnerCanvas::new();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a current-thread runtime is available in tests");
+        let ctx = BuildContext::new(
+            Canvas::new(&inner),
+            ResolvedSize {
+                width: 400.0,
+                height: 800.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            window(),
+            runtime.handle().clone(),
+        );
+
+        drop(session);
+
+        assert!(
+            !painter(&ctx),
+            "a region that went away leaves no knobs to paint"
+        );
     }
 
     #[test]
@@ -565,12 +777,45 @@ mod tests {
 
         let anchor = session.menu_anchor().expect("a selection has an anchor");
 
-        assert_eq!(anchor.x, 20.0, "the start caret, not the whole selection");
-        assert_eq!(anchor.y, 100.0);
         assert!(
-            anchor.width < 10.0,
+            anchor.x <= 20.0 && anchor.x + anchor.width >= 20.0,
+            "the start caret, not the whole selection"
+        );
+        assert!(
+            anchor.y + anchor.height <= 116.0,
+            "the pill sits over where the selection began, not over the line below it"
+        );
+        assert!(
+            anchor.width < 20.0,
             "a caret is thin, so the pill sits over where the selection began"
         );
+    }
+
+    /// The knobs paint above every widget — the callout included — so a pill
+    /// placed against the bare caret would have the start knob sitting on its
+    /// edge. The anchor therefore covers the knob, and the pill's gap is kept
+    /// from the knob rather than from the glyphs behind it.
+    #[test]
+    fn the_pill_hangs_above_the_knob_rather_than_behind_it() {
+        let (session, slot, _geometry) = session();
+        select(&session, &slot, 2..5);
+        let (start, _) = session.handle_circles().expect("knobs");
+
+        let anchor = session.menu_anchor().expect("a selection has an anchor");
+
+        assert_eq!(anchor.y, start.circle_bounds().y);
+    }
+
+    #[test]
+    fn a_selection_with_no_knobs_anchors_the_menu_on_its_caret_alone() {
+        let (session, slot, _geometry) = session();
+        let mouse = PointerKey::new(PointerSource::Mouse, 0);
+        session.begin(SelectionPoint::new(Rc::clone(&slot), 2), mouse);
+        session.extend_to_position(55.0, 108.0, mouse);
+
+        let anchor = session.menu_anchor().expect("a selection has an anchor");
+
+        assert_eq!(anchor, Bounds::new(20.0, 100.0, 0.0, 16.0));
     }
 
     #[test]
@@ -765,7 +1010,9 @@ mod tests {
         let (session, slot, _geometry) = session();
         select(&session, &slot, 2..5);
         session.ui.show_menu();
-        assert_eq!(session.ui.menu_anchor_bounds().map(|anchor| anchor.x), Some(20.0));
+        // The pill is centred on its anchor, and the anchor covers the knob:
+        // its centre is the caret the selection starts at.
+        assert_eq!(session.ui.menu_anchor_bounds().map(anchor_center_x), Some(20.0));
 
         // The callout stays up while the selection under it grows, which is
         // exactly what `Select All` from it does.
@@ -777,7 +1024,7 @@ mod tests {
             session.menu_anchor(),
             "the pill moves with the selection rather than staying behind"
         );
-        assert_eq!(session.ui.menu_anchor_bounds().map(|anchor| anchor.x), Some(0.0));
+        assert_eq!(session.ui.menu_anchor_bounds().map(anchor_center_x), Some(0.0));
         assert_eq!(slot.selected_range(), Some(0..10));
     }
 
