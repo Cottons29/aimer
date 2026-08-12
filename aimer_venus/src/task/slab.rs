@@ -1,26 +1,65 @@
+use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::task::Waker;
 
 use crate::task::{LocalFuture, Phase, ScopeId, TaskId};
 
+/// The "no neighbour" marker for the intrusive per-scope lists.
+const NONE: u32 = u32::MAX;
+
 /// One spawned task, as the scheduler stores it.
 ///
-/// `future` is an [`Option`] because polling *moves the future out* of the
+/// `lease` is an [`Option`] because polling *moves the future out* of the
 /// slab: the scheduler's interior state must be un-borrowed while a task runs,
-/// or a task that spawns another task would panic on a re-entrant borrow.
+/// or a task that spawns another task would panic on a re-entrant borrow. The
+/// waker travels with the future so that a poll moves two words instead of
+/// bumping an [`std::sync::Arc`] refcount — an atomic pair per poll adds up at
+/// 120 Hz.
 pub(crate) struct Task {
-    future: Option<LocalFuture>,
-    waker: Waker,
+    lease: Option<(LocalFuture, Waker)>,
     pub(crate) phase: Phase,
     pub(crate) scope: ScopeId,
     /// Whether this task is already sitting in a ready queue. Without it a task
     /// woken five times before it next runs would be polled five times.
     pub(crate) queued: bool,
+    /// Neighbours in this task's scope list — see [`TaskSlab::scopes`].
+    prev_in_scope: u32,
+    next_in_scope: u32,
 }
 
 struct Slot {
     generation: u32,
     task: Option<Task>,
 }
+
+/// Hashes a [`ScopeId`] to itself.
+///
+/// Scope ids are sequential `u64`s handed out by the scheduler, never attacker
+/// input, so SipHash's collision resistance buys nothing here — and its cost
+/// would be paid on every spawn and every task completion.
+#[derive(Default)]
+struct ScopeIdHasher(u64);
+
+impl Hasher for ScopeIdHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.0 = self.0.rotate_left(8) ^ u64::from(byte);
+        }
+    }
+
+    #[inline]
+    fn write_u64(&mut self, id: u64) {
+        self.0 = id;
+    }
+}
+
+type ScopeIndex = HashMap<ScopeId, u32, BuildHasherDefault<ScopeIdHasher>>;
 
 /// A generational arena of live tasks.
 ///
@@ -33,14 +72,23 @@ pub(crate) struct TaskSlab {
     slots: Vec<Slot>,
     vacant: Vec<u32>,
     live: usize,
+    /// The head of each scope's doubly-linked task list, threaded through the
+    /// slots themselves.
+    ///
+    /// This is what keeps scope cancellation proportional to the *scope*: the
+    /// framework drops one [`crate::TaskScope`] per unmounting element, and an
+    /// element that spawned nothing must pay one missed lookup — not a sweep of
+    /// every slot the application has ever allocated.
+    scopes: ScopeIndex,
 }
 
 impl TaskSlab {
-    pub(crate) const fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             slots: Vec::new(),
             vacant: Vec::new(),
             live: 0,
+            scopes: ScopeIndex::default(),
         }
     }
 
@@ -62,7 +110,8 @@ impl TaskSlab {
         }
     }
 
-    /// Stores `task` in the slot reserved for `id`.
+    /// Stores `task` in the slot reserved for `id`, linking it into its
+    /// scope's list.
     pub(crate) fn occupy(
         &mut self,
         id: TaskId,
@@ -71,14 +120,25 @@ impl TaskSlab {
         phase: Phase,
         scope: ScopeId,
     ) {
-        let slot = &mut self.slots[id.index() as usize];
+        let index = id.index();
+        let next_in_scope = self.scopes.insert(scope, index).unwrap_or(NONE);
+        if next_in_scope != NONE {
+            self.slots[next_in_scope as usize]
+                .task
+                .as_mut()
+                .expect("a scope list names only live tasks")
+                .prev_in_scope = index;
+        }
+
+        let slot = &mut self.slots[index as usize];
         debug_assert!(slot.task.is_none(), "a reserved slot was occupied twice");
         slot.task = Some(Task {
-            future: Some(future),
-            waker,
+            lease: Some((future, waker)),
             phase,
             scope,
             queued: true,
+            prev_in_scope: NONE,
+            next_in_scope,
         });
         self.live += 1;
     }
@@ -105,20 +165,18 @@ impl TaskSlab {
     /// which is how a task woken while it is running avoids being polled
     /// re-entrantly.
     pub(crate) fn lend(&mut self, id: TaskId) -> Option<(LocalFuture, Waker)> {
-        let task = self.get_mut(id)?;
-        let future = task.future.take()?;
-        Some((future, task.waker.clone()))
+        self.get_mut(id)?.lease.take()
     }
 
-    /// Gives a lent future back after a `Poll::Pending`.
+    /// Gives a lent future and its waker back after a `Poll::Pending`.
     ///
     /// Returns `false` when the task was cancelled while it was running — a
     /// widget unmounting itself from its own handler — in which case the future
     /// is dropped here instead.
-    pub(crate) fn restore(&mut self, id: TaskId, future: LocalFuture) -> bool {
+    pub(crate) fn restore(&mut self, id: TaskId, future: LocalFuture, waker: Waker) -> bool {
         match self.get_mut(id) {
             Some(task) => {
-                task.future = Some(future);
+                task.lease = Some((future, waker));
                 true
             }
             None => false,
@@ -130,34 +188,78 @@ impl TaskSlab {
         let Some(slot) = self.slots.get_mut(id.index() as usize) else {
             return false;
         };
-        if slot.generation != id.generation() || slot.task.is_none() {
+        if slot.generation != id.generation() {
             return false;
         }
+        let Some(task) = slot.task.take() else {
+            return false;
+        };
 
-        slot.task = None;
         slot.generation = slot.generation.wrapping_add(1);
         self.vacant.push(id.index());
         self.live -= 1;
+        self.unlink(&task, id.index());
         true
+    }
+
+    /// Takes a removed task out of its scope's list.
+    fn unlink(&mut self, task: &Task, index: u32) {
+        let Task {
+            prev_in_scope: prev,
+            next_in_scope: next,
+            scope,
+            ..
+        } = *task;
+
+        if next != NONE {
+            self.slots[next as usize]
+                .task
+                .as_mut()
+                .expect("a scope list names only live tasks")
+                .prev_in_scope = prev;
+        }
+
+        if prev != NONE {
+            self.slots[prev as usize]
+                .task
+                .as_mut()
+                .expect("a scope list names only live tasks")
+                .next_in_scope = next;
+        } else if next != NONE {
+            *self
+                .scopes
+                .get_mut(&scope)
+                .expect("a live task's scope is indexed") = next;
+        } else {
+            debug_assert_eq!(self.scopes.get(&scope), Some(&index));
+            self.scopes.remove(&scope);
+        }
     }
 
     /// Drops every task belonging to `scope`, returning how many there were.
     ///
     /// This is what an unmounting element relies on: no abort handle per task,
-    /// no generation counter per widget, one sweep.
+    /// no generation counter per widget, one walk of the scope's own list. A
+    /// scope that spawned nothing — most of them, since the framework keeps one
+    /// per element — costs a single missed hash lookup.
     pub(crate) fn remove_scope(&mut self, scope: ScopeId) -> usize {
-        let mut removed = 0;
-        for index in 0..self.slots.len() {
-            let slot = &mut self.slots[index];
-            if slot.task.as_ref().is_none_or(|task| task.scope != scope) {
-                continue;
-            }
+        let Some(mut index) = self.scopes.remove(&scope) else {
+            return 0;
+        };
 
-            slot.task = None;
+        let mut removed = 0;
+        while index != NONE {
+            let slot = &mut self.slots[index as usize];
+            let task = slot
+                .task
+                .take()
+                .expect("a scope list names only live tasks");
             slot.generation = slot.generation.wrapping_add(1);
-            self.vacant.push(index as u32);
+            self.vacant.push(index);
             removed += 1;
+            index = task.next_in_scope;
         }
+
         self.live -= removed;
         removed
     }
@@ -204,10 +306,10 @@ mod tests {
         let mut slab = TaskSlab::new();
         let id = insert(&mut slab, ScopeId::ROOT);
 
-        let (future, _) = slab.lend(id).expect("the future to be available");
+        let (future, waker) = slab.lend(id).expect("the future to be available");
         assert!(slab.lend(id).is_none());
 
-        assert!(slab.restore(id, future));
+        assert!(slab.restore(id, future, waker));
         assert!(slab.lend(id).is_some());
     }
 
@@ -216,10 +318,68 @@ mod tests {
         let mut slab = TaskSlab::new();
         let id = insert(&mut slab, ScopeId::ROOT);
 
-        let (future, _) = slab.lend(id).expect("the future to be available");
+        let (future, waker) = slab.lend(id).expect("the future to be available");
         slab.remove(id);
 
-        assert!(!slab.restore(id, future));
+        assert!(!slab.restore(id, future, waker));
+        assert_eq!(slab.len(), 0);
+    }
+
+    #[test]
+    fn cancelling_a_scope_with_no_tasks_removes_nothing() {
+        let mut slab = TaskSlab::new();
+        let _busy = insert(&mut slab, ScopeId::new(1));
+
+        assert_eq!(slab.remove_scope(ScopeId::new(2)), 0);
+        assert_eq!(slab.len(), 1);
+    }
+
+    #[test]
+    fn cancelling_a_scope_twice_removes_nothing_the_second_time() {
+        let mut slab = TaskSlab::new();
+        let scope = ScopeId::new(1);
+        insert(&mut slab, scope);
+        insert(&mut slab, scope);
+
+        assert_eq!(slab.remove_scope(scope), 2);
+        assert_eq!(slab.remove_scope(scope), 0);
+        assert_eq!(slab.len(), 0);
+    }
+
+    // Whichever position a task holds in its scope's bookkeeping — first
+    // spawned, last spawned, or in between — finishing early must take exactly
+    // that task out of the scope and nothing else.
+    #[test]
+    fn a_task_that_finished_is_not_counted_when_its_scope_is_cancelled() {
+        for removed_first in 0..3 {
+            let mut slab = TaskSlab::new();
+            let scope = ScopeId::new(1);
+            let tasks = [
+                insert(&mut slab, scope),
+                insert(&mut slab, scope),
+                insert(&mut slab, scope),
+            ];
+
+            assert!(slab.remove(tasks[removed_first]));
+            assert_eq!(slab.remove_scope(scope), 2, "early finisher #{removed_first}");
+            assert_eq!(slab.len(), 0);
+        }
+    }
+
+    #[test]
+    fn a_reused_slot_does_not_resurrect_its_old_scope() {
+        let mut slab = TaskSlab::new();
+        let old = ScopeId::new(1);
+        let new = ScopeId::new(2);
+
+        let first = insert(&mut slab, old);
+        assert!(slab.remove(first));
+        let second = insert(&mut slab, new);
+        assert_eq!(first.index(), second.index(), "the slot should be reused");
+
+        assert_eq!(slab.remove_scope(old), 0);
+        assert!(slab.contains(second));
+        assert_eq!(slab.remove_scope(new), 1);
         assert_eq!(slab.len(), 0);
     }
 

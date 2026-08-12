@@ -262,7 +262,16 @@ impl LocalScheduler {
     }
 
     /// Moves published wakes into the ready queue of each woken task's phase.
+    ///
+    /// Gated on the wake flags before anything is borrowed: this runs before
+    /// every poll of a microtask drain, and in the overwhelmingly common "no
+    /// new wakes" case it must cost a flag read, not a borrow and a buffer
+    /// swap.
     fn dispatch_wakes(&self) {
+        if !self.wakes.has_pending() {
+            return;
+        }
+
         let mut borrow = self.inner.borrow_mut();
         let Inner {
             tasks,
@@ -316,7 +325,6 @@ impl LocalScheduler {
         let Some((mut future, waker)) = self.inner.borrow_mut().tasks.lend(task) else {
             return;
         };
-
         let mut context = Context::from_waker(&waker);
 
         #[cfg(debug_assertions)]
@@ -329,6 +337,10 @@ impl LocalScheduler {
         // rather than asserted: the offending task still deserves to finish, and
         // a timing assertion would fire on a loaded machine that is not at
         // fault.
+        //
+        // This is the only thing that answers "which future dropped that frame",
+        // so it stays on in debug builds. Release builds pay nothing: the clock
+        // is not even read.
         #[cfg(debug_assertions)]
         {
             let elapsed = started.elapsed();
@@ -348,7 +360,7 @@ impl LocalScheduler {
 
         // A `false` here means the task was cancelled while it was running, so
         // the future has nowhere to go back to and is dropped with this scope.
-        let _ = inner.tasks.restore(task, future);
+        let _ = inner.tasks.restore(task, future, waker);
     }
 }
 

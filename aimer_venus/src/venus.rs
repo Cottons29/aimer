@@ -219,6 +219,34 @@ impl Venus {
         self.governor.borrow().frame_time()
     }
 
+    /// Retunes the runtime for the display it turned out to be drawing on.
+    ///
+    /// A runtime is created before a window exists, so it starts on an assumed
+    /// 60 Hz. An event loop that learns the real rate is expected to say so:
+    /// until it does, a 120 Hz display is budgeted as though its frames were
+    /// twice as long, which is how background work ends up spending time the
+    /// frame never had.
+    ///
+    /// A rate the platform could not report is ignored rather than believed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use aimer_venus::Venus;
+    ///
+    /// let venus = Venus::new();
+    /// assert!(venus.frame_time() > Duration::from_millis(16));
+    ///
+    /// venus.set_refresh_rate(120.0);
+    /// assert!(venus.frame_time() < Duration::from_micros(8_400));
+    /// ```
+    #[inline]
+    pub fn set_refresh_rate(&self, hz: f32) {
+        self.governor.borrow_mut().set_refresh_rate(hz);
+    }
+
     /// Runs one whole frame around `build`.
     ///
     /// The order is the contract, and it is the same one browsers settled on:

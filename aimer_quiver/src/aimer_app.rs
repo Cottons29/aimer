@@ -1223,6 +1223,57 @@ mod tests {
         assert!(app.take_redraw_request());
     }
 
+    /// An application with nothing to do must let the loop sleep.
+    ///
+    /// This is the other half of [`unfinished_work_asks_for_another_frame`], and
+    /// the more expensive one to get wrong: a runtime that reports work it does
+    /// not have turns every frame into a request for the next, so the
+    /// application renders flat out forever and every real frame competes with a
+    /// pointless one. That reads to a user as a *low* frame rate, which is the
+    /// opposite of what the extra frames were spent on.
+    #[test]
+    fn an_idle_application_does_not_ask_for_another_frame() {
+        let mut app = AimerApp::start_headless(RecordingWidget {
+            builds: Arc::new(AtomicUsize::new(0)),
+            cancels: Arc::new(AtomicUsize::new(0)),
+        });
+        app.render_frame();
+        app.take_redraw_request();
+
+        for _ in 0..8 {
+            app.render_frame();
+            assert!(
+                !app.take_redraw_request(),
+                "an idle frame asked for another one"
+            );
+        }
+    }
+
+    /// A task that is waiting on something that has not happened is not ready
+    /// work, and must not keep the loop spinning.
+    #[test]
+    fn a_pending_task_does_not_keep_the_loop_awake() {
+        let mut app = AimerApp::start_headless(RecordingWidget {
+            builds: Arc::new(AtomicUsize::new(0)),
+            cancels: Arc::new(AtomicUsize::new(0)),
+        });
+
+        // What an `AsyncBuilder` holds while a request is in flight: alive, and
+        // with nothing to poll until its answer arrives.
+        app.venus()
+            .spawn(async { std::future::pending::<()>().await });
+
+        app.render_frame();
+        app.take_redraw_request();
+        app.render_frame();
+
+        assert_eq!(app.venus().task_count(), 1, "the request is still in flight");
+        assert!(
+            !app.take_redraw_request(),
+            "a frame spent waiting asked for another one"
+        );
+    }
+
     /// Records the order the frame phases ran in, from inside the build.
     struct OrderedWidget {
         order: Rc<RefCell<Vec<&'static str>>>,

@@ -172,6 +172,25 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         }
     }
 
+    /// Tells the runtime how fast the display it is drawing on actually is.
+    ///
+    /// winit reports the rate in millihertz, and only for a monitor it can
+    /// identify: a window that has not been placed yet, a headless compositor,
+    /// or a platform with no notion of a monitor all answer `None`. In that case
+    /// nothing is said and the runtime keeps the rate it has, which is strictly
+    /// better than dividing by a number the platform declined to give.
+    fn tune_runtime_to_display(&self, window: &Window) {
+        let Some(millihertz) = window
+            .current_monitor()
+            .or_else(|| window.primary_monitor())
+            .and_then(|monitor| monitor.refresh_rate_millihertz())
+        else {
+            return;
+        };
+
+        self.venus.set_refresh_rate(millihertz as f32 / 1_000.0);
+    }
+
     /// The bookkeeping every frame does before anything is drawn.
     ///
     /// This frame's share of a scroll gesture is delivered here, and a gesture
@@ -471,6 +490,13 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         let window = self
             .native_window()
             .expect("the windowed loop always owns a native window");
+
+        // The runtime was built before this window existed, so it has been
+        // budgeting frames against an assumed 60 Hz. Told the real rate here —
+        // the first moment there is a monitor to ask — a ProMotion or gaming
+        // display stops being handed twice the idle time its frames have, and an
+        // overrun is recognised after one missed frame instead of two.
+        self.tune_runtime_to_display(window);
 
         // winit's iOS window is created without a `UIWindowScene`. On the
         // iOS 26/27 SDK the scene life cycle is mandatory, so a scene-less

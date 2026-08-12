@@ -227,6 +227,24 @@ impl FrameGovernor {
         self
     }
 
+    /// Retunes the governor for a display refreshing `hz` times per second.
+    ///
+    /// A runtime is built before anyone knows what it will be drawing on, so the
+    /// rate it starts with is a guess. Leaving that guess in place is not
+    /// harmless: a governor that believes a 120 Hz frame is 16.6 ms hands out
+    /// twice the idle time the frame actually has, and does not count a frame as
+    /// overrun until two of them have already been missed.
+    ///
+    /// A non-positive or non-finite rate is ignored, because a platform that
+    /// cannot report its refresh rate should leave the current one alone rather
+    /// than divide by it.
+    #[inline]
+    pub fn set_refresh_rate(&mut self, hz: f32) {
+        if hz.is_finite() && hz > 0.0 {
+            self.frame_time = Duration::from_secs_f32(1.0 / hz);
+        }
+    }
+
     /// Marks the start of a frame.
     #[inline]
     pub fn begin_frame(&mut self) {
@@ -325,6 +343,40 @@ mod tests {
         });
 
         assert!(time_remaining_in_frame().is_none());
+    }
+
+    // A governor built for 60 Hz and left there on a 120 Hz display hands out
+    // twice the time the frame has. Retuning is what keeps the budget and the
+    // overrun threshold honest.
+    #[test]
+    fn retuning_the_refresh_rate_shortens_the_frame_and_its_budget() {
+        let mut governor = FrameGovernor::for_refresh_rate(60.0);
+        governor.begin_frame();
+        let at_sixty = governor.idle_budget().time_remaining();
+
+        governor.set_refresh_rate(120.0);
+        governor.begin_frame();
+        let at_one_twenty = governor.idle_budget().time_remaining();
+
+        assert!(governor.frame_time() < Duration::from_micros(8_400));
+        assert!(
+            at_one_twenty < at_sixty,
+            "a shorter frame must hand out less: {at_one_twenty:?} vs {at_sixty:?}"
+        );
+    }
+
+    // A platform that cannot answer must not be able to break the governor.
+    #[test]
+    fn an_unreportable_refresh_rate_leaves_the_frame_alone() {
+        let mut governor = FrameGovernor::for_refresh_rate(120.0);
+        let tuned = governor.frame_time();
+
+        governor.set_refresh_rate(0.0);
+        governor.set_refresh_rate(-60.0);
+        governor.set_refresh_rate(f32::NAN);
+        governor.set_refresh_rate(f32::INFINITY);
+
+        assert_eq!(governor.frame_time(), tuned);
     }
 
     #[test]

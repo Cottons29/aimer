@@ -1,15 +1,16 @@
 //! The one place work leaves the UI thread.
 
+use std::collections::VecDeque;
 use std::pin::Pin;
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, JoinHandle};
 
 /// One unit of work queued for a worker thread.
 type Job = Box<dyn FnOnce() + Send>;
 
-enum Slot<T> {
+ enum Slot<T> {
     /// Nobody has finished yet; the waker of whoever is awaiting, if it has been
     /// polled at all.
     Waiting(Option<Waker>),
@@ -96,6 +97,68 @@ impl<T> Future for Offloaded<T> {
     }
 }
 
+/// One worker's slice of the pool's shared state.
+struct WorkerSlot {
+    /// This worker's own job queue: the pool pushes here, the owner pops from
+    /// the front, and a worker whose own queue is empty steals from a sibling's
+    /// front. Per-worker queues are what keep dispatch parallel — two workers
+    /// taking jobs touch two different locks, not one shared one.
+    jobs: Mutex<VecDeque<Job>>,
+    /// Raised by the worker when a full scan of every queue found nothing,
+    /// lowered when it picks work up again.
+    ///
+    /// The handshake that makes the flag reliable: the worker raises it
+    /// *before* its final scan, and the submitter reads it *after* pushing a
+    /// job — both through `SeqCst` and the queue locks — so any job is either
+    /// seen by that final scan or its submitter sees the raised flag and rings
+    /// the alarm.
+    idle: AtomicBool,
+    /// The wake token: `true` means the worker owes the queues another scan.
+    /// Guarded by its own mutex so a ring landing between the final scan and
+    /// the wait is never lost.
+    token: Mutex<bool>,
+    alarm: Condvar,
+}
+
+impl WorkerSlot {
+    fn new() -> Self {
+        Self {
+            jobs: Mutex::new(VecDeque::new()),
+            idle: AtomicBool::new(false),
+            token: Mutex::new(false),
+            alarm: Condvar::new(),
+        }
+    }
+
+    /// Hands the worker a wake token and rings its alarm.
+    fn ring(&self) {
+        if let Ok(mut token) = self.token.lock() {
+            *token = true;
+        }
+        self.alarm.notify_one();
+    }
+
+    /// Blocks until a wake token arrives, then consumes it.
+    fn wait_for_ring(&self) {
+        let Ok(mut token) = self.token.lock() else {
+            return;
+        };
+        while !*token {
+            match self.alarm.wait(token) {
+                Ok(woken) => token = woken,
+                Err(_) => return,
+            }
+        }
+        *token = false;
+    }
+}
+
+/// The state a pool shares with its workers.
+struct PoolShared {
+    slots: Box<[WorkerSlot]>,
+    shutdown: AtomicBool,
+}
+
 /// A small pool of threads for work that cannot be sliced.
 ///
 /// A frame budget makes this non-optional rather than a nicety: a forty
@@ -107,6 +170,15 @@ impl<T> Future for Offloaded<T> {
 /// Requiring it at the callback layer, as a general-purpose runtime does, taxes
 /// every handler in the framework for the sake of the few that do I/O.
 ///
+/// # Dispatch
+///
+/// Every worker owns its own queue; a submitted job goes to an idle worker's
+/// queue when one exists, and round-robin across the busy ones otherwise. A
+/// worker whose own queue runs dry steals from its siblings before parking, so
+/// a job queued behind a slow one is picked up by whichever worker frees up
+/// first — no single lock serializes dispatch, and no worker sleeps while work
+/// is stranded elsewhere.
+///
 /// # Panics
 ///
 /// A closure that panics takes its worker thread with it, and the awaiting task
@@ -114,7 +186,10 @@ impl<T> Future for Offloaded<T> {
 /// not panic in offloaded work; the release profile aborts the process on panic
 /// in any case.
 pub struct OffloadPool {
-    jobs: Option<Sender<Job>>,
+    shared: Arc<PoolShared>,
+    /// Where the next job lands when every worker is busy, so a burst spreads
+    /// across the queues instead of piling onto one.
+    cursor: AtomicUsize,
     workers: Vec<JoinHandle<()>>,
 }
 
@@ -122,21 +197,24 @@ impl OffloadPool {
     /// Spawns a pool of `threads` workers, at least one.
     pub fn new(threads: usize) -> Self {
         let threads = threads.max(1);
-        let (sender, receiver) = mpsc::channel::<Job>();
-        let receiver = Arc::new(Mutex::new(receiver));
+        let shared = Arc::new(PoolShared {
+            slots: (0..threads).map(|_| WorkerSlot::new()).collect(),
+            shutdown: AtomicBool::new(false),
+        });
 
         let workers = (0..threads)
             .map(|index| {
-                let receiver = Arc::clone(&receiver);
+                let shared = Arc::clone(&shared);
                 thread::Builder::new()
                     .name(format!("aimer-venus-offload-{index}"))
-                    .spawn(move || worker(receiver))
+                    .spawn(move || worker(&shared, index))
                     .expect("an offload worker thread")
             })
             .collect();
 
         Self {
-            jobs: Some(sender),
+            shared,
+            cursor: AtomicUsize::new(0),
             workers,
         }
     }
@@ -161,14 +239,39 @@ impl OffloadPool {
         let rendezvous = Rendezvous::new();
         let completion = Arc::clone(&rendezvous);
 
-        let job: Job = Box::new(move || completion.complete(work()));
-        if let Some(jobs) = self.jobs.as_ref() {
-            // A send only fails once the pool is being dropped, at which point
-            // nothing is left to await the result either.
-            let _ = jobs.send(job);
+        self.submit(Box::new(move || completion.complete(work())));
+        Offloaded { rendezvous }
+    }
+
+    /// Queues `job` and makes sure a worker will get to it.
+    fn submit(&self, job: Job) {
+        let slots = &self.shared.slots;
+
+        // An idle worker's own queue is the best home for the job; when every
+        // worker is busy, round-robin spreads the burst across their queues.
+        let target = Self::idle_worker(slots)
+            .unwrap_or_else(|| self.cursor.fetch_add(1, Ordering::Relaxed) % slots.len());
+        if let Ok(mut jobs) = slots[target].jobs.lock() {
+            jobs.push_back(job);
         }
 
-        Offloaded { rendezvous }
+        // Re-read the flags *after* the push — see [`WorkerSlot::idle`]. Any
+        // idle worker will do when the target itself is not: it steals.
+        let sleeper = if slots[target].idle.load(Ordering::SeqCst) {
+            Some(target)
+        } else {
+            Self::idle_worker(slots)
+        };
+        if let Some(index) = sleeper {
+            slots[index].ring();
+        }
+    }
+
+    /// The first worker currently advertising an empty scan, if any.
+    fn idle_worker(slots: &[WorkerSlot]) -> Option<usize> {
+        slots
+            .iter()
+            .position(|slot| slot.idle.load(Ordering::SeqCst))
     }
 
     /// How many worker threads the pool owns.
@@ -186,49 +289,189 @@ impl Default for OffloadPool {
 }
 
 impl Drop for OffloadPool {
-    /// Closes the queue and joins the workers.
+    /// Closes the pool and joins the workers.
     ///
-    /// Joining means an application shutting down does not race a worker that is
-    /// halfway through writing into a rendezvous.
+    /// A worker only exits once every queue is empty, so a job the pool
+    /// accepted still runs; and joining means an application shutting down does
+    /// not race a worker that is halfway through writing into a rendezvous.
     fn drop(&mut self) {
-        self.jobs.take();
+        self.shared.shutdown.store(true, Ordering::SeqCst);
+        for slot in self.shared.slots.iter() {
+            slot.ring();
+        }
         for worker in self.workers.drain(..) {
             let _ = worker.join();
         }
     }
 }
 
-fn worker(receiver: Arc<Mutex<Receiver<Job>>>) {
+fn worker(shared: &PoolShared, me: usize) {
+    let slot = &shared.slots[me];
     loop {
-        // The lock is held only long enough to take one job, so a worker never
-        // blocks its peers while running.
-        let job = {
-            let Ok(receiver) = receiver.lock() else {
-                return;
-            };
-            receiver.recv()
-        };
+        if let Some(job) = claim(shared, me) {
+            job();
+            continue;
+        }
 
-        match job {
-            Ok(job) => job(),
-            Err(_) => return,
+        // Nothing anywhere on a first pass. Raise the idle flag *before*
+        // scanning once more: a job pushed before the raise is caught by this
+        // scan, and one pushed after it sees the flag and rings the alarm — so
+        // the worker never sleeps through a submission.
+        slot.idle.store(true, Ordering::SeqCst);
+        if let Some(job) = claim(shared, me) {
+            slot.idle.store(false, Ordering::SeqCst);
+            job();
+            continue;
+        }
+
+        // The shutdown check sits behind the empty scan on purpose: a pool
+        // being dropped drains before it dies.
+        if shared.shutdown.load(Ordering::SeqCst) {
+            return;
+        }
+
+        slot.wait_for_ring();
+        slot.idle.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Takes one job: the front of this worker's own queue, or failing that, the
+/// front of a sibling's — a worker with time on its hands steals rather than
+/// letting work sit behind a busy peer.
+fn claim(shared: &PoolShared, me: usize) -> Option<Job> {
+    let slots = &shared.slots;
+    if let Ok(mut jobs) = slots[me].jobs.lock()
+        && let Some(job) = jobs.pop_front()
+    {
+        return Some(job);
+    }
+
+    // Victims are scanned starting past `me`, so no single queue is every
+    // thief's first stop.
+    for offset in 1..slots.len() {
+        let victim = (me + offset) % slots.len();
+        if let Ok(mut jobs) = slots[victim].jobs.lock()
+            && let Some(job) = jobs.pop_front()
+        {
+            return Some(job);
         }
     }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
-    use std::time::Duration;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
 
     use super::*;
     use crate::Venus;
+
+    /// Spins until `condition` holds, panicking with `what` if it never does.
+    ///
+    /// The deadline is generous because CI machines stall; a passing run never
+    /// comes near it.
+    fn wait_until(what: &str, condition: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !condition() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            thread::yield_now();
+        }
+    }
 
     #[test]
     fn a_pool_always_has_at_least_one_worker() {
         assert_eq!(OffloadPool::new(0).thread_count(), 1);
         assert!(OffloadPool::with_default_threads().thread_count() >= 1);
+    }
+
+    // The dispatch property the pool must never lose: work queued while a
+    // worker is stuck belongs to the *pool*, not to that worker. Every worker
+    // is first wedged on a gate, a batch of quick jobs is queued behind them,
+    // and then a single worker is released — that one worker must be able to
+    // reach and finish every quick job, wherever it was queued.
+    #[test]
+    fn a_blocked_worker_does_not_strand_the_jobs_queued_behind_it() {
+        let pool = OffloadPool::new(2);
+        let occupied = Arc::new(AtomicUsize::new(0));
+
+        let gates: Vec<mpsc::Sender<()>> = (0..pool.thread_count())
+            .map(|_| {
+                let (open, gate) = mpsc::channel::<()>();
+                let counted = occupied.clone();
+                // The result is observed through the counter, not awaited.
+                drop(pool.offload(move || {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    let _ = gate.recv();
+                }));
+                open
+            })
+            .collect();
+        wait_until("every worker to pick up its blocker", || {
+            occupied.load(Ordering::SeqCst) == 2
+        });
+
+        let done = Arc::new(AtomicUsize::new(0));
+        for _ in 0..8 {
+            let counted = done.clone();
+            drop(pool.offload(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }));
+        }
+
+        // One worker comes back; the other stays wedged the whole time.
+        gates[0].send(()).expect("the blocked worker to be alive");
+        wait_until("the free worker to finish every queued job", || {
+            done.load(Ordering::SeqCst) == 8
+        });
+
+        gates[1].send(()).expect("the blocked worker to be alive");
+    }
+
+    // Dropping the pool joins the workers, and joining means draining: a job
+    // the pool accepted is a job that runs, even when the drop arrives while
+    // the queue is still full.
+    #[test]
+    fn jobs_accepted_before_the_pool_drops_still_run() {
+        let pool = OffloadPool::new(1);
+        let ran = Arc::new(AtomicUsize::new(0));
+
+        let (open, gate) = mpsc::channel::<()>();
+        drop(pool.offload(move || {
+            let _ = gate.recv();
+        }));
+        for _ in 0..16 {
+            let counted = ran.clone();
+            drop(pool.offload(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }));
+        }
+
+        open.send(()).expect("the blocked worker to be alive");
+        drop(pool);
+        assert_eq!(ran.load(Ordering::SeqCst), 16);
+    }
+
+    // Many small jobs from one submitter — the shape the dispatch rework is
+    // for. Every job must land exactly once, none lost to a wake race.
+    #[test]
+    fn a_storm_of_small_jobs_all_lands() {
+        let jobs = 10_000;
+        let done = Arc::new(AtomicUsize::new(0));
+
+        let pool = OffloadPool::new(4);
+        for _ in 0..jobs {
+            let counted = done.clone();
+            drop(pool.offload(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }));
+        }
+        drop(pool);
+
+        assert_eq!(done.load(Ordering::SeqCst), jobs);
     }
 
     // The property that makes `offload` worth having: the awaiting task keeps

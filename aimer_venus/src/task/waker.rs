@@ -1,3 +1,4 @@
+use std::cell::{Cell, UnsafeCell};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Wake, Waker};
@@ -14,6 +15,29 @@ use crate::task::TaskId;
 /// `EventLoopProxy::send_event`.
 pub type Notifier = Box<dyn Fn() + Send + Sync>;
 
+/// The wakes raised by the UI thread itself, kept out of the mutex.
+///
+/// Most wakes never cross a thread: `yield_now`, budget slicing and `set_state`
+/// chains all wake from inside a poll, on the UI thread, thousands of times a
+/// frame under load. Routing them through the cross-thread lock would put an
+/// atomic read-modify-write on the hottest path the runtime has, paying for a
+/// synchronization that same-thread code does not need.
+///
+/// # Safety invariant
+///
+/// Only the thread recorded in [`WakeQueue::owner`] may touch these fields.
+/// [`WakeQueue::wake`] checks the current thread before entering the fast
+/// path, and [`WakeQueue::drain_into`] / [`WakeQueue::has_pending`] are called
+/// exclusively by the scheduler, which is `!Send` and lives on that thread.
+struct UiWakes {
+    pending: UnsafeCell<Vec<TaskId>>,
+    has_pending: Cell<bool>,
+}
+
+// SAFETY: every access is confined to the owner thread — see the invariant on
+// [`UiWakes`] — so no two threads ever touch the interior data concurrently.
+unsafe impl Sync for UiWakes {}
+
 /// The one place where Venus crosses a thread boundary.
 ///
 /// Tasks are non-`Send` and are polled exclusively on the UI thread, but a
@@ -21,13 +45,24 @@ pub type Notifier = Box<dyn Fn() + Send + Sync>;
 /// more — has to be publishable from anywhere. Holding only ids here is what
 /// lets the futures themselves stay `Rc`-friendly.
 ///
-/// The queue is read by the scheduler at the start of every phase. A lock is
-/// acceptable on that path because it is uncontended in the common case, and
-/// the [`AtomicBool`] means the overwhelmingly common "nothing was woken"
-/// answer costs a single relaxed-ordering load and no lock at all.
+/// Wakes travel one of two roads, split by the thread they come from:
+///
+/// - **Same-thread wakes** — the overwhelming majority — go into `local`, a
+///   plain unsynchronized buffer, because the producer and the consumer are
+///   provably the same thread.
+/// - **Cross-thread wakes** — a worker finishing an offload — take the mutex
+///   and nudge the parked event loop through the notifier.
+///
+/// The queue is read by the scheduler at the start of every phase, and the two
+/// flags mean the overwhelmingly common "nothing was woken" answer costs one
+/// [`Cell`] read plus one atomic load, and no lock at all.
 pub(crate) struct WakeQueue {
-    pending: Mutex<Vec<TaskId>>,
-    has_pending: AtomicBool,
+    /// Wakes raised on the UI thread itself; unsynchronized by design.
+    local: UiWakes,
+    /// Wakes raised on any other thread.
+    shared: Mutex<Vec<TaskId>>,
+    /// Whether `shared` holds anything, so draining an empty queue never locks.
+    has_shared: AtomicBool,
     notifier: Mutex<Option<Notifier>>,
     owner: ThreadId,
 }
@@ -40,8 +75,12 @@ impl WakeQueue {
     /// also be asleep.
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
-            pending: Mutex::new(Vec::new()),
-            has_pending: AtomicBool::new(false),
+            local: UiWakes {
+                pending: UnsafeCell::new(Vec::new()),
+                has_pending: Cell::new(false),
+            },
+            shared: Mutex::new(Vec::new()),
+            has_shared: AtomicBool::new(false),
             notifier: Mutex::new(None),
             owner: thread::current().id(),
         })
@@ -56,15 +95,23 @@ impl WakeQueue {
 
     /// Publishes a wake for `id`, nudging the event loop if the wake came from
     /// another thread.
+    ///
+    /// A wake from the UI thread takes the lock-free fast path: the loop is
+    /// demonstrably awake and the queue's consumer is this very thread, so
+    /// neither the mutex nor the notifier has anything to add.
     pub(crate) fn wake(&self, id: TaskId) {
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.push(id);
-        }
-        self.has_pending.store(true, Ordering::Release);
-
         if thread::current().id() == self.owner {
+            // SAFETY: this branch runs only on the owner thread, the sole
+            // thread allowed to touch `local` — see [`UiWakes`].
+            unsafe { (*self.local.pending.get()).push(id) };
+            self.local.has_pending.set(true);
             return;
         }
+
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.push(id);
+        }
+        self.has_shared.store(true, Ordering::Release);
 
         if let Ok(notifier) = self.notifier.lock()
             && let Some(notifier) = notifier.as_ref()
@@ -76,31 +123,45 @@ impl WakeQueue {
     /// Moves every published wake into `out`, leaving the queue empty.
     ///
     /// `out` is the scheduler's reusable scratch buffer, so a steady stream of
-    /// wakes allocates nothing.
+    /// wakes allocates nothing. Must be called on the owner thread — which the
+    /// scheduler, being `!Send`, guarantees.
     pub(crate) fn drain_into(&self, out: &mut Vec<TaskId>) {
-        if !self.has_pending.load(Ordering::Acquire) {
-            return;
+        debug_assert_eq!(thread::current().id(), self.owner);
+
+        if self.local.has_pending.get() {
+            // SAFETY: only the owner thread reaches here, and `wake`'s fast
+            // path runs on the same thread, so this access cannot overlap
+            // another — see [`UiWakes`].
+            unsafe { out.append(&mut *self.local.pending.get()) };
+            self.local.has_pending.set(false);
         }
 
-        if let Ok(mut pending) = self.pending.lock() {
-            out.append(&mut pending);
+        if self.has_shared.load(Ordering::Acquire) {
+            if let Ok(mut shared) = self.shared.lock() {
+                out.append(&mut shared);
+            }
+            self.has_shared.store(false, Ordering::Release);
         }
-        self.has_pending.store(false, Ordering::Release);
     }
 
     /// Whether anything has been woken since the last drain.
     ///
-    /// The event loop uses this to decide whether it may go back to sleep.
+    /// The event loop uses this to decide whether it may go back to sleep, and
+    /// the scheduler gates its dispatch on it. Must be called on the owner
+    /// thread — which the scheduler, being `!Send`, guarantees.
     pub(crate) fn has_pending(&self) -> bool {
-        self.has_pending.load(Ordering::Acquire)
+        debug_assert_eq!(thread::current().id(), self.owner);
+        self.local.has_pending.get() || self.has_shared.load(Ordering::Acquire)
     }
 }
 
 /// The waker handed to one task, for the whole life of that task.
 ///
-/// Built once at spawn and cloned per poll — an [`Arc`] refcount bump — rather
-/// than allocated per poll, because at 120 Hz every per-poll allocation is a
-/// frame-time risk.
+/// Built once at spawn; the resulting [`Waker`] then moves in and out of the
+/// slab together with the future, so an ordinary poll costs neither an
+/// allocation nor a refcount bump. Clones only happen when a future stashes
+/// `cx.waker()` somewhere — which is the future's business, not the
+/// scheduler's.
 struct TaskWaker {
     id: TaskId,
     queue: Arc<WakeQueue>,
@@ -155,6 +216,28 @@ mod tests {
         queue.drain_into(&mut drained);
 
         assert_eq!(drained, vec![id(3)]);
+        assert!(!queue.has_pending());
+    }
+
+    // A wake raised on the UI thread and one raised on a worker land in the
+    // same drain: the two publication paths must converge on one queue that the
+    // scheduler reads.
+    #[test]
+    fn wakes_from_the_ui_thread_and_a_worker_drain_together() {
+        let queue = WakeQueue::new();
+        let mut drained = Vec::new();
+
+        queue.wake(id(0));
+        let from_worker = Arc::clone(&queue);
+        thread::spawn(move || from_worker.wake(id(1)))
+            .join()
+            .expect("the worker to finish");
+        assert!(queue.has_pending());
+
+        queue.drain_into(&mut drained);
+
+        drained.sort_by_key(|id| id.index());
+        assert_eq!(drained, vec![id(0), id(1)]);
         assert!(!queue.has_pending());
     }
 
