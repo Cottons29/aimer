@@ -514,6 +514,14 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         let previous_runtime = Venus::uninstall();
         venus.install();
 
+        // Every task Venus polls is polled inside the async runtime, so a
+        // future that builds its resources on the first poll — a request, a
+        // timer, a file read — finds a runtime there instead of panicking.
+        #[cfg(not(target_arch = "wasm32"))]
+        venus.set_poll_context(crate::poll_context::TokioPollContext::new(
+            async_runtime.handle().clone(),
+        ));
+
         let window = WindowHandle::headless(options.size, scale_factor);
         let mut headless = Self {
             app: AimerApplicationHandler {
@@ -945,6 +953,15 @@ fn start_event_loop(
     let venus = Venus::new();
     venus.install();
     venus.set_notifier(request_frame_ready);
+
+    // Every task Venus polls is polled inside the async runtime, so a future
+    // that builds its resources on the first poll — a request, a timer, a file
+    // read — finds a runtime there instead of panicking. The driver itself
+    // stays on its own threads: only the lookup happens here.
+    #[cfg(not(target_arch = "wasm32"))]
+    venus.set_poll_context(crate::poll_context::TokioPollContext::new(
+        async_runtime.handle().clone(),
+    ));
 
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
     let inspector = InspectorAppHandle::connect(

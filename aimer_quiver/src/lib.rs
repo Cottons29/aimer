@@ -16,6 +16,10 @@ mod ios_screen {
 }
 
 mod adapter_detail;
+/// Entering the application's async runtime while Venus polls a task. Native
+/// only: the browser has one task queue and no runtime to be inside of.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod poll_context;
 /// The native application menu, and the shortcuts macOS routes through it.
 pub mod menu;
 pub mod frame_stats;
