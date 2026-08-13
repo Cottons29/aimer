@@ -3,8 +3,15 @@ mod single_child;
 pub use single_child::aspecratio::{AspectRatio, RatioOption};
 pub use single_child::container::Container;
 pub use single_child::opacity::Opacity;
+pub use single_child::resizable::band::ResizeBand;
+pub use single_child::resizable::direction::Direction;
+pub use single_child::resizable::handle::ResizeHandle;
+pub use single_child::resizable::{RawResizable, Resizable};
 pub use single_child::sized_box::SizedBox;
 pub use single_child::zero_size_box::ZeroSizedBox;
+
+#[doc(no_inline)]
+pub use aimer_utils::cursor::CursorIcon;
 
 #[cfg(test)]
 mod tests {
