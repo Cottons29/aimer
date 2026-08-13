@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::task::Context;
 
 use crate::budget::{self, FrameBudget};
+use crate::poll_context::PollContext;
 use crate::task::slab::TaskSlab;
 use crate::task::waker::{Notifier, WakeQueue, waker_for};
 use crate::task::{Phase, ScopeId, TaskId, TaskScope};
@@ -65,6 +66,12 @@ struct Inner {
 pub struct LocalScheduler {
     inner: RefCell<Inner>,
     wakes: Arc<WakeQueue>,
+    /// The host runtime every poll is wrapped in, if the host installed one.
+    ///
+    /// Kept apart from [`Inner`] because it is read on the poll path while the
+    /// task state is lent out, and because a task is allowed to install one
+    /// while it runs.
+    poll_context: RefCell<Option<Rc<dyn PollContext>>>,
 }
 
 impl LocalScheduler {
@@ -82,6 +89,7 @@ impl LocalScheduler {
                 woken: Vec::new(),
             }),
             wakes: WakeQueue::new(),
+            poll_context: RefCell::new(None),
         })
     }
 
@@ -179,6 +187,27 @@ impl LocalScheduler {
     #[inline]
     pub fn set_notifier(&self, notifier: impl Fn() + Send + Sync + 'static) {
         self.wakes.set_notifier(Box::new(notifier) as Notifier);
+    }
+
+    /// Installs the runtime every task is polled inside from now on.
+    ///
+    /// See [`PollContext`] for what this buys: futures from `reqwest`, `tokio`
+    /// and every other ecosystem that builds its resources on the first poll
+    /// and looks its runtime up in a thread-local. Replaces whatever was
+    /// installed before, because a thread has one host runtime rather than a
+    /// stack of them.
+    #[inline]
+    pub fn set_poll_context(&self, context: impl PollContext + 'static) {
+        *self.poll_context.borrow_mut() = Some(Rc::new(context) as Rc<dyn PollContext>);
+    }
+
+    /// Removes the installed runtime, returning polls to bare.
+    ///
+    /// A host shutting its runtime down says so here: a context that outlives
+    /// the runtime it enters is a handle to something that no longer exists.
+    #[inline]
+    pub fn clear_poll_context(&self) {
+        *self.poll_context.borrow_mut() = None;
     }
 
     /// Runs microtasks until none are left, returning how many ran.
@@ -330,7 +359,19 @@ impl LocalScheduler {
         #[cfg(debug_assertions)]
         let started = web_time::Instant::now();
 
-        let finished = future.as_mut().poll(&mut context).is_ready();
+        // Cloned rather than borrowed across the poll: the task about to run may
+        // install a context of its own, and a live borrow is the one thing that
+        // would turn that into a panic. `None` — every test, and the whole
+        // browser — clones to nothing at all.
+        let host = self.poll_context.borrow().clone();
+        let mut finished = false;
+        {
+            let mut poll_once = || finished = future.as_mut().poll(&mut context).is_ready();
+            match host {
+                Some(host) => host.enter(&mut poll_once),
+                None => poll_once(),
+            }
+        }
 
         // A single poll that holds the thread for a millisecond is a stutter,
         // and it is far cheaper to hear about it here than from a user. Reported

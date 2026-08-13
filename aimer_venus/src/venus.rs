@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::budget::{FrameBudget, FrameGovernor};
+use crate::poll_context::PollContext;
 use crate::scheduler::LocalScheduler;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::offload::{OffloadPool, Offloaded};
@@ -171,6 +172,23 @@ impl Venus {
     #[inline]
     pub fn set_notifier(&self, notifier: impl Fn() + Send + Sync + 'static) {
         self.scheduler.set_notifier(notifier);
+    }
+
+    /// Installs the host runtime every task is polled inside.
+    ///
+    /// This is what lets a future from another ecosystem — `reqwest`,
+    /// `tokio::fs`, a `sleep` — be spawned anywhere in the UI: see
+    /// [`PollContext`]. Venus itself names no runtime; the host installs the
+    /// adapter once, next to [`install`](Self::install).
+    #[inline]
+    pub fn set_poll_context(&self, context: impl PollContext + 'static) {
+        self.scheduler.set_poll_context(context);
+    }
+
+    /// Removes the installed host runtime, returning polls to bare.
+    #[inline]
+    pub fn clear_poll_context(&self) {
+        self.scheduler.clear_poll_context();
     }
 
     /// Runs microtasks until none are left, returning how many ran.

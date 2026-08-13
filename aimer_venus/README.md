@@ -156,6 +156,61 @@ Two things a loop should know:
   raised off the UI thread; a wake raised on the UI thread never pings it,
   because the loop is demonstrably awake.
 
+## Hosting another runtime's futures
+
+A future from `reqwest`, `tokio::fs` or `tokio::time` does not need its runtime
+to *poll* it — it needs that runtime to be **findable** while it is polled,
+because it builds its resources on the first poll and looks the runtime up in a
+thread-local. Venus polls on the UI thread, where that lookup finds nothing, so
+such a future would panic before it reached the network.
+
+One hook fixes that for every spawn path at once. The host installs an adapter
+and Venus enters it around each poll — and only around the poll, never across an
+`await`:
+
+```rust
+use std::cell::Cell;
+use std::rc::Rc;
+
+use aimer_venus::{PollContext, Venus};
+
+// Aimer's own adapter is `aimer_quiver::poll_context::TokioPollContext`,
+// whose `enter` is `let _guard = self.handle.enter(); poll();`.
+struct MarkThread(Rc<Cell<bool>>);
+
+impl PollContext for MarkThread {
+    fn enter(&self, poll: &mut dyn FnMut()) {
+        self.0.set(true);
+        poll();
+        self.0.set(false);
+    }
+}
+
+let inside = Rc::new(Cell::new(false));
+let venus = Venus::new();
+venus.set_poll_context(MarkThread(inside.clone()));
+
+let observed = Rc::new(Cell::new(false));
+let seen = observed.clone();
+let marked = inside.clone();
+venus.spawn(async move { seen.set(marked.get()) });
+venus.run_microtasks();
+
+assert!(observed.get());
+```
+
+Venus still names no runtime and depends on none: it knows only how to run a
+closure inside whatever the host handed it. Aimer's application loop installs
+the adapter for its async runtime next to `Venus::install`, which is why
+`examples/http_request_button.rs` can `spawn_local` a request from a button
+handler with nothing else in the way.
+
+The completion side needed no work at all. The other runtime's reactor wakes
+Venus's waker from its own thread, and the task resumes in the phase it was
+spawned into — so an HTTP response lands *before this frame's build*, which is
+more than the runtime that fetched it can promise. Its driver threads keep the
+handshake and the decoding off the UI thread entirely.
+
 ## Costs, honestly
 
 - A task pays one `Box::pin` at spawn and nothing per poll. Polling a ready task
@@ -168,3 +223,6 @@ Two things a loop should know:
 - A microtask drain is deliberately unbudgeted, so a microtask that re-wakes
   itself forever hangs the frame. Debug builds assert once the drain passes
   100 000 polls.
+- An installed poll context costs one `Rc` clone and one dynamic call per poll,
+  plus whatever the host's guard is — a thread-local swap, for Tokio. With no
+  context installed the poll path reads an empty `Option` and nothing else.

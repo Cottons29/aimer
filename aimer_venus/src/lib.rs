@@ -5,6 +5,7 @@ mod budget;
 // budgeted idle phase is what takes its place there.
 #[cfg(not(target_arch = "wasm32"))]
 mod offload;
+mod poll_context;
 mod scheduler;
 mod task;
 mod venus;
@@ -15,6 +16,7 @@ pub use crate::budget::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::offload::{OffloadPool, Offloaded};
+pub use crate::poll_context::PollContext;
 pub use crate::scheduler::LocalScheduler;
 pub use crate::task::{Notifier, Phase, ScopeId, TaskId, TaskScope};
 pub use crate::venus::{Venus, spawn_local};
