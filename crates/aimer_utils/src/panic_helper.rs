@@ -4,10 +4,14 @@ use std::panic::Location;
 #[cfg(not(target_arch = "wasm32"))]
 use std::{env, fs};
 
+mod capture;
+
 #[cfg(debug_assertions)]
 mod embedded_sources {
     include!(concat!(env!("OUT_DIR"), "/embedded_sources.rs"));
 }
+
+pub use capture::{PanicSite, PanicWatch};
 
 /// Formats concise diagnostics for tracked panic call sites.
 pub struct PanicHelper;
@@ -23,19 +27,65 @@ impl PanicHelper {
 
 fn format_location(file: &str, line: u32, column: u32) -> String {
     let coordinates = format!("{file}:{line}:{column}");
-    let Some(source_line) = read_source(file).and_then(|source| {
+    let Some(snippet) = source_snippet(file, line, column) else {
+        return coordinates;
+    };
+
+    format!("{coordinates}\n{snippet}")
+}
+
+/// The source line `line` of `file` followed by a caret run underlining the
+/// expression that starts at `column`.
+///
+/// [`None`] when the source is neither embedded nor readable, or when nothing
+/// remains to underline past `column`.
+pub(crate) fn source_snippet(file: &str, line: u32, column: u32) -> Option<String> {
+    let source_line = read_source(file).and_then(|source| {
         source
             .lines()
             .nth(line.saturating_sub(1) as usize)
             .map(str::to_owned)
-    }) else {
-        return coordinates;
-    };
-    let Some(highlight) = highlight_source_line(&source_line, column) else {
-        return coordinates;
-    };
+    })?;
+    let (source_line, column) = dedent_source_line(&source_line, column);
+    let highlight = highlight_source_line(&source_line, column)?;
 
-    format!("{coordinates}\n{source_line}\n{highlight}")
+    Some(format!("{source_line}\n{highlight}"))
+}
+
+/// The widest indentation a reported source line keeps, in spaces.
+///
+/// Deeply nested widget trees push their expressions far to the right, and a
+/// line that carries that indentation into a narrow console pane is wrapped by
+/// the renderer — which breaks the caret run away from the expression it points
+/// at. Clamping the indentation keeps the two on one line without losing the
+/// hint that the expression is nested.
+const MAX_INDENT: usize = 10;
+
+/// Columns a leading tab is counted as while measuring indentation.
+const TAB_WIDTH: usize = 4;
+
+/// Reduces the indentation of `source_line` to at most [`MAX_INDENT`] spaces,
+/// returning the line and the column `column` moved to.
+///
+/// Leading tabs are measured as [`TAB_WIDTH`] columns and rewritten as spaces,
+/// so the caret run computed from the returned column lands under the same
+/// characters no matter how the source was indented.
+fn dedent_source_line(source_line: &str, column: u32) -> (String, u32) {
+    let indent = source_line.chars().take_while(char::is_ascii_whitespace).count();
+    let width: usize = source_line
+        .chars()
+        .take(indent)
+        .map(|character| if character == '\t' { TAB_WIDTH } else { 1 })
+        .sum();
+    if width <= MAX_INDENT && width == indent {
+        return (source_line.to_owned(), column);
+    }
+
+    let kept = width.min(MAX_INDENT);
+    let start = (column.saturating_sub(1) as usize).max(indent);
+    let dedented: String = " ".repeat(kept) + &source_line.chars().skip(indent).collect::<String>();
+
+    (dedented, (start - indent + kept + 1) as u32)
 }
 
 fn read_source(file: &str) -> Option<Cow<'static, str>> {
@@ -140,5 +190,36 @@ mod tests {
         let highlight = highlight_source_line("let π = PanicPosition::of(ctx);", 9).unwrap();
 
         assert_eq!(highlight, "        ^^^^^^^^^^^^^^^^^^^^^^");
+    }
+
+    #[test]
+    fn deeply_indented_source_line_keeps_at_most_ten_leading_spaces() {
+        let source_line = format!("{}Option::<i32>::None.unwrap()", " ".repeat(24));
+        let (dedented, column) = dedent_source_line(&source_line, 25);
+
+        assert_eq!(dedented, "          Option::<i32>::None.unwrap()");
+        assert_eq!(column, 11);
+    }
+
+    #[test]
+    fn shallow_indentation_is_left_untouched() {
+        let source_line = "    let value = None.unwrap();";
+        let (dedented, column) = dedent_source_line(source_line, 17);
+
+        assert_eq!(dedented, source_line);
+        assert_eq!(column, 17);
+    }
+
+    #[test]
+    fn dedented_line_and_carets_stay_aligned() {
+        let source_line = format!("{}let value = None.unwrap();", "\t".repeat(6));
+        let (dedented, column) = dedent_source_line(&source_line, 19);
+        let highlight = highlight_source_line(&dedented, column).unwrap();
+
+        assert_eq!(dedented, "          let value = None.unwrap();");
+        assert_eq!(
+            highlight,
+            format!("{}{}", " ".repeat(22), "^".repeat("None.unwrap()".len()))
+        );
     }
 }

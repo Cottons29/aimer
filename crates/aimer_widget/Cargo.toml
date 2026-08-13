@@ -21,6 +21,9 @@ winit.workspace = true
 smallvec.workspace = true
 hashbrown.workspace = true
 
+[dev-dependencies]
+aimer_cupid.workspace = true
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 objc.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}

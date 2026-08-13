@@ -10,10 +10,12 @@ pub mod drag_and_drop;
 pub mod file_drop_zone;
 mod floating;
 mod focus_node_example;
+mod http_request_button;
 mod loading_animation;
 mod markdown_example;
 mod modal;
 mod panic_recovery;
+mod resizable_example;
 pub mod routing;
 mod scroll_and_row;
 mod selectable_text;
@@ -48,6 +50,8 @@ use crate::modal::start_modal_example;
 #[allow(unused_imports)]
 use crate::panic_recovery::start_panic_recovery_example;
 #[allow(unused_imports)]
+use crate::resizable_example::start_resizable_example;
+#[allow(unused_imports)]
 use crate::scroll_and_row::test_scroll_and_row;
 #[allow(unused_imports)]
 use crate::stateful::start_counter;
@@ -64,10 +68,6 @@ fn main() {
     // test_text();
     // stateful_2::start_my_list();
     // start_counter();
-    // AimerApp::start(Container::new().child(Row::new().children([
-    //     Expanded::new().child(TestFadingAnimation),
-    //     Expanded::new().child(TestFadingAnimation),
-    // ])))
     // test_positioned()
     // async_builder::start_async_builder_example()
     // test_scrollable()
@@ -76,8 +76,9 @@ fn main() {
     // start_floating_example();
     // drag_and_drop::start_drag_and_drop_example();
     // file_drop_zone::start_file_drop_zone_example();
-    start_markdown_example();
+    // start_markdown_example();
     // start_panic_recovery_example();
+    // start_resizable_example();
     // test_scroll_and_row();
     // start_svg_test();
     // panic_recovery::start_panic_recovery_example()
@@ -85,7 +86,7 @@ fn main() {
     // start_system_theme_example()
     // system_theme::start_system_theme_example();
     // test_text()
-    // start_loading_animation_example()
+    start_loading_animation_example()
     // floating::start_floating_example();
     // file_drop_zone::start_file_drop_zone_example()
     // drag_and_drop::start_drag_and_drop_example();
@@ -93,9 +94,9 @@ fn main() {
     // text_area_example::start_text_area_example();
     // text_field_example::start_text_field_example();
     // focus_node_example::start_focus_node_example()
+    // http_request_button::start_http_request_button()
+    // resizable_example::start_resizable_example();
 }
-
-
 
 #[allow(unused)]
 fn test_text() {
@@ -141,82 +142,84 @@ Latin — Salve                             Hawaiian — Aloha                  
 #[allow(unused)]
 fn test_positioned() {
     AimerApp::start(
-        Container::new().color(Color::WHITE).child(
-            Stack::new().children([
-                Positioned::new()
-                    .top(80.0)
-                    .left(80.0)
-                    .child(
-                        Container::new()
-                            .box_decoration(
-                                BoxDecoration::new()
-                                    .border(BoxBorder::all(
-                                        BorderSlice::new()
-                                            .style(BorderStyle::Solid)
-                                            .stroke(Stroke::Px(30.0))
-                                            .color(Colors::Black),
-                                    ))
-                                    .outline(BoxOutline::all(
-                                        BorderSlice::new()
-                                            .style(BorderStyle::Solid)
-                                            .stroke(Stroke::Px(3.0))
-                                            .color(Colors::Black),
-                                    ))
-                                    .border_radius((55, 6, 25, 6))
-                                    .background_color(Colors::Red)
-                                    .box_shadow(vec![
-                                        BoxShadow::new()
-                                            .color(Colors::Black.alpha(120))
-                                            .blur(10.0)
-                                            .inset(true),
-                                    ]),
-                            )
-                            .width(Dimension::Px(400.0))
-                            .height(Dimension::Px(400.0))
-                            .child(
-                                Text::new("Hello, World!")
-                                    .text_style(TextStyle::new().color(Colors::Black)),
-                            ),
-                    )
-                    .boxed(),
-                Positioned::new()
-                    .top(280.0)
-                    .left(180.0)
-                    .child(
-                        Container::new()
-                            .box_decoration(
-                                BoxDecoration::new()
-                                    .border(BoxBorder::all(
-                                        BorderSlice::new()
-                                            .style(BorderStyle::Solid)
-                                            .stroke(Stroke::Px(30.0))
-                                            .color(Colors::Black),
-                                    ))
-                                    .outline(BoxOutline::all(
-                                        BorderSlice::new()
-                                            .style(BorderStyle::Solid)
-                                            .stroke(Stroke::Px(3.0))
-                                            .color(Colors::Black),
-                                    ))
-                                    .border_radius((55, 6, 25, 6))
-                                    .background_color(Colors::Red)
-                                    .box_shadow(vec![
-                                        BoxShadow::new()
-                                            .color(Colors::Black.alpha(120))
-                                            .blur(10.0)
-                                            .inset(true),
-                                    ]),
-                            )
-                            .width(Dimension::Px(400.0))
-                            .height(Dimension::Px(400.0))
-                            .child(
-                                Text::new("Hello, World!")
-                                    .text_style(TextStyle::new().color(Colors::Black)),
-                            ),
-                    )
-                    .boxed(),
-            ]),
-        ),
+        Container::new()
+            .color(Color::WHITE)
+            .child(
+                Stack::new().children([
+                    Positioned::new()
+                        .top(80.0)
+                        .left(80.0)
+                        .child(
+                            Container::new()
+                                .box_decoration(
+                                    BoxDecoration::new()
+                                        .border(BoxBorder::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .stroke(Stroke::Px(30.0))
+                                                .color(Colors::Black),
+                                        ))
+                                        .outline(BoxOutline::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .stroke(Stroke::Px(3.0))
+                                                .color(Colors::Black),
+                                        ))
+                                        .border_radius((55, 6, 25, 6))
+                                        .background_color(Colors::Red)
+                                        .box_shadow(vec![
+                                            BoxShadow::new()
+                                                .color(Colors::Black.alpha(120))
+                                                .blur(10.0)
+                                                .inset(true),
+                                        ]),
+                                )
+                                .width(Dimension::Px(400.0))
+                                .height(Dimension::Px(400.0))
+                                .child(
+                                    Text::new("Hello, World!")
+                                        .text_style(TextStyle::new().color(Colors::Black)),
+                                ),
+                        )
+                        .boxed(),
+                    Positioned::new()
+                        .top(280.0)
+                        .left(180.0)
+                        .child(
+                            Container::new()
+                                .box_decoration(
+                                    BoxDecoration::new()
+                                        .border(BoxBorder::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .stroke(Stroke::Px(30.0))
+                                                .color(Colors::Black),
+                                        ))
+                                        .outline(BoxOutline::all(
+                                            BorderSlice::new()
+                                                .style(BorderStyle::Solid)
+                                                .stroke(Stroke::Px(3.0))
+                                                .color(Colors::Black),
+                                        ))
+                                        .border_radius((55, 6, 25, 6))
+                                        .background_color(Colors::Red)
+                                        .box_shadow(vec![
+                                            BoxShadow::new()
+                                                .color(Colors::Black.alpha(120))
+                                                .blur(10.0)
+                                                .inset(true),
+                                        ]),
+                                )
+                                .width(Dimension::Px(400.0))
+                                .height(Dimension::Px(400.0))
+                                .child(
+                                    Text::new("Hello, World!")
+                                        .text_style(TextStyle::new().color(Colors::Black)),
+                                ),
+                        )
+                        .boxed(),
+                ]),
+            ),
     )
 }
 
@@ -338,7 +341,11 @@ pub fn test_scrollable() {
                 .box_child(
                     Text::new(format!("Item {}", i))
                         .text_align(TextAlign::MidCenter)
-                        .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                        .text_style(
+                            TextStyle::new()
+                                .font_size(15)
+                                .color(Colors::Black),
+                        ),
                 )
         });
 
@@ -360,7 +367,11 @@ pub fn test_scrollable() {
     };
     let app = Container::new()
         .color(Color::WHITE)
-        .child(Scrollable::new().axis(ScrollAxis::Vertical).child(content));
+        .child(
+            Scrollable::new()
+                .axis(ScrollAxis::Vertical)
+                .child(content),
+        );
 
     AimerApp::start(app);
 }
@@ -394,7 +405,11 @@ fn test_scrollable_row() {
                     .child(
                         Text::new(format!("Item {}", i))
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(Colors::Black),
+                            ),
                     )
                     .boxed()
             } else {
@@ -417,7 +432,11 @@ fn test_scrollable_row() {
                     .child(
                         Text::new(format!("Item {}", i))
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(Colors::Black),
+                            ),
                     )
                     .boxed()
             }

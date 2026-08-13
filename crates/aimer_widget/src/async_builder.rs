@@ -1,5 +1,3 @@
-mod tokio_context;
-
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::future::Future;
 use std::marker::PhantomData;
@@ -55,8 +53,10 @@ pub struct SnapshotBuilder<B, T, E> {
 ///   [`Venus::offload`](aimer_venus::Venus::offload), which runs it on a worker
 ///   thread and resolves back here.
 ///
-/// Futures that create Tokio resources keep working: each poll happens inside
-/// the application's runtime context.
+/// Futures from a runtime-backed ecosystem — `reqwest`, `tokio::fs`, a `sleep`
+/// — keep working: the application installs a
+/// [`PollContext`](aimer_venus::PollContext) on its runtime, so every poll of
+/// every task happens inside the async runtime it owns.
 ///
 /// ```rust
 /// use aimer_widget::{AsyncBuilder, AsyncSnapshot, ErrorWidget, Widget};
@@ -460,7 +460,7 @@ where
             return;
         };
 
-        let future = tokio_context::bind(ctx, (self.future_factory)());
+        let future = (self.future_factory)();
         let runtime = Rc::downgrade(&self.runtime);
         let window = ctx.window.clone();
         venus.spawn_in(scope, async move {

@@ -34,7 +34,7 @@ use crate::gesture::{
 ///
 /// The detector paints nothing and adopts its child's layout; finish
 /// construction with [`GestureDetector::child`] or
-/// [`GestureDetector::box_child`]. Scroll events are consumed only when
+/// [`GestureDetector::dyn_child`]. Scroll events are consumed only when
 /// [`GestureDetector::on_scroll`] is configured, so a detector that does not
 /// handle scrolling lets it reach whatever is below.
 ///
@@ -172,7 +172,7 @@ impl<W> GestureDetector<W> {
     /// APIs need one [`AnyWidget`] return type despite using different concrete
     /// child types.
     #[inline]
-    pub fn box_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
+    pub fn dyn_child<C: Widget + 'static>(self, child: C) -> AnyWidget {
         self.child(child).boxed()
     }
 }
@@ -211,12 +211,7 @@ impl<E: Element> RawGestureDetector<E> {
     fn process(&self, event: &PointerEvent) {
         let output = {
             let mut state = self.state.borrow_mut();
-            recognize(
-                &mut state,
-                event,
-                AnimInstant::now(),
-                self.handlers.mask(),
-            )
+            recognize(&mut state, event, AnimInstant::now(), self.handlers.mask())
         };
         self.handlers.dispatch_all(output);
     }
@@ -312,12 +307,6 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
         }
 
         if let ElementEvent::Scroll { delta, .. } = event {
-            // A scroll carries no position, and a `MouseRegion` wrapper (which
-            // has no bounds of its own) forwards every event here regardless of
-            // where the cursor is. Consuming one unconditionally meant a
-            // handler-less detector on a top `Stack` layer swallowed every wheel
-            // and trackpad scroll before a `Scrollable` on a lower layer could
-            // see it, and scrolling appeared completely dead.
             if !self.handlers.consumes_scroll() {
                 return EventResult::ignored();
             }
@@ -661,12 +650,9 @@ mod tests {
         let pointer = touch(5.0, 5.0, 7);
         let key = PointerKey::new(pointer.source, pointer.id);
 
-        let down = pointer_capture_effect(
-            EventResult::consumed(),
-            &ElementEvent::PointerDown(pointer),
-        );
-        let up =
-            pointer_capture_effect(EventResult::consumed(), &ElementEvent::PointerUp(pointer));
+        let down =
+            pointer_capture_effect(EventResult::consumed(), &ElementEvent::PointerDown(pointer));
+        let up = pointer_capture_effect(EventResult::consumed(), &ElementEvent::PointerUp(pointer));
 
         assert_eq!(down.capture_request(), CaptureRequest::Capture(key));
         assert_eq!(up.capture_request(), CaptureRequest::Release(key));
@@ -720,10 +706,8 @@ mod tests {
     fn a_move_neither_captures_nor_releases_the_pointer() {
         let pointer = touch(5.0, 5.0, 7);
 
-        let moved = pointer_capture_effect(
-            EventResult::consumed(),
-            &ElementEvent::PointerMove(pointer),
-        );
+        let moved =
+            pointer_capture_effect(EventResult::consumed(), &ElementEvent::PointerMove(pointer));
 
         assert_eq!(moved.capture_request(), CaptureRequest::None);
     }

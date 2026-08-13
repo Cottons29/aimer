@@ -42,6 +42,14 @@ aimer_native.workspace = true
 aimer_ctxmenu.workspace = true
 
 
+[dev-dependencies]
+# The `http_request_button` example fetches a real URL, to show that a
+# third-party async crate works on every Venus spawn path.
+reqwest.workspace = true
+# `tests/venus_poll_context_headless.rs` asks the async runtime whether it is
+# findable while Venus polls, and awaits a timer it owns.
+tokio = { workspace = true, features = ["rt", "time"] }
+
 [features]
 markdown = []
 provider = []
@@ -57,48 +65,7 @@ markdown-arborium = ["aimer_markdown/arborium"]
 
 [workspace]
 resolver = "3"
-members = [
-    ".",
-    "website",
-    "aimer_quiver",
-    "aimer_cli",
-    "aimer_cupid",
-    "aimer_rubick",
-    "aimer_venus",
-    "jaime",
-    # An isolated workbench: it uses workspace crates but nothing depends on it.
-    "aimer_laboratory",
-    "crates/aimer_widget",
-    "crates/aimer_container",
-    "crates/aimer_flex",
-    "crates/aimer_grid",
-    "crates/aimer_scroll",
-    "crates/aimer_space",
-    "crates/aimer_color",
-    "crates/aimer_input",
-    "crates/aimer_canvas",
-    "crates/aimer_attribute",
-    "crates/aimer_utils",
-    "crates/aimer_animation",
-    "crates/aimer_events",
-    "crates/aimer_focus",
-    "crates/aimer_router",
-    "crates/aimer_inspector",
-    "crates/aimer_assets",
-    "crates/aimer_style",
-    "crates/aimer_text",
-    "crates/aimer_macro",
-    "crates/aimer_provider",
-    "crates/aimer_sdk",
-    "website_backend",
-    "crates/aimer_markdown",
-    "crates/aimer_svg",
-    "crates/aimer_native",
-    "crates/aimer_modal",
-    "crates/aimer_dnd",
-    "crates/aimer_ffi_utils",
-    "crates/aimer_ctxmenu",
-]
+members = [".", "website", "aimer_quiver", "aimer_cli", "aimer_cupid", "aimer_rubick", "aimer_venus", "jaime", "aimer_laboratory", "crates/aimer_widget", "crates/aimer_container", "crates/aimer_flex", "crates/aimer_grid", "crates/aimer_scroll", "crates/aimer_space", "crates/aimer_color", "crates/aimer_input", "crates/aimer_canvas", "crates/aimer_attribute", "crates/aimer_utils", "crates/aimer_animation", "crates/aimer_events", "crates/aimer_focus", "crates/aimer_router", "crates/aimer_inspector", "crates/aimer_assets", "crates/aimer_style", "crates/aimer_text", "crates/aimer_macro", "crates/aimer_provider", "crates/aimer_std", "website_backend", "crates/aimer_markdown", "crates/aimer_svg", "crates/aimer_native", "crates/aimer_modal", "crates/aimer_dnd", "crates/aimer_ffi_utils", "crates/aimer_ctxmenu"]
 
 
 [workspace.dependencies]

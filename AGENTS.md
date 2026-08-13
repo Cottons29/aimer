@@ -95,6 +95,7 @@ This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `e
 - **In a crate the file should be tidy into their related folder if possible** It's make each crate are look organized
   and easy to maintain rather than a crate/src is full of Rust source file, prefer no mod.rs.
 - **Use `pub use aimer_xxxx as xxxx` when re-export in aimer crate** It makes the Api look clean.
+- **Use Black-White Color Theme, for Example, if User Asked** User prefer mono-chrome color.
 
 ### In-Crate Tidy Structure Example
 

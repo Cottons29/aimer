@@ -75,5 +75,19 @@
     "title": "Widgets Now Give Their Fields Away",
     "author": "Cottons29",
     "tags": ["Widget", "Performance", "Rubick"]
+  },
+  {
+    "id": "another-development-experience",
+    "upload_time": "2026-08-13T08:33:00Z",
+    "title": "Better DX with Aimer and News",
+    "author": "Cottons29",
+    "tags": ["UX", "CLI"]
+  },
+  {
+    "id": "aimer-cli-update",
+    "upload_time": "2026-08-14T02:30:00Z",
+    "title": "New Updated Aimer CLI",
+    "author": "Cottons29",
+    "tags": ["CLI"]
   }
 ]

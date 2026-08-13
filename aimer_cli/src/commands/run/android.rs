@@ -15,7 +15,7 @@ use crate::commands::run::helpers::{
     ConsoleReporter, build_log, fail, run_to_completion, set_status, spawn_streamed,
 };
 use crate::commands::run::pipeline::{Flow, RunContext, Runner};
-use crate::commands::run::utilities::{LogStyling, StyledLog};
+use crate::commands::run::utilities::{AppOutput, LogStyling};
 
 /// Application id used when `build.gradle.kts.template` cannot be read.
 const FALLBACK_APP_ID: &str = "com.example.app";
@@ -70,10 +70,12 @@ const SYSTEM_NOISE_TAGS: &[&str] = &[
 /// pane.
 ///
 /// The logcat framing is stripped first, so a JSON log record written by the app
-/// is recognised by [`process_log`](LogStyling::process_log) and rendered from
-/// its declared level; anything else keeps the plain logcat text.
-fn parse_logcat_line(l: String) -> StyledLog {
-    strip_logcat_framing(l).process_log()
+/// is recognised by
+/// [`process_app_output`](LogStyling::process_app_output) and rendered from its
+/// declared level — a recovered widget panic included; anything else keeps the
+/// plain logcat text.
+fn parse_logcat_line(l: String) -> AppOutput {
+    strip_logcat_framing(l).process_app_output()
 }
 
 /// The tag of a `logcat -v time` line, i.e. the `SatelliteController` of
@@ -136,7 +138,7 @@ fn stream_logcat(pipe: impl Read + Send + 'static, tx: Sender<RunnerEvent>) {
             if !is_app_log(&line, &app_id) {
                 continue;
             }
-            let _ = tx.send(RunnerEvent::AppLog(parse_logcat_line(line)));
+            let _ = tx.send(parse_logcat_line(line).into());
         }
     });
 }

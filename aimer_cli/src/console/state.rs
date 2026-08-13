@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
 use crate::commands::run::cargo_message::ErrorReport;
-use crate::commands::run::utilities::StyledLog;
+use crate::commands::run::panic_report::PanicReport;
+use crate::commands::run::utilities::{AppOutput, StyledLog};
 use crate::console::log_history::LogHistory;
 
 /// Maximum number of log lines retained per pane before old lines are dropped.
@@ -28,8 +29,23 @@ pub enum RunnerEvent {
     /// pane can lay it out for its own width.
     BuildReport(ErrorReport),
     AppLog(StyledLog),
+    /// A widget panic the running app recovered from, to be shown as one block.
+    /// Sent as a report rather than as ready-made lines so the pane can lay it
+    /// out for its own width, exactly like a [`BuildReport`](Self::BuildReport).
+    AppPanic(PanicReport),
     StatusChange(Status),
     HotReload,
+}
+
+impl From<AppOutput> for RunnerEvent {
+    /// The event one line of application output becomes.
+    #[inline]
+    fn from(output: AppOutput) -> Self {
+        match output {
+            AppOutput::Log(line) => Self::AppLog(line),
+            AppOutput::Panic(report) => Self::AppPanic(report),
+        }
+    }
 }
 
 /// Which pane currently has focus in the console.
@@ -125,6 +141,34 @@ impl BuildEntry {
     }
 }
 
+/// One entry of the App Logs pane.
+///
+/// The pane is the application's own output, one line at a time. A widget panic
+/// the framework recovered from is the exception: like the `Compile Error` block
+/// of a failed build it is framed and fills the pane, so it is kept as a report
+/// and laid out again whenever the pane is resized.
+#[derive(Clone, Debug)]
+pub enum AppEntry {
+    /// A line of application output, already styled by the reader thread.
+    Line(StyledLog),
+    /// A recovered widget panic, laid out on demand.
+    Panic(PanicReport),
+}
+
+impl AppEntry {
+    /// The text of this entry in a pane `width` cells wide.
+    ///
+    /// A line ignores the width and only cares whether the source location of
+    /// its log call is shown; a panic block is laid out for the width and is
+    /// unaffected by the toggle — it states where it happened itself.
+    pub fn render(&self, width: usize, show_source: bool) -> Cow<'_, str> {
+        match self {
+            Self::Line(line) => Cow::Owned(line.render(show_source)),
+            Self::Panic(report) => Cow::Owned(report.lines_with_width(width).join("\n")),
+        }
+    }
+}
+
 /// A single on-screen (already wrapped) row of a log pane, mapped back to the
 /// source logical line it came from. Produced by the renderer so the mouse
 /// handler can translate screen cells into text positions.
@@ -176,11 +220,15 @@ pub struct PaneView {
 /// `mod.rs` owns one of these and the renderer in `ui.rs` reads from it.
 pub struct AppState {
     pub build_logs: LogHistory<BuildEntry>,
-    pub app_logs: LogHistory<StyledLog>,
+    pub app_logs: LogHistory<AppEntry>,
     /// Inner width of the Build Logs pane, in cells, as of the last frame. The
     /// `Compile Error` block is laid out for it; zero until the pane has been
     /// drawn once.
     build_width: usize,
+    /// Inner width of the App Logs pane, in cells, as of the last frame. A
+    /// recovered panic block is laid out for it; zero until the pane has been
+    /// drawn once.
+    app_width: usize,
     /// Whether app log lines show the source location of the log call, i.e. the
     /// `(file:line)` suffix of a structured record. Hidden by default to keep
     /// the pane narrow, and toggled with `e`; lines without a location — plain
@@ -213,6 +261,7 @@ impl AppState {
             build_logs: LogHistory::new(MAX_LINES),
             app_logs: LogHistory::new(MAX_LINES),
             build_width: 0,
+            app_width: 0,
             show_log_source: false,
             status: Status::Compiling(0),
             pane: ConsoleType::App,
@@ -279,11 +328,46 @@ impl AppState {
     ///
     /// [`show_log_source`]: AppState::show_log_source
     pub fn push_app_log(&mut self, msg: StyledLog) {
+        self.push_app_entry(AppEntry::Line(msg.without_carriage_returns()));
+    }
+
+    /// Append the block of a widget panic the app recovered from, laid out for
+    /// the current pane width.
+    pub fn push_app_panic(&mut self, report: PanicReport) {
+        self.push_app_entry(AppEntry::Panic(report));
+    }
+
+    /// Append `entry`, rendered as the pane currently shows it.
+    fn push_app_entry(&mut self, entry: AppEntry) {
+        let width = self.app_width;
         let show_source = self.show_log_source;
         self.app_logs
-            .push(msg.without_carriage_returns(), move |line| {
-                Cow::Owned(line.render(show_source))
-            });
+            .push(entry, move |entry| entry.render(width, show_source));
+    }
+
+    /// Tell the App Logs pane how wide it is, re-laying its width-dependent
+    /// entries out when that changed.
+    ///
+    /// Called by the renderer on every frame; like [`set_build_width`] the
+    /// rebuild is skipped unless the width actually changed and the pane holds a
+    /// panic block, so a console without one pays nothing for it.
+    ///
+    /// [`set_build_width`]: AppState::set_build_width
+    pub fn set_app_width(&mut self, width: usize) {
+        if self.app_width == width {
+            return;
+        }
+        self.app_width = width;
+        let has_panic = self
+            .app_logs
+            .entries()
+            .iter()
+            .any(|entry| matches!(entry, AppEntry::Panic(_)));
+        if has_panic {
+            let show_source = self.show_log_source;
+            self.app_logs
+                .rebuild(move |entry| entry.render(width, show_source));
+        }
     }
 
     /// Show or hide the source location of every app log line at once.
@@ -292,9 +376,10 @@ impl AppState {
     /// than something the draw path decides.
     pub fn toggle_log_source(&mut self) {
         self.show_log_source = !self.show_log_source;
+        let width = self.app_width;
         let show_source = self.show_log_source;
         self.app_logs
-            .rebuild(move |line| Cow::Owned(line.render(show_source)));
+            .rebuild(move |entry| entry.render(width, show_source));
     }
 
     /// The app log lines as they must currently appear on screen.
@@ -302,7 +387,7 @@ impl AppState {
         self.app_logs
             .entries()
             .iter()
-            .map(|line| line.render(self.show_log_source))
+            .map(|entry| entry.render(self.app_width, self.show_log_source).into_owned())
             .collect()
     }
 
@@ -413,6 +498,7 @@ impl Default for AppState {
 mod tests {
     use super::*;
     use crate::commands::run::cargo_message::CargoMessage;
+    use crate::commands::run::utilities::{LogLevel, LogRecord};
 
     // ── strip_ansi ───────────────────────────────────────────────────
 
@@ -630,6 +716,76 @@ mod tests {
         let mut state = AppState::new();
         state.push_app_log(StyledLog::plain("hello\rworld"));
         assert_eq!(state.app_log_lines(), vec!["helloworld"]);
+    }
+
+    // ── The recovered panic block ────────────────────────────────────
+
+    /// The report of a widget panic the running app recovered from.
+    fn panic_report() -> PanicReport {
+        let record = LogRecord {
+            level: LogLevel::Error,
+            message: concat!(
+                "Widget `HttpRequestButton` panicked during build: boom\n",
+                "\n",
+                "at jaime/src/http_request_button.rs:117:67\n",
+                "\n",
+                "        let panic: Option<i32> = Option::None.unwrap();\n",
+                "                                 ^^^^^^^^^^^^^^^^^^^^^",
+            )
+            .to_string(),
+            file: None,
+            line: None,
+        };
+        PanicReport::of(&record).expect("a panic report")
+    }
+
+    #[test]
+    fn app_state_push_app_panic_shows_the_whole_block() {
+        let mut state = AppState::new();
+        state.set_app_width(80);
+        state.push_app_panic(panic_report());
+
+        let rows = row_texts(state.app_logs.rows());
+        assert!(rows.iter().any(|row| row.contains("Panicked: Widget")));
+        assert!(rows.iter().any(|row| row.contains("^^^^^^^^^^")));
+        assert_eq!(widest_row(state.app_logs.rows()), 80);
+    }
+
+    #[test]
+    fn app_state_relays_the_panic_block_out_when_the_pane_is_resized() {
+        let mut state = AppState::new();
+        state.set_app_width(80);
+        state.push_app_panic(panic_report());
+
+        state.set_app_width(120);
+
+        assert_eq!(widest_row(state.app_logs.rows()), 120);
+    }
+
+    #[test]
+    fn app_state_leaves_ordinary_app_lines_unresized() {
+        // Only a block depends on the width, so resizing must not touch the
+        // pane's ordinary lines.
+        let mut state = AppState::new();
+        state.push_app_log(StyledLog::plain("[INFO] ready"));
+
+        state.set_app_width(120);
+
+        assert_eq!(state.app_log_lines(), vec!["[INFO] ready"]);
+    }
+
+    #[test]
+    fn app_state_toggle_log_source_keeps_the_panic_block_intact() {
+        // A panic block states where it came from itself, so the toggle that
+        // hides the log call location has nothing to hide in it.
+        let mut state = AppState::new();
+        state.set_app_width(80);
+        state.push_app_panic(panic_report());
+
+        let before = state.app_log_lines();
+        state.toggle_log_source();
+
+        assert_eq!(state.app_log_lines(), before);
     }
 
     // ── Source location toggle ───────────────────────────────────────

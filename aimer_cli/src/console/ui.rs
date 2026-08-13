@@ -67,9 +67,11 @@ pub fn render(
     let height = area.height.saturating_sub(2) as usize;
     let width = area.width.saturating_sub(2).max(1) as usize;
 
-    // The compile error block fills the pane, so it has to be laid out for the
-    // width the pane has now rather than the one it had when the build failed.
+    // The compile error and panic blocks fill their pane, so they have to be
+    // laid out for the width the pane has now rather than the one it had when
+    // the build failed or the widget panicked.
     state.set_build_width(width);
+    state.set_app_width(width);
 
     // Background painted under selected text in Vim-style selection mode.
     let selection_highlight = Style::default().bg(Color::Blue);

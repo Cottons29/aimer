@@ -238,6 +238,7 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
                 RunnerEvent::BuildLog(msg) => state.push_build_log(msg),
                 RunnerEvent::BuildReport(report) => state.push_build_report(report),
                 RunnerEvent::AppLog(msg) => state.push_app_log(msg),
+                RunnerEvent::AppPanic(report) => state.push_app_panic(report),
                 RunnerEvent::StatusChange(s) => state.apply_status(s),
                 RunnerEvent::HotReload => {
                     // Only trigger reload if app is currently running or idling
@@ -656,6 +657,13 @@ pub fn start_no_tui(device: Device, pkg_name: String, release: bool) -> anyhow::
             }
             RunnerEvent::AppLog(msg) => {
                 println!("{}", msg.render(true));
+            }
+            // Framed to the terminal width like a build report, so it is printed
+            // as it stands rather than line by line.
+            RunnerEvent::AppPanic(report) => {
+                for line in report.lines() {
+                    println!("{}", line);
+                }
             }
             RunnerEvent::StatusChange(status) => match &status {
                 Status::Compiling(pct) => eprintln!("[status] Compiling {}%", pct),

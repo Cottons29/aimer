@@ -328,7 +328,7 @@ pub fn stream_stdout_as_app_log(stdout: impl Read + Send + 'static, tx: Sender<R
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for l in reader.lines().map_while(Result::ok) {
-            let _ = tx.send(RunnerEvent::AppLog(l.process_log()));
+            let _ = tx.send(l.process_app_output().into());
         }
     });
 }
@@ -338,7 +338,7 @@ pub fn stream_stderr_as_app_log(stderr: impl Read + Send + 'static, tx: Sender<R
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
         for l in reader.lines().map_while(Result::ok) {
-            let _ = tx.send(RunnerEvent::AppLog(l.process_log()));
+            let _ = tx.send(l.process_app_output().into());
         }
     });
 }
@@ -351,7 +351,7 @@ pub fn stream_as_app_log_split_cr(pipe: impl Read + Send + 'static, tx: Sender<R
         for l in reader.lines().map_while(Result::ok) {
             for part in l.split('\r') {
                 if !part.is_empty() {
-                    let _ = tx.send(RunnerEvent::AppLog(part.to_string().process_log()));
+                    let _ = tx.send(part.to_string().process_app_output().into());
                 }
             }
         }

@@ -21,7 +21,7 @@ fn box_child_erases_every_single_child_widget() {
     assert_any_widget(Align::new().box_child(ZeroSizedBox));
     assert_any_widget(Positioned::new().box_child(ZeroSizedBox));
     assert_any_widget(Button::new().box_child(ZeroSizedBox));
-    assert_any_widget(GestureDetector::new().box_child(ZeroSizedBox));
+    assert_any_widget(GestureDetector::new().dyn_child(ZeroSizedBox));
     assert_any_widget(MouseRegion::new().box_child(ZeroSizedBox));
     #[cfg(feature = "provider")]
     {

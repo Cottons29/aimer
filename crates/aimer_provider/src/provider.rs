@@ -3,10 +3,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::panic::Location;
 use std::rc::{Rc, Weak};
 
-use aimer_utils::PanicHelper;
 use aimer_widget::base::{BuildConsumer, BuildContext, ResolvedSize, Size, Vec2d, WindowHandle};
 use aimer_widget::{
     AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, LayoutElement,
@@ -88,16 +86,19 @@ impl<T: 'static> ProviderHandle<T> {
     /// # Panics
     ///
     /// Panics when no matching provider is in the current widget scope.
+    ///
+    /// The panic is raised in the body of this `#[track_caller]` method rather
+    /// than inside a closure: a closure is an untracked frame, so panicking
+    /// there blames this file instead of the widget that asked for the value.
     #[track_caller]
     pub fn of(context: &BuildContext) -> Self {
-        let caller = Location::caller();
-        Self::try_of(context).unwrap_or_else(|| {
+        let Some(handle) = Self::try_of(context) else {
             panic!(
-                "No provider for `{}` found in the current widget scope\n\n{}",
-                type_name::<T>(),
-                PanicHelper::location(caller),
+                "No provider for `{}` found in the current widget scope",
+                type_name::<T>()
             )
-        })
+        };
+        handle
     }
 
     /// Mutates the current value and notifies subscribed widgets.
@@ -246,6 +247,11 @@ pub trait ProviderContext {
         *self.read::<T>()
     }
 
+    /// Return a copy of `Option<T>` without subscribing
+    fn try_copied<T: Copy + 'static>(&self) -> Option<T> {
+        self.try_read::<T>().map(|snapshot| *snapshot)
+    }
+
     /// Returns and subscribes to the nearest provided `T`, if one exists.
     ///
     /// # Panics
@@ -280,52 +286,57 @@ impl ProviderContext for BuildContext<'_> {
             .map(|provided| provided.0.read())
     }
 
+    #[track_caller]
     fn read<T: 'static>(&self) -> Snapshot<T> {
-        self.try_read::<T>().unwrap_or_else(|| {
+        let Some(snapshot) = self.try_read::<T>() else {
             panic!(
                 "No provider for `{}` found in the current widget scope",
                 type_name::<T>()
             )
-        })
+        };
+        snapshot
     }
 
+    #[track_caller]
     fn try_watch<T: 'static>(&self) -> Option<Snapshot<T>> {
         let provided = self.get_state::<Provided<T>>()?;
-        let consumer = self.current_build_consumer().unwrap_or_else(|| {
+        let Some(consumer) = self.current_build_consumer() else {
             panic!(
                 "watch::<{}>() must be called while building a widget",
                 type_name::<T>()
             )
-        });
+        };
         provided.0.subscribe_watch(&consumer, &self.window);
         Some(provided.0.read())
     }
-
+    #[track_caller]
     fn watch<T: 'static>(&self) -> Snapshot<T> {
-        self.try_watch::<T>().unwrap_or_else(|| {
+        let Some(snapshot) = self.try_watch::<T>() else {
             panic!(
                 "No provider for `{}` found in the current widget scope",
                 type_name::<T>()
             )
-        })
+        };
+        snapshot
     }
 
+    #[track_caller]
     fn select<T: 'static, R: PartialEq + 'static>(
         &self,
         selector: impl Fn(&T) -> R + 'static,
     ) -> R {
-        let provided = self.get_state::<Provided<T>>().unwrap_or_else(|| {
+        let Some(provided) = self.get_state::<Provided<T>>() else {
             panic!(
                 "No provider for `{}` found in the current widget scope",
                 type_name::<T>()
             )
-        });
-        let consumer = self.current_build_consumer().unwrap_or_else(|| {
+        };
+        let Some(consumer) = self.current_build_consumer() else {
             panic!(
                 "select::<{}>() must be called while building a widget",
                 type_name::<T>()
             )
-        });
+        };
         let selected = selector(&provided.0.read());
         provided
             .0
@@ -333,24 +344,26 @@ impl ProviderContext for BuildContext<'_> {
         selected
     }
 
+    #[track_caller]
     fn update<T: Clone + 'static>(&self, mutation: impl FnOnce(&mut T)) {
-        let provided = self.get_state::<Provided<T>>().unwrap_or_else(|| {
+        let Some(provided) = self.get_state::<Provided<T>>() else {
             panic!(
                 "No provider for `{}` found in the current widget scope",
                 type_name::<T>()
             )
-        });
+        };
         provided.0.update(mutation);
     }
 
+    #[track_caller]
     fn dispatch<A: 'static>(&self, action: A) {
-        let dispatcher = self.get_state::<StoreDispatcher<A>>().unwrap_or_else(|| {
+        let Some(dispatcher) = self.get_state::<StoreDispatcher<A>>() else {
             panic!(
                 "No store accepting `{}` found in the current widget scope",
                 type_name::<A>()
             )
-        });
-        (dispatcher.0)(action);
+        };
+        dispatcher.0(action);
     }
 }
 
@@ -363,14 +376,6 @@ impl ProviderContext for BuildContext<'_> {
 pub struct Provider<T, W = RequiredChild> {
     create: Option<Rc<dyn Fn() -> T>>,
     handle: Option<ProviderHandle<T>>,
-    // `W` is a type-state marker only: the child itself is erased into a
-    // [`ChildBuilder`], and `Provider<T, RequiredChild>` stays a non-widget
-    // because `RequiredChild` is not a `Widget`. Before [`Provider::child`] is
-    // called the slot holds [`ChildBuilder::required`], a placeholder that
-    // allocates nothing and reports the missing child as an error widget, so
-    // [`Provider::new`] stays as cheap as the `create` and `handle` slots next
-    // to it. The marker keeps that placeholder unreachable from any completed
-    // widget.
     child: ChildBuilder,
     marker: PhantomData<W>,
 }
@@ -845,8 +850,10 @@ impl<T: 'static, A: 'static> Rebuildable for StoreElement<T, A> {
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::rc::Rc;
 
+    use aimer_utils::PanicSite;
     use aimer_widget::base::{BuildConsumer, BuildContext, WindowHandle};
     use aimer_widget::{
         Drawable, EventElement, LayoutElement, Rebuildable, State, StateUpdater, StatefulElement,
@@ -1097,6 +1104,64 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_provider_is_blamed_on_the_calling_line() {
+        let context = context();
+
+        let watch = PanicSite::watch();
+        let expected_line = line!() + 2;
+        let payload = catch_unwind(AssertUnwindSafe(|| {
+            let _ = ProviderContext::read::<Counter>(&context);
+        }))
+        .expect_err("reading a missing provider should panic");
+        let site = watch.take_site().expect("the panic site should be recorded");
+        let message = payload
+            .downcast_ref::<String>()
+            .expect("the diagnostic should be an owned message");
+
+        assert_eq!(site.file(), file!());
+        assert_eq!(site.line(), expected_line);
+        assert_eq!(message.lines().count(), 1, "{message}");
+        assert!(message.contains("Counter"), "{message}");
+    }
+
+    #[test]
+    fn watching_outside_a_build_is_blamed_on_the_calling_line() {
+        let context = context();
+        let handle = ProviderHandle::new(Counter::default());
+
+        context.with_state(Provided(handle), |context| {
+            let watch = PanicSite::watch();
+            let expected_line = line!() + 2;
+            let failed = catch_unwind(AssertUnwindSafe(|| {
+                let _ = ProviderContext::watch::<Counter>(context);
+            }))
+            .is_err();
+            let site = watch.take_site().expect("the panic site should be recorded");
+
+            assert!(failed);
+            assert_eq!(site.file(), file!());
+            assert_eq!(site.line(), expected_line);
+        });
+    }
+
+    #[test]
+    fn a_missing_store_is_blamed_on_the_calling_line() {
+        let context = context();
+
+        let watch = PanicSite::watch();
+        let expected_line = line!() + 2;
+        let failed = catch_unwind(AssertUnwindSafe(|| {
+            ProviderContext::dispatch(&context, 7_u32);
+        }))
+        .is_err();
+        let site = watch.take_site().expect("the panic site should be recorded");
+
+        assert!(failed);
+        assert_eq!(site.file(), file!());
+        assert_eq!(site.line(), expected_line);
+    }
+
+    #[test]
     fn read_returns_a_snapshot_without_requiring_the_value_to_be_clone() {
         let context = context();
         let handle = ProviderHandle::new(NonClone { value: 7 });
@@ -1226,17 +1291,25 @@ mod tests {
 
     #[test]
     fn missing_handle_diagnostic_highlights_its_external_caller() {
-        let panic = std::panic::catch_unwind(|| {
+        let watch = PanicSite::watch();
+        let rendered = catch_unwind(|| {
             let _ = ProviderHandle::<Counter>::of(&context());
         })
-        .expect_err("missing provider should panic");
-        let message = panic
-            .downcast_ref::<String>()
-            .expect("provider panic should use an owned diagnostic");
+        .err()
+        .and_then(|_| watch.take_site())
+        .expect("the panic site should be recorded")
+        .to_string();
 
-        assert!(message.contains(file!()));
-        assert!(message.contains("ProviderHandle::<Counter>::of(&context())"));
-        assert!(message.contains("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"));
+        assert!(rendered.starts_with("at "), "{rendered}");
+        assert!(rendered.contains(file!()), "{rendered}");
+        assert!(
+            rendered.contains("ProviderHandle::<Counter>::of(&context())"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"),
+            "{rendered}"
+        );
     }
 
     #[test]

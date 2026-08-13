@@ -12,7 +12,7 @@ aimer_color.workspace = true
 aimer_provider.workspace = true
 aimer_widget.workspace = true
 aimer_cupid.workspace = true
-bitflags.workspace = true
+aimer_utils.workspace = true
 
 [dev-dependencies]
 aimer_canvas.workspace = true

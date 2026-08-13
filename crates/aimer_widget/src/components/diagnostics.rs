@@ -1,4 +1,5 @@
 use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
+use aimer_canvas::{FontFamily, FontStyle};
 use aimer_color::prelude::Color;
 
 use crate::base::BuildContext;
@@ -81,6 +82,14 @@ impl ErrorElement {
         }
     }
 
+    /// Fills the available bounds with the diagnostic and writes `message`
+    /// across them.
+    ///
+    /// The message is written in [`FontFamily::MONOSPACE`] — Aimer's bundled
+    /// JetBrains Mono — because a recovered panic reports its own source line
+    /// followed by a run of carets under the failing expression. Only a
+    /// fixed-advance face keeps the two columns aligned; a proportional one
+    /// leaves the carets pointing at whatever happens to sit above them.
     pub fn draw_message(ctx: &BuildContext, message: &str) {
         let size = diagnostic_bounds(ctx);
         ctx.canvas
@@ -99,12 +108,14 @@ impl ErrorElement {
             (200f32, 34f32)
         };
 
-        ctx.canvas.draw_text_wrapped(
+        ctx.canvas.draw_text_wrapped_styled(
             text,
             Vec2d { x: 24.0, y: pos_y },
             font_size,
             Color::YELLOW,
             (size.width - 24.0).max(0.0),
+            FontFamily::MONOSPACE,
+            FontStyle::Normal,
             600,
         );
     }
@@ -368,8 +379,42 @@ pub fn paint_overflow_indicator(
 #[cfg(test)]
 mod tests {
     use aimer_attribute::ResolvedSize;
+    use aimer_canvas::{Canvas, FontFamily, InnerCanvas};
+    use aimer_cupid::draw_cmd::DrawCommand;
 
-    use super::{OverflowEdges, detect_overflow};
+    use super::{ErrorElement, OverflowEdges, detect_overflow};
+    use crate::base::{BuildContext, WindowHandle};
+
+    #[tokio::test]
+    async fn the_diagnostic_message_is_written_in_the_bundled_monospace_face() {
+        let canvas = Box::leak(Box::new(InnerCanvas::new()));
+        let ctx = BuildContext::new(
+            Canvas::new(canvas),
+            ResolvedSize {
+                width: 800.0,
+                height: 600.0,
+            },
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::runtime::Handle::current(),
+        );
+
+        ErrorElement::draw_message(&ctx, "Widget `Broken` panicked during build: boom");
+
+        let family = canvas
+            .take_draw_list()
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                DrawCommand::DrawText { font_family, .. } => Some(*font_family),
+                _ => None,
+            });
+
+        assert_eq!(family, Some(FontFamily::MONOSPACE));
+    }
 
     #[test]
     fn detects_each_overflowing_edge() {

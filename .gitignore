@@ -15,4 +15,6 @@ mylog
 .codegraph/
 
 # Self-signed TLS certs for the Trunk dev server (generated via gen_certs.sh)
-website/builds/web/self_signed_certs/
+website/builds
+
+

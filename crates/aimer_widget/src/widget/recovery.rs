@@ -5,6 +5,8 @@ use std::fmt;
 #[cfg(panic = "unwind")]
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use aimer_utils::PanicSite;
+
 use crate::{AnyElement, Element};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,6 +39,7 @@ pub(crate) struct PanicDiagnostic {
     widget_name: &'static str,
     phase: BuildPhase,
     payload: String,
+    site: Option<PanicSite>,
     backtrace: Option<Backtrace>,
 }
 
@@ -47,6 +50,9 @@ impl fmt::Display for PanicDiagnostic {
             "Widget `{}` panicked during {}: {}",
             self.widget_name, self.phase, self.payload
         )?;
+        if let Some(site) = &self.site {
+            write!(f, "\n\n{site}")?;
+        }
         if let Some(backtrace) = &self.backtrace {
             write!(f, "\n\nBacktrace:\n{backtrace}")?;
         }
@@ -69,10 +75,15 @@ pub(crate) fn recover_operation<T>(
 ) -> Result<T, PanicDiagnostic> {
     #[cfg(panic = "unwind")]
     {
-        catch_unwind(AssertUnwindSafe(operation)).map_err(|payload| PanicDiagnostic {
+        let watch = PanicSite::watch();
+        let outcome = catch_unwind(AssertUnwindSafe(operation));
+        let site = watch.take_site();
+
+        outcome.map_err(|payload| PanicDiagnostic {
             widget_name,
             phase,
             payload: panic_payload(payload.as_ref()),
+            site,
             backtrace: capture_backtrace(),
         })
     }
@@ -161,6 +172,7 @@ mod tests {
             widget_name: "MissingProviderWidget",
             phase: BuildPhase::Build,
             payload: "No provider found".to_owned(),
+            site: None,
             backtrace: None,
         };
 
@@ -173,10 +185,44 @@ mod tests {
             widget_name: "MissingProviderWidget",
             phase: BuildPhase::Build,
             payload: "No provider found".to_owned(),
+            site: None,
             backtrace: Some(Backtrace::disabled()),
         };
 
         assert!(diagnostic.to_string().contains("Backtrace:"));
+    }
+
+    #[test]
+    fn recovered_diagnostic_points_at_the_panicking_source_line() {
+        let expected_line = line!() + 2;
+        let diagnostic = recover_operation("PanickingWidget", BuildPhase::Build, || {
+            Option::<i32>::None.unwrap()
+        })
+        .expect_err("panic should be recovered");
+
+        let message = diagnostic.to_string();
+        assert!(
+            message.contains(&format!("\n\nat {}:{expected_line}:", file!())),
+            "{message}"
+        );
+        assert!(message.contains("Option::<i32>::None.unwrap()"), "{message}");
+        assert!(message.contains("^^^"), "{message}");
+    }
+
+    #[test]
+    fn diagnostic_omits_the_source_frame_when_the_site_is_unknown() {
+        let diagnostic = PanicDiagnostic {
+            widget_name: "MissingProviderWidget",
+            phase: BuildPhase::Build,
+            payload: "No provider found".to_owned(),
+            site: None,
+            backtrace: None,
+        };
+
+        assert_eq!(
+            diagnostic.to_string(),
+            "Widget `MissingProviderWidget` panicked during build: No provider found"
+        );
     }
 
     #[test]

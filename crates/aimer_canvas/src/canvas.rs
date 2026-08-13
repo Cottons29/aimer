@@ -5,7 +5,7 @@ use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 pub use aimer_cupid::canvas::TextMetrics;
 pub use aimer_cupid::font::TextLanguage;
-use aimer_cupid::font::{FontFamily, FontStyle};
+pub use aimer_cupid::font::{FontFamily, FontStyle};
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 pub use aimer_cupid::text_pipeline::TextOverflowMode;
 pub use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;

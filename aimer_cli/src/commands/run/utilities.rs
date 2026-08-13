@@ -6,8 +6,26 @@ use colored::Colorize;
 use crossterm::style::Stylize;
 use serde::Deserialize;
 
+use crate::commands::run::panic_report::PanicReport;
+
 pub trait LogStyling {
     fn process_log(self) -> StyledLog;
+
+    fn process_app_output(self) -> AppOutput;
+}
+
+/// What one line of application output turned out to be.
+///
+/// Almost everything is a log line, ready to be drawn. The exception is a widget
+/// panic the framework recovered from: it is reported as a whole block — the
+/// headline, where it happened and the source line that panicked — and is kept
+/// as a [`PanicReport`] so the pane can lay that block out for its own width.
+#[derive(Clone, Debug)]
+pub enum AppOutput {
+    /// An ordinary line of application output.
+    Log(StyledLog),
+    /// A widget panic the framework recovered from.
+    Panic(PanicReport),
 }
 
 /// One line of application output, ready to be drawn, with the source location
@@ -227,18 +245,40 @@ impl LogStyling for String {
         if let Some(record) = LogRecord::parse(&self) {
             return record.style();
         }
-        StyledLog::plain(if self.contains("[ERROR]") {
-            self.red().to_string()
-        } else if self.contains("[WARN]") {
-            self.yellow().to_string()
-        } else if self.contains("[DEBUG]") || self.contains("hot-reload") {
-            self.green().to_string()
-        } else if self.contains("[INFO]") {
-            self.bright_cyan().to_string()
-        } else {
-            self
-        })
+        style_plain(self)
     }
+
+    /// Style one line of application output, telling a recovered widget panic
+    /// apart from an ordinary log line.
+    ///
+    /// The record is parsed once for both answers, so recognising a panic costs
+    /// the reader thread nothing on the lines that aren't one.
+    fn process_app_output(self) -> AppOutput {
+        match LogRecord::parse(&self) {
+            Some(record) => match PanicReport::of(&record) {
+                Some(report) => AppOutput::Panic(report),
+                None => AppOutput::Log(record.style()),
+            },
+            None => AppOutput::Log(style_plain(self)),
+        }
+    }
+}
+
+/// Style a line that is not a log record from the level it mentions, and leave it
+/// alone when it mentions none — raw `println!` output reaches the console
+/// verbatim.
+fn style_plain(line: String) -> StyledLog {
+    StyledLog::plain(if line.contains("[ERROR]") {
+        line.red().to_string()
+    } else if line.contains("[WARN]") {
+        line.yellow().to_string()
+    } else if line.contains("[DEBUG]") || line.contains("hot-reload") {
+        line.green().to_string()
+    } else if line.contains("[INFO]") {
+        line.bright_cyan().to_string()
+    } else {
+        line
+    })
 }
 
 #[cfg(test)]
@@ -298,6 +338,39 @@ mod tests {
         let styled = String::from("just a normal message").process_log();
         assert!(!styled.has_location());
         assert_eq!(styled.render(true), styled.render(false));
+    }
+
+    #[test]
+    fn process_app_output_reports_a_recovered_widget_panic() {
+        let line = concat!(
+            r#"{"__aimer":1,"level":"error","message":"Widget `Button` panicked during build: "#,
+            r#"boom\n\nat app/src/main.rs:7:9","file":"recovery.rs","line":66}"#,
+        )
+        .to_string();
+
+        let AppOutput::Panic(report) = line.process_app_output() else {
+            panic!("a recovered panic must not be shown as an ordinary log line");
+        };
+        assert!(report.lines_with_width(80).iter().any(|l| l.contains("boom")));
+    }
+
+    #[test]
+    fn process_app_output_keeps_an_ordinary_error_a_log_line() {
+        let line =
+            r#"{"__aimer":1,"level":"error","message":"request failed","line":7}"#.to_string();
+
+        let AppOutput::Log(styled) = line.process_app_output() else {
+            panic!("an error the app logged itself is not a panic");
+        };
+        assert!(styled.render(true).contains("[ERROR] request failed"));
+    }
+
+    #[test]
+    fn process_app_output_forwards_plain_output_as_a_log_line() {
+        let AppOutput::Log(styled) = "just a normal message".to_string().process_app_output() else {
+            panic!("plain output is not a panic");
+        };
+        assert_eq!(styled.render(true), "just a normal message");
     }
 
     #[test]

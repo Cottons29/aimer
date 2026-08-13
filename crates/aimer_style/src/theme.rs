@@ -3,6 +3,7 @@ use aimer_color::prelude::Color;
 use aimer_provider::{ProviderContext, Snapshot};
 use aimer_widget::Brightness;
 use aimer_widget::base::BuildContext;
+use std::any::type_name;
 
 /// Semantic colors used by themed widgets.
 ///
@@ -46,7 +47,7 @@ impl ThemeData {
     /// Creates Aimer's built-in light theme.
     pub const fn light() -> Self {
         Self {
-            primary_color: Color::BLUE,
+            primary_color: Color::RED,
             on_primary_color: Color::WHITE,
             background_color: Color::WHITE,
             on_background_color: Color::BLACK,
@@ -178,8 +179,19 @@ pub trait Theme: Animatable + Clone + PartialEq + Sized + 'static {
     ///
     /// Panics when there is no [`crate::AnimatedTheme`] ancestor or when called
     /// outside a widget build.
+    ///
+    /// The panic is raised in the body of this `#[track_caller]` method rather
+    /// than inside a closure: a closure is an untracked frame, so panicking
+    /// there blames this file instead of the widget that asked for the theme.
+    #[track_caller]
     fn of(context: &BuildContext) -> Snapshot<Self> {
-        context.watch::<Self>()
+        let Some(theme) = context.try_watch() else {
+            panic!(
+                "No provider for `{}` found in the current widget scope",
+                type_name::<Self>()
+            )
+        };
+        theme
     }
 
     /// Returns the current theme without subscribing the building widget to
@@ -188,8 +200,15 @@ pub trait Theme: Animatable + Clone + PartialEq + Sized + 'static {
     /// # Panics
     ///
     /// Panics when there is no [`crate::AnimatedTheme`] ancestor.
+    #[track_caller]
     fn read(context: &BuildContext) -> Snapshot<Self> {
-        context.read::<Self>()
+        let Some(theme) = context.try_read() else {
+            panic!(
+                "No provider for `{}` found in the current widget scope",
+                type_name::<Self>()
+            )
+        };
+        theme
     }
 
     /// Returns a copy of the current theme without subscribing the building
@@ -198,11 +217,18 @@ pub trait Theme: Animatable + Clone + PartialEq + Sized + 'static {
     /// # Panics
     ///
     /// Panics when there is no provider for this theme type.
+    #[track_caller]
     fn copied(context: &BuildContext) -> Self
     where
         Self: Copy,
     {
-        context.copied::<Self>()
+        let Some(theme) = context.try_copied::<Self>() else {
+            panic!(
+                "No provider for `{}` found in the current widget scope",
+                type_name::<Self>()
+            )
+        };
+        theme
     }
 }
 
@@ -210,7 +236,11 @@ impl Theme for ThemeData {}
 
 #[cfg(test)]
 mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
     use aimer_animation::Animatable;
+    use aimer_utils::PanicSite;
+    use aimer_widget::base::WindowHandle;
 
     use super::*;
     use crate::Theme as ThemeDerive;
@@ -263,5 +293,63 @@ mod tests {
         let end = DirectTheme { value: 6.0 };
 
         assert_eq!(begin.lerp(&end, 0.5), DirectTheme { value: 4.0 });
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn context() -> BuildContext<'static> {
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        BuildContext::new(
+            canvas,
+            Default::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn a_missing_theme_provider_is_blamed_on_the_calling_line() {
+        let context = context();
+
+        let watch = PanicSite::watch();
+        let expected_line = line!() + 2;
+        let payload = catch_unwind(AssertUnwindSafe(|| {
+            let _ = ThemeData::of(&context);
+        }))
+        .expect_err("a theme lookup without a provider should panic");
+        let site = watch.take_site().expect("the panic site should be recorded");
+        let message = payload
+            .downcast_ref::<String>()
+            .expect("the diagnostic should be an owned message");
+
+        assert_eq!(site.file(), file!());
+        assert_eq!(site.line(), expected_line);
+        assert_eq!(message.lines().count(), 1, "{message}");
+        assert!(message.contains("ThemeData"), "{message}");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn a_missing_theme_provider_highlights_the_calling_expression() {
+        let context = context();
+
+        let watch = PanicSite::watch();
+        let rendered = catch_unwind(AssertUnwindSafe(|| {
+            let _ = ThemeData::read(&context);
+        }))
+        .err()
+        .and_then(|_| watch.take_site())
+        .expect("the panic site should be recorded")
+        .to_string();
+
+        assert!(rendered.starts_with("at "), "{rendered}");
+        assert!(rendered.contains("ThemeData::read(&context)"), "{rendered}");
+        assert!(rendered.contains("^^^"), "{rendered}");
     }
 }

@@ -473,6 +473,6 @@ mod tests {
             .collect();
 
         assert!(times.windows(2).all(|pair| pair[0] >= pair[1]));
-        assert_eq!(store.0.blogs.first().unwrap().id, "consuming-widget-to-element");
+        assert_eq!(store.0.blogs.first().unwrap().id, "aimer-cli-update");
     }
 }

@@ -1,7 +1,5 @@
-use std::panic::Location;
 use std::rc::Rc;
 
-use aimer_utils::PanicHelper;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyElement, AnyWidget, Widget};
 
@@ -40,15 +38,17 @@ impl OutletSlot {
 pub struct Outlet;
 
 impl Widget for Outlet {
+    /// # Panics
+    ///
+    /// Panics when no [`crate::shell::Shell`] is in scope. The panic is raised
+    /// in the body of this `#[track_caller]` method rather than inside a
+    /// closure: a closure is an untracked frame, so panicking there blames this
+    /// file instead of the code that placed the outlet.
     #[track_caller]
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let caller = Location::caller();
-        let slot = ctx.get_state::<OutletSlot>().unwrap_or_else(|| {
-            panic!(
-                "No Shell found in context. An `Outlet` must be rendered inside a `Shell`.\n\n{}",
-                PanicHelper::location(caller),
-            )
-        });
+        let Some(slot) = ctx.get_state::<OutletSlot>() else {
+            panic!("No Shell found in context. An `Outlet` must be rendered inside a `Shell`.")
+        };
         let child = slot.build_child(ctx);
         child.to_element(ctx)
     }
@@ -62,6 +62,7 @@ impl Widget for Outlet {
 mod tests {
     use std::panic::catch_unwind;
 
+    use aimer_utils::PanicSite;
     use aimer_widget::base::{BuildContext, ResolvedSize, WindowHandle};
 
     use super::*;
@@ -96,24 +97,26 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn missing_shell_diagnostic_highlights_the_outlet_caller() {
-        let panic = catch_unwind(|| {
+        let watch = PanicSite::watch();
+        let rendered = catch_unwind(|| {
             let _ = Outlet.to_element(&context());
         })
-        .expect_err("an outlet without a shell should panic");
-        let message = panic
-            .downcast_ref::<String>()
-            .expect("outlet panic should use an owned diagnostic");
+        .err()
+        .and_then(|_| watch.take_site())
+        .expect("the panic site should be recorded")
+        .to_string();
 
-        assert!(message.contains(file!()), "{message}");
+        assert!(rendered.starts_with("at "), "{rendered}");
+        assert!(rendered.contains(file!()), "{rendered}");
         assert!(
-            message.contains("Outlet.to_element(&context())"),
-            "{message}"
+            rendered.contains("Outlet.to_element(&context())"),
+            "{rendered}"
         );
         assert!(
-            message
+            rendered
                 .lines()
                 .any(|line| line.trim_start().starts_with("^^^^")),
-            "{message}"
+            "{rendered}"
         );
     }
 }
