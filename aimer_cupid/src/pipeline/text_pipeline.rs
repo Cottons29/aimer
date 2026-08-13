@@ -1197,7 +1197,34 @@ impl TextPipelineV2 {
         let mut ahead_of_view = Vec::new();
         let mut visible = vec![true; requests.len()];
         for (index, req) in requests.iter().enumerate() {
-            let bounds = [req.x, req.y, req.bounds_width, req.bounds_height];
+            // Glyphs can render slightly outside the box the request declares:
+            // an ascender or italic left-bearing reaches above/left of the
+            // origin, and a tight box can clip glyphs that overflow it. The
+            // coarse on-screen test below would then drop a request whose
+            // glyphs have already scrolled into (or not yet out of) the clip.
+            // Inflate the box by the request's largest font size so the test
+            // only ever errs toward keeping text — `glyph_intersects_clip`
+            // does the precise per-glyph check afterwards. Non-positive extents
+            // are left alone so `known_extent` still reads them as unbounded.
+            let pad = req
+                .spans
+                .iter()
+                .map(|span| span.font_size.unwrap_or(req.font_size))
+                .fold(req.font_size, f32::max);
+            let bounds = [
+                req.x - pad,
+                req.y - pad,
+                if req.bounds_width > 0.0 {
+                    req.bounds_width + 2.0 * pad
+                } else {
+                    req.bounds_width
+                },
+                if req.bounds_height > 0.0 {
+                    req.bounds_height + 2.0 * pad
+                } else {
+                    req.bounds_height
+                },
+            ];
             if request_is_on_screen(bounds, req.clip_rect, surface) {
                 on_screen.push(req);
             } else {

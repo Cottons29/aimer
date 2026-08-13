@@ -76,7 +76,7 @@ fn main() {
     // start_floating_example();
     // drag_and_drop::start_drag_and_drop_example();
     // file_drop_zone::start_file_drop_zone_example();
-    // start_markdown_example();
+    start_markdown_example();
     // start_panic_recovery_example();
     // start_resizable_example();
     // test_scroll_and_row();
@@ -86,7 +86,7 @@ fn main() {
     // start_system_theme_example()
     // system_theme::start_system_theme_example();
     // test_text()
-    start_loading_animation_example()
+    // start_loading_animation_example()
     // floating::start_floating_example();
     // file_drop_zone::start_file_drop_zone_example()
     // drag_and_drop::start_drag_and_drop_example();
