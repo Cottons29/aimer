@@ -265,6 +265,8 @@ pub fn state_router() {
 
 /// Launch the tabbed stateful-shell demo: three branches (Feed, Notifications,
 /// Profile), each keeping its own independent navigation history.
+///
+/// ## This is not working yet, I will update it
 pub fn tab_shell_app() {
     AimerApp::start(StatefulShell::<TabRoute>::new(
         vec![TabRoute::Feed, TabRoute::Notifications, TabRoute::Profile],

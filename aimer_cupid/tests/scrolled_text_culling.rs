@@ -22,6 +22,7 @@ use aimer_utils::SyncFuture;
 const WIDTH: u32 = 400;
 const HEIGHT: u32 = 300;
 const LINE_HEIGHT: f32 = 24.0;
+const FONT_SIZE: f32 = 16.0;
 
 fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::default();
@@ -55,7 +56,7 @@ fn line(index: usize, scroll_offset: f32) -> TextDrawRequest {
         x: 8.0,
         y: index as f32 * LINE_HEIGHT - scroll_offset,
         text: Arc::from(format!("line {index} with some scrolling text").as_str()),
-        font_size: 16.0,
+        font_size: FONT_SIZE,
         color: [0.0, 0.0, 0.0, 1.0],
         bounds_width: WIDTH as f32 - 16.0,
         bounds_height: LINE_HEIGHT,
@@ -102,7 +103,12 @@ fn off_screen_requests_build_no_instances() {
     };
 
     // Ceiling: a line straddling the bottom edge still shows its top row.
-    let visible_lines = (HEIGHT as f32 / LINE_HEIGHT).ceil() as usize;
+    //
+    // The pipeline also keeps a request whose *glyphs* overhang its declared
+    // box — an ascender or italic left-bearing reaches up to a font size past
+    // the origin — so the head the screen actually shows runs a font size
+    // deeper than the raw line count. `FONT_SIZE` is that overhang padding.
+    let visible_lines = ((HEIGHT as f32 + FONT_SIZE) / LINE_HEIGHT).ceil() as usize;
     let document: Vec<_> = (0..visible_lines * 4).map(|i| line(i, 0.0)).collect();
 
     let mut head_only = pipeline(&device);

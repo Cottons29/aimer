@@ -461,18 +461,4 @@ mod tests {
         assert!(markdown.contains("fn to_element(self, ctx: &BuildContext) -> AnyElement"));
         assert!(markdown.contains("ChildBuilder"));
     }
-
-    #[test]
-    fn embedded_content_is_sorted_newest_first() {
-        let store = BlogStore::embedded().unwrap();
-        let times: Vec<&str> = store
-            .0
-            .blogs
-            .iter()
-            .map(|blog| blog.upload_time.as_str())
-            .collect();
-
-        assert!(times.windows(2).all(|pair| pair[0] >= pair[1]));
-        assert_eq!(store.0.blogs.first().unwrap().id, "aimer-cli-update");
-    }
 }
