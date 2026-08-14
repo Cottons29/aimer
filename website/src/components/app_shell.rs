@@ -83,7 +83,7 @@ impl State<AppShell> for AppShellState {
         self.updater = updater;
     }
 
-    fn adopt_config_from(&mut self, new: &Self) {
+    fn adopt_config_from(&mut self, new: Self) {
         self.active_tab = new.active_tab;
     }
 

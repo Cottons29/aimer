@@ -1,5 +1,4 @@
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -17,6 +16,7 @@ use aimer_widget::{
 };
 
 use crate::RawTextWidget;
+use crate::text_source::TextSource;
 
 /// A label-sized text control that responds to primary presses.
 ///
@@ -42,7 +42,7 @@ use crate::RawTextWidget;
 #[derive(Clone)]
 pub struct TextButton {
     disabled: bool,
-    label: Rc<str>,
+    label: TextSource,
     color: Option<Color>,
     hover_color: Option<Color>,
     disabled_color: Option<Color>,
@@ -67,7 +67,7 @@ impl TextButton {
     /// The color constants are not applied automatically; configure them with
     /// the color builders.
     #[inline]
-    pub fn new(label: impl Into<Rc<str>>) -> Self {
+    pub fn new(label: impl Into<TextSource>) -> Self {
         Self {
             disabled: false,
             label: label.into(),
@@ -442,6 +442,7 @@ impl Rebuildable for RawTextButton {}
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::rc::Rc;
 
     use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
     use aimer_cupid::draw_cmd::DrawCommand;

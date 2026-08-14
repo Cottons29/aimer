@@ -345,7 +345,7 @@ impl<W: Widget + 'static> Widget for Scrollable<W> {
 impl<W: Widget + 'static> State<Scrollable<W>> for ScrollableState<W> {
     fn init_state(&mut self, _updater: StateUpdater<Self>) {}
 
-    fn adopt_config_from(&mut self, new: &Self) {
+    fn adopt_config_from(&mut self, new: Self) {
         let controller_changed = match (&self.controller, &new.controller) {
             (_, None) => false,
             (Some(current), Some(new)) => !current.shares_identity_with(new),
@@ -358,15 +358,15 @@ impl<W: Widget + 'static> State<Scrollable<W>> for ScrollableState<W> {
                 || self.key != new.key
                 || controller_changed;
 
-        self.child = new.child.clone();
+        self.child = new.child;
         self.scroll_behavior = new.scroll_behavior;
         self.axis = new.axis;
         self.vertical_scroll_bar = new.vertical_scroll_bar;
         self.horizontal_scroll_bar = new.horizontal_scroll_bar;
-        self.key = new.key.clone();
+        self.key = new.key;
         self.web_overscroll = new.web_overscroll;
 
-        if let Some(new_ctrl) = new.controller.clone() {
+        if let Some(new_ctrl) = new.controller {
             self.controller = Some(new_ctrl);
         }
 
@@ -723,7 +723,7 @@ mod tests {
             .child(ErrorWidget::new("next"));
         let mut state = current.create_state();
 
-        state.adopt_config_from(&next.create_state());
+        state.adopt_config_from(next.create_state());
 
         assert_eq!(state.web_overscroll, OverscrollSources::ALL);
         assert!(state.refresh_scroll_state.get());
@@ -744,7 +744,7 @@ mod tests {
         let mut state = current.create_state();
         let next_state = next.create_state();
 
-        state.adopt_config_from(&next_state);
+        state.adopt_config_from(next_state);
 
         assert!(matches!(state.axis, ScrollAxis::Horizontal));
         assert!(state.vertical_scroll_bar.is_none());
@@ -758,7 +758,7 @@ mod tests {
         let mut state = current.create_state();
         let next_state = next.create_state();
 
-        state.adopt_config_from(&next_state);
+        state.adopt_config_from(next_state);
 
         assert!(!state.refresh_scroll_state.get());
     }

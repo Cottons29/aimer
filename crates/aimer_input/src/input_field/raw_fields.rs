@@ -17,7 +17,7 @@ use aimer_events::text_editing::TextEditingDelta;
 use aimer_events::window::get_window;
 use aimer_macro::Rebuildable;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
-use aimer_text::RawTextWidget;
+use aimer_text::{RawTextWidget, TextSource};
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutCache, LayoutElement,

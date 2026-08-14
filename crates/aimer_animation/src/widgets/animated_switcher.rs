@@ -164,26 +164,26 @@ impl<T: Widget + 'static> State<AnimatedSwitcher<T>> for AnimatedSwitcherState<T
         self.updater = updater;
     }
 
-    fn adopt_config_from(&mut self, new: &Self) {
+    fn adopt_config_from(&mut self, new: Self) {
         self.duration = new.duration;
         self.curve = new.curve;
         self.switch_out_curve = new.switch_out_curve;
-        self.in_controller.set_duration(new.duration);
-        self.in_controller.set_curve(new.curve);
-        self.out_controller.set_duration(new.duration);
-        self.out_controller.set_curve(new.switch_out_curve);
+        self.in_controller.set_duration(self.duration);
+        self.in_controller.set_curve(self.curve);
+        self.out_controller.set_duration(self.duration);
+        self.out_controller.set_curve(self.switch_out_curve);
 
         if self.child_key != new.child_key {
             self.old_child = Some(self.current_child.clone());
-            self.current_child = new.current_child.clone();
-            self.child_key = new.child_key.clone();
+            self.current_child = new.current_child;
+            self.child_key = new.child_key;
             self.in_controller.reset();
             self.out_controller.reset();
             self.in_controller.forward_from_first_tick();
             self.out_controller.forward_from_first_tick();
             request_next_frame();
         } else {
-            self.current_child = new.current_child.clone();
+            self.current_child = new.current_child;
         }
     }
 
@@ -357,7 +357,7 @@ mod tests {
         test_frame_requester::reset();
         let mut current = state("first");
 
-        current.adopt_config_from(&state("second"));
+        current.adopt_config_from(state("second"));
 
         assert!(current.old_child.is_some());
         assert_eq!(current.child_key, Some(Key::Value("second".to_owned())));
@@ -380,7 +380,7 @@ mod tests {
     fn unchanged_key_updates_without_a_transition() {
         let mut current = state("same");
 
-        current.adopt_config_from(&state("same"));
+        current.adopt_config_from(state("same"));
 
         assert!(current.old_child.is_none());
         assert!(!current.out_controller.is_animating());
@@ -489,7 +489,7 @@ mod tests {
             let incoming = Rc::new(Cell::new(0));
 
             let mut current = switcher("home", &outgoing).create_state();
-            current.adopt_config_from(&switcher("docs", &incoming).create_state());
+            current.adopt_config_from(switcher("docs", &incoming).create_state());
 
             assert!(
                 current.out_controller.is_animating(),
@@ -522,7 +522,7 @@ mod tests {
 
             let quick = Duration::from_millis(1);
             let mut current = switcher_lasting(quick, "home", &outgoing).create_state();
-            current.adopt_config_from(&switcher_lasting(quick, "docs", &incoming).create_state());
+            current.adopt_config_from(switcher_lasting(quick, "docs", &incoming).create_state());
 
             // Run the fade to its end: the first tick starts the clock, the
             // second one arrives after the duration has elapsed.

@@ -127,7 +127,7 @@ mod tests {
 
         // Mirrors `ButtonState::adopt_config_from`: refresh the config
         // (`index`, `selected`) while keeping runtime (`hovered`).
-        fn adopt_config_from(&mut self, new: &Self) {
+        fn adopt_config_from(&mut self, new: Self) {
             self.index = new.index;
             self.selected = new.selected;
         }

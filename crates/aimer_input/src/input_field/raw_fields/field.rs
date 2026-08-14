@@ -732,7 +732,7 @@ impl RawTextField {
         align: TextAlign,
     ) -> RawTextWidget {
         RawTextWidget {
-            text: text.into(),
+            text: TextSource::Shared(Rc::from(text)),
             text_style: *style,
             text_align: align,
             cache: LayoutCache::new(),

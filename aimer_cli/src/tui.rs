@@ -1,8 +1,12 @@
 use std::fmt;
 use std::io::stdout;
 
+use crossterm::event::{
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    supports_keyboard_enhancement,
 };
 use crossterm::{Command, cursor, execute};
 
@@ -57,6 +61,7 @@ impl Command for DisableButtonMouseCapture {
 pub struct RawModeGuard {
     alternate_screen: bool,
     mouse_capture: bool,
+    supports_enhancement: bool,
 }
 
 impl RawModeGuard {
@@ -67,6 +72,7 @@ impl RawModeGuard {
         Ok(Self {
             alternate_screen: false,
             mouse_capture: false,
+            supports_enhancement: false,
         })
     }
 
@@ -74,10 +80,17 @@ impl RawModeGuard {
     /// Used by the full-screen console TUI.
     pub fn with_alternate_screen() -> anyhow::Result<Self> {
         enable_raw_mode()?;
-        execute!(stdout(), EnterAlternateScreen, EnableButtonMouseCapture)?;
+        let supports_enhancement = supports_keyboard_enhancement().unwrap_or(false);
+        execute!(
+            stdout(),
+            EnterAlternateScreen,
+            EnableButtonMouseCapture,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )?;
         Ok(Self {
             alternate_screen: true,
             mouse_capture: true,
+            supports_enhancement,
         })
     }
 }
@@ -90,8 +103,11 @@ impl Drop for RawModeGuard {
         }
         if self.alternate_screen {
             let _ = execute!(out, LeaveAlternateScreen);
-        }
+        };
         let _ = execute!(out, cursor::Show);
+        if self.supports_enhancement {
+            let _ = execute!(out, PopKeyboardEnhancementFlags);
+        }
         let _ = disable_raw_mode();
     }
 }

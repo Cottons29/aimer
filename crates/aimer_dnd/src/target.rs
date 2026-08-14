@@ -242,10 +242,10 @@ impl<T: 'static> State<DragTarget<T, HasChild>> for DragTargetLiveState<T> {
         self.updater = updater;
     }
 
-    fn adopt_config_from(&mut self, new: &Self) {
-        self.will_accept = new.will_accept.clone();
-        self.on_accept = new.on_accept.clone();
-        self.child = new.child.clone();
+    fn adopt_config_from(&mut self, new: Self) {
+        self.will_accept = new.will_accept;
+        self.on_accept = new.on_accept;
+        self.child = new.child;
     }
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {

@@ -75,11 +75,11 @@ fn main() {
     // start_modal_example();
     // start_floating_example();
     // routing::tab_shell_app();
-    routing::state_router()
+    // routing::state_router()
     // drag_and_drop::start_drag_and_drop_example();
     // file_drop_zone::start_file_drop_zone_example();
     // start_markdown_example();
-    // start_panic_recovery_example();
+    start_panic_recovery_example();
     // start_resizable_example();
     // test_scroll_and_row();
     // start_svg_test();
@@ -99,6 +99,7 @@ fn main() {
     // http_request_button::start_http_request_button()
     // resizable_example::start_resizable_example();
 }
+
 
 #[allow(unused)]
 fn test_text() {

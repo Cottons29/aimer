@@ -304,16 +304,16 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
         self.state_updater = updater;
     }
 
-    fn adopt_config_from(&mut self, new: &Self) {
+    fn adopt_config_from(&mut self, new: Self) {
         // `is_hover` and `is_pressed` are deliberately not adopted: they describe
         // what the pointer is doing right now, which a rebuild does not change.
-        self.on_press = new.on_press.clone();
+        self.on_press = new.on_press;
         self.is_disabled = new.is_disabled;
-        self.on_long_press = new.on_long_press.clone();
-        self.on_double_press = new.on_double_press.clone();
-        self.on_right_press = new.on_right_press.clone();
-        self.decoration = new.decoration.clone();
-        self.child = new.child.clone();
+        self.on_long_press = new.on_long_press;
+        self.on_double_press = new.on_double_press;
+        self.on_right_press = new.on_right_press;
+        self.decoration = new.decoration;
+        self.child = new.child;
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {

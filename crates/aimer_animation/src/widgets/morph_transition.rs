@@ -234,22 +234,22 @@ impl<T: Widget + 'static> State<MorphTransition<T>> for MorphTransitionState<T> 
         self.updater = updater;
     }
 
-    fn adopt_config_from(&mut self, new: &Self) {
+    fn adopt_config_from(&mut self, new: Self) {
         self.duration = new.duration;
         self.curve = new.curve;
-        self.controller.set_duration(new.duration);
-        self.controller.set_curve(new.curve);
+        self.controller.set_duration(self.duration);
+        self.controller.set_curve(self.curve);
 
         if self.child_key != new.child_key || self.current_color != new.current_color {
             self.old_child = Some(self.current_child.clone());
             self.old_color = self.current_color;
-            self.current_child = new.current_child.clone();
-            self.child_key = new.child_key.clone();
+            self.current_child = new.current_child;
+            self.child_key = new.child_key;
             self.current_color = new.current_color;
             self.controller.reset();
             self.controller.forward();
         } else {
-            self.current_child = new.current_child.clone();
+            self.current_child = new.current_child;
         }
     }
 
@@ -698,7 +698,7 @@ mod tests {
     fn changed_key_preserves_old_child_and_starts_morph() {
         let mut current = state("small", Rgba::WHITE);
 
-        current.adopt_config_from(&state("large", Rgba::BLACK));
+        current.adopt_config_from(state("large", Rgba::BLACK));
 
         assert!(current.old_child.is_some());
         assert_eq!(current.child_key, Some(Key::Value("large".to_owned())));
@@ -710,7 +710,7 @@ mod tests {
     fn changed_color_starts_morph_for_same_child() {
         let mut current = state("card", Rgba::WHITE);
 
-        current.adopt_config_from(&state("card", Rgba::BLACK));
+        current.adopt_config_from(state("card", Rgba::BLACK));
 
         assert!(current.old_child.is_some());
         assert_eq!(current.old_color, Some(Rgba::WHITE));
@@ -721,7 +721,7 @@ mod tests {
     fn unchanged_configuration_does_not_start_morph() {
         let mut current = state("card", Rgba::WHITE);
 
-        current.adopt_config_from(&state("card", Rgba::WHITE));
+        current.adopt_config_from(state("card", Rgba::WHITE));
 
         assert!(current.old_child.is_none());
         assert!(!current.controller.is_animating());

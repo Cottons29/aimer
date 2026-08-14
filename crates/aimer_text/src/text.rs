@@ -1,7 +1,6 @@
 pub mod raw_text;
 pub mod selectable_text;
 
-use std::rc::Rc;
 use std::sync::Mutex;
 
 use aimer_style::{TextAlign, TextOverflow, TextStyle};
@@ -11,6 +10,7 @@ use aimer_widget::{AnyElement, Element, LayoutCache, Widget};
 use crate::selection::selectable::SelectionScope;
 use crate::text::raw_text::RawTextWidget;
 use crate::text::selectable_text::RawSelectableText;
+use crate::text_source::TextSource;
 
 /// The highlight color a selectable `Text` falls back to when it somehow sits
 /// outside a region; regions always supply their own.
@@ -30,21 +30,26 @@ const DEFAULT_SELECTION_COLOR: aimer_widget::base::Color =
 /// use aimer_style::{TextAlign, TextStyle};
 /// use aimer_text::Text;
 ///
-/// let title = Text::new("Aimer").text_align(TextAlign::MidCenter)
-///                               .text_style(TextStyle::default())
-///                               .wrapped();
+/// let title = Text::new("Aimer")
+///                 .text_align(TextAlign::MidCenter)
+///                 .text_style(TextStyle::default())
+///                 .wrapped();
 /// ```
 #[allow(dead_code)]
 pub struct Text {
-    text: Rc<str>,
+    text: TextSource,
     text_align: TextAlign,
     text_style: TextStyle,
 }
 
 impl Text {
     /// Creates text containing `text` with default style and alignment.
+    ///
+    /// Passing a `&'static str` literal stores it directly with no
+    /// allocation; passing a `String` or `Rc<str>` behaves as before. See
+    /// [`TextSource`] for details.
     #[inline]
-    pub fn new(text: impl Into<Rc<str>>) -> Self {
+    pub fn new(text: impl Into<TextSource>) -> Self {
         Self {
             text: text.into(),
             text_align: TextAlign::default(),
@@ -54,7 +59,7 @@ impl Text {
 
     /// Replaces the displayed string while preserving style and alignment.
     #[inline]
-    pub fn text(mut self, text: impl Into<Rc<str>>) -> Self {
+    pub fn text(mut self, text: impl Into<TextSource>) -> Self {
         self.text = text.into();
         self
     }
@@ -111,7 +116,7 @@ impl Widget for Text {
         if ctx.get_state::<SelectionScope>().is_some() {
             return RawSelectableText::new(
                 ctx,
-                self.text,
+                self.text.to_rc(),
                 self.text_style,
                 self.text_align,
                 DEFAULT_SELECTION_COLOR,

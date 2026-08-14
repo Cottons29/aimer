@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use std::sync::Mutex;
 
 use aimer_attribute::position::Vec2d;
@@ -8,6 +7,8 @@ use aimer_style::*;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{TextOverflowMode, *};
 
+use crate::text_source::TextSource;
+
 /// Low-level element that lays out and paints one run of text.
 ///
 /// [`crate::Text`] is the usual constructor. Direct construction requires
@@ -15,7 +16,7 @@ use aimer_widget::{TextOverflowMode, *};
 /// the text, style, and alignment.
 #[derive(Rebuildable, EventElement)]
 pub struct RawTextWidget {
-    pub text: Rc<str>,
+    pub text: TextSource,
     pub text_style: TextStyle,
     pub text_align: TextAlign,
     pub cache: LayoutCache,

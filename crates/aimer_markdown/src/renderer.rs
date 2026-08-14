@@ -69,7 +69,7 @@ fn copy_code_with<E>(source: &str, copy: impl FnOnce(&str) -> Result<(), E>) -> 
 
 fn build_code_header(value: &str, language: Option<&str>, theme: &MarkdownTheme) -> AnyWidget {
     let language = match code_block_language_label(language) {
-        Some(language) => Text::new(language)
+        Some(language) => Text::new(language.to_string())
             .text_style(
                 theme
                     .code_block

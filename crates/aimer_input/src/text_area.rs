@@ -323,7 +323,7 @@ impl State<TextArea> for TextFieldState {
     }
 
     #[inline]
-    fn adopt_config_from(&mut self, new: &Self) {
+    fn adopt_config_from(&mut self, new: Self) {
         self.adopt(new);
     }
 

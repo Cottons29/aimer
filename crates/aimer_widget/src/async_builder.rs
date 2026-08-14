@@ -294,11 +294,11 @@ where
 {
     fn init_state(&mut self, _updater: StateUpdater<Self>) {}
 
-    fn adopt_config_from(&mut self, new: &Self) {
-        self.future_factory = new.future_factory.clone();
-        self.snapshot_builder = new.snapshot_builder.clone();
+    fn adopt_config_from(&mut self, new: Self) {
+        self.future_factory = new.future_factory;
+        self.snapshot_builder = new.snapshot_builder;
         if self.request_key != new.request_key {
-            self.request_key = new.request_key.clone();
+            self.request_key = new.request_key;
             self.runtime.reset();
         }
     }

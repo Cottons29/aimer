@@ -223,10 +223,10 @@ impl State<DropZone<HasChild>> for DropZoneLiveState {
         self.updater = updater;
     }
 
-    fn adopt_config_from(&mut self, new: &Self) {
-        self.extensions = new.extensions.clone();
-        self.on_drop = new.on_drop.clone();
-        self.child = new.child.clone();
+    fn adopt_config_from(&mut self, new: Self) {
+        self.extensions = new.extensions;
+        self.on_drop = new.on_drop;
+        self.child = new.child;
     }
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {

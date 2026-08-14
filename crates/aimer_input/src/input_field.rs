@@ -191,10 +191,10 @@ impl TextFieldState {
 
     /// Replaces widget configuration while retaining mounted editing state.
     #[inline]
-    pub(crate) fn adopt(&mut self, new: &Self) {
-        self.config = new.config.clone();
+    pub(crate) fn adopt(&mut self, new: Self) {
+        self.config = new.config;
         if new.provided_focus_node {
-            self.focus_node = new.focus_node.clone();
+            self.focus_node = new.focus_node;
         }
         self.provided_focus_node = new.provided_focus_node;
     }
@@ -266,7 +266,7 @@ impl State<TextField> for TextFieldState {
         self.init(updater);
     }
 
-    fn adopt_config_from(&mut self, new: &Self) {
+    fn adopt_config_from(&mut self, new: Self) {
         self.adopt(new);
     }
 
@@ -633,7 +633,7 @@ mod tests {
         assert!(!state.caret().is_visible());
 
         let rebuilt = TextField::new().hint("after").create_state();
-        State::<TextField>::adopt_config_from(&mut state, &rebuilt);
+        State::<TextField>::adopt_config_from(&mut state, rebuilt);
 
         assert_eq!(&*state.config.hint, "after");
         assert!(!state.caret().is_visible());
@@ -651,7 +651,7 @@ mod tests {
         let start = AnimInstant::now();
         state.caret().tick(start);
 
-        State::<TextField>::adopt_config_from(&mut state, &TextField::new().create_state());
+        State::<TextField>::adopt_config_from(&mut state, TextField::new().create_state());
 
         assert!(state.caret().tick(start + HALF));
         assert!(!state.caret().is_visible());

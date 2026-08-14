@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::commands::run::Device;
 use crate::commands::run::pipeline::{self, RunContext};
-use crate::commands::run::utilities::{LogStyling, get_project_root};
+use crate::commands::run::utilities::{LogStyling, StyledLog, get_project_root};
 use crate::targets::Targets;
 use crate::tui::RawModeGuard;
 use aimer_inspector::InspectorServer;
@@ -22,7 +22,12 @@ use aimer_utils::AnimInstant;
 use anyhow::Context;
 use arboard::Clipboard;
 use crossbeam::channel::Sender;
-use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEventKind,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
+use crossterm::execute;
+use crossterm::terminal::supports_keyboard_enhancement;
 use notify::{Event as NotifyEvent, RecursiveMode, Watcher};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -136,6 +141,7 @@ fn hit_test(view: &PaneView, col: u16, row: u16) -> Option<(usize, usize)> {
 
 pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<()> {
     let _guard = RawModeGuard::with_alternate_screen()?;
+
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
     let (tx, rx) = crossbeam::channel::unbounded();
@@ -178,21 +184,22 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
     // let _watcher = {
     //     let tx_watch = tx.clone();
     //     let mut debounce_last = AnimInstant::now();
-    //     let mut watcher = notify::recommended_watcher(move |res:
-    // Result<NotifyEvent, notify::Error>| {         if let Ok(event) = res {
-    //             use notify::EventKind;
-    //             match event.kind {
-    //                 EventKind::Modify(_) | EventKind::Create(_) |
-    // EventKind::Remove(_) => {                     let dominated_by_rs = event
-    //                         .paths
-    //                         .iter()
-    //                         .any(|p| p.extension().is_some_and(|ext| ext ==
-    // "rs"));                     if dominated_by_rs {
-    //                         let now = AnimInstant::now();
-    //                             if now.duration_since(debounce_last) >
-    //     Duration::from_millis(500) {                             debounce_last =
-    //     now;                             let _ =
-    //     tx_watch.send(RunnerEvent::HotReload);                         }
+    //     let mut watcher =
+    //         notify::recommended_watcher(move |res: Result<NotifyEvent, notify::Error>| {
+    //             if let Ok(event) = res {
+    //                 use notify::EventKind;
+    //                 match event.kind {
+    //                     EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
+    //                         let dominated_by_rs = event
+    //                             .paths
+    //                             .iter()
+    //                             .any(|p| p.extension().is_some_and(|ext| ext == "rs"));
+    //                         if dominated_by_rs {
+    //                             let now = AnimInstant::now();
+    //                             if now.duration_since(debounce_last) > Duration::from_millis(500) {
+    //                                 debounce_last = now;
+    //                                 let _ = tx_watch.send(RunnerEvent::HotReload);
+    //                             }
     //                         }
     //                     }
     //                     _ => {}
@@ -200,12 +207,8 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
     //             }
     //         })
     //         .ok();
-    //         if let Some(ref mut w) = watcher {
-    //         let _ = w.watch(Path::new("src"), RecursiveMode::Recursive);
-    //         // Also watch crates/ if it exists
-    //         if Path::new("crates").exists() {
-    //             let _ = w.watch(Path::new("crates"), RecursiveMode::Recursive);
-    //         }
+    //     if let Some(ref mut w) = watcher {
+    //         let _ = w.watch(Path::new("."), RecursiveMode::Recursive);
     //     }
     //     watcher
     // };
@@ -360,9 +363,9 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
                                 _ => {}
                             }
                         }
-                        #[cfg(target_os = "macos")]
-                        (KeyCode::Char('c'), KeyModifiers::META)
-                        | (KeyCode::Char('C'), KeyModifiers::META) => {
+
+                        // Yank the active selection (Vim-style) to the clipboard.
+                        (KeyCode::Char('y'), _) | (KeyCode::Char('Y'), _) => {
                             if let Some(text) = state.selected_text() {
                                 if let Ok(mut clipboard) = Clipboard::new() {
                                     let _ = clipboard.set_text(text);
@@ -371,7 +374,17 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
                             }
                         }
 
-                        #[cfg(not(target_os = "macos"))]
+                        #[cfg(target_os = "macos")]
+                        (KeyCode::Char('c'), KeyModifiers::SUPER)
+                        | (KeyCode::Char('C'), KeyModifiers::SUPER) => {
+                            if let Some(text) = state.selected_text() {
+                                if let Ok(mut clipboard) = Clipboard::new() {
+                                    let _ = clipboard.set_text(text);
+                                }
+                                state.clear_selection();
+                            }
+                        }
+
                         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                             if let Some(text) = state.selected_text() {
                                 if let Ok(mut clipboard) = Clipboard::new() {
@@ -408,16 +421,6 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
                                     state.app_log_text()
                                 };
                                 let _ = clipboard.set_text(logs);
-                            }
-                        }
-
-                        // Yank the active selection (Vim-style) to the clipboard.
-                        (KeyCode::Char('y'), _) | (KeyCode::Char('Y'), _) => {
-                            if let Some(text) = state.selected_text() {
-                                if let Ok(mut clipboard) = Clipboard::new() {
-                                    let _ = clipboard.set_text(text);
-                                }
-                                state.clear_selection();
                             }
                         }
 
@@ -566,6 +569,7 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
     }
 
     // Terminal restoration is handled by `_guard` on drop.
+
     Ok(())
 }
 
@@ -605,43 +609,6 @@ pub fn start_no_tui(device: Device, pkg_name: String, release: bool) -> anyhow::
         inspector_handle.port,
         release,
     );
-
-    // Hot-reload file watcher
-    let _watcher = {
-        let tx_watch = tx.clone();
-        let mut debounce_last = AnimInstant::now();
-        let mut watcher =
-            notify::recommended_watcher(move |res: Result<NotifyEvent, notify::Error>| {
-                if let Ok(event) = res {
-                    use notify::EventKind;
-                    match event.kind {
-                        EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
-                            let dominated_by_rs = event
-                                .paths
-                                .iter()
-                                .any(|p| p.extension().is_some_and(|ext| ext == "rs"));
-                            if dominated_by_rs {
-                                let now = AnimInstant::now();
-                                if now.duration_since(debounce_last) > Duration::from_millis(500) {
-                                    debounce_last = now;
-                                    let _ = tx_watch.send(RunnerEvent::HotReload);
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            })
-            .ok();
-        if let Some(ref mut w) = watcher {
-            let _ = w.watch(Path::new("src"), RecursiveMode::Recursive);
-            if Path::new("crates").exists() {
-                let _ = w.watch(Path::new("crates"), RecursiveMode::Recursive);
-            }
-        }
-        watcher
-    };
-
     // Simple blocking event loop — print logs to stdout/stderr.
     while let Ok(event) = rx.recv() {
         match event {

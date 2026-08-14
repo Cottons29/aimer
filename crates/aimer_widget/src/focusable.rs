@@ -299,19 +299,19 @@ impl<W: Widget + 'static> State<Focusable<W>> for FocusableState<W> {
     {
     }
 
-    fn adopt_config_from(&mut self, new: &Self) {
+    fn adopt_config_from(&mut self, new: Self) {
         // The node is deliberately not adopted unless the new widget carried
         // one: see `supplied`.
         if new.supplied {
-            self.node = new.node.clone();
+            self.node = new.node;
             self.supplied = true;
         }
-        self.on_focus = new.on_focus.clone();
-        self.on_focus_lost = new.on_focus_lost.clone();
-        self.on_focus_change = new.on_focus_change.clone();
+        self.on_focus = new.on_focus;
+        self.on_focus_lost = new.on_focus_lost;
+        self.on_focus_change = new.on_focus_change;
         self.behavior = new.behavior;
-        self.gate = new.gate.clone();
-        self.child = new.child.clone();
+        self.gate = new.gate;
+        self.child = new.child;
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
@@ -1033,7 +1033,7 @@ mod tests {
             .child(child())
             .create_state();
 
-        live.adopt_config_from(&replacement);
+        live.adopt_config_from(replacement);
 
         assert!(live.node.ptr_eq(&node), "the focus target must not be swapped");
         assert_eq!(live.behavior, FocusBehavior::Ignore);
@@ -1050,7 +1050,7 @@ mod tests {
             .child(child())
             .create_state();
 
-        live.adopt_config_from(&replacement);
+        live.adopt_config_from(replacement);
 
         assert!(live.node.ptr_eq(&node));
     }

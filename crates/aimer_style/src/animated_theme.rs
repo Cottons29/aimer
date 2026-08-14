@@ -347,22 +347,23 @@ impl<T: Theme> StatefulWidget for ResolvedTheme<T> {
 impl<T: Theme> State<ResolvedTheme<T>> for AnimatedThemeState<T> {
     fn init_state(&mut self, _updater: StateUpdater<Self>) {}
 
-    fn adopt_config_from(&mut self, new: &Self) {
+    fn adopt_config_from(&mut self, new: Self) {
         self.duration = new.duration;
         self.curve = new.curve;
-        self.child = new.child.clone();
-        self.controller.set_duration(new.duration);
-        self.controller.set_curve(new.curve);
+        self.child = new.child;
+        self.controller.set_duration(self.duration);
+        self.controller.set_curve(self.curve);
 
+        let new_target = new.target;
         if !self
             .transition
             .borrow_mut()
-            .retarget(new.target.clone(), self.controller.value())
+            .retarget(new_target.clone(), self.controller.value())
         {
             return;
         }
 
-        self.target = new.target.clone();
+        self.target = new_target;
         self.controller.reset();
         if self.duration.is_zero() {
             self.controller.set_value(1.0);
@@ -752,7 +753,7 @@ mod tests {
         let new_state = widget(theme(101), Duration::ZERO).create_state();
 
         <AnimatedThemeState<ThemeData> as State<ResolvedTheme<ThemeData>>>::adopt_config_from(
-            &mut state, &new_state,
+            &mut state, new_state,
         );
 
         assert_eq!(*state.handle.read(), theme(101));
@@ -768,7 +769,7 @@ mod tests {
 
         <AnimatedThemeState<CustomTheme> as State<ResolvedTheme<CustomTheme>>>::adopt_config_from(
             &mut state,
-            &new_state,
+            new_state,
         );
 
         assert_eq!(*state.handle.read(), CustomTheme { value: 101.0 });
@@ -782,7 +783,7 @@ mod tests {
         let new_state = widget(theme(101), Duration::from_millis(400)).create_state();
 
         <AnimatedThemeState<ThemeData> as State<ResolvedTheme<ThemeData>>>::adopt_config_from(
-            &mut state, &new_state,
+            &mut state, new_state,
         );
 
         assert_eq!(state.controller.duration(), Duration::from_millis(400));
@@ -871,7 +872,7 @@ mod tests {
 
         let flipped = themed.resolved(Brightness::Dark, None).create_state();
         <AnimatedThemeState<ThemeData> as State<ResolvedTheme<ThemeData>>>::adopt_config_from(
-            &mut state, &flipped,
+            &mut state, flipped,
         );
 
         assert!(

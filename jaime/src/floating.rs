@@ -170,7 +170,7 @@ impl FloatingShowcaseState {
 }
 
 /// Wraps a button in an [`Anchor`] so a panel can be pinned to it.
-fn trigger(label: &str, handle: AnchorHandle, on_press: impl Into<VoidCallback>) -> AnyWidget {
+fn trigger(label: &'static str, handle: AnchorHandle, on_press: impl Into<VoidCallback>) -> AnyWidget {
     Anchor::new()
         .handle(handle)
         .child(

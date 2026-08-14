@@ -481,8 +481,8 @@ impl<T: 'static, W: Widget + 'static> StatefulWidget for Provider<T, W> {
 impl<T: 'static, W: Widget + 'static> State<Provider<T, W>> for ProviderState<T, W> {
     fn init_state(&mut self, _updater: StateUpdater<Self>) {}
 
-    fn adopt_config_from(&mut self, new: &Self) {
-        self.child = new.child.clone();
+    fn adopt_config_from(&mut self, new: Self) {
+        self.child = new.child;
     }
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
@@ -716,9 +716,9 @@ impl<T: Clone + 'static, A: 'static, W: Widget + 'static> State<StoreProvider<T,
     for StoreState<T, A, W>
 {
     fn init_state(&mut self, _updater: StateUpdater<Self>) {}
-    fn adopt_config_from(&mut self, new: &Self) {
-        self.reducer = new.reducer.clone();
-        self.child = new.child.clone();
+    fn adopt_config_from(&mut self, new: Self) {
+        self.reducer = new.reducer;
+        self.child = new.child;
     }
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         StoreScope {

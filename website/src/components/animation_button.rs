@@ -134,10 +134,10 @@ impl State<AnimatedPlatformButtonList> for AnimatedPlatformButtonListState {
         self.updater = updater;
     }
 
-    fn adopt_config_from(&mut self, new: &Self) {
+    fn adopt_config_from(&mut self, new: Self) {
         self.selected_index = new.selected_index;
         self.compact = new.compact;
-        self.on_selected = new.on_selected.clone();
+        self.on_selected = new.on_selected;
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
@@ -258,7 +258,7 @@ mod tests {
             .compact(true)
             .create_state();
 
-        state.adopt_config_from(&updated);
+        state.adopt_config_from(updated);
 
         assert_eq!(state.selected_index, 2);
         assert!(state.compact);

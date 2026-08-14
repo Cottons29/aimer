@@ -405,7 +405,7 @@ mod tests {
         // Config = `config_label`; runtime = `runtime`. On reconcile the
         // framework preserves this live state but must refresh the config from
         // the freshly-built widget.
-        fn adopt_config_from(&mut self, new: &Self) {
+        fn adopt_config_from(&mut self, new: Self) {
             self.config_adoptions.set(self.config_adoptions.get() + 1);
             self.config_label = new.config_label;
         }
@@ -1094,7 +1094,7 @@ mod tests {
         fn init_state(&mut self, updater: StateUpdater<Self>) {
             self.updater = updater;
         }
-        fn adopt_config_from(&mut self, new: &Self) {
+        fn adopt_config_from(&mut self, new: Self) {
             if self.child_key != new.child_key {
                 self.transitions.set(self.transitions.get() + 1);
                 self.child_key = new.child_key;
@@ -1879,7 +1879,7 @@ mod tests {
             // Mirrors `ButtonState::adopt_config_from`: refresh the parent-
             // provided config (`index`, `selected`) while keeping runtime
             // (`hovered`).
-            fn adopt_config_from(&mut self, new: &Self) {
+            fn adopt_config_from(&mut self, new: Self) {
                 self.index = new.index;
                 self.selected = new.selected;
             }

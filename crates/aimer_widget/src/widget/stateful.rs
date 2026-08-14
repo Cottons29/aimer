@@ -41,11 +41,16 @@ pub(crate) struct SyncChild(pub(crate) UnsafeCell<AnyElement>);
 unsafe impl Send for SyncChild {}
 unsafe impl Sync for SyncChild {}
 
-/// A `Send + Sync` wrapper around `UnsafeCell<S>` for state storage.
+/// A `Send + Sync` wrapper around an optionally-owned state value.
+///
+/// The value is stored in an option so reconciliation can move a freshly-built
+/// state into the preserved live state without leaving `StateUpdater`s that
+/// still reference the source cell pointing at invalid memory.
+///
 /// Safety: the rendering pipeline is single-threaded. Mutations are applied
 /// exclusively during `rebuild_if_dirty` on the render thread, and reads
 /// happen only on the render thread (event handlers, build).
-struct SyncState<S>(UnsafeCell<S>);
+struct SyncState<S>(UnsafeCell<Option<S>>);
 unsafe impl<S: Send> Send for SyncState<S> {}
 unsafe impl<S: Send> Sync for SyncState<S> {}
 
@@ -73,10 +78,11 @@ struct SyncStateAny(UnsafeCell<Rc<dyn Any>>);
 unsafe impl Send for SyncStateAny {}
 unsafe impl Sync for SyncStateAny {}
 
-/// Type-erased "copy the widget configuration from another element's state into
-/// mine" hook. Captures this element's state cell (typed as `W::State`);
-/// downcasts the supplied `&dyn Any` (another element's `SyncState<W::State>`)
-/// and calls `State::adopt_config_from`. No-op when the concrete types differ.
+/// Type-erased "adopt the widget configuration from another element's state
+/// into mine" hook. Captures this element's state cell (typed as `W::State`);
+/// downcasts the supplied `&dyn Any` (another element's `SyncState<W::State>`),
+/// takes its state, and calls `State::adopt_config_from`. No-op when the
+/// concrete types differ or the source state was already consumed.
 type AdoptConfigCallBack = dyn Fn(&dyn Any);
 
 /// A `Send + Sync` wrapper around the config-adoption closure.
@@ -178,7 +184,11 @@ impl<S: 'static> StateUpdater<S> {
     #[track_caller]
     pub fn read_state(&self) -> &S {
         match self.inner.as_ref().map(|inner| inner.state.clone()) {
-            Some(state) => unsafe { &*state.0.get() },
+            Some(state) => unsafe {
+                (&*state.0.get())
+                    .as_ref()
+                    .expect("State has already been consumed during reconciliation")
+            },
             None => {
                 let loc = Location::caller();
                 error!("Attempted to read state from an uninitialized StateUpdater");
@@ -287,7 +297,11 @@ impl<S: 'static> StateUpdater<S> {
             }
         };
         // Safety: single-threaded rendering pipeline — no concurrent mutation.
-        let state = unsafe { &*inner.state.0.get() };
+        let state = unsafe {
+            (&*inner.state.0.get())
+                .as_ref()
+                .expect("State has already been consumed during reconciliation")
+        };
         f(state)
     }
 
@@ -365,10 +379,15 @@ pub trait State<W: StatefulWidget> {
     /// fields such as hover/focus/scroll/animation progress — but the freshly
     /// built `new` state carries the up-to-date widget *configuration* (the
     /// props passed down from the parent, e.g. a `TextButton`'s `style` /
-    /// `hover_style` / `on_press`, or a selected/disabled flag). Copy those
-    /// configuration fields out of `new` into `self` here so the widget renders
-    /// with the current configuration while retaining its runtime state.
-    fn adopt_config_from(&mut self, _new: &Self) {}
+    /// `hover_style` / `on_press`, or a selected/disabled flag). Move those
+    /// configuration fields out of the freshly-built `new` state into
+    /// `self` so the widget renders with the current configuration while
+    /// retaining its runtime state.
+    fn adopt_config_from(&mut self, _new: Self)
+    where
+        Self: Sized,
+    {
+    }
 
     /// Override this method to build the widget
     fn build(&self, ctx: &BuildContext) -> impl Widget;
@@ -529,7 +548,7 @@ impl StatefulElement {
             && let Some(key_ref) = key.as_ref()
             && let Some(live) = lookup_keyed_state(key_ref, debug_name)
         {
-            let fresh_state = Rc::new(SyncState(UnsafeCell::new(state)));
+            let fresh_state = Rc::new(SyncState(UnsafeCell::new(Some(state))));
             let fresh_state_any: Rc<dyn Any> = fresh_state;
             recover_operation(debug_name, BuildPhase::AdoptConfig, || {
                 (live.adopt_config_fn)(fresh_state_any.as_ref())
@@ -564,7 +583,7 @@ impl StatefulElement {
 
         let tx = Rc::new(StateMutationQueue::default());
 
-        let state_cell = Rc::new(SyncState(UnsafeCell::new(state)));
+        let state_cell = Rc::new(SyncState(UnsafeCell::new(Some(state))));
         let state_revision = Rc::new(Cell::new(0));
 
         // Create the updater and pass it into init_state.
@@ -572,7 +591,11 @@ impl StatefulElement {
 
         {
             // Safety: single-threaded — we are the only accessor during construction.
-            let s = unsafe { &mut *state_cell.0.get() };
+            let s = unsafe {
+                (&mut *state_cell.0.get())
+                    .as_mut()
+                    .expect("State was consumed before initialization")
+            };
             recover_operation(debug_name, BuildPhase::InitState, || {
                 s.init_state(init_updater.clone())
             })?;
@@ -586,7 +609,11 @@ impl StatefulElement {
             // Drain all pending mutations before rebuilding.
             let mutation_result =
                 recover_operation(debug_name, BuildPhase::ApplyStateMutation, || {
-                    let s = unsafe { &mut *state_for_build.0.get() };
+                    let s = unsafe {
+                        (&mut *state_for_build.0.get())
+                            .as_mut()
+                            .expect("State has already been consumed during reconciliation")
+                    };
                     mutations_for_rebuild.drain_into(s, || {
                         revision_for_rebuild.fetch_add(1);
                     });
@@ -595,7 +622,11 @@ impl StatefulElement {
                 return diagnostic.into_error_element();
             }
             ctx.with_build_consumer(consumer_for_rebuild.clone(), |ctx| {
-                let s = unsafe { &*state_for_build.0.get() };
+                let s = unsafe {
+                    (&*state_for_build.0.get())
+                        .as_ref()
+                        .expect("State has already been consumed during reconciliation")
+                };
                 let child_widget =
                     match recover_operation(debug_name, BuildPhase::Build, || s.build(ctx)) {
                         Ok(widget) => widget,
@@ -610,7 +641,11 @@ impl StatefulElement {
 
         let child = {
             // Safety: single-threaded — initial build during construction.
-            let s = unsafe { &*state_cell.0.get() };
+            let s = unsafe {
+                (&*state_cell.0.get())
+                    .as_ref()
+                    .expect("State was consumed before the initial build")
+            };
             ctx.with_build_consumer(build_consumer, |ctx| {
                 let child_widget =
                     recover_operation(debug_name, BuildPhase::Build, || s.build(ctx))?;
@@ -631,10 +666,16 @@ impl StatefulElement {
         let adopt_config_fn: Rc<AdoptConfigCallBack> = Rc::new(move |new_any: &dyn Any| {
             if let Some(new_cell) = new_any.downcast_ref::<SyncState<W::State>>() {
                 // Safety: single-threaded reconciliation; the live state is not
-                // otherwise borrowed while we copy the fresh config into it.
-                let old_state = unsafe { &mut *state_for_config.0.get() };
-                let new_state = unsafe { &*new_cell.0.get() };
-                old_state.adopt_config_from(new_state);
+                // otherwise borrowed while we move the fresh config into it.
+                let old_state = unsafe {
+                    (&mut *state_for_config.0.get())
+                        .as_mut()
+                        .expect("Live state was consumed during reconciliation")
+                };
+                let new_state = unsafe { (&mut *new_cell.0.get()).take() };
+                if let Some(new_state) = new_state {
+                    old_state.adopt_config_from(new_state);
+                }
             }
         });
 
@@ -1076,6 +1117,15 @@ impl StatefulElement {
         // is asked to adopt from can be itself. Its state never left, and the
         // borrows below would collide with themselves.
         if std::ptr::eq(self, old) {
+            return;
+        }
+        // Keyed construction can already reuse the live element's state cell
+        // before the replacement enters the general tree walk. In that case
+        // the fresh element has already adopted its configuration, and taking
+        // the shared cell here would alias the live mutable state.
+        let self_state = unsafe { &*self.state_any.0.get() };
+        let old_state = unsafe { &*old.state_any.0.get() };
+        if Rc::ptr_eq(self_state, old_state) {
             return;
         }
         // Safety: called only from `update_from_widget` during single-threaded
@@ -1525,8 +1575,8 @@ mod tests {
     impl State<KeyedOuter> for KeyedOuterState {
         fn init_state(&mut self, _updater: StateUpdater<Self>) {}
 
-        fn adopt_config_from(&mut self, new: &Self) {
-            self.page = new.page.clone();
+        fn adopt_config_from(&mut self, new: Self) {
+            self.page = new.page;
         }
 
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
@@ -1742,7 +1792,7 @@ mod tests {
             self.updater.replace(Some(updater));
         }
 
-        fn adopt_config_from(&mut self, new: &Self) {
+        fn adopt_config_from(&mut self, new: Self) {
             if new.phase == PanicPhase::AdoptConfig {
                 panic!("keyed configuration failed");
             }
@@ -2065,5 +2115,52 @@ mod tests {
             updater.read(|_s| {});
         }));
         assert!(result.is_err());
+    }
+
+    struct OwnedConfigWidget;
+
+    struct OwnedConfigState {
+        config: String,
+    }
+
+    impl StatefulWidget for OwnedConfigWidget {
+        type State = OwnedConfigState;
+
+        fn create_state(self) -> Self::State {
+            OwnedConfigState {
+                config: String::from("new"),
+            }
+        }
+    }
+
+    impl State<OwnedConfigWidget> for OwnedConfigState {
+        fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+
+        fn adopt_config_from(&mut self, new: Self) {
+            self.config = new.config;
+        }
+
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            LeafProbe
+        }
+    }
+
+    impl Widget for OwnedConfigWidget {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            StatefulElement::from_widget(self, ctx, "OwnedConfigWidget", None)
+        }
+    }
+
+    #[test]
+    fn adopt_config_from_consumes_the_new_state() {
+        let mut state = OwnedConfigState {
+            config: String::from("old"),
+        };
+
+        state.adopt_config_from(OwnedConfigState {
+            config: String::from("new"),
+        });
+
+        assert_eq!(state.config, "new");
     }
 }

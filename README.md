@@ -11,7 +11,7 @@ fn main() {
       .child(
         Text::new("Hello World!")
           .text_align(TextAlign::MidCenter)
-          .text_style(TextStyle::new().color(Color::BLACK))
+          .text_style(TextStyle::new().color(Color::WHITE))
       )
   );
 }

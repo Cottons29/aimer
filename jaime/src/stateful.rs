@@ -16,20 +16,13 @@ pub fn start_counter() {
 #[widget(Stateful)]
 pub struct CounterWidget {
     pub initial_count: i32,
-    pub on_switch: Option<VoidCallback>,
 }
 
 impl CounterWidget {
     pub fn new(initial_count: i32) -> Self {
         Self {
             initial_count,
-            on_switch: None,
         }
-    }
-
-    pub fn on_switch(mut self, on_switch: VoidCallback) -> Self {
-        self.on_switch = Some(on_switch);
-        self
     }
 }
 // create a state for the CounterWidget

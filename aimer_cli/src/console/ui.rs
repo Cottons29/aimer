@@ -8,6 +8,44 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use crate::console::state::VisualRow;
 use crate::console::{AppState, ConsoleType, PaneView, Selection, Status};
 
+fn calc_scroll(
+    logs: &[Line],
+    height: usize,
+    width: usize,
+    requested_scroll: usize,
+) -> (usize, u16, u16) {
+    if logs.is_empty() {
+        return (0, 0, 0);
+    }
+    let mut total_wrapped = 0;
+    for line in logs.iter() {
+        let line_width = line.width();
+        let w = line_width.div_ceil(width);
+        total_wrapped += w.max(1);
+    }
+
+    let max_scroll = total_wrapped.saturating_sub(height);
+    let actual_scroll = requested_scroll.min(max_scroll);
+
+    let target_lines = height + actual_scroll;
+    let mut start = 0;
+    let mut wrapped_lines = 0;
+
+    for (i, line) in logs.iter().enumerate().rev() {
+        let line_width = line.width();
+        let w = line_width.div_ceil(width);
+        wrapped_lines += w.max(1);
+        if wrapped_lines >= target_lines {
+            start = i;
+            break;
+        }
+    }
+
+    let skip_top = wrapped_lines.saturating_sub(target_lines);
+
+    (start, skip_top as u16, actual_scroll as u16)
+}
+
 /// Render the full console UI as a function of the current [`AppState`] and the
 /// latest inspector snapshot. Pane scroll positions are clamped here as a side
 /// effect of layout, which is why `state` is taken mutably.
@@ -78,43 +116,6 @@ pub fn render(
     // Reset the hit-test snapshot every frame; only the focused log pane in
     // selection mode publishes one (see `build_selection_view`).
     state.last_view = None;
-
-    let calc_scroll = |logs: &[Line],
-                       height: usize,
-                       width: usize,
-                       requested_scroll: usize|
-     -> (usize, u16, u16) {
-        if logs.is_empty() {
-            return (0, 0, 0);
-        }
-        let mut total_wrapped = 0;
-        for line in logs.iter() {
-            let line_width = line.width();
-            let w = line_width.div_ceil(width);
-            total_wrapped += w.max(1);
-        }
-
-        let max_scroll = total_wrapped.saturating_sub(height);
-        let actual_scroll = requested_scroll.min(max_scroll);
-
-        let target_lines = height + actual_scroll;
-        let mut start = 0;
-        let mut wrapped_lines = 0;
-
-        for (i, line) in logs.iter().enumerate().rev() {
-            let line_width = line.width();
-            let w = line_width.div_ceil(width);
-            wrapped_lines += w.max(1);
-            if wrapped_lines >= target_lines {
-                start = i;
-                break;
-            }
-        }
-
-        let skip_top = wrapped_lines.saturating_sub(target_lines);
-
-        (start, skip_top as u16, actual_scroll as u16)
-    };
 
     if state.pane == ConsoleType::Build {
         if state.selection_mode {

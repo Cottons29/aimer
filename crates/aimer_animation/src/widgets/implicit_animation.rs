@@ -141,14 +141,15 @@ where
         self.updater = updater;
     }
 
-    fn adopt_config_from(&mut self, new: &Self) {
+    fn adopt_config_from(&mut self, new: Self) {
         self.duration = new.duration;
         self.curve = new.curve;
-        self.builder = new.builder.clone();
-        self.controller.set_duration(new.duration);
-        self.controller.set_curve(new.curve);
+        self.builder = new.builder;
+        self.controller.set_duration(self.duration);
+        self.controller.set_curve(self.curve);
 
         if self.target != new.target {
+            let new_target = new.target;
             let current = self.tween.with(|tween| {
                 tween
                     .as_ref()
@@ -157,8 +158,8 @@ where
             });
             self.current.with_mut(|value| *value = current.clone());
             self.tween
-                .with_mut(|tween| *tween = Some(Tween::new(current, new.target.clone())));
-            self.target = new.target.clone();
+                .with_mut(|tween| *tween = Some(Tween::new(current, new_target.clone())));
+            self.target = new_target;
             self.controller.reset();
             self.controller.forward_from_first_tick();
             request_next_frame();
@@ -395,7 +396,7 @@ mod tests {
         let mut state = widget(2.0).create_state();
         let new_state = widget(10.0).create_state();
 
-        state.adopt_config_from(&new_state);
+        state.adopt_config_from(new_state);
 
         state.tween.with(|tween| {
             let tween = tween.as_ref().unwrap();
@@ -408,10 +409,10 @@ mod tests {
     #[test]
     fn interrupted_animation_retargets_from_sampled_value() {
         let mut state = widget(0.0).create_state();
-        state.adopt_config_from(&widget(10.0).create_state());
+        state.adopt_config_from(widget(10.0).create_state());
         state.controller.set_value(0.5);
 
-        state.adopt_config_from(&widget(20.0).create_state());
+        state.adopt_config_from(widget(20.0).create_state());
 
         state.tween.with(|tween| {
             let tween = tween.as_ref().unwrap();
@@ -424,7 +425,7 @@ mod tests {
     fn unchanged_target_does_not_restart_animation() {
         let mut state = widget(3.0).create_state();
 
-        state.adopt_config_from(&widget(3.0).create_state());
+        state.adopt_config_from(widget(3.0).create_state());
 
         assert!(state.tween.with(Option::is_none));
         assert!(!state.controller.is_animating());
