@@ -33,7 +33,11 @@ pub use aimer_macro::{Router, StatefulWidget, StatelessWidget, Theme, key, main}
 #[cfg(feature = "markdown")]
 pub use aimer_markdown::{
     Alignment as MarkdownAlignment, Block as MarkdownBlock, Document as MarkdownDocument,
-    ImageResolver as MarkdownImageResolver, Inline as MarkdownInline,
+    BlockRule as MarkdownBlockRule, BlockSyntax as MarkdownBlockSyntax,
+    CustomBlockBuilder as MarkdownCustomBlockBuilder, CustomBlockData as MarkdownCustomBlockData,
+    CustomInlineBuilder as MarkdownCustomInlineBuilder,
+    CustomInlineData as MarkdownCustomInlineData, ImageResolver as MarkdownImageResolver,
+    Inline as MarkdownInline, InlineRule as MarkdownInlineRule, InlineSyntax as MarkdownInlineSyntax,
     LinkHandler as MarkdownLinkHandler, MarkdownError, MarkdownImage, MarkdownTheme,
     MarkdownViewer,
 };
@@ -89,7 +93,7 @@ pub mod style {
     pub use aimer_animation::primitives::curve::Curve;
     pub use aimer_animation::{AnimationEffect, AnimationStatus};
     pub use aimer_color::prelude::{Color, Colors};
-    pub use aimer_flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
+    pub use aimer_flex::{BoxAlignment, FlexDirection, OverflowBehavior};
     pub use aimer_style::*;
 }
 

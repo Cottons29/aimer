@@ -27,8 +27,8 @@ const PRESSED_DARKEN: f32 = 0.15;
 ///
 /// `Button` renders a decorated container (background, border, outline) and
 /// provides callbacks for primary tap, double-tap, long-press, and
-/// secondary-button tap. It substitutes a disabled background and suppresses
-/// all pointer callbacks when disabled.
+/// secondary-button tap. It supports optional decorations for hover, press,
+/// and disabled states, and suppresses all pointer callbacks when disabled.
 ///
 /// The default button is enabled, has an empty [`BoxDecoration`], and has no-op
 /// callbacks. Finish construction with [`Button::child`] or
@@ -50,6 +50,9 @@ pub struct Button<W = RequiredChild> {
     pub on_double_press: VoidCallback,
     pub on_right_press: VoidCallback,
     pub decoration: BoxDecoration,
+    pub hover_decoration: Option<BoxDecoration>,
+    pub press_decoration: Option<BoxDecoration>,
+    pub disable_decoration: Option<BoxDecoration>,
     pub is_disabled: bool,
     /// The subtree inside the button, kept as a builder because the button
     /// rebuilds itself on hover and press and needs the same child each time.
@@ -79,6 +82,9 @@ pub struct ButtonState<W: Widget + 'static> {
     pub on_double_press: VoidCallback,
     pub on_right_press: VoidCallback,
     pub decoration: BoxDecoration,
+    pub hover_decoration: Option<BoxDecoration>,
+    pub press_decoration: Option<BoxDecoration>,
+    pub disable_decoration: Option<BoxDecoration>,
     current_state: Rc<Cell<PointerState>>,
     state_updater: StateUpdater<Self>,
     child: ChildBuilder,
@@ -103,6 +109,9 @@ impl Button {
             on_double_press: VoidCallback::default(),
             on_right_press: VoidCallback::default(),
             decoration: BoxDecoration::default(),
+            hover_decoration: None,
+            press_decoration: None,
+            disable_decoration: None,
             is_disabled: false,
             child: ChildBuilder::required(),
             widget_key: None,
@@ -216,6 +225,33 @@ impl<W> Button<W> {
         self
     }
 
+    /// Sets the decoration drawn while the enabled button is hovered.
+    ///
+    /// When unset, the normal decoration is lightened automatically.
+    #[inline]
+    pub fn hover_decoration(mut self, hover_decoration: BoxDecoration) -> Self {
+        self.hover_decoration = Some(hover_decoration);
+        self
+    }
+
+    /// Sets the decoration drawn while the button is pressed.
+    ///
+    /// When unset, the active decoration is darkened automatically.
+    #[inline]
+    pub fn press_decoration(mut self, press_decoration: BoxDecoration) -> Self {
+        self.press_decoration = Some(press_decoration);
+        self
+    }
+
+    /// Sets the decoration drawn while the button is disabled.
+    ///
+    /// When unset, the background is replaced with translucent black.
+    #[inline]
+    pub fn disable_decoration(mut self, disable_decoration: BoxDecoration) -> Self {
+        self.disable_decoration = Some(disable_decoration);
+        self
+    }
+
     /// Enables or disables primary, double, and long-press interaction.
     ///
     /// A disabled button omits its hover and gesture wrappers and draws its
@@ -243,6 +279,9 @@ impl<W> Button<W> {
             on_double_press: self.on_double_press,
             on_right_press: self.on_right_press,
             decoration: self.decoration,
+            hover_decoration: self.hover_decoration,
+            press_decoration: self.press_decoration,
+            disable_decoration: self.disable_decoration,
             is_disabled: self.is_disabled,
             child: ChildBuilder::from_widget(child),
             widget_key: self.widget_key,
@@ -274,6 +313,9 @@ impl<W: Widget + 'static> StatefulWidget for Button<W> {
             on_double_press: self.on_double_press.clone(),
             on_right_press: self.on_right_press.clone(),
             decoration: self.decoration.clone(),
+            hover_decoration: self.hover_decoration.clone(),
+            press_decoration: self.press_decoration.clone(),
+            disable_decoration: self.disable_decoration.clone(),
             state_updater: StateUpdater::empty(),
             current_state: Rc::new(Cell::new(PointerState::Outside)),
             child: self.child.clone(),
@@ -313,31 +355,15 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
         self.on_double_press = new.on_double_press;
         self.on_right_press = new.on_right_press;
         self.decoration = new.decoration;
+        self.hover_decoration = new.hover_decoration;
+        self.press_decoration = new.press_decoration;
+        self.disable_decoration = new.disable_decoration;
         self.child = new.child;
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
         let child = self.child.clone();
-
-        let mut decor = self.decoration.clone();
-
-        if self.is_hover
-            && let Some(color) = decor.background_color
-        {
-            decor.background_color = Some(color.lighten(0.2));
-        }
-
-        // After the hover lightening, so a hovered button still visibly reacts to
-        // being pressed rather than the two cancelling out.
-        if self.is_pressed
-            && let Some(color) = decor.background_color
-        {
-            decor.background_color = Some(color.darken(PRESSED_DARKEN));
-        }
-
-        if self.is_disabled {
-            decor.background_color = Option::from(Color::BLACK.with_opacity(120));
-        }
+        let decor = self.active_decoration();
         let child = Container::new().box_decoration(decor).child(child);
 
         if self.is_disabled {
@@ -401,13 +427,61 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
     }
 }
 
+impl<W: Widget + 'static> ButtonState<W> {
+    #[inline]
+    fn active_decoration(&self) -> BoxDecoration {
+        if self.is_disabled {
+            if let Some(decoration) = &self.disable_decoration {
+                return decoration.clone();
+            }
+
+            let mut decoration = self.decoration.clone();
+            decoration.background_color.set(Some(Color::BLACK.with_opacity(120)));
+            return decoration;
+        }
+
+        if self.is_pressed {
+            if let Some(decoration) = &self.press_decoration {
+                return decoration.clone();
+            }
+        }
+
+        let mut decoration = if self.is_hover {
+            self.hover_decoration
+                .clone()
+                .unwrap_or_else(|| self.decoration.clone())
+        } else {
+            self.decoration.clone()
+        };
+
+        if self.is_hover
+            && self.hover_decoration.is_none()
+            && let Some(color) = decoration.background_color.get()
+        {
+            decoration.background_color.set(Some(color.lighten(0.2)));
+        }
+
+        // After the hover lightening, so a hovered button still visibly reacts to
+        // being pressed rather than the two cancelling out.
+        if self.is_pressed
+            && self.press_decoration.is_none()
+            && let Some(color) = decoration.background_color.get()
+        {
+            decoration.background_color.set(Some(color.darken(PRESSED_DARKEN)));
+        }
+
+        decoration
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
     use aimer_attribute::size::ResolvedSize;
-    use aimer_widget::base::WindowHandle;
+    use aimer_style::BoxDecoration;
+    use aimer_widget::base::{Color, WindowHandle};
     use aimer_widget::{AnyElement, ErrorWidget, Key, State, StatefulWidget, Widget};
 
     use super::{Button, BuildContext};
@@ -511,5 +585,55 @@ mod tests {
             Widget::key(&button),
             Some(Key::Value("platform-button".to_owned()))
         );
+    }
+
+    #[test]
+    fn state_specific_decorations_are_transferred_to_button_state() {
+        let normal = BoxDecoration::new().background_color(Color::WHITE);
+        let hover = BoxDecoration::new().background_color(Color::BLUE);
+        let press = BoxDecoration::new().background_color(Color::RED);
+        let disabled = BoxDecoration::new().background_color(Color::GRAY);
+
+        let state = Button::new()
+            .decoration(normal.clone())
+            .hover_decoration(hover.clone())
+            .press_decoration(press.clone())
+            .disable_decoration(disabled.clone())
+            .child(aimer_widget::ErrorWidget::new("button"))
+            .create_state();
+
+        assert_eq!(state.decoration, normal);
+        assert_eq!(state.hover_decoration, Some(hover));
+        assert_eq!(state.press_decoration, Some(press));
+        assert_eq!(state.disable_decoration, Some(disabled));
+    }
+
+    #[test]
+    fn state_specific_decorations_follow_disabled_pressed_hover_precedence() {
+        let normal = BoxDecoration::new().background_color(Color::WHITE);
+        let hover = BoxDecoration::new().background_color(Color::BLUE);
+        let press = BoxDecoration::new().background_color(Color::RED);
+        let disabled = BoxDecoration::new().background_color(Color::GRAY);
+        let mut state = Button::new()
+            .decoration(normal.clone())
+            .hover_decoration(hover.clone())
+            .press_decoration(press.clone())
+            .disable_decoration(disabled.clone())
+            .child(aimer_widget::ErrorWidget::new("button"))
+            .create_state();
+
+        state.is_disabled = true;
+        state.is_hover = true;
+        state.is_pressed = true;
+        assert_eq!(state.active_decoration(), disabled);
+
+        state.is_disabled = false;
+        assert_eq!(state.active_decoration(), press);
+
+        state.is_pressed = false;
+        assert_eq!(state.active_decoration(), hover);
+
+        state.is_hover = false;
+        assert_eq!(state.active_decoration(), normal);
     }
 }

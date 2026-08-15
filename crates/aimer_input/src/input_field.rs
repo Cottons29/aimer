@@ -4,6 +4,7 @@ pub mod context_menu;
 mod controller;
 pub mod raw_fields;
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
@@ -294,7 +295,7 @@ impl TextField {
             max_length: None,
             enable: true,
             decoration: BoxDecoration {
-                background_color: Some(Colors::White.into()),
+                background_color: Cell::new(Some(Colors::White.into())),
                 ..Default::default()
             },
             hover_decoration: None,

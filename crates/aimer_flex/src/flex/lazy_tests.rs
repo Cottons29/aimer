@@ -15,7 +15,7 @@ use crate::flex::raw_flex::RawFlex;
 use crate::flex::test_support::{
     CountingChild, ResizingChild, dummy_build_context, replace_a_generated_subtree,
 };
-use crate::flex::LayoutDirection;
+use crate::flex::FlexDirection;
 
 const CHILD_COUNT: usize = 100_000;
 const CHILD_HEIGHT: f32 = 80.0;
@@ -25,7 +25,7 @@ fn tall_column(measured: &Rc<Cell<usize>>, drawn: &Rc<Cell<usize>>) -> RawFlex {
     let children = (0..CHILD_COUNT)
         .map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, measured, drawn))
         .collect();
-    RawFlex::new(LayoutDirection::Column, children, "Column")
+    RawFlex::new(FlexDirection::Column, children, "Column")
 }
 
 /// A `Column` under a viewport must paint only the children intersecting it,
@@ -143,7 +143,7 @@ fn a_resized_child_moves_its_siblings_on_the_next_frame() {
     let first_at = Rc::new(Cell::new((0.0, 0.0)));
     let second_at = Rc::new(Cell::new((0.0, 0.0)));
     let column = RawFlex::new(
-        LayoutDirection::Column,
+        FlexDirection::Column,
         vec![
             ResizingChild::boxed_new(&height, &first_at),
             ResizingChild::boxed_new(&Rc::new(Cell::new(20.0)), &second_at),
@@ -176,7 +176,7 @@ fn a_replaced_child_list_is_measured_again() {
     let height = Rc::new(Cell::new(CHILD_HEIGHT));
     let placement = Rc::new(Cell::new((0.0, 0.0)));
     let column = RawFlex::new(
-        LayoutDirection::Column,
+        FlexDirection::Column,
         vec![ResizingChild::boxed_new(&height, &placement)],
         "Column",
     );
@@ -209,7 +209,7 @@ fn an_adopted_table_is_not_trusted_when_the_rows_were_rebuilt() {
     // The container that measured the loading state.
     let short = Rc::new(Cell::new(CHILD_HEIGHT));
     let old = RawFlex::new(
-        LayoutDirection::Column,
+        FlexDirection::Column,
         vec![
             ResizingChild::boxed_new(&short, &placement),
             ResizingChild::boxed_new(&short, &placement),
@@ -222,7 +222,7 @@ fn an_adopted_table_is_not_trusted_when_the_rows_were_rebuilt() {
     // from scratch out of the data that arrived.
     let tall = Rc::new(Cell::new(CHILD_HEIGHT * 20.0));
     let new = RawFlex::new(
-        LayoutDirection::Column,
+        FlexDirection::Column,
         vec![
             ResizingChild::boxed_new(&tall, &placement),
             ResizingChild::boxed_new(&tall, &placement),

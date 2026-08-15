@@ -331,7 +331,7 @@ mod tests {
             .screen_margin(15.0);
 
         assert_eq!(
-            styled.panel.background_color,
+            styled.panel.background_color.get(),
             Some(Color::Rgba(1, 2, 3, 4))
         );
         assert!(styled.padding == LayoutSpacing::all(Spacing::Px(3)));

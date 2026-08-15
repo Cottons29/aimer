@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use aimer_container::{AspectRatio, Container, Opacity, SizedBox, ZeroSizedBox};
-use aimer_flex::{BoxAlignment, Column, Expanded, Flex, LayoutDirection, OverflowBehavior, Row};
+use aimer_flex::{BoxAlignment, Column, Expanded, Flex, FlexDirection, OverflowBehavior, Row};
 use aimer_grid::{
     Grid, GridAlignment, GridError, GridItem, GridOverflow, GridPlacement, GridTrack,
 };
@@ -20,7 +20,7 @@ fn split_crates_expose_their_widget_families() {
     let _ = TypeId::of::<Column>();
     let _ = TypeId::of::<Expanded>();
     let _ = TypeId::of::<Flex>();
-    let _ = TypeId::of::<LayoutDirection>();
+    let _ = TypeId::of::<FlexDirection>();
     let _ = TypeId::of::<OverflowBehavior>();
     let _ = TypeId::of::<Row>();
 

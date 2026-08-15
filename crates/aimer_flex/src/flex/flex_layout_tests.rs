@@ -5,6 +5,8 @@
 //! nine-hundred-line ceiling this crate keeps per file.
 
 use super::*;
+use crate::flex::raw_flex::justify_distribution;
+use crate::flex::JustifyContent;
 
 
 fn column_of(sizes: &[(f32, f32)], gap: f32) -> FlexLayout {
@@ -16,6 +18,70 @@ fn column_of(sizes: &[(f32, f32)], gap: f32) -> FlexLayout {
         })
         .collect();
     FlexLayout::from_sizes(sizes, false, gap, false)
+}
+
+#[test]
+fn justify_content_distributes_free_main_axis_space() {
+    assert_eq!(
+        justify_distribution(JustifyContent::Start, 60.0, 3),
+        (0.0, 0.0)
+    );
+    assert_eq!(
+        justify_distribution(JustifyContent::Center, 60.0, 3),
+        (30.0, 0.0)
+    );
+    assert_eq!(
+        justify_distribution(JustifyContent::End, 60.0, 3),
+        (60.0, 0.0)
+    );
+    assert_eq!(
+        justify_distribution(JustifyContent::SpaceBetween, 60.0, 3),
+        (0.0, 30.0)
+    );
+    assert_eq!(
+        justify_distribution(JustifyContent::SpaceAround, 60.0, 3),
+        (10.0, 20.0)
+    );
+    assert_eq!(
+        justify_distribution(JustifyContent::SpaceEvenly, 60.0, 3),
+        (15.0, 15.0)
+    );
+}
+
+#[test]
+fn space_between_falls_back_to_start_for_one_child() {
+    assert_eq!(
+        justify_distribution(JustifyContent::SpaceBetween, 60.0, 1),
+        (0.0, 0.0)
+    );
+}
+
+#[test]
+fn visible_range_accounts_for_distributed_main_axis_space() {
+    let layout = FlexLayout::from_sizes(
+        vec![
+            ResolvedSize {
+                width: 10.0,
+                height: 10.0,
+            },
+            ResolvedSize {
+                width: 10.0,
+                height: 10.0,
+            },
+            ResolvedSize {
+                width: 10.0,
+                height: 10.0,
+            },
+        ],
+        true,
+        0.0,
+        false,
+    );
+
+    assert_eq!(
+        layout.visible_range_with_extra_space(25.0, 35.0, 0.0, 15.0),
+        1..2
+    );
 }
 
 #[test]

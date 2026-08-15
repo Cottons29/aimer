@@ -11,8 +11,8 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_widget::base::BuildContext;
 
-use crate::flex::raw_flex::RawFlex;
-use crate::flex::{BoxAlignment, LayoutDirection};
+use crate::flex::raw_flex::{RawFlex, justify_distribution};
+use crate::flex::{BoxAlignment, FlexDirection, JustifyContent};
 
 /// Positions and total size of a wrapped flex line set.
 pub(crate) struct WrapLayout {
@@ -25,13 +25,16 @@ pub(crate) struct WrapLayout {
 /// Lays children out onto as many lines as `max_width` / `max_height` allow.
 fn compute_wrap_layout(
     children: &[ResolvedSize],
-    direction: LayoutDirection,
+    direction: FlexDirection,
     max_width: f32,
     max_height: f32,
     gap_x: f32,
     gap_y: f32,
+    justify_content: JustifyContent,
 ) -> WrapLayout {
     let mut offsets = Vec::with_capacity(children.len());
+    let mut lines = Vec::new();
+    let mut line_start = 0;
     let mut main_offset: f32 = 0.0;
     let mut cross_offset: f32 = 0.0;
     let mut line_cross: f32 = 0.0;
@@ -39,34 +42,40 @@ fn compute_wrap_layout(
 
     for child in children {
         let (child_main, child_cross, max_main, main_gap, cross_gap) = match direction {
-            LayoutDirection::Row | LayoutDirection::Inherit => {
+            FlexDirection::Row | FlexDirection::Inherit => {
                 (child.width, child.height, max_width, gap_x, gap_y)
             }
-            LayoutDirection::Column => (child.height, child.width, max_height, gap_y, gap_x),
+            FlexDirection::Column => (child.height, child.width, max_height, gap_y, gap_x),
         };
-        let required_main = if main_offset > 0.0 {
+        let has_line_child = line_start < offsets.len();
+        let required_main = if has_line_child {
             main_offset + main_gap + child_main
         } else {
             child_main
         };
-        if main_offset > 0.0 && required_main > max_main {
+        if has_line_child && required_main > max_main {
+            lines.push((line_start, offsets.len(), main_offset));
             max_line_main = max_line_main.max(main_offset);
             cross_offset += line_cross + cross_gap;
             main_offset = 0.0;
             line_cross = 0.0;
+            line_start = offsets.len();
         }
-        if main_offset > 0.0 {
+        if line_start < offsets.len() {
             main_offset += main_gap;
         }
         let offset = match direction {
-            LayoutDirection::Row | LayoutDirection::Inherit => (main_offset, cross_offset),
-            LayoutDirection::Column => (cross_offset, main_offset),
+            FlexDirection::Row | FlexDirection::Inherit => (main_offset, cross_offset),
+            FlexDirection::Column => (cross_offset, main_offset),
         };
         offsets.push(offset);
         main_offset += child_main;
         line_cross = line_cross.max(child_cross);
     }
 
+    if line_start < offsets.len() {
+        lines.push((line_start, offsets.len(), main_offset));
+    }
     max_line_main = max_line_main.max(main_offset);
     let total_cross = if children.is_empty() {
         0.0
@@ -74,15 +83,35 @@ fn compute_wrap_layout(
         cross_offset + line_cross
     };
     let size = match direction {
-        LayoutDirection::Row | LayoutDirection::Inherit => ResolvedSize {
+        FlexDirection::Row | FlexDirection::Inherit => ResolvedSize {
             width: max_line_main,
             height: total_cross,
         },
-        LayoutDirection::Column => ResolvedSize {
+        FlexDirection::Column => ResolvedSize {
             width: total_cross,
             height: max_line_main,
         },
     };
+    for (start, end, line_main) in lines {
+        let (max_main, is_row) = match direction {
+            FlexDirection::Row | FlexDirection::Inherit => (max_width, true),
+            FlexDirection::Column => (max_height, false),
+        };
+        let (leading, between) = justify_distribution(
+            justify_content,
+            (max_main - line_main).max(0.0),
+            end - start,
+        );
+        for (local_index, offset) in offsets[start..end].iter_mut().enumerate() {
+            let extra = leading + between * local_index as f32;
+            if is_row {
+                offset.0 += extra;
+            } else {
+                offset.1 += extra;
+            }
+        }
+    }
+
     WrapLayout { offsets, size }
 }
 
@@ -98,10 +127,10 @@ impl RawFlex {
         self.materialize_all(ctx);
         let mut child_ctx = ctx.clone();
         match self.direction {
-            LayoutDirection::Row | LayoutDirection::Inherit => {
+            FlexDirection::Row | FlexDirection::Inherit => {
                 child_ctx.box_constraint.max_width = f32::MAX;
             }
-            LayoutDirection::Column => {
+            FlexDirection::Column => {
                 child_ctx.box_constraint.max_height = f32::MAX;
             }
         }
@@ -118,6 +147,18 @@ impl RawFlex {
             ctx.box_constraint.max_height,
             gap_x,
             gap_y,
+            self.justify_content.unwrap_or(match self.direction {
+                FlexDirection::Row | FlexDirection::Inherit => match self.horizontal_alignment {
+                    BoxAlignment::Start => JustifyContent::Start,
+                    BoxAlignment::Center => JustifyContent::Center,
+                    BoxAlignment::End => JustifyContent::End,
+                },
+                FlexDirection::Column => match self.vertical_alignment {
+                    BoxAlignment::Start => JustifyContent::Start,
+                    BoxAlignment::Center => JustifyContent::Center,
+                    BoxAlignment::End => JustifyContent::End,
+                },
+            }),
         );
         (sizes, layout)
     }
@@ -126,15 +167,15 @@ impl RawFlex {
         let (sizes, layout) = self.wrapped_layout(ctx, gap_x, gap_y);
         let extra_width = (ctx.box_constraint.max_width - layout.size.width).max(0.0);
         let extra_height = (ctx.box_constraint.max_height - layout.size.height).max(0.0);
-        let base_x = match self.horizontal_alignment {
-            BoxAlignment::Start => 0.0,
-            BoxAlignment::Center => extra_width / 2.0,
-            BoxAlignment::End => extra_width,
+        let base_x = if matches!(self.direction, FlexDirection::Column) {
+            align_offset(self.horizontal_alignment, extra_width)
+        } else {
+            0.0
         };
-        let base_y = match self.vertical_alignment {
-            BoxAlignment::Start => 0.0,
-            BoxAlignment::Center => extra_height / 2.0,
-            BoxAlignment::End => extra_height,
+        let base_y = if matches!(self.direction, FlexDirection::Column) {
+            0.0
+        } else {
+            align_offset(self.vertical_alignment, extra_height)
         };
         let mut draw_commands = Vec::with_capacity(self.children.len());
 
@@ -180,11 +221,21 @@ impl RawFlex {
     }
 }
 
+#[inline]
+fn align_offset(alignment: BoxAlignment, extra: f32) -> f32 {
+    match alignment {
+        BoxAlignment::Start => 0.0,
+        BoxAlignment::Center => extra / 2.0,
+        BoxAlignment::End => extra,
+    }
+}
+
 #[cfg(test)]
 mod wrap_tests {
     use aimer_attribute::size::ResolvedSize;
 
-    use super::{LayoutDirection, compute_wrap_layout};
+    use super::{FlexDirection, compute_wrap_layout};
+    use crate::flex::JustifyContent;
 
     #[test]
     fn row_wraps_children_onto_additional_lines() {
@@ -203,7 +254,15 @@ mod wrap_tests {
             },
         ];
 
-        let layout = compute_wrap_layout(&children, LayoutDirection::Row, 100.0, 100.0, 5.0, 3.0);
+        let layout = compute_wrap_layout(
+            &children,
+            FlexDirection::Row,
+            100.0,
+            100.0,
+            5.0,
+            3.0,
+            JustifyContent::Start,
+        );
 
         assert_eq!(
             layout.size,
@@ -213,6 +272,63 @@ mod wrap_tests {
             }
         );
         assert_eq!(layout.offsets, vec![(0.0, 0.0), (0.0, 13.0), (55.0, 13.0)]);
+    }
+
+    #[test]
+    fn space_between_is_applied_to_each_wrapped_line() {
+        let children = vec![
+            ResolvedSize {
+                width: 20.0,
+                height: 10.0,
+            },
+            ResolvedSize {
+                width: 20.0,
+                height: 10.0,
+            },
+            ResolvedSize {
+                width: 20.0,
+                height: 10.0,
+            },
+        ];
+
+        let layout = compute_wrap_layout(
+            &children,
+            FlexDirection::Row,
+            50.0,
+            100.0,
+            0.0,
+            0.0,
+            JustifyContent::SpaceBetween,
+        );
+
+        assert_eq!(layout.offsets, vec![(0.0, 0.0), (30.0, 0.0), (0.0, 10.0)]);
+    }
+
+    #[test]
+    fn row_wrap_keeps_gaps_after_zero_sized_children() {
+        let children = vec![
+            ResolvedSize {
+                width: 0.0,
+                height: 10.0,
+            },
+            ResolvedSize {
+                width: 20.0,
+                height: 10.0,
+            },
+        ];
+
+        let layout = compute_wrap_layout(
+            &children,
+            FlexDirection::Row,
+            100.0,
+            100.0,
+            5.0,
+            0.0,
+            JustifyContent::Start,
+        );
+
+        assert_eq!(layout.size.width, 25.0);
+        assert_eq!(layout.offsets, vec![(0.0, 0.0), (5.0, 0.0)]);
     }
 
     #[test]
@@ -232,8 +348,15 @@ mod wrap_tests {
             },
         ];
 
-        let layout =
-            compute_wrap_layout(&children, LayoutDirection::Column, 100.0, 100.0, 3.0, 5.0);
+        let layout = compute_wrap_layout(
+            &children,
+            FlexDirection::Column,
+            100.0,
+            100.0,
+            3.0,
+            5.0,
+            JustifyContent::Start,
+        );
 
         assert_eq!(
             layout.size,

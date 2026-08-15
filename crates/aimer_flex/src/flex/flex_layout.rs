@@ -32,7 +32,7 @@ use aimer_attribute::BoxConstraint;
 use aimer_attribute::size::ResolvedSize;
 use aimer_widget::base::BuildContext;
 
-use crate::flex::LayoutDirection;
+use crate::flex::FlexDirection;
 use crate::flex::children_source::ChildrenSource;
 use crate::flex::flex_child::distribute_flex_space;
 
@@ -163,13 +163,13 @@ impl FlexLayout {
     /// materialize the whole range first; see
     /// [`RawFlex::measure_layout`](crate::flex::raw_flex::RawFlex).
     pub(crate) fn build(
-        direction: LayoutDirection,
+        direction: FlexDirection,
         children: &dyn ChildrenSource,
         ctx: &BuildContext,
         gap_main: f32,
     ) -> Self {
         let len = children.len();
-        let is_row = !matches!(direction, LayoutDirection::Column);
+        let is_row = !matches!(direction, FlexDirection::Column);
         let (max_main, max_cross) = if is_row {
             (ctx.box_constraint.max_width, ctx.box_constraint.max_height)
         } else {
@@ -569,6 +569,41 @@ impl FlexLayout {
             .partition_point(|offset| *offset <= start)
             .saturating_sub(1);
         let last = self.offsets.partition_point(|offset| *offset < end);
+        first.min(self.len)..last.min(self.len)
+    }
+
+    /// Returns the visible range when a constant amount of extra main-axis
+    /// space is inserted before every child after the first one.
+    ///
+    /// This is used by semantic justification. The regular table remains
+    /// unchanged because its cached offsets still describe measured layout;
+    /// only the visibility search needs to account for the distributed space.
+    pub(crate) fn visible_range_with_extra_space(
+        &self,
+        start: f64,
+        end: f64,
+        leading: f64,
+        between: f64,
+    ) -> Range<usize> {
+        if self.len == 0 || end < start {
+            return 0..0;
+        }
+
+        let offset = |index: usize| self.offset(index) + leading + between * index as f64;
+        let partition = |keep: &dyn Fn(f64) -> bool| {
+            let (mut low, mut high) = (0usize, self.len);
+            while low < high {
+                let middle = low + (high - low) / 2;
+                if keep(offset(middle)) {
+                    low = middle + 1;
+                } else {
+                    high = middle;
+                }
+            }
+            low
+        };
+        let first = partition(&|value| value <= start).saturating_sub(1);
+        let last = partition(&|value| value < end);
         first.min(self.len)..last.min(self.len)
     }
 }

@@ -1,6 +1,6 @@
 use aimer::style::{LayoutSpacing, Spacing, TextDecoration, TextOverflow, TextStyle};
 use aimer::{
-    AimerApp, Color, Container, Flex, FontStyle, FontWeight, LayoutDirection, RichText,
+    AimerApp, Color, Container, Flex, FontStyle, FontWeight, FlexDirection, RichText,
     SelectionArea, SizedBox, SpanStyle, Text, TextSpan, Widget,
 };
 
@@ -10,7 +10,7 @@ pub fn selectable_text_example() -> impl Widget {
         .padding(LayoutSpacing::all(Spacing::Px(32)))
         .child(
             Flex::new()
-                .direction(LayoutDirection::Column)
+                .direction(FlexDirection::Column)
                 .children([
                     Text::new("Selectable text region")
                         .text_style(TextStyle::new().font_size(30).color(Color::BLACK))
@@ -32,7 +32,7 @@ pub fn selectable_text_example() -> impl Widget {
                         .padding(LayoutSpacing::all(Spacing::Px(20)))
                         .color(Color::Rgb(245, 247, 250))
                         .child(SelectionArea::new().selection_color(Color::Rgba(51, 153, 255, 96)).child(
-                            Flex::new().direction(LayoutDirection::Column).children([
+                            Flex::new().direction(FlexDirection::Column).children([
                                 Text::new("A heading that joins the selection")
                                     .text_style(TextStyle::new().font_size(24).color(Color::BLACK))
                                     .boxed(),

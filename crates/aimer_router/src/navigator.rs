@@ -97,6 +97,7 @@ pub struct NavigatorState<R>
 where
     R: Route,
 {
+    pub initial_route: R,
     pub history: Vec<R>,
     pub updater: StateUpdater<Self>,
     pub routes: fn(R) -> AnyWidget,
@@ -120,6 +121,31 @@ impl<R: Route> NavigatorState<R> {
                     browser_replace_state(&prev.format());
                 }
             }
+        });
+    }
+
+    pub fn current_route(&self) -> R {
+        self.history
+            .last()
+            .expect("History should not be empty")
+            .clone()
+    }
+
+    pub fn clear(&self) {
+        self.updater.set_state(|state| {
+            state.history.clear();
+            state.history.push(state.initial_route.clone());
+            #[cfg(target_arch = "wasm32")]
+            browser_replace_state(&state.initial_route.format());
+        });
+    }
+
+    pub fn set_route(&self, route: R) {
+        #[cfg(target_arch = "wasm32")]
+        browser_replace_state(&route.format());
+        self.updater.set_state(|state| {
+            state.history.clear();
+            state.history.push(route);
         });
     }
 }
@@ -257,12 +283,12 @@ impl<R: 'static> Rebuildable for NavigatorElement<R> {
         self.scoped(ctx, |ctx| self.child.rebuild_if_dirty(ctx));
     }
 
-    fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
-        self.scoped(ctx, callback);
-    }
-
     fn is_carry_state(&self) -> bool {
         true
+    }
+
+    fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
+        self.scoped(ctx, callback);
     }
 
     fn mark_needs_rebuild(&self) {
@@ -275,6 +301,9 @@ pub struct NavigatorController<R> {
     pop_fn: Rc<dyn Fn()>,
     can_pop_fn: Rc<dyn Fn() -> bool>,
     history_len_fn: Rc<dyn Fn() -> usize>,
+    current_route_fn: Rc<dyn Fn() -> R>,
+    clear_fn: Rc<dyn Fn()>,
+    set_route_fn: Rc<dyn Fn(R)>,
 }
 
 unsafe impl<R> Send for NavigatorController<R> {}
@@ -286,6 +315,9 @@ impl<R> Clone for NavigatorController<R> {
             pop_fn: self.pop_fn.clone(),
             can_pop_fn: self.can_pop_fn.clone(),
             history_len_fn: self.history_len_fn.clone(),
+            current_route_fn: self.current_route_fn.clone(),
+            clear_fn: self.clear_fn.clone(),
+            set_route_fn: self.set_route_fn.clone(),
         }
     }
 }
@@ -317,6 +349,29 @@ impl<R: 'static> NavigatorController<R> {
     pub fn history_len(&self) -> usize {
         (self.history_len_fn)()
     }
+
+    /// Returns the route currently displayed by the navigator.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the navigator history is empty. A [`Navigator`] always keeps
+    /// at least one route, so this indicates a broken internal invariant.
+    pub fn current_route(&self) -> R {
+        (self.current_route_fn)()
+    }
+
+    /// Removes all pushed routes and returns the navigator to its initial route.
+    pub fn clear(&self) {
+        (self.clear_fn)();
+    }
+
+    /// Replaces the complete navigation history with `route`.
+    ///
+    /// The supplied route becomes the only route in the history, so a later
+    /// [`Self::pop`] does nothing until another route is pushed.
+    pub fn set_route(&self, route: R) {
+        (self.set_route_fn)(route);
+    }
 }
 
 impl<R: Route> NavigatorController<R> {
@@ -338,6 +393,7 @@ impl<R: Route> StatefulWidget for Navigator<R> {
     type State = NavigatorState<R>;
     fn create_state(self) -> Self::State {
         NavigatorState::<R> {
+            initial_route: self.initial_route.clone(),
             history: vec![self.initial_route.clone()],
             updater: StateUpdater::empty(),
             routes: self.routes,
@@ -362,33 +418,29 @@ fn navigator_controller<R: Route>(
     NavigatorController {
         push_fn: {
             let updater = updater.clone();
-            Rc::new(move |route: R| {
-                #[cfg(target_arch = "wasm32")]
-                browser_push_state(&route.format());
-                updater.set_state(|state| {
-                    state.history.push(route);
-                });
-            })
+            Rc::new(move |route: R| updater.read(|state| state.push(route)))
         },
         pop_fn: {
             let updater = updater.clone();
-            Rc::new(move || {
-                updater.set_state(|state| {
-                    if state.history.len() > 1 {
-                        state.history.pop();
-                        #[cfg(target_arch = "wasm32")]
-                        if let Some(previous) = state.history.last() {
-                            browser_replace_state(&previous.format());
-                        }
-                    }
-                });
-            })
+            Rc::new(move || updater.read(|state| state.pop()))
         },
         can_pop_fn: {
             let updater = updater.clone();
             Rc::new(move || updater.read(|state| state.history.len() > 1))
         },
-        history_len_fn: Rc::new(move || updater.read(|state| state.history.len())),
+        history_len_fn: {
+            let updater = updater.clone();
+            Rc::new(move || updater.read(|state| state.history.len()))
+        },
+        current_route_fn: {
+            let updater = updater.clone();
+            Rc::new(move || updater.read(|state| state.current_route()))
+        },
+        clear_fn: {
+            let updater = updater.clone();
+            Rc::new(move || updater.read(|state| state.clear()))
+        },
+        set_route_fn: Rc::new(move |route| updater.read(|state| state.set_route(route))),
     }
 }
 
@@ -403,11 +455,16 @@ mod tests {
 
     thread_local! {
         static NAVIGATOR_OBSERVED: Cell<bool> = const { Cell::new(false) };
+        static CURRENT_ROUTE_OBSERVED: Cell<Option<TestRoute>> = const { Cell::new(None) };
+        static HISTORY_LENGTH_OBSERVED: Cell<usize> = const { Cell::new(0) };
+        static NAVIGATOR_OPERATION_STEP: Cell<u8> = const { Cell::new(0) };
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum TestRoute {
         Home,
+        Settings,
+        Profile,
     }
 
     impl Route for TestRoute {
@@ -416,7 +473,11 @@ mod tests {
         }
 
         fn format(&self) -> String {
-            "/".to_owned()
+            match self {
+                Self::Home => "/".to_owned(),
+                Self::Settings => "/settings".to_owned(),
+                Self::Profile => "/profile".to_owned(),
+            }
         }
     }
 
@@ -445,8 +506,66 @@ mod tests {
         }
     }
 
+    struct NavigatorControllerOperationsWidget;
+
+    impl Widget for NavigatorControllerOperationsWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            NavigatorControllerOperationsElement.boxed()
+        }
+    }
+
+    struct NavigatorControllerOperationsElement;
+
+    impl VisitorElement for NavigatorControllerOperationsElement {
+        fn debug_name(&self) -> &'static str {
+            "NavigatorControllerOperationsElement"
+        }
+    }
+    impl EventElement for NavigatorControllerOperationsElement {}
+    impl LayoutElement for NavigatorControllerOperationsElement {}
+    impl Rebuildable for NavigatorControllerOperationsElement {}
+    impl Drawable for NavigatorControllerOperationsElement {
+        fn draw(&self, ctx: &BuildContext) {
+            let navigator = NavigatorController::<TestRoute>::of(ctx);
+
+            match NAVIGATOR_OPERATION_STEP.get() {
+                0 => {
+                    assert_eq!(navigator.current_route(), TestRoute::Home);
+                    navigator.push(TestRoute::Settings);
+                }
+                1 => {
+                    assert_eq!(navigator.current_route(), TestRoute::Settings);
+                    navigator.push(TestRoute::Profile);
+                }
+                2 => {
+                    assert_eq!(navigator.current_route(), TestRoute::Profile);
+                    navigator.set_route(TestRoute::Settings);
+                }
+                3 => {
+                    assert_eq!(navigator.current_route(), TestRoute::Settings);
+                    assert_eq!(navigator.history_len(), 1);
+                    navigator.push(TestRoute::Profile);
+                }
+                4 => {
+                    assert_eq!(navigator.current_route(), TestRoute::Profile);
+                    navigator.clear();
+                }
+                5 => {
+                    CURRENT_ROUTE_OBSERVED.set(Some(navigator.current_route()));
+                    HISTORY_LENGTH_OBSERVED.set(navigator.history_len());
+                }
+                _ => return,
+            }
+            NAVIGATOR_OPERATION_STEP.set(NAVIGATOR_OPERATION_STEP.get() + 1);
+        }
+    }
+
     fn lookup_route(_: TestRoute) -> AnyWidget {
         NavigatorLookupWidget.boxed()
+    }
+
+    fn lookup_controller_operations(_: TestRoute) -> AnyWidget {
+        NavigatorControllerOperationsWidget.boxed()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -487,6 +606,25 @@ mod tests {
         element.draw(&context());
 
         assert!(NAVIGATOR_OBSERVED.get());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn navigator_controller_can_read_and_replace_route_history() {
+        CURRENT_ROUTE_OBSERVED.set(None);
+        HISTORY_LENGTH_OBSERVED.set(0);
+        NAVIGATOR_OPERATION_STEP.set(0);
+        let navigator = Navigator::new(TestRoute::Home, lookup_controller_operations);
+        let initial_context = context();
+        let element = navigator.to_element(&initial_context);
+
+        for _ in 0..6 {
+            element.draw(&context());
+            element.rebuild_if_dirty(&context());
+        }
+
+        assert_eq!(CURRENT_ROUTE_OBSERVED.get(), Some(TestRoute::Home));
+        assert_eq!(HISTORY_LENGTH_OBSERVED.get(), 1);
     }
 
     #[test]

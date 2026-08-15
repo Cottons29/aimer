@@ -21,10 +21,7 @@ aimer_input.workspace = true
 aimer_native.workspace = true
 synoptic.workspace = true
 arborium = { workspace = true, features = [
-    "default",
-    "lang-python",
-    "lang-rust",
-    "lang-toml",
+    "all-languages",
 ], optional = true }
 
 [features]

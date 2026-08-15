@@ -10,7 +10,7 @@ use crate::rect_pipeline::{RectInstance, RectPipeline};
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::svg_pipeline::SvgPipeline;
 use crate::text_pipeline::{RichTextSpan, TextDecorationDraw, TextDrawRequest, TextPipelineV2};
-use crate::utilities::{Mat3, Rect};
+use crate::utilities::{Color, Mat3, Rect};
 
 struct ClipState {
     rect: Rect,
@@ -65,6 +65,108 @@ impl Default for AlphaState {
 fn apply_alpha(mut color: [f32; 4], alpha: f32) -> [f32; 4] {
     color[3] *= alpha;
     color
+}
+
+/// Builds the GPU rect instance(s) for a single `FillRect` command.
+///
+/// Returns the box's own instance (background + border, its outline fields
+/// always zeroed) and, when the command carries a visible outline, a second
+/// instance covering only the outline ring at its expanded bounds (its fill
+/// and border fields always zeroed, so it paints nothing but the ring).
+///
+/// An outline is drawn just outside its box's own edge, so it can overlap
+/// whatever is painted right after it — an adjacent sibling in a `Row`, say.
+/// Splitting it into its own instance lets the caller defer it: see
+/// [`Renderer::deferred_outlines`].
+#[allow(clippy::too_many_arguments)]
+fn build_fill_rect_instances(
+    rect: Rect,
+    color: Color,
+    border_radius: [f32; 4],
+    border_width: [f32; 4],
+    border_color: Color,
+    outline_width: [f32; 4],
+    outline_color: Color,
+    current_transform: &Mat3,
+    clip: Option<&ClipState>,
+    alpha: f32,
+) -> (RectInstance, Option<RectInstance>) {
+    let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
+    let sy = (current_transform.cols[1][0].powi(2) + current_transform.cols[1][1].powi(2)).sqrt();
+
+    let ol = outline_width[3]; // left
+    let or = outline_width[1]; // right
+    let ot = outline_width[0]; // top
+    let ob = outline_width[2]; // bottom
+    let has_outline = ol > 0.0 || or > 0.0 || ot > 0.0 || ob > 0.0;
+
+    // Transform the top-left and bottom-right corners of the box itself. This
+    // correctly handles translation and scaling.
+    let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
+    let (p2x, p2y) =
+        current_transform.transform_point(rect.x + rect.width, rect.y + rect.height);
+
+    let mut scaled_br = border_radius;
+    for r in &mut scaled_br {
+        *r *= sx;
+    } // Assuming uniform scale for simplicity, or use sx
+
+    let mut scaled_bw = border_width;
+    scaled_bw[0] *= sy; // top
+    scaled_bw[1] *= sx; // right
+    scaled_bw[2] *= sy; // bottom
+    scaled_bw[3] *= sx; // left
+
+    let clip_rect = clip_to_array(clip);
+    let clip_radii = clip_border_radius(clip);
+
+    let outline_instance = has_outline.then(|| {
+        // Transform the top-left and bottom-right corners of the quad expanded
+        // by the outline width, so the ring is visible.
+        let (ep1x, ep1y) = current_transform.transform_point(rect.x - ol, rect.y - ot);
+        let (ep2x, ep2y) = current_transform
+            .transform_point(rect.x + rect.width + or, rect.y + rect.height + ob);
+
+        let mut scaled_ow = outline_width;
+        scaled_ow[0] *= sy; // top
+        scaled_ow[1] *= sx; // right
+        scaled_ow[2] *= sy; // bottom
+        scaled_ow[3] *= sx; // left
+
+        RectInstance {
+            position: [ep1x.min(ep2x), ep1y.min(ep2y)],
+            size: [(ep2x - ep1x).abs(), (ep2y - ep1y).abs()],
+            color: [0.0, 0.0, 0.0, 0.0],
+            border_radius: scaled_br,
+            border_width: [0.0; 4],
+            border_color: [0.0, 0.0, 0.0, 0.0],
+            outline_width: scaled_ow,
+            outline_color: apply_alpha(outline_color.to_array(), alpha),
+            clip_rect,
+            clip_border_radius: clip_radii,
+            shadow_params: [0.0; 4],
+            shadow_color: [0.0; 4],
+            shadow_flags: [0.0; 4],
+        }
+    });
+
+    let main_instance = RectInstance {
+        position: [p1x.min(p2x), p1y.min(p2y)],
+        size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
+        color: apply_alpha(color.to_array(), alpha),
+        border_radius: scaled_br,
+        border_width: scaled_bw,
+        border_color: apply_alpha(border_color.to_array(), alpha),
+        outline_width: [0.0; 4],
+        outline_color: [0.0, 0.0, 0.0, 0.0],
+        clip_rect,
+        clip_border_radius: clip_radii,
+        shadow_params: [0.0; 4],
+        shadow_color: [0.0; 4],
+        shadow_flags: [0.0; 4],
+    };
+
+    (main_instance, outline_instance)
 }
 
 fn has_renderable_dimensions(width: u32, height: u32) -> bool {
@@ -196,6 +298,14 @@ pub struct Renderer {
     decoration_requests: Vec<TextDecorationDraw>,
     svg_items: Vec<SvgRenderItem>,
     resolved: Vec<ResolvedCmd>,
+    /// Outline rings pulled out of this frame's `FillRect` commands.
+    ///
+    /// An outline is painted just outside its own box's edge, so it can
+    /// overlap whatever sits next to that box (e.g. an adjacent panel in a
+    /// `Row`). Holding these back and appending them to `resolved` only
+    /// after every in-order command of the frame keeps every outline on top
+    /// instead of being silently painted over by a later sibling.
+    deferred_outlines: Vec<RectInstance>,
     textures_to_remove: Vec<u32>,
     multisample_target: Option<MultisampleTarget>,
     antialiasing: crate::AntiAlias,
@@ -231,6 +341,7 @@ impl Renderer {
             decoration_requests: Vec::new(),
             svg_items: Vec::new(),
             resolved: Vec::new(),
+            deferred_outlines: Vec::new(),
             textures_to_remove: Vec::new(),
             multisample_target: None,
             antialiasing,
@@ -361,6 +472,7 @@ impl Renderer {
         self.decoration_requests.clear();
         self.svg_items.clear();
         self.resolved.clear();
+        self.deferred_outlines.clear();
         self.textures_to_remove.clear();
 
         if !has_renderable_dimensions(width, height) {
@@ -442,70 +554,31 @@ impl Renderer {
                     outline_width,
                     outline_color,
                 } => {
-                    // Extract scale factors from the current transform matrix
-                    let sx = (current_transform.cols[0][0].powi(2)
-                        + current_transform.cols[0][1].powi(2))
-                    .sqrt();
-                    let sy = (current_transform.cols[1][0].powi(2)
-                        + current_transform.cols[1][1].powi(2))
-                    .sqrt();
+                    let (main_instance, outline_instance) = build_fill_rect_instances(
+                        *rect,
+                        *color,
+                        *border_radius,
+                        *border_width,
+                        *border_color,
+                        *outline_width,
+                        *outline_color,
+                        &current_transform,
+                        self.clip_stack.last(),
+                        alpha_state.current(),
+                    );
 
-                    // Expand the quad by the outline width so the outline ring is visible.
-                    // These are in logical pixels and must be scaled to device pixels.
-                    let ol = outline_width[3]; // left
-                    let or = outline_width[1]; // right
-                    let ot = outline_width[0]; // top
-                    let ob = outline_width[2]; // bottom
-
-                    // Transform the top-left and bottom-right corners of the expanded quad.
-                    // This correctly handles translation and scaling.
-                    let (p1x, p1y) = current_transform.transform_point(rect.x - ol, rect.y - ot);
-                    let (p2x, p2y) = current_transform
-                        .transform_point(rect.x + rect.width + or, rect.y + rect.height + ob);
-
-                    // let expanded_w = p2x - p1x;
-                    // let expanded_h = p2y - p1y;
-
-                    // Scale other properties by the appropriate axis
-                    let mut scaled_br = *border_radius;
-                    for r in &mut scaled_br {
-                        *r *= sx;
-                    } // Assuming uniform scale for simplicity, or use sx
-
-                    let mut scaled_bw = *border_width;
-                    scaled_bw[0] *= sy; // top
-                    scaled_bw[1] *= sx; // right
-                    scaled_bw[2] *= sy; // bottom
-                    scaled_bw[3] *= sx; // left
-
-                    let mut scaled_ow = *outline_width;
-                    scaled_ow[0] *= sy; // top
-                    scaled_ow[1] *= sx; // right
-                    scaled_ow[2] *= sy; // bottom
-                    scaled_ow[3] *= sx; // left
+                    // An outline is painted just outside its box's own edge, so it can
+                    // overlap whatever sits next to that box (e.g. an adjacent panel in
+                    // a `Row`, drawn right after it at the same layer). Deferring it —
+                    // later appended to `resolved` after every in-order command of this
+                    // frame — keeps every outline on top instead of letting a later
+                    // sibling silently paint over it.
+                    if let Some(outline_instance) = outline_instance {
+                        self.deferred_outlines.push(outline_instance);
+                    }
 
                     self.resolved.push(ResolvedCmd {
-                        kind: ResolvedKind::Rect(RectInstance {
-                            position: [p1x.min(p2x), p1y.min(p2y)],
-                            size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
-                            color: apply_alpha(color.to_array(), alpha_state.current()),
-                            border_radius: scaled_br,
-                            border_width: scaled_bw,
-                            border_color: apply_alpha(
-                                border_color.to_array(),
-                                alpha_state.current(),
-                            ),
-                            outline_width: scaled_ow,
-                            outline_color: apply_alpha(
-                                outline_color.to_array(),
-                                alpha_state.current(),
-                            ),
-                            clip_rect: clip_to_array(self.clip_stack.last()),
-                            clip_border_radius: clip_border_radius(self.clip_stack.last()),
-                            shadow_params: [0.0; 4],
-                            shadow_color: [0.0; 4],
-                            shadow_flags: [0.0; 4],
-                        }),
+                        kind: ResolvedKind::Rect(main_instance),
                     });
                 }
                 DrawCommand::ClearRect { rect } => {
@@ -822,6 +895,16 @@ impl Renderer {
                     }
                 }
             }
+        }
+
+        // Every outline recorded this frame paints last, on top of every
+        // in-order command above — including a sibling drawn after the
+        // outlined box that would otherwise cover the ring bleeding past its
+        // edge (see `deferred_outlines`).
+        for instance in self.deferred_outlines.drain(..) {
+            self.resolved.push(ResolvedCmd {
+                kind: ResolvedKind::Rect(instance),
+            });
         }
 
         // Prepare custom pipelines
@@ -1149,6 +1232,73 @@ mod tests {
         assert_eq!(state.current(), 1.0);
         state.set(-1.0);
         assert_eq!(state.current(), 0.0);
+    }
+
+    // Regression: `BoxOutline` is meant to bleed just outside its own box,
+    // like a CSS `outline` — but the outline used to be baked into the very
+    // same rect instance as the background/border, all sharing one draw call
+    // in submission order. A sibling painted right after that box (e.g. the
+    // next panel in a `Row`) landed on top of the whole instance, including
+    // the outline ring bleeding into the sibling's space, making the outline
+    // look like it "never rendered". Splitting the outline into its own
+    // instance is what lets the renderer defer and paint it last.
+    #[test]
+    fn build_fill_rect_instances_returns_no_outline_instance_when_outline_is_zero() {
+        let rect = Rect::new(10.0, 20.0, 100.0, 50.0);
+        let (main_instance, outline_instance) = build_fill_rect_instances(
+            rect,
+            Color::white(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::black(),
+            [0.0; 4],
+            Color::red(),
+            &Mat3::identity(),
+            None,
+            1.0,
+        );
+
+        assert!(outline_instance.is_none());
+        assert_eq!(main_instance.position, [10.0, 20.0]);
+        assert_eq!(main_instance.size, [100.0, 50.0]);
+    }
+
+    #[test]
+    fn build_fill_rect_instances_splits_outline_ring_from_the_box_own_bounds() {
+        let rect = Rect::new(10.0, 20.0, 100.0, 50.0);
+        // [top, right, bottom, left]
+        let outline_width = [2.0, 3.0, 4.0, 5.0];
+
+        let (main_instance, outline_instance) = build_fill_rect_instances(
+            rect,
+            Color::white(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::black(),
+            outline_width,
+            Color::red(),
+            &Mat3::identity(),
+            None,
+            1.0,
+        );
+
+        // The box's own instance stays at its own bounds and carries no
+        // outline of its own — otherwise it would double-draw the ring.
+        assert_eq!(main_instance.position, [10.0, 20.0]);
+        assert_eq!(main_instance.size, [100.0, 50.0]);
+        assert_eq!(main_instance.outline_width, [0.0; 4]);
+        assert_eq!(main_instance.outline_color, [0.0, 0.0, 0.0, 0.0]);
+
+        // The outline instance covers the box expanded by its outline width on
+        // every side, and paints nothing but the ring.
+        let outline_instance = outline_instance.expect("outline width is non-zero");
+        assert_eq!(outline_instance.position, [5.0, 18.0]);
+        assert_eq!(outline_instance.size, [108.0, 56.0]);
+        assert_eq!(outline_instance.color, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(outline_instance.border_width, [0.0; 4]);
+        assert_eq!(outline_instance.border_color, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(outline_instance.outline_width, outline_width);
+        assert_eq!(outline_instance.outline_color, Color::red().to_array());
     }
 
     #[test]

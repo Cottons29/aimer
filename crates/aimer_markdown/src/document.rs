@@ -4,6 +4,8 @@ use aimer_utils::error;
 use markdown::mdast::{AlignKind, Node};
 use markdown::{Constructs, ParseOptions};
 
+use crate::custom::{BlockRule, CustomBlockData, CustomInlineData, InlineRule};
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Document {
     pub blocks: Vec<Block>,
@@ -36,6 +38,7 @@ pub enum Block {
         identifier: String,
         blocks: Vec<Block>,
     },
+    Custom(CustomBlockData),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -79,6 +82,7 @@ pub enum Inline {
     FootnoteReference {
         identifier: String,
     },
+    Custom(CustomInlineData),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,38 +110,266 @@ impl Display for MarkdownError {
 
 impl std::error::Error for MarkdownError {}
 
+struct PreparedSource {
+    source: String,
+    blocks: Vec<(String, CustomBlockData)>,
+}
+
+fn validate_rules(
+    block_rules: &[BlockRule],
+    inline_rules: &[InlineRule],
+) -> Result<(), MarkdownError> {
+    for (index, rule) in block_rules.iter().enumerate() {
+        let (opening, closing) = rule.delimiters();
+        if opening.is_empty() || closing.is_empty() || opening == closing {
+            return Err(MarkdownError::new(format!(
+                "Custom block rule '{}' has invalid delimiters",
+                rule.name()
+            )));
+        }
+        if block_rules[..index]
+            .iter()
+            .any(|other| other.name() == rule.name() || other.delimiters() == (opening, closing))
+        {
+            return Err(MarkdownError::new(format!(
+                "Duplicate custom block rule '{}'",
+                rule.name()
+            )));
+        }
+    }
+    for (index, rule) in inline_rules.iter().enumerate() {
+        let (opening, closing) = rule.delimiters();
+        if opening.is_empty() || closing.is_empty() || opening == closing {
+            return Err(MarkdownError::new(format!(
+                "Custom inline rule '{}' has invalid delimiters",
+                rule.name()
+            )));
+        }
+        if inline_rules[..index]
+            .iter()
+            .any(|other| other.name() == rule.name() || other.delimiters() == (opening, closing))
+        {
+            return Err(MarkdownError::new(format!(
+                "Duplicate custom inline rule '{}'",
+                rule.name()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn prepare_source(
+    source: &str,
+    block_rules: &[BlockRule],
+    inline_rules: &[InlineRule],
+) -> Result<PreparedSource, MarkdownError> {
+    let mut prepared = String::with_capacity(source.len());
+    let mut blocks = Vec::new();
+    let mut lines = source.split_inclusive('\n').peekable();
+    let mut token_index = 0;
+
+    while let Some(line) = lines.next() {
+        let line_content = line.trim_matches(['\r', '\n']);
+        let Some(rule) = block_rules
+            .iter()
+            .find(|rule| rule.delimiters().0 == line_content.trim())
+        else {
+            prepared.push_str(line);
+            continue;
+        };
+
+        let (_, closing) = rule.delimiters();
+        let mut body = String::new();
+        let mut nesting = 1_usize;
+        let mut closed = false;
+        while let Some(inner_line) = lines.next() {
+            let inner_content = inner_line.trim_matches(['\r', '\n']);
+            if inner_content.trim() == rule.delimiters().0 {
+                nesting += 1;
+                body.push_str(inner_line);
+            } else if inner_content.trim() == closing {
+                nesting -= 1;
+                if nesting == 0 {
+                    closed = true;
+                    break;
+                }
+                body.push_str(inner_line);
+            } else {
+                body.push_str(inner_line);
+            }
+        }
+        if !closed {
+            return Err(MarkdownError::new(format!(
+                "Unclosed custom block '{}'",
+                rule.name()
+            )));
+        }
+
+        let body = body.trim_end_matches(['\r', '\n']);
+        let content = Document::parse_with_rules(body, block_rules, inline_rules)?;
+        let token = loop {
+            let token = format!("AIMER_CUSTOM_BLOCK_{token_index}");
+            token_index += 1;
+            if !source.contains(&token) {
+                break token;
+            }
+        };
+        prepared.push_str(&token);
+        prepared.push('\n');
+        blocks.push((token, CustomBlockData {
+            name: rule.name().to_string(),
+            text: body.to_string(),
+            content,
+        }));
+    }
+
+    Ok(PreparedSource { source: prepared, blocks })
+}
+
+fn replace_custom_blocks(blocks: &mut [Block], captures: &[(String, CustomBlockData)]) {
+    for block in blocks {
+        match block {
+            Block::Paragraph(inlines) if inlines.len() == 1 => {
+                let Some(Inline::Text(token)) = inlines.first() else {
+                    continue;
+                };
+                if let Some((_, data)) = captures.iter().find(|(candidate, _)| candidate == token) {
+                    *block = Block::Custom(data.clone());
+                }
+            }
+            Block::Blockquote(children) => replace_custom_blocks(children, captures),
+            Block::List { items, .. } => items
+                .iter_mut()
+                .for_each(|item| replace_custom_blocks(&mut item.blocks, captures)),
+            Block::FootnoteDefinition { blocks, .. } => replace_custom_blocks(blocks, captures),
+            _ => {}
+        }
+    }
+}
+
+fn split_custom_inlines(
+    result: &mut Vec<Inline>,
+    mut remaining: &str,
+    rules: &[InlineRule],
+) -> Result<(), MarkdownError> {
+    while let Some((start, rule)) = find_custom_opening(remaining, rules) {
+        if start > 0 {
+            split_custom_inlines(result, &remaining[..start], rules)?;
+        }
+        let (opening, closing) = rule.delimiters();
+        let value_start = start + opening.len();
+        let Some(relative_end) = find_unescaped(remaining[value_start..].as_bytes(), closing) else {
+            return Err(MarkdownError::new(format!(
+                "Unclosed custom inline '{}'",
+                rule.name()
+            )));
+        };
+        let value_end = value_start + relative_end;
+        let value = &remaining[value_start..value_end];
+        if rules.iter().any(|nested| {
+            find_unescaped(value.as_bytes(), nested.delimiters().0).is_some()
+        }) {
+            return Err(MarkdownError::new(format!(
+                "Nested custom inline '{}' is not supported",
+                rule.name()
+            )));
+        }
+        result.push(Inline::Custom(CustomInlineData {
+            name: rule.name().to_string(),
+            text: value.to_string(),
+            label: value.to_string(),
+        }));
+        remaining = &remaining[value_end + closing.len()..];
+    }
+    if !remaining.is_empty() {
+        result.push(Inline::Text(remaining.to_string()));
+    }
+    Ok(())
+}
+
+fn find_custom_opening<'a>(value: &str, rules: &'a [InlineRule]) -> Option<(usize, &'a InlineRule)> {
+    rules
+        .iter()
+        .filter_map(|rule| {
+            find_unescaped(value.as_bytes(), rule.delimiters().0).map(|start| (start, rule))
+        })
+        .min_by_key(|(start, _)| *start)
+}
+
+fn find_unescaped(value: &[u8], needle: &str) -> Option<usize> {
+    let needle = needle.as_bytes();
+    let mut offset = 0;
+    while offset + needle.len() <= value.len() {
+        let Some(relative) = value[offset..].windows(needle.len()).position(|window| window == needle)
+        else {
+            return None;
+        };
+        let position = offset + relative;
+        let mut slash_count = 0;
+        let mut slash = position;
+        while slash > 0 && value[slash - 1] == b'\\' {
+            slash_count += 1;
+            slash -= 1;
+        }
+        if slash_count % 2 == 0 {
+            return Some(position);
+        }
+        offset = position + needle.len();
+    }
+    None
+}
+
 impl Document {
     pub fn parse(source: &str) -> Result<Self, MarkdownError> {
+        Self::parse_with_rules(source, &[], &[])
+    }
+
+    pub(crate) fn parse_with_rules(
+        source: &str,
+        block_rules: &[BlockRule],
+        inline_rules: &[InlineRule],
+    ) -> Result<Self, MarkdownError> {
+        validate_rules(block_rules, inline_rules)?;
+        let prepared = prepare_source(source, block_rules, inline_rules)?;
         let options = ParseOptions {
             constructs: Constructs::gfm(),
             gfm_strikethrough_single_tilde: false,
             ..ParseOptions::default()
         };
-        let root = markdown::to_mdast(source, &options)
+        let root = markdown::to_mdast(&prepared.source, &options)
             .map_err(|error| MarkdownError::new(error.to_string()))?;
         let Node::Root(root) = root else {
             return Err(MarkdownError::new(
                 "Markdown parser did not produce a document root",
             ));
         };
-        Ok(Self {
-            blocks: convert_blocks(&root.children)?,
-        })
+        let mut blocks = convert_blocks(&root.children, inline_rules)?;
+        replace_custom_blocks(&mut blocks, &prepared.blocks);
+        Ok(Self { blocks })
     }
 }
 
-fn convert_blocks(nodes: &[Node]) -> Result<Vec<Block>, MarkdownError> {
-    nodes.iter().map(convert_block).collect()
+fn convert_blocks(nodes: &[Node], inline_rules: &[InlineRule]) -> Result<Vec<Block>, MarkdownError> {
+    nodes
+        .iter()
+        .map(|node| convert_block(node, inline_rules))
+        .collect()
 }
 
-fn convert_block(node: &Node) -> Result<Block, MarkdownError> {
+fn convert_block(node: &Node, inline_rules: &[InlineRule]) -> Result<Block, MarkdownError> {
     match node {
         Node::Heading(heading) => Ok(Block::Heading {
             depth: heading.depth,
-            content: convert_inlines(&heading.children)?,
+            content: convert_inlines(&heading.children, inline_rules)?,
         }),
-        Node::Paragraph(paragraph) => Ok(Block::Paragraph(convert_inlines(&paragraph.children)?)),
-        Node::Blockquote(quote) => Ok(Block::Blockquote(convert_blocks(&quote.children)?)),
+        Node::Paragraph(paragraph) => Ok(Block::Paragraph(convert_inlines(
+            &paragraph.children,
+            inline_rules,
+        )?)),
+        Node::Blockquote(quote) => Ok(Block::Blockquote(convert_blocks(
+            &quote.children,
+            inline_rules,
+        )?)),
         Node::List(list) => {
             let items = list
                 .children
@@ -150,7 +382,7 @@ fn convert_block(node: &Node) -> Result<Block, MarkdownError> {
                     };
                     Ok(ListItem {
                         checked: item.checked,
-                        blocks: convert_blocks(&item.children)?,
+                        blocks: convert_blocks(&item.children, inline_rules)?,
                     })
                 })
                 .collect::<Result<_, MarkdownError>>()?;
@@ -183,7 +415,7 @@ fn convert_block(node: &Node) -> Result<Block, MarkdownError> {
                                     "Markdown table row contains a non-cell node",
                                 ));
                             };
-                            convert_inlines(&cell.children)
+                            convert_inlines(&cell.children, inline_rules)
                         })
                         .collect::<Result<_, MarkdownError>>()?;
                     Ok(TableRow { cells })
@@ -194,7 +426,7 @@ fn convert_block(node: &Node) -> Result<Block, MarkdownError> {
         }
         Node::FootnoteDefinition(footnote) => Ok(Block::FootnoteDefinition {
             identifier: footnote.identifier.clone(),
-            blocks: convert_blocks(&footnote.children)?,
+            blocks: convert_blocks(&footnote.children, inline_rules)?,
         }),
         Node::Html(_) => Err(MarkdownError::new(
             "Raw HTML is not supported in MarkdownViewer",
@@ -206,22 +438,22 @@ fn convert_block(node: &Node) -> Result<Block, MarkdownError> {
     }
 }
 
-fn convert_inlines(nodes: &[Node]) -> Result<Vec<Inline>, MarkdownError> {
+fn convert_inlines(nodes: &[Node], inline_rules: &[InlineRule]) -> Result<Vec<Inline>, MarkdownError> {
     let mut result = Vec::new();
     for node in nodes {
         match node {
-            Node::Text(text) => push_text_with_soft_breaks(&mut result, &text.value),
+            Node::Text(text) => push_text_with_soft_breaks(&mut result, &text.value, inline_rules)?,
             Node::Break(_) => result.push(Inline::HardBreak),
             Node::Emphasis(emphasis) => {
-                result.push(Inline::Emphasis(convert_inlines(&emphasis.children)?))
+                result.push(Inline::Emphasis(convert_inlines(&emphasis.children, inline_rules)?))
             }
-            Node::Strong(strong) => result.push(Inline::Strong(convert_inlines(&strong.children)?)),
-            Node::Delete(delete) => result.push(Inline::Delete(convert_inlines(&delete.children)?)),
+            Node::Strong(strong) => result.push(Inline::Strong(convert_inlines(&strong.children, inline_rules)?)),
+            Node::Delete(delete) => result.push(Inline::Delete(convert_inlines(&delete.children, inline_rules)?)),
             Node::InlineCode(code) => result.push(Inline::Code(code.value.clone())),
             Node::Link(link) => result.push(Inline::Link {
                 url: link.url.clone(),
                 title: link.title.clone(),
-                content: convert_inlines(&link.children)?,
+                content: convert_inlines(&link.children, inline_rules)?,
             }),
             Node::Image(image) => result.push(Inline::Image {
                 url: image.url.clone(),
@@ -249,17 +481,26 @@ fn convert_inlines(nodes: &[Node]) -> Result<Vec<Inline>, MarkdownError> {
     Ok(result)
 }
 
-fn push_text_with_soft_breaks(result: &mut Vec<Inline>, value: &str) {
+fn push_text_with_soft_breaks(
+    result: &mut Vec<Inline>,
+    value: &str,
+    inline_rules: &[InlineRule],
+) -> Result<(), MarkdownError> {
     let mut parts = value.split('\n').peekable();
     while let Some(part) = parts.next() {
-        push_extended_image_text(result, part);
+        push_extended_image_text(result, part, inline_rules)?;
         if parts.peek().is_some() {
             result.push(Inline::SoftBreak);
         }
     }
+    Ok(())
 }
 
-fn push_extended_image_text(result: &mut Vec<Inline>, value: &str) {
+fn push_extended_image_text(
+    result: &mut Vec<Inline>,
+    value: &str,
+    inline_rules: &[InlineRule],
+) -> Result<(), MarkdownError> {
     let mut remaining = value;
     while let Some(start) = remaining.find("![") {
         let Some(alt_end_relative) = remaining[start + 2..].find("](") else {
@@ -286,8 +527,9 @@ fn push_extended_image_text(result: &mut Vec<Inline>, value: &str) {
         remaining = &remaining[destination_end + 1..];
     }
     if !remaining.is_empty() {
-        result.push(Inline::Text(remaining.to_string()));
+        split_custom_inlines(result, remaining, inline_rules)?;
     }
+    Ok(())
 }
 
 fn node_name(node: &Node) -> &'static str {
@@ -343,9 +585,91 @@ impl From<AlignKind> for Alignment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{BlockRule, BlockSyntax, InlineRule, InlineSyntax};
 
     fn parse(source: &str) -> Document {
         Document::parse(source).expect("fixture should parse")
+    }
+
+    #[test]
+    fn parses_paired_custom_blocks_and_inlines() {
+        let block_rule = BlockRule::new(
+            "alert",
+            BlockSyntax::Paired {
+                opening: ":::alert",
+                closing: ":::",
+            },
+        );
+        let inline_rule = InlineRule::new(
+            "button",
+            InlineSyntax::Paired {
+                opening: "{{button:",
+                closing: "}}",
+            },
+        );
+
+        let document = Document::parse_with_rules(
+            ":::alert\n**Important**\n:::\n\nClick {{button:continue}}.",
+            &[block_rule],
+            &[inline_rule],
+        )
+        .expect("custom Markdown should parse");
+
+        assert!(matches!(
+            &document.blocks[0],
+            Block::Custom(data)
+                if data.name == "alert"
+                    && data.text == "**Important**"
+                    && matches!(data.content.blocks.as_slice(), [Block::Paragraph(_)])
+        ));
+        let Block::Paragraph(inlines) = &document.blocks[1] else {
+            panic!("expected custom inline paragraph")
+        };
+        assert!(matches!(
+            inlines.as_slice(),
+            [Inline::Text(prefix), Inline::Custom(data), Inline::Text(suffix)]
+                if prefix == "Click " && data.name == "button" && data.text == "continue" && suffix == "."
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_and_unclosed_custom_rules() {
+        let rule = BlockRule::new(
+            "alert",
+            BlockSyntax::Paired {
+                opening: ":::alert",
+                closing: ":::",
+            },
+        );
+        let duplicate = Document::parse_with_rules(
+            ":::alert\nbody\n:::",
+            &[rule.clone(), rule.clone()],
+            &[],
+        )
+        .expect_err("duplicate rules must be rejected");
+        assert!(duplicate.message().contains("Duplicate custom block rule"));
+
+        let unclosed = Document::parse_with_rules(
+            ":::alert\nbody",
+            &[rule],
+            &[],
+        )
+        .expect_err("unclosed blocks must be rejected");
+        assert!(unclosed.message().contains("Unclosed custom block"));
+
+        let unclosed_inline = Document::parse_with_rules(
+            "Click {{button:value",
+            &[],
+            &[InlineRule::new(
+                "button",
+                InlineSyntax::Paired {
+                    opening: "{{button:",
+                    closing: "}}",
+                },
+            )],
+        )
+        .expect_err("unclosed inline values must be rejected");
+        assert!(unclosed_inline.message().contains("Unclosed custom inline"));
     }
 
     fn inline_text(inlines: &[Inline]) -> String {
@@ -360,6 +684,7 @@ mod tests {
                 Inline::Link { content, .. } => inline_text(content),
                 Inline::Image { alt, .. } => alt.clone(),
                 Inline::FootnoteReference { identifier } => identifier.clone(),
+                Inline::Custom(data) => data.text.clone(),
             })
             .collect()
     }

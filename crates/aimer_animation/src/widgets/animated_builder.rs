@@ -7,7 +7,7 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
-    VisitorElement, Widget,
+    VisitorElement, Widget, carry_element_state,
 };
 
 use crate::control::controller::AnimationController;
@@ -98,6 +98,11 @@ impl Drawable for AnimatedBuilderElement {
         let curved_value = self.controller.tick(AnimInstant::now());
         if curved_value != self.last_value.get() {
             let child = (self.builder)(curved_value, ctx);
+            // The builder is called fresh whenever the curved value changes,
+            // but its element still owns runtime state an ordinary rebuild
+            // would hand over — carry it across so a new value does not also
+            // wipe everything nested below it.
+            carry_element_state(unsafe { &*self.child.get() }.as_ref(), child.as_ref(), ctx);
             unsafe { *self.child.get() = child };
             self.last_value.set(curved_value);
         }

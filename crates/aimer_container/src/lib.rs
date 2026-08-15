@@ -24,7 +24,7 @@ mod tests {
     use aimer_canvas::{Canvas, InnerCanvas};
     use aimer_flex::flex_child::RawExpanded;
     use aimer_flex::raw_flex::RawFlex;
-    use aimer_flex::{Column, LayoutDirection, Row};
+    use aimer_flex::{Column, FlexDirection, Row};
     use aimer_scroll::{ScrollAxis, Scrollable};
     use aimer_space::positioned::RawPositionedElement;
     use aimer_space::{Positioned, Stack};
@@ -675,11 +675,11 @@ mod tests {
     }
 
     fn row_of(children: Vec<AnyElement>) -> RawFlex {
-        RawFlex::new(LayoutDirection::Row, children, "Row")
+        RawFlex::new(FlexDirection::Row, children, "Row")
     }
 
     fn column_of(children: Vec<AnyElement>) -> RawFlex {
-        RawFlex::new(LayoutDirection::Column, children, "Column")
+        RawFlex::new(FlexDirection::Column, children, "Column")
     }
 
     /// A single `Expanded` in a `Row` fills the whole parent width.

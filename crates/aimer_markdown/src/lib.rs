@@ -1,4 +1,5 @@
 mod cache;
+mod custom;
 mod document;
 mod markdown_theme;
 mod renderer;
@@ -22,6 +23,10 @@ use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyElement, AnyWidget, Key, Widget};
 use cache::LruCache;
 pub use document::{Alignment, Block, Document, Inline, ListItem, MarkdownError, TableRow};
+pub use custom::{
+    BlockRule, BlockSyntax, CustomBlockBuilder, CustomBlockData, CustomInlineBuilder,
+    CustomInlineData, InlineRule, InlineSyntax,
+};
 pub use markdown_theme::MarkdownTheme;
 pub use renderer::{ImageResolver, LinkHandler, MarkdownImage, default_image_resolver};
 pub use syntax::{CaptureSpan, highlight};
@@ -82,6 +87,8 @@ pub struct MarkdownViewer {
     theme: MarkdownTheme,
     link_handler: Option<LinkHandler>,
     image_resolver: ImageResolver,
+    custom_blocks: Vec<(BlockRule, CustomBlockBuilder)>,
+    custom_inlines: Vec<(InlineRule, CustomInlineBuilder)>,
     padding: LayoutSpacing,
     scrollable: bool,
     key: Key,
@@ -104,6 +111,8 @@ impl MarkdownViewer {
             theme: MarkdownTheme::default(),
             link_handler: Some(Rc::new(open_web_link)),
             image_resolver: Rc::new(default_image_resolver),
+            custom_blocks: Vec::new(),
+            custom_inlines: Vec::new(),
             padding: Default::default(),
             key: Key::unique(),
             scrollable: true,
@@ -151,6 +160,28 @@ impl MarkdownViewer {
         self
     }
 
+    /// Registers a paired custom block and its widget builder.
+    #[inline]
+    pub fn custom_block(
+        mut self,
+        rule: impl Into<BlockRule>,
+        builder: impl Fn(&CustomBlockData) -> AnyWidget + 'static,
+    ) -> Self {
+        self.custom_blocks.push((rule.into(), Rc::new(builder)));
+        self
+    }
+
+    /// Registers a paired custom inline value and its widget builder.
+    #[inline]
+    pub fn custom_inline(
+        mut self,
+        rule: impl Into<InlineRule>,
+        builder: impl Fn(&CustomInlineData) -> AnyWidget + 'static,
+    ) -> Self {
+        self.custom_inlines.push((rule.into(), Rc::new(builder)));
+        self
+    }
+
     /// Add a key for widget
     pub fn key(mut self, key: Key) -> Self {
         self.key = key;
@@ -160,13 +191,33 @@ impl MarkdownViewer {
 
 impl Widget for MarkdownViewer {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let document = parse_document(self.source.clone());
+        let block_rules = self
+            .custom_blocks
+            .iter()
+            .map(|(rule, _)| rule.clone())
+            .collect::<Vec<_>>();
+        let inline_rules = self
+            .custom_inlines
+            .iter()
+            .map(|(rule, _)| rule.clone())
+            .collect::<Vec<_>>();
+        let document = if block_rules.is_empty() && inline_rules.is_empty() {
+            parse_document(self.source.clone())
+        } else {
+            Rc::new(Document::parse_with_rules(
+                &self.source,
+                &block_rules,
+                &inline_rules,
+            ))
+        };
         let content = match document.as_ref() {
             Ok(document) => renderer::render_document(
                 document,
                 &self.theme,
                 self.link_handler.as_ref(),
                 &self.image_resolver,
+                &self.custom_blocks,
+                &self.custom_inlines,
             ),
             Err(error) => aimer_text::Text::new(error.to_string())
                 .text_style(self.theme.body)

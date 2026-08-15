@@ -424,14 +424,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Compute outline ring if needed
     var outline_premul = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     if has_outline {
-        // Outline outer edge: expanded rect with expanded radii
+        // Outline outer edge: expanded rect with expanded radii.
+        //
+        // A corner only grows rounder here when the box itself already has a
+        // radius there — offsetting a *sharp* corner outward by a uniform
+        // thickness is still sharp, it doesn't gain a `max(ow_top, ow_left)`
+        // radius of its own. `select`'s zero branch keeps square corners
+        // square no matter how thick the outline is.
         let expanded_half = in.rect_size * 0.5;
         let expanded_centered = in.local_pos - expanded_half;
         let outline_radii = vec4<f32>(
-            in.border_radius.x + max(ow_top, ow_left),
-            in.border_radius.y + max(ow_top, ow_right),
-            in.border_radius.z + max(ow_bottom, ow_right),
-            in.border_radius.w + max(ow_bottom, ow_left),
+            select(0.0, in.border_radius.x + max(ow_top, ow_left), in.border_radius.x > 0.0),
+            select(0.0, in.border_radius.y + max(ow_top, ow_right), in.border_radius.y > 0.0),
+            select(0.0, in.border_radius.z + max(ow_bottom, ow_right), in.border_radius.z > 0.0),
+            select(0.0, in.border_radius.w + max(ow_bottom, ow_left), in.border_radius.w > 0.0),
         );
         let outline_d = sdf_rounded_rect(expanded_centered, expanded_half, outline_radii);
         let outline_outer_alpha = 1.0 - smoothstep(-0.5, 0.5, outline_d);

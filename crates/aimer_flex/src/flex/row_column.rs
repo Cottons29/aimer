@@ -6,7 +6,7 @@ use aimer_widget::{AnyElement, AnyWidget, Element, RequiredChild, Widget};
 use crate::flex::children_source::EagerChildren;
 use crate::flex::flex_list::FlexList;
 use crate::flex::raw_flex::RawFlex;
-use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
+use crate::flex::{BoxAlignment, FlexDirection, JustifyContent, OverflowBehavior};
 
 /// A flex container that arranges a homogeneous collection vertically.
 ///
@@ -20,15 +20,24 @@ use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
 /// ```rust
 /// use aimer_container::SizedBox;
 /// use aimer_flex::{Column, Row};
+/// use aimer_widget::Widget;
 ///
-/// let column = Column::new().children([Row::new().children([SizedBox::new().width(40),
-///                                                           SizedBox::new().width(60)]),
-///                                      Row::new().children([SizedBox::new().width(100),
-///                                                           SizedBox::new().width(20)])]);
+/// let column = Column::new()
+///                 .children([
+///                     Row::new().children([
+///                         SizedBox::new().width(40).boxed(),
+///                         SizedBox::new().width(60).boxed()
+///                     ]).boxed(),
+///                     Row::new().children([
+///                         SizedBox::new().width(100).boxed(),  // |
+///                         SizedBox::new().width(20).boxed()    // | Same Widget no need to boxed
+///                     ]).boxed()
+///                 ]);
 /// ```
 pub struct Column<W = RequiredChild> {
     vertical_alignment: BoxAlignment,
     horizontal_alignment: BoxAlignment,
+    justify_content: Option<JustifyContent>,
     gaps: LayoutSpacing,
     overflow: OverflowBehavior,
     children: Vec<W>,
@@ -51,6 +60,7 @@ impl Column {
         Self {
             vertical_alignment: Default::default(),
             horizontal_alignment: Default::default(),
+            justify_content: None,
             gaps: Default::default(),
             overflow: Default::default(),
             children: Default::default(),
@@ -72,6 +82,26 @@ impl Column {
     #[inline]
     pub fn horizontal_alignment(mut self, alignment: BoxAlignment) -> Self {
         self.horizontal_alignment = alignment;
+        self
+    }
+
+    /// Sets placement along the column's vertical main axis.
+    ///
+    /// The default preserves [`Column::vertical_alignment`]. Use any of the
+    /// six [`JustifyContent`] variants to place or distribute the children.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use aimer_flex::{Column, JustifyContent};
+    ///
+    /// let column = Column::new()
+    ///     .justify_content(JustifyContent::SpaceAround)
+    ///     .children(std::iter::empty::<aimer_container::SizedBox>());
+    /// ```
+    #[inline]
+    pub fn justify_content(mut self, justify_content: JustifyContent) -> Self {
+        self.justify_content = Some(justify_content);
         self
     }
 
@@ -109,6 +139,7 @@ impl Column {
         Column {
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
+            justify_content: self.justify_content,
             gaps: self.gaps,
             overflow: self.overflow,
             children: children.into_iter().collect(),
@@ -134,12 +165,15 @@ impl Column {
     /// ```
     #[inline]
     pub fn list<T>(self, items: impl IntoIterator<Item = T>) -> FlexList<T> {
-        FlexList::new(LayoutDirection::Column,
-                      self.vertical_alignment,
-                      self.horizontal_alignment,
-                      self.gaps,
-                      self.overflow,
-                      items)
+        FlexList::new(
+            FlexDirection::Column,
+            self.vertical_alignment,
+            self.horizontal_alignment,
+            self.justify_content,
+            self.gaps,
+            self.overflow,
+            items,
+        )
     }
 
     /// Replaces the child collection and completes this builder.
@@ -152,6 +186,7 @@ impl Column {
         Column {
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
+            justify_content: self.justify_content,
             gaps: self.gaps,
             overflow: self.overflow,
             children: children.into_iter().collect(),
@@ -161,11 +196,17 @@ impl Column {
 
 impl<W: Widget + 'static> Widget for Column<W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let children = EagerChildren(self.children.into_iter().map(|c| c.to_element(ctx)).collect());
+        let children = EagerChildren(
+            self.children
+                .into_iter()
+                .map(|c| c.to_element(ctx))
+                .collect(),
+        );
         RawFlex {
-            direction: LayoutDirection::Column,
+            direction: FlexDirection::Column,
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
+            justify_content: self.justify_content,
             gaps: self.gaps,
             overflow_behavior: self.overflow,
             children: Box::new(children),
@@ -174,7 +215,6 @@ impl<W: Widget + 'static> Widget for Column<W> {
             item_extent: None,
             debug_name: "Column",
             cache_bound: CacheBounds::new(),
-
         }
         .boxed()
     }
@@ -189,6 +229,7 @@ impl<W: Widget + 'static> Widget for Column<W> {
 pub struct Row<W: Widget + 'static = AnyWidget> {
     vertical_alignment: BoxAlignment,
     horizontal_alignment: BoxAlignment,
+    justify_content: Option<JustifyContent>,
     gaps: LayoutSpacing,
     overflow: OverflowBehavior,
     children: Vec<W>,
@@ -210,6 +251,7 @@ impl Row {
         Self {
             vertical_alignment: Default::default(),
             horizontal_alignment: Default::default(),
+            justify_content: None,
             gaps: Default::default(),
             overflow: Default::default(),
             children: Default::default(),
@@ -231,6 +273,24 @@ impl Row {
     #[inline]
     pub fn horizontal_alignment(mut self, alignment: BoxAlignment) -> Self {
         self.horizontal_alignment = alignment;
+        self
+    }
+
+    /// Sets placement along the row's horizontal main axis.
+    ///
+    /// The default preserves [`Row::horizontal_alignment`]. Use any of the
+    /// six [`JustifyContent`] variants to place or distribute the children.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use aimer_flex::{JustifyContent, Row};
+    ///
+    /// let row = Row::new().justify_content(JustifyContent::SpaceBetween);
+    /// ```
+    #[inline]
+    pub fn justify_content(mut self, justify_content: JustifyContent) -> Self {
+        self.justify_content = Some(justify_content);
         self
     }
 
@@ -271,10 +331,12 @@ impl Row {
     /// ```
     #[inline]
     pub fn list<T>(self, items: impl IntoIterator<Item = T>) -> FlexList<T> {
+
         FlexList::new(
-            LayoutDirection::Row,
+            FlexDirection::Row,
             self.vertical_alignment,
             self.horizontal_alignment,
+            self.justify_content,
             self.gaps,
             self.overflow,
             items,
@@ -290,6 +352,7 @@ impl Row {
         Row {
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
+            justify_content: self.justify_content,
             gaps: self.gaps,
             overflow: self.overflow,
             children: children.into_iter().collect(),
@@ -308,6 +371,7 @@ impl Row {
         Row {
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
+            justify_content: self.justify_content,
             gaps: self.gaps,
             overflow: self.overflow,
             children: children.into_iter().collect(),
@@ -347,11 +411,17 @@ impl Row {
 
 impl<W: Widget + 'static> Widget for Row<W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let children = EagerChildren(self.children.into_iter().map(|c| c.to_element(ctx)).collect());
+        let children = EagerChildren(
+            self.children
+                .into_iter()
+                .map(|c| c.to_element(ctx))
+                .collect(),
+        );
         RawFlex {
-            direction: LayoutDirection::Row,
+            direction: FlexDirection::Row,
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
+            justify_content: self.justify_content,
             gaps: self.gaps,
             overflow_behavior: self.overflow,
             children: Box::new(children),

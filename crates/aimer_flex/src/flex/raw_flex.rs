@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::flex::children_source::{ChildrenSource, EagerChildren};
 use crate::flex::flex_layout::{FlexLayout, FlexLayoutCache};
 use crate::flex::flex_list::FlexList;
-use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
+use crate::flex::{BoxAlignment, FlexDirection, JustifyContent, OverflowBehavior};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_attribute::{BoxConstraint, CacheBounds, Dimension};
@@ -18,21 +18,22 @@ use aimer_widget::{
 /// Arranges a homogeneous collection of children along a configurable main
 /// axis.
 ///
-/// [`LayoutDirection::Row`] uses a horizontal main axis and
-/// [`LayoutDirection::Column`] a vertical one. Alignment controls placement on
+/// [`FlexDirection::Row`] uses a horizontal main axis and
+/// [`FlexDirection::Column`] a vertical one. Alignment controls placement on
 /// each physical axis, while [`OverflowBehavior`] clips, exposes, or wraps
 /// children that exceed the available constraints. Spacing is expressed as
 /// logical pixels through [`LayoutSpacing`].
 ///
-/// `Flex::new()` defaults to [`LayoutDirection::Inherit`], start alignment on
+/// `Flex::new()` defaults to [`FlexDirection::Inherit`], start alignment on
 /// both axes, zero gaps, [`OverflowBehavior::Hidden`], and no children. Supply
 /// children with [`Flex::children`] or append to an existing erased collection
 /// with [`Flex::add_child`].
 #[allow(dead_code)]
 pub struct Flex<W: Widget + 'static = AnyWidget> {
-    pub(crate) direction: LayoutDirection,
+    pub(crate) direction: FlexDirection,
     pub(crate) vertical_alignment: BoxAlignment,
     pub(crate) horizontal_alignment: BoxAlignment,
+    pub(crate) justify_content: Option<JustifyContent>,
     pub(crate) gaps: LayoutSpacing,
     pub(crate) overflow: OverflowBehavior,
     pub(crate) children: Vec<W>,
@@ -58,9 +59,10 @@ impl Flex {
     #[inline]
     pub fn new() -> Self {
         Self {
-            direction: LayoutDirection::default(),
+            direction: FlexDirection::default(),
             vertical_alignment: BoxAlignment::default(),
             horizontal_alignment: BoxAlignment::default(),
+            justify_content: None,
             gaps: LayoutSpacing::default(),
             overflow: OverflowBehavior::default(),
             children: Vec::new(),
@@ -71,11 +73,11 @@ impl Flex {
 impl<W: Widget + 'static> Flex<W> {
     /// Sets the main-axis direction used to place children.
     ///
-    /// The default is [`LayoutDirection::Inherit`]. Use
-    /// [`LayoutDirection::Row`] for left-to-right placement or
-    /// [`LayoutDirection::Column`] for top-to-bottom placement.
+    /// The default is [`FlexDirection::Inherit`]. Use
+    /// [`FlexDirection::Row`] for left-to-right placement or
+    /// [`FlexDirection::Column`] for top-to-bottom placement.
     #[inline]
-    pub fn direction(mut self, direction: LayoutDirection) -> Self {
+    pub fn direction(mut self, direction: FlexDirection) -> Self {
         self.direction = direction;
         self
     }
@@ -95,6 +97,28 @@ impl<W: Widget + 'static> Flex<W> {
     #[inline]
     pub fn horizontal_alignment(mut self, alignment: BoxAlignment) -> Self {
         self.horizontal_alignment = alignment;
+        self
+    }
+
+    /// Sets placement along the flex container's main axis.
+    ///
+    /// The default preserves the physical-axis alignment methods. Once set,
+    /// this semantic value takes precedence over the old main-axis alignment:
+    /// [`FlexDirection::Row`] uses the horizontal axis and
+    /// [`FlexDirection::Column`] uses the vertical axis.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use aimer_flex::{Flex, FlexDirection, JustifyContent};
+    ///
+    /// let flex = Flex::new()
+    ///     .direction(FlexDirection::Row)
+    ///     .justify_content(JustifyContent::SpaceEvenly);
+    /// ```
+    #[inline]
+    pub fn justify_content(mut self, justify_content: JustifyContent) -> Self {
+        self.justify_content = Some(justify_content);
         self
     }
 
@@ -132,9 +156,9 @@ impl<W: Widget + 'static> Flex<W> {
     ///
     /// ```rust
     /// use aimer_container::SizedBox;
-    /// use aimer_flex::{Flex, LayoutDirection};
+    /// use aimer_flex::{Flex, FlexDirection};
     ///
-    /// let flex = Flex::new().direction(LayoutDirection::Column)
+    /// let flex = Flex::new().direction(FlexDirection::Column)
     ///                       .list(0..120_000)
     ///                       .builder(|i| SizedBox::new().height(*i % 40));
     /// ```
@@ -144,6 +168,7 @@ impl<W: Widget + 'static> Flex<W> {
             self.direction,
             self.vertical_alignment,
             self.horizontal_alignment,
+            self.justify_content,
             self.gaps,
             self.overflow,
             items,
@@ -161,6 +186,7 @@ impl<W: Widget + 'static> Flex<W> {
             direction: self.direction,
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
+            justify_content: self.justify_content,
             gaps: self.gaps,
             overflow: self.overflow,
             children: children.into_iter().collect(),
@@ -190,6 +216,7 @@ impl<W: Widget + 'static> Widget for Flex<W> {
             direction: self.direction,
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
+            justify_content: self.justify_content,
             gaps: self.gaps,
             children: Box::new(EagerChildren(elements)),
             cache: LayoutCache::new(),
@@ -211,9 +238,10 @@ impl<W: Widget + 'static> Widget for Flex<W> {
 /// - Row: layout that always aligns children in a horizontal direction
 #[allow(dead_code)]
 pub struct RawFlex {
-    pub(crate) direction: LayoutDirection,
+    pub(crate) direction: FlexDirection,
     pub(crate) vertical_alignment: BoxAlignment,
     pub(crate) horizontal_alignment: BoxAlignment,
+    pub(crate) justify_content: Option<JustifyContent>,
     pub(crate) gaps: LayoutSpacing,
     /// Supplies the children by index.
     ///
@@ -241,7 +269,7 @@ impl RawFlex {
     #[doc(hidden)]
     #[inline]
     pub fn new(
-        direction: LayoutDirection,
+        direction: FlexDirection,
         children: Vec<AnyElement>,
         debug_name: &'static str,
     ) -> Self {
@@ -249,6 +277,7 @@ impl RawFlex {
             direction,
             vertical_alignment: Default::default(),
             horizontal_alignment: Default::default(),
+            justify_content: None,
             gaps: Default::default(),
             children: Box::new(EagerChildren(children)),
             cache: Default::default(),
@@ -311,6 +340,40 @@ fn align_offset(alignment: BoxAlignment, extra: f32) -> f32 {
     }
 }
 
+/// Returns the leading space and additional space between adjacent children.
+///
+/// `free_space` excludes the gaps already recorded in the layout table. A
+/// non-positive or unbounded amount cannot be distributed, so children remain
+/// at their measured positions.
+#[inline]
+pub(crate) fn justify_distribution(
+    justify_content: JustifyContent,
+    free_space: f32,
+    child_count: usize,
+) -> (f32, f32) {
+    if child_count == 0 || !free_space.is_finite() || free_space <= 0.0 {
+        return (0.0, 0.0);
+    }
+
+    match justify_content {
+        JustifyContent::Start => (0.0, 0.0),
+        JustifyContent::Center => (free_space / 2.0, 0.0),
+        JustifyContent::End => (free_space, 0.0),
+        JustifyContent::SpaceBetween if child_count > 1 => {
+            (0.0, free_space / (child_count - 1) as f32)
+        }
+        JustifyContent::SpaceAround => {
+            let between = free_space / child_count as f32;
+            (between / 2.0, between)
+        }
+        JustifyContent::SpaceEvenly => {
+            let space = free_space / (child_count + 1) as f32;
+            (space, space)
+        }
+        JustifyContent::SpaceBetween => (0.0, 0.0),
+    }
+}
+
 impl RawFlex {
     #[inline]
     fn resole_gaps(&self, ctx: &BuildContext) -> (f32, f32) {
@@ -327,7 +390,7 @@ impl RawFlex {
     /// `true` when children run along the horizontal axis.
     #[inline]
     fn is_row(&self) -> bool {
-        !matches!(self.direction, LayoutDirection::Column)
+        !matches!(self.direction, FlexDirection::Column)
     }
 
     /// Picks the gap that separates two adjacent children.
@@ -577,20 +640,33 @@ impl RawFlex {
         self.children.materialize_all(ctx);
     }
 
-    /// Main-axis shift applied to every child by the container's own alignment.
+    /// Main-axis leading and inter-child space added by the container's
+    /// justification.
     #[inline]
-    fn base_main(&self, ctx: &BuildContext, total: ResolvedSize) -> f32 {
-        if self.is_row() {
-            align_offset(
+    fn main_distribution(&self, ctx: &BuildContext, total: ResolvedSize, child_count: usize) -> (f32, f32) {
+        let (max_main, total_main, legacy_alignment) = if self.is_row() {
+            (
+                ctx.box_constraint.max_width,
+                total.width,
                 self.horizontal_alignment,
-                (ctx.box_constraint.max_width - total.width).max(0.0),
             )
         } else {
-            align_offset(
+            (
+                ctx.box_constraint.max_height,
+                total.height,
                 self.vertical_alignment,
-                (ctx.box_constraint.max_height - total.height).max(0.0),
             )
-        }
+        };
+        let justify_content = self.justify_content.unwrap_or(match legacy_alignment {
+            BoxAlignment::Start => JustifyContent::Start,
+            BoxAlignment::Center => JustifyContent::Center,
+            BoxAlignment::End => JustifyContent::End,
+        });
+        justify_distribution(
+            justify_content,
+            (max_main - total_main).max(0.0),
+            child_count,
+        )
     }
 
     /// Resolves the children that `ctx.visible_rect` exposes.
@@ -602,14 +678,23 @@ impl RawFlex {
         &self,
         ctx: &BuildContext,
         layout: &FlexLayout,
-        base_main: f32,
+        distribution: (f32, f32),
     ) -> Range<usize> {
         let Some((vx, vy, vw, vh)) = ctx.visible_rect else {
             return 0..layout.len();
         };
         let (start, extent) = if self.is_row() { (vx, vw) } else { (vy, vh) };
-        let start = (start - base_main) as f64;
-        layout.visible_range(start, start + extent as f64)
+        let (leading, between) = distribution;
+        if between == 0.0 {
+            let start = (start - leading) as f64;
+            return layout.visible_range(start, start + extent as f64);
+        }
+        layout.visible_range_with_extra_space(
+            start as f64,
+            (start + extent) as f64,
+            leading as f64,
+            between as f64,
+        )
     }
 }
 
@@ -656,10 +741,10 @@ impl Drawable for RawFlex {
 
         let is_row = self.is_row();
         let mut layout = self.flex_layout(ctx);
-        // The container's own alignment shifts every child by the same amount
-        // along the main axis; the cross axis is aligned per child.
-        let mut base_main = self.base_main(ctx, layout.total());
-        let mut range = self.painted_range(ctx, &layout, base_main);
+        // The container's justification distributes free space along the main
+        // axis; the cross axis is aligned per child.
+        let mut distribution = self.main_distribution(ctx, layout.total(), layout.len());
+        let mut range = self.painted_range(ctx, &layout, distribution);
 
         // Bring the slice about to be painted into existence before anything
         // borrows a child. A windowed source drops what left the range here, so
@@ -682,8 +767,8 @@ impl Drawable for RawFlex {
                 // a recorded child agrees with the table from now on.
                 ctx.window.request_redraw();
             }
-            base_main = self.base_main(ctx, layout.total());
-            range = self.painted_range(ctx, &layout, base_main);
+            distribution = self.main_distribution(ctx, layout.total(), layout.len());
+            range = self.painted_range(ctx, &layout, distribution);
             self.children.window(range.clone(), ctx);
             if rebuilt {
                 // A rebuilt table measured every child, so there is nothing left
@@ -728,7 +813,9 @@ impl Drawable for RawFlex {
             let child_size = layout.size(index);
             let c_w = child_size.width;
             let c_h = child_size.height;
-            let main = base_main + layout.offset(index) as f32;
+            let main = distribution.0
+                + layout.offset(index) as f32
+                + distribution.1 * index as f32;
 
             let (offset_x, offset_y) = if is_row {
                 (

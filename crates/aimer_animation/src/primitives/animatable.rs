@@ -1,3 +1,5 @@
+use aimer_widget::base::Color;
+
 /// Trait for types that can be linearly interpolated.
 ///
 /// Implement this on any type you want to animate between two values.
@@ -35,6 +37,19 @@ impl Animatable for i64 {
 impl Animatable for u8 {
     fn lerp(&self, other: &Self, t: f32) -> Self {
         (*self as f32 + (*other as f32 - *self as f32) * t).round() as u8
+    }
+}
+impl Animatable for Color {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        let rgba= self.to_rgba();
+        let rgba2= other.to_rgba();
+
+        let red = rgba.0.lerp(&rgba2.0, t);
+        let green = rgba.1.lerp(&rgba2.1, t);
+        let blue = rgba.2.lerp(&rgba2.2, t);
+        let alpha = rgba.3.lerp(&rgba2.3, t);
+
+        Color::Rgba(red, green, blue, alpha)
     }
 }
 

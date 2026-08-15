@@ -8,7 +8,7 @@ edition = "2024"
 path = "src/main.rs"
 crate-type = ["cdylib", "staticlib"]
 [dependencies]
-aimer = { path = "..", features = ["markdown", "svg", "provider"] }
+aimer = { path = "..", features = ["markdown", "svg", "provider", "markdown-arborium"] }
 webbrowser = "1.2.1"
 serde.workspace = true
 serde_json.workspace = true

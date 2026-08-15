@@ -41,15 +41,15 @@ use aimer_widget::{AnyElement, Element, Key, Widget};
 
 use crate::flex::children_source::{ChildrenSource, EagerChildren, KeyMapper, WindowedChildren};
 use crate::flex::raw_flex::RawFlex;
-use crate::flex::{BoxAlignment, LayoutDirection, OverflowBehavior};
+use crate::flex::{BoxAlignment, FlexDirection, JustifyContent, OverflowBehavior};
 
 /// Debug name reported by the element a list produces.
 #[inline]
-fn debug_name_of(direction: LayoutDirection) -> &'static str {
+fn debug_name_of(direction: FlexDirection) -> &'static str {
     match direction {
-        LayoutDirection::Column => "Column",
-        LayoutDirection::Row => "Row",
-        LayoutDirection::Inherit => "Flex",
+        FlexDirection::Column => "Column",
+        FlexDirection::Row => "Row",
+        FlexDirection::Inherit => "Flex",
     }
 }
 
@@ -60,9 +60,10 @@ fn debug_name_of(direction: LayoutDirection) -> &'static str {
 /// [`Flex::list`](crate::Flex::list). It is not a [`Widget`]; complete it with
 /// [`FlexList::builder`].
 pub struct FlexList<T> {
-    direction: LayoutDirection,
+    direction: FlexDirection,
     vertical_alignment: BoxAlignment,
     horizontal_alignment: BoxAlignment,
+    justify_content: Option<JustifyContent>,
     gaps: LayoutSpacing,
     overflow: OverflowBehavior,
     item_extent: Option<Dimension>,
@@ -75,9 +76,10 @@ impl<T> FlexList<T> {
     #[doc(hidden)]
     #[inline]
     pub fn new(
-        direction: LayoutDirection,
+        direction: FlexDirection,
         vertical_alignment: BoxAlignment,
         horizontal_alignment: BoxAlignment,
+        justify_content: Option<JustifyContent>,
         gaps: LayoutSpacing,
         overflow: OverflowBehavior,
         items: impl IntoIterator<Item = T>,
@@ -86,6 +88,7 @@ impl<T> FlexList<T> {
             direction,
             vertical_alignment,
             horizontal_alignment,
+            justify_content,
             gaps,
             overflow,
             item_extent: None,
@@ -188,6 +191,28 @@ impl<T> FlexList<T> {
         self
     }
 
+    /// Sets placement along the list's main axis.
+    ///
+    /// The default preserves the physical-axis alignment inherited from the
+    /// [`Row`] or [`Column`] that created this list. Use any of the six
+    /// [`JustifyContent`] variants to place or distribute its children.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use aimer_flex::{Column, JustifyContent};
+    ///
+    /// let list = Column::new()
+    ///     .list([1, 2, 3])
+    ///     .justify_content(JustifyContent::SpaceEvenly)
+    ///     .builder(|_| aimer_container::SizedBox::new().height(20.0));
+    /// ```
+    #[inline]
+    pub fn justify_content(mut self, justify_content: JustifyContent) -> Self {
+        self.justify_content = Some(justify_content);
+        self
+    }
+
     /// Sets the spacing inserted between adjacent children.
     #[inline]
     pub fn gaps(mut self, gaps: impl Into<LayoutSpacing>) -> Self {
@@ -228,6 +253,7 @@ impl<T> FlexList<T> {
             direction: self.direction,
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
+            justify_content: self.justify_content,
             gaps: self.gaps,
             overflow: self.overflow,
             item_extent: self.item_extent,
@@ -263,9 +289,10 @@ impl<T> FlexList<T> {
 /// scrolled a long way out of view is eventually dropped, and one that has no
 /// element cannot receive a broadcast.
 pub struct ListFlex<T, F> {
-    direction: LayoutDirection,
+    direction: FlexDirection,
     vertical_alignment: BoxAlignment,
     horizontal_alignment: BoxAlignment,
+    justify_content: Option<JustifyContent>,
     gaps: LayoutSpacing,
     overflow: OverflowBehavior,
     item_extent: Option<Dimension>,
@@ -296,6 +323,15 @@ impl<T, F> ListFlex<T, F> {
     #[inline]
     pub fn key(mut self, key: impl Fn(&T) -> Key + 'static) -> Self {
         self.keyed = Some(Rc::new(key));
+        self
+    }
+
+    /// Sets placement along the list's main axis.
+    ///
+    /// The default is inherited from the source [`FlexList`].
+    #[inline]
+    pub fn justify_content(mut self, justify_content: JustifyContent) -> Self {
+        self.justify_content = Some(justify_content);
         self
     }
 
@@ -358,6 +394,7 @@ where
             direction: self.direction,
             vertical_alignment: self.vertical_alignment,
             horizontal_alignment: self.horizontal_alignment,
+            justify_content: self.justify_content,
             gaps: self.gaps,
             overflow_behavior: self.overflow,
             children: self.children_source(ctx),

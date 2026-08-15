@@ -17,7 +17,10 @@ use aimer_widget::{AnyWidget, Widget};
 
 pub(crate) use crate::markdown_theme::MarkdownTheme;
 use crate::syntax::highlight_cached;
-use crate::{Alignment, Block, CaptureSpan, Document, Inline, TableRow};
+use crate::{
+    Alignment, Block, CaptureSpan, CustomBlockBuilder, CustomInlineBuilder, Document, Inline,
+    TableRow,
+};
 
 const TICK_SVG_DATA: &[u8] = include_bytes!("../tick-checkbox-svgrepo-com.svg");
 const COPY_SVG_DATA: &[u8] = include_bytes!("../copy-2-svgrepo-com.svg");
@@ -129,14 +132,14 @@ pub fn default_image_resolver(image: &MarkdownImage) -> AnyWidget {
         // debug!("Loading network image {}", image.source);
 
         Container::new()
-            .height(400)
+            // .height(400)
             .child(Row::new().children([NetworkImage::new(image.source.clone()).height(400)]))
             .boxed()
     } else {
         // debug!("Loading asset image {}", image.source);
 
         Container::new()
-            .height(400)
+            // .height(400)
             .child(Row::new().children([AssetImage::new(image.source.clone()).height(400)]))
             .boxed()
     }
@@ -174,6 +177,7 @@ fn inline_span(inline: &Inline, theme: &MarkdownTheme) -> TextSpan {
         Inline::FootnoteReference { identifier } => TextSpan::new(format!("[{identifier}]"))
             .style(theme.link)
             .link(format!("#footnote-{identifier}")),
+        Inline::Custom(data) => TextSpan::new(data.text.clone()),
     }
 }
 
@@ -182,8 +186,17 @@ pub(crate) fn render_document(
     theme: &MarkdownTheme,
     link_handler: Option<&LinkHandler>,
     image_resolver: &ImageResolver,
+    custom_blocks: &[(crate::BlockRule, CustomBlockBuilder)],
+    custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
 ) -> AnyWidget {
-    render_blocks(&document.blocks, theme, link_handler, image_resolver)
+    render_blocks(
+        &document.blocks,
+        theme,
+        link_handler,
+        image_resolver,
+        custom_blocks,
+        custom_inlines,
+    )
 }
 
 fn render_blocks(
@@ -191,10 +204,21 @@ fn render_blocks(
     theme: &MarkdownTheme,
     link_handler: Option<&LinkHandler>,
     image_resolver: &ImageResolver,
+    custom_blocks: &[(crate::BlockRule, CustomBlockBuilder)],
+    custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
 ) -> AnyWidget {
     let children = blocks
         .iter()
-        .map(|block| render_block(block, theme, link_handler, image_resolver))
+        .map(|block| {
+            render_block(
+                block,
+                theme,
+                link_handler,
+                image_resolver,
+                custom_blocks,
+                custom_inlines,
+            )
+        })
         .collect::<Vec<_>>();
     Column::new()
         .horizontal_alignment(BoxAlignment::Start)
@@ -220,6 +244,8 @@ fn render_table(
     rows: &[TableRow],
     theme: &MarkdownTheme,
     link_handler: Option<&LinkHandler>,
+    image_resolver: &ImageResolver,
+    custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
 ) -> AnyWidget {
     let column_count = rows
         .iter()
@@ -242,18 +268,15 @@ fn render_table(
                     .get(column_index)
                     .copied()
                     .unwrap_or(Alignment::None);
-                let rich = RichText::new(inline_spans(content, theme))
-                    .text_style(theme.body)
-                    .text_align(table_text_align(alignment))
-                    .wrapped()
-                    .link_hover_color(theme.link_hover_color);
-                let content: AnyWidget = match link_handler {
-                    Some(handler) => {
-                        let handler = (*handler).clone();
-                        rich.on_link(move |target: Rc<str>| handler(target)).boxed()
-                    }
-                    None => rich.boxed(),
-                };
+                let content = render_inline_flow(
+                    content,
+                    theme.body,
+                    Some(table_text_align(alignment)),
+                    theme,
+                    link_handler,
+                    image_resolver,
+                    custom_inlines,
+                );
                 let background = if row_index == 0 {
                     theme.table_header_background
                 } else {
@@ -287,16 +310,29 @@ fn render_block(
     theme: &MarkdownTheme,
     link_handler: Option<&LinkHandler>,
     image_resolver: &ImageResolver,
+    custom_blocks: &[(crate::BlockRule, CustomBlockBuilder)],
+    custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
 ) -> AnyWidget {
     match block {
-        Block::Heading { depth, content } => rich_text(
+        Block::Heading { depth, content } => render_inline_flow(
             content,
             theme.headings[usize::from(*depth).saturating_sub(1).min(5)],
+            None,
             theme,
             link_handler,
+            image_resolver,
+            custom_inlines,
         ),
         Block::Paragraph(content) => {
-            render_paragraph(content, theme.body, theme, link_handler, image_resolver)
+            render_inline_flow(
+                content,
+                theme.body,
+                None,
+                theme,
+                link_handler,
+                image_resolver,
+                custom_inlines,
+            )
         }
         Block::Blockquote(blocks) => Container::new()
             .padding(LayoutSpacing::all(8_u32))
@@ -318,6 +354,8 @@ fn render_block(
                 theme,
                 link_handler,
                 image_resolver,
+                custom_blocks,
+                custom_inlines,
             )),
         Block::List {
             ordered,
@@ -355,6 +393,8 @@ fn render_block(
                                 theme,
                                 link_handler,
                                 image_resolver,
+                                custom_blocks,
+                                custom_inlines,
                             )),
                         ])
                         .boxed()
@@ -403,16 +443,35 @@ fn render_block(
                 )
         }
         Block::ThematicBreak => SizedBox::new().height(1.0).color(theme.rule_color).boxed(),
-        Block::Table { alignments, rows } => render_table(alignments, rows, theme, link_handler),
+        Block::Table { alignments, rows } => render_table(
+            alignments,
+            rows,
+            theme,
+            link_handler,
+            image_resolver,
+            custom_inlines,
+        ),
         Block::FootnoteDefinition { identifier, blocks } => Row::new()
             .gaps(LayoutSpacing::all(6_u32))
             .children(vec![
                 Text::new(format!("[{identifier}]"))
                     .text_style(theme.body.font_weight(FontWeight::Bold))
                     .boxed(),
-                render_blocks(blocks, theme, link_handler, image_resolver),
+                render_blocks(
+                    blocks,
+                    theme,
+                    link_handler,
+                    image_resolver,
+                    custom_blocks,
+                    custom_inlines,
+                ),
             ])
             .boxed(),
+        Block::Custom(data) => custom_blocks
+            .iter()
+            .find(|(rule, _)| rule.name() == data.name)
+            .map(|(_, builder)| builder(data))
+            .unwrap_or_else(|| Text::new(data.text.clone()).text_style(theme.body).boxed()),
     }
 }
 
@@ -454,14 +513,31 @@ fn render_blocks_with_style(
     theme: &MarkdownTheme,
     link_handler: Option<&LinkHandler>,
     image_resolver: &ImageResolver,
+    custom_blocks: &[(crate::BlockRule, CustomBlockBuilder)],
+    custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
 ) -> AnyWidget {
     let children = blocks
         .iter()
         .map(|block| match block {
             Block::Paragraph(inlines) => {
-                render_paragraph(inlines, style, theme, link_handler, image_resolver)
+                render_inline_flow(
+                    inlines,
+                    style,
+                    None,
+                    theme,
+                    link_handler,
+                    image_resolver,
+                    custom_inlines,
+                )
             }
-            _ => render_block(block, theme, link_handler, image_resolver),
+            _ => render_block(
+                block,
+                theme,
+                link_handler,
+                image_resolver,
+                custom_blocks,
+                custom_inlines,
+            ),
         })
         .collect::<Vec<_>>();
     Column::new()
@@ -470,25 +546,37 @@ fn render_blocks_with_style(
         .box_children(children)
 }
 
-fn render_paragraph(
+fn render_inline_flow(
     inlines: &[Inline],
     style: TextStyle,
+    alignment: Option<TextAlign>,
     theme: &MarkdownTheme,
     link_handler: Option<&LinkHandler>,
     image_resolver: &ImageResolver,
+    custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
 ) -> AnyWidget {
-    if !inlines
+    let has_image = inlines
         .iter()
-        .any(|inline| matches!(inline, Inline::Image { .. }))
-    {
-        return rich_text(inlines, style, theme, link_handler);
+        .any(|inline| matches!(inline, Inline::Image { .. }));
+    let has_custom_inline = inlines
+        .iter()
+        .any(|inline| matches!(inline, Inline::Custom(_)));
+    if !has_image && !has_custom_inline {
+        return rich_text_aligned(inlines, style, alignment, theme, link_handler);
     }
     let mut children = Vec::new();
     let mut text = Vec::new();
     for inline in inlines {
         if let Inline::Image { url, title, alt } = inline {
             if !text.is_empty() {
-                children.push(rich_text(&text, style, theme, link_handler));
+                children.push(rich_text_for_inline_flow(
+                    &text,
+                    style,
+                    alignment,
+                    theme,
+                    link_handler,
+                    has_custom_inline,
+                ));
                 text.clear();
             }
             children.push(image_resolver(&MarkdownImage {
@@ -496,23 +584,95 @@ fn render_paragraph(
                 alt: alt.clone(),
                 title: title.clone(),
             }));
+        } else if let Inline::Custom(data) = inline {
+            if !text.is_empty() {
+                children.push(rich_text_for_inline_flow(
+                    &text,
+                    style,
+                    alignment,
+                    theme,
+                    link_handler,
+                    true,
+                ));
+                text.clear();
+            }
+            let widget = custom_inlines
+                .iter()
+                .find(|(rule, _)| rule.name() == data.name)
+                .map(|(_, builder)| builder(data))
+                .unwrap_or_else(|| Text::new(data.text.clone()).text_style(style).boxed());
+            children.push(widget);
         } else {
             text.push(inline.clone());
         }
     }
     if !text.is_empty() {
-        children.push(rich_text(&text, style, theme, link_handler));
+        children.push(rich_text_for_inline_flow(
+            &text,
+            style,
+            alignment,
+            theme,
+            link_handler,
+            has_custom_inline,
+        ));
     }
-    Column::new()
-        .horizontal_alignment(BoxAlignment::Start)
-        .gaps(LayoutSpacing::all(8_u32))
-        .children(children)
-        .boxed()
+    if children.len() == 1 {
+        return children.remove(0);
+    }
+    if has_custom_inline && !has_image {
+        Row::new()
+            .vertical_alignment(BoxAlignment::Start)
+            .children(children)
+            .boxed()
+    } else {
+        Column::new()
+            .horizontal_alignment(BoxAlignment::Start)
+            .gaps(LayoutSpacing::all(8_u32))
+            .children(children)
+            .boxed()
+    }
 }
 
-fn rich_text(
+fn rich_text_for_inline_flow(
     inlines: &[Inline],
     style: TextStyle,
+    alignment: Option<TextAlign>,
+    theme: &MarkdownTheme,
+    link_handler: Option<&LinkHandler>,
+    has_custom_inline: bool,
+) -> AnyWidget {
+    if has_custom_inline {
+        rich_text_aligned_unwrapped(inlines, style, alignment, theme, link_handler)
+    } else {
+        rich_text_aligned(inlines, style, alignment, theme, link_handler)
+    }
+}
+
+fn rich_text_aligned_unwrapped(
+    inlines: &[Inline],
+    style: TextStyle,
+    alignment: Option<TextAlign>,
+    theme: &MarkdownTheme,
+    link_handler: Option<&LinkHandler>,
+) -> AnyWidget {
+    let rich = RichText::new(inline_spans(inlines, theme)).text_style(style);
+    let rich = match alignment {
+        Some(alignment) => rich.text_align(alignment),
+        None => rich,
+    };
+    match link_handler {
+        Some(handler) => {
+            let handler = (*handler).clone();
+            rich.on_link(move |target: Rc<str>| handler(target)).boxed()
+        }
+        None => rich.boxed(),
+    }
+}
+
+fn rich_text_aligned(
+    inlines: &[Inline],
+    style: TextStyle,
+    alignment: Option<TextAlign>,
     theme: &MarkdownTheme,
     link_handler: Option<&LinkHandler>,
 ) -> AnyWidget {
@@ -520,6 +680,10 @@ fn rich_text(
         .text_style(style)
         .wrapped()
         .link_hover_color(theme.link_hover_color);
+    let rich = match alignment {
+        Some(alignment) => rich.text_align(alignment),
+        None => rich,
+    };
     match link_handler {
         Some(handler) => {
             let handler = (*handler).clone();
@@ -589,7 +753,8 @@ mod tests {
     fn single_line_blockquote_uses_bounded_width_and_natural_height() {
         let resolver: ImageResolver = Rc::new(default_image_resolver);
         let quote = Document::parse("> one line").unwrap();
-        let quote_widget = render_document(&quote, &MarkdownTheme::default(), None, &resolver);
+        let quote_widget =
+            render_document(&quote, &MarkdownTheme::default(), None, &resolver, &[], &[]);
         let quote_ctx = layout_context(320.0, 200.0);
         let quote_size = quote_widget
             .to_element(&quote_ctx)
@@ -602,7 +767,8 @@ mod tests {
         );
 
         let document = Document::parse("> one line\n\nafter").unwrap();
-        let widget = render_document(&document, &MarkdownTheme::default(), None, &resolver);
+        let widget =
+            render_document(&document, &MarkdownTheme::default(), None, &resolver, &[], &[]);
         let ctx = layout_context(320.0, 200.0);
 
         let size = widget.to_element(&ctx).computed_size(&ctx);
@@ -629,12 +795,12 @@ mod tests {
         let nested_quote = Document::parse("> outer\n>> inner").unwrap();
 
         let single_height =
-            render_document(&single_quote, &MarkdownTheme::default(), None, &resolver)
+            render_document(&single_quote, &MarkdownTheme::default(), None, &resolver, &[], &[])
                 .to_element(&ctx)
                 .computed_size(&ctx)
                 .height;
         let nested_height =
-            render_document(&nested_quote, &MarkdownTheme::default(), None, &resolver)
+            render_document(&nested_quote, &MarkdownTheme::default(), None, &resolver, &[], &[])
                 .to_element(&ctx)
                 .computed_size(&ctx)
                 .height;
@@ -653,10 +819,10 @@ mod tests {
         let paragraph = Document::parse("Use CodeGraph to understand code safely").unwrap();
         let list = Document::parse("- Use CodeGraph to understand code safely").unwrap();
 
-        let paragraph_size = render_document(&paragraph, &theme, None, &resolver)
+        let paragraph_size = render_document(&paragraph, &theme, None, &resolver, &[], &[])
             .to_element(&ctx)
             .computed_size(&ctx);
-        let list_size = render_document(&list, &theme, None, &resolver)
+        let list_size = render_document(&list, &theme, None, &resolver, &[], &[])
             .to_element(&ctx)
             .computed_size(&ctx);
 
@@ -757,7 +923,8 @@ mod tests {
         let document = Document::parse("```rust\nfn main() {}\n```").unwrap();
         let (ctx, canvas) = layout_context_with_canvas(320.0, 200.0);
         let element =
-            render_document(&document, &MarkdownTheme::default(), None, &resolver).to_element(&ctx);
+            render_document(&document, &MarkdownTheme::default(), None, &resolver, &[], &[])
+                .to_element(&ctx);
         element.layout(&ctx);
         element.draw(&ctx);
         let text = canvas
@@ -784,7 +951,8 @@ mod tests {
         let (mut ctx, canvas) = layout_context_with_canvas(1700.0, 200.0);
         ctx.scale = 2.0;
         let element =
-            render_document(&document, &MarkdownTheme::default(), None, &resolver).to_element(&ctx);
+            render_document(&document, &MarkdownTheme::default(), None, &resolver, &[], &[])
+                .to_element(&ctx);
 
         element.layout(&ctx);
         element.draw(&ctx);
@@ -806,11 +974,11 @@ mod tests {
         .unwrap();
 
         let narrow_ctx = layout_context(180.0, 200.0);
-        let narrow_size = render_document(&document, &MarkdownTheme::default(), None, &resolver)
+        let narrow_size = render_document(&document, &MarkdownTheme::default(), None, &resolver, &[], &[])
             .to_element(&narrow_ctx)
             .computed_size(&narrow_ctx);
         let wide_ctx = layout_context(800.0, 200.0);
-        let wide_size = render_document(&document, &MarkdownTheme::default(), None, &resolver)
+        let wide_size = render_document(&document, &MarkdownTheme::default(), None, &resolver, &[], &[])
             .to_element(&wide_ctx)
             .computed_size(&wide_ctx);
 
@@ -926,7 +1094,80 @@ mod tests {
             SizedBox::new().boxed()
         });
 
-        let _widget = render_document(&document, &MarkdownTheme::default(), None, &resolver);
+        let _widget = render_document(&document, &MarkdownTheme::default(), None, &resolver, &[], &[]);
         assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn document_rendering_invokes_custom_block_and_inline_builders() {
+        use crate::{BlockRule, BlockSyntax, CustomBlockData, CustomInlineData, InlineRule, InlineSyntax};
+
+        let document = Document::parse_with_rules(
+            ":::alert\nblock body\n:::\n\nClick {{button:continue}}.",
+            &[BlockRule::new(
+                "alert",
+                BlockSyntax::Paired {
+                    opening: ":::alert",
+                    closing: ":::",
+                },
+            )],
+            &[InlineRule::new(
+                "button",
+                InlineSyntax::Paired {
+                    opening: "{{button:",
+                    closing: "}}",
+                },
+            )],
+        )
+        .unwrap();
+        let block_calls = Rc::new(Cell::new(0));
+        let inline_calls = Rc::new(Cell::new(0));
+        let observed_block = block_calls.clone();
+        let observed_inline = inline_calls.clone();
+        let blocks = vec![
+            (
+                BlockRule::new(
+                    "alert",
+                    BlockSyntax::Paired {
+                        opening: ":::alert",
+                        closing: ":::",
+                    },
+                ),
+                Rc::new(move |data: &CustomBlockData| {
+                    assert_eq!(data.text, "block body");
+                    observed_block.set(observed_block.get() + 1);
+                    Text::new(data.text.clone()).boxed()
+                }) as CustomBlockBuilder,
+            ),
+        ];
+        let inlines = vec![
+            (
+                InlineRule::new(
+                    "button",
+                    InlineSyntax::Paired {
+                        opening: "{{button:",
+                        closing: "}}",
+                    },
+                ),
+                Rc::new(move |data: &CustomInlineData| {
+                    assert_eq!(data.label, "continue");
+                    observed_inline.set(observed_inline.get() + 1);
+                    Text::new(data.label.clone()).boxed()
+                }) as CustomInlineBuilder,
+            ),
+        ];
+        let resolver: ImageResolver = Rc::new(default_image_resolver);
+
+        let _widget = render_document(
+            &document,
+            &MarkdownTheme::default(),
+            None,
+            &resolver,
+            &blocks,
+            &inlines,
+        );
+
+        assert_eq!(block_calls.get(), 1);
+        assert_eq!(inline_calls.get(), 1);
     }
 }

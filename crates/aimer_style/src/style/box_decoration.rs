@@ -2,6 +2,7 @@ pub(crate) mod border_radius;
 pub(crate) mod box_shadow;
 pub(crate) mod shapes;
 
+use std::cell::Cell;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
@@ -18,7 +19,7 @@ pub struct BoxDecoration {
     pub outline: BoxOutline,
     pub border_radius: BorderRadius,
     pub box_shadow: Vec<BoxShadow>,
-    pub background_color: Option<Color>,
+    pub background_color: Cell<Option<Color>>,
 }
 
 impl From<BoxShadow> for Vec<BoxShadow> {
@@ -52,8 +53,8 @@ impl BoxDecoration {
     }
 
     #[inline]
-    pub fn box_shadow(mut self, box_shadow: Vec<BoxShadow>) -> Self {
-        self.box_shadow = box_shadow;
+    pub fn box_shadow(mut self, box_shadow: impl IntoIterator<Item = BoxShadow>) -> Self {
+        self.box_shadow = box_shadow.into_iter().collect();
         self
     }
 
@@ -64,18 +65,14 @@ impl BoxDecoration {
     }
 
     #[inline]
-    pub fn background_color(mut self, background_color: impl Into<Color>) -> Self {
-        self.background_color = Some(background_color.into());
+    pub fn background_color(self, background_color: impl Into<Color>) -> Self {
+        self.background_color.set(Some(background_color.into()));
         self
     }
 
     #[inline]
     pub fn update_color(&self, new_color: impl Into<Color>) {
-        #[allow(unused_mut)]
-        let mut bg_ptr = &self.background_color as *const Option<Color> as *mut Option<Color>;
-        unsafe {
-            *bg_ptr = Some(new_color.into());
-        }
+        self.background_color.set(Some(new_color.into()));
     }
 }
 
@@ -116,7 +113,7 @@ impl Drawable for BoxDecoration {
                     width: box_width,
                     height: box_height,
                 },
-                self.background_color.unwrap_or(Color::Transparent),
+                self.background_color.get().unwrap_or(Color::Transparent),
                 radii,
                 [b_widths.1, b_widths.2, b_widths.3, b_widths.0], /* stroke_rect_per_side
                                                                    * uses [top, right,
@@ -127,7 +124,7 @@ impl Drawable for BoxDecoration {
                 [o_widths.1, o_widths.2, o_widths.3, o_widths.0],
                 self.outline.effective_color(box_width, box_height, scale),
             );
-        } else if let Some(color) = self.background_color {
+        } else if let Some(color) = self.background_color.get() {
             ctx.canvas.fill_color_rect_per_corner(
                 Vec2d { x: 0.0, y: 0.0 },
                 ResolvedSize {

@@ -22,7 +22,7 @@ pub use raw_flex::Flex;
 pub use row_column::{Column, Row};
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub enum LayoutDirection {
+pub enum FlexDirection {
     Row,
     Column,
     #[default]
@@ -34,6 +34,36 @@ pub enum BoxAlignment {
     Start,
     Center,
     End,
+}
+
+/// Controls how children are placed along a flex container's main axis.
+///
+/// `Start`, `Center`, and `End` place the group without changing the spacing
+/// between children. The remaining variants distribute positive free space
+/// between and around the children. When the children use all available space
+/// or overflow it, every variant falls back to the closest position possible.
+///
+/// # Examples
+///
+/// ```rust
+/// use aimer_flex::JustifyContent;
+///
+/// let start = JustifyContent::Start;
+/// let centered = JustifyContent::Center;
+/// let end = JustifyContent::End;
+/// let between = JustifyContent::SpaceBetween;
+/// let around = JustifyContent::SpaceAround;
+/// let evenly = JustifyContent::SpaceEvenly;
+/// ```
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum JustifyContent {
+    #[default]
+    Start,
+    Center,
+    End,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]

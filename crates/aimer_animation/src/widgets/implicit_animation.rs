@@ -9,6 +9,7 @@ use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, Key, LayoutElement, Rebuildable,
     State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    carry_element_state,
 };
 
 use crate::control::controller::AnimationController;
@@ -177,7 +178,7 @@ where
     }
 }
 
-struct ImplicitAnimatedFrame<T: Animatable + Clone + 'static> {
+struct ImplicitAnimatedFrame<T: Animatable + Clone + PartialEq + 'static> {
     current: Rc<LocalCell<T>>,
     target: T,
     builder: Rc<ImplicitElementBuilder<T>>,
@@ -185,7 +186,7 @@ struct ImplicitAnimatedFrame<T: Animatable + Clone + 'static> {
     tween: Rc<LocalCell<Option<Tween<T>>>>,
 }
 
-impl<T: Animatable + Clone + 'static> Widget for ImplicitAnimatedFrame<T> {
+impl<T: Animatable + Clone + PartialEq + 'static> Widget for ImplicitAnimatedFrame<T> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let value = self.current.with(Clone::clone);
         let child = (self.builder)(&value, ctx);
@@ -201,7 +202,7 @@ impl<T: Animatable + Clone + 'static> Widget for ImplicitAnimatedFrame<T> {
     }
 }
 
-struct ImplicitAnimatedElement<T: Animatable + Clone + 'static> {
+struct ImplicitAnimatedElement<T: Animatable + Clone + PartialEq + 'static> {
     child: UnsafeCell<AnyElement>,
     current: Rc<LocalCell<T>>,
     target: T,
@@ -210,10 +211,10 @@ struct ImplicitAnimatedElement<T: Animatable + Clone + 'static> {
     tween: Rc<LocalCell<Option<Tween<T>>>>,
 }
 
-unsafe impl<T: Animatable + Clone + 'static> Send for ImplicitAnimatedElement<T> {}
-unsafe impl<T: Animatable + Clone + 'static> Sync for ImplicitAnimatedElement<T> {}
+unsafe impl<T: Animatable + Clone + PartialEq + 'static> Send for ImplicitAnimatedElement<T> {}
+unsafe impl<T: Animatable + Clone + PartialEq + 'static> Sync for ImplicitAnimatedElement<T> {}
 
-impl<T: Animatable + Clone + 'static> Drawable for ImplicitAnimatedElement<T> {
+impl<T: Animatable + Clone + PartialEq + 'static> Drawable for ImplicitAnimatedElement<T> {
     fn draw(&self, ctx: &BuildContext) {
         let progress = self.controller.tick(AnimInstant::now());
         let value = self.tween.with(|tween| {
@@ -222,8 +223,27 @@ impl<T: Animatable + Clone + 'static> Drawable for ImplicitAnimatedElement<T> {
                 .map(|tween| tween.lerp(progress))
                 .unwrap_or_else(|| self.current.with(Clone::clone))
         });
-        self.current.with_mut(|current| *current = value.clone());
-        unsafe { *self.child.get() = (self.builder)(&value, ctx) };
+
+        // The builder is called fresh every frame so the subtree reflects the
+        // interpolated value, but its element still owns runtime state an
+        // ordinary rebuild would hand over — a hovered resize handle, a drag
+        // in flight, a scroll offset. Carry it across so animating a value
+        // does not also wipe everything nested below it.
+        //
+        // A settled animation produces the same value every frame, and the
+        // child it already built is the child that value names: keep it
+        // instead of rebuilding. Replacing the whole subtree would churn its
+        // element identities — the ids the dispatcher's captured pointers and
+        // focus records resolve through — so a press that spans a redraw the
+        // animation did not even ask for would be dropped.
+        let changed = self.current.with(|current| *current != value);
+        if changed {
+            self.current.with_mut(|current| *current = value.clone());
+            let new_child = (self.builder)(&value, ctx);
+            carry_element_state(unsafe { &*self.child.get() }.as_ref(), new_child.as_ref(), ctx);
+            unsafe { *self.child.get() = new_child };
+        }
+
         unsafe { &*self.child.get() }.draw(ctx);
 
         if self.controller.is_animating() {
@@ -235,7 +255,7 @@ impl<T: Animatable + Clone + 'static> Drawable for ImplicitAnimatedElement<T> {
     }
 }
 
-impl<T: Animatable + Clone + 'static> VisitorElement for ImplicitAnimatedElement<T> {
+impl<T: Animatable + Clone + PartialEq + 'static> VisitorElement for ImplicitAnimatedElement<T> {
     fn debug_name(&self) -> &'static str {
         "ImplicitAnimatedElement"
     }
@@ -245,7 +265,7 @@ impl<T: Animatable + Clone + 'static> VisitorElement for ImplicitAnimatedElement
     }
 }
 
-impl<T: Animatable + Clone + 'static> EventElement for ImplicitAnimatedElement<T> {
+impl<T: Animatable + Clone + PartialEq + 'static> EventElement for ImplicitAnimatedElement<T> {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         unsafe { &*self.child.get() }.on_event(event)
     }
@@ -255,13 +275,13 @@ impl<T: Animatable + Clone + 'static> EventElement for ImplicitAnimatedElement<T
     }
 }
 
-impl<T: Animatable + Clone + 'static> Rebuildable for ImplicitAnimatedElement<T> {
+impl<T: Animatable + Clone + PartialEq + 'static> Rebuildable for ImplicitAnimatedElement<T> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         unsafe { &*self.child.get() }.rebuild_if_dirty(ctx);
     }
 }
 
-impl<T: Animatable + Clone + 'static> LayoutElement for ImplicitAnimatedElement<T> {
+impl<T: Animatable + Clone + PartialEq + 'static> LayoutElement for ImplicitAnimatedElement<T> {
     fn pos(&self) -> Option<Vec2d> {
         unsafe { &*self.child.get() }.pos()
     }
@@ -289,6 +309,8 @@ impl<T: Animatable + Clone + 'static> LayoutElement for ImplicitAnimatedElement<
 
 #[cfg(test)]
 mod tests {
+    use std::cell::{Cell, RefCell};
+
     use super::*;
     use crate::widgets::test_frame_requester;
 
@@ -315,6 +337,58 @@ mod tests {
     impl Widget for TestWidget {
         fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             TestElement.boxed()
+        }
+    }
+
+    /// A widget/element pair that records, on every `adopt_runtime_state_from`
+    /// call, the identity of the element it replaced — the same hook
+    /// `RawResizable` relies on to keep a hovered handle across a rebuild.
+    struct RecordingWidget {
+        id: u32,
+        log: Rc<RefCell<Vec<u32>>>,
+    }
+
+    struct RecordingElement {
+        id: u32,
+        log: Rc<RefCell<Vec<u32>>>,
+    }
+
+    impl Widget for RecordingWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            RecordingElement {
+                id: self.id,
+                log: self.log,
+            }
+            .boxed()
+        }
+    }
+
+    impl Drawable for RecordingElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl EventElement for RecordingElement {}
+
+    impl LayoutElement for RecordingElement {}
+
+    impl VisitorElement for RecordingElement {
+        fn debug_name(&self) -> &'static str {
+            "RecordingElement"
+        }
+    }
+
+    impl Rebuildable for RecordingElement {
+        fn option_any(&self) -> Option<&dyn std::any::Any> {
+            Some(self)
+        }
+
+        fn adopt_runtime_state_from(&self, old: &dyn Element) {
+            if let Some(old) = old
+                .option_any()
+                .and_then(|value| value.downcast_ref::<Self>())
+            {
+                self.log.borrow_mut().push(old.id);
+            }
         }
     }
 
@@ -389,6 +463,62 @@ mod tests {
 
         assert_eq!(test_frame_requester::count(), 1);
         assert!(!ctx.window.take_redraw_request());
+    }
+
+    // Regression: the child element used to be replaced outright on every
+    // frame the animation redrew, discarding whatever runtime state it held —
+    // a `Resizable` wrapped in an `ImplicitAnimatedBuilder` lost its hovered
+    // resize handle the moment it was reported, since the very next frame
+    // rebuilt it from scratch with a fresh `hovered: None`. The handle's own
+    // `enter_zone` then saw no change on the way out and never reported
+    // `Direction::NONE` again.
+    #[test]
+    fn draw_carries_runtime_state_into_every_rebuilt_child() {
+        let ctx = dummy_build_context();
+        let log: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
+        let next_id = Rc::new(Cell::new(0u32));
+
+        let builder_log = log.clone();
+        let builder_id = next_id.clone();
+        let builder: Rc<ImplicitElementBuilder<f32>> =
+            Rc::new(move |_value: &f32, ctx: &BuildContext| {
+                let id = builder_id.get();
+                builder_id.set(id + 1);
+                RecordingWidget {
+                    id,
+                    log: builder_log.clone(),
+                }
+                .to_element(ctx)
+            });
+
+        let first_child = (builder)(&0.0, &ctx);
+        let controller = AnimationController::with_millis(100, Curve::Linear);
+        controller.forward_from_first_tick();
+
+        let element = ImplicitAnimatedElement {
+            child: UnsafeCell::new(first_child),
+            current: Rc::new(LocalCell::new(0.0)),
+            target: 1.0,
+            builder,
+            controller,
+            tween: Rc::new(LocalCell::new(Some(Tween::new(0.0, 1.0)))),
+        };
+
+        // A draw whose interpolated value changed rebuilds the child (ids 1,
+        // then 2), and each rebuild must hand its state over from the element
+        // it replaces (ids 0, then 1) — the same hand-over a normal rebuild
+        // performs for free. The first draw only starts the animation — the
+        // controller's first tick is this one, so the value has not moved yet
+        // and the child is kept — and a draw that still shows the same value
+        // keeps the child it built, so the later draws are separated by
+        // enough time for the animation to advance.
+        element.draw(&ctx);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        element.draw(&ctx);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        element.draw(&ctx);
+
+        assert_eq!(*log.borrow(), vec![0, 1]);
     }
 
     #[test]

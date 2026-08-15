@@ -67,7 +67,7 @@ impl State<CounterWidget> for CounterState {
             })
             .child(
                 Flex::new()
-                    .direction(LayoutDirection::Column)
+                    .direction(FlexDirection::Column)
                     .vertical_alignment(BoxAlignment::Center)
                     .horizontal_alignment(BoxAlignment::Center)
                     .children([

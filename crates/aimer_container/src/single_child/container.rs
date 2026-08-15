@@ -188,7 +188,7 @@ impl<E: Element> RawContainer<E> {
     /// visually covers whatever sits behind it in a `Stack`, so it must also
     /// occlude it for hit-testing (Flutter's `HitTestBehavior::opaque`).
     fn is_opaque(&self) -> bool {
-        self.color.is_some() || self.box_decoration.background_color.is_some()
+        self.color.is_some() || self.box_decoration.background_color.get().is_some()
     }
 
     #[allow(dead_code)]
@@ -305,7 +305,7 @@ impl<T: Element> Drawable for RawContainer<T> {
         }
 
         if let Some(color) = self.color
-            && self.box_decoration.background_color.is_none()
+            && self.box_decoration.background_color.get().is_none()
         {
             // debug!("updated color to {color:?}");
             self.box_decoration.update_color(color)
@@ -722,9 +722,9 @@ mod tests {
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::cell::Cell;
 
-    use aimer_widget::base::WindowHandle;
     use super::*;
     use crate::SizedBox;
+    use aimer_widget::base::WindowHandle;
 
     /// Counts every call that reaches the system allocator on this thread.
     ///
@@ -859,7 +859,6 @@ mod tests {
     /// element measured 576 bytes and spilled out of the pool.
     #[test]
     fn a_container_element_fits_a_pooled_block() {
-
         eprintln!("Container Size : {}", size_of::<Container>());
 
         assert!(

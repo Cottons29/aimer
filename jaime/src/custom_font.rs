@@ -1,7 +1,7 @@
 use aimer::style::{LayoutSpacing, Spacing, TextStyle};
 use aimer::{
     AimerApp, BoxAlignment, Color, Container, Dimension, Flex, FontError, FontFamily,
-    FontRegistration, FontRegistry, FontStyle, FontWeight, LayoutDirection, SizedBox, Text, Widget,
+    FontRegistration, FontRegistry, FontStyle, FontWeight, FlexDirection, SizedBox, Text, Widget,
 };
 
 const CUSTOM_FONT_FAMILY: &str = "Jaime JetBrains Mono";
@@ -29,7 +29,7 @@ pub fn start_custom_font_example() {
             .padding(LayoutSpacing::all(Spacing::Px(32)))
             .child(
                 Flex::new()
-                    .direction(LayoutDirection::Column)
+                    .direction(FlexDirection::Column)
                     .vertical_alignment(BoxAlignment::Center)
                     .horizontal_alignment(BoxAlignment::Center)
                     .children([
