@@ -1,3 +1,5 @@
+#![cfg(feature = "markdown")]
+
 //! Custom widgets rendered by Markdown must remain interactive.
 
 use std::cell::Cell;

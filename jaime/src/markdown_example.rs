@@ -14,6 +14,82 @@ This block is written in Markdown, but rendered as a custom Aimer widget.
 :::
 "#;
 
+const TYPED_CUSTOM_MARKDOWN: &str = r#"# Strongly Typed Markdown Widgets
+
+Typed inline syntax decodes into a model: @{alice}.
+
+:::typed-callout
+This block is parsed into typed properties and keeps its nested Markdown document.
+:::
+"#;
+
+struct TypedCallout;
+
+struct TypedCalloutProps {
+    message: String,
+    content: MarkdownDocument,
+}
+
+impl MarkdownCustomBlock for TypedCallout {
+    const NAME: &'static str = "typed-callout";
+    const OPENING: &'static str = ":::typed-callout";
+
+    type Props = TypedCalloutProps;
+
+    fn parse(input: MarkdownCustomBlockInput<'_>) -> Result<Self::Props, MarkdownError> {
+        let message = input.raw.trim().to_owned();
+        if message.is_empty() {
+            return Err(MarkdownError::new("typed callout cannot be empty"));
+        }
+        Ok(TypedCalloutProps {
+            message,
+            content: input.content.clone(),
+        })
+    }
+
+    fn build(props: &Self::Props, _ctx: &aimer::BuildContext) -> AnyWidget {
+        Container::new()
+            .padding(LayoutSpacing::all(Spacing::Px(16)))
+            .color(Color::Rgb(243, 244, 246))
+            .child(
+                Column::new().children([
+                    Text::new("Typed block")
+                        .text_style(TextStyle::new().font_weight(FontWeight::Bold))
+                        .boxed(),
+                    Text::new(props.message.clone()).boxed(),
+                    Text::new(format!(
+                        "Nested blocks parsed: {}",
+                        props.content.blocks.len()
+                    ))
+                    .boxed(),
+                ]),
+            )
+            .boxed()
+    }
+}
+
+struct TypedMention;
+
+impl MarkdownCustomInline for TypedMention {
+    const NAME: &'static str = "mention";
+    const OPENING: &'static str = "@{";
+    const CLOSING: &'static str = "}";
+
+    type Props = String;
+
+    fn parse(raw: &str) -> Result<Self::Props, MarkdownError> {
+        let name = raw.trim();
+        if name.is_empty() {
+            return Err(MarkdownError::new("mention cannot be empty"));
+        }
+        Ok(name.to_owned())
+    }
+
+    fn build(props: &Self::Props, _ctx: &aimer::BuildContext) -> AnyWidget {
+        Text::new(format!("@{props}")).boxed()
+    }
+}
+
 pub fn jaime_markdown_source() -> &'static str {
     JAIME_MARKDOWN
 }
@@ -116,6 +192,15 @@ pub fn custom_markdown_content() -> MarkdownViewer {
     custom_markdown_content_with_press(|| {})
 }
 
+pub fn typed_custom_markdown_content() -> MarkdownViewer {
+    MarkdownViewer::new()
+        .padding(LayoutSpacing::all(Spacing::Px(16)))
+        .theme(MarkdownTheme::default())
+        .markdown(TYPED_CUSTOM_MARKDOWN)
+        .typed_block::<TypedCallout>()
+        .typed_inline::<TypedMention>()
+}
+
 #[widget(Stateful)]
 pub struct CustomMarkdownExample {}
 
@@ -164,7 +249,13 @@ impl State<CustomMarkdownExample> for CustomMarkdownExampleState {
 pub fn custom_markdown_viewer() -> impl Widget {
     Container::new()
         .color(Color::WHITE)
-        .child(CustomMarkdownExample::new())
+        .child(
+            Row::new()
+                .children([
+                Expanded::new().box_child(typed_custom_markdown_content()),
+                    Expanded::new().box_child(CustomMarkdownExample::new()),
+            ]),
+        )
 }
 
 pub fn start_custom_markdown_example() {
@@ -180,7 +271,8 @@ mod tests {
     use aimer::{MarkdownDocument, Widget};
 
     use super::{
-        custom_markdown_content, jaime_markdown_content, jaime_markdown_source, CUSTOM_MARKDOWN,
+        custom_markdown_content, jaime_markdown_content, jaime_markdown_source,
+        typed_custom_markdown_content, CUSTOM_MARKDOWN, TYPED_CUSTOM_MARKDOWN,
     };
 
     #[test]
@@ -197,5 +289,12 @@ mod tests {
         assert!(CUSTOM_MARKDOWN.contains("{{button:Press me}}"));
         assert!(CUSTOM_MARKDOWN.contains(":::callout"));
         assert!(custom_markdown_content().text_content().is_some());
+    }
+
+    #[test]
+    fn typed_custom_markdown_registers_strongly_typed_rules() {
+        assert!(TYPED_CUSTOM_MARKDOWN.contains("@{alice}"));
+        assert!(TYPED_CUSTOM_MARKDOWN.contains(":::typed-callout"));
+        assert!(typed_custom_markdown_content().text_content().is_some());
     }
 }

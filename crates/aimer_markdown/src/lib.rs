@@ -24,8 +24,8 @@ use aimer_widget::{AnyElement, AnyWidget, Key, Widget};
 use cache::LruCache;
 pub use document::{Alignment, Block, Document, Inline, ListItem, MarkdownError, TableRow};
 pub use custom::{
-    BlockRule, BlockSyntax, CustomBlockBuilder, CustomBlockData, CustomInlineBuilder,
-    CustomInlineData, InlineRule, InlineSyntax,
+    BlockRule, BlockSyntax, CustomBlock, CustomBlockBuilder, CustomBlockData, CustomBlockInput,
+    CustomInline, CustomInlineBuilder, CustomInlineData, InlineRule, InlineSyntax,
 };
 pub use markdown_theme::MarkdownTheme;
 pub use renderer::{ImageResolver, LinkHandler, MarkdownImage, default_image_resolver};
@@ -89,6 +89,8 @@ pub struct MarkdownViewer {
     image_resolver: ImageResolver,
     custom_blocks: Vec<(BlockRule, CustomBlockBuilder)>,
     custom_inlines: Vec<(InlineRule, CustomInlineBuilder)>,
+    typed_custom_blocks: Vec<(BlockRule, custom::TypedCustomBlockBuilder)>,
+    typed_custom_inlines: Vec<(InlineRule, custom::TypedCustomInlineBuilder)>,
     padding: LayoutSpacing,
     scrollable: bool,
     key: Key,
@@ -113,6 +115,8 @@ impl MarkdownViewer {
             image_resolver: Rc::new(default_image_resolver),
             custom_blocks: Vec::new(),
             custom_inlines: Vec::new(),
+            typed_custom_blocks: Vec::new(),
+            typed_custom_inlines: Vec::new(),
             padding: Default::default(),
             key: Key::unique(),
             scrollable: true,
@@ -182,6 +186,57 @@ impl MarkdownViewer {
         self
     }
 
+    /// Registers a strongly typed custom block.
+    #[inline]
+    pub fn typed_block<T: CustomBlock>(mut self) -> Self {
+        let rule = BlockRule::new(
+            T::NAME,
+            BlockSyntax::Paired {
+                opening: T::OPENING,
+                closing: T::CLOSING,
+            },
+        );
+        let builder = Rc::new(|data: &CustomBlockData, ctx: &BuildContext| {
+            match T::parse(CustomBlockInput {
+                raw: &data.text,
+                content: &data.content,
+            }) {
+                Ok(props) => T::build(&props, ctx),
+                Err(error) => aimer_text::Text::new(format!(
+                    "custom block '{}': {error}",
+                    T::NAME
+                ))
+                .boxed(),
+            }
+        });
+        self.typed_custom_blocks.push((rule, builder));
+        self
+    }
+
+    /// Registers a strongly typed custom inline element.
+    #[inline]
+    pub fn typed_inline<T: CustomInline>(mut self) -> Self {
+        let rule = InlineRule::new(
+            T::NAME,
+            InlineSyntax::Paired {
+                opening: T::OPENING,
+                closing: T::CLOSING,
+            },
+        );
+        let builder = Rc::new(|data: &CustomInlineData, ctx: &BuildContext| {
+            match T::parse(&data.text) {
+                Ok(props) => T::build(&props, ctx),
+                Err(error) => aimer_text::Text::new(format!(
+                    "custom inline '{}': {error}",
+                    T::NAME
+                ))
+                .boxed(),
+            }
+        });
+        self.typed_custom_inlines.push((rule, builder));
+        self
+    }
+
     /// Add a key for widget
     pub fn key(mut self, key: Key) -> Self {
         self.key = key;
@@ -201,6 +256,24 @@ impl Widget for MarkdownViewer {
             .iter()
             .map(|(rule, _)| rule.clone())
             .collect::<Vec<_>>();
+        let typed_block_rules = self
+            .typed_custom_blocks
+            .iter()
+            .map(|(rule, _)| rule.clone())
+            .collect::<Vec<_>>();
+        let typed_inline_rules = self
+            .typed_custom_inlines
+            .iter()
+            .map(|(rule, _)| rule.clone())
+            .collect::<Vec<_>>();
+        let block_rules = block_rules
+            .into_iter()
+            .chain(typed_block_rules)
+            .collect::<Vec<_>>();
+        let inline_rules = inline_rules
+            .into_iter()
+            .chain(typed_inline_rules)
+            .collect::<Vec<_>>();
         let document = if block_rules.is_empty() && inline_rules.is_empty() {
             parse_document(self.source.clone())
         } else {
@@ -211,13 +284,16 @@ impl Widget for MarkdownViewer {
             ))
         };
         let content = match document.as_ref() {
-            Ok(document) => renderer::render_document(
+            Ok(document) => renderer::render_document_with_context(
                 document,
                 &self.theme,
                 self.link_handler.as_ref(),
                 &self.image_resolver,
                 &self.custom_blocks,
                 &self.custom_inlines,
+                &self.typed_custom_blocks,
+                &self.typed_custom_inlines,
+                Some(ctx),
             ),
             Err(error) => aimer_text::Text::new(error.to_string())
                 .text_style(self.theme.body)
@@ -252,7 +328,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use super::{DocumentCache, open_web_link_with};
+    use super::*;
 
     #[test]
     fn document_cache_reuses_unchanged_markdown() {
@@ -323,5 +399,47 @@ mod tests {
 
         assert!(handled.is_none());
         assert!(opened.into_inner().is_empty());
+    }
+
+    #[test]
+    fn viewer_registers_typed_custom_rules() {
+        struct Alert;
+
+        impl CustomBlock for Alert {
+            const NAME: &'static str = "alert";
+            const OPENING: &'static str = ":::alert";
+
+            type Props = String;
+
+            fn parse(input: CustomBlockInput<'_>) -> Result<Self::Props, MarkdownError> {
+                Ok(input.raw.to_owned())
+            }
+
+            fn build(_props: &Self::Props, _ctx: &BuildContext) -> AnyWidget {
+                aimer_text::Text::new("alert").boxed()
+            }
+        }
+
+        struct Mention;
+
+        impl CustomInline for Mention {
+            const NAME: &'static str = "mention";
+            const OPENING: &'static str = "@{";
+            const CLOSING: &'static str = "}";
+
+            type Props = String;
+
+            fn parse(raw: &str) -> Result<Self::Props, MarkdownError> {
+                Ok(raw.to_owned())
+            }
+
+            fn build(_props: &Self::Props, _ctx: &BuildContext) -> AnyWidget {
+                aimer_text::Text::new("mention").boxed()
+            }
+        }
+
+        let _viewer = MarkdownViewer::new()
+            .typed_block::<Alert>()
+            .typed_inline::<Mention>();
     }
 }

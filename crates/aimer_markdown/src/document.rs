@@ -91,7 +91,8 @@ pub struct MarkdownError {
 }
 
 impl MarkdownError {
-    fn new(message: impl Into<String>) -> Self {
+    /// Creates an error describing an invalid Markdown document or extension.
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -121,7 +122,7 @@ fn validate_rules(
 ) -> Result<(), MarkdownError> {
     for (index, rule) in block_rules.iter().enumerate() {
         let (opening, closing) = rule.delimiters();
-        if opening.is_empty() || closing.is_empty() || opening == closing {
+        if rule.name().is_empty() || opening.is_empty() || closing.is_empty() || opening == closing {
             return Err(MarkdownError::new(format!(
                 "Custom block rule '{}' has invalid delimiters",
                 rule.name()
@@ -139,7 +140,7 @@ fn validate_rules(
     }
     for (index, rule) in inline_rules.iter().enumerate() {
         let (opening, closing) = rule.delimiters();
-        if opening.is_empty() || closing.is_empty() || opening == closing {
+        if rule.name().is_empty() || opening.is_empty() || closing.is_empty() || opening == closing {
             return Err(MarkdownError::new(format!(
                 "Custom inline rule '{}' has invalid delimiters",
                 rule.name()

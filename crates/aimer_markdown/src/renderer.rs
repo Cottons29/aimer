@@ -13,6 +13,7 @@ use aimer_style::{
 };
 use aimer_svg::{Svg, SvgDocument, SvgStyle};
 use aimer_text::{RichText, SelectionArea, SpanStyle, Text, TextSpan};
+use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyWidget, Widget};
 
 pub(crate) use crate::markdown_theme::MarkdownTheme;
@@ -21,6 +22,7 @@ use crate::{
     Alignment, Block, CaptureSpan, CustomBlockBuilder, CustomInlineBuilder, Document, Inline,
     TableRow,
 };
+use crate::custom::{TypedCustomBlockBuilder, TypedCustomInlineBuilder};
 
 const TICK_SVG_DATA: &[u8] = include_bytes!("../tick-checkbox-svgrepo-com.svg");
 const COPY_SVG_DATA: &[u8] = include_bytes!("../copy-2-svgrepo-com.svg");
@@ -181,6 +183,7 @@ fn inline_span(inline: &Inline, theme: &MarkdownTheme) -> TextSpan {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn render_document(
     document: &Document,
     theme: &MarkdownTheme,
@@ -189,6 +192,30 @@ pub(crate) fn render_document(
     custom_blocks: &[(crate::BlockRule, CustomBlockBuilder)],
     custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
 ) -> AnyWidget {
+    render_document_with_context(
+        document,
+        theme,
+        link_handler,
+        image_resolver,
+        custom_blocks,
+        custom_inlines,
+        &[],
+        &[],
+        None,
+    )
+}
+
+pub(crate) fn render_document_with_context(
+    document: &Document,
+    theme: &MarkdownTheme,
+    link_handler: Option<&LinkHandler>,
+    image_resolver: &ImageResolver,
+    custom_blocks: &[(crate::BlockRule, CustomBlockBuilder)],
+    custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
+    typed_custom_blocks: &[(crate::BlockRule, TypedCustomBlockBuilder)],
+    typed_custom_inlines: &[(crate::InlineRule, TypedCustomInlineBuilder)],
+    ctx: Option<&BuildContext>,
+) -> AnyWidget {
     render_blocks(
         &document.blocks,
         theme,
@@ -196,6 +223,9 @@ pub(crate) fn render_document(
         image_resolver,
         custom_blocks,
         custom_inlines,
+        typed_custom_blocks,
+        typed_custom_inlines,
+        ctx,
     )
 }
 
@@ -206,6 +236,9 @@ fn render_blocks(
     image_resolver: &ImageResolver,
     custom_blocks: &[(crate::BlockRule, CustomBlockBuilder)],
     custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
+    typed_custom_blocks: &[(crate::BlockRule, TypedCustomBlockBuilder)],
+    typed_custom_inlines: &[(crate::InlineRule, TypedCustomInlineBuilder)],
+    ctx: Option<&BuildContext>,
 ) -> AnyWidget {
     let children = blocks
         .iter()
@@ -217,6 +250,9 @@ fn render_blocks(
                 image_resolver,
                 custom_blocks,
                 custom_inlines,
+                typed_custom_blocks,
+                typed_custom_inlines,
+                ctx,
             )
         })
         .collect::<Vec<_>>();
@@ -246,6 +282,8 @@ fn render_table(
     link_handler: Option<&LinkHandler>,
     image_resolver: &ImageResolver,
     custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
+    typed_custom_inlines: &[(crate::InlineRule, TypedCustomInlineBuilder)],
+    ctx: Option<&BuildContext>,
 ) -> AnyWidget {
     let column_count = rows
         .iter()
@@ -276,6 +314,8 @@ fn render_table(
                     link_handler,
                     image_resolver,
                     custom_inlines,
+                    typed_custom_inlines,
+                    ctx,
                 );
                 let background = if row_index == 0 {
                     theme.table_header_background
@@ -312,6 +352,9 @@ fn render_block(
     image_resolver: &ImageResolver,
     custom_blocks: &[(crate::BlockRule, CustomBlockBuilder)],
     custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
+    typed_custom_blocks: &[(crate::BlockRule, TypedCustomBlockBuilder)],
+    typed_custom_inlines: &[(crate::InlineRule, TypedCustomInlineBuilder)],
+    ctx: Option<&BuildContext>,
 ) -> AnyWidget {
     match block {
         Block::Heading { depth, content } => render_inline_flow(
@@ -322,6 +365,8 @@ fn render_block(
             link_handler,
             image_resolver,
             custom_inlines,
+            typed_custom_inlines,
+            ctx,
         ),
         Block::Paragraph(content) => {
             render_inline_flow(
@@ -332,6 +377,8 @@ fn render_block(
                 link_handler,
                 image_resolver,
                 custom_inlines,
+                typed_custom_inlines,
+                ctx,
             )
         }
         Block::Blockquote(blocks) => Container::new()
@@ -356,6 +403,9 @@ fn render_block(
                 image_resolver,
                 custom_blocks,
                 custom_inlines,
+                typed_custom_blocks,
+                typed_custom_inlines,
+                ctx,
             )),
         Block::List {
             ordered,
@@ -395,6 +445,9 @@ fn render_block(
                                 image_resolver,
                                 custom_blocks,
                                 custom_inlines,
+                                typed_custom_blocks,
+                                typed_custom_inlines,
+                                ctx,
                             )),
                         ])
                         .boxed()
@@ -450,6 +503,8 @@ fn render_block(
             link_handler,
             image_resolver,
             custom_inlines,
+            typed_custom_inlines,
+            ctx,
         ),
         Block::FootnoteDefinition { identifier, blocks } => Row::new()
             .gaps(LayoutSpacing::all(6_u32))
@@ -464,13 +519,22 @@ fn render_block(
                     image_resolver,
                     custom_blocks,
                     custom_inlines,
+                    typed_custom_blocks,
+                    typed_custom_inlines,
+                    ctx,
                 ),
             ])
             .boxed(),
-        Block::Custom(data) => custom_blocks
+        Block::Custom(data) => typed_custom_blocks
             .iter()
             .find(|(rule, _)| rule.name() == data.name)
-            .map(|(_, builder)| builder(data))
+            .and_then(|(_, builder)| ctx.map(|ctx| builder(data, ctx)))
+            .or_else(|| {
+                custom_blocks
+                    .iter()
+                    .find(|(rule, _)| rule.name() == data.name)
+                    .map(|(_, builder)| builder(data))
+            })
             .unwrap_or_else(|| Text::new(data.text.clone()).text_style(theme.body).boxed()),
     }
 }
@@ -515,6 +579,9 @@ fn render_blocks_with_style(
     image_resolver: &ImageResolver,
     custom_blocks: &[(crate::BlockRule, CustomBlockBuilder)],
     custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
+    typed_custom_blocks: &[(crate::BlockRule, TypedCustomBlockBuilder)],
+    typed_custom_inlines: &[(crate::InlineRule, TypedCustomInlineBuilder)],
+    ctx: Option<&BuildContext>,
 ) -> AnyWidget {
     let children = blocks
         .iter()
@@ -528,6 +595,8 @@ fn render_blocks_with_style(
                     link_handler,
                     image_resolver,
                     custom_inlines,
+                    typed_custom_inlines,
+                    ctx,
                 )
             }
             _ => render_block(
@@ -537,6 +606,9 @@ fn render_blocks_with_style(
                 image_resolver,
                 custom_blocks,
                 custom_inlines,
+                typed_custom_blocks,
+                typed_custom_inlines,
+                ctx,
             ),
         })
         .collect::<Vec<_>>();
@@ -554,6 +626,8 @@ fn render_inline_flow(
     link_handler: Option<&LinkHandler>,
     image_resolver: &ImageResolver,
     custom_inlines: &[(crate::InlineRule, CustomInlineBuilder)],
+    typed_custom_inlines: &[(crate::InlineRule, TypedCustomInlineBuilder)],
+    ctx: Option<&BuildContext>,
 ) -> AnyWidget {
     let has_image = inlines
         .iter()
@@ -600,6 +674,12 @@ fn render_inline_flow(
                 .iter()
                 .find(|(rule, _)| rule.name() == data.name)
                 .map(|(_, builder)| builder(data))
+                .or_else(|| {
+                    typed_custom_inlines
+                        .iter()
+                        .find(|(rule, _)| rule.name() == data.name)
+                        .and_then(|(_, builder)| ctx.map(|ctx| builder(data, ctx)))
+                })
                 .unwrap_or_else(|| Text::new(data.text.clone()).text_style(style).boxed());
             children.push(widget);
         } else {

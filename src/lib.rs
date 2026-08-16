@@ -21,8 +21,8 @@ pub use aimer_events::element::ElementEvent;
 pub use aimer_flex::*;
 pub use aimer_focus as focus;
 pub use aimer_focus::{
-    FocusBehavior, FocusCallback, FocusCandidate, FocusManager, FocusNode, FocusTrap, FocusTrapId,
-    FocusTransition, active_focus_trap,
+    FocusBehavior, FocusCallback, FocusCandidate, FocusManager, FocusNode, FocusTransition,
+    FocusTrap, FocusTrapId, active_focus_trap,
 };
 pub use aimer_grid::*;
 pub use aimer_input::button::Button;
@@ -32,19 +32,21 @@ pub use aimer_input::*;
 pub use aimer_macro::{Router, StatefulWidget, StatelessWidget, Theme, key, main};
 #[cfg(feature = "markdown")]
 pub use aimer_markdown::{
-    Alignment as MarkdownAlignment, Block as MarkdownBlock, Document as MarkdownDocument,
-    BlockRule as MarkdownBlockRule, BlockSyntax as MarkdownBlockSyntax,
+    Alignment as MarkdownAlignment, Block as MarkdownBlock, BlockRule as MarkdownBlockRule,
+    BlockSyntax as MarkdownBlockSyntax, CustomBlock as MarkdownCustomBlock,
     CustomBlockBuilder as MarkdownCustomBlockBuilder, CustomBlockData as MarkdownCustomBlockData,
+    CustomBlockInput as MarkdownCustomBlockInput, CustomInline as MarkdownCustomInline,
     CustomInlineBuilder as MarkdownCustomInlineBuilder,
-    CustomInlineData as MarkdownCustomInlineData, ImageResolver as MarkdownImageResolver,
-    Inline as MarkdownInline, InlineRule as MarkdownInlineRule, InlineSyntax as MarkdownInlineSyntax,
+    CustomInlineData as MarkdownCustomInlineData, Document as MarkdownDocument,
+    ImageResolver as MarkdownImageResolver, Inline as MarkdownInline,
+    InlineRule as MarkdownInlineRule, InlineSyntax as MarkdownInlineSyntax,
     LinkHandler as MarkdownLinkHandler, MarkdownError, MarkdownImage, MarkdownTheme,
     MarkdownViewer,
 };
 pub use aimer_modal::{
     Anchor, AnchorHandle, Floating, FloatingAlign, FloatingPlacement, FloatingSide, Modal,
-    ModalAnimation, ModalController, ModalHandle, ModalHost, ModalId, OverflowPolicy,
-    OverlayLayer, OverlayLayerHandle, PlacementSpec, resolve_placement,
+    ModalAnimation, ModalController, ModalHandle, ModalHost, ModalId, OverflowPolicy, OverlayLayer,
+    OverlayLayerHandle, PlacementSpec, resolve_placement,
 };
 #[cfg(feature = "provider")]
 pub use aimer_provider::{
@@ -70,7 +72,6 @@ pub use aimer_venus as venus;
 pub use aimer_venus::{TaskScope, Venus, yield_if_over_budget, yield_now};
 pub use aimer_widget::base::BuildContext;
 pub use aimer_widget::{self, Key, State, StatefulWidget, StatelessWidget, Widget, *};
-
 
 pub use aimer_native as native;
 
