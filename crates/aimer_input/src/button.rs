@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::future::Future;
 use std::marker::PhantomData;
+use std::panic::Location;
 use std::rc::Rc;
 
 use aimer_container::Container;
@@ -262,8 +263,10 @@ impl<W> Button<W> {
     }
 
     /// Sets the identity of this button for widget reconciliation.
+    #[track_caller]
     pub fn key(mut self, key: impl Into<Key>) -> Self {
-        self.widget_key = Some(key.into());
+        let caller = Location::caller();
+        self.widget_key = Some(key.into().with_location(caller));
         self
     }
 

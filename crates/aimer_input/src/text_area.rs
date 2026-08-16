@@ -1,3 +1,4 @@
+use std::panic::Location;
 use std::sync::Arc;
 
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
@@ -7,9 +8,7 @@ use aimer_widget::{
 };
 
 use crate::TextEditingController;
-use crate::input_field::raw_fields::{
-    ExpandDirection, InputType, TextFieldCallback,
-};
+use crate::input_field::raw_fields::{ExpandDirection, InputType, TextFieldCallback};
 use crate::input_field::{TextField, TextFieldState};
 
 /// A multiline text input widget.
@@ -275,8 +274,10 @@ impl TextArea {
     /// A keyed area keeps its state, caret timeline, focus, and selection when
     /// the surrounding widget list is reordered.
     #[inline]
+    #[track_caller]
     pub fn key(mut self, key: impl Into<Key>) -> Self {
-        self.field = self.field.key(key);
+        let caller = Location::caller();
+        self.field = self.field.key(key.into().with_location(caller));
         self
     }
 
@@ -351,9 +352,9 @@ impl Widget for TextArea {
 #[cfg(test)]
 mod tests {
     use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
+    use aimer_widget::StatefulWidget;
     use aimer_widget::base::{Color, Colors};
     use aimer_widget::{FocusNode, Key, Widget};
-    use aimer_widget::StatefulWidget;
 
     use crate::input::{TextArea, TextEditingController};
     use crate::input_field::raw_fields::{ExpandDirection, InputType};

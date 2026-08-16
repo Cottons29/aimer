@@ -373,26 +373,6 @@ impl LocalScheduler {
             }
         }
 
-        // A single poll that holds the thread for a millisecond is a stutter,
-        // and it is far cheaper to hear about it here than from a user. Reported
-        // rather than asserted: the offending task still deserves to finish, and
-        // a timing assertion would fire on a loaded machine that is not at
-        // fault.
-        //
-        // This is the only thing that answers "which future dropped that frame",
-        // so it stays on in debug builds. Release builds pay nothing: the clock
-        // is not even read.
-        #[cfg(debug_assertions)]
-        {
-            let elapsed = started.elapsed();
-            if elapsed > crate::MICROTASK_BUDGET_WARNING {
-                eprintln!(
-                    "aimer_venus: one poll held the UI thread for {elapsed:?} — slice it with \
-                     `yield_if_over_budget` or move it to `Venus::offload`"
-                );
-            }
-        }
-
         let mut inner = self.inner.borrow_mut();
         if finished {
             inner.tasks.remove(task);

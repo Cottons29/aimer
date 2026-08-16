@@ -1,5 +1,6 @@
 use std::cell::{Cell, UnsafeCell};
 use std::marker::PhantomData;
+use std::panic::Location;
 use std::time::Duration;
 
 use aimer_attribute::position::Vec2d;
@@ -141,6 +142,7 @@ impl<T: Widget> MorphTransition<T> {
     /// The initial child is displayed without animation. Later rebuilds start
     /// a morph when the effective child key or optional background color
     /// changes. The child's own [`Widget::key`] is the default identity.
+
     pub fn new(duration: Duration, curve: Curve, child: T) -> Self {
         Self {
             child: ChildBuilder::from_widget(child),
@@ -158,6 +160,7 @@ impl<T: Widget> MorphTransition<T> {
     /// A changed color starts a transition even when the child key is
     /// unchanged. Without this builder, no background is painted or
     /// interpolated by the transition.
+    #[inline]
     pub fn background_color(mut self, color: Rgba) -> Self {
         self.background_color = Some(color);
         self
@@ -166,8 +169,11 @@ impl<T: Widget> MorphTransition<T> {
     /// Sets an explicit child identity used to detect content changes.
     ///
     /// This overrides the key reported by the child widget.
+    #[inline]
+    #[track_caller]
     pub fn child_key(mut self, key: impl Into<Key>) -> Self {
-        self.transition_key = Some(key.into());
+        let caller = Location::caller();
+        self.transition_key = Some(key.into().with_location(caller));
         self
     }
 
@@ -175,8 +181,11 @@ impl<T: Widget> MorphTransition<T> {
     ///
     /// This does not determine whether a morph starts; use
     /// [`child_key`](Self::child_key) for that purpose.
+    #[track_caller]
+    #[inline]
     pub fn key(mut self, key: impl Into<Key>) -> Self {
-        self.widget_key = Some(key.into());
+        let caller = Location::caller();
+        self.widget_key = Some(key.into().with_location(caller));
         self
     }
 }

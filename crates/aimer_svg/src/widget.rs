@@ -480,7 +480,7 @@ impl Widget for SvgAsset {
         });
 
         RawSvgAsset {
-            loader,
+            loader: RefCell::new(loader),
             phase: Cell::new(SvgAssetPhase::Loading),
             width: self.width,
             height: self.height,
@@ -508,7 +508,7 @@ enum SvgAssetPhase {
 }
 
 struct RawSvgAsset {
-    loader: SvgLoader,
+    loader: RefCell<SvgLoader>,
     phase: Cell<SvgAssetPhase>,
     width: Option<Dimension>,
     height: Option<Dimension>,
@@ -526,7 +526,7 @@ impl RawSvgAsset {
         if self.phase.get() != SvgAssetPhase::Loading {
             return;
         }
-        match self.loader.state() {
+        match self.loader.borrow().state() {
             SvgLoadState::Loading => {}
             SvgLoadState::Ready(document) => {
                 let svg = Svg {
@@ -621,7 +621,25 @@ impl EventElement for RawSvgAsset {
     fn event_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
 }
 
-impl Rebuildable for RawSvgAsset {}
+impl Rebuildable for RawSvgAsset {
+    fn option_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    /// Carries the (possibly already loaded) loader across a rebuild so a frame
+    /// of an ancestor's animation does not reset the SVG back to `Loading` and
+    /// re-read the asset. `phase` is left fresh — `refresh` re-evaluates the
+    /// carried loader on the next draw and builds the element from it.
+    fn adopt_runtime_state_from(&self, old: &dyn Element) {
+        let Some(old) = old
+            .option_any()
+            .and_then(|value| value.downcast_ref::<Self>())
+        else {
+            return;
+        };
+        *self.loader.borrow_mut() = old.loader.borrow().clone();
+    }
+}
 
 pub struct RawSvg {
     document: SvgDocument,
@@ -1111,4 +1129,58 @@ fn point_segment_distance(point: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f3
     let t = (((point.0 - a.0) * segment.0 + (point.1 - a.1) * segment.1) / length_squared)
         .clamp(0.0, 1.0);
     (point.0 - (a.0 + t * segment.0)).hypot(point.1 - (a.1 + t * segment.1))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::{Cell, RefCell, UnsafeCell};
+    use std::sync::Arc;
+
+    use aimer_widget::{Element, Rebuildable};
+
+    use super::{RawSvgAsset, SvgAssetPhase};
+    use crate::{SvgLoader, SvgLoadState, SvgSource};
+
+    fn asset(loader: SvgLoader) -> RawSvgAsset {
+        RawSvgAsset {
+            loader: RefCell::new(loader),
+            phase: Cell::new(SvgAssetPhase::Loading),
+            width: None,
+            height: None,
+            styles: Vec::new(),
+            hover_styles: Vec::new(),
+            pressed_styles: Vec::new(),
+            callbacks: Vec::new(),
+            loading_element: None,
+            error_element: None,
+            svg_element: UnsafeCell::new(None),
+        }
+    }
+
+    // An ancestor animation rebuilds its child every frame and hands runtime
+    // state over via `carry_element_state`. The rebuilt `SvgAsset` element must
+    // adopt the old one's loader so it renders immediately instead of restarting
+    // the async load every frame.
+    #[tokio::test]
+    async fn rebuild_carries_the_loaded_loader() {
+        let source = br#"<svg width="2" height="2" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#;
+
+        let mut loaded = SvgLoader::new(SvgSource::Memory(Arc::from(source.as_slice())));
+        loaded.load().await;
+        let old = asset(loaded);
+
+        let fresh = SvgLoader::new(SvgSource::Memory(Arc::from(source.as_slice())));
+        let new = asset(fresh);
+        assert!(matches!(
+            new.loader.borrow().state(),
+            SvgLoadState::Loading
+        ));
+
+        new.adopt_runtime_state_from(&old as &dyn Element);
+
+        assert!(matches!(
+            new.loader.borrow().state(),
+            SvgLoadState::Ready(_)
+        ));
+    }
 }

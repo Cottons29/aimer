@@ -93,6 +93,14 @@ impl<R: Route> Navigator<R> {
     }
 }
 
+
+impl<R: Route> Navigator<R> {
+    /// Shorthand of [`NavigatorController::of`].
+    pub fn of(ctx: &BuildContext) -> NavigatorInstance<R> {
+        NavigatorController::of(ctx)
+    }
+}
+
 pub struct NavigatorState<R>
 where
     R: Route,
@@ -129,6 +137,15 @@ impl<R: Route> NavigatorState<R> {
             .last()
             .expect("History should not be empty")
             .clone()
+    }
+
+    pub fn routes(&self) -> Vec<R> {
+        self.history.clone()
+    }
+
+    pub fn contains_route(&self, route: &R) -> bool {
+        let route = route.format();
+        self.history.iter().any(|candidate| candidate.format() == route)
     }
 
     pub fn clear(&self) {
@@ -301,6 +318,8 @@ pub struct NavigatorController<R> {
     pop_fn: Rc<dyn Fn()>,
     can_pop_fn: Rc<dyn Fn() -> bool>,
     history_len_fn: Rc<dyn Fn() -> usize>,
+    routes_fn: Rc<dyn Fn() -> Vec<R>>,
+    contains_route_fn: Rc<dyn Fn(&R) -> bool>,
     current_route_fn: Rc<dyn Fn() -> R>,
     clear_fn: Rc<dyn Fn()>,
     set_route_fn: Rc<dyn Fn(R)>,
@@ -315,6 +334,8 @@ impl<R> Clone for NavigatorController<R> {
             pop_fn: self.pop_fn.clone(),
             can_pop_fn: self.can_pop_fn.clone(),
             history_len_fn: self.history_len_fn.clone(),
+            routes_fn: self.routes_fn.clone(),
+            contains_route_fn: self.contains_route_fn.clone(),
             current_route_fn: self.current_route_fn.clone(),
             clear_fn: self.clear_fn.clone(),
             set_route_fn: self.set_route_fn.clone(),
@@ -348,6 +369,39 @@ impl<R: 'static> NavigatorController<R> {
 
     pub fn history_len(&self) -> usize {
         (self.history_len_fn)()
+    }
+
+    /// Returns a snapshot of the navigator's route history, from the initial
+    /// route to the currently displayed route.
+    ///
+    /// The returned vector is independent of the navigator. Pushing, popping,
+    /// or replacing routes after this method returns does not change it.
+    pub fn routes(&self) -> Vec<R> {
+        (self.routes_fn)()
+    }
+
+    /// Returns whether `route` is present in the navigator's route history.
+    ///
+    /// Routes are compared by their formatted paths rather than by requiring
+    /// every [`Route`] implementation to also implement [`PartialEq`]. This
+    /// makes the query available to all existing route types while matching
+    /// the identity used by browser navigation.
+    pub fn contains_route(&self, route: &R) -> bool
+    where
+        R: Route,
+    {
+        (self.contains_route_fn)(route)
+    }
+
+    /// Iterates over a snapshot of the navigator's route history.
+    ///
+    /// The iterator does not keep the navigator borrowed and therefore remains
+    /// valid if the navigator is used to change its history while iterating.
+    pub fn iter(&self) -> std::vec::IntoIter<R>
+    where
+        R: Route,
+    {
+        self.routes().into_iter()
     }
 
     /// Returns the route currently displayed by the navigator.
@@ -386,6 +440,24 @@ impl<R: Route> NavigatorController<R> {
             }
             None => false,
         }
+    }
+}
+
+impl<R: Route> IntoIterator for &NavigatorController<R> {
+    type Item = R;
+    type IntoIter = std::vec::IntoIter<R>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<R: Route> IntoIterator for NavigatorController<R> {
+    type Item = R;
+    type IntoIter = std::vec::IntoIter<R>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.routes().into_iter()
     }
 }
 
@@ -431,6 +503,14 @@ fn navigator_controller<R: Route>(
         history_len_fn: {
             let updater = updater.clone();
             Rc::new(move || updater.read(|state| state.history.len()))
+        },
+        routes_fn: {
+            let updater = updater.clone();
+            Rc::new(move || updater.read(|state| state.routes()))
+        },
+        contains_route_fn: {
+            let updater = updater.clone();
+            Rc::new(move |route| updater.read(|state| state.contains_route(route)))
         },
         current_route_fn: {
             let updater = updater.clone();
@@ -553,6 +633,10 @@ mod tests {
                 5 => {
                     CURRENT_ROUTE_OBSERVED.set(Some(navigator.current_route()));
                     HISTORY_LENGTH_OBSERVED.set(navigator.history_len());
+                    assert_eq!(navigator.routes(), vec![TestRoute::Home]);
+                    assert!(navigator.contains_route(&TestRoute::Home));
+                    let routes: Vec<_> = (&navigator).into_iter().collect();
+                    assert_eq!(routes, vec![TestRoute::Home]);
                 }
                 _ => return,
             }

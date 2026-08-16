@@ -5,6 +5,7 @@ mod controller;
 pub mod raw_fields;
 
 use std::cell::Cell;
+use std::panic::Location;
 use std::sync::Arc;
 
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
@@ -318,8 +319,10 @@ impl TextField {
     /// A keyed field keeps its state — and therefore its caret timeline, focus,
     /// and selection — when the surrounding widget list is reordered.
     #[inline]
+    #[track_caller]
     pub fn key(mut self, key: impl Into<Key>) -> Self {
-        self.widget_key = Some(key.into());
+        let caller = Location::caller();
+        self.widget_key = Some(key.into().with_location(caller));
         self
     }
 

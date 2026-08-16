@@ -6,13 +6,13 @@
 //! wrapper that grants that to any subtree, and the rest of this module is the
 //! element it retains.
 
-use std::marker::PhantomData;
-
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_focus::{FocusBehavior, FocusCallback, FocusGate, FocusNode};
 use aimer_utils::callback::{CallbackExecutor, VoidCallback};
+use std::marker::PhantomData;
+use std::panic::Location;
 
 use crate::base::BuildContext;
 use crate::components::drawable::Drawable;
@@ -204,8 +204,10 @@ impl<W> Focusable<W> {
 
     /// Sets the identity of this region for widget reconciliation.
     #[inline]
+    #[track_caller]
     pub fn key(mut self, key: impl Into<Key>) -> Self {
-        self.widget_key = Some(key.into());
+        let caller = Location::caller();
+        self.widget_key = Some(key.into().with_location(caller));
         self
     }
 
@@ -504,8 +506,7 @@ impl EventElement for RawFocusable {
     /// while the children below it are gathered exactly as before.
     #[inline]
     fn focus_node(&self) -> Option<&FocusNode> {
-        let offered =
-            self.behavior.is_focusable() && self.gate.call(()).unwrap_or(true);
+        let offered = self.behavior.is_focusable() && self.gate.call(()).unwrap_or(true);
         offered.then_some(&self.node)
     }
 
@@ -752,7 +753,11 @@ mod tests {
             true
         }
 
-        fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
+        fn with_rebuild_context(
+            &self,
+            ctx: &BuildContext,
+            callback: &mut dyn FnMut(&BuildContext),
+        ) {
             self.published.set(true);
             callback(ctx);
         }
@@ -914,7 +919,10 @@ mod tests {
     async fn a_press_focuses_the_region_it_lands_on() {
         let node = FocusNode::new();
         let ctx = context();
-        let root = Focusable::new().node(node.clone()).child(child()).to_element(&ctx);
+        let root = Focusable::new()
+            .node(node.clone())
+            .child(child())
+            .to_element(&ctx);
         let mut dispatcher = EventDispatcher::new();
 
         press(&mut dispatcher, &root, INSIDE);
@@ -929,7 +937,10 @@ mod tests {
     async fn a_press_that_missed_the_region_takes_focus_away() {
         let node = FocusNode::new();
         let ctx = context();
-        let root = Focusable::new().node(node.clone()).child(child()).to_element(&ctx);
+        let root = Focusable::new()
+            .node(node.clone())
+            .child(child())
+            .to_element(&ctx);
         let mut dispatcher = EventDispatcher::new();
 
         press(&mut dispatcher, &root, INSIDE);
@@ -992,7 +1003,10 @@ mod tests {
 
         hover(&mut dispatcher, &root, OUTSIDE);
 
-        assert!(node.has_focus(), "an automatic region asks for focus itself");
+        assert!(
+            node.has_focus(),
+            "an automatic region asks for focus itself"
+        );
     }
 
     /// The reason this widget has state at all.
@@ -1035,7 +1049,10 @@ mod tests {
 
         live.adopt_config_from(replacement);
 
-        assert!(live.node.ptr_eq(&node), "the focus target must not be swapped");
+        assert!(
+            live.node.ptr_eq(&node),
+            "the focus target must not be swapped"
+        );
         assert_eq!(live.behavior, FocusBehavior::Ignore);
     }
 
@@ -1123,12 +1140,18 @@ mod tests {
             .to_element(&ctx);
 
         let gain = element.on_event(&ElementEvent::FocusGained);
-        assert_eq!((gained.get(), lost.get(), changes.get()), (1, 0, Some(true)));
+        assert_eq!(
+            (gained.get(), lost.get(), changes.get()),
+            (1, 0, Some(true))
+        );
         assert!(!gain.is_consumed(), "a notification is news, not a request");
         assert!(gain.needs_redraw(), "the region is painted differently now");
 
         let loss = element.on_event(&ElementEvent::FocusLost);
-        assert_eq!((gained.get(), lost.get(), changes.get()), (1, 1, Some(false)));
+        assert_eq!(
+            (gained.get(), lost.get(), changes.get()),
+            (1, 1, Some(false))
+        );
         assert!(!loss.is_consumed());
     }
 
@@ -1223,7 +1246,10 @@ mod tests {
 
         open.set(true);
         press(&mut dispatcher, &root, INSIDE);
-        assert!(node.has_focus(), "the gate is asked again, never remembered");
+        assert!(
+            node.has_focus(),
+            "the gate is asked again, never remembered"
+        );
     }
 
     /// Laying a region out lays its child out.
@@ -1246,7 +1272,11 @@ mod tests {
 
         element.layout(&ctx);
 
-        assert_eq!(layouts.get(), 1, "the child has to be laid out, not measured");
+        assert_eq!(
+            layouts.get(),
+            1,
+            "the child has to be laid out, not measured"
+        );
     }
 
     /// The region sits exactly where its child sits.
@@ -1323,7 +1353,10 @@ mod tests {
     async fn a_supplied_node_can_claim_focus_imperatively() {
         let node = FocusNode::new();
         let ctx = context();
-        let root = Focusable::new().node(node.clone()).child(child()).to_element(&ctx);
+        let root = Focusable::new()
+            .node(node.clone())
+            .child(child())
+            .to_element(&ctx);
         let mut dispatcher = EventDispatcher::new();
 
         node.request_focus();

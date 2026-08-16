@@ -1,4 +1,5 @@
 use std::cell::UnsafeCell;
+use std::panic::Location;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -80,8 +81,10 @@ where
     }
 
     /// Sets the identity of the animated builder for widget reconciliation.
+    #[track_caller]
     pub fn key(mut self, key: impl Into<Key>) -> Self {
-        self.widget_key = Some(key.into());
+        let location = Location::caller();
+        self.widget_key = Some(key.into().with_location(location));
         self
     }
 }

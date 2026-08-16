@@ -66,7 +66,7 @@ fn stateful_widget_impl(item_struct: &ItemStruct) -> TokenStream {
         impl #impl_generics aimer::widget::Widget for #struct_name #ty_generics #where_clause {
             #key_method
 
-            fn to_element(self, ctx: &widget::base::BuildContext) -> aimer::widget::AnyElement {
+            fn to_element(self, ctx: &aimer::widget::base::BuildContext) -> aimer::widget::AnyElement {
                 // The key is read before the widget is handed over, because the
                 // element takes it by value and moves its props into the state.
                 let __key = #key_pass;

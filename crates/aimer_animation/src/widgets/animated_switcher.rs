@@ -1,5 +1,6 @@
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
+use std::panic::Location;
 use std::time::Duration;
 
 use aimer_attribute::position::Vec2d;
@@ -92,8 +93,10 @@ impl<T: Widget + 'static> AnimatedSwitcher<T> {
     /// Sets the child identity used to decide whether a transition is needed.
     /// This is useful when the child widget itself does not expose a key.
     #[inline]
+    #[track_caller]
     pub fn child_key(mut self, key: impl Into<Key>) -> Self {
-        self.transition_key = Some(key.into());
+        let caller = Location::caller();
+        self.transition_key = Some(key.into().with_location(caller));
         self
     }
 
@@ -102,8 +105,10 @@ impl<T: Widget + 'static> AnimatedSwitcher<T> {
     /// This is independent of [`child_key`](Self::child_key), which controls
     /// whether the children cross-fade.
     #[inline]
+    #[track_caller]
     pub fn key(mut self, key: impl Into<Key>) -> Self {
-        self.widget_key = Some(key.into());
+        let caller = Location::caller();
+        self.widget_key = Some(key.into().with_location(caller));
         self
     }
 }

@@ -61,6 +61,11 @@ impl fmt::Display for PanicDiagnostic {
 }
 
 impl PanicDiagnostic {
+    pub(crate) fn with_site(mut self, site: PanicSite) -> Self {
+        self.site = Some(site);
+        self
+    }
+
     pub(crate) fn into_error_element(self) -> AnyElement {
         let message = self.to_string();
         aimer_utils::log::error(&message);

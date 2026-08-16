@@ -128,7 +128,11 @@ impl Drawable for ErrorElement {
 }
 
 impl EventElement for ErrorElement {}
-impl Rebuildable for ErrorElement {}
+impl Rebuildable for ErrorElement {
+    fn option_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+}
 
 impl VisitorElement for ErrorElement {
     fn debug_name(&self) -> &'static str {

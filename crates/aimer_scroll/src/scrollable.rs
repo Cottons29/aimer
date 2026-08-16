@@ -119,14 +119,16 @@ impl Scrollable {
     /// Finish the builder with [`Scrollable::child`] or
     /// [`Scrollable::box_child`].
     #[inline]
+    #[track_caller]
     pub fn new() -> Self {
+        let caller = std::panic::Location::caller();
         Self {
             child: ChildBuilder::required(),
             scroll_behavior: ScrollBehavior::default(),
             axis: ScrollAxis::default(),
             vertical_scroll_bar: Some(ScrollBar::default()),
             horizontal_scroll_bar: Some(ScrollBar::default()),
-            key: key!(),
+            key: Key::Value(caller.to_string()).with_location(caller),
             key_scroll_strength: 50f32,
             controller: None,
             web_overscroll: OverscrollSources::WEB_DEFAULT,
@@ -141,14 +143,16 @@ impl Scrollable {
     /// enables both default scroll bars, generates a storage key, and has no
     /// external controller.
     #[inline]
+    #[track_caller]
     pub fn with_child<W: Widget + 'static>(child: W) -> Scrollable<W> {
+        let caller = std::panic::Location::caller();
         Scrollable {
             child: ChildBuilder::from_widget(child),
             scroll_behavior: ScrollBehavior::default(),
             axis: ScrollAxis::default(),
             vertical_scroll_bar: Some(ScrollBar::default()),
             horizontal_scroll_bar: Some(ScrollBar::default()),
-            key: Key::unique(),
+            key: Key::Value(caller.to_string()).with_location(caller),
             controller: None,
             key_scroll_strength: 50f32,
             web_overscroll: OverscrollSources::WEB_DEFAULT,
@@ -201,8 +205,10 @@ impl Scrollable {
     /// [`Scrollable::new`] generates a fresh key. Reusing a stable key allows a
     /// torn-down viewport to recover its stored position.
     #[inline]
-    pub fn key(mut self, key: Key) -> Self {
-        self.key = key;
+    #[track_caller]
+    pub fn key(mut self, key: impl Into<Key>) -> Self {
+        let location = std::panic::Location::caller();
+        self.key = key.into().with_location(location);
         self
     }
 
@@ -399,7 +405,16 @@ impl<W: Widget + 'static> ScrollableState<W> {
         if live.is_none() || scale_changed || refresh_scroll_state {
             let next = self.create_scroll_state(ctx);
             if let Some(previous) = live.as_ref() {
-                next.adopt_scroll_state(previous);
+                // Adopting the previous engine's live offset keeps the viewport
+                // in place across a rebuild or scale change, but a storage-key
+                // switch means this viewport now shows a *different* list:
+                // `create_scroll_state` has already seeded it from that key's
+                // saved offset, so carrying the previous list's position across
+                // would share one offset between the two. Only adopt the live
+                // interaction state when the key is unchanged.
+                if previous.storage_key == self.key {
+                    next.adopt_scroll_state(previous);
+                }
             }
             *live = Some(next);
         }
@@ -598,12 +613,13 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
+    use aimer_attribute::position::Vec2d;
     use aimer_attribute::size::ResolvedSize;
     use aimer_widget::base::WindowHandle;
-    use aimer_widget::{AnyElement, ErrorWidget, State, StatefulWidget, Widget};
+    use aimer_widget::{AnyElement, ErrorWidget, Key, State, StatefulWidget, Widget};
 
     use super::{
-        BuildContext, OverscrollSource, OverscrollSources, ScrollAxis, Scrollable,
+        scroll_storage, BuildContext, OverscrollSource, OverscrollSources, ScrollAxis, Scrollable,
         resolved_overscroll_sources,
     };
 
@@ -753,13 +769,64 @@ mod tests {
 
     #[test]
     fn equivalent_parent_rebuild_keeps_the_live_scroll_engine() {
-        let current = Scrollable::new().child(ErrorWidget::new("current"));
-        let next = Scrollable::new().child(ErrorWidget::new("next"));
+        // `Scrollable::new` keys by call site, so pin an explicit key to model
+        // a parent rebuild that produces the *same* scrollable.
+        let current = Scrollable::new()
+            .key("equivalent")
+            .child(ErrorWidget::new("current"));
+        let next = Scrollable::new()
+            .key("equivalent")
+            .child(ErrorWidget::new("next"));
         let mut state = current.create_state();
         let next_state = next.create_state();
 
         state.adopt_config_from(next_state);
 
         assert!(!state.refresh_scroll_state.get());
+    }
+
+    // A storage-key switch (e.g. swapping between two category lists) must seed
+    // the fresh engine from the new key's saved offset rather than adopting the
+    // previous list's live position — otherwise every list shares one offset.
+    #[tokio::test]
+    async fn a_storage_key_switch_seeds_from_the_new_keys_saved_offset() {
+        let ctx = context();
+
+        // List A is live and has been scrolled down.
+        let mut state = Scrollable::new()
+            .key("list-a")
+            .child(ErrorWidget::new("a"))
+            .create_state();
+        state.build(&ctx).to_element(&ctx);
+        state
+            .scroll_state
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .scroll_offset
+            .set(Vec2d { x: 0.0, y: 300.0 });
+
+        // List B has its own remembered position.
+        scroll_storage::save_offset(
+            &Key::Value("list-b".into()),
+            Vec2d { x: 0.0, y: 120.0 },
+        );
+
+        // Swap to list B.
+        state.adopt_config_from(
+            Scrollable::new()
+                .key("list-b")
+                .child(ErrorWidget::new("b"))
+                .create_state(),
+        );
+        state.build(&ctx).to_element(&ctx);
+
+        let engine = state.scroll_state.borrow();
+        let engine = engine.as_ref().unwrap();
+        assert_eq!(
+            engine.scroll_offset.get().y,
+            120.0,
+            "list B must restore its own offset, not list A's 300"
+        );
     }
 }

@@ -102,6 +102,69 @@ struct StateMutationQueue<S> {
     mutations: RefCell<VecDeque<StateMutation<S>>>,
 }
 
+struct FailureState {
+    message: RefCell<Option<String>>,
+}
+
+impl FailureState {
+    fn record(&self, diagnostic: &PanicDiagnostic) -> bool {
+        let mut message = self.message.borrow_mut();
+        if message.is_none() {
+            *message = Some(diagnostic.to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    fn record_message(&self, message: String) {
+        let mut current = self.message.borrow_mut();
+        if current.is_none() {
+            *current = Some(message);
+        }
+    }
+
+    fn message(&self) -> Option<String> {
+        self.message.borrow().clone()
+    }
+
+    fn error_element(&self) -> Option<AnyElement> {
+        self.message
+            .borrow()
+            .as_ref()
+            .map(|message| crate::ErrorElement::new(message.clone()).boxed())
+    }
+
+    fn is_failed(&self) -> bool {
+        self.message.borrow().is_some()
+    }
+}
+
+fn recover_failure(
+    failure: &FailureState,
+    failed: &Cell<bool>,
+    dirty: &Cell<bool>,
+    diagnostic: PanicDiagnostic,
+) -> AnyElement {
+    failed.set(true);
+    dirty.set(false);
+    if failure.record(&diagnostic) {
+        diagnostic.into_error_element()
+    } else {
+        failure
+            .error_element()
+            .expect("a recorded failure should have an error element")
+    }
+}
+
+impl Default for FailureState {
+    fn default() -> Self {
+        Self {
+            message: RefCell::new(None),
+        }
+    }
+}
+
 impl<S> Default for StateMutationQueue<S> {
     fn default() -> Self {
         Self {
@@ -157,6 +220,7 @@ struct StateUpdaterInner<S> {
     /// Shared state for synchronous reads on the render thread.
     state: Rc<SyncState<S>>,
     dirty: Rc<Cell<bool>>,
+    failure: Rc<FailureState>,
 }
 
 impl<S> Clone for StateUpdater<S> {
@@ -166,6 +230,7 @@ impl<S> Clone for StateUpdater<S> {
                 tx: inner.tx.clone(),
                 state: inner.state.clone(),
                 dirty: inner.dirty.clone(),
+                failure: inner.failure.clone(),
             }),
         }
     }
@@ -175,9 +240,19 @@ impl<S: 'static> StateUpdater<S> {
     /// Create a new `StateUpdater` from a channel sender, shared state, and a
     /// dirty flag.
     #[inline]
-    fn with(tx: Rc<StateMutationQueue<S>>, state: Rc<SyncState<S>>, dirty: Rc<Cell<bool>>) -> Self {
+    fn with(
+        tx: Rc<StateMutationQueue<S>>,
+        state: Rc<SyncState<S>>,
+        dirty: Rc<Cell<bool>>,
+        failure: Rc<FailureState>,
+    ) -> Self {
         Self {
-            inner: Some(StateUpdaterInner { tx, state, dirty }),
+            inner: Some(StateUpdaterInner {
+                tx,
+                state,
+                dirty,
+                failure,
+            }),
         }
     }
 
@@ -271,6 +346,9 @@ impl<S: 'static> StateUpdater<S> {
                 panic!("State is not initialized (see error above)");
             }
         };
+        if inner.failure.is_failed() {
+            return;
+        }
         inner.tx.push(Box::new(f));
         // Only request a redraw if this is the first set_state since the last rebuild.
         // This coalesces multiple set_state calls into a single redraw request.
@@ -397,6 +475,8 @@ pub type RebuildCallBack = dyn Fn(&BuildContext) -> AnyElement;
 struct KeyedStateEntry {
     rebuild_fn: Weak<RebuildCallBack>,
     dirty: Weak<Cell<bool>>,
+    failed: Weak<Cell<bool>>,
+    failure: Weak<FailureState>,
     state_revision: Weak<Cell<u64>>,
     state_any: Weak<dyn Any>,
     state_sender: Weak<dyn Any>,
@@ -406,10 +486,28 @@ struct KeyedStateEntry {
 struct LiveKeyedState {
     rebuild_fn: Rc<RebuildCallBack>,
     dirty: Rc<Cell<bool>>,
+    failed: Rc<Cell<bool>>,
+    failure: Rc<FailureState>,
     state_revision: Rc<Cell<u64>>,
     state_any: Rc<dyn Any>,
     state_sender: Rc<dyn Any>,
     adopt_config_fn: Rc<AdoptConfigCallBack>,
+}
+
+fn consumed_state_panic_message(debug_name: &'static str, key: Option<&crate::Key>) -> String {
+    match key {
+        Some(key) => format!(
+            "Live state was consumed during reconciliation for widget `{debug_name}` with key {}. \
+             Check where this key is created and used: keys for stateful widgets must be stable \
+             and unique; do not reuse one key for multiple widgets.",
+            key.diagnostic_description()
+        ),
+        None => format!(
+            "Live state was consumed during reconciliation for widget `{debug_name}`. Check \
+             where this widget's key is created and used: keys for stateful widgets must be stable \
+             and unique; do not reuse one key for multiple widgets."
+        ),
+    }
 }
 
 thread_local! {
@@ -476,6 +574,10 @@ pub struct StatefulElement {
     /// `&dyn Any`) into this element's live state via
     /// `State::adopt_config_from`.
     adopt_config_fn: SyncAdoptConfigFn,
+    /// Set after a recovered reconciliation failure so later queued updates do
+    /// not touch a state cell that reconciliation has already consumed.
+    failed: Rc<Cell<bool>>,
+    failure: Rc<FailureState>,
 }
 
 impl StatefulElement {
@@ -550,9 +652,15 @@ impl StatefulElement {
         {
             let fresh_state = Rc::new(SyncState(UnsafeCell::new(Some(state))));
             let fresh_state_any: Rc<dyn Any> = fresh_state;
-            recover_operation(debug_name, BuildPhase::AdoptConfig, || {
+            if let Err(diagnostic) = recover_operation(debug_name, BuildPhase::AdoptConfig, || {
                 (live.adopt_config_fn)(fresh_state_any.as_ref())
-            })?;
+            }) {
+                live.failed.set(true);
+                live.dirty.set(false);
+                let diagnostic = diagnostic.with_site(key_ref.diagnostic_site());
+                live.failure.record(&diagnostic);
+                return Err(diagnostic);
+            }
 
             let child = (live.rebuild_fn)(ctx);
             return recover_operation(debug_name, BuildPhase::KeyedState, || {
@@ -569,6 +677,8 @@ impl StatefulElement {
                     state_any: SyncStateAny(UnsafeCell::new(live.state_any)),
                     state_sender: SyncStateAny(UnsafeCell::new(live.state_sender)),
                     adopt_config_fn: SyncAdoptConfigFn(UnsafeCell::new(live.adopt_config_fn)),
+                    failed: live.failed,
+                    failure: live.failure,
                 };
                 let updater = element
                     .state_updater()
@@ -585,9 +695,16 @@ impl StatefulElement {
 
         let state_cell = Rc::new(SyncState(UnsafeCell::new(Some(state))));
         let state_revision = Rc::new(Cell::new(0));
+        let failure = Rc::new(FailureState::default());
+        let failed = Rc::new(Cell::new(false));
 
         // Create the updater and pass it into init_state.
-        let init_updater = StateUpdater::with(tx.clone(), state_cell.clone(), dirty.clone());
+        let init_updater = StateUpdater::with(
+            tx.clone(),
+            state_cell.clone(),
+            dirty.clone(),
+            failure.clone(),
+        );
 
         {
             // Safety: single-threaded — we are the only accessor during construction.
@@ -605,7 +722,13 @@ impl StatefulElement {
         let revision_for_rebuild = state_revision.clone();
         let mutations_for_rebuild = tx.clone();
         let consumer_for_rebuild = build_consumer.clone();
+        let failure_for_rebuild = failure.clone();
+        let failed_for_rebuild = failed.clone();
+        let dirty_for_rebuild = dirty.clone();
         let rebuild_fn: Rc<RebuildCallBack> = Rc::new(move |ctx| {
+            if let Some(error) = failure_for_rebuild.error_element() {
+                return error;
+            }
             // Drain all pending mutations before rebuilding.
             let mutation_result =
                 recover_operation(debug_name, BuildPhase::ApplyStateMutation, || {
@@ -619,7 +742,12 @@ impl StatefulElement {
                     });
                 });
             if let Err(diagnostic) = mutation_result {
-                return diagnostic.into_error_element();
+                return recover_failure(
+                    &failure_for_rebuild,
+                    &failed_for_rebuild,
+                    &dirty_for_rebuild,
+                    diagnostic,
+                );
             }
             ctx.with_build_consumer(consumer_for_rebuild.clone(), |ctx| {
                 let s = unsafe {
@@ -630,12 +758,27 @@ impl StatefulElement {
                 let child_widget =
                     match recover_operation(debug_name, BuildPhase::Build, || s.build(ctx)) {
                         Ok(widget) => widget,
-                        Err(diagnostic) => return diagnostic.into_error_element(),
+                        Err(diagnostic) => {
+                            return recover_failure(
+                                &failure_for_rebuild,
+                                &failed_for_rebuild,
+                                &dirty_for_rebuild,
+                                diagnostic,
+                            )
+                        }
                     };
-                recover_operation(debug_name, BuildPhase::ToElement, || {
+                match recover_operation(debug_name, BuildPhase::ToElement, || {
                     Widget::to_element(child_widget, ctx)
                 })
-                .unwrap_or_else(|diagnostic| diagnostic.into_error_element())
+                {
+                    Ok(element) => element,
+                    Err(diagnostic) => recover_failure(
+                        &failure_for_rebuild,
+                        &failed_for_rebuild,
+                        &dirty_for_rebuild,
+                        diagnostic,
+                    ),
+                }
             })
         });
 
@@ -663,6 +806,7 @@ impl StatefulElement {
         let state_any: Rc<dyn Any> = state_cell.clone();
         let state_sender: Rc<dyn Any> = tx.clone();
         let state_for_config = state_cell.clone();
+        let key_for_config = key.clone();
         let adopt_config_fn: Rc<AdoptConfigCallBack> = Rc::new(move |new_any: &dyn Any| {
             if let Some(new_cell) = new_any.downcast_ref::<SyncState<W::State>>() {
                 // Safety: single-threaded reconciliation; the live state is not
@@ -670,7 +814,12 @@ impl StatefulElement {
                 let old_state = unsafe {
                     (&mut *state_for_config.0.get())
                         .as_mut()
-                        .expect("Live state was consumed during reconciliation")
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{}",
+                                consumed_state_panic_message(debug_name, key_for_config.as_ref())
+                            )
+                        })
                 };
                 let new_state = unsafe { (&mut *new_cell.0.get()).take() };
                 if let Some(new_state) = new_state {
@@ -678,8 +827,7 @@ impl StatefulElement {
                 }
             }
         });
-
-        let updater = StateUpdater::with(tx, state_cell, dirty.clone());
+        let updater = StateUpdater::with(tx, state_cell, dirty.clone(), failure.clone());
 
         let element = StatefulElement {
             child: SyncChild(UnsafeCell::new(child)),
@@ -694,6 +842,8 @@ impl StatefulElement {
             state_any: SyncStateAny(UnsafeCell::new(state_any)),
             state_sender: SyncStateAny(UnsafeCell::new(state_sender)),
             adopt_config_fn: SyncAdoptConfigFn(UnsafeCell::new(adopt_config_fn)),
+            failed,
+            failure,
         };
 
         let element = if KeyedStateScope::is_active() {
@@ -721,6 +871,15 @@ impl StatefulElement {
     /// This avoids destroying and recreating the entire subtree when only a
     /// deeply-nested element's state has changed.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        if self.failed.get() {
+            self.dirty.borrow().set(false);
+            if let Some(error) = self.failure.error_element() {
+                unsafe {
+                    *self.child.0.get() = error;
+                }
+            }
+            return;
+        }
         if !self.dirty.borrow().get() {
             // A clean ancestor does not participate in reconciliation, so avoid
             // scanning its entire subtree solely to populate the keyed-state
@@ -1092,6 +1251,7 @@ impl StatefulElement {
             sender,
             state,
             self.dirty.borrow().clone(),
+            self.failure.clone(),
         ))
     }
 
@@ -1117,6 +1277,24 @@ impl StatefulElement {
         // is asked to adopt from can be itself. Its state never left, and the
         // borrows below would collide with themselves.
         if std::ptr::eq(self, old) {
+            return;
+        }
+        if self.failed.get()
+            || old.failed.get()
+            || self.failure.is_failed()
+            || old.failure.is_failed()
+        {
+            if let Some(message) = self.failure.message().or_else(|| old.failure.message()) {
+                self.failure.record_message(message.clone());
+                old.failure.record_message(message);
+                self.failed.set(true);
+                self.dirty.borrow().set(false);
+                if let Some(error) = self.failure.error_element() {
+                    unsafe {
+                        *self.child.0.get() = error;
+                    }
+                }
+            }
             return;
         }
         // Keyed construction can already reuse the live element's state cell
@@ -1163,7 +1341,27 @@ impl StatefulElement {
             // Safety: single-threaded reconciliation.
             let fresh_state: &dyn Any = unsafe { &*self.state_any.0.get() }.as_ref();
             let old_adopt = unsafe { &*old.adopt_config_fn.0.get() };
-            old_adopt(fresh_state);
+            if let Err(diagnostic) = recover_operation(
+                self.debug_name.get(),
+                BuildPhase::AdoptConfig,
+                || old_adopt(fresh_state),
+            ) {
+                let diagnostic = match self.key.as_ref().or(old.key.as_ref()) {
+                    Some(key) => diagnostic.with_site(key.diagnostic_site()),
+                    None => diagnostic,
+                };
+                self.failure.record(&diagnostic);
+                old.failure.record(&diagnostic);
+                unsafe {
+                    *self.child.0.get() = diagnostic.into_error_element();
+                }
+                old.failed.set(true);
+                self.failed.set(true);
+                self.dirty.borrow().set(false);
+                let cur_gen = self.rebuild_generation.get();
+                self.last_rebuilt_generation.set(cur_gen);
+                return;
+            }
         }
 
         // Repoint this element's config-refresh machinery at the OLD state cell,
@@ -1234,9 +1432,19 @@ fn lookup_keyed_state(key: &crate::key::Key, debug_name: &'static str) -> Option
     KEYED_STATE_REGISTRY.with(|registry| {
         let registry = registry.borrow();
         let entry = registry.get(&(key.clone(), debug_name))?;
+        let failed = entry.failed.upgrade()?;
+        if failed.get() {
+            return None;
+        }
+        let failure = entry.failure.upgrade()?;
+        if failure.is_failed() {
+            return None;
+        }
         Some(LiveKeyedState {
             rebuild_fn: entry.rebuild_fn.upgrade()?,
             dirty: entry.dirty.upgrade()?,
+            failed,
+            failure,
             state_revision: entry.state_revision.upgrade()?,
             state_any: entry.state_any.upgrade()?,
             state_sender: entry.state_sender.upgrade()?,
@@ -1253,9 +1461,16 @@ fn register_keyed_state(element: &StatefulElement) {
     let state_any = unsafe { (&*element.state_any.0.get()).clone() };
     let state_sender = unsafe { (&*element.state_sender.0.get()).clone() };
     let adopt_config_fn = unsafe { (&*element.adopt_config_fn.0.get()).clone() };
+    let failed = element.failed.clone();
+    let failure = element.failure.clone();
     KEYED_STATE_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
-        if registry
+        let existing_failed = registry
+            .get(&(key.clone(), element.debug_name.get()))
+            .and_then(|entry| entry.failed.upgrade())
+            .is_some_and(|failed| failed.get());
+        if !existing_failed
+            && registry
             .get(&(key.clone(), element.debug_name.get()))
             .and_then(|entry| entry.state_revision.upgrade())
             .is_some_and(|revision| revision.get() >= element.state_revision.borrow().get())
@@ -1267,6 +1482,8 @@ fn register_keyed_state(element: &StatefulElement) {
             KeyedStateEntry {
                 rebuild_fn: Rc::downgrade(&rebuild_fn),
                 dirty: Rc::downgrade(&element.dirty.borrow()),
+                failed: Rc::downgrade(&failed),
+                failure: Rc::downgrade(&failure),
                 state_revision: Rc::downgrade(&element.state_revision.borrow()),
                 state_any: Rc::downgrade(&state_any),
                 state_sender: Rc::downgrade(&state_sender),
@@ -1880,6 +2097,31 @@ mod tests {
     }
 
     #[test]
+    fn stale_rebuild_after_queued_panic_reuses_the_recovery_element() {
+        let context = dummy_build_context();
+        let widget = lifecycle_widget(PanicPhase::None);
+        let updater_slot = widget.updater.clone();
+        let element = StatefulElement::from_widget(widget, &context, "LifecycleWidget", None);
+        let stateful = element
+            .option_any()
+            .and_then(|value| value.downcast_ref::<StatefulElement>())
+            .expect("element should be stateful");
+        let updater = updater_slot.borrow().as_ref().unwrap().clone();
+        updater.set_state(|_| panic!("queued mutation failed"));
+
+        let rebuild = unsafe { (&*stateful.rebuild_fn.0.get()).clone() };
+        let first = rebuild(&context);
+        assert_eq!(first.debug_name(), "ErrorWidget");
+
+        let second = rebuild(&context);
+        assert_eq!(
+            second.debug_name(),
+            "ErrorWidget",
+            "stale callbacks must not rebuild the failed state again"
+        );
+    }
+
+    #[test]
     fn dirty_state_build_panic_installs_stable_error_child() {
         let context = dummy_build_context();
         let widget = lifecycle_widget(PanicPhase::None);
@@ -1922,6 +2164,192 @@ mod tests {
             Some(key),
         );
         assert_eq!(recovered.debug_name(), "ErrorWidget");
+    }
+
+    #[test]
+    fn failed_keyed_reconciliation_does_not_retry_the_live_state() {
+        let context = dummy_build_context();
+        let _scope = KeyedStateScope::enter();
+        let key = crate::Key::Value("consumed-live-state-key".to_owned());
+        let live = StatefulElement::from_widget(
+            lifecycle_widget(PanicPhase::None),
+            &context,
+            "LifecycleWidget",
+            Some(key.clone()),
+        );
+        let live_stateful = live
+            .option_any()
+            .and_then(|value| value.downcast_ref::<StatefulElement>())
+            .expect("live element should be stateful");
+        let updater = live_stateful
+            .state_updater::<LifecycleState>()
+            .expect("live element should expose its state updater");
+        let live_state = unsafe { &*live_stateful.state_any.0.get() }
+            .downcast_ref::<SyncState<LifecycleState>>()
+            .expect("live state should have the expected type");
+        unsafe {
+            (&mut *live_state.0.get()).take();
+        }
+
+        let recovered = StatefulElement::from_widget(
+            lifecycle_widget(PanicPhase::None),
+            &context,
+            "LifecycleWidget",
+            Some(key),
+        );
+
+        assert_eq!(recovered.debug_name(), "ErrorWidget");
+        updater.set_state(|_| {});
+        live_stateful.rebuild_if_dirty(&context);
+        assert!(has_error_child(live.as_ref()));
+    }
+
+    #[test]
+    fn carried_config_panic_becomes_error_child_with_key_hint() {
+        let context = dummy_build_context();
+        let key = crate::Key::Value("carry-panic-key".to_owned());
+        let old = StatefulElement::from_widget(
+            lifecycle_widget(PanicPhase::None),
+            &context,
+            "LifecycleWidget",
+            Some(key.clone()),
+        );
+        let old_stateful = old
+            .option_any()
+            .and_then(|value| value.downcast_ref::<StatefulElement>())
+            .expect("old element should be stateful");
+        let old_state = unsafe { &*old_stateful.state_any.0.get() }
+            .downcast_ref::<SyncState<LifecycleState>>()
+            .expect("old state should have the expected type");
+        unsafe {
+            (&mut *old_state.0.get()).take();
+        }
+
+        let new = StatefulElement::from_widget(
+            lifecycle_widget(PanicPhase::None),
+            &context,
+            "LifecycleWidget",
+            Some(key),
+        );
+
+        carry_stateful(old.as_ref(), new.as_ref(), &context);
+
+        assert!(has_error_child(new.as_ref()));
+    }
+
+    #[test]
+    fn failed_state_reconciliation_does_not_report_a_second_internal_panic() {
+        let context = dummy_build_context();
+        let key = crate::Key::Value("carry-panic-key".to_owned());
+        let old = StatefulElement::from_widget(
+            lifecycle_widget(PanicPhase::None),
+            &context,
+            "LifecycleWidget",
+            Some(key.clone()),
+        );
+        let old_stateful = old
+            .option_any()
+            .and_then(|value| value.downcast_ref::<StatefulElement>())
+            .expect("old element should be stateful");
+        let updater = old_stateful
+            .state_updater::<LifecycleState>()
+            .expect("old element should expose its state updater");
+        updater.set_state(|_| {});
+        let old_state = unsafe { &*old_stateful.state_any.0.get() }
+            .downcast_ref::<SyncState<LifecycleState>>()
+            .expect("old state should have the expected type");
+        unsafe {
+            (&mut *old_state.0.get()).take();
+        }
+
+        let new = StatefulElement::from_widget(
+            lifecycle_widget(PanicPhase::None),
+            &context,
+            "LifecycleWidget",
+            Some(key),
+        );
+
+        carry_stateful(old.as_ref(), new.as_ref(), &context);
+
+        assert!(has_error_child(new.as_ref()));
+        updater.set_state(|_| {});
+        old_stateful.rebuild_if_dirty(&context);
+        assert!(has_error_child(old.as_ref()));
+    }
+
+    #[test]
+    fn stale_keyed_rebuild_reuses_the_original_recovery_diagnostic() {
+        let context = dummy_build_context();
+        let _scope = KeyedStateScope::enter();
+        let key = crate::Key::Value("stale-rebuild-key".to_owned());
+        let live = StatefulElement::from_widget(
+            lifecycle_widget(PanicPhase::None),
+            &context,
+            "LifecycleWidget",
+            Some(key.clone()),
+        );
+        let live_stateful = live
+            .option_any()
+            .and_then(|value| value.downcast_ref::<StatefulElement>())
+            .expect("live element should be stateful");
+        let live_state = unsafe { &*live_stateful.state_any.0.get() }
+            .downcast_ref::<SyncState<LifecycleState>>()
+            .expect("live state should have the expected type");
+        unsafe {
+            (&mut *live_state.0.get()).take();
+        }
+
+        let recovered = StatefulElement::from_widget(
+            lifecycle_widget(PanicPhase::None),
+            &context,
+            "LifecycleWidget",
+            Some(key),
+        );
+        assert_eq!(recovered.debug_name(), "ErrorWidget");
+
+        let rebuild = unsafe { (&*live_stateful.rebuild_fn.0.get()).clone() };
+        let stale_child = rebuild(&context);
+        let stale_debug = stale_child
+            .option_any()
+            .and_then(|value| value.downcast_ref::<crate::ErrorElement>())
+            .map(|error| format!("{error:?}"))
+            .expect("stale rebuild should return an error element");
+
+        assert!(stale_debug.contains("adopt_config_from"), "{stale_debug}");
+        assert!(!stale_debug.contains("queued state mutation"), "{stale_debug}");
+        assert!(stale_debug.contains("stale-rebuild-key"), "{stale_debug}");
+    }
+
+    #[test]
+    fn consumed_keyed_state_panic_explains_where_to_check_the_key() {
+        let key = crate::Key::Value("duplicate-key".to_owned());
+
+        let message = consumed_state_panic_message("LifecycleWidget", Some(&key));
+
+        assert!(message.contains("LifecycleWidget"));
+        assert!(message.contains("duplicate-key"));
+        assert!(message.contains("value Value(\"duplicate-key\")"));
+        assert!(!message.contains("create_location"));
+        assert!(!message.contains(file!()));
+        assert!(message.contains("key is created and used"));
+        assert!(message.contains("stable and unique"));
+    }
+
+    #[test]
+    fn consumed_keyed_state_diagnostic_points_to_key_creation() {
+        let key = crate::Key::Value("creation-site-key".to_owned());
+        let diagnostic = recover_operation("LifecycleWidget", BuildPhase::AdoptConfig, || {
+            panic!("{}", consumed_state_panic_message("LifecycleWidget", Some(&key)))
+        })
+        .expect_err("the consumed-state diagnostic should be recovered");
+
+        let message = diagnostic.with_site(key.diagnostic_site()).to_string();
+
+        assert!(message.contains("at "), "{message}");
+        assert!(message.contains(file!()), "{message}");
+        assert!(message.contains("let key = crate::Key::Value"), "{message}");
+        assert!(message.contains("^"), "{message}");
+        assert!(!message.contains("create_location"), "{message}");
     }
 
     #[test]

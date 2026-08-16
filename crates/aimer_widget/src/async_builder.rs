@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::future::Future;
 use std::marker::PhantomData;
+use std::panic::Location;
 use std::rc::{Rc, Weak};
 
 use aimer_attribute::{ResolvedSize, Size, Vec2d};
@@ -122,8 +123,10 @@ impl<K, F, B> AsyncBuilder<K, F, B> {
     ///
     /// This is distinct from [`request_key`](Self::request_key): the widget key
     /// identifies the element, while the request key controls future reuse.
+    #[track_caller]
     pub fn key(mut self, key: impl Into<Key>) -> Self {
-        self.widget_key = Some(key.into());
+        let caller = Location::caller();
+        self.widget_key = Some(key.into().with_location(caller));
         self
     }
 }

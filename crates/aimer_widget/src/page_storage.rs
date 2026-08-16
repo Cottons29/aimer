@@ -37,7 +37,7 @@
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
-
+use std::panic::Location;
 use crate::Key;
 
 thread_local! {
@@ -47,8 +47,10 @@ thread_local! {
 /// Persist `value` under `key`, overwriting any previous value. Call this
 /// wherever the value changes (e.g. inside a button's `on_press`) so a later
 /// teardown/rebuild can restore it.
+#[track_caller]
 pub fn write<T: 'static>(key: impl Into<Key>, value: T) {
-    let key = key.into();
+    let caller = Location::caller();
+    let key = key.into().with_location(caller);
     STORE.with(|m| {
         m.borrow_mut().insert(key, Box::new(value));
     });
