@@ -48,11 +48,17 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // it) to avoid recomputing the child layout multiple times per draw.
         self.ctrl.cached_content_size.set(content_size);
         let transform = ctx.canvas.get_transform_translation();
+        let layout_size = self.layout_size(ctx);
         let max_x = (content_size.width - viewport_w).max(0.0);
         let max_y = (content_size.height - viewport_h).max(0.0);
 
-        self.bounds
-            .save(ctx.scale, transform.0, transform.1, viewport_w, viewport_h);
+        self.bounds.save(
+            ctx.scale,
+            transform.0,
+            transform.1,
+            layout_size.width,
+            layout_size.height,
+        );
         self.ctrl.cached_viewport.set((viewport_w, viewport_h));
         self.ctrl.cursor_pos.set(Some(ctx.cursor_pos));
 
@@ -117,13 +123,15 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // Write-back: persist the live position so a full teardown/re-create can
         // restore it (see `scroll_storage`). Stored in logical (unscaled) pixels
         // to survive a scale change. Only when the user opted in via `storage_key`.
-        crate::scrollable::scroll_storage::save_offset(
-            &self.ctrl.storage_key,
-            Vec2d {
-                x: offset.x / ctx.scale,
-                y: offset.y / ctx.scale,
-            },
-        );
+        if self.ctrl.remember_scroll_offset {
+            crate::scrollable::scroll_storage::save_offset(
+                &self.ctrl.storage_key,
+                Vec2d {
+                    x: offset.x / ctx.scale,
+                    y: offset.y / ctx.scale,
+                },
+            );
+        }
 
         let offset = self.ctrl.visual_offset(offset);
 
@@ -150,6 +158,14 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         });
 
         let mut child_ctx = ctx.clone();
+        child_ctx.box_constraint.min_width = child_ctx.box_constraint.min_width.min(viewport_w);
+        child_ctx.box_constraint.min_height = child_ctx.box_constraint.min_height.min(viewport_h);
+        child_ctx.box_constraint.max_width = viewport_w;
+        child_ctx.box_constraint.max_height = viewport_h;
+        child_ctx.parent_size = ResolvedSize {
+            width: viewport_w,
+            height: viewport_h,
+        };
         match self.ctrl.axis {
             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
@@ -176,33 +192,46 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // Draw child content
         self.child.draw(&child_ctx);
 
-        // Restore before drawing scrollbars (they should not be offset by scroll)
+        // Restore before drawing scrollbars (they are separate in-flow children).
         ctx.canvas.clear_clip();
         ctx.canvas.restore();
 
-        // Draw scrollbars on top, clipped to viewport
-        ctx.canvas.save();
-        ctx.canvas.set_clip(
-            Vec2d { x: 0.0, y: 0.0 },
-            ResolvedSize {
-                width: viewport_w.round(),
-                height: viewport_h.round(),
-            },
-        );
+        if let Some(vertical_bar) = &self.vertical_scroll_bar
+            && matches!(self.ctrl.axis, ScrollAxis::Vertical)
         {
-            if let Some(ref vertical_bar) = self.vertical_scroll_bar
-                && matches!(self.ctrl.axis, ScrollAxis::Vertical)
-            {
-                self.draw_scrollbar(ctx, vertical_bar, viewport_w, viewport_h, true);
-            }
-            if let Some(ref horizontal_bar) = self.horizontal_scroll_bar
-                && matches!(self.ctrl.axis, ScrollAxis::Horizontal)
-            {
-                self.draw_scrollbar(ctx, horizontal_bar, viewport_w, viewport_h, false);
-            }
+            let mut bar_ctx = ctx.clone();
+            bar_ctx.box_constraint.max_width = self.vertical_bar_width;
+            bar_ctx.box_constraint.max_height = viewport_h;
+            bar_ctx.parent_size = ResolvedSize {
+                width: self.vertical_bar_width,
+                height: viewport_h,
+            };
+            ctx.canvas.save();
+            ctx.canvas.translate(Vec2d {
+                x: viewport_w,
+                y: 0.0,
+            });
+            vertical_bar.draw(&bar_ctx);
+            ctx.canvas.restore();
         }
-        ctx.canvas.clear_clip();
-        ctx.canvas.restore();
+        if let Some(horizontal_bar) = &self.horizontal_scroll_bar
+            && matches!(self.ctrl.axis, ScrollAxis::Horizontal)
+        {
+            let mut bar_ctx = ctx.clone();
+            bar_ctx.box_constraint.max_width = viewport_w;
+            bar_ctx.box_constraint.max_height = self.horizontal_bar_height;
+            bar_ctx.parent_size = ResolvedSize {
+                width: viewport_w,
+                height: self.horizontal_bar_height,
+            };
+            ctx.canvas.save();
+            ctx.canvas.translate(Vec2d {
+                x: 0.0,
+                y: viewport_h,
+            });
+            horizontal_bar.draw(&bar_ctx);
+            ctx.canvas.restore();
+        }
     }
 }
 

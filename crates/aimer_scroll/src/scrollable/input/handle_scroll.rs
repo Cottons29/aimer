@@ -566,6 +566,15 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     aimer_events::window::request_animation_frame();
                     return child_result.merge(EventResult::consumed().with_redraw());
                 }
+
+                // The thumb highlight is resolved from the cursor at draw
+                // time, and hover moves no longer buy a frame each — so the
+                // move that carries the cursor across a thumb edge schedules
+                // the one frame the highlight needs, and every other move
+                // schedules nothing.
+                if self.ctrl.sync_thumb_hover(*p) {
+                    aimer_events::window::request_animation_frame();
+                }
                 false
             }
             ElementEvent::KeyInput {
@@ -689,6 +698,12 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 impl<E: Element> VisitorElement for RawScrollableContainer<E> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(&self.child);
+        if let Some(vertical_scroll_bar) = &self.vertical_scroll_bar {
+            visitor(vertical_scroll_bar);
+        }
+        if let Some(horizontal_scroll_bar) = &self.horizontal_scroll_bar {
+            visitor(horizontal_scroll_bar);
+        }
     }
 
     fn debug_name(&self) -> &'static str {
@@ -698,23 +713,20 @@ impl<E: Element> VisitorElement for RawScrollableContainer<E> {
 
 impl<E: Element> LayoutElement for RawScrollableContainer<E> {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        match self.ctrl.axis {
-            ScrollAxis::Vertical => ResolvedSize {
-                width: ctx.box_constraint.max_width,
-                height: ctx.box_constraint.max_height,
-            },
-            ScrollAxis::Horizontal => ResolvedSize {
-                width: ctx.box_constraint.max_width,
-                height: self
-                    .content_size(ctx)
-                    .height
-                    .clamp(ctx.box_constraint.min_height, ctx.box_constraint.max_height),
-            },
-        }
+        self.layout_size(ctx)
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        let (viewport_w, viewport_h) = self.viewport_size(ctx);
         let mut child_ctx = ctx.clone();
+        child_ctx.box_constraint.min_width = child_ctx.box_constraint.min_width.min(viewport_w);
+        child_ctx.box_constraint.min_height = child_ctx.box_constraint.min_height.min(viewport_h);
+        child_ctx.box_constraint.max_width = viewport_w;
+        child_ctx.box_constraint.max_height = viewport_h;
+        child_ctx.parent_size = ResolvedSize {
+            width: viewport_w,
+            height: viewport_h,
+        };
         match self.ctrl.axis {
             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,

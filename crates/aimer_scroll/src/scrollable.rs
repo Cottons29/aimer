@@ -1,26 +1,20 @@
-pub mod cache_extent;
-pub mod constants;
-pub mod controller;
-pub mod device_contact;
-pub mod draw_scroll;
-pub mod handle_scroll;
-pub mod overscroll_source;
-pub mod raw_scroll;
-pub mod recovery_end;
-pub mod scroll_bar;
-pub mod scroll_behavior;
-pub mod scroll_frame;
-pub mod scroll_storage;
-pub mod spring;
-pub mod velocity_history;
-/// Browser-only gesture analysis. Compiled for the host as well so its logic
-/// stays covered by the workspace test run.
+pub mod core;
+pub mod input;
+pub mod physics;
+pub mod platform;
+pub mod rendering;
+pub mod state;
+
+// Keep the original module paths available while the implementation is
+// organized by responsibility below `scrollable/`.
+pub use core::raw_scroll;
+pub use input::{device_contact, handle_scroll, scroll_frame};
+pub use physics::{constants, overscroll_source, scroll_behavior, spring, velocity_history};
+pub use platform::recovery_end;
+pub use rendering::{cache_extent, draw_scroll, scroll_bar};
+pub use state::{controller, scroll_storage};
 #[cfg(any(target_arch = "wasm32", test))]
-pub mod web_overscroll;
-/// Browser-only gesture termination. Compiled for the host as well so its
-/// logic stays covered by the workspace test run.
-#[cfg(any(target_arch = "wasm32", test))]
-pub mod web_recovery_end;
+pub use platform::{web_overscroll, web_recovery_end};
 
 use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
@@ -44,14 +38,29 @@ use velocity_history::VelocityHistory;
 
 use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
+use crate::scrollable::scroll_bar::{reserved_viewport, track_width};
+
+#[inline]
+fn resolved_parent_extent(min: f32, max: f32, parent: f32) -> f32 {
+    let extent = if max.is_finite() && max < f32::MAX {
+        max
+    } else if parent.is_finite() && parent < f32::MAX {
+        parent.max(min)
+    } else {
+        min
+    };
+
+    extent.clamp(min, max)
+}
 
 /// A single-child viewport that scrolls overflowing content along one axis.
 ///
 /// The child receives an unbounded constraint on the selected [`ScrollAxis`]
 /// and the viewport clips and translates that content according to
 /// [`ScrollBehavior`]. The default axis is vertical, both scroll bars are
-/// enabled, a fresh storage [`Key`] is generated, and no external
-/// [`ScrollController`] is attached.
+/// enabled, teardown persistence is disabled, and no external
+/// [`ScrollController`] is attached. Call [`Scrollable::key`] to preserve the
+/// offset across a full teardown and later recreation.
 ///
 /// Attach a child with [`Scrollable::child`] to retain its concrete type, or
 /// with [`Scrollable::box_child`] when branches need a shared erased type.
@@ -81,12 +90,13 @@ pub struct Scrollable<W = RequiredChild> {
     pub axis: ScrollAxis,
     pub vertical_scroll_bar: Option<ScrollBar>,
     pub horizontal_scroll_bar: Option<ScrollBar>,
-    /// Opt-in `PageStorage`-style identity. When set, the live scroll offset is
-    /// saved under this key and restored if the `Scrollable` is fully torn down
-    /// and later recreated (e.g. a swapped tab). `None` = not remembered
-    /// across teardown (rebuild/resize is still preserved via
-    /// reconciliation).
+    /// Identity used by live-state reconciliation and, after [`Scrollable::key`]
+    /// is called, by `PageStorage`-style teardown persistence.
+    ///
+    /// A default scrollable does not read or write offset storage; rebuilds and
+    /// resizes still preserve its live position through reconciliation.
     pub key: Key,
+    remember_scroll_offset: bool,
     /// Optional app-held [`ScrollController`] for programmatic control. When
     /// `Some`, the app can read the live position and drive it with
     /// [`ScrollController::jump_to`] / [`ScrollController::animate_to`]; the
@@ -129,6 +139,7 @@ impl Scrollable {
             vertical_scroll_bar: Some(ScrollBar::default()),
             horizontal_scroll_bar: Some(ScrollBar::default()),
             key: Key::Value(caller.to_string()).with_location(caller),
+            remember_scroll_offset: false,
             key_scroll_strength: 50f32,
             controller: None,
             web_overscroll: OverscrollSources::WEB_DEFAULT,
@@ -140,8 +151,8 @@ impl Scrollable {
     ///
     /// This is equivalent to [`Scrollable::new`] followed by
     /// [`Scrollable::child`]: it uses the default vertical axis and behavior,
-    /// enables both default scroll bars, generates a storage key, and has no
-    /// external controller.
+    /// enables both default scroll bars, does not persist its offset across a
+    /// teardown, and has no external controller.
     #[inline]
     #[track_caller]
     pub fn with_child<W: Widget + 'static>(child: W) -> Scrollable<W> {
@@ -153,6 +164,7 @@ impl Scrollable {
             vertical_scroll_bar: Some(ScrollBar::default()),
             horizontal_scroll_bar: Some(ScrollBar::default()),
             key: Key::Value(caller.to_string()).with_location(caller),
+            remember_scroll_offset: false,
             controller: None,
             key_scroll_strength: 50f32,
             web_overscroll: OverscrollSources::WEB_DEFAULT,
@@ -202,13 +214,16 @@ impl Scrollable {
 
     /// Replaces the identity used to persist and restore the logical offset.
     ///
-    /// [`Scrollable::new`] generates a fresh key. Reusing a stable key allows a
-    /// torn-down viewport to recover its stored position.
+    /// Default scrollables preserve their live position during ordinary
+    /// rebuilds but start from their declared initial offset after a full
+    /// teardown. Supplying a stable key opts into storing the live offset and
+    /// restoring it when the viewport is later recreated.
     #[inline]
     #[track_caller]
     pub fn key(mut self, key: impl Into<Key>) -> Self {
         let location = std::panic::Location::caller();
         self.key = key.into().with_location(location);
+        self.remember_scroll_offset = true;
         self
     }
 
@@ -276,9 +291,10 @@ impl Scrollable {
             scroll_behavior: self.scroll_behavior,
             axis: self.axis,
             key: self.key,
+            remember_scroll_offset: self.remember_scroll_offset,
             controller: self.controller,
-            vertical_scroll_bar: self.vertical_scroll_bar,
-            horizontal_scroll_bar: self.horizontal_scroll_bar,
+            vertical_scroll_bar: self.vertical_scroll_bar.clone(),
+            horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
             web_overscroll: self.web_overscroll,
             marker: PhantomData,
         }
@@ -309,6 +325,7 @@ pub struct ScrollableState<W: Widget + 'static> {
     vertical_scroll_bar: Option<ScrollBar>,
     horizontal_scroll_bar: Option<ScrollBar>,
     key: Key,
+    remember_scroll_offset: bool,
     controller: Option<ScrollController>,
     web_overscroll: OverscrollSources,
     scroll_state: RefCell<Option<Rc<ScrollState>>>,
@@ -328,9 +345,10 @@ impl<W: Widget + 'static> StatefulWidget for Scrollable<W> {
             child: self.child.clone(),
             scroll_behavior: self.scroll_behavior,
             axis: self.axis,
-            vertical_scroll_bar: self.vertical_scroll_bar,
-            horizontal_scroll_bar: self.horizontal_scroll_bar,
+            vertical_scroll_bar: self.vertical_scroll_bar.clone(),
+            horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
             key: self.key.clone(),
+            remember_scroll_offset: self.remember_scroll_offset,
             controller: self.controller.clone(),
             web_overscroll: self.web_overscroll,
             scroll_state: RefCell::new(None),
@@ -362,6 +380,7 @@ impl<W: Widget + 'static> State<Scrollable<W>> for ScrollableState<W> {
                 || !same_scroll_axis(self.axis, new.axis)
                 || self.web_overscroll != new.web_overscroll
                 || self.key != new.key
+                || self.remember_scroll_offset != new.remember_scroll_offset
                 || controller_changed;
 
         self.child = new.child;
@@ -370,6 +389,7 @@ impl<W: Widget + 'static> State<Scrollable<W>> for ScrollableState<W> {
         self.vertical_scroll_bar = new.vertical_scroll_bar;
         self.horizontal_scroll_bar = new.horizontal_scroll_bar;
         self.key = new.key;
+        self.remember_scroll_offset = new.remember_scroll_offset;
         self.web_overscroll = new.web_overscroll;
 
         if let Some(new_ctrl) = new.controller {
@@ -388,8 +408,8 @@ impl<W: Widget + 'static> State<Scrollable<W>> for ScrollableState<W> {
         ScrollableFrame {
             child: self.child.clone(),
             ctrl,
-            vertical_scroll_bar: self.vertical_scroll_bar,
-            horizontal_scroll_bar: self.horizontal_scroll_bar,
+            vertical_scroll_bar: self.vertical_scroll_bar.clone(),
+            horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
         }
     }
 }
@@ -412,7 +432,9 @@ impl<W: Widget + 'static> ScrollableState<W> {
                 // saved offset, so carrying the previous list's position across
                 // would share one offset between the two. Only adopt the live
                 // interaction state when the key is unchanged.
-                if previous.storage_key == self.key {
+                if previous.storage_key == self.key
+                    && previous.remember_scroll_offset == self.remember_scroll_offset
+                {
                     next.adopt_scroll_state(previous);
                 }
             }
@@ -437,11 +459,15 @@ impl<W: Widget + 'static> ScrollableState<W> {
     }
     #[inline]
     fn create_scroll_state(&self, ctx: &BuildContext) -> Rc<ScrollState> {
-        // Seed the initial offset: prefer a previously stored position (survives a
-        // full teardown) keyed by `storage_key`; otherwise fall back to the declared
-        // `scroll_behavior.scroll_offset`. Stored offsets are logical (unscaled), so
-        // re-apply `ctx.scale` here just like the declared offset below.
-        let mut initial_offset = scroll_storage::read_offset(&self.key)
+        // Seed an explicitly keyed viewport from its stored position after a
+        // full teardown; an unkeyed viewport always uses the declared behavior.
+        // Stored offsets are logical (unscaled), so re-apply `ctx.scale` here
+        // just like the declared offset below.
+        let stored_offset = self
+            .remember_scroll_offset
+            .then(|| scroll_storage::read_offset(&self.key))
+            .flatten();
+        let mut initial_offset = stored_offset
             .map(|logical| Vec2d {
                 x: logical.x * ctx.scale,
                 y: logical.y * ctx.scale,
@@ -476,6 +502,7 @@ impl<W: Widget + 'static> ScrollableState<W> {
             speed_multiplier: ctx.scale,
             scroll_offset: Cell::new(initial_offset),
             storage_key: self.key.clone(),
+            remember_scroll_offset: self.remember_scroll_offset,
             last_pointer_pos: Cell::new(None),
             drag_mode: Cell::new(DragMode::None),
             cached_max_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
@@ -488,6 +515,7 @@ impl<W: Widget + 'static> ScrollableState<W> {
             last_frame_time: Cell::new(None),
             v_thumb_rect: Cell::new(None),
             h_thumb_rect: Cell::new(None),
+            thumb_hovered: Cell::new(false),
             v_scroll_multiplier: Cell::new(0.0),
             h_scroll_multiplier: Cell::new(0.0),
             last_scale: Cell::new(ctx.scale),
@@ -589,18 +617,75 @@ struct ScrollableFrame {
 
 impl Widget for ScrollableFrame {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let full_width = resolved_parent_extent(
+            ctx.box_constraint.min_width,
+            ctx.box_constraint.max_width,
+            ctx.parent_size.width,
+        );
+        let full_height = resolved_parent_extent(
+            ctx.box_constraint.min_height,
+            ctx.box_constraint.max_height,
+            ctx.parent_size.height,
+        );
+        let vertical_bar_width = if matches!(self.ctrl.axis, ScrollAxis::Vertical) {
+            self.vertical_scroll_bar
+                .as_ref()
+                .map(|bar| track_width(bar, full_width, ctx.scale))
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let horizontal_bar_height = if matches!(self.ctrl.axis, ScrollAxis::Horizontal) {
+            self.horizontal_scroll_bar
+                .as_ref()
+                .map(|bar| track_width(bar, full_height, ctx.scale))
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let (viewport_w, viewport_h) = reserved_viewport(
+            self.ctrl.axis,
+            full_width,
+            full_height,
+            if matches!(self.ctrl.axis, ScrollAxis::Vertical) {
+                vertical_bar_width
+            } else {
+                horizontal_bar_height
+            },
+        );
+
         let mut child_ctx = ctx.clone();
+        child_ctx.box_constraint.min_width = child_ctx.box_constraint.min_width.min(viewport_w);
+        child_ctx.box_constraint.min_height = child_ctx.box_constraint.min_height.min(viewport_h);
+        child_ctx.box_constraint.max_width = viewport_w;
+        child_ctx.box_constraint.max_height = viewport_h;
+        child_ctx.parent_size = aimer_attribute::size::ResolvedSize {
+            width: viewport_w,
+            height: viewport_h,
+        };
         match self.ctrl.axis {
             ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
             ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
         }
         let child = self.child.build(&child_ctx);
+        let vertical_scroll_bar = self.vertical_scroll_bar.map(|bar| {
+            bar.for_scrollable(self.ctrl.clone(), ScrollAxis::Vertical)
+                .to_element(ctx)
+        });
+        let horizontal_scroll_bar = self.horizontal_scroll_bar.map(|bar| {
+            bar.for_scrollable(self.ctrl.clone(), ScrollAxis::Horizontal)
+                .to_element(ctx)
+        });
 
         RawScrollableContainer {
             child,
             ctrl: self.ctrl.clone(),
-            vertical_scroll_bar: self.vertical_scroll_bar,
-            horizontal_scroll_bar: self.horizontal_scroll_bar,
+            vertical_scroll_bar,
+            horizontal_scroll_bar,
+            viewport_w,
+            viewport_h,
+            vertical_bar_width,
+            horizontal_bar_height,
             bounds: CacheBounds::with_vec2d(child_ctx.parent_pos),
             event_dispatcher: RefCell::new(aimer_widget::EventDispatcher::new()),
         }
@@ -620,10 +705,57 @@ mod tests {
 
     use super::{
         scroll_storage, BuildContext, OverscrollSource, OverscrollSources, ScrollAxis, Scrollable,
-        resolved_overscroll_sources,
+        resolved_overscroll_sources, resolved_parent_extent,
     };
 
     fn assert_stateful_widget<W: StatefulWidget>() {}
+
+    #[test]
+    fn a_bounded_parent_uses_its_maximum_extent() {
+        assert_eq!(resolved_parent_extent(0.0, 320.0, 240.0), 320.0);
+    }
+
+    #[test]
+    fn an_unbounded_parent_uses_its_resolved_size() {
+        assert_eq!(resolved_parent_extent(0.0, f32::MAX, 240.0), 240.0);
+    }
+
+    #[test]
+    fn an_unbounded_parent_still_honors_the_minimum_extent() {
+        assert_eq!(resolved_parent_extent(320.0, f32::MAX, 240.0), 320.0);
+    }
+
+    #[test]
+    fn two_unbounded_extents_fall_back_to_the_minimum() {
+        assert_eq!(resolved_parent_extent(0.0, f32::MAX, f32::MAX), 0.0);
+    }
+
+    #[tokio::test]
+    async fn an_unbounded_parent_constraint_uses_the_parent_size_for_the_viewport() {
+        let mut ctx = context();
+        ctx.parent_size = ResolvedSize {
+            width: 320.0,
+            height: 180.0,
+        };
+        ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 320.0,
+            max_height: f32::MAX,
+        };
+
+        let state = Scrollable::new()
+            .vertical_scroll_bar(None)
+            .horizontal_scroll_bar(None)
+            .child(ErrorWidget::new("content"))
+            .create_state();
+        let element = state.build(&ctx).to_element(&ctx);
+
+        assert_eq!(element.computed_size(&ctx), ResolvedSize {
+            width: 320.0,
+            height: 180.0,
+        });
+    }
 
     /// Content that reports how often it was asked for an element.
     struct Probe {
@@ -827,6 +959,33 @@ mod tests {
             engine.scroll_offset.get().y,
             120.0,
             "list B must restore its own offset, not list A's 300"
+        );
+    }
+
+    fn default_scrollable() -> Scrollable<ErrorWidget> {
+        Scrollable::new().child(ErrorWidget::new("content"))
+    }
+
+    #[tokio::test]
+    async fn a_default_scrollable_does_not_restore_an_old_offset_after_teardown() {
+        let ctx = context();
+        let first = default_scrollable().create_state();
+        scroll_storage::save_offset(
+            &first.key,
+            Vec2d {
+                x: 0.0,
+                y: -48.0,
+            },
+        );
+
+        let recreated = default_scrollable().create_state();
+        recreated.build(&ctx).to_element(&ctx);
+
+        let engine = recreated.scroll_state.borrow();
+        assert_eq!(
+            engine.as_ref().unwrap().scroll_offset.get(),
+            Vec2d::ZERO,
+            "an unkeyed viewport must open at the declared initial offset"
         );
     }
 }

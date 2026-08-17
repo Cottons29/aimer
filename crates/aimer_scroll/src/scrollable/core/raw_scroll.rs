@@ -6,7 +6,7 @@ use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_widget::base::*;
-use aimer_widget::{Element, EventDispatcher, Rebuildable};
+use aimer_widget::{AnyElement, Element, EventDispatcher, Rebuildable};
 
 pub use crate::scrollable::controller::DragMode;
 use crate::scrollable::controller::ScrollState;
@@ -18,8 +18,12 @@ pub struct RawScrollableContainer<E: Element> {
     /// [`ScrollController`](crate::ScrollController) can share the very same
     /// state and drive it programmatically across rebuilds.
     pub(crate) ctrl: Rc<ScrollState>,
-    pub(crate) vertical_scroll_bar: Option<ScrollBar>,
-    pub(crate) horizontal_scroll_bar: Option<ScrollBar>,
+    pub(crate) vertical_scroll_bar: Option<AnyElement>,
+    pub(crate) horizontal_scroll_bar: Option<AnyElement>,
+    pub(crate) viewport_w: f32,
+    pub(crate) viewport_h: f32,
+    pub(crate) vertical_bar_width: f32,
+    pub(crate) horizontal_bar_height: f32,
     pub(crate) bounds: CacheBounds,
     pub(crate) event_dispatcher: RefCell<EventDispatcher>,
 }
@@ -63,11 +67,134 @@ impl<E: Element + 'static> Rebuildable for RawScrollableContainer<E> {
 }
 
 impl<E: Element> RawScrollableContainer<E> {
-    /// Compute the viewport size from the build context constraints.
-    pub(crate) fn viewport_size(&self, ctx: &BuildContext) -> (f32, f32) {
-        (ctx.box_constraint.max_width, ctx.box_constraint.max_height)
+    /// Resolves the scroll-axis extent against the active constraints.
+    #[inline]
+    fn constrained_extent(
+        viewport: f32,
+        bar_extent: f32,
+        min: f32,
+        max: f32,
+        parent: f32,
+    ) -> (f32, f32) {
+        let total = if max.is_finite() && max < f32::MAX {
+            max
+        } else if parent.is_finite() && parent < f32::MAX {
+            parent.max(min)
+        } else {
+            viewport + bar_extent
+        }
+        .clamp(min, max);
+        let bar_extent = bar_extent.min(total).max(0.0);
+        (total, (total - bar_extent).max(0.0))
     }
 
+    /// Resolves the cross-axis extent — the axis this viewport never scrolls.
+    ///
+    /// A bounded maximum is filled, exactly like any other box handed a
+    /// definite extent. An *unbounded* maximum means the surrounding layout is
+    /// asking the viewport how much space it needs — a `Column` measuring its
+    /// children inside a vertical scroll viewport does exactly that — so the
+    /// honest answer is the child's own extent plus the bar reserved on this
+    /// axis. Falling back to the parent's resolved size here is what used to
+    /// stretch a horizontal code-block scroller to the full height of the
+    /// outer viewport.
+    ///
+    /// `content` is only invoked on the unbounded path, so the common bounded
+    /// case never measures the child.
+    #[inline]
+    fn cross_extent(
+        content: impl FnOnce() -> f32,
+        bar_extent: f32,
+        min: f32,
+        max: f32,
+    ) -> (f32, f32) {
+        let total = if max.is_finite() && max < f32::MAX {
+            max
+        } else {
+            content() + bar_extent
+        }
+        .clamp(min, max);
+        let bar_extent = bar_extent.min(total).max(0.0);
+        (total, (total - bar_extent).max(0.0))
+    }
+
+    /// Measures the child's extent across the scroll axis.
+    ///
+    /// The scroll axis is left unbounded exactly as the child is measured
+    /// everywhere else in this container, so the result comes from the same
+    /// per-constraint layout cache the draw pass resolves and costs nothing on
+    /// a settled frame.
+    fn content_cross_extent(&self, ctx: &BuildContext) -> f32 {
+        let mut child_ctx = ctx.clone();
+        match self.ctrl.axis {
+            crate::ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
+            crate::ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
+        }
+        let size = self.child.computed_size(&child_ctx);
+        match self.ctrl.axis {
+            crate::ScrollAxis::Vertical => size.width,
+            crate::ScrollAxis::Horizontal => size.height,
+        }
+    }
+
+    /// Resolves both extents this scrollable occupies under `ctx`.
+    ///
+    /// Returns `((width, inner_width), (height, inner_height))`, where the
+    /// first value of each pair includes the bar reserved on that axis and the
+    /// second is the content viewport that remains. The scroll axis fills the
+    /// space it was given; the cross axis wraps the child when its constraint
+    /// is unbounded — see [`RawScrollableContainer::cross_extent`].
+    #[inline]
+    fn resolved_extents(&self, ctx: &BuildContext) -> ((f32, f32), (f32, f32)) {
+        let constraint = &ctx.box_constraint;
+        match self.ctrl.axis {
+            crate::ScrollAxis::Vertical => (
+                Self::cross_extent(
+                    || self.content_cross_extent(ctx),
+                    self.vertical_bar_width,
+                    constraint.min_width,
+                    constraint.max_width,
+                ),
+                Self::constrained_extent(
+                    self.viewport_h,
+                    0.0,
+                    constraint.min_height,
+                    constraint.max_height,
+                    ctx.parent_size.height,
+                ),
+            ),
+            crate::ScrollAxis::Horizontal => (
+                Self::constrained_extent(
+                    self.viewport_w,
+                    0.0,
+                    constraint.min_width,
+                    constraint.max_width,
+                    ctx.parent_size.width,
+                ),
+                Self::cross_extent(
+                    || self.content_cross_extent(ctx),
+                    self.horizontal_bar_height,
+                    constraint.min_height,
+                    constraint.max_height,
+                ),
+            ),
+        }
+    }
+
+    /// Computes the total size this scrollable occupies under `ctx`.
+    #[inline]
+    pub(crate) fn layout_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        let ((width, _), (height, _)) = self.resolved_extents(ctx);
+        ResolvedSize { width, height }
+    }
+
+    /// Computes the content viewport from the active layout constraints.
+    pub(crate) fn viewport_size(&self, ctx: &BuildContext) -> (f32, f32) {
+        let ((_, width), (_, height)) = self.resolved_extents(ctx);
+        (width, height)
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn draw_scrollbar(
         &self,
         ctx: &BuildContext,
@@ -367,6 +494,136 @@ mod tests {
 
     impl Rebuildable for CapturingChild {}
 
+    /// A child that reports the same intrinsic size under every constraint,
+    /// standing in for wrapped content such as a code block's text.
+    struct FixedSizeChild {
+        size: ResolvedSize,
+    }
+
+    impl VisitorElement for FixedSizeChild {
+        fn debug_name(&self) -> &'static str {
+            "FixedSizeChild"
+        }
+    }
+
+    impl EventElement for FixedSizeChild {}
+
+    impl LayoutElement for FixedSizeChild {
+        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+            self.size
+        }
+    }
+
+    impl Drawable for FixedSizeChild {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for FixedSizeChild {}
+
+    /// A scrollable along `axis` holding a child of a fixed intrinsic size,
+    /// used to observe how the container resolves its own extents.
+    fn sized_scrollable(
+        axis: crate::ScrollAxis,
+        child: ResolvedSize,
+    ) -> RawScrollableContainer<AnyElement> {
+        let mut state = ScrollState::for_test_at(Vec2d::default());
+        state.axis = axis;
+
+        RawScrollableContainer {
+            child: FixedSizeChild { size: child }.boxed(),
+            ctrl: Rc::new(state),
+            vertical_scroll_bar: None,
+            horizontal_scroll_bar: None,
+            viewport_w: 100.0,
+            viewport_h: 100.0,
+            vertical_bar_width: 0.0,
+            horizontal_bar_height: 0.0,
+            bounds: CacheBounds::new(),
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+        }
+    }
+
+    /// Regression test: a horizontal scrollable measured under an unbounded
+    /// height — a `Column` inside a vertical scroll viewport does exactly that
+    /// — must wrap its child's height instead of stretching to the parent's
+    /// resolved size, which used to blow a code block up to the full height of
+    /// the outer viewport.
+    #[tokio::test]
+    async fn a_horizontal_scrollable_wraps_its_height_when_the_cross_axis_is_unbounded() {
+        let mut scrollable = sized_scrollable(crate::ScrollAxis::Horizontal, ResolvedSize {
+            width: 300.0,
+            height: 120.0,
+        });
+        scrollable.horizontal_bar_height = 10.0;
+
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        let mut ctx = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 500.0,
+                height: 600.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+        ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 500.0,
+            max_height: f32::MAX,
+        };
+
+        assert_eq!(scrollable.viewport_size(&ctx), (500.0, 120.0));
+        assert_eq!(scrollable.computed_size(&ctx), ResolvedSize {
+            width: 500.0,
+            height: 130.0,
+        });
+    }
+
+    #[tokio::test]
+    async fn a_vertical_scrollable_wraps_its_width_when_the_cross_axis_is_unbounded() {
+        let mut scrollable = sized_scrollable(crate::ScrollAxis::Vertical, ResolvedSize {
+            width: 300.0,
+            height: 120.0,
+        });
+        scrollable.vertical_bar_width = 12.0;
+
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        let mut ctx = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 800.0,
+                height: 400.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+        ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: f32::MAX,
+            max_height: 400.0,
+        };
+
+        assert_eq!(scrollable.viewport_size(&ctx), (300.0, 400.0));
+        assert_eq!(scrollable.computed_size(&ctx), ResolvedSize {
+            width: 312.0,
+            height: 400.0,
+        });
+    }
+
     /// A container laid out over the top-left 100x100 corner, wrapping a child
     /// that captures the pointer it is pressed with. Both elements of a rebuild
     /// share `ctrl`, exactly as the live scroll engine is shared across one.
@@ -382,9 +639,139 @@ mod tests {
             ctrl,
             vertical_scroll_bar: None,
             horizontal_scroll_bar: None,
+            viewport_w: 100.0,
+            viewport_h: 100.0,
+            vertical_bar_width: 0.0,
+            horizontal_bar_height: 0.0,
             bounds,
             event_dispatcher: RefCell::new(EventDispatcher::new()),
         }
+    }
+
+    #[tokio::test]
+    async fn computed_size_fills_the_parent_constraint_over_the_stored_viewport() {
+        let scrollable = capturing_scrollable(
+            Rc::new(Cell::new(0)),
+            Rc::new(ScrollState::for_test_at(Vec2d::default())),
+        );
+        let mut scrollable = scrollable;
+        scrollable.vertical_bar_width = 12.0;
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        let mut ctx = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 200.0,
+                height: 160.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+        ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 40.0,
+            min_height: 30.0,
+            max_width: 200.0,
+            max_height: 160.0,
+        };
+
+        assert_eq!(scrollable.computed_size(&ctx), ResolvedSize {
+            width: 200.0,
+            height: 160.0,
+        });
+    }
+
+    #[tokio::test]
+    async fn a_flex_assigned_constraint_shrinks_the_scrollable_viewport() {
+        let mut scrollable = capturing_scrollable(
+            Rc::new(Cell::new(0)),
+            Rc::new(ScrollState::for_test_at(Vec2d::default())),
+        );
+        scrollable.viewport_w = 800.0;
+        scrollable.viewport_h = 600.0;
+        scrollable.vertical_bar_width = 12.0;
+
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        let mut ctx = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 800.0,
+                height: 600.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+        ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 320.0,
+            max_height: 180.0,
+        };
+
+        assert_eq!(scrollable.viewport_size(&ctx), (308.0, 180.0));
+        assert_eq!(scrollable.computed_size(&ctx), ResolvedSize {
+            width: 320.0,
+            height: 180.0,
+        });
+    }
+
+    #[tokio::test]
+    async fn a_retained_scrollable_expands_when_the_parent_constraint_grows() {
+        let mut scrollable = capturing_scrollable(
+            Rc::new(Cell::new(0)),
+            Rc::new(ScrollState::for_test_at(Vec2d::default())),
+        );
+        scrollable.viewport_w = 320.0;
+        scrollable.viewport_h = 180.0;
+        scrollable.vertical_bar_width = 12.0;
+
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        let mut ctx = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 320.0,
+                height: 180.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+        ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 320.0,
+            max_height: 180.0,
+        };
+
+        assert_eq!(scrollable.viewport_size(&ctx), (308.0, 180.0));
+
+        ctx.parent_size = ResolvedSize {
+            width: 640.0,
+            height: 360.0,
+        };
+        ctx.box_constraint.max_width = 640.0;
+        ctx.box_constraint.max_height = 360.0;
+
+        assert_eq!(scrollable.viewport_size(&ctx), (628.0, 360.0));
+        assert_eq!(scrollable.computed_size(&ctx), ResolvedSize {
+            width: 640.0,
+            height: 360.0,
+        });
     }
 
     // A rebuild triggered by the press itself — a `Button` inside the list

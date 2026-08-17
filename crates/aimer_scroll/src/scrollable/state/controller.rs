@@ -53,10 +53,11 @@ pub struct ScrollState {
     pub(crate) overscroll_source: Cell<OverscrollSource>,
     pub(crate) axis: ScrollAxis,
     pub(crate) scroll_offset: Cell<Vec2d>,
-    /// `PageStorage`-style key this scrollable saves its live offset under, so
-    /// a full teardown/re-create restores the position. `None` = not
-    /// remembered.
+    /// Identity used for `PageStorage`-style offset persistence when
+    /// `remember_scroll_offset` is enabled.
     pub(crate) storage_key: Key,
+    /// Whether `storage_key` participates in teardown persistence.
+    pub(crate) remember_scroll_offset: bool,
     pub(crate) last_pointer_pos: Cell<Option<Vec2d>>,
     pub(crate) drag_mode: Cell<DragMode>,
     pub(crate) cached_max_scroll: Cell<Vec2d>,
@@ -66,6 +67,11 @@ pub struct ScrollState {
     pub(crate) last_frame_time: Cell<Option<AnimInstant>>,
     pub(crate) v_thumb_rect: Cell<Option<(f32, f32, f32, f32)>>,
     pub(crate) h_thumb_rect: Cell<Option<(f32, f32, f32, f32)>>,
+    /// Whether the cursor was over a scrollbar thumb after the last pointer
+    /// move, so the move that crosses a thumb edge — and only that move — can
+    /// schedule the frame that repaints the highlight (see
+    /// [`sync_thumb_hover`](Self::sync_thumb_hover)).
+    pub(crate) thumb_hovered: Cell<bool>,
     pub(crate) v_scroll_multiplier: Cell<f32>,
     pub(crate) h_scroll_multiplier: Cell<f32>,
     pub(crate) last_scale: Cell<f32>,
@@ -224,6 +230,7 @@ impl ScrollState {
         self.last_event_time.set(prev.last_event_time.get());
         self.last_frame_time.set(prev.last_frame_time.get());
         self.cursor_pos.set(prev.cursor_pos.get());
+        self.thumb_hovered.set(prev.thumb_hovered.get());
         *self.velocity_history.borrow_mut() = prev.velocity_history.borrow().clone();
         self.fling_start_time.set(prev.fling_start_time.get());
         self.fling_start_offset.set(prev.fling_start_offset.get());
@@ -1035,6 +1042,21 @@ impl ScrollState {
         }
     }
 
+    /// Reconciles the remembered thumb-hover state with the cursor at `p`
+    /// and reports whether it changed.
+    ///
+    /// The thumb's highlight is resolved at draw time from
+    /// [`cursor_pos`](Self::cursor_pos), so it only updates on frames that
+    /// actually render. Pointer moves no longer buy a frame each — that is
+    /// what used to repaint the window at input rate — so the move that
+    /// carries the cursor across a thumb edge is detected here, and the
+    /// caller schedules the single frame that repaints the highlight.
+    #[inline]
+    pub(crate) fn sync_thumb_hover(&self, p: Vec2d) -> bool {
+        let hovered = self.hit_test_v_thumb(p) || self.hit_test_h_thumb(p);
+        self.thumb_hovered.replace(hovered) != hovered
+    }
+
     /// Record `velocity` as the speed the finger held for the `dt` seconds
     /// that ended at `at`.
     pub(crate) fn push_velocity(&self, velocity: Vec2d, dt: f32, at: AnimInstant) {
@@ -1253,9 +1275,10 @@ impl ScrollState {
         track_width: f32,
     ) -> bool {
         if let Some((_tx, y, _tw, h)) = self.v_thumb_rect.get() {
-            // Track spans the right edge of the viewport.
-            let track_left = viewport_w - track_width;
-            let in_track_x = p.x >= track_left;
+            // The track occupies the reserved strip immediately after the
+            // content viewport rather than floating over its right edge.
+            let track_left = viewport_w;
+            let in_track_x = p.x >= track_left && p.x <= track_left + track_width;
             let in_track_y = p.y >= 0.0 && p.y <= viewport_h;
             let on_thumb = p.y >= y && p.y <= y + h;
             in_track_x && in_track_y && !on_thumb
@@ -1274,8 +1297,10 @@ impl ScrollState {
         track_width: f32,
     ) -> bool {
         if let Some((x, _ty, w, _th)) = self.h_thumb_rect.get() {
-            let track_top = viewport_h - track_width;
-            let in_track_y = p.y >= track_top;
+            // The track occupies the reserved strip immediately after the
+            // content viewport rather than floating over its bottom edge.
+            let track_top = viewport_h;
+            let in_track_y = p.y >= track_top && p.y <= track_top + track_width;
             let in_track_x = p.x >= 0.0 && p.x <= viewport_w;
             let on_thumb = p.x >= x && p.x <= x + w;
             in_track_y && in_track_x && !on_thumb
@@ -1551,6 +1576,7 @@ impl ScrollState {
             axis: ScrollAxis::Vertical,
             scroll_offset: Cell::new(offset),
             storage_key: key!(),
+            remember_scroll_offset: false,
             last_pointer_pos: Cell::new(None),
             drag_mode: Cell::new(DragMode::None),
             cached_max_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
@@ -1560,6 +1586,7 @@ impl ScrollState {
             last_frame_time: Cell::new(None),
             v_thumb_rect: Cell::new(None),
             h_thumb_rect: Cell::new(None),
+            thumb_hovered: Cell::new(false),
             v_scroll_multiplier: Cell::new(0.0),
             h_scroll_multiplier: Cell::new(0.0),
             last_scale: Cell::new(1.0),
@@ -1605,6 +1632,33 @@ mod tests {
 
     fn ctrl_with_offset(offset: Vec2d) -> ScrollState {
         ScrollState::for_test_at(offset)
+    }
+
+    // Regression for "moving the cursor pins a core": with per-move redraws
+    // gone, the highlight the draw pass resolves from the cursor only updates
+    // on a frame somebody asked for — and the moves that cross a thumb edge
+    // are the ones that must ask, exactly once per crossing.
+    #[test]
+    fn thumb_hover_changes_only_on_the_move_that_crosses_the_edge() {
+        let ctrl = ctrl_with_offset(Vec2d::default());
+        ctrl.v_thumb_rect.set(Some((390.0, 100.0, 10.0, 80.0)));
+
+        assert!(
+            !ctrl.sync_thumb_hover(Vec2d { x: 200.0, y: 120.0 }),
+            "a move far from the thumb changes nothing"
+        );
+        assert!(
+            ctrl.sync_thumb_hover(Vec2d { x: 395.0, y: 120.0 }),
+            "the move that enters the thumb reports the transition"
+        );
+        assert!(
+            !ctrl.sync_thumb_hover(Vec2d { x: 395.0, y: 150.0 }),
+            "a move within the thumb reports nothing further"
+        );
+        assert!(
+            ctrl.sync_thumb_hover(Vec2d { x: 200.0, y: 120.0 }),
+            "the move that leaves the thumb reports the transition"
+        );
     }
 
     // Reconciliation contract: on rebuild the freshly built controller starts at
