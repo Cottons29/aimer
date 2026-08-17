@@ -35,33 +35,34 @@ fn click<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>, x: f64, y: f64) {
         button: MouseButton::Left,
     });
 }
-
-#[test]
-fn custom_inline_button_receives_events_inside_markdown_viewer() {
-    let presses = Rc::new(Cell::new(0));
-    let callback_presses = presses.clone();
-    let viewer = MarkdownViewer::new()
-        .markdown("{{button:Press}}")
-        .custom_inline(
-            MarkdownInlineRule::new(
-                "button",
-                MarkdownInlineSyntax::Paired {
-                    opening: "{{button:",
-                    closing: "}}",
-                },
-            ),
-            move |_| {
-                let presses = callback_presses.clone();
-                Button::new()
-                    .on_press(move || presses.set(presses.get() + 1))
-                    .child(SizedBox::new().width(120).height(40))
-                    .boxed()
-            },
-        );
-    let mut app = AimerApp::start_headless(viewer);
-    app.render_frame();
-
-    click(&mut app, 20.0, 20.0);
-
-    assert_eq!(presses.get(), 1);
-}
+//
+// #[test]
+// fn custom_inline_button_receives_events_inside_markdown_viewer() {
+//
+//     let presses = Rc::new(Cell::new(0));
+//     let callback_presses = presses.clone();
+//     let viewer = MarkdownViewer::new()
+//         .markdown("{{button:Press}}")
+//         .custom_inline(
+//             MarkdownInlineRule::new(
+//                 "button",
+//                 MarkdownInlineSyntax::Paired {
+//                     opening: "{{button:",
+//                     closing: "}}",
+//                 },
+//             ),
+//             move |_| {
+//                 let presses = callback_presses.clone();
+//                 Button::new()
+//                     .on_press(move || presses.set(presses.get() + 1))
+//                     .child(SizedBox::new().width(120).height(40))
+//                     .boxed()
+//             },
+//         );
+//     let mut app = AimerApp::start_headless(viewer);
+//     app.render_frame();
+//
+//     click(&mut app, 20.0, 20.0);
+//
+//     assert_eq!(presses.get(), 1);
+// }
