@@ -28,6 +28,7 @@ aimer_inspector.workspace = true
 aimer_canvas.workspace = true
 aimer_modal.workspace = true
 aimer_venus.workspace = true
+aimer_native.workspace = true
 wgpu.workspace = true
 
 

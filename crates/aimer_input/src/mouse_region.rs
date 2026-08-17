@@ -185,8 +185,15 @@ impl<E: Element> RawMouseRegion<E> {
     }
 
     /// Reconcile the stored hover state with `is_inside`, firing the
-    /// enter/exit callbacks only on an actual transition and requesting a
-    /// redraw so the decoration can update.
+    /// enter/exit callbacks, updating the cursor icon this region configures,
+    /// and requesting a redraw so the decoration can update — all only on an
+    /// actual transition, so the moves between two crossings cost nothing.
+    ///
+    /// Edge-triggering is what the frame budget rests on: pointer moves no
+    /// longer buy a repaint each, so the one frame a hover decoration needs is
+    /// scheduled here, by the move that crossed the edge. The same goes for
+    /// the platform cursor — setting it per move was a syscall per mouse
+    /// event; setting it per crossing is two per visit.
     ///
     /// This is shared by `on_event` (driven by pointer events) and `draw`
     /// (driven by the last-known cursor position). Evaluating it in `draw`
@@ -198,10 +205,17 @@ impl<E: Element> RawMouseRegion<E> {
     fn sync_hover(&self, is_inside: bool) {
         if is_inside {
             if matches!(self.current_state.get(), PointerState::Outside) {
+                if let Some(icon) = self.cursor {
+                    self.window.set_cursor(icon);
+                }
                 Self::execute_void_callback(&self.on_hover_enter);
                 self.current_state.set(PointerState::Inside);
+                request_animation_frame()
             }
         } else if matches!(self.current_state.get(), PointerState::Inside) {
+            if self.cursor.is_some() {
+                self.window.set_cursor(winit::window::CursorIcon::Default);
+            }
             Self::execute_void_callback(&self.on_hover_exit);
             self.current_state.set(PointerState::Outside);
             request_animation_frame()
@@ -283,7 +297,6 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
 
         let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
 
-        // Update the cursor icon on every mouse event while over the region.
         let is_mouse = matches!(
             pointer,
             Some(PointerKey {
@@ -291,14 +304,6 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
                 ..
             })
         );
-        if is_inside && is_mouse {
-            if let Some(icon) = self.cursor {
-                self.window.set_cursor(icon);
-            }
-        } else if is_mouse && self.cursor.is_some() {
-            self.window.set_cursor(winit::window::CursorIcon::Default);
-        }
-
         if is_mouse {
             self.sync_hover(is_inside);
         }
@@ -311,10 +316,22 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
             .dispatch(&self.child, pos, event);
         let is_captured =
             pointer.is_some_and(|pointer| self.event_dispatcher.borrow().is_captured(pointer));
-        let result = if result.is_consumed() {
-            result.with_redraw()
-        } else {
-            result
+        let result = match event {
+            // A child claiming a hover move is not a child changing pixels:
+            // upgrading every consumed move to a redraw repainted the window
+            // at input rate while the cursor merely crossed the UI. Whoever
+            // changes state on a move schedules its own frame. A region with
+            // an icon claims the move itself, because the application
+            // restores the default cursor whenever a move goes unconsumed.
+            ElementEvent::PointerMove(_) => {
+                if is_mouse && is_inside && self.cursor.is_some() {
+                    result.merge(EventResult::consumed())
+                } else {
+                    result
+                }
+            }
+            _ if result.is_consumed() => result.with_redraw(),
+            _ => result,
         };
         match (pointer, was_captured, is_captured) {
             (Some(pointer), false, true) => result.with_pointer_capture(pointer),
@@ -493,7 +510,7 @@ mod tests {
             event_dispatcher: RefCell::new(EventDispatcher::new()),
         };
 
-        let result = region.on_event(&ElementEvent::PointerMove(PointerInfo::new(
+        let result = region.on_event(&ElementEvent::PointerDown(PointerInfo::new(
             aimer_attribute::position::Vec2d { x: 10.0, y: 10.0 },
             PointerSource::Mouse,
             7,
@@ -502,6 +519,109 @@ mod tests {
 
         assert!(result.is_consumed());
         assert!(result.needs_redraw());
+    }
+
+    // Regression for "moving the cursor pins a core": a child claiming a hover
+    // move is not a child changing pixels. Inventing a redraw for every
+    // consumed move repainted the whole window at input rate while the cursor
+    // merely crossed the UI — whoever changes state on a move asks for its own
+    // frame.
+    #[test]
+    fn a_consumed_hover_move_is_forwarded_without_inventing_a_redraw() {
+        let bounds = CacheBounds::new();
+        bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let region = RawMouseRegion {
+            on_hover_enter: VoidCallback::default(),
+            on_hover_exit: VoidCallback::default(),
+            cursor: None,
+            current_state: Rc::new(Cell::new(PointerState::Inside)),
+            cached_bounds: bounds,
+            child: ResultElement,
+            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+        };
+
+        let result = region.on_event(&ElementEvent::PointerMove(PointerInfo::new(
+            aimer_attribute::position::Vec2d { x: 10.0, y: 10.0 },
+            PointerSource::Mouse,
+            7,
+            PointerButton::Primary,
+        )));
+
+        assert!(result.is_consumed());
+        assert!(!result.needs_redraw(), "a hover claim is not a repaint");
+    }
+
+    // The icon a region sets survives only while the move is consumed: an
+    // unconsumed move makes the application restore the platform default
+    // cursor. So a region with an icon claims the hover move even when its
+    // child ignores it — without asking for a frame, which is what used to
+    // make the claim so expensive.
+    #[test]
+    fn a_cursor_region_claims_the_hover_move_its_icon_depends_on() {
+        let bounds = CacheBounds::new();
+        bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let region = RawMouseRegion {
+            on_hover_enter: VoidCallback::default(),
+            on_hover_exit: VoidCallback::default(),
+            cursor: Some(winit::window::CursorIcon::Pointer),
+            current_state: Rc::new(Cell::new(PointerState::Inside)),
+            cached_bounds: bounds,
+            child: TestElement,
+            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+        };
+
+        let result = region.on_event(&ElementEvent::PointerMove(PointerInfo::new(
+            aimer_attribute::position::Vec2d { x: 10.0, y: 10.0 },
+            PointerSource::Mouse,
+            7,
+            PointerButton::Primary,
+        )));
+
+        assert!(result.is_consumed(), "the icon lives only while the move is claimed");
+        assert!(!result.needs_redraw(), "claiming the cursor repaints nothing");
+    }
+
+    // With per-move redraws gone, the frame that repaints a hover decoration
+    // has to come from the transition itself — once per crossing, not once per
+    // move.
+    #[test]
+    fn a_hover_transition_schedules_exactly_one_frame() {
+        let frames = Rc::new(Cell::new(0usize));
+        let counted = frames.clone();
+        let previous = aimer_events::window::set_thread_redraw_requester(move || {
+            counted.set(counted.get() + 1);
+        });
+
+        let bounds = CacheBounds::new();
+        bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let region = RawMouseRegion {
+            on_hover_enter: VoidCallback::default(),
+            on_hover_exit: VoidCallback::default(),
+            cursor: None,
+            current_state: Rc::new(Cell::new(PointerState::Outside)),
+            cached_bounds: bounds,
+            child: TestElement,
+            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+        };
+        let move_inside = |x: f32, y: f32| {
+            ElementEvent::PointerMove(PointerInfo::new(
+                aimer_attribute::position::Vec2d { x, y },
+                PointerSource::Mouse,
+                7,
+                PointerButton::Primary,
+            ))
+        };
+
+        let _ = region.on_event(&move_inside(10.0, 10.0));
+        assert_eq!(frames.get(), 1, "entering schedules the repaint");
+
+        let _ = region.on_event(&move_inside(20.0, 20.0));
+        assert_eq!(frames.get(), 1, "moving within schedules nothing further");
+
+        aimer_events::window::restore_thread_redraw_requester(previous);
     }
 
     #[test]

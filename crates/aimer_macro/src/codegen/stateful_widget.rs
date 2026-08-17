@@ -1,8 +1,8 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{ItemStruct, parse2};
+use syn::{Data, DeriveInput, Fields, parse2};
 
-/// Emits the struct together with the `Widget` impl that hands it to a
+/// Emits the item together with the `Widget` impl that hands it to a
 /// `StatefulElement`, for the `#[widget(Stateful)]` attribute form.
 ///
 /// The attribute *replaces* the item it is written on, so the item has to be
@@ -10,14 +10,14 @@ use syn::{ItemStruct, parse2};
 /// compiler reports the syntax error on the user's own tokens rather than on
 /// tokens this macro invented.
 pub fn generate_stateful_widget_impl(input: TokenStream) -> TokenStream {
-    let item_struct = match parse2::<ItemStruct>(input.clone()) {
-        Ok(s) => s,
+    let item = match parse2::<DeriveInput>(input.clone()) {
+        Ok(item) => item,
         Err(_) => return input,
     };
-    let widget_impl = stateful_widget_impl(&item_struct);
+    let widget_impl = stateful_widget_impl(&item);
 
     quote! {
-        #item_struct
+        #item
         #widget_impl
     }
 }
@@ -25,26 +25,25 @@ pub fn generate_stateful_widget_impl(input: TokenStream) -> TokenStream {
 /// Emits only the `Widget` impl, for the `#[derive(StatefulWidget)]` form.
 ///
 /// A derive is expanded *beside* the item it is written on, which the compiler
-/// keeps: emitting the struct again would define it twice. There is likewise
-/// nothing to fall back to when the input is not a struct, so the error is
-/// reported instead of being swallowed.
+/// keeps: emitting the item again would define it twice.
 pub fn derive_stateful_widget(input: TokenStream) -> TokenStream {
-    match parse2::<ItemStruct>(input) {
-        Ok(item_struct) => stateful_widget_impl(&item_struct),
+    match parse2::<DeriveInput>(input) {
+        Ok(item) => stateful_widget_impl(&item),
         Err(err) => err.to_compile_error(),
     }
 }
 
 /// The `Widget` impl both forms share.
-fn stateful_widget_impl(item_struct: &ItemStruct) -> TokenStream {
-    let struct_name = &item_struct.ident;
-    let (impl_generics, ty_generics, where_clause) = item_struct.generics.split_for_impl();
+fn stateful_widget_impl(input: &DeriveInput) -> TokenStream {
+    let item_name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    // Detect if the struct has a `key` field
-    let has_key = item_struct
-        .fields
-        .iter()
-        .any(|f| f.ident.as_ref().is_some_and(|i| i == "key"));
+    // Only named structs can expose the conventional `key` field without
+    // imposing a positional or variant-specific convention on other items.
+    let has_key = matches!(
+        &input.data,
+        Data::Struct(data) if matches!(&data.fields, Fields::Named(fields) if fields.named.iter().any(|field| field.ident.as_ref().is_some_and(|ident| ident == "key")))
+    );
 
     let key_pass = if has_key {
         quote! { self.key.clone() }
@@ -63,17 +62,17 @@ fn stateful_widget_impl(item_struct: &ItemStruct) -> TokenStream {
     };
 
     quote! {
-        impl #impl_generics aimer::widget::Widget for #struct_name #ty_generics #where_clause {
+        impl #impl_generics aimer::widget::Widget for #item_name #ty_generics #where_clause {
             #key_method
 
             fn to_element(self, ctx: &aimer::widget::base::BuildContext) -> aimer::widget::AnyElement {
                 // The key is read before the widget is handed over, because the
                 // element takes it by value and moves its props into the state.
                 let __key = #key_pass;
-                aimer::widget::StatefulElement::from_widget(self, ctx, stringify!(#struct_name), __key)
+                aimer::widget::StatefulElement::from_widget(self, ctx, stringify!(#item_name), __key)
             }
             fn debug_name(&self) -> &'static str {
-                stringify!(#struct_name)
+                stringify!(#item_name)
             }
         }
     }
@@ -133,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn the_derive_rejects_what_is_not_a_struct() {
+    fn the_derive_supports_an_enum() {
         let output = derive_stateful_widget(quote! {
             enum NotAWidget {
                 Nope,
@@ -141,6 +140,6 @@ mod tests {
         })
         .to_string();
 
-        assert!(output.contains("compile_error"));
+        assert!(output.contains("impl aimer :: widget :: Widget for NotAWidget"));
     }
 }

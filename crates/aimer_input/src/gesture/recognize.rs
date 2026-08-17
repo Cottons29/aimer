@@ -84,7 +84,14 @@ pub fn recognize(
         }
 
         PointerEvent::Move(pointer) => {
-            state.touches.insert(*pointer);
+            // Only a contact that went down on this detector is updated. A
+            // mouse gliding over the surface is a hover, not a contact:
+            // recording it would leave the detector believing it owns a
+            // pointer that never pressed — and, downstream, claiming (and
+            // repainting for) every hover move that merely crosses it.
+            if state.touches.contains(pointer.source, pointer.id) {
+                state.touches.insert(*pointer);
+            }
 
             if state.pinch.is_some()
                 && state.touches.len() >= 2

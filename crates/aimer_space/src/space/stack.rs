@@ -1,8 +1,8 @@
 use aimer_attribute::BoxConstraint;
-use aimer_macro::{EventElement, LayoutElement, Rebuildable};
+use aimer_macro::{LayoutElement, Rebuildable};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, LayoutElement, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, VisitorElement, Widget,
 };
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -103,7 +103,7 @@ impl Widget for Stack {
     }
 }
 
-#[derive(Rebuildable, LayoutElement, EventElement)]
+#[derive(Rebuildable, LayoutElement)]
 pub struct RawStackElement {
     pub children: Vec<AnyElement>,
     pub direction: StackDirection,
@@ -156,5 +156,23 @@ impl VisitorElement for RawStackElement {
 
     fn debug_name(&self) -> &'static str {
         "RawStackElement"
+    }
+}
+
+impl EventElement for RawStackElement {
+    /// Offer the topmost layer first, matching paint order.
+    ///
+    /// Position-based dispatch walks the child list in reverse, so visiting
+    /// children in ascending layer order makes the highest layer answer a press
+    /// before anything painted beneath it. Without this a full-area bottom
+    /// layer — a `Scrollable` under a floating `Align`, say — swallows the press
+    /// aimed at the button above it.
+    fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        let mut sorted: Vec<&'a dyn Element> =
+            self.children.iter().map(|child| child.as_ref()).collect();
+        sorted.sort_by_key(|child| child.layer());
+        for child in sorted {
+            visitor(child);
+        }
     }
 }

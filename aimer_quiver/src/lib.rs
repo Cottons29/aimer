@@ -33,5 +33,6 @@ mod system_safe_area;
 pub mod raster;
 pub mod render_ctx;
 pub mod window_attr;
+pub use window_attr::WindowAttr;
 
 pub use winit;

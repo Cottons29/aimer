@@ -100,14 +100,14 @@ impl TryFrom<&str> for AttributeKind {
     }
 }
 
-/// Attribute macro that wires up a struct (or enum for `Router`) as a Widget.
+/// Attribute macro that wires up an item as a Widget.
 ///
 /// Accepts one of four kinds as its argument:
 ///
 /// | Kind | Target | What is generated |
 /// |------|--------|-------------------|
-/// | `Stateless` | struct | `impl Widget` via `StatelessWidget::build` |
-/// | `Stateful` | struct | `impl Widget` via `StatefulElement` |
+/// | `Stateless` | struct, tuple struct, enum, or union | `impl Widget` via `StatelessWidget::build` |
+/// | `Stateful` | struct, tuple struct, enum, or union | `impl Widget` via `StatefulElement` |
 /// | `Router` | enum | full router `impl Widget` dispatch |
 /// | `RawWidget` | struct | bare `impl Widget` stub (body uses `unimplemented!`) |
 ///
@@ -169,20 +169,25 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
         };
     }
 
-    let item_struct = match item {
-        Item::Struct(s) => s,
-        _ => {
-            return syn::Error::new_spanned(
-                item,
-                "Widget attribute expects a struct unless using Router",
-            )
+    if is_raw_widget && !matches!(&item, Item::Struct(_)) {
+        return syn::Error::new_spanned(item, "RawWidget can only be applied to structs")
             .to_compile_error()
             .into();
-        }
-    };
+    }
 
-    // Convert back to TokenStream for codegen
-    let input_ts = quote! { #item_struct };
+    if !matches!(&item, Item::Struct(_) | Item::Enum(_) | Item::Union(_)) {
+        return syn::Error::new_spanned(
+            item,
+            "Stateless and Stateful widgets can only be applied to structs, enums, or unions",
+        )
+        .to_compile_error()
+        .into();
+    }
+
+    // Convert the original item back to TokenStream for codegen. Stateless and
+    // Stateful intentionally accept every item shape that can implement their
+    // respective user traits.
+    let input_ts = quote! { #item };
 
     let widget_code = if is_raw_widget {
         RawWidgetCodegen::generate(input_ts)
@@ -195,27 +200,26 @@ pub fn widget(args: TokenStream, input: TokenStream) -> TokenStream {
     TokenStream::from(widget_code)
 }
 
-/// Derives `Widget` for a stateless widget struct.
+/// Derives `Widget` for a stateless widget item.
 ///
 /// The derive form of [`#[widget(Stateless)]`](macro@widget): it generates the
-/// exact same `Widget` impl, but is written *beside* your struct instead of
+/// exact same `Widget` impl, but is written *beside* your item instead of
 /// replacing it, so the definition the compiler sees is the one you wrote.
 ///
-/// The generated `to_element` clones the widget and keeps the copy in a
-/// [`StatelessElement`], so that the element can re-run `build()` when it is
-/// marked dirty — on a resize, for instance. Your struct must therefore
-/// implement both `Clone` and `StatelessWidget`.
+/// The generated `to_element` keeps the widget in a [`StatelessElement`] so
+/// that the element can re-run `build()` when it is marked dirty — on a resize,
+/// for instance. Your item must implement `StatelessWidget`.
 ///
-/// A field named `key` (of type `Option<Key>`) is picked up automatically and
-/// forwarded to the element, giving the widget a stable identity across
-/// rebuilds.
+/// For named structs, a field named `key` (of type `Option<Key>`) is picked up
+/// automatically and forwarded to the element, giving the widget a stable
+/// identity across rebuilds.
 ///
 /// # Examples
 ///
 /// ```rust,ignore
 /// use aimer::*;
 ///
-/// #[derive(Clone, StatelessWidget)]
+/// #[derive(StatelessWidget)]
 /// pub struct Greeting {
 ///     pub name: String,
 /// }
@@ -233,19 +237,19 @@ pub fn stateless_widget_derive(input: TokenStream) -> TokenStream {
     TokenStream::from(StatelessWidgetCodegen::derive(input.into()))
 }
 
-/// Derives `Widget` for a stateful widget struct.
+/// Derives `Widget` for a stateful widget item.
 ///
 /// The derive form of [`#[widget(Stateful)]`](macro@widget): it generates the
-/// exact same `Widget` impl, but is written *beside* your struct instead of
+/// exact same `Widget` impl, but is written *beside* your item instead of
 /// replacing it, so the definition the compiler sees is the one you wrote.
 ///
 /// The generated `to_element` hands the widget to a `StatefulElement`, which
 /// owns the `State` your `StatefulWidget` impl creates and keeps it alive
 /// across rebuilds. Your struct must implement `StatefulWidget`.
 ///
-/// A field named `key` (of type `Option<Key>`) is picked up automatically and
-/// forwarded to the element, giving the state a stable identity across
-/// rebuilds.
+/// For named structs, a field named `key` (of type `Option<Key>`) is picked up
+/// automatically and forwarded to the element, giving the state a stable
+/// identity across rebuilds.
 ///
 /// # Examples
 ///

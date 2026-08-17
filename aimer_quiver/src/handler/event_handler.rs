@@ -342,7 +342,13 @@ impl WindowEventHandler {
                 if !result.is_consumed() {
                     window.set_cursor(CursorIcon::Default);
                 }
-                if Self::should_redraw(result, result.is_consumed()) {
+                // A consumed move is a claim, not a repaint: a widget guarding
+                // its cursor icon or tracking a hover consumes every move it
+                // covers, and rendering a frame for each one is what used to
+                // pin a core while the cursor merely crossed the window. Only
+                // an explicit redraw request — a drag, a crossed hover edge —
+                // buys the frame.
+                if Self::should_redraw(result, false) {
                     window.request_redraw();
                 }
             }
@@ -786,6 +792,11 @@ impl WindowEventHandler {
         app: &mut AimerApplicationHandler<W>,
         event_loop: &ActiveEventLoop,
     ) {
+        #[cfg(target_os = "macos")]
+        if let Some(window) = app.native_window() {
+            app.macos_windowing.window_layout_changed(window);
+        }
+
         #[cfg(target_os = "ios")]
         aimer_utils::debug!("iOS handle_resize raw size: {size:?}");
         #[cfg(target_os = "ios")]

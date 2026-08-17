@@ -154,6 +154,7 @@ arborium = "2.18.0"
 synoptic = "2.2.9"
 muda = "0.19.3"
 objc2-ui-kit = "0.3.2"
+objc2-app-kit = "0.3.2"
 objc2 = "0.6.4"
 objc2-core-text = { version = "0.3.2", default-features = false }
 objc2-core-foundation = { version = "0.3.2", default-features = false }

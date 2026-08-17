@@ -335,7 +335,23 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
             return EventResult::ignored();
         };
 
-        self.process(&pointer_event);
+        let output = {
+            let mut state = self.state.borrow_mut();
+            recognize(&mut state, &pointer_event, AnimInstant::now(), self.handlers.mask())
+        };
+
+        // A move that advanced nothing through an idle recognizer is a pure
+        // hover. Claiming it — and scheduling a frame for it — used to render
+        // the whole window at input rate whenever the cursor merely crossed a
+        // detector, so it falls through untouched instead.
+        if output.is_empty()
+            && matches!(event, ElementEvent::PointerMove(_))
+            && !self.state.borrow().is_engaged()
+        {
+            return EventResult::ignored();
+        }
+
+        self.handlers.dispatch_all(output);
         self.window.request_redraw();
         pointer_capture_effect(EventResult::consumed().with_redraw(), event)
     }
@@ -710,5 +726,40 @@ mod tests {
             pointer_capture_effect(EventResult::consumed(), &ElementEvent::PointerMove(pointer));
 
         assert_eq!(moved.capture_request(), CaptureRequest::None);
+    }
+
+    // Regression for "moving the cursor pins a core": a hover move over an
+    // idle recognizer produces no gesture, so consuming it — and scheduling a
+    // frame for it — turned every mouse move over any detector into a full
+    // window redraw. A forum page is covered edge to edge in detectors, which
+    // is how merely waving the cursor rendered the whole tree at input rate.
+    #[test]
+    fn a_hover_move_over_an_idle_recognizer_asks_for_nothing() {
+        let detector = counting_detector(Rc::new(std::cell::Cell::new(0)));
+        let hover = PointerInfo::mouse(Vec2d { x: 10.0, y: 10.0 }, PointerButton::Primary);
+
+        let result = detector.on_event(&ElementEvent::PointerMove(hover));
+
+        assert!(!result.is_consumed(), "an idle hover move must fall through");
+        assert!(!result.needs_redraw(), "nothing changed, nothing to repaint");
+        assert!(
+            !detector.window.take_redraw_request(),
+            "no frame may be scheduled for a move that advanced no gesture"
+        );
+    }
+
+    // The guard above must not starve a live gesture: a move while the press
+    // is held still belongs to this detector, keeps the frames coming for the
+    // long-press poll, and stays consumed so nothing underneath steals it.
+    #[test]
+    fn a_move_during_a_press_still_claims_the_gesture_and_repaints() {
+        let detector = counting_detector(Rc::new(std::cell::Cell::new(0)));
+        let pointer = touch(10.0, 10.0, 2);
+        *detector.state.borrow_mut() = pressing(pointer);
+
+        let result = detector.on_event(&ElementEvent::PointerMove(touch(12.0, 12.0, 2)));
+
+        assert!(result.is_consumed(), "a held press owns its moves");
+        assert!(result.needs_redraw(), "a live gesture keeps the frames coming");
     }
 }

@@ -23,6 +23,7 @@ use crate::handler::file_drag::FileDrag;
 use crate::handler::scroll_classifier::DualScroller;
 use crate::handler::user_events::handle_user_event;
 use crate::render_ctx::AimerRenderContext;
+use crate::window_attr::WindowAttr;
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
@@ -86,6 +87,8 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     /// report its metrics. Keeping the handle here is what lets both drivers
     /// run the same event and frame code.
     pub window: Option<WindowHandle>,
+    pub window_attr: WindowAttr,
+    pub(crate) macos_windowing: aimer_native::macos_windowing::MacosWindowing,
     pub render_ctx: AimerRenderContext,
     pub widget_root: Option<AnyElement>,
     pub event_dispatcher: EventDispatcher,
@@ -440,6 +443,9 @@ pub(crate) fn run_startup_hooks(
 impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for AimerApplicationHandler<W> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         run_startup_hooks(&mut self.startup_hooks, &mut self.startup_resources);
+        if self.window.is_none() {
+            self.macos_windowing = aimer_native::macos_windowing::take_pending();
+        }
 
         #[cfg(target_os = "android")]
         {
@@ -459,13 +465,11 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         let window_attributes = {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
-                WindowAttributes::default()
-                    .with_inner_size(LogicalSize::new(1150, 800))
-                    .with_title("Aimer")
+                self.window_attr.to_winit()
             }
             #[cfg(target_os = "android")]
             {
-                WindowAttributes::default()
+                self.window_attr.to_winit()
             }
             #[cfg(target_os = "ios")]
             {
@@ -479,6 +483,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
                 }
             }
         };
+        let window_attributes = self.macos_windowing.apply_attributes(window_attributes);
 
         if self.window.is_none() {
             let window = event_loop.create_window(window_attributes).unwrap();
@@ -490,6 +495,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         let window = self
             .native_window()
             .expect("the windowed loop always owns a native window");
+        self.macos_windowing.window_created(window);
 
         // The runtime was built before this window existed, so it has been
         // budgeting frames against an assumed 60 Hz. Told the real rate here —
@@ -586,6 +592,11 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "macos")]
+        if let Some(window) = self.native_window() {
+            self.macos_windowing.window_redraw_requested(window);
+        }
+
         // A file drag is the one gesture the platform stops describing once it
         // has begun: macOS delivers no cursor motion at all while its own drag
         // session runs. So the position is asked for here instead, and a frame

@@ -56,6 +56,78 @@ impl State<Counter> for CounterState {
     }
 }
 
+#[derive(StatelessWidget)]
+struct TupleStateless(String);
+
+impl StatelessWidget for TupleStateless {
+    fn build(&self, _: &BuildContext) -> impl Widget {
+        Text::new(self.0.clone())
+    }
+}
+
+#[derive(StatelessWidget)]
+enum EnumStateless {
+    Label(String),
+    Empty,
+}
+
+impl StatelessWidget for EnumStateless {
+    fn build(&self, _: &BuildContext) -> impl Widget {
+        Text::new(match self {
+            Self::Label(label) => label.clone(),
+            Self::Empty => String::from("empty"),
+        })
+    }
+}
+
+#[derive(StatefulWidget)]
+struct TupleStateful(i32);
+
+struct TupleStatefulState(i32);
+
+impl StatefulWidget for TupleStateful {
+    type State = TupleStatefulState;
+
+    fn create_state(self) -> Self::State {
+        TupleStatefulState(self.0)
+    }
+}
+
+impl State<TupleStateful> for TupleStatefulState {
+    fn init_state(&mut self, _: StateUpdater<Self>) {}
+
+    fn build(&self, _: &BuildContext) -> impl Widget {
+        Text::new(self.0.to_string())
+    }
+}
+
+#[derive(StatefulWidget)]
+enum EnumStateful {
+    Count(i32),
+    Empty,
+}
+
+struct EnumStatefulState(i32);
+
+impl StatefulWidget for EnumStateful {
+    type State = EnumStatefulState;
+
+    fn create_state(self) -> Self::State {
+        EnumStatefulState(match self {
+            Self::Count(count) => count,
+            Self::Empty => 0,
+        })
+    }
+}
+
+impl State<EnumStateful> for EnumStatefulState {
+    fn init_state(&mut self, _: StateUpdater<Self>) {}
+
+    fn build(&self, _: &BuildContext) -> impl Widget {
+        Text::new(self.0.to_string())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Router)]
 enum AppRoute {
     #[route("/")]
@@ -123,6 +195,22 @@ fn the_stateful_derive_makes_the_struct_a_widget() {
     let counter = Counter { initial_count: 7 };
     assert_eq!(Widget::debug_name(&counter), "Counter");
     assert_eq!(counter.create_state().count, 7);
+}
+
+#[test]
+fn stateless_derive_supports_tuple_structs_and_enums() {
+    assert_widget::<TupleStateless>();
+    assert_widget::<EnumStateless>();
+    assert!(Widget::key(&TupleStateless(String::from("tuple"))).is_none());
+    assert!(Widget::key(&EnumStateless::Empty).is_none());
+}
+
+#[test]
+fn stateful_derive_supports_tuple_structs_and_enums() {
+    assert_widget::<TupleStateful>();
+    assert_widget::<EnumStateful>();
+    assert_eq!(TupleStateful(4).create_state().0, 4);
+    assert_eq!(EnumStateful::Count(9).create_state().0, 9);
 }
 
 #[test]

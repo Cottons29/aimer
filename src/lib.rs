@@ -55,7 +55,7 @@ pub use aimer_provider::{
 pub use aimer_quiver as quiver;
 pub use aimer_quiver::frame_stats;
 pub use aimer_quiver::{
-    self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions,
+    self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions, WindowAttr,
     set_first_frame_rendered_callback,
 };
 pub use aimer_rubick::{self, ErasedFrom, Rubick};

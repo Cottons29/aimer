@@ -218,6 +218,18 @@ impl GestureState {
         self.touches.contains(source, id)
     }
 
+    /// Whether any gesture is currently in flight — a press being held, a drag
+    /// past the slop, a pinch, or any contact still down.
+    ///
+    /// The idle counterpart is what matters: a pointer event reaching an idle
+    /// recognizer that also produced no output was a pure hover, which the
+    /// detector lets fall through instead of claiming — and repainting for —
+    /// every mouse move that merely crosses it.
+    #[inline]
+    pub fn is_engaged(&self) -> bool {
+        self.press.is_some() || self.drag.is_some() || self.pinch.is_some() || !self.touches.is_empty()
+    }
+
     /// Forgets everything about the single-pointer press: the press itself, any
     /// drag it became, and any long press it reached.
     #[inline]

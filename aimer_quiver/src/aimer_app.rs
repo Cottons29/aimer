@@ -20,6 +20,8 @@ use tokio::runtime::Runtime;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
+
+use crate::window_attr::WindowAttr;
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
@@ -424,6 +426,7 @@ pub struct AimerApp<W = ()> {
     child: W,
     antialiasing: AntiAlias,
     startup_hooks: Vec<StartupHook>,
+    window_attr: WindowAttr,
 }
 
 /// The setup the framework itself needs before a native window appears.
@@ -526,7 +529,9 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         let mut headless = Self {
             app: AimerApplicationHandler {
                 window: Some(window.clone()),
+                macos_windowing: Default::default(),
                 render_ctx: AimerRenderContext::new(antialiasing),
+                window_attr: WindowAttr::new(),
                 widget_root: None,
                 event_dispatcher: aimer_widget::EventDispatcher::new(),
                 scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
@@ -580,6 +585,10 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             &mut headless.app.startup_hooks,
             &mut headless.app.startup_resources,
         );
+        // A headless setup may install macOS window customization through the
+        // same public hook, but there is no native window to consume it. Clear
+        // that thread-local value so it cannot leak into a later windowed run.
+        drop(aimer_native::macos_windowing::take_pending());
 
         // An application that has just come up owes the screen a frame, and the
         // windowed loop asks for it the moment its window exists. Starting with
@@ -753,6 +762,7 @@ impl AimerApp {
             child: (),
             antialiasing: AntiAlias::default(),
             startup_hooks: Vec::new(),
+            window_attr: WindowAttr::new(),
         }
     }
 
@@ -760,6 +770,17 @@ impl AimerApp {
     #[inline]
     pub fn with_antialiasing(mut self, antialiasing: AntiAlias) -> Self {
         self.antialiasing = antialiasing;
+        self
+    }
+
+    /// Configures the native window created when the application starts.
+    ///
+    /// The attributes use Aimer's window API and are translated to the active
+    /// platform backend only when the native event loop creates the window.
+    /// Headless applications continue to use [`HeadlessOptions`] instead.
+    #[inline]
+    pub fn window(mut self, window_attr: WindowAttr) -> Self {
+        self.window_attr = window_attr;
         self
     }
 
@@ -772,6 +793,11 @@ impl AimerApp {
     /// The returned value is retained until the application exits, allowing
     /// native resources created by the callback to remain alive for the full
     /// application lifecycle.
+    ///
+    /// macOS window customization can be registered here by constructing an
+    /// [`aimer_native::macos_windowing::MacosWindowing`] value and calling its
+    /// `install` method. That API is a no-op on other platforms, so the same
+    /// setup callback can be compiled and used cross-platform.
     #[inline]
     pub fn setup<R: 'static>(mut self, setup: impl FnOnce() -> R + 'static) -> Self {
         self.startup_hooks.push(Box::new(move || Box::new(setup())));
@@ -785,6 +811,7 @@ impl AimerApp {
             child,
             antialiasing: self.antialiasing,
             startup_hooks: self.startup_hooks,
+            window_attr: self.window_attr,
         }
     }
 
@@ -845,6 +872,7 @@ impl<W: Widget + 'static> AimerApp<W> {
             ModalHost::new().child(self.child),
             native_startup_hooks(self.startup_hooks),
             self.antialiasing,
+            self.window_attr,
         );
     }
 
@@ -856,6 +884,7 @@ impl<W: Widget + 'static> AimerApp<W> {
             ModalHost::new().child(self.child),
             native_startup_hooks(self.startup_hooks),
             self.antialiasing,
+            self.window_attr,
         );
     }
 
@@ -880,6 +909,7 @@ fn start_event_loop(
     widget: impl Widget + 'static,
     startup_hooks: Vec<StartupHook>,
     antialiasing: AntiAlias,
+    window_attr: WindowAttr,
 ) {
     if APP_STARTED.swap(true, Ordering::SeqCst) {
         return;
@@ -975,7 +1005,9 @@ fn start_event_loop(
     info!("Creating App instance...");
     let mut app = AimerApplicationHandler {
         window: None,
+        macos_windowing: Default::default(),
         render_ctx: AimerRenderContext::new(antialiasing),
+        window_attr,
         widget_root: None,
         event_dispatcher: aimer_widget::EventDispatcher::new(),
         scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
@@ -1851,6 +1883,31 @@ mod tests {
         assert!(!app.take_redraw_request());
     }
 
+    // Regression for "moving the cursor pins a core": consuming a hover move is
+    // how a widget guards its cursor icon, not a promise that pixels changed.
+    // Treating the claim as a repaint made every mouse move over any hover
+    // widget render the whole window at input rate.
+    #[test]
+    fn headless_consumed_hover_moves_do_not_ask_for_a_frame() {
+        let events = Arc::new(AtomicUsize::new(0));
+        let mut app = AimerApp::start_headless(CapturingWidget {
+            events: events.clone(),
+        });
+        app.render_frame();
+        assert!(!app.take_redraw_request());
+
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(20.0, 30.0),
+        });
+
+        assert_eq!(events.load(Ordering::SeqCst), 1, "the widget heard the move");
+        assert!(
+            !app.take_redraw_request(),
+            "a consumed hover move must not cost a frame"
+        );
+    }
+
     struct CursorWidget;
 
     impl Widget for CursorWidget {
@@ -2066,6 +2123,19 @@ mod tests {
         app.render_frame();
 
         assert_eq!(runs.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn app_window_configuration_is_retained_when_child_is_attached() {
+        let app = AimerApp::new()
+            .window(WindowAttr::new().title("Inspector").inner_size(900, 600))
+            .child(RecordingWidget {
+                builds: Arc::new(AtomicUsize::new(0)),
+                cancels: Arc::new(AtomicUsize::new(0)),
+            });
+
+        assert_eq!(app.window_attr.title, "Inspector");
+        assert_eq!(app.window_attr.inner_size, (900, 600));
     }
 
     struct RedrawWidget;

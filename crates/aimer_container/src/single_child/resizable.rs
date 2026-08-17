@@ -129,8 +129,8 @@ impl Resizable {
             height: 0.0,
             min_width: 0.0,
             min_height: 0.0,
-            max_width: f32::INFINITY,
-            max_height: f32::INFINITY,
+            max_width: f32::MAX,
+            max_height: f32::MAX,
             handle_thickness: DEFAULT_HANDLE_THICKNESS,
             handle_outset: None,
             direction: Direction::ALL,
@@ -517,6 +517,22 @@ impl<E: Element> RawResizable<E> {
             height: size.height * scale,
         }
     }
+
+    /// The size the box occupies, never larger than the space its parent handed
+    /// it.
+    ///
+    /// A stored [`f32::MAX`] — the "fill the parent" sentinel — therefore
+    /// resolves to the parent's bounded constraint instead of overflowing into
+    /// an unbounded child, which would let a flex child inside consume
+    /// `f32::MAX` and push every following sibling off-screen.
+    #[inline]
+    fn effective_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        let size = self.scaled_size(ctx.scale);
+        ResolvedSize {
+            width: size.width.min(ctx.box_constraint.max_width),
+            height: size.height.min(ctx.box_constraint.max_height),
+        }
+    }
 }
 
 /// `size` held within `min` and `max`.
@@ -665,11 +681,11 @@ impl<E: Element> LayoutElement for RawResizable<E> {
     }
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.scaled_size(ctx.scale)
+        self.effective_size(ctx)
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        let size = self.scaled_size(ctx.scale);
+        let size = self.effective_size(ctx);
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         self.bounds
             .save(ctx.scale, abs_x, abs_y, size.width, size.height);
@@ -716,7 +732,7 @@ impl<E: Element> LayoutElement for RawResizable<E> {
 
 impl<E: Element> Drawable for RawResizable<E> {
     fn draw(&self, ctx: &BuildContext) {
-        let size = self.scaled_size(ctx.scale);
+        let size = self.effective_size(ctx);
 
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         self.bounds

@@ -1,8 +1,8 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{ItemStruct, parse2};
+use syn::{Data, DeriveInput, Fields, parse2};
 
-/// Emits the struct together with the `Widget` impl that drives it through
+/// Emits the item together with the `Widget` impl that drives it through
 /// [`StatelessWidget::build`], for the `#[widget(Stateless)]` attribute form.
 ///
 /// The attribute *replaces* the item it is written on, so the item has to be
@@ -12,14 +12,14 @@ use syn::{ItemStruct, parse2};
 ///
 /// [`StatelessWidget::build`]: https://docs.rs/aimer::widget
 pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
-    let item_struct = match parse2::<ItemStruct>(input.clone()) {
-        Ok(s) => s,
+    let item = match parse2::<DeriveInput>(input.clone()) {
+        Ok(item) => item,
         Err(_) => return input, // Should handle error properly but returning input is safe fallback
     };
-    let widget_impl = stateless_widget_impl(&item_struct);
+    let widget_impl = stateless_widget_impl(&item);
 
     quote! {
-        #item_struct
+        #item
         #widget_impl
     }
 }
@@ -27,28 +27,27 @@ pub fn generate_stateless_widget_impl(input: TokenStream) -> TokenStream {
 /// Emits only the `Widget` impl, for the `#[derive(StatelessWidget)]` form.
 ///
 /// A derive is expanded *beside* the item it is written on, which the compiler
-/// keeps: emitting the struct again would define it twice. There is likewise
-/// nothing to fall back to when the input is not a struct, so the error is
-/// reported instead of being swallowed.
+/// keeps: emitting the item again would define it twice.
 pub fn derive_stateless_widget(input: TokenStream) -> TokenStream {
-    match parse2::<ItemStruct>(input) {
-        Ok(item_struct) => stateless_widget_impl(&item_struct),
+    match parse2::<DeriveInput>(input) {
+        Ok(item) => stateless_widget_impl(&item),
         Err(err) => err.to_compile_error(),
     }
 }
 
 /// The `Widget` impl both forms share.
-fn stateless_widget_impl(item_struct: &ItemStruct) -> TokenStream {
-    let struct_name = &item_struct.ident;
-    let (impl_generics, ty_generics, where_clause) = item_struct.generics.split_for_impl();
+fn stateless_widget_impl(input: &DeriveInput) -> TokenStream {
+    let item_name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    let struct_name_str = struct_name.to_string();
+    let item_name_str = item_name.to_string();
 
-    // Detect if the struct has a `key` field
-    let has_key = item_struct
-        .fields
-        .iter()
-        .any(|f| f.ident.as_ref().is_some_and(|i| i == "key"));
+    // Only named structs can expose the conventional `key` field without
+    // imposing a positional or variant-specific convention on other items.
+    let has_key = matches!(
+        &input.data,
+        Data::Struct(data) if matches!(&data.fields, Fields::Named(fields) if fields.named.iter().any(|field| field.ident.as_ref().is_some_and(|ident| ident == "key")))
+    );
 
     let key_pass = if has_key {
         quote! { self.key.clone() }
@@ -67,7 +66,7 @@ fn stateless_widget_impl(item_struct: &ItemStruct) -> TokenStream {
     };
 
     quote! {
-        impl #impl_generics aimer::widget::Widget for #struct_name #ty_generics #where_clause {
+        impl #impl_generics aimer::widget::Widget for #item_name #ty_generics #where_clause {
             #key_method
 
             fn to_element(self, ctx: &aimer::widget::base::BuildContext) -> aimer::widget::AnyElement {
@@ -83,11 +82,11 @@ fn stateless_widget_impl(item_struct: &ItemStruct) -> TokenStream {
                     ctx,
                     __rebuild,
                     __key,
-                    #struct_name_str,
+                    #item_name_str,
                 ))
             }
             fn debug_name(&self) -> &'static str {
-                #struct_name_str
+                #item_name_str
             }
         }
     }
@@ -170,9 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn the_derive_rejects_what_is_not_a_struct() {
-        // The attribute form can fall back to re-emitting its input; a derive
-        // has nothing to fall back to, so it must say what went wrong.
+    fn the_derive_supports_an_enum() {
         let output = derive_stateless_widget(quote! {
             enum NotAWidget {
                 Nope,
@@ -180,6 +177,6 @@ mod tests {
         })
         .to_string();
 
-        assert!(output.contains("compile_error"));
+        assert!(output.contains("impl aimer :: widget :: Widget for NotAWidget"));
     }
 }
