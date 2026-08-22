@@ -1,3 +1,5 @@
+
+
 # Aimer
 
 Aimer (pronounced "aa·may" it's mean "to love" in french) is a cross-platform UI framework built with Rust, inspired by Flutter's widget model. Aimer lets you build native user
@@ -68,7 +70,7 @@ aimer create my_aimer
 ### Running the App
 
 ```bash
-cd my_aimer && Aimer run
+cd my_aimer && aimer run
 ```
 
 ## Milestone
