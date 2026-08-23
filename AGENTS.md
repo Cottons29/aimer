@@ -1,316 +1,132 @@
-# Aimer — Development Guide
+# Aimer — Development Instructions
 
-Instructions for AI coding assistants and human contributors working on the Aimer codebase.
+These instructions apply to the entire repository. A nested `AGENTS.md` takes precedence for files in its directory.
 
-**Never give up on the right solution.**
+## Priorities
 
----
+When requirements compete, use this order:
 
-## Project Overview
+1. Correctness and safety.
+2. The user's explicit request and acceptance criteria.
+3. Performance on measured or clearly hot GUI paths.
+4. Consistency with the surrounding module.
+5. Minimal complexity and dependency cost.
 
-Aimer is a cross-platform GUI application framework written in Rust, inspired by Flutter's widget model. It lets you
-build native user interfaces from a single codebase using a declarative, composable widget tree (`Container!`, `Row!`,
-`Column!`, `Text!`, `Button!`, ...).
+Do not stop at a superficial workaround. Find and fix the root cause while keeping the change within the requested
+scope.
 
-At its core sits **Cupid**, Aimer's custom high-performance 2D rendering engine, built on
-[`wgpu`](https://wgpu.rs). Cupid batches draw calls (rectangles, text, images) and uses hardware acceleration for
-rounded corners, borders, clipping, and typography across Metal (Apple), Vulkan / OpenGL (Linux, Android), D3D
-(Windows), and WebGPU / WebGL (web).
+## Before Editing
 
-Key concepts:
+- Read the relevant implementation, tests, and any nested `AGENTS.md` before changing code.
+- Use available IDE context or Codegraph MCP when it is relevant, but do not assume an IDE integration exists. CLI
+  inspection is valid.
+- Do not invent missing facts. First inspect the repository, compiler output, tests, or documentation. Ask the user only
+  when the ambiguity cannot be resolved locally and different answers would materially change the implementation.
+- Preserve unrelated user changes. Do not revert or overwrite them.
+- Match existing module patterns unless this file or the user explicitly requires otherwise.
 
-- **Declarative UI** — composable widget tree via macros.
-- **Stateful widgets** — Flutter-style `StatefulWidget` / `State` with `StateUpdater` for reactive rebuilds.
-- **Layout engine** — flexbox-inspired `Row`, `Column`, `Container`, `Scrollable`.
-- **Cupid** — the wgpu-powered renderer with a `CupidCanvas` API for low-level drawing.
+## Scope and Autonomy
 
-See `README.md` for the current feature milestone and stability markers (`⚠️ Unstable`,
-`⛔️ Very Unstable`).
+- For requests to explain, review, diagnose, or plan: inspect and report; do not modify code unless asked.
+- For requests to build, change, or fix: make the in-scope local edits and run relevant non-destructive checks without
+  asking first.
+- Ask before destructive actions, external writes, adding a substantial dependency, changing public API beyond the
+  request, or materially expanding scope.
+- Do not create commits, branches, pull requests, or publish artifacts unless the user explicitly asks. Pull requests
+  must be created by a human unless the user overrides this rule.
 
-### Repository Layout (Cargo Workspace)
+## Test-Driven Development
 
-This is a **monorepo** managed as a single Cargo workspace (`resolver = "3"`, `edition = "2024"`).
+Use red-green-refactor for behavior changes:
 
-| Path                     | Purpose                                                                              |
-|--------------------------|--------------------------------------------------------------------------------------|
-| `src/`                   | The umbrella `aimer` crate — re-exports the public API.                              |
-| `aimer_cupid/`           | Cupid rendering engine (wgpu, pipelines, text/glyph rasterizer).                     |
-| `aimer_quiver/`          | Windowing / platform integration layer.                                              |
-| `crates/aimer_widget`    | Core widget system, element tree, `BuildContext`.                                    |
-| `crates/aimer_container` | Layout containers (`Row`, `Column`, `Scrollable`, spacing).                          |
-| `crates/aimer_color`     | Color types and named palettes.                                                      |
-| `crates/aimer_input`     | Gestures and input fields.                                                           |
-| `crates/aimer_canvas`    | Canvas abstractions.                                                                 |
-| `crates/aimer_attribute` | Shared attributes (dimensions, edges, etc.).                                         |
-| `crates/aimer_utils`     | Shared utilities.                                                                    |
-| `crates/aimer_animation` | Animation controllers, curves, tweens, keyframes.                                    |
-| `crates/aimer_events`    | Event system.                                                                        |
-| `crates/aimer_focus`     | Keyboard focus ownership and confinement (`FocusNode`, `FocusManager`, `FocusTrap`). |
-| `crates/aimer_router`    | Navigation / routing.                                                                |
-| `crates/aimer_inspector` | Widget inspector (unstable).                                                         |
-| `crates/aimer_assets`    | Asset loading.                                                                       |
-| `crates/aimer_style`     | Styling primitives.                                                                  |
-| `crates/aimer_text`      | Text layout / typography.                                                            |
-| `crates/aimer_macro`     | Proc-macros (`#[aimer::main]`, widget macros).                                       |
-| `crates/aimer_provider`  | Dependency/state provider.                                                           |
-| `crates/aimer_sdk`       | SDK aggregation.                                                                     |
-| `dev_tools/aimer_cli`    | The `aimer` CLI binary (create/run/build/doctor/...).                                |
-| `dev_tools/aimer_lsp`    | Language server tooling.                                                             |
-| `jaime/`                 | Internal tooling crate.                                                              |
-| `website/`               | Project website (WASM demo).                                                         |
+1. Add a focused test that fails for the intended reason.
+2. Run it and confirm the failure.
+3. Implement the smallest complete production change that makes it pass.
+4. Run the focused test again, then the relevant crate tests.
+5. Refactor only while the tests remain green.
 
-> **Large monorepo note:** subprojects may carry their own nested `AGENTS.md`. When working inside a
-> subproject, read its local `AGENTS.md` first — it takes precedence over this root file for that
-> subproject's specifics.
+Additional test rules:
 
----
+- Bug fixes require a regression test.
+- New behavior must cover its happy path plus relevant invalid-input and boundary cases.
+- Pure refactors may rely on existing tests when they already cover the affected behavior.
+- Prefer inline `#[cfg(test)] mod tests` modules next to the code they cover, matching the prevailing crate pattern.
+- Keep tests deterministic. Fix time and random inputs; use tolerances for floating-point assertions where appropriate.
+- Never delete, ignore, weaken, or skip a test merely to make the suite pass.
+- If a pre-existing failure is unrelated, report it with evidence; do not silently work around it.
+- If a useful test is impractical, explain why before implementing and use the strongest feasible verification.
 
-## Golden Rules
+## Rust and API Design
 
-- **Never Guess Ask Me Instead**. When meeting a problem, and not sure about the reason or smt else, please ask me
-  instead of guessing.
-- **Performance Critical Project**. This is a GUI framework, therefore performance is very critical thing, make sure the
-  logic is lightweight and high performance.
-- **Use CodeGraph to understand code.** It is fast and always safe for reading/navigating the codebase. Prefer it before
-  opening files blindly.
-- **Use the IDE (JetBrains IDEs/ VSCODE...etc) integration to search or edit code** when connected with the MCP server —
-  it is the safest, fastest path for refactors and renames.
-- **Never write "Lazy Senior Dev" code.** Do not merely patch the symptom with spaghetti that other developers will
-  curse. Solve the actual problem cleanly with effective logic pattern.
-- **Follow Test Driven Development.** Write the failing test first, then the code that makes it pass.
-- **The Widget-implemented struct always has new () with no parameter and child always in the last for building valid
-  Widget**
-- **Write Rust's std Standard Document Comment** when implementing new feature should provided detailed documentation
-  like Rust's std does.
-- **Add `#[inline]` to the builder pattern methods** it's good to make the compiler inlining the builder-pattern instead
-  of prepare call stack frame.
-- **One Rust File Cannot Bigger Than 2000 LOD** It's good for spliting the logic into the modular file rather than one
-  big Rust File.
-- **Avoid Using Third Party If Possible** It's would be good if some small feature can be implemented in local crate.
-- **Apply Zero-Copy Principle if Possible** It's another way to avoid allocation and increase overall performance.
-- **Move your fields in `to_element`, never clone them** `Widget::to_element(self, ctx)` consumes the widget, and the
-  widget is dropped right after the call, so a `.clone()` there is a per-frame allocation nobody reads. A widget that
-  rebuilds *itself* (a button on hover, a viewport on scroll) keeps its child in a `ChildBuilder`, which retains the
-  child's element instead of asking for the widget twice.
-- **In a crate the file should be tidy into their related folder if possible** It's make each crate are look organized
-  and easy to maintain rather than a crate/src is full of Rust source file, prefer no mod.rs.
-- **Use `pub use aimer_xxxx as xxxx` when re-export in aimer crate** It makes the Api look clean.
-- **Use Black-White Color Theme, for Example, if User Asked** User prefer mono-chrome color.
+- Use the latest stable Rust toolchain supported by the workspace.
+- Prefer clear ownership and borrowing over allocation. Apply zero-copy techniques when they simplify or measurably
+  improve a hot path; do not introduce unsafe code or complex lifetimes without demonstrated benefit.
+- Keep `unsafe` blocks minimal and document their safety invariants.
+- Never hardcode or log credentials, tokens, signing keys, or other secrets.
+- Prefer existing workspace dependencies and standard-library solutions. Add a third-party crate only when its
+  maintenance, correctness, or complexity benefit justifies it.
+- Prefer the crate version that published more than 1 ~ 2 weeks ago to prevent malicious crates from being introduced.
+- Prefer using the git url with a specific commit hash or tag for introduce external crate when possible.
+- Declare shared dependencies in root `[workspace.dependencies]`, then use `<dependency>.workspace = true` in member
+  crates.
+- New crate names use the `aimer_*` prefix.
+- Route public umbrella-crate re-exports through `src/lib.rs`. Use `pub use aimer_xxxx as xxxx` when exposing a crate
+  under a shorter public name.
+- Keep source files at or below 2,000 lines (inline-unittest excluded). Split by responsibility before exceeding that
+  limit. Prefer named module, the unittest is not count toward source LOD files such as `gesture.rs` plus
+  `gesture/drag.rs`; do not introduce `mod.rs` files.
+- Add documentation comments to new public APIs. Document purpose, important invariants, panics/errors, safety
+  requirements, and a useful example when appropriate. Follow Rust standard-library style, but keep documentation
+  proportional to the API.
+- Add comments for invariants and non-obvious decisions, not for code that is already self-explanatory.
+- Do not run `cargo fmt`. Preserve the surrounding formatting style in edited code.
 
-### In-Crate Tidy Structure Example
+## Widget Conventions
 
-```text
-aimer_input
-├── Cargo.toml
-└── src
-    ├── button.rs
-    ├── gesture
-    │   ├── gesture_detector.rs
-    │   ├── handlers.rs
-    │   ├── recognize
-    │   │   ├── drag.rs
-    │   │   ├── scale.rs
-    │   │   └── tap.rs
-    │   ├── recognize.rs
-    │   └── state.rs
-    ├── gesture.rs
-    ├── input_field
-    │   ├── caret.rs
-    │   ├── controller.rs
-    │   └── raw_fields.rs
-    ├── input_field.rs
-    ├── lib.rs
-    └── mouse_region.rs
+For structs that implement `Widget`:
 
-```
+- Provide a zero-argument `new()` that returns the incomplete/default builder state.
+- If a child is required, make the child-setting method the final type-state transition that produces a valid widget.
+- Put the child type parameter last when practical and consistent with the existing API.
+- Mark small builder methods `#[inline]`.
+- In `Widget::to_element(self, ctx)`, move owned fields into the retained element. Do not clone fields merely because
+  ownership is inconvenient: `self` is consumed.
+- A self-rebuilding widget should retain its child through `ChildBuilder` or the repository's equivalent retained-child
+  mechanism instead of rebuilding or cloning it unnecessarily.
 
-### Rust STD Documentation Example `Option<T>`
-
-```rust
-
-/// A trait for giving a type a useful default value.
-///
-/// Sometimes, you want to fall back to some kind of default value, and
-/// don't particularly care what it is. This comes up often with `struct`s
-/// that define a set of options:
-///
-/// ```
-/// # #[allow(dead_code)]
-/// struct SomeOptions {
-///     foo: i32,
-///     bar: f32,
-/// }
-/// ```
-///
-/// How can we define some default values? You can use `Default`:
-///
-/// ```
-/// # #[allow(dead_code)]
-/// #[derive(Default)]
-/// struct SomeOptions {
-///     foo: i32,
-///     bar: f32,
-/// }
-///
-/// fn main() {
-///     let options: SomeOptions = Default::default();
-/// }
-/// ```
-///
-/// Now, you get all of the default values. Rust implements `Default` for various primitive types.
-///
-/// If you want to override a particular option, but still retain the other defaults:
-///
-/// ```
-/// # #[allow(dead_code)]
-/// # #[derive(Default)]
-/// # struct SomeOptions {
-/// #     foo: i32,
-/// #     bar: f32,
-/// # }
-/// fn main() {
-///     let options = SomeOptions { foo: 42, ..Default::default() };
-/// }
-/// ```
-///
-/// ## Derivable
-///
-/// This trait can be used with `#[derive]` if all of the type's fields implement
-/// `Default`. When `derive`d, it will use the default value for each field's type.
-///
-/// ### `enum`s
-///
-/// When using `#[derive(Default)]` on an `enum`, you need to choose which unit variant will be
-/// default. You do this by placing the `#[default]` attribute on the variant.
-///
-/// ```
-/// #[derive(Default)]
-/// enum Kind {
-///     #[default]
-///     A,
-///     B,
-///     C,
-/// }
-/// ```
-///
-/// You cannot use the `#[default]` attribute on non-unit or non-exhaustive variants.
-///
-/// The `#[default]` attribute was stabilized in Rust 1.62.0.
-///
-/// ## How can I implement `Default`?
-///
-/// Provide an implementation for the `default()` method that returns the value of
-/// your type that should be the default:
-///
-/// ```
-/// # #![allow(dead_code)]
-/// enum Kind {
-///     A,
-///     B,
-///     C,
-/// }
-///
-/// impl Default for Kind {
-///     fn default() -> Self { Kind::A }
-/// }
-/// ```
-///
-/// # Examples
-///
-/// ```
-/// # #[allow(dead_code)]
-/// #[derive(Default)]
-/// struct SomeOptions {
-///     foo: i32,
-///     bar: f32,
-/// }
-/// ```
-#[rustc_diagnostic_item = "Default"]
-#[stable(feature = "rust1", since = "1.0.0")]
-#[rustc_const_unstable(feature = "const_default", issue = "143894")]
-pub const trait Default: Sized {
-    /// Returns the "default value" for a type.
-    ///
-    /// Default values are often some kind of initial value, identity value, or anything else that
-    /// may make sense as a default.
-    ///
-    /// # Examples
-    ///
-    /// Using built-in default values:
-    ///
-    /// ```
-    /// let i: i8 = Default::default();
-    /// let (x, y): (Option<String>, f64) = Default::default();
-    /// let (a, b, (c, d)): (i32, u32, (bool, bool)) = Default::default();
-    /// ```
-    ///
-    /// Making your own:
-    ///
-    /// ```
-    /// # #[allow(dead_code)]
-    /// enum Kind {
-    ///     A,
-    ///     B,
-    ///     C,
-    /// }
-    ///
-    /// impl Default for Kind {
-    ///     fn default() -> Self { Kind::A }
-    /// }
-    /// ```
-    #[stable(feature = "rust1", since = "1.0.0")]
-    #[rustc_diagnostic_item = "default_fn"]
-    fn default() -> Self;
-}
-```
-
-### Builder Pattern Example
+Example:
 
 ```rust
 pub struct MyWidget<W = RequiredChild> {
-    child: W,
     size: f32,
+    child: W,
 }
-
 
 impl MyWidget {
     #[inline]
     pub fn new() -> Self {
         Self {
+            size: 0.0,
             child: RequiredChild,
-            size: Default::default()
         }
     }
+
     #[inline]
     pub fn size(mut self, size: f32) -> Self {
         self.size = size;
         self
     }
 
-    // This will make the instance became a valid widget
     #[inline]
     pub fn child<W: Widget>(self, child: W) -> MyWidget<W> {
         MyWidget {
+            size: self.size,
             child,
-            size: self.size
         }
-    }
-
-    #[inline]
-    /// Sugar of MyWidget::new().child(...).boxed()
-    pub fn dyn_child<W: Widget>(self, child: W) -> AnyWidget {
-        MyWidget {
-            child,
-            size: self.size
-        }.boxed()
     }
 }
 
-
 impl<W: Widget + 'static> Widget for MyWidget<W> {
-    // `to_element` **consumes** the widget: a widget is a short-lived
-    // description and the element it produces is the retained side, so move the
-    // fields into the element instead of cloning them.
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawMyWidget {
             size: self.size,
@@ -319,89 +135,44 @@ impl<W: Widget + 'static> Widget for MyWidget<W> {
             .boxed()
     }
 }
-
-
 ```
 
-### Test Driven Development
+## Performance
 
-TDD relies on a very short cycle: turn a requirement into a specific, failing test, then write only the code needed to
-make it pass, then refactor. Do not add behavior that isn't proven by a test.
+Aimer is a performance-sensitive GUI framework.
 
-**_Before you write code, write the test cases first!_**
+- Treat per-frame rendering, layout, input, animation, and widget rebuild paths as hot unless evidence shows otherwise.
+- Avoid avoidable allocations, clones, repeated tree walks, blocking work, and unnecessary synchronization on hot paths.
+- Do not claim a change is faster without evidence. For non-obvious performance changes, add or run a benchmark,
+  profiler, allocation check, or equivalent measurement.
+- Do not trade correctness or maintainability for speculative micro-optimizations.
+- When changing GPU buffers, FFI, or platform code, validate sizes, alignments, lifetimes, and thread-affinity
+  assumptions.
 
----
+## Visual Design
 
-## Build & Test Commands
+When the user asks for an example UI without specifying a palette, prefer a monochrome black-and-white theme. An
+explicit user-supplied design or existing product style takes precedence.
 
-Run from the workspace root unless noted. Requires the latest stable Rust toolchain.
+## Validation Commands
 
-### Test
+Run commands from the workspace root unless a nested guide says otherwise.
 
 ```bash
-# Run all tests across the workspace
-cargo test
+# Focused test
+cargo test -p aimer_animation test_curve_linear
 
-# Test a single crate
+# Crate tests
 cargo test -p aimer_animation
 
-# Run a single test by name
-cargo test -p aimer_animation test_curve_linear
+# Entire workspace (use when the change scope warrants it)
+cargo test --workspace --all-features
 ```
 
-## Code Style Guidelines
+Before handing off:
 
-- Match the surrounding code's patterns and idioms; keep changes consistent with the module.
-- Crate names use the `aimer_*` prefix; keep new crates consistent.
-- Only add comments where the existing code does; avoid noise, prefer meaningful variable name.
-- Prefer the workspace dependency table (`[workspace.dependencies]` in the root `Cargo.toml`) — add new deps there and
-  reference them with `<dep>.workspace = true`.
-- do not run `cargo fmt`
-
----
-
-## Testing Instructions
-
-- **TDD is mandatory.** Write a failing test that captures the requirement or reproduces the bug first; confirm it
-  fails; then implement until it passes.
-- Tests live inline as `#[cfg(test)] mod tests` next to the code they cover (the prevailing pattern across `crates/*`).
-  Follow that layout.
-- For **bug fixes**: add a regression test that fails before the fix.
-- For **new features**: cover the happy path, negative/invalid input, and edge cases.
-- For **refactors**: rely on existing tests; add coverage only where it is missing.
-- **Determinism:** rendering/layout/animation code can be timing- or float-sensitive — seed or fix inputs and assert
-  with appropriate tolerances instead of exact floats where relevant.
-- **Never** disable, `#[ignore]`, delete, or weaken tests to make a suite pass, and never use skip flags. If a test
-  fails, assume your change caused it and fix the root cause.
-- Both production and test code must compile before you run tests; fix all compile errors first.
-
----
-
-## Security Considerations
-
-- **GPU / unsafe code:** Cupid and the platform layers use `wgpu`, and platform FFI (`objc`,
-  `core-foundation`, `jni`, `ndk`). Keep `unsafe` blocks minimal, localized, and documented with the invariants they
-  rely on. Never widen an `unsafe` boundary casually.
-- **Buffer/GPU memory:** validate sizes and alignments before uploading to GPU buffers;
-- **Secrets:** never hardcode credentials, tokens, or signing keys. Keep them out of the repo and out of logs.
-- **Dependencies:** prefer vetted, already-used crates; pin new dependencies through the workspace table and justify
-  additions.
-
----
-
-## Commit & Pull Request Guidelines
-
-- The PR needs to make manually by `Human` not generated by `LLM`.
-
----
-
-## Extra Notes for New Contributors
-
-- Platform prerequisites: macOS/iOS need Xcode + Metal hardware; Android needs the NDK; web needs
-  `trunk`.
-- The public entry point is `aimer` (`src/lib.rs`), which re-exports the sub-crates — prefer routing new public API
-  through it.
-- The render profile in release is aggressive (`lto = true`, `panic = "abort"`, `strip = symbols`); don't rely on
-  unwinding for control flow in production paths.
-- Anything you'd tell a new teammate — a subtle invariant, a flaky platform, a large asset — belongs here or in the
-  relevant nested `AGENTS.md`.
+- Ensure production and test code compile.
+- Run the narrowest relevant checks first, then broaden according to change risk.
+- Report exactly what was run and whether it passed.
+- Report any checks not run and the reason.
+- Summarize changed behavior and identify remaining risks or follow-up work without claiming unverified success.
