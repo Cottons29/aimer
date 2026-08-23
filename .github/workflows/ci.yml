@@ -17,7 +17,9 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
         with:
+          targets: aarch64-apple-darwin, wasm32-unknown-unknown
           components: clippy
 
       - name: Cache cargo

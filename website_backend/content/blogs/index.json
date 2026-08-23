@@ -96,6 +96,13 @@
     "title": "Custom Markdown Widgets and the New Flex Layout",
     "author": "Cottons29",
     "tags": ["Markdown", "Flex"]
+  },
+  {
+    "id": "shared-smart-pointer-and-hot-reload",
+    "upload_time": "2026-08-24T00:00:00Z",
+    "title": "Shared Ownership and Experimental Hot Reload",
+    "author": "Cottons29",
+    "tags": ["Rust", "Performance", "Hot Reload"]
   }
 
 ]

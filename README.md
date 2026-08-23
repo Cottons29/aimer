@@ -47,7 +47,7 @@ tree on native platforms.
 ### Prerequisites
 
 - [Rust](https://www.rust-lang.org/tools/install) version based on the Aimer version:
-  - example : Aimer version = 1.97.1, Rust version also required to 1.97.1
+  - example : Aimer version = 1.98.0, Rust version also required to 1.98.0
 
 - Platform-specific dependencies:
     - **macOS / iOS**: Xcode and Metal-compatible hardware
