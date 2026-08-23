@@ -5,7 +5,7 @@ edition = "2024"
 
 [lib]
 path="src/main.rs"
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
-aimer = {git="https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-2"}
+aimer = {git="https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-3"}

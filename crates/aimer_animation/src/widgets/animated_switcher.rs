@@ -42,21 +42,30 @@ fn request_next_frame() {
 ///                           Curve::Linear,
 ///                           ErrorWidget::new("Current page")).child_key("current-page");
 /// ```
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_animation::AnimatedSwitcher", schema_only)]
 pub struct AnimatedSwitcher<T: Widget + 'static> {
     /// The subtree to show, kept as a builder because a cross-fade rebuilds it
     /// once per frame, for as long as the fade lasts.
+    #[portable_child]
     pub child: ChildBuilder,
+    #[portable_skip]
     pub duration: Duration,
+    #[portable_skip]
     pub curve: Curve,
     /// Optional separate curve for the outgoing child. Defaults to `curve`.
+    #[portable_skip]
     pub switch_out_curve: Option<Curve>,
+    #[portable_skip]
     transition_key: Option<Key>,
+    #[portable_skip]
     widget_key: Option<Key>,
     /// The child's type, which the builder erases.
     ///
     /// The switcher's state is bound to it, so switchers that show different
     /// kinds of child stay distinct types and never reconcile onto each
     /// other's state.
+    #[portable_skip]
     marker: PhantomData<T>,
 }
 
@@ -225,6 +234,8 @@ impl Widget for AnimatedSwitcherFrame {
     }
 }
 
+impl aimer_widget::PortableWidget for AnimatedSwitcherFrame {}
+
 struct AnimatedSwitcherElement {
     current_child: AnyElement,
     old_child: UnsafeCell<Option<AnyElement>>,
@@ -342,6 +353,8 @@ mod tests {
         }
     }
 
+    impl aimer_widget::PortableWidget for TestWidget {}
+
     fn state(key: &'static str) -> AnimatedSwitcherState<TestWidget> {
         AnimatedSwitcher::new(Duration::from_millis(100), Curve::Linear, TestWidget(key))
             .create_state()
@@ -430,6 +443,8 @@ mod tests {
                 "Probe"
             }
         }
+
+        impl aimer_widget::PortableWidget for Probe {}
 
         fn context() -> BuildContext<'static> {
             let canvas = {
@@ -608,6 +623,8 @@ mod tests {
             }
         }
 
+        impl aimer_widget::PortableWidget for RecordingPage {}
+
         fn route_label(route: usize) -> &'static str {
             if route == 0 { "home" } else { "docs" }
         }
@@ -672,19 +689,16 @@ mod tests {
                     Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
                 aimer_canvas::Canvas::new(leaked)
             };
-            BuildContext {
-                parent_size: Default::default(),
+            BuildContext::new(
                 canvas,
-                scale: 1.0,
-                parent_pos: Default::default(),
-                cursor_pos: Default::default(),
-                box_constraint: Default::default(),
-                visible_rect: None,
-                window: WindowHandle::headless(Default::default(), 1.0),
+                Default::default(),
+                1.0,
+                Default::default(),
+                Default::default(),
+                WindowHandle::headless(Default::default(), 1.0),
                 #[cfg(not(target_arch = "wasm32"))]
-                async_handle: dummy_async_handle(),
-                inherited_states: Default::default(),
-            }
+                dummy_async_handle(),
+            )
         }
 
         #[test]

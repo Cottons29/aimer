@@ -81,18 +81,29 @@ fn open_web_link(target: Rc<str>) {
 /// in a header and provide a copy control that writes the complete code source
 /// to the platform clipboard. Unlabelled fences keep the header without showing
 /// a language name.
-#[derive(Clone)]
+#[derive(Clone, aimer_widget::PortableWidget)]
+#[portable_widget(id = "aimer_markdown::MarkdownViewer", schema_only)]
 pub struct MarkdownViewer {
+    #[portable_skip]
     source: Rc<str>,
+    #[portable_skip]
     theme: MarkdownTheme,
+    #[portable_skip]
     link_handler: Option<LinkHandler>,
+    #[portable_skip]
     image_resolver: ImageResolver,
+    #[portable_skip]
     custom_blocks: Vec<(BlockRule, CustomBlockBuilder)>,
+    #[portable_skip]
     custom_inlines: Vec<(InlineRule, CustomInlineBuilder)>,
+    #[portable_skip]
     typed_custom_blocks: Vec<(BlockRule, custom::TypedCustomBlockBuilder)>,
+    #[portable_skip]
     typed_custom_inlines: Vec<(InlineRule, custom::TypedCustomInlineBuilder)>,
+    #[portable_skip]
     padding: LayoutSpacing,
     scrollable: bool,
+    #[portable_skip]
     key: Key,
 }
 

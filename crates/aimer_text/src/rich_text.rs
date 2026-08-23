@@ -4,13 +4,18 @@ use std::rc::Rc;
 use aimer_attribute::{Bounds, ResolvedSize};
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_events::pointer::{PointerButton, PointerSource};
-use aimer_style::{TextAlign, TextOverflow, TextStyle};
+use aimer_macro::{PortableValue, PortableWidget};
+use aimer_style::{
+    FontFamily, FontStyle, FontWeight, TextAlign, TextDecoration, TextDecorationLine,
+    TextDecorationStyle, TextOverflow, TextStyle,
+};
 use aimer_utils::AnimInstant;
 use aimer_utils::callback::{Callback, CallbackExecutor};
 use aimer_widget::base::{BuildContext, Color};
+use aimer_widget::portable::PortableMaterializeError;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, FocusNode, LayoutElement, PointerKey,
-    RawFocusable, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, FocusNode, LayoutElement,
+    PointerKey, RawFocusable, VisitorElement, Widget,
 };
 
 use crate::paragraph::{Paragraph, display_color, geometry};
@@ -22,12 +27,461 @@ use crate::selection::touch_hold::{
     TouchHold, TouchHoldGate, enter_hold, frame_origin, press_touch,
 };
 use crate::selection::ui;
-use crate::text_span::TextSpan;
+use crate::text_span::{ResolvedTextSpan, SpanStyle, TextSpan};
 
 /// Callback invoked with the target of an activated linked [`TextSpan`].
 pub type LinkCallback = Callback<Rc<str>, ()>;
 
 pub(crate) const DEFAULT_SELECTION_COLOR: Color = Color::Rgba(51, 153, 255, 96);
+
+#[derive(Clone, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::RichTextContent",
+    version = "1.0",
+    max_encoded_bytes = 131_072,
+    max_depth = 16,
+    max_entries = 16_384,
+    max_string_bytes = 65_536,
+    max_value_bytes = 16_384,
+    max_reconstruction_work = 32_768,
+)]
+struct PortableRichTextContent {
+    spans: Vec<PortableRichTextSpan>,
+    overflow: PortableTextOverflow,
+    text_align: PortableTextAlign,
+}
+
+#[derive(Clone, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::RichTextSpan",
+    version = "1.0",
+    max_encoded_bytes = 16_384,
+    max_depth = 8,
+    max_entries = 1_024,
+    max_string_bytes = 16_384,
+    max_value_bytes = 4_096,
+    max_reconstruction_work = 4_096,
+)]
+struct PortableRichTextSpan {
+    text: String,
+    style: PortableRichTextStyle,
+    link: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::RichTextStyle",
+    version = "1.0",
+    max_encoded_bytes = 512,
+    max_depth = 8,
+    max_entries = 64,
+    max_string_bytes = 256,
+    max_value_bytes = 128,
+    max_reconstruction_work = 128,
+)]
+struct PortableRichTextStyle {
+    font_size: u32,
+    font_family: PortableFontFamily,
+    font_style: PortableFontStyle,
+    font_weight: PortableFontWeight,
+    color: u32,
+    background_color: Option<u32>,
+    text_decoration: PortableTextDecoration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::FontFamily",
+    version = "1.0",
+    max_encoded_bytes = 32,
+)]
+enum PortableFontFamily {
+    #[portable_value(tag = 0)]
+    SansSerif,
+    #[portable_value(tag = 1)]
+    Monospace,
+    #[portable_value(tag = 2)]
+    Custom(u64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::FontStyle",
+    version = "1.0",
+    max_encoded_bytes = 32,
+)]
+enum PortableFontStyle {
+    #[portable_value(tag = 0)]
+    Normal,
+    #[portable_value(tag = 1)]
+    Italic,
+    #[portable_value(tag = 2)]
+    Oblique,
+    #[portable_value(tag = 3)]
+    ObliqueDeg(i32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::FontWeight",
+    version = "1.0",
+    max_encoded_bytes = 32,
+)]
+enum PortableFontWeight {
+    #[portable_value(tag = 0)]
+    VeryThin,
+    #[portable_value(tag = 1)]
+    Thin,
+    #[portable_value(tag = 2)]
+    Normal,
+    #[portable_value(tag = 3)]
+    Bold,
+    #[portable_value(tag = 4)]
+    Bolder,
+    #[portable_value(tag = 5)]
+    Value(u32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::TextDecorationStyle",
+    version = "1.0",
+    max_encoded_bytes = 32,
+)]
+enum PortableTextDecorationStyle {
+    #[portable_value(tag = 0)]
+    Solid,
+    #[portable_value(tag = 1)]
+    Double,
+    #[portable_value(tag = 2)]
+    Dotted,
+    #[portable_value(tag = 3)]
+    Dashed,
+    #[portable_value(tag = 4)]
+    Wavy,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::TextDecoration",
+    version = "1.0",
+    max_encoded_bytes = 128,
+)]
+struct PortableTextDecoration {
+    line_bits: u8,
+    style: PortableTextDecorationStyle,
+    color: Option<u32>,
+    thickness: Option<f32>,
+    offset: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::TextAlign",
+    version = "1.0",
+    max_encoded_bytes = 32,
+)]
+enum PortableTextAlign {
+    #[portable_value(tag = 0)]
+    TopLeft,
+    #[portable_value(tag = 1)]
+    TopCenter,
+    #[portable_value(tag = 2)]
+    TopRight,
+    #[portable_value(tag = 3)]
+    MidCenter,
+    #[portable_value(tag = 4)]
+    MidLeft,
+    #[portable_value(tag = 5)]
+    MidRight,
+    #[portable_value(tag = 6)]
+    BotLeft,
+    #[portable_value(tag = 7)]
+    BotCenter,
+    #[portable_value(tag = 8)]
+    BotRight,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::TextOverflow",
+    version = "1.0",
+    max_encoded_bytes = 32,
+)]
+enum PortableTextOverflow {
+    #[portable_value(tag = 0)]
+    Clip,
+    #[portable_value(tag = 1)]
+    Ellipsis,
+    #[portable_value(tag = 2)]
+    Wrap,
+    #[portable_value(tag = 3)]
+    Value(u32),
+}
+
+impl PortableRichTextContent {
+    fn from_parts(
+        span: &TextSpan,
+        text_style: &TextStyle,
+        overflow: Option<TextOverflow>,
+        text_align: TextAlign,
+    ) -> Self {
+        Self {
+            spans: span
+                .flatten(text_style)
+                .into_iter()
+                .map(PortableRichTextSpan::from_resolved)
+                .collect(),
+            overflow: PortableTextOverflow::from_native(
+                overflow.unwrap_or(text_style.text_overflow),
+            ),
+            text_align: PortableTextAlign::from_native(text_align),
+        }
+    }
+
+    fn into_widget(
+        self,
+        property: aimer_widget::portable::__anteros::PropertyId,
+    ) -> Result<RichText, PortableMaterializeError> {
+        let spans = self
+            .spans
+            .into_iter()
+            .map(|span| span.into_native(property))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(RichText::new(TextSpan::root(spans))
+            .text_align(self.text_align.into_native())
+            .text_overflow(self.overflow.into_native()))
+    }
+}
+
+impl PortableRichTextSpan {
+    fn from_resolved(span: ResolvedTextSpan) -> Self {
+        Self {
+            text: span.text.to_string(),
+            style: PortableRichTextStyle::from_native(span.style),
+            link: span.link.map(|link| link.to_string()),
+        }
+    }
+
+    fn into_native(
+        self,
+        property: aimer_widget::portable::__anteros::PropertyId,
+    ) -> Result<TextSpan, PortableMaterializeError> {
+        let style = self.style.into_native(property)?;
+        let mut span = TextSpan::new(self.text).style(style);
+        if let Some(link) = self.link {
+            span = span.link(link);
+        }
+        Ok(span)
+    }
+}
+
+impl PortableRichTextStyle {
+    fn from_native(style: TextStyle) -> Self {
+        Self {
+            font_size: style.font_size,
+            font_family: PortableFontFamily::from_native(style.font_family),
+            font_style: PortableFontStyle::from_native(style.font_style),
+            font_weight: PortableFontWeight::from_native(style.font_weight),
+            color: style.color.as_u32(),
+            background_color: style.background_color.map(|color| color.as_u32()),
+            text_decoration: PortableTextDecoration::from_native(style.text_decoration),
+        }
+    }
+
+    fn into_native(
+        self,
+        property: aimer_widget::portable::__anteros::PropertyId,
+    ) -> Result<SpanStyle, PortableMaterializeError> {
+        let mut style = SpanStyle::new()
+            .font_size(self.font_size)
+            .font_family(self.font_family.into_native(property)?)
+            .font_style(self.font_style.into_native())
+            .font_weight(self.font_weight.into_native())
+            .color(Color::from_primitive(self.color))
+            .text_decoration(self.text_decoration.into_native(property)?);
+        if let Some(color) = self.background_color {
+            style = style.background_color(Color::from_primitive(color));
+        }
+        Ok(style)
+    }
+}
+
+impl PortableFontFamily {
+    fn from_native(family: FontFamily) -> Self {
+        if family == FontFamily::SANS_SERIF {
+            Self::SansSerif
+        } else if family == FontFamily::MONOSPACE {
+            Self::Monospace
+        } else {
+            Self::Custom(family.raw())
+        }
+    }
+
+    fn into_native(
+        self,
+        property: aimer_widget::portable::__anteros::PropertyId,
+    ) -> Result<FontFamily, PortableMaterializeError> {
+        match self {
+            Self::SansSerif => Ok(FontFamily::SANS_SERIF),
+            Self::Monospace => Ok(FontFamily::MONOSPACE),
+            Self::Custom(_) => Err(PortableMaterializeError::InvalidPropertyValue { property }),
+        }
+    }
+}
+
+impl PortableFontStyle {
+    fn from_native(style: FontStyle) -> Self {
+        match style {
+            FontStyle::Normal => Self::Normal,
+            FontStyle::Italic => Self::Italic,
+            FontStyle::Oblique => Self::Oblique,
+            FontStyle::ObliqueDeg(degrees) => Self::ObliqueDeg(degrees),
+        }
+    }
+
+    fn into_native(self) -> FontStyle {
+        match self {
+            Self::Normal => FontStyle::Normal,
+            Self::Italic => FontStyle::Italic,
+            Self::Oblique => FontStyle::Oblique,
+            Self::ObliqueDeg(degrees) => FontStyle::ObliqueDeg(degrees),
+        }
+    }
+}
+
+impl PortableFontWeight {
+    fn from_native(weight: FontWeight) -> Self {
+        match weight {
+            FontWeight::VeryThin => Self::VeryThin,
+            FontWeight::Thin => Self::Thin,
+            FontWeight::Normal => Self::Normal,
+            FontWeight::Bold => Self::Bold,
+            FontWeight::Bolder => Self::Bolder,
+            FontWeight::Value(value) => Self::Value(value),
+        }
+    }
+
+    fn into_native(self) -> FontWeight {
+        match self {
+            Self::VeryThin => FontWeight::VeryThin,
+            Self::Thin => FontWeight::Thin,
+            Self::Normal => FontWeight::Normal,
+            Self::Bold => FontWeight::Bold,
+            Self::Bolder => FontWeight::Bolder,
+            Self::Value(value) => FontWeight::Value(value),
+        }
+    }
+}
+
+impl PortableTextDecoration {
+    fn from_native(decoration: TextDecoration) -> Self {
+        Self {
+            line_bits: decoration.line.bits(),
+            style: match decoration.style {
+                TextDecorationStyle::Solid => PortableTextDecorationStyle::Solid,
+                TextDecorationStyle::Double => PortableTextDecorationStyle::Double,
+                TextDecorationStyle::Dotted => PortableTextDecorationStyle::Dotted,
+                TextDecorationStyle::Dashed => PortableTextDecorationStyle::Dashed,
+                TextDecorationStyle::Wavy => PortableTextDecorationStyle::Wavy,
+            },
+            color: decoration.color.map(|color| color.as_u32()),
+            thickness: decoration.thickness,
+            offset: decoration.offset,
+        }
+    }
+
+    fn into_native(
+        self,
+        property: aimer_widget::portable::__anteros::PropertyId,
+    ) -> Result<TextDecoration, PortableMaterializeError> {
+        let known_bits = TextDecorationLine::UNDERLINE.bits()
+            | TextDecorationLine::OVERLINE.bits()
+            | TextDecorationLine::LINE_THROUGH.bits()
+            | TextDecorationLine::ITALIC.bits();
+        if self.line_bits & !known_bits != 0 {
+            return Err(PortableMaterializeError::InvalidPropertyValue { property });
+        }
+        let mut line = TextDecorationLine::NONE;
+        if self.line_bits & TextDecorationLine::UNDERLINE.bits() != 0 {
+            line = line | TextDecorationLine::UNDERLINE;
+        }
+        if self.line_bits & TextDecorationLine::OVERLINE.bits() != 0 {
+            line = line | TextDecorationLine::OVERLINE;
+        }
+        if self.line_bits & TextDecorationLine::LINE_THROUGH.bits() != 0 {
+            line = line | TextDecorationLine::LINE_THROUGH;
+        }
+        if self.line_bits & TextDecorationLine::ITALIC.bits() != 0 {
+            line = line | TextDecorationLine::ITALIC;
+        }
+        let style = match self.style {
+            PortableTextDecorationStyle::Solid => TextDecorationStyle::Solid,
+            PortableTextDecorationStyle::Double => TextDecorationStyle::Double,
+            PortableTextDecorationStyle::Dotted => TextDecorationStyle::Dotted,
+            PortableTextDecorationStyle::Dashed => TextDecorationStyle::Dashed,
+            PortableTextDecorationStyle::Wavy => TextDecorationStyle::Wavy,
+        };
+        let mut decoration = TextDecoration::from_parts(line, style);
+        if let Some(color) = self.color {
+            decoration = decoration.with_color(Color::from_primitive(color));
+        }
+        if let Some(thickness) = self.thickness {
+            decoration = decoration.with_thickness(thickness);
+        }
+        Ok(decoration.with_offset(self.offset))
+    }
+}
+
+impl PortableTextAlign {
+    fn from_native(align: TextAlign) -> Self {
+        match align {
+            TextAlign::TopLeft => Self::TopLeft,
+            TextAlign::TopCenter => Self::TopCenter,
+            TextAlign::TopRight => Self::TopRight,
+            TextAlign::MidCenter => Self::MidCenter,
+            TextAlign::MidLeft => Self::MidLeft,
+            TextAlign::MidRight => Self::MidRight,
+            TextAlign::BotLeft => Self::BotLeft,
+            TextAlign::BotCenter => Self::BotCenter,
+            TextAlign::BotRight => Self::BotRight,
+        }
+    }
+
+    fn into_native(self) -> TextAlign {
+        match self {
+            Self::TopLeft => TextAlign::TopLeft,
+            Self::TopCenter => TextAlign::TopCenter,
+            Self::TopRight => TextAlign::TopRight,
+            Self::MidCenter => TextAlign::MidCenter,
+            Self::MidLeft => TextAlign::MidLeft,
+            Self::MidRight => TextAlign::MidRight,
+            Self::BotLeft => TextAlign::BotLeft,
+            Self::BotCenter => TextAlign::BotCenter,
+            Self::BotRight => TextAlign::BotRight,
+        }
+    }
+}
+
+impl PortableTextOverflow {
+    fn from_native(overflow: TextOverflow) -> Self {
+        match overflow {
+            TextOverflow::Clip => Self::Clip,
+            TextOverflow::Ellipsis => Self::Ellipsis,
+            TextOverflow::Wrap => Self::Wrap,
+            TextOverflow::Value(value) => Self::Value(value),
+        }
+    }
+
+    fn into_native(self) -> TextOverflow {
+        match self {
+            Self::Clip => TextOverflow::Clip,
+            Self::Ellipsis => TextOverflow::Ellipsis,
+            Self::Wrap => TextOverflow::Wrap,
+            Self::Value(value) => TextOverflow::Value(value),
+        }
+    }
+}
 
 /// Displays a tree of styled [`TextSpan`] values with optional links and
 /// selection.
@@ -37,6 +491,10 @@ pub(crate) const DEFAULT_SELECTION_COLOR: Color = Color::Rgba(51, 153, 255, 96);
 /// and disabled selection. Wrapping lays text onto multiple lines; ellipsis
 /// truncates the first line to the available width. Selectable text supports
 /// pointer selection and the platform select-all and copy shortcuts.
+/// Portable guest lowering retains span text, resolved styles, link targets,
+/// alignment, overflow, and the reflected interaction properties. The
+/// [`RichText::on_link`] closure remains native-only because closures are not
+/// portable values.
 ///
 /// # Example
 ///
@@ -51,15 +509,27 @@ pub(crate) const DEFAULT_SELECTION_COLOR: Color = Color::Rgba(51, 153, 255, 96);
 /// .selectable()
 /// .wrapped();
 /// ```
+#[derive(PortableWidget)]
+#[portable_widget(
+    id = "aimer_text::RichText",
+    validate = validate_portable_rich_text,
+    materializer = materialize_portable_rich_text
+)]
 pub struct RichText {
+    #[portable_skip]
     span: TextSpan,
+    #[portable_skip]
     text_style: TextStyle,
+    #[portable_skip]
     overflow: Option<TextOverflow>,
+    #[portable_skip]
     text_align: TextAlign,
+    #[portable_skip]
     on_link: LinkCallback,
     link_hover_color: Option<Color>,
     selectable: bool,
     selection_color: Option<Color>,
+    content: PortableRichTextContent,
 }
 
 impl RichText {
@@ -67,16 +537,29 @@ impl RichText {
     /// interaction settings.
     #[inline]
     pub fn new(span: TextSpan) -> Self {
+        let text_style = TextStyle::default();
+        let text_align = TextAlign::default();
+        let content = PortableRichTextContent::from_parts(&span, &text_style, None, text_align);
         Self {
             span,
-            text_style: TextStyle::default(),
+            text_style,
             overflow: None,
-            text_align: TextAlign::default(),
+            text_align,
             on_link: LinkCallback::default(),
             link_hover_color: None,
             selectable: false,
             selection_color: None,
+            content,
         }
+    }
+
+    fn refresh_portable_content(&mut self) {
+        self.content = PortableRichTextContent::from_parts(
+            &self.span,
+            &self.text_style,
+            self.overflow,
+            self.text_align,
+        );
     }
 
     /// Replaces the base style inherited by spans that do not override
@@ -84,6 +567,7 @@ impl RichText {
     #[inline]
     pub fn text_style(mut self, text_style: TextStyle) -> Self {
         self.text_style = text_style;
+        self.refresh_portable_content();
         self
     }
 
@@ -91,6 +575,7 @@ impl RichText {
     #[inline]
     pub fn text_align(mut self, text_align: TextAlign) -> Self {
         self.text_align = text_align;
+        self.refresh_portable_content();
         self
     }
 
@@ -98,6 +583,7 @@ impl RichText {
     #[inline]
     pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
         self.overflow = Some(text_overflow);
+        self.refresh_portable_content();
         self
     }
 
@@ -150,6 +636,79 @@ impl RichText {
         self.selection_color = Some(color);
         self
     }
+}
+
+#[cfg(feature = "portable-guest")]
+fn validate_portable_rich_text(
+    text: &RichText,
+    ctx: &aimer_widget::portable::PortableBuildContext,
+    source: aimer_widget::portable::SourceFingerprint,
+) -> Result<(), aimer_widget::portable::PortableBuildError> {
+    if text
+        .content
+        .spans
+        .iter()
+        .any(|span| matches!(span.style.font_family, PortableFontFamily::Custom(_)))
+    {
+        return Err(ctx.unsupported_widget("RichText::custom_font_family", source));
+    }
+    Ok(())
+}
+
+fn materialize_portable_rich_text(
+    document: &aimer_widget::portable::__anteros::WidgetDocumentView<'_>,
+    node: aimer_widget::portable::__anteros::WidgetNodeView<'_>,
+    children: Vec<AnyWidget>,
+) -> Result<AnyWidget, PortableMaterializeError> {
+    if !children.is_empty() {
+        return Err(PortableMaterializeError::InvalidChildCount {
+            expected: 0,
+            actual: children.len(),
+        });
+    }
+
+    let content_property =
+        aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+            "aimer.property:aimer_text::RichText:content",
+        );
+    let content: PortableRichTextContent = aimer_widget::portable::required_materialized_property(
+        document,
+        &node,
+        content_property,
+    )?;
+    let link_hover_color: Option<Color> = aimer_widget::portable::optional_materialized_property(
+        document,
+        &node,
+        aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+            "aimer.property:aimer_text::RichText:link_hover_color",
+        ),
+    )?;
+    let selectable: bool = aimer_widget::portable::required_materialized_property(
+        document,
+        &node,
+        aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+            "aimer.property:aimer_text::RichText:selectable",
+        ),
+    )?;
+    let selection_color: Option<Color> = aimer_widget::portable::optional_materialized_property(
+        document,
+        &node,
+        aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+            "aimer.property:aimer_text::RichText:selection_color",
+        ),
+    )?;
+
+    let mut widget = content.into_widget(content_property)?;
+    if let Some(color) = link_hover_color {
+        widget = widget.link_hover_color(color);
+    }
+    if selectable {
+        widget = widget.selectable();
+    }
+    if let Some(color) = selection_color {
+        widget = widget.selection_color(color);
+    }
+    Ok(widget.boxed())
 }
 
 impl Widget for RichText {
@@ -718,4 +1277,1220 @@ impl Drawable for RawRichText {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    //! Behaviour tests for [`super::RichText`] and [`super::RawRichText`].
+
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    use aimer_attribute::{Bounds, Vec2d};
+    use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
+    use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
+    use aimer_style::{TextAlign, TextOverflow, TextStyle};
+    use aimer_widget::base::{Color, WindowHandle};
+    use aimer_widget::{EventElement, FocusNode, PointerKey};
+
+    use super::{
+        DEFAULT_SELECTION_COLOR, LinkCallback, LinkRegion, RawRichText, SelectionBinding,
+    };
+    use crate::paragraph::Paragraph;
+    use crate::selection::TextHitRegion;
+    use crate::selection::selectable::{SelectionCoordinator, TextGeometry};
+    use crate::selection::session::SelectionSession;
+    use crate::text_span::{ResolvedTextSpan, layout_resolved_spans};
+
+    /// Builds a standalone registration: its own session with a single slot,
+    /// which is what a `RichText` outside a selection region gets.
+    fn standalone_binding(
+        window: &WindowHandle,
+        coordinator: Rc<SelectionCoordinator>,
+        text: Rc<str>,
+    ) -> RefCell<SelectionBinding> {
+        let session = SelectionSession::new(window.clone(), coordinator, DEFAULT_SELECTION_COLOR);
+        let geometry = Rc::new(TextGeometry::new(window.clone()));
+        let slot = session.register(text, Rc::downgrade(&geometry) as _);
+        slot.stamp();
+        RefCell::new(SelectionBinding {
+            geometry,
+            session,
+            slot,
+            owns_session: true,
+        })
+    }
+
+    fn selectable_raw_text(on_link: LinkCallback) -> RawRichText {
+        selectable_raw_text_with_coordinator(on_link, Rc::new(SelectionCoordinator::default()))
+    }
+
+    fn selectable_raw_text_with_coordinator(
+        on_link: LinkCallback,
+        selection_coordinator: Rc<SelectionCoordinator>,
+    ) -> RawRichText {
+        raw_text_with(
+            on_link,
+            selection_coordinator,
+            Rc::from("élink"),
+            vec![TextHitRegion::new(0..6, Bounds::new(0.0, 0.0, 20.0, 10.0))],
+            Bounds::new(0.0, 0.0, 20.0, 10.0),
+        )
+    }
+
+    /// Builds an element that behaves as if it had already painted `regions`
+    /// inside `bounds`, which is what pointer handling and the session's
+    /// geometric hit test read.
+    fn raw_text_with(
+        on_link: LinkCallback,
+        selection_coordinator: Rc<SelectionCoordinator>,
+        plain_text: Rc<str>,
+        regions: Vec<TextHitRegion>,
+        bounds: Bounds,
+    ) -> RawRichText {
+        let window = WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0);
+        let text = RawRichText {
+            paragraph: Paragraph::new(
+                vec![ResolvedTextSpan::plain(
+                    Rc::clone(&plain_text),
+                    TextStyle::default(),
+                )],
+                TextAlign::TopLeft,
+                TextOverflow::Clip,
+            ),
+            plain_text: Rc::clone(&plain_text),
+            on_link,
+            link_hover_color: Some(Color::Hex(0x388BFD)),
+            selectable: true,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            binding: standalone_binding(&window, selection_coordinator, plain_text),
+            link_regions: RefCell::new(vec![LinkRegion {
+                target: Rc::from("https://aimer.dev"),
+                bounds: Bounds::new(0.0, 0.0, 20.0, 10.0),
+            }]),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+            hover_cursor: crate::selection::cursor::HoverCursor::new(),
+            touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+            focus_node: FocusNode::new(),
+        };
+        let geometry = text.geometry();
+        *geometry.regions.borrow_mut() = regions;
+        geometry
+            .bounds
+            .save(1.0, bounds.x, bounds.y, bounds.width, bounds.height);
+        text.attached()
+    }
+
+    /// A primary mouse press at an absolute logical position.
+    fn mouse_press(x: f32, y: f32) -> PointerInfo {
+        PointerInfo::new(
+            Vec2d { x, y },
+            PointerSource::Mouse,
+            0,
+            PointerButton::Primary,
+        )
+    }
+
+    /// The range of the element's own text that is selected.
+    fn selected(text: &RawRichText) -> Option<std::ops::Range<usize>> {
+        text.slot().selected_range()
+    }
+
+    #[test]
+    fn rich_text_selection_is_opt_in() {
+        let plain = super::RichText::new(crate::TextSpan::new("plain"));
+        let selectable = super::RichText::new(crate::TextSpan::new("selectable")).selectable();
+
+        assert!(!plain.selectable);
+        assert!(selectable.selectable);
+    }
+
+    #[test]
+    fn rich_text_selection_color_is_customizable() {
+        let color = Color::Rgba(255, 0, 128, 64);
+        let text = super::RichText::new(crate::TextSpan::new("selectable"))
+            .selectable()
+            .selection_color(color);
+
+        assert_eq!(text.selection_color, Some(color));
+    }
+
+    #[test]
+    fn explicit_overflow_override_is_independent_of_builder_order() {
+        let before_style = super::RichText::new(crate::TextSpan::new("before"))
+            .text_overflow(TextOverflow::Wrap)
+            .text_style(TextStyle::new().font_size(20));
+        let after_style = super::RichText::new(crate::TextSpan::new("after"))
+            .text_style(TextStyle::new().font_size(20))
+            .text_overflow(TextOverflow::Wrap);
+
+        assert!(matches!(
+            before_style.resolved_overflow(),
+            TextOverflow::Wrap
+        ));
+        assert!(matches!(
+            after_style.resolved_overflow(),
+            TextOverflow::Wrap
+        ));
+    }
+
+    // #[test]
+    // fn hovering_interactive_text_claims_the_cursor_event() {
+    //     let text = selectable_raw_text(LinkCallback::default());
+    //
+    //     assert!(text.on_event(&ElementEvent::PointerMove(
+    //         Vec2d { x: 1.0, y: 5.0 },
+    //         PointerSource::Mouse,
+    //         0,
+    //     )).is_consumed());
+    // }
+
+    #[test]
+    fn moving_into_and_out_of_a_link_updates_hover_and_requests_redraw() {
+        let text = selectable_raw_text(LinkCallback::default());
+
+        let _ = text.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
+            Vec2d { x: 1.0, y: 5.0 },
+            PointerButton::Primary,
+        )));
+        assert_eq!(
+            text.hovered_link.borrow().as_deref(),
+            Some("https://aimer.dev")
+        );
+        assert!(text.geometry().window().take_redraw_request());
+
+        let _ = text.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
+            Vec2d { x: 50.0, y: 50.0 },
+            PointerButton::Primary,
+        )));
+        assert!(text.hovered_link.borrow().is_none());
+        assert!(text.geometry().window().take_redraw_request());
+    }
+
+    #[test]
+    fn moving_within_a_link_keeps_the_link_hovered() {
+        let text = selectable_raw_text(LinkCallback::default());
+
+        for x in 1..20 {
+            let _ = text.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
+                Vec2d { x: x as f32, y: 5.0 },
+                PointerButton::Primary,
+            )));
+
+            assert_eq!(
+                text.hovered_link.borrow().as_deref(),
+                Some("https://aimer.dev")
+            );
+        }
+    }
+
+    #[test]
+    fn select_all_shortcut_selects_the_visible_text_after_focus() {
+        let text = selectable_raw_text(LinkCallback::default());
+        let _ = text.on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+            Vec2d { x: 1.0, y: 5.0 },
+            PointerButton::Primary,
+        )));
+
+        let handled = text.on_event(&ElementEvent::KeyInput {
+            key: NamedKey::Other("a".into()),
+            action: KeyAction::Pressed,
+            modifiers: Modifiers {
+                ctrl: true,
+                ..Modifiers::default()
+            },
+        });
+
+        assert!(handled.is_consumed());
+        assert_eq!(selected(&text), Some(0..6));
+    }
+
+    #[test]
+    fn a_press_outside_a_standalone_text_clears_its_selection() {
+        let text = selectable_raw_text(LinkCallback::default());
+        let _ = text.on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+            Vec2d { x: 1.0, y: 5.0 },
+            PointerButton::Primary,
+        )));
+        let _ = text.on_event(&ElementEvent::PointerUp(PointerInfo::mouse(
+            Vec2d { x: 1.0, y: 5.0 },
+            PointerButton::Primary,
+        )));
+        text.session().select_all();
+        assert_eq!(selected(&text), Some(0..6));
+
+        // Broadcast to every element is how the tree reports a press nobody took.
+        let _ = text.on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+            Vec2d { x: 500.0, y: 900.0 },
+            PointerButton::Primary,
+        )));
+
+        assert_eq!(selected(&text), None);
+        assert!(!text.session().is_focused());
+    }
+
+    #[test]
+    fn selecting_second_text_clears_first_selection_focus_and_capture() {
+        let coordinator = Rc::new(SelectionCoordinator::default());
+        let first =
+            selectable_raw_text_with_coordinator(LinkCallback::default(), coordinator.clone());
+        let second = selectable_raw_text_with_coordinator(LinkCallback::default(), coordinator);
+
+        let _ = first.on_event(&ElementEvent::PointerDown(PointerInfo::new(
+            Vec2d { x: 1.0, y: 5.0 },
+            PointerSource::Mouse,
+            7,
+            PointerButton::Primary,
+        )));
+        first.session().select_all();
+        assert!(first.session().is_focused());
+        assert_eq!(selected(&first), Some(0..6));
+        let _ = first.geometry().window().take_redraw_request();
+
+        let second_result = second.on_event(&ElementEvent::PointerDown(PointerInfo::new(
+            Vec2d { x: 1.0, y: 5.0 },
+            PointerSource::Mouse,
+            8,
+            PointerButton::Primary,
+        )));
+
+        assert_eq!(selected(&first), None);
+        assert!(!first.session().is_focused());
+        assert_eq!(first.session().active_pointer(), None);
+        assert!(first.geometry().window().take_redraw_request());
+        assert!(second.session().is_focused());
+        let second_pointer = PointerKey::new(PointerSource::Mouse, 8);
+        assert_eq!(second.session().active_pointer(), Some(second_pointer));
+        assert_eq!(
+            second_result.capture_request(),
+            aimer_widget::CaptureRequest::Capture(second_pointer)
+        );
+    }
+
+    #[test]
+    fn coordinator_does_not_retain_a_dropped_session() {
+        let coordinator = Rc::new(SelectionCoordinator::default());
+        let session = SelectionSession::new(
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0),
+            coordinator.clone(),
+            DEFAULT_SELECTION_COLOR,
+        );
+        let weak_session = Rc::downgrade(&session);
+        session.claim();
+
+        drop(session);
+
+        assert!(weak_session.upgrade().is_none());
+        assert!(coordinator.current().is_none());
+    }
+
+    #[test]
+    fn dragging_a_link_selects_text_without_activating_the_link() {
+        let activations = Rc::new(Cell::new(0));
+        let text = selectable_raw_text(LinkCallback::from({
+            let activations = activations.clone();
+            move |_| activations.set(activations.get() + 1)
+        }));
+
+        let down_result = text.on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+            Vec2d { x: 1.0, y: 5.0 },
+            PointerButton::Primary,
+        )));
+        let pointer = PointerKey::new(PointerSource::Mouse, 0);
+        assert_eq!(
+            down_result.capture_request(),
+            aimer_widget::CaptureRequest::Capture(pointer)
+        );
+        assert_eq!(selected(&text), Some(0..0));
+        let _ = text.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
+            Vec2d { x: 19.0, y: 5.0 },
+            PointerButton::Primary,
+        )));
+        let up_result = text.on_event(&ElementEvent::PointerUp(PointerInfo::mouse(
+            Vec2d { x: 19.0, y: 5.0 },
+            PointerButton::Primary,
+        )));
+
+        assert_eq!(selected(&text), Some(0..6));
+        assert_eq!(
+            up_result.capture_request(),
+            aimer_widget::CaptureRequest::Release(pointer)
+        );
+        assert_eq!(activations.get(), 0);
+    }
+
+    #[test]
+    fn dragging_below_short_final_line_selects_complete_text() {
+        let text = raw_text_with(
+            LinkCallback::default(),
+            Rc::new(SelectionCoordinator::default()),
+            Rc::from("long\n}"),
+            vec![
+                TextHitRegion::new(0..1, Bounds::new(10.0, 20.0, 100.0, 10.0)),
+                TextHitRegion::new(5..6, Bounds::new(10.0, 30.0, 10.0, 10.0)),
+            ],
+            Bounds::new(10.0, 20.0, 100.0, 20.0),
+        );
+
+        let _ = text.on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+            Vec2d { x: 10.0, y: 25.0 },
+            PointerButton::Primary,
+        )));
+        let _ = text.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
+            Vec2d { x: 200.0, y: 50.0 },
+            PointerButton::Primary,
+        )));
+        let _ = text.on_event(&ElementEvent::PointerUp(PointerInfo::mouse(
+            Vec2d { x: 200.0, y: 50.0 },
+            PointerButton::Primary,
+        )));
+
+        let selection = selected(&text).expect("the drag selects the whole text");
+        assert_eq!(selection, 0..text.plain_text.len());
+        assert_eq!(text.session().selected_text(), text.plain_text.as_ref());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn selection_highlight_starts_at_the_text_line_top() {
+        use aimer_attribute::ResolvedSize;
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_widget::Drawable;
+        use aimer_widget::base::BuildContext;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        let selection_color = Color::Rgba(255, 0, 128, 64);
+        let text = RawRichText {
+            paragraph: Paragraph::new(vec![ResolvedTextSpan::plain(
+                Rc::from("selected"),
+                TextStyle::new().font_size(24),
+            )], TextAlign::TopLeft, TextOverflow::Wrap),
+            plain_text: Rc::from("selected"),
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: true,
+            selection_color,
+            binding: standalone_binding(
+                &context.window,
+                Rc::new(SelectionCoordinator::default()),
+                Rc::from("selected"),
+            ),
+            link_regions: RefCell::new(Vec::new()),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+            hover_cursor: crate::selection::cursor::HoverCursor::new(),
+            touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+            focus_node: FocusNode::new(),
+        };
+        text.session().select_all();
+        let layout = text.paragraph.prepare(&context);
+        let expected_top = layout.fragments[0].baseline - layout.fragments[0].ascent;
+
+        text.draw(&context);
+
+        let (selection_top, rendered_color) = inner
+            .draw_list()
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                DrawCommand::FillRect { rect, color, .. } => Some((rect.y, *color)),
+                _ => None,
+            })
+            .unwrap();
+        let expected_color: aimer_cupid::utilities::Color = selection_color.into();
+        assert_eq!(selection_top, expected_top);
+        assert_eq!(rendered_color.to_array(), expected_color.to_array());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn selection_highlight_connects_across_adjacent_spans() {
+        use aimer_attribute::ResolvedSize;
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_widget::Drawable;
+        use aimer_widget::base::BuildContext;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        let text = RawRichText {
+            paragraph: Paragraph::new(vec![
+                ResolvedTextSpan::plain(Rc::from("normal "), TextStyle::new().font_size(20)),
+                ResolvedTextSpan::plain(
+                    Rc::from("italic"),
+                    TextStyle::new()
+                        .font_size(20)
+                        .font_style(aimer_style::FontStyle::Italic),
+                ),
+            ], TextAlign::TopLeft, TextOverflow::Wrap),
+            plain_text: Rc::from("normal italic"),
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: true,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            binding: standalone_binding(
+                &context.window,
+                Rc::new(SelectionCoordinator::default()),
+                Rc::from("normal italic"),
+            ),
+            link_regions: RefCell::new(Vec::new()),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+            hover_cursor: crate::selection::cursor::HoverCursor::new(),
+            touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+            focus_node: FocusNode::new(),
+        };
+        text.session().select_all();
+
+        text.draw(&context);
+
+        let highlight_count = inner
+            .draw_list()
+            .commands()
+            .iter()
+            .filter(|command| matches!(command, DrawCommand::FillRect { .. }))
+            .count();
+        assert_eq!(highlight_count, 1);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn selection_highlights_touch_between_wrapped_lines() {
+        use aimer_attribute::{BoxConstraint, ResolvedSize};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_widget::Drawable;
+        use aimer_widget::base::BuildContext;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let mut context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 70.0,
+                height: 200.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(70, 200), 1.0),
+            runtime.handle().clone(),
+        );
+        context.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 70.0,
+            max_height: 200.0,
+        };
+        let text = RawRichText {
+            paragraph: Paragraph::new(vec![ResolvedTextSpan::plain(
+                Rc::from("first second third"),
+                TextStyle::new().font_size(24),
+            )], TextAlign::TopLeft, TextOverflow::Wrap),
+            plain_text: Rc::from("first second third"),
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: true,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            binding: standalone_binding(
+                &context.window,
+                Rc::new(SelectionCoordinator::default()),
+                Rc::from("first second third"),
+            ),
+            link_regions: RefCell::new(Vec::new()),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+            hover_cursor: crate::selection::cursor::HoverCursor::new(),
+            touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+            focus_node: FocusNode::new(),
+        };
+        text.session().select_all();
+
+        text.draw(&context);
+
+        let highlights = inner
+            .draw_list()
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                DrawCommand::FillRect { rect, .. } => Some(*rect),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(highlights.len() > 1);
+        for adjacent in highlights.windows(2) {
+            assert!((adjacent[0].y + adjacent[0].height - adjacent[1].y).abs() < 0.01);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn explicit_newlines_have_stable_hit_targets_and_connected_highlights() {
+        use aimer_attribute::{BoxConstraint, ResolvedSize};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_widget::Drawable;
+        use aimer_widget::base::BuildContext;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let mut context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 200.0,
+                height: 200.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 200), 1.0),
+            runtime.handle().clone(),
+        );
+        context.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 200.0,
+            max_height: 200.0,
+        };
+        let text = RawRichText {
+            paragraph: Paragraph::new(vec![
+                ResolvedTextSpan::plain(Rc::from("first\n"), TextStyle::new().font_size(20)),
+                ResolvedTextSpan::plain(Rc::from("\n"), TextStyle::new().font_size(20)),
+                ResolvedTextSpan::plain(Rc::from("third"), TextStyle::new().font_size(20)),
+            ], TextAlign::TopLeft, TextOverflow::Wrap),
+            plain_text: Rc::from("first\n\nthird"),
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: true,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            binding: standalone_binding(
+                &context.window,
+                Rc::new(SelectionCoordinator::default()),
+                Rc::from("first\n\nthird"),
+            ),
+            link_regions: RefCell::new(Vec::new()),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+            hover_cursor: crate::selection::cursor::HoverCursor::new(),
+            touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+            focus_node: FocusNode::new(),
+        };
+        text.session().select_all();
+
+        let layout = text.paragraph.prepare(&context);
+        assert_eq!(layout.line_breaks.len(), 2);
+        assert_eq!(layout.line_breaks[0].source_range, 5..6);
+        assert_eq!(layout.line_breaks[1].source_range, 6..7);
+        assert_eq!(
+            layout.line_breaks[0].x + layout.line_breaks[0].hit_width,
+            layout.size.width
+        );
+        assert_eq!(layout.line_breaks[1].hit_width, layout.size.width);
+        assert_eq!(layout.line_breaks[0].selection_width, 1.0);
+        assert_eq!(layout.line_breaks[1].selection_width, 1.0);
+        assert!(layout.line_breaks[1].height > 0.0);
+        assert!(
+            (layout.line_breaks[0].y + layout.line_breaks[0].height - layout.line_breaks[1].y)
+                .abs()
+                < 0.01
+        );
+
+        text.draw(&context);
+
+        let geometry = text.geometry();
+        let regions = geometry.regions.borrow();
+        assert!(regions.iter().any(|region| region.source_range == (5..5)));
+        assert!(regions.iter().any(|region| region.source_range == (6..6)));
+        assert_eq!(
+            crate::selection::text_offset_at(
+                &regions,
+                199.0,
+                layout.line_breaks[0].y + layout.line_breaks[0].height / 2.0,
+            ),
+            Some(5),
+        );
+        assert_eq!(
+            crate::selection::text_offset_at(
+                &regions,
+                199.0,
+                layout.line_breaks[1].y + layout.line_breaks[1].height / 2.0,
+            ),
+            Some(6),
+        );
+        let highlights = inner
+            .draw_list()
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                DrawCommand::FillRect { rect, .. } => Some(*rect),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(highlights.len(), 3);
+        assert_eq!(highlights[0].width, layout.fragments[0].width + 1.0);
+        assert_eq!(highlights[1].width, 1.0);
+        for adjacent in highlights.windows(2) {
+            assert!((adjacent[0].y + adjacent[0].height - adjacent[1].y).abs() < 0.01);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn italic_span_enables_synthetic_italic_for_its_draw() {
+        use aimer_attribute::ResolvedSize;
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_widget::Drawable;
+        use aimer_widget::base::BuildContext;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        let text = RawRichText {
+            paragraph: Paragraph::new(vec![ResolvedTextSpan::plain(
+                Rc::from("italic"),
+                TextStyle::new()
+                    .font_size(20)
+                    .font_style(aimer_style::FontStyle::Italic),
+            )], TextAlign::TopLeft, TextOverflow::Clip),
+            plain_text: Rc::from("italic"),
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: false,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            binding: standalone_binding(
+                &context.window,
+                Rc::new(SelectionCoordinator::default()),
+                Rc::from("italic"),
+            ),
+            link_regions: RefCell::new(Vec::new()),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+            hover_cursor: crate::selection::cursor::HoverCursor::new(),
+            touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+            focus_node: FocusNode::new(),
+        };
+
+        text.draw(&context);
+
+        let commands = inner.draw_list();
+        let commands = commands.commands();
+        let draw_index = commands
+            .iter()
+            .position(|command| matches!(command, DrawCommand::DrawText { .. }))
+            .unwrap();
+        assert!(matches!(
+            commands[draw_index - 1],
+            DrawCommand::SetItalic { italic: true }
+        ));
+        assert!(matches!(
+            commands[draw_index + 1],
+            DrawCommand::SetItalic { italic: false }
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn backgrounds_draw_before_text_without_changing_size_or_link_regions() {
+        use std::cell::RefCell;
+
+        use aimer_attribute::{ResolvedSize, Vec2d};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_style::{TextAlign, TextOverflow};
+        use aimer_widget::Drawable;
+        use aimer_widget::base::{BuildContext, WindowHandle};
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d { x: 1.0, y: 5.0 },
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        let highlighted_span = ResolvedTextSpan {
+            text: Rc::from("linked"),
+            style: TextStyle::new().background_color(aimer_widget::base::Color::RED),
+            link: Some(Rc::from("https://aimer.dev")),
+        };
+        let highlighted = RawRichText {
+            paragraph: Paragraph::new(vec![highlighted_span.clone()], TextAlign::TopLeft, TextOverflow::Clip),
+            plain_text: Rc::from("linked"),
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: false,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            binding: standalone_binding(
+                &context.window,
+                Rc::new(SelectionCoordinator::default()),
+                Rc::from("linked"),
+            ),
+            link_regions: RefCell::new(Vec::new()),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+            hover_cursor: crate::selection::cursor::HoverCursor::new(),
+            touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+            focus_node: FocusNode::new(),
+        };
+        let plain = RawRichText {
+            paragraph: Paragraph::new(vec![ResolvedTextSpan {
+                style: TextStyle {
+                    background_color: None,
+                    ..highlighted_span.style
+                },
+                ..highlighted_span
+            }], TextAlign::TopLeft, TextOverflow::Clip),
+            plain_text: Rc::from("linked"),
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: false,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            binding: standalone_binding(
+                &context.window,
+                Rc::new(SelectionCoordinator::default()),
+                Rc::from("linked"),
+            ),
+            link_regions: RefCell::new(Vec::new()),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+            hover_cursor: crate::selection::cursor::HoverCursor::new(),
+            touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+            focus_node: FocusNode::new(),
+        };
+
+        assert_eq!(
+            highlighted.paragraph.prepare(&context).size,
+            plain.paragraph.prepare(&context).size
+        );
+        highlighted.draw(&context);
+        assert_eq!(
+            highlighted.hovered_link.borrow().as_deref(),
+            Some("https://aimer.dev")
+        );
+
+        let commands = inner.draw_list();
+        let background_index = commands
+            .commands()
+            .iter()
+            .position(|command| matches!(command, DrawCommand::FillRect { .. }))
+            .unwrap();
+        let text_index = commands
+            .commands()
+            .iter()
+            .position(|command| matches!(command, DrawCommand::DrawText { .. }))
+            .unwrap();
+        assert!(background_index < text_index);
+        assert_eq!(highlighted.link_regions.borrow().len(), 1);
+    }
+
+    #[test]
+    fn wrapping_uses_one_cursor_across_span_boundaries() {
+        let style = TextStyle::new().font_size(10);
+        let spans = vec![
+            ResolvedTextSpan::plain(Rc::from("abc"), style),
+            ResolvedTextSpan::plain(Rc::from("def"), style),
+        ];
+
+        let layout =
+            layout_resolved_spans(&spans, 20.0, |text, _| text.chars().count() as f32 * 5.0);
+
+        assert_eq!(layout.line_count, 2);
+        assert_eq!(layout.fragments[0].line, 0);
+        assert_eq!(layout.fragments[1].line, 0);
+        assert_eq!(layout.fragments[1].x, 15.0);
+        assert_eq!(layout.fragments[2].line, 1);
+        assert_eq!(layout.fragments[2].x, 0.0);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn wrapping_uses_parent_width_when_constraint_is_unbounded() {
+        use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_style::{TextAlign, TextOverflow};
+        use aimer_widget::base::{BuildContext, WindowHandle};
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let mut context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 20.0,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(20, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        context.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: f32::MAX,
+            max_height: f32::MAX,
+        };
+        let rich_text = RawRichText {
+            paragraph: Paragraph::new(vec![ResolvedTextSpan::plain(
+                Rc::from("abcdef"),
+                TextStyle::new().font_size(10),
+            )], TextAlign::TopLeft, TextOverflow::Wrap),
+            plain_text: Rc::from("abcdef"),
+            on_link: LinkCallback::default(),
+            link_hover_color: None,
+            selectable: false,
+            selection_color: DEFAULT_SELECTION_COLOR,
+            binding: standalone_binding(
+                &context.window,
+                Rc::new(SelectionCoordinator::default()),
+                Rc::from("abcdef"),
+            ),
+            link_regions: RefCell::new(Vec::new()),
+            pressed_link: RefCell::new(None),
+            hovered_link: RefCell::new(None),
+            hover_cursor: crate::selection::cursor::HoverCursor::new(),
+            touch_hold: crate::selection::touch_hold::TouchHoldGate::new(),
+            focus_node: FocusNode::new(),
+        };
+
+        assert_eq!(rich_text.paragraph.available_width(&context), 20.0);
+        let first_layout = rich_text.paragraph.prepare(&context);
+        let cached_layout = rich_text.paragraph.prepare(&context);
+        assert_eq!(first_layout.size.width, 20.0);
+        assert!(Rc::ptr_eq(&first_layout, &cached_layout));
+
+        context.parent_size.width = 40.0;
+        let resized_layout = rich_text.paragraph.prepare(&context);
+        assert_eq!(resized_layout.size.width, 40.0);
+        assert!(!Rc::ptr_eq(&first_layout, &resized_layout));
+    }
+
+    /// A text that owns its session owns the keyboard that goes with it, which is
+    /// what tells it about a press it never sees — one that landed on another
+    /// widget entirely.
+    #[test]
+    fn a_standalone_selectable_text_holds_the_focus_while_it_holds_a_selection() {
+        let text = selectable_raw_text(LinkCallback::default());
+        let session = text.session();
+
+        assert!(!session.is_focused(), "nothing is selected yet");
+
+        let _ = text.on_event(&ElementEvent::PointerDown(mouse_press(2.0, 5.0)));
+        let _ = text.on_event(&ElementEvent::PointerMove(mouse_press(18.0, 5.0)));
+
+        assert!(selected(&text).is_some());
+        assert!(session.is_focused());
+    }
+
+    /// The keyboard such a text holds is held for it by the standard focus
+    /// attachment, which is asked afresh every time targets are gathered — a
+    /// selection begins and ends under the finger, with nothing rebuilding the
+    /// paragraph in between.
+    #[test]
+    fn a_standalone_selectable_text_is_offered_as_a_target_only_while_it_has_a_selection() {
+        let text = selectable_raw_text(LinkCallback::default());
+        let session = text.session();
+        let target = text.focus_target();
+
+        assert!(target.focus_node().is_none(), "nothing is selected yet");
+
+        session.select_all();
+
+        assert!(target.focus_node().is_some());
+    }
+
+    #[test]
+    fn a_standalone_selectable_text_drops_its_selection_when_it_loses_the_focus() {
+        let text = selectable_raw_text(LinkCallback::default());
+        let _ = text.on_event(&ElementEvent::PointerDown(mouse_press(2.0, 5.0)));
+        let _ = text.on_event(&ElementEvent::PointerMove(mouse_press(18.0, 5.0)));
+        assert!(selected(&text).is_some());
+
+        let _ = text.on_event(&ElementEvent::FocusLost);
+
+        assert_eq!(selected(&text), None);
+        assert!(!text.session().is_focused());
+    }
+
+    /// Inside a region the selection, and therefore the keyboard, belongs to the
+    /// region: a participant that took the focus for itself would keep the region
+    /// from ever getting it.
+    #[test]
+    fn a_participant_of_a_region_leaves_the_focus_to_the_region() {
+        let window = WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0);
+        let session = SelectionSession::new(
+            window.clone(),
+            Rc::new(SelectionCoordinator::default()),
+            DEFAULT_SELECTION_COLOR,
+        );
+        let text = selectable_raw_text(LinkCallback::default());
+        let plain = text.plain_text.clone();
+        let geometry = text.geometry();
+        let slot = session.register(Rc::clone(&plain), Rc::downgrade(&geometry) as _);
+        slot.stamp();
+        session.begin_frame();
+        *text.binding.borrow_mut() = SelectionBinding {
+            geometry,
+            session,
+            slot,
+            owns_session: false,
+        };
+
+        let _ = text.on_event(&ElementEvent::PointerDown(mouse_press(2.0, 5.0)));
+        let _ = text.on_event(&ElementEvent::PointerMove(mouse_press(18.0, 5.0)));
+
+        assert!(selected(&text).is_some());
+        assert!(
+            text.focus_target().focus_node().is_none(),
+            "a participant is not wrapped in a focus attachment at all"
+        );
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn rich_text_publishes_its_derived_portable_schema() {
+        use aimer_widget::portable::PortableWidgetSchema;
+
+        let schema = <super::RichText as PortableWidgetSchema>::SCHEMA;
+
+        assert_eq!(
+            schema.widget().canonical_name(),
+            "aimer.widget:aimer_text::RichText"
+        );
+        assert_eq!(
+            schema
+                .properties()
+                .iter()
+                .map(|property| property.canonical_name())
+                .collect::<Vec<_>>(),
+            vec![
+                "aimer.property:aimer_text::RichText:link_hover_color",
+                "aimer.property:aimer_text::RichText:selectable",
+                "aimer.property:aimer_text::RichText:selection_color",
+                "aimer.property:aimer_text::RichText:content",
+            ]
+        );
+        assert!(schema.callbacks().is_empty());
+        assert!(
+            aimer_widget::portable::linked_portable_native_widget_registrations()
+                .iter()
+                .any(|registration| registration.widget_type() == schema.widget().id())
+        );
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn rich_text_schema_includes_the_round_trip_content_property() {
+        use aimer_widget::portable::PortableWidgetSchema;
+
+        let schema = <super::RichText as PortableWidgetSchema>::SCHEMA;
+
+        assert_eq!(
+            schema
+                .properties()
+                .iter()
+                .map(|property| property.canonical_name())
+                .collect::<Vec<_>>(),
+            vec![
+                "aimer.property:aimer_text::RichText:link_hover_color",
+                "aimer.property:aimer_text::RichText:selectable",
+                "aimer.property:aimer_text::RichText:selection_color",
+                "aimer.property:aimer_text::RichText:content",
+            ]
+        );
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn rich_text_lowering_retains_supported_configuration_only() {
+        use aimer_anteros::WidgetDocumentView;
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+            StableId128, PortableWidgetSchema,
+        };
+        use aimer_widget::PortableWidget;
+
+        let mut context = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 4_096).with_max_blob_bytes(4_096),
+            PortableLimits::new(8, 16, 64, 128, 4_096),
+        )
+        .unwrap();
+        let source = SourceFingerprint::new(StableId128::from_bytes([3; 16]));
+        let root = super::RichText::new(crate::TextSpan::new("native span"))
+            .link_hover_color(Color::Rgba(1, 2, 3, 4))
+            .selectable()
+            .selection_color(Color::Rgba(5, 6, 7, 8))
+            .to_portable_node(&mut context, source)
+            .unwrap();
+        let document = context.finish_document(root).unwrap();
+        let bytes = document.encode().unwrap();
+        let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
+        let node = view.node(root.index()).unwrap();
+        let schema = <super::RichText as PortableWidgetSchema>::SCHEMA;
+        let mut expected = schema
+            .properties()
+            .iter()
+            .map(|property| property.id())
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        let mut actual = node
+            .properties()
+            .map(|property| property.property_id())
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+
+        assert_eq!(node.widget_type(), schema.widget().id());
+        assert_eq!(actual, expected);
+        assert_eq!(node.children().count(), 0);
+        assert!(node.callbacks().next().is_none());
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn rich_text_content_round_trips_through_guest_ir_and_native_materializer() {
+        use aimer_anteros::{PropertyValue, WidgetDocumentView};
+        use aimer_style::FontWeight;
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableNativeWidget, PortableValue,
+            PortableWidgetLimits, SourceFingerprint, StableId128, PortableWidgetSchema,
+        };
+        use aimer_widget::PortableWidget;
+
+        let mut context = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 16, 8, 8, 64, 16_384).with_max_blob_bytes(16_384),
+            PortableLimits::new(8, 32, 128, 256, 16_384),
+        )
+        .unwrap();
+        let source = SourceFingerprint::new(StableId128::from_bytes([8; 16]));
+        let rich_text = super::RichText::new(
+            crate::TextSpan::new("Hello ").style(
+                crate::text_span::SpanStyle::new()
+                    .font_weight(FontWeight::Bold)
+                    .color(Color::Rgba(1, 2, 3, 4)),
+            )
+            .child(crate::TextSpan::new("world").link("/docs")),
+        )
+        .text_align(TextAlign::MidCenter)
+        .wrapped()
+        .on_link(LinkCallback::default())
+        .link_hover_color(Color::Rgba(5, 6, 7, 8))
+        .selectable()
+        .selection_color(Color::Rgba(9, 10, 11, 12));
+
+        let root = rich_text
+            .to_portable_node(&mut context, source)
+            .unwrap();
+        let document = context.finish_document(root).unwrap();
+        let bytes = document.encode().unwrap();
+        let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
+        let node = view.node(root.index()).unwrap();
+        let schema = <super::RichText as PortableWidgetSchema>::SCHEMA;
+        let content_property = schema
+            .properties()
+            .iter()
+            .find(|property| property.canonical_name().ends_with(":content"))
+            .unwrap()
+            .id();
+        let blob = node
+            .properties()
+            .find(|property| property.property_id() == content_property)
+            .and_then(|property| match property.value() {
+                PropertyValue::BlobRef(index) => view.blob(index),
+                _ => None,
+            })
+            .unwrap();
+        let content = super::PortableRichTextContent::decode_value(
+            blob,
+            super::PortableRichTextContent::SCHEMA.version(),
+        )
+        .unwrap();
+
+        assert_eq!(content.spans.len(), 2);
+        assert_eq!(content.spans[0].text, "Hello ");
+        assert_eq!(content.spans[0].style.font_weight, super::PortableFontWeight::Bold);
+        assert_eq!(content.spans[1].text, "world");
+        assert_eq!(content.spans[1].link.as_deref(), Some("/docs"));
+        assert_eq!(content.text_align, super::PortableTextAlign::MidCenter);
+        assert_eq!(content.overflow, super::PortableTextOverflow::Wrap);
+
+        let _materialized = <super::RichText as PortableNativeWidget>::materialize_widget(
+            &view,
+            node,
+            Vec::new(),
+        )
+        .unwrap();
+    }
+
+    // Keep the region cases included here without pushing this source past the
+    // repository's 2,000-line limit.
+    mod region {
+        include!("rich_text/tests/region.rs");
+    }
+}

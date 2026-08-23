@@ -9,6 +9,7 @@ use crossbeam::channel::Sender;
 
 use crate::commands::assemble::link_flags;
 use crate::commands::run::cargo_message::{self, CargoMessage, ErrorReport, RenderedDiagnostics};
+use crate::commands::run::capability_sources::configure_command;
 use crate::commands::run::console::{RunnerEvent, Status};
 use crate::commands::run::utilities::LogStyling;
 
@@ -118,6 +119,12 @@ pub fn spawn_cargo_build(
     release: bool,
 ) -> Option<ExitStatus> {
     let mut cmd = cargo_command(target, release);
+
+    if let Err(error) = configure_command(&mut cmd) {
+        let _ = tx.send(RunnerEvent::BuildLog(error));
+        let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
+        return None;
+    }
 
     cmd.env("DEFAULT_INSPECTOR_PORT", inspector_port.to_string());
     cmd.env("DEFAULT_INSPECTOR_ADDRESS", inspector_address.to_string());

@@ -28,14 +28,23 @@ use aimer_widget::{
 /// both axes, zero gaps, [`OverflowBehavior::Hidden`], and no children. Supply
 /// children with [`Flex::children`] or append to an existing erased collection
 /// with [`Flex::add_child`].
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_flex::flex::Flex", schema_only)]
 #[allow(dead_code)]
 pub struct Flex<W: Widget + 'static = AnyWidget> {
+    #[portable_skip]
     pub(crate) direction: FlexDirection,
+    #[portable_skip]
     pub(crate) vertical_alignment: BoxAlignment,
+    #[portable_skip]
     pub(crate) horizontal_alignment: BoxAlignment,
+    #[portable_skip]
     pub(crate) justify_content: Option<JustifyContent>,
+    #[portable_skip]
     pub(crate) gaps: LayoutSpacing,
+    #[portable_skip]
     pub(crate) overflow: OverflowBehavior,
+    #[portable_children]
     pub(crate) children: Vec<W>,
 }
 
@@ -229,6 +238,7 @@ impl<W: Widget + 'static> Widget for Flex<W> {
         .boxed()
     }
 }
+
 /// #### lower level flex container also the base of the flex layout such as
 ///
 /// - Flex: layout that aligns children in horizontal and vertical
@@ -842,10 +852,6 @@ impl Drawable for RawFlex {
 
             let draw_ctx = BuildContext {
                 parent_size: child_size,
-                canvas: ctx.canvas.clone(),
-                scale: ctx.scale,
-                parent_pos: ctx.parent_pos,
-                cursor_pos: ctx.cursor_pos,
                 box_constraint: BoxConstraint {
                     min_width: 0.0,
                     min_height: 0.0,
@@ -855,10 +861,7 @@ impl Drawable for RawFlex {
                 visible_rect: ctx
                     .visible_rect
                     .map(|(vx, vy, vw, vh)| (vx - offset_x, vy - offset_y, vw, vh)),
-                window: ctx.window.clone(),
-                #[cfg(not(target_arch = "wasm32"))]
-                async_handle: ctx.async_handle.clone(),
-                inherited_states: ctx.inherited_states.clone(),
+                ..ctx.clone()
             };
 
             let rx = (offset_x * scale).round() / scale;

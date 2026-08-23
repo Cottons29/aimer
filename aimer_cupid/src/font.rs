@@ -97,7 +97,7 @@ impl TextLanguage {
     /// ```
     pub fn from_tag(tag: &str) -> Option<Self> {
         let primary = tag
-            .split(|separator| separator == '-' || separator == '_')
+            .split(['-', '_'])
             .next()
             .unwrap_or_default();
         match primary.to_ascii_lowercase().as_str() {
@@ -122,6 +122,12 @@ impl FontFamily {
     #[doc(hidden)]
     pub const fn raw(self) -> u64 {
         self.0
+    }
+
+    /// Reconstructs a family handle received from a portable style codec.
+    #[doc(hidden)]
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
     }
 }
 

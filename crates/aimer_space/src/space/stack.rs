@@ -34,8 +34,12 @@ pub enum StackDirection {
 ///                         .add_child(Align::new().alignment(Alignment::MidCenter)
 ///                                                .child(SizedBox::new().width(40).height(40)));
 /// ```
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_space::space::Stack", schema_only)]
 pub struct Stack<W = AnyWidget> {
+    #[portable_children]
     pub children: Vec<W>,
+    #[portable_skip]
     pub direction: StackDirection,
 }
 

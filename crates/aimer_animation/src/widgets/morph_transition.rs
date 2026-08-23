@@ -120,19 +120,28 @@ impl Animatable for Rgba {
 ///                          ErrorWidget::new("Profile card")).background_color(Rgba::WHITE)
 ///                                                           .child_key("profile-card");
 /// ```
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_animation::MorphTransition", schema_only)]
 pub struct MorphTransition<T: Widget + 'static> {
     /// The morphing content, kept as a builder because a cross-fade places the
     /// same content again on every frame of the transition.
+    #[portable_child]
     pub child: ChildBuilder,
+    #[portable_skip]
     pub duration: Duration,
+    #[portable_skip]
     pub curve: Curve,
     /// Optional background color to morph. If set, the color transitions
     /// from the old value to this value when the child changes.
+    #[portable_skip]
     pub background_color: Option<Rgba>,
+    #[portable_skip]
     transition_key: Option<Key>,
+    #[portable_skip]
     widget_key: Option<Key>,
     /// Records which child type completed this transition without storing it,
     /// so one `State` impl stays paired with one child type.
+    #[portable_skip]
     marker: PhantomData<T>,
 }
 
@@ -325,6 +334,8 @@ impl Widget for MorphTransitionFrame {
         .boxed()
     }
 }
+
+impl aimer_widget::PortableWidget for MorphTransitionFrame {}
 
 /// Snapshot of a child's layout properties at a point in time.
 #[derive(Debug, Clone)]
@@ -649,6 +660,8 @@ mod tests {
             panic!("not needed for state lifecycle tests")
         }
     }
+
+    impl aimer_widget::PortableWidget for TestWidget {}
 
     fn state(key: &'static str, color: Rgba) -> MorphTransitionState<TestWidget> {
         MorphTransition::new(Duration::from_millis(100), Curve::Linear, TestWidget(key))

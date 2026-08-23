@@ -48,11 +48,18 @@ fn request_next_frame() {
 ///     |width| ErrorWidget::new(format!("Width: {width:.0}")),
 /// );
 /// ```
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_animation::ImplicitAnimatedBuilder", schema_only)]
 pub struct ImplicitAnimatedBuilder<T: Animatable + Clone + PartialEq + 'static> {
+    #[portable_skip]
     pub value: T,
+    #[portable_skip]
     pub duration: Duration,
+    #[portable_skip]
     pub curve: Curve,
+    #[portable_skip]
     builder: Rc<ImplicitElementBuilder<T>>,
+    #[portable_skip]
     widget_key: Option<Key>,
 }
 
@@ -205,6 +212,11 @@ impl<T: Animatable + Clone + PartialEq + 'static> Widget for ImplicitAnimatedFra
     }
 }
 
+impl<T: Animatable + Clone + PartialEq + 'static> aimer_widget::PortableWidget
+    for ImplicitAnimatedFrame<T>
+{
+}
+
 struct ImplicitAnimatedElement<T: Animatable + Clone + PartialEq + 'static> {
     child: UnsafeCell<AnyElement>,
     current: Rc<LocalCell<T>>,
@@ -343,6 +355,8 @@ mod tests {
         }
     }
 
+    impl aimer_widget::PortableWidget for TestWidget {}
+
     /// A widget/element pair that records, on every `adopt_runtime_state_from`
     /// call, the identity of the element it replaced — the same hook
     /// `RawResizable` relies on to keep a hovered handle across a rebuild.
@@ -365,6 +379,8 @@ mod tests {
             .boxed()
         }
     }
+
+    impl aimer_widget::PortableWidget for RecordingWidget {}
 
     impl Drawable for RecordingElement {
         fn draw(&self, _ctx: &BuildContext) {}
@@ -414,19 +430,17 @@ mod tests {
                 Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
             aimer_canvas::Canvas::new(leaked)
         };
-        BuildContext {
-            parent_size: Default::default(),
+
+        BuildContext::new(
             canvas,
-            scale: 1.0,
-            parent_pos: Default::default(),
-            cursor_pos: Default::default(),
-            box_constraint: Default::default(),
-            visible_rect: None,
-            window: WindowHandle::headless(Default::default(), 1.0),
+            Default::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
             #[cfg(not(target_arch = "wasm32"))]
-            async_handle: dummy_async_handle(),
-            inherited_states: Default::default(),
-        }
+            dummy_async_handle(),
+        )
     }
 
     fn widget(value: f32) -> ImplicitAnimatedBuilder<f32> {

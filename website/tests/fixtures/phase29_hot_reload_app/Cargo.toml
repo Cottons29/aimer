@@ -1,0 +1,12 @@
+[package]
+name = "website-phase29-hot-reload-app"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+aimer = { path = "../../../..", features = ["provider"] }
+website = { path = "../../..", default-features = false, features = ["portable-guest"] }
+
+[workspace]
+resolver = "3"

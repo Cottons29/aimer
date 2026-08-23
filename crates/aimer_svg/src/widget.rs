@@ -76,13 +76,20 @@ struct CallbackRule {
 /// # Ok(())
 /// # }
 /// ```
+#[derive(aimer_widget::PortableWidget)]
+#[portable_widget(id = "aimer_svg::Svg", schema_only)]
 pub struct Svg {
+    #[portable_skip]
     document: SvgDocument,
     width: Option<Dimension>,
     height: Option<Dimension>,
+    #[portable_skip]
     styles: Vec<StyleRule>,
+    #[portable_skip]
     hover_styles: Vec<StyleRule>,
+    #[portable_skip]
     pressed_styles: Vec<StyleRule>,
+    #[portable_skip]
     callbacks: Vec<CallbackRule>,
 }
 
@@ -281,15 +288,24 @@ impl Widget for Svg {
 ///                                            SvgStyle::new().fill(SvgColor::rgba8(0, 128, 255,
 ///                                                                                 255)));
 /// ```
+#[derive(aimer_widget::PortableWidget)]
+#[portable_widget(id = "aimer_svg::SvgAsset", schema_only)]
 pub struct SvgAsset {
+    #[portable_skip]
     key: Arc<str>,
     width: Option<Dimension>,
     height: Option<Dimension>,
+    #[portable_skip]
     styles: Vec<StyleRule>,
+    #[portable_skip]
     hover_styles: Vec<StyleRule>,
+    #[portable_skip]
     pressed_styles: Vec<StyleRule>,
+    #[portable_skip]
     callbacks: Vec<CallbackRule>,
+    #[portable_skip]
     loading_widget: Option<AnyWidget>,
+    #[portable_skip]
     error_widget: Option<AnyWidget>,
 }
 

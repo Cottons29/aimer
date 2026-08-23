@@ -511,7 +511,7 @@ fn advance_element_tree_generation() {
         .expect("exhausted all element-tree generations");
 }
 
-fn structural_children(element: &dyn Element) -> SmallVec<[&dyn Element; 8]> {
+pub(crate) fn structural_children(element: &dyn Element) -> SmallVec<[&dyn Element; 8]> {
     let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
     element.event_children(&mut |child| children.push(child));
     element.visit_children(&mut |child| {
@@ -548,49 +548,20 @@ pub(crate) fn identities_are_compatible(old: &dyn Element, new: &dyn Element) ->
 /// Keyed children match by key regardless of sibling order. Unkeyed children
 /// match only in the same sibling position. Incompatible or removed nodes keep
 /// their newly allocated identities.
+#[cfg(test)]
 pub(crate) fn reconcile_element_identities(old: &dyn Element, new: &dyn Element) {
-    if !identities_are_compatible(old, new) {
-        return;
-    }
-
-    if let Some(old_id) = old.element_id() {
-        new.set_element_id(old_id);
-    }
-
-    let old_children = structural_children(old);
-    let new_children = structural_children(new);
-    let mut matched = vec![false; old_children.len()];
-
-    for (new_index, new_child) in new_children.iter().copied().enumerate() {
-        let old_index = if let Some(new_key) = new_child.reconciliation_key() {
-            old_children
-                .iter()
-                .enumerate()
-                .position(|(index, old_child)| {
-                    !matched[index]
-                        && old_child.reconciliation_key() == Some(new_key)
-                        && identities_are_compatible(*old_child, new_child)
-                })
-        } else {
-            old_children.get(new_index).and_then(|old_child| {
-                (!matched[new_index]
-                    && old_child.reconciliation_key().is_none()
-                    && identities_are_compatible(*old_child, new_child))
-                .then_some(new_index)
-            })
-        };
-
-        if let Some(old_index) = old_index {
-            matched[old_index] = true;
-            reconcile_element_identities(old_children[old_index], new_child);
-        }
-    }
+    crate::reconciliation_plan::plan_element_reconciliation(old, new).apply_identities();
 }
 
 /// Reconciles identities for a generated subtree and invalidates structural
 /// path indexes.
 pub(crate) fn reconcile_generated_tree(old: &dyn Element, new: &dyn Element) {
-    reconcile_element_identities(old, new);
+    crate::reconciliation_plan::plan_element_reconciliation(old, new)
+        .commit_generated_tree()
+        .expect("fresh reconciliation plan must remain valid until commit");
+}
+
+pub(crate) fn complete_generated_tree_reconciliation(old: &dyn Element, new: &dyn Element) {
     clear_removed_focus(old, new);
     advance_element_tree_generation();
 }

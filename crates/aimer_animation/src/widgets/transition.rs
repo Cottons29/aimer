@@ -25,8 +25,12 @@ fn request_next_frame() {
 /// At value `0.0` the child is fully transparent; at `1.0` it is fully opaque.
 /// Values are clamped to that range for drawing. Layout and event behavior are
 /// delegated to the child.
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_animation::FadeTransition", schema_only)]
 pub struct FadeTransition<T: Widget + 'static> {
+    #[portable_skip]
     pub opacity: AnimationController,
+    #[portable_child]
     pub child: T,
 }
 
@@ -146,11 +150,16 @@ impl_transition_element!(
 /// The child is translated by `offset * (1.0 - controller_value)` pixels.
 /// At value `0.0` the child is at the offset position; at `1.0` it is at its
 /// natural position.
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_animation::SlideTransition", schema_only)]
 pub struct SlideTransition<T: Widget + 'static> {
+    #[portable_skip]
     pub position: AnimationController,
     /// The offset direction in pixels at value 0.0. At value 1.0 the child is
     /// at (0,0).
+    #[portable_skip]
     pub offset: (f32, f32),
+    #[portable_child]
     pub child: T,
 }
 
@@ -271,8 +280,12 @@ impl LayoutElement for SlideTransitionElement {
 ///
 /// A value of `1.0` is the child's natural size. The drawing transform is
 /// centered in the current box constraints; layout itself is unchanged.
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_animation::ScaleTransition", schema_only)]
 pub struct ScaleTransition<T: Widget + 'static> {
+    #[portable_skip]
     pub scale: AnimationController,
+    #[portable_child]
     pub child: T,
 }
 
@@ -386,8 +399,12 @@ impl LayoutElement for ScaleTransitionElement {
 ///
 /// At value 0.0 the child is at 0 rotation; at 1.0 it has completed one full
 /// turn (2π radians).
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_animation::RotationTransition", schema_only)]
 pub struct RotationTransition<T: Widget + 'static> {
+    #[portable_skip]
     pub turns: AnimationController,
+    #[portable_child]
     pub child: T,
 }
 
@@ -526,6 +543,8 @@ mod tests {
         }
     }
 
+    impl aimer_widget::PortableWidget for TestWidget {}
+
     #[cfg(not(target_arch = "wasm32"))]
     fn dummy_async_handle() -> tokio::runtime::Handle {
         static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
@@ -545,19 +564,16 @@ mod tests {
                 Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
             aimer_canvas::Canvas::new(leaked)
         };
-        BuildContext {
-            parent_size: Default::default(),
+        BuildContext::new(
             canvas,
-            scale: 1.0,
-            parent_pos: Default::default(),
-            cursor_pos: Default::default(),
-            box_constraint: Default::default(),
-            visible_rect: None,
-            window: WindowHandle::headless(Default::default(), 1.0),
+            Default::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
             #[cfg(not(target_arch = "wasm32"))]
-            async_handle: dummy_async_handle(),
-            inherited_states: Default::default(),
-        }
+            dummy_async_handle(),
+        )
     }
 
     fn controller() -> AnimationController {

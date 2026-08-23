@@ -5,6 +5,12 @@ use aimer::router::Outlet;
 use aimer::style::{AnimatedTheme, Theme, ThemeData};
 use aimer::{BuildContext, widget, *};
 
+#[cfg(feature = "portable-guest")]
+use aimer::portable::{
+    AimerReflectionType, DecodeError, Decoder, EncodeError, Encoder, FieldDescriptor, FieldKind,
+    PortableApply, PortableEncode, StableId128, TypeSchema,
+};
+
 use crate::components::header::HeaderSection;
 
 /// The persistent application shell frame: a fixed [`HeaderSection`] on top and
@@ -58,6 +64,84 @@ pub struct AppShellState {
     active_tab: usize,
     theme_mode: WebsiteThemeMode,
     updater: StateUpdater<Self>,
+}
+
+#[cfg(feature = "portable-guest")]
+const APP_SHELL_STATE_FIELDS: &[FieldDescriptor] = &[
+    FieldDescriptor::new("active_tab", "usize", FieldKind::Retained),
+    FieldDescriptor::new("theme_mode", "WebsiteThemeMode", FieldKind::Retained),
+    FieldDescriptor::new(
+        "updater",
+        "StateUpdater<AppShellState>",
+        FieldKind::Fresh,
+    ),
+];
+
+#[cfg(feature = "portable-guest")]
+const APP_SHELL_STATE_SCHEMA: TypeSchema = TypeSchema::new(
+    "AppShellState",
+    StableId128::from_path(
+        "aimer.type.v1",
+        "website::components::app_shell::AppShellState",
+    ),
+    APP_SHELL_STATE_FIELDS,
+);
+
+#[cfg(feature = "portable-guest")]
+impl AimerReflectionType for AppShellState {
+    const TYPE_ID: StableId128 = StableId128::from_path(
+        "aimer.type.v1",
+        "website::components::app_shell::AppShellState",
+    );
+
+    fn schema() -> &'static TypeSchema {
+        &APP_SHELL_STATE_SCHEMA
+    }
+}
+
+#[cfg(feature = "portable-guest")]
+impl PortableEncode for AppShellState {
+    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
+        encoder.nested(|encoder| {
+            encoder.field(&APP_SHELL_STATE_FIELDS[0], |encoder| {
+                self.active_tab.encode(encoder)
+            })?;
+            encoder.field(&APP_SHELL_STATE_FIELDS[1], |encoder| {
+                let tag = match self.theme_mode {
+                    WebsiteThemeMode::Light => 0_u8,
+                    WebsiteThemeMode::Dark => 1_u8,
+                };
+                tag.encode(encoder)
+            })?;
+            encoder.field(&APP_SHELL_STATE_FIELDS[2], |_| Ok(()))
+        })
+    }
+}
+
+#[cfg(feature = "portable-guest")]
+impl PortableApply for AppShellState {
+    type Retained = (usize, u8);
+
+    fn decode_retained(decoder: &mut Decoder<'_>) -> Result<Self::Retained, DecodeError> {
+        decoder.nested(|decoder| {
+            let active_tab = decoder.field(&APP_SHELL_STATE_FIELDS[0])?.unwrap();
+            let theme_mode = decoder.field::<u8>(&APP_SHELL_STATE_FIELDS[1])?.unwrap();
+            if theme_mode > 1 {
+                return Err(DecodeError::InvalidEnumTag(theme_mode as u32));
+            }
+            let _ = decoder.field::<u8>(&APP_SHELL_STATE_FIELDS[2])?;
+            Ok((active_tab, theme_mode))
+        })
+    }
+
+    fn apply_retained(&mut self, retained: Self::Retained) {
+        self.active_tab = retained.0;
+        self.theme_mode = match retained.1 {
+            0 => WebsiteThemeMode::Light,
+            1 => WebsiteThemeMode::Dark,
+            _ => unreachable!("PortableApply validates the theme mode tag"),
+        };
+    }
 }
 
 impl AppShellState {

@@ -65,7 +65,7 @@ pub fn execute(project_name: &str) -> anyhow::Result<()> {
     tracing::debug!("current_dir : {}", current_dir.display());
     println!("Creating project '{}'", project_name);
 
-    let app_name = prompt_abortable!(Text::new("App name:"));
+    prompt_abortable!(Text::new("App name:"));
     let description = prompt_abortable!(Text::new("Description:"));
     let version = prompt_abortable!(Text::new("Version:").with_default("0.1.0"));
     let author = prompt_abortable!(Text::new("Author:"));
@@ -303,6 +303,10 @@ mod tests {
             crate::config::parse_cargo_package_name(&dir),
             Some("myapp".to_string())
         );
+        let cargo_manifest = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+        let cargo_manifest: toml::Value = toml::from_str(&cargo_manifest).unwrap();
+        let crate_types = cargo_manifest["lib"]["crate-type"].as_array().unwrap();
+        assert!(crate_types.iter().any(|value| value.as_str() == Some("rlib")));
 
         // aimer.toml round-trips with the collected metadata.
         let manifest = AimerManifest::load_from(&dir).unwrap().unwrap();

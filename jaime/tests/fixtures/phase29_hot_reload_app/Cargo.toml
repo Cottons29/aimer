@@ -1,0 +1,12 @@
+[package]
+name = "jaime-phase29-hot-reload-app"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+aimer = { path = "../../../..", features = ["provider"] }
+jaime = { path = "../../..", features = ["portable-guest"] }
+
+[workspace]
+resolver = "3"

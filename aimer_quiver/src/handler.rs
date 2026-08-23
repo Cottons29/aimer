@@ -34,6 +34,14 @@ use aimer_widget::{AnyElement, EventDispatcher, EventResult, Widget};
 use std::any::Any;
 use std::cell::Cell;
 use std::rc::Rc;
+#[cfg(feature = "wasm-hot-reload")]
+use aimer_anteros::{
+    ReloadCommit, ReloadCommitError, ReloadCoordinator, ReloadEventDisposition,
+    ReloadEventOverflow, ReloadGuest, ReloadSnapshot, ReloadTransactionError,
+    ReloadTransactionId,
+};
+#[cfg(feature = "wasm-hot-reload")]
+use aimer_widget::{ReconciliationPlanError, plan_element_reconciliation};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 use winit::application::ApplicationHandler;
@@ -49,6 +57,181 @@ use winit::window::{self, Fullscreen, Window, WindowAttributes, WindowId};
 use aimer_utils::debug;
 
 pub(crate) type StartupHook = Box<dyn FnOnce() -> Box<dyn Any>>;
+
+/// A fully prepared reload candidate waiting for a Quiver host safe point.
+///
+/// The command owns the candidate guest, callback snapshot, and disconnected
+/// native root as one value. Dropping a superseded command therefore retires
+/// the complete candidate without touching the active application.
+#[cfg(feature = "wasm-hot-reload")]
+pub struct ReloadCommand<G: ReloadGuest, R> {
+    transaction: ReloadTransactionId,
+    candidate: ReloadSnapshot<G, R>,
+}
+
+#[cfg(feature = "wasm-hot-reload")]
+impl<G: ReloadGuest, R> ReloadCommand<G, R> {
+    /// Creates a command from a coordinator-issued transaction and candidate.
+    #[inline]
+    pub const fn new(
+        transaction: ReloadTransactionId,
+        candidate: ReloadSnapshot<G, R>,
+    ) -> Self {
+        Self {
+            transaction,
+            candidate,
+        }
+    }
+}
+
+/// A single-threaded reload command sink for headless Quiver hosts.
+///
+/// Candidate preparation may queue a command at any time between host calls,
+/// but [`Self::process_safe_point`] is the only operation that can install it.
+/// The headless driver calls that method only between event and tree operations,
+/// making the active generation, callbacks, and root coherent for the complete
+/// duration of every operation.
+#[cfg(feature = "wasm-hot-reload")]
+pub struct HeadlessReloadHost<G: ReloadGuest, R, E> {
+    coordinator: ReloadCoordinator<G, R, E>,
+    pending_command: Option<ReloadCommand<G, R>>,
+    request_frame: Box<dyn Fn()>,
+}
+
+#[cfg(feature = "wasm-hot-reload")]
+impl<G: ReloadGuest, R, E> HeadlessReloadHost<G, R, E> {
+    /// Creates a safe-point host with an explicit bounded event capacity.
+    #[inline]
+    pub fn new(
+        active: ReloadSnapshot<G, R>,
+        max_queued_events: usize,
+        request_frame: impl Fn() + 'static,
+    ) -> Self {
+        Self {
+            coordinator: ReloadCoordinator::new(active)
+                .max_queued_events(max_queued_events),
+            pending_command: None,
+            request_frame: Box::new(request_frame),
+        }
+    }
+
+    /// Opens the event barrier and supersedes any command not yet committed.
+    pub fn begin_reload(&mut self) -> ReloadTransactionId {
+        self.pending_command.take();
+        self.coordinator.begin_reload()
+    }
+
+    /// Queues one complete candidate without changing the active snapshot.
+    pub fn queue_command(
+        &mut self,
+        command: ReloadCommand<G, R>,
+    ) -> Result<(), ReloadTransactionError> {
+        let current = self.coordinator.current_transaction();
+        if current != Some(command.transaction) {
+            let error = match current {
+                Some(current) => ReloadTransactionError::Superseded {
+                    supplied: command.transaction,
+                    current,
+                },
+                None => ReloadTransactionError::NoTransaction,
+            };
+            return Err(error);
+        }
+        self.pending_command = Some(command);
+        Ok(())
+    }
+
+    /// Borrows the coherent snapshot used by the next host operation.
+    #[inline]
+    pub const fn active(&self) -> &ReloadSnapshot<G, R> {
+        self.coordinator.active()
+    }
+
+    /// Mutably borrows the coherent snapshot for one serialized host operation.
+    #[inline]
+    pub const fn active_mut(&mut self) -> &mut ReloadSnapshot<G, R> {
+        self.coordinator.active_mut()
+    }
+
+    /// Returns whether the host owns a candidate waiting for its safe point.
+    ///
+    /// This diagnostic reports only bounded command ownership; it does not
+    /// inspect guest state or execute candidate code. Reliability harnesses use
+    /// it to verify that commit, rejection, supersession, and cancellation
+    /// return the host to its candidate-free baseline.
+    #[inline]
+    pub const fn has_pending_command(&self) -> bool {
+        self.pending_command.is_some()
+    }
+
+    /// Retains an event while preparation is active or returns it for dispatch.
+    #[inline]
+    pub fn route_event(
+        &mut self,
+        event: E,
+    ) -> Result<ReloadEventDisposition<E>, ReloadEventOverflow<E>> {
+        self.coordinator.route_event(event)
+    }
+
+    /// Commits the queued command between host event/tree operations.
+    ///
+    /// `preflight` is the final fallible operation and must be side-effect free.
+    /// `commit` runs only after it succeeds and must perform only the infallible
+    /// native state carry prepared by reconciliation. Exactly one frame is
+    /// requested after a successful installation; an empty queue requests none.
+    pub fn process_safe_point<P>(
+        &mut self,
+        preflight: impl FnOnce(&ReloadSnapshot<G, R>, &ReloadSnapshot<G, R>) -> Result<(), P>,
+        commit: impl FnOnce(&mut ReloadSnapshot<G, R>, &mut ReloadSnapshot<G, R>),
+    ) -> Result<Option<ReloadCommit<E>>, ReloadCommitError<P, E>> {
+        let Some(command) = self.pending_command.take() else {
+            return Ok(None);
+        };
+        self.coordinator
+            .stage_candidate(command.transaction, command.candidate)
+            .map_err(ReloadCommitError::Transaction)?;
+        let committed = self
+            .coordinator
+            .commit(command.transaction, preflight, commit)?;
+        (self.request_frame)();
+        Ok(Some(committed))
+    }
+
+    /// Rejects the open transaction and releases its events to the active host.
+    pub fn rollback(
+        &mut self,
+        transaction: ReloadTransactionId,
+    ) -> Result<aimer_anteros::ReloadReplay<E>, ReloadTransactionError> {
+        self.pending_command.take();
+        self.coordinator.rollback(transaction)
+    }
+}
+
+#[cfg(feature = "wasm-hot-reload")]
+impl<G: ReloadGuest, E> HeadlessReloadHost<G, AnyElement, E> {
+    /// Installs a disconnected Aimer element tree at the current safe point.
+    ///
+    /// Reconciliation planning and validation complete before native state or
+    /// identities move from the active tree. The same unchanged pair is then
+    /// committed synchronously, so the second validation cannot normally fail;
+    /// such a failure indicates a violated single-threaded host invariant.
+    pub fn process_element_safe_point(
+        &mut self,
+        ctx: &BuildContext,
+    ) -> Result<Option<ReloadCommit<E>>, ReloadCommitError<ReconciliationPlanError, E>> {
+        self.process_safe_point(
+            |old, candidate| {
+                plan_element_reconciliation(old.root().as_ref(), candidate.root().as_ref())
+                    .validate()
+            },
+            |old, candidate| {
+                plan_element_reconciliation(old.root().as_ref(), candidate.root().as_ref())
+                    .commit(ctx)
+                    .expect("validated reconciliation plan changed during safe-point commit");
+            },
+        )
+    }
+}
 
 /// Walk the snapshot tree and find a node matching the hovered widget by name
 /// and bounds.
@@ -136,9 +319,24 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     /// re-reported for every position it is found at rather than only for the
     /// one it came in at.
     pub(crate) file_drag: FileDrag,
+    #[cfg(feature = "wasm-hot-reload")]
+    pub(crate) live_reload: Option<crate::hot_reload::LiveReloadHost>,
 }
 
 impl<W: Widget + 'static> AimerApplicationHandler<W> {
+    /// Borrows the one root currently visible to input and rendering.
+    #[inline]
+    pub(crate) fn active_root(&self) -> Option<&AnyElement> {
+        #[cfg(feature = "wasm-hot-reload")]
+        if let Some(root) = self
+            .live_reload
+            .as_ref()
+            .and_then(crate::hot_reload::LiveReloadHost::active_root)
+        {
+            return Some(root);
+        }
+        self.widget_root.as_ref()
+    }
     /// The platform window behind this application, if it has one.
     ///
     /// Only code that talks to the platform itself — surface creation, native
@@ -282,14 +480,28 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         pos: Vec2d,
         event: &aimer_events::element::ElementEvent,
     ) -> EventResult {
-        let Some(root) = &self.widget_root else {
+        let Self {
+            event_dispatcher,
+            widget_root,
+            #[cfg(feature = "wasm-hot-reload")]
+            live_reload,
+            ..
+        } = self;
+        #[cfg(feature = "wasm-hot-reload")]
+        let root = live_reload
+            .as_ref()
+            .and_then(crate::hot_reload::LiveReloadHost::active_root)
+            .or(widget_root.as_ref());
+        #[cfg(not(feature = "wasm-hot-reload"))]
+        let root = widget_root.as_ref();
+        let Some(root) = root else {
             return EventResult::ignored();
         };
-        self.event_dispatcher.dispatch(root.as_ref(), pos, event)
+        event_dispatcher.dispatch(root.as_ref(), pos, event)
     }
 
     pub(crate) fn cancel_element_events(&mut self) -> EventResult {
-        let Some(root) = &self.widget_root else {
+        let Some(root) = self.active_root() else {
             return EventResult::ignored();
         };
         let result = aimer_widget::broadcast_event(
@@ -354,6 +566,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 pub(crate) struct FrameDrawer<'a, W: Widget + 'static> {
     widget_root: &'a mut Option<AnyElement>,
     pending_widget: &'a mut Option<W>,
+    #[cfg(feature = "wasm-hot-reload")]
+    live_reload: &'a mut Option<crate::hot_reload::LiveReloadHost>,
     window: WindowHandle,
     scale: f32,
     cursor_pos: Vec2d,
@@ -373,26 +587,34 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
     /// into the next frame.
     pub(crate) fn draw(&mut self, canvas: &aimer_canvas::InnerCanvas, width: u32, height: u32) {
         let canvas = aimer_canvas::Canvas::new(canvas);
-        let build_ctx = BuildContext {
-            parent_size: ResolvedSize {
+        let mut build_ctx = BuildContext::new(
+            canvas,
+            ResolvedSize {
                 width: width as f32,
                 height: height as f32,
             },
-            canvas,
-            scale: self.scale,
-            parent_pos: Default::default(),
-            cursor_pos: self.cursor_pos,
-            box_constraint: BoxConstraint {
-                min_width: 0.0,
-                min_height: 0.0,
-                max_width: width as f32,
-                max_height: height as f32,
-            },
-            visible_rect: None,
-            window: self.window.clone(),
+            self.scale,
+            Default::default(),
+            self.cursor_pos,
+            self.window.clone(),
             #[cfg(not(target_arch = "wasm32"))]
-            async_handle: self.async_handle.clone(),
-            inherited_states: Default::default(),
+            self.async_handle.clone(),
+        );
+        build_ctx.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: width as f32,
+            max_height: height as f32,
+        };
+
+        #[cfg(feature = "wasm-hot-reload")]
+        let live_layout_required = if let Some(host) = self.live_reload.as_mut() {
+            if let Err(error) = host.process_safe_point(&build_ctx) {
+                aimer_utils::error!("live reload safe point failed: {error}");
+            }
+            host.take_layout_required()
+        } else {
+            false
         };
 
         if self.widget_root.is_none()
@@ -401,31 +623,57 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             *self.widget_root = Some(widget.to_element(&build_ctx));
         }
 
-        let Some(root) = self.widget_root.as_ref() else {
-            return;
-        };
+        #[cfg(feature = "wasm-hot-reload")]
+        let root = self
+            .live_reload
+            .as_ref()
+            .and_then(crate::hot_reload::LiveReloadHost::active_root)
+            .or(self.widget_root.as_ref());
+        #[cfg(not(feature = "wasm-hot-reload"))]
+        let root = self.widget_root.as_ref();
+        {
+            if let Some(root) = root {
+                #[cfg(feature = "wasm-hot-reload")]
+                if live_layout_required {
+                    root.rebuild_if_dirty(&build_ctx);
+                    root.layout(&build_ctx);
+                }
 
-        #[cfg(debug_assertions)]
-        if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
-            *hovered = None;
+                #[cfg(debug_assertions)]
+                if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
+                    *hovered = None;
+                }
+
+                build_ctx.canvas.save();
+                root.draw(&build_ctx);
+                build_ctx.canvas.restore();
+
+                #[cfg(debug_assertions)]
+                if self.inspector_enabled {
+                    // Save and restore canvas state to ensure the inspector overlay
+                    // always renders at the top layer above all widgets,
+                    // unaffected by any residual transforms.
+                    build_ctx.canvas.save();
+                    InspectorOverlay::draw(
+                        root.as_ref(),
+                        &build_ctx.canvas,
+                        self.cursor_pos,
+                        build_ctx.scale,
+                    );
+                    build_ctx.canvas.restore();
+                }
+            }
         }
 
-        build_ctx.canvas.save();
-        root.draw(&build_ctx);
-        build_ctx.canvas.restore();
-
-        #[cfg(debug_assertions)]
-        if self.inspector_enabled {
-            // Save and restore canvas state to ensure the inspector overlay
-            // always renders at the top layer above all widgets,
-            // unaffected by any residual transforms.
+        #[cfg(feature = "wasm-hot-reload")]
+        if let Some(overlay) = self
+            .live_reload
+            .as_ref()
+            .and_then(crate::hot_reload::LiveReloadHost::reload_overlay)
+        {
+            overlay.layout(&build_ctx);
             build_ctx.canvas.save();
-            InspectorOverlay::draw(
-                root.as_ref(),
-                &build_ctx.canvas,
-                self.cursor_pos,
-                build_ctx.scale,
-            );
+            overlay.draw(&build_ctx);
             build_ctx.canvas.restore();
         }
     }
@@ -651,6 +899,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             render_ctx,
             widget_root,
             pending_widget,
+            #[cfg(feature = "wasm-hot-reload")]
+            live_reload,
             #[cfg(not(target_arch = "wasm32"))]
             async_runtime,
             ..
@@ -663,6 +913,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             FrameDrawer {
                 widget_root,
                 pending_widget,
+                #[cfg(feature = "wasm-hot-reload")]
+                live_reload,
                 window,
                 scale,
                 cursor_pos,
@@ -687,7 +939,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             .as_ref()
             .filter(|inspector| inspector.is_enabled())
         {
-            let snapshot = self.widget_root.as_ref().map(|root| {
+            let snapshot = self.active_root().map(|root| {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     aimer_inspector::InspectorServer::snapshot_tree(root)

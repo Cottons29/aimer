@@ -1,0 +1,30 @@
+[package]
+name = "aimer_anteros-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+autobins = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+aimer_anteros = { path = ".." }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "envelope"
+path = "fuzz_targets/envelope.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "portable_documents"
+path = "fuzz_targets/portable_documents.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

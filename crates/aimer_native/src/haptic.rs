@@ -162,4 +162,67 @@ impl Haptics {
     }
 }
 
+/// Permanent-host implementation of Aimer's portable haptics capability.
+///
+/// iOS maps the portable effects to UIKit feedback generators. Platforms that
+/// do not yet provide an Aimer haptics backend return an explicit unsupported
+/// result instead of silently accepting an effect they cannot produce.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeHapticsProvider;
+
+impl aimer_haptics::HapticFeedback for NativeHapticsProvider {
+    fn trigger(
+        &self,
+        kind: aimer_haptics::HapticKind,
+    ) -> aimer_anteros::CapabilityResult<()> {
+        #[cfg(target_os = "ios")]
+        {
+            use aimer_haptics::HapticKind;
+
+            match kind {
+                HapticKind::Selection => Haptics::selection(),
+                HapticKind::LightImpact => Haptics::impact(ImpactStyle::Light),
+                HapticKind::MediumImpact => Haptics::impact(ImpactStyle::Medium),
+                HapticKind::HeavyImpact => Haptics::impact(ImpactStyle::Heavy),
+                HapticKind::Success => Haptics::notification(NotificationStyle::Success),
+                HapticKind::Warning => Haptics::notification(NotificationStyle::Warning),
+                HapticKind::Error => Haptics::notification(NotificationStyle::Error),
+            }
+            Ok(())
+        }
+        #[cfg(not(target_os = "ios"))]
+        {
+            let _ = kind;
+            Err(aimer_anteros::CapabilityError::Unsupported)
+        }
+    }
+}
+
+
+
+#[cfg(all(test, not(target_os = "ios")))]
+mod capability_tests {
+    use aimer_haptics::{HapticFeedback, HapticKind};
+    use aimer_anteros::CapabilityError;
+
+    use super::NativeHapticsProvider;
+
+    #[test]
+    fn native_provider_reports_unsupported_without_a_platform_backend() {
+        let provider = NativeHapticsProvider;
+
+        for kind in [
+            HapticKind::Selection,
+            HapticKind::LightImpact,
+            HapticKind::MediumImpact,
+            HapticKind::HeavyImpact,
+            HapticKind::Success,
+            HapticKind::Warning,
+            HapticKind::Error,
+        ] {
+            assert_eq!(provider.trigger(kind), Err(CapabilityError::Unsupported));
+        }
+    }
+}
+
 

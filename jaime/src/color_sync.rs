@@ -18,6 +18,8 @@ impl Widget for ColorSync {
     }
 }
 
+impl aimer::PortableWidget for ColorSync {}
+
 impl StatelessWidget for ColorSync {
     fn build(&self, _: &BuildContext) -> impl Widget {
         let colors = [

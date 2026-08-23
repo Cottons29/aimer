@@ -1,6 +1,8 @@
 use std::any::{Any, TypeId};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+#[cfg(feature = "portable-guest")]
+use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,6 +14,74 @@ use aimer_canvas::Canvas;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Handle;
 use winit::window::Window;
+
+/// A canvas available to native builds and deliberately unavailable to
+/// portable widget-description builds.
+///
+/// Portable builds may run ordinary widget `build` methods, but they cannot
+/// issue draw commands because no renderer exists in the guest. Dereferencing
+/// an unavailable canvas therefore reports the invalid operation rather than
+/// silently discarding it.
+#[cfg(feature = "portable-guest")]
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct BuildCanvas<'a>(Option<Canvas<'a>>);
+
+#[cfg(feature = "portable-guest")]
+impl<'a> BuildCanvas<'a> {
+    #[inline]
+    fn native(canvas: Canvas<'a>) -> Self {
+        Self(Some(canvas))
+    }
+
+    #[inline]
+    const fn unavailable() -> Self {
+        Self(None)
+    }
+}
+
+#[cfg(feature = "portable-guest")]
+impl<'a> Deref for BuildCanvas<'a> {
+    type Target = Canvas<'a>;
+
+    #[track_caller]
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap_or_else(|| {
+            panic!("drawing is unavailable while building portable Widget IR")
+        })
+    }
+}
+
+/// A Tokio handle that is absent from portable widget-description builds.
+#[cfg(all(feature = "portable-guest", not(target_arch = "wasm32")))]
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct BuildAsyncHandle(Option<Handle>);
+
+#[cfg(all(feature = "portable-guest", not(target_arch = "wasm32")))]
+impl BuildAsyncHandle {
+    #[inline]
+    fn native(handle: Handle) -> Self {
+        Self(Some(handle))
+    }
+
+    #[inline]
+    const fn unavailable() -> Self {
+        Self(None)
+    }
+}
+
+#[cfg(all(feature = "portable-guest", not(target_arch = "wasm32")))]
+impl Deref for BuildAsyncHandle {
+    type Target = Handle;
+
+    #[track_caller]
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap_or_else(|| {
+            panic!("asynchronous runtime access is unavailable while building portable Widget IR")
+        })
+    }
+}
 
 #[doc(hidden)]
 #[derive(Debug)]
@@ -27,6 +97,8 @@ pub struct HeadlessWindowState {
 pub enum WindowHandle {
     Native(&'static Window),
     Headless(Arc<HeadlessWindowState>),
+    #[cfg(feature = "portable-guest")]
+    Portable,
 }
 
 impl WindowHandle {
@@ -51,6 +123,8 @@ impl WindowHandle {
                 state.width.load(Ordering::Relaxed),
                 state.height.load(Ordering::Relaxed),
             ),
+            #[cfg(feature = "portable-guest")]
+            Self::Portable => Default::default(),
         }
     }
 
@@ -58,6 +132,8 @@ impl WindowHandle {
         match self {
             Self::Native(window) => window.scale_factor(),
             Self::Headless(state) => f64::from_bits(state.scale_factor.load(Ordering::Relaxed)),
+            #[cfg(feature = "portable-guest")]
+            Self::Portable => 1.0,
         }
     }
 
@@ -65,6 +141,8 @@ impl WindowHandle {
         match self {
             Self::Native(window) => window.request_redraw(),
             Self::Headless(state) => state.redraw_requested.store(true, Ordering::Release),
+            #[cfg(feature = "portable-guest")]
+            Self::Portable => {}
         }
     }
 
@@ -77,6 +155,8 @@ impl WindowHandle {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) = cursor;
             }
+            #[cfg(feature = "portable-guest")]
+            Self::Portable => {}
         }
     }
 
@@ -90,6 +170,8 @@ impl WindowHandle {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner()),
             ),
+            #[cfg(feature = "portable-guest")]
+            Self::Portable => None,
         }
     }
 
@@ -109,6 +191,8 @@ impl WindowHandle {
         match self {
             Self::Native(window) => Some(*window),
             Self::Headless(_) => None,
+            #[cfg(feature = "portable-guest")]
+            Self::Portable => None,
         }
     }
 
@@ -126,6 +210,8 @@ impl WindowHandle {
         match self {
             Self::Native(_) => false,
             Self::Headless(state) => state.redraw_requested.swap(false, Ordering::AcqRel),
+            #[cfg(feature = "portable-guest")]
+            Self::Portable => false,
         }
     }
 }
@@ -133,15 +219,20 @@ impl WindowHandle {
 #[derive(Clone)]
 pub struct BuildContext<'a> {
     pub parent_size: ResolvedSize,
+    #[cfg(not(feature = "portable-guest"))]
     pub canvas: Canvas<'a>,
+    #[cfg(feature = "portable-guest")]
+    pub canvas: BuildCanvas<'a>,
     pub scale: f32,
     pub parent_pos: Vec2d,
     pub cursor_pos: Vec2d,
     pub box_constraint: BoxConstraint,
     pub visible_rect: Option<(f32, f32, f32, f32)>, // (x, y, width, height)
     pub window: WindowHandle,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
     pub async_handle: Handle,
+    #[cfg(all(not(target_arch = "wasm32"), feature = "portable-guest"))]
+    pub async_handle: BuildAsyncHandle,
     pub inherited_states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
 }
 
@@ -232,7 +323,10 @@ impl<'a> BuildContext<'a> {
         #[cfg(not(target_arch = "wasm32"))] async_handle: Handle,
     ) -> Self {
         Self {
+            #[cfg(not(feature = "portable-guest"))]
             canvas,
+            #[cfg(feature = "portable-guest")]
+            canvas: BuildCanvas::native(canvas),
             parent_size: size,
             scale,
             parent_pos,
@@ -240,10 +334,58 @@ impl<'a> BuildContext<'a> {
             box_constraint: BoxConstraint::default(),
             visible_rect: None,
             window,
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
             async_handle,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "portable-guest"))]
+            async_handle: BuildAsyncHandle::native(async_handle),
             inherited_states: Rc::new(RefCell::new(HashMap::new())),
         }
+    }
+
+    /// Creates the resource-free context passed to portable `build` methods.
+    ///
+    /// Layout-independent build logic, inherited state, and deterministic
+    /// platform defaults remain available. Drawing and native asynchronous
+    /// work fail explicitly because a portable guest owns neither resource.
+    #[cfg(feature = "portable-guest")]
+    #[inline]
+    pub fn portable() -> BuildContext<'static> {
+        Self::portable_with_inherited_states(Rc::new(RefCell::new(HashMap::new())))
+    }
+
+    /// Creates a portable build context backed by an existing inherited-state
+    /// scope.
+    ///
+    /// Generated guest lowering uses this constructor so each nested `build`
+    /// sees the same ambient provider map. The map is still scoped by the
+    /// lowering operation; native handles and subscriptions remain outside the
+    /// guest ABI.
+    #[doc(hidden)]
+    #[cfg(feature = "portable-guest")]
+    #[inline]
+    pub fn portable_with_inherited_states(
+        inherited_states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
+    ) -> BuildContext<'static> {
+        BuildContext {
+            parent_size: ResolvedSize::default(),
+            canvas: BuildCanvas::unavailable(),
+            scale: 1.0,
+            parent_pos: Vec2d::default(),
+            cursor_pos: Vec2d::default(),
+            box_constraint: BoxConstraint::default(),
+            visible_rect: None,
+            window: WindowHandle::Portable,
+            #[cfg(not(target_arch = "wasm32"))]
+            async_handle: BuildAsyncHandle::unavailable(),
+            inherited_states,
+        }
+    }
+
+    /// Returns whether this context belongs to a portable Widget IR build.
+    #[cfg(feature = "portable-guest")]
+    #[inline]
+    pub const fn is_portable(&self) -> bool {
+        matches!(self.window, WindowHandle::Portable)
     }
 
     pub fn insert_state<T: Any>(&self, state: T) {
@@ -443,6 +585,33 @@ mod tests {
             #[cfg(not(target_arch = "wasm32"))]
             dummy_async_handle(),
         )
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn portable_context_builds_stateless_widgets_without_native_resources() {
+        struct Probe;
+
+        impl crate::StatelessWidget for Probe {
+            fn build(&self, ctx: &BuildContext) -> impl crate::Widget {
+                assert_eq!(ctx.scale, 1.0);
+                assert_eq!(ctx.parent_size, ResolvedSize::default());
+                crate::ErrorWidget::new("portable probe")
+            }
+        }
+
+        let context = BuildContext::portable();
+        let _widget = crate::StatelessWidget::build(&Probe, &context);
+        assert!(context.is_portable());
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn portable_context_rejects_drawing_instead_of_silently_ignoring_it() {
+        let context = BuildContext::portable();
+        let result = catch_unwind(AssertUnwindSafe(|| context.canvas.save()));
+
+        assert!(result.is_err());
     }
 
     #[test]

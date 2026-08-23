@@ -16,8 +16,12 @@ use crate::outlet::{OutletChildBuilder, OutletSlot};
 /// somewhere in its tree — and a builder for the currently active child route.
 /// When built, the shell injects an [`OutletSlot`] into the context so the
 /// descendant outlet can render the child.
+#[derive(aimer_widget::PortableWidget)]
+#[portable_widget(id = "aimer_router::Shell", schema_only)]
 pub struct Shell {
+    #[portable_child]
     frame: AnyWidget,
+    #[portable_skip]
     child_builder: OutletChildBuilder,
 }
 
@@ -183,10 +187,16 @@ pub fn active_top<R: Clone>(branches: &[Vec<R>], active: usize) -> Option<R> {
 /// [`crate::Outlet`]. Each branch starts with exactly one route and guarded
 /// pops never empty a stack. Descendants navigate through
 /// [`StatefulShellController`].
+#[derive(aimer_widget::PortableWidget)]
+#[portable_widget(id = "aimer_router::StatefulShell", schema_only)]
 pub struct StatefulShell<R: Route> {
+    #[portable_skip]
     pub branches: Vec<Vec<R>>,
+    #[portable_skip]
     pub active: usize,
+    #[portable_skip]
     pub frame: fn(&BuildContext) -> AnyWidget,
+    #[portable_skip]
     pub routes: fn(R) -> AnyWidget,
 }
 
@@ -377,6 +387,8 @@ mod tests {
             .boxed()
         }
     }
+
+    impl aimer_widget::PortableWidget for DeferredOutletWidget {}
 
     struct DeferredOutletElement {
         child_built: Rc<Cell<bool>>,

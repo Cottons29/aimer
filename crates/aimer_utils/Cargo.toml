@@ -22,3 +22,6 @@ aimer_venus.workspace = true
 
 [features]
 time-cost = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(aimer_portable_guest)"] }

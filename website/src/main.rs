@@ -1,25 +1,37 @@
 #![allow(clippy::main_recursion)]
 
+#[cfg(not(feature = "portable-guest"))]
 pub mod api;
+#[cfg(not(feature = "portable-guest"))]
 mod blog_store;
+#[cfg(not(feature = "portable-guest"))]
 mod components;
+#[cfg(not(feature = "portable-guest"))]
 mod router;
+#[cfg(not(feature = "portable-guest"))]
 mod screen;
+#[cfg(not(feature = "portable-guest"))]
 mod utils;
+#[cfg(feature = "portable-guest")]
+pub mod portable_proof;
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "portable-guest")))]
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
+#[cfg(not(feature = "portable-guest"))]
 use aimer::router::Navigator;
+#[cfg(not(feature = "portable-guest"))]
 use aimer::*;
 
+#[cfg(not(feature = "portable-guest"))]
 use crate::router::AppRouter;
-#[cfg(test)]
+#[cfg(all(test, not(feature = "portable-guest")))]
 pub static TEST_STATE_UPDATED: AtomicBool = AtomicBool::new(false);
-#[cfg(test)]
+#[cfg(all(test, not(feature = "portable-guest")))]
 pub static CURRENT_INDEX: AtomicUsize = AtomicUsize::new(0);
 
 // this is the entry point of the app
+#[cfg(not(feature = "portable-guest"))]
 #[aimer::main]
 fn main() {
     AimerApp::start(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
@@ -27,7 +39,11 @@ fn main() {
     }));
 }
 
-#[cfg(test)]
+#[cfg(feature = "portable-guest")]
+#[allow(dead_code)]
+fn main() {}
+
+#[cfg(all(test, not(feature = "portable-guest")))]
 mod test {
     use std::sync::atomic::Ordering;
     use std::thread::sleep;

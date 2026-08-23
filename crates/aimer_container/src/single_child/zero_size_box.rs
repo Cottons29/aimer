@@ -5,12 +5,21 @@ use aimer_widget::{
 };
 /// A leaf widget that occupies no space and paints nothing.
 ///
-/// `ZeroSizedBox` has no constructor or child: instantiate the unit struct
-/// directly. It is useful as an empty placeholder where a valid [`Widget`] or
-/// element is required, and its layout size remains the default zero size.
+/// `ZeroSizedBox` has no child and can be constructed with [`ZeroSizedBox::new`]
+/// or by instantiating the unit struct directly. It is useful as an empty
+/// placeholder where a valid [`Widget`] or element is required, and its layout
+/// size remains the default zero size.
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_container::single_child::ZeroSizedBox")]
 pub struct ZeroSizedBox;
 
 impl ZeroSizedBox {
+    /// Creates an empty widget with zero layout size.
+    #[inline]
+    pub const fn new() -> Self {
+        Self
+    }
+
     #[inline]
     pub fn boxed() -> Box<Self> {
         Box::new(Self)

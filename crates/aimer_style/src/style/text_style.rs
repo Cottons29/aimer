@@ -39,6 +39,17 @@ impl TextDecorationLine {
         self.0
     }
 
+    /// Reconstructs a decoration bit-set when all bits belong to the stable
+    /// portable line vocabulary.
+    #[doc(hidden)]
+    pub const fn from_bits(bits: u8) -> Option<Self> {
+        if bits & !0x0F == 0 {
+            Some(Self(bits))
+        } else {
+            None
+        }
+    }
+
     /// True when every line in `other` is present in `self`.
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
@@ -88,7 +99,7 @@ impl TextDecorationStyle {
 /// thickness and a vertical offset. Replaces the old on/off `Underline`-only
 /// enum.
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextDecoration {
     pub line: TextDecorationLine,
     pub style: TextDecorationStyle,
@@ -193,7 +204,7 @@ impl Default for TextDecoration {
 }
 
 #[allow(dead_code)]
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextAlign {
     #[default]
     TopLeft,
@@ -208,7 +219,7 @@ pub enum TextAlign {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextStyle {
     pub font_size: u32,
     pub font_family: FontFamily,
@@ -293,7 +304,7 @@ impl Default for TextStyle {
 }
 
 #[allow(dead_code)]
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextOverflow {
     Clip,
     Ellipsis,

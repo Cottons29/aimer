@@ -35,6 +35,8 @@ impl OutletSlot {
 /// shell injects an [`OutletSlot`] and the outlet builds the active child from
 /// it. An `Outlet` used without an ancestor shell panics — that is a
 /// programming error, mirroring `NavigatorController::of`.
+#[derive(aimer_widget::PortableWidget)]
+#[portable_widget(id = "aimer_router::Outlet", schema_only)]
 pub struct Outlet;
 
 impl Widget for Outlet {

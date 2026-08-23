@@ -1,0 +1,15 @@
+[package]
+name = "automatic-hot-reload-app"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+aimer = { path = "../../../.." }
+
+[features]
+default = ["portable-guest"]
+portable-guest = ["aimer/portable-guest"]
+
+[workspace]
+resolver = "3"

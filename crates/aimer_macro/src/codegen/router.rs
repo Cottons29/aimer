@@ -32,7 +32,8 @@ fn query_pairs(query: &Option<String>) -> Vec<(String, String)> {
 }
 
 impl RouterCodegen {
-    /// Emits the enum together with its `Route` and `Widget` impls, for the
+    /// Emits the enum together with its `Route`, `Widget`, and
+    /// `PortableWidget` impls, for the
     /// `#[widget(Router)]` attribute form.
     ///
     /// The attribute *replaces* the item it is written on, so the enum is
@@ -53,7 +54,7 @@ impl RouterCodegen {
         }
     }
 
-    /// Emits only the `Route` and `Widget` impls, for the
+    /// Emits only the `Route`, `Widget`, and `PortableWidget` impls, for the
     /// `#[derive(Router)]` form.
     ///
     /// A derive is expanded *beside* the enum it is written on, which the
@@ -70,8 +71,8 @@ impl RouterCodegen {
     }
 }
 
-/// Reads the routing attributes off `item_enum` and returns the `Route` and
-/// `Widget` impls they describe.
+/// Reads the routing attributes off `item_enum` and returns the `Route`,
+/// `Widget`, and `PortableWidget` impls they describe.
 ///
 /// The attributes are *removed* as they are read: they are meaningful only to
 /// this macro, and the attribute form re-emits the enum, where an unknown
@@ -547,6 +548,8 @@ fn take_routing(item_enum: &mut ItemEnum) -> Result<TokenStream, syn::Error> {
                 aimer::router::Router::build(&self, ctx).to_element(ctx)
             }
         }
+
+        impl aimer::widget::PortableWidget for #enum_name {}
     })
 }
 
@@ -586,6 +589,7 @@ mod tests {
         assert!(!generated.contains("enum TestRouter"));
         assert!(generated.contains("impl aimer :: router :: Route for TestRouter"));
         assert!(generated.contains("impl aimer :: widget :: Widget for TestRouter"));
+        assert!(generated.contains("impl aimer :: widget :: PortableWidget for TestRouter"));
     }
 
     #[test]

@@ -1,5 +1,7 @@
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Sub, SubAssign};
 
+use aimer_macro::PortableValue;
+
 use super::handle::ResizeHandle;
 
 /// The set of sides a [`Resizable`](super::Resizable) may be dragged by.
@@ -48,7 +50,11 @@ use super::handle::ResizeHandle;
 /// assert!(sides.contains(Direction::BOTTOM));
 /// assert!(!sides.contains(Direction::TOP_LEFT));
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_container::single_child::Direction",
+    max_encoded_bytes = 16
+)]
 pub struct Direction(u8);
 
 impl Direction {

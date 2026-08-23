@@ -14,13 +14,22 @@ use aimer_widget::{
 ///
 /// Attach a child with [`Positioned::child`] to retain its concrete type, or
 /// with [`Positioned::box_child`] when branches need a shared erased type.
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_space::space::Positioned", schema_only)]
 pub struct Positioned<W: Widget + 'static = ZeroSizedBox> {
+    #[portable_child]
     pub child: W,
+    #[portable_skip]
     pub position: Position,
+    #[portable_optional]
     pub left: Dimension,
+    #[portable_optional]
     pub top: Dimension,
+    #[portable_optional]
     pub right: Dimension,
+    #[portable_optional]
     pub bottom: Dimension,
+    #[portable_skip]
     pub transform: Transform,
     pub layer: u32,
 }

@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aimer_anteros.workspace = true
+aimer_haptics.workspace = true
 winit.workspace = true
 
 

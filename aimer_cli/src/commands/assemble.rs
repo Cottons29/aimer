@@ -230,6 +230,7 @@ fn xcode_command(
     configuration: &str,
     sdk: Option<&str>,
     arch: &str,
+    force_load_library: Option<&str>,
 ) -> Command {
     let mut cmd = Command::new("xcodebuild");
     cmd.arg("-project")
@@ -240,6 +241,11 @@ fn xcode_command(
         .arg(configuration);
     if let Some(sdk) = sdk {
         cmd.arg("-sdk").arg(sdk);
+    }
+    if let Some(library) = force_load_library {
+        cmd.arg(format!(
+            "OTHER_LDFLAGS=$(inherited) -force_load {library}"
+        ));
     }
     cmd.arg("SYMROOT=build")
         .arg("-arch")
@@ -304,7 +310,10 @@ pub(crate) fn desktop_bundle_path(target: Targets, pkg_name: &str, release: bool
 /// Cargo names the default binary after the package, dashes included, so the
 /// raw package name is used here rather than [`lib_name_of`].
 pub(crate) fn desktop_exe_path(pkg_name: &str, release: bool) -> String {
-    let project_path = get_project_root(true).unwrap_or(PathBuf::new()).display().to_string();
+    let project_path = get_project_root(true)
+        .unwrap_or_default()
+        .display()
+        .to_string();
     format!(
         "{project_path}/target/{}/{pkg_name}{}",
         profile_name(release),
@@ -352,6 +361,28 @@ pub(crate) fn package_macos(
     release: bool,
     reporter: &dyn Reporter,
 ) -> anyhow::Result<String> {
+    package_macos_with_options(pkg_name, release, reporter, false)
+}
+
+/// Package a macOS hot-reload host with the Rust archive force-loaded.
+///
+/// The force-load is scoped to this packaging path because portable widget
+/// registrations are linker-only symbols. Normal macOS builds retain their
+/// existing linker behavior.
+pub(crate) fn package_macos_for_hot_reload(
+    pkg_name: &str,
+    release: bool,
+    reporter: &dyn Reporter,
+) -> anyhow::Result<String> {
+    package_macos_with_options(pkg_name, release, reporter, true)
+}
+
+fn package_macos_with_options(
+    pkg_name: &str,
+    release: bool,
+    reporter: &dyn Reporter,
+    force_load_rust_library: bool,
+) -> anyhow::Result<String> {
     let lib_name = lib_name_of(pkg_name);
     let src_lib = artifact_path(MACOS_RUST_TARGET, &lib_name, release, ".a");
     copy_lib(
@@ -365,6 +396,8 @@ pub(crate) fn package_macos(
     clean_bundle(&artifact)?;
 
     let arch = host_arch();
+    let force_load_library = force_load_rust_library
+        .then(|| format!("$(SRCROOT)/Libraries/lib{lib_name}.a"));
     reporter.note(format!("Building Xcode project for {arch}..."));
     reporter.run(
         xcode_command(
@@ -373,6 +406,7 @@ pub(crate) fn package_macos(
             xcode_configuration(release),
             None,
             arch,
+            force_load_library.as_deref(),
         ),
         Step::new(StepKind::Xcode, "xcodebuild for macOS"),
     )?;
@@ -492,6 +526,7 @@ pub(crate) fn package_ios(
             xcode_configuration(release),
             Some(plan.sdk),
             plan.arch,
+            None,
         ),
         Step::new(StepKind::Xcode, "xcodebuild for iOS"),
     )?;
@@ -1257,12 +1292,36 @@ mod tests {
 
     #[test]
     fn xcode_command_carries_the_configuration_and_no_sdk_on_macos() {
-        let cmd = xcode_command("builds/macos", "my_app", "Release", None, "arm64");
+        let cmd = xcode_command(
+            "builds/macos",
+            "my_app",
+            "Release",
+            None,
+            "arm64",
+            None,
+        );
         let args = args_of(&cmd);
         assert!(args.contains(&"-configuration".to_string()));
         assert!(args.contains(&"Release".to_string()));
         assert!(!args.contains(&"-sdk".to_string()));
         assert!(args.contains(&"my_app.xcodeproj".to_string()));
+    }
+
+    #[test]
+    fn xcode_command_force_loads_the_rust_archive_for_hot_reload() {
+        let cmd = xcode_command(
+            "builds/macos",
+            "my_app",
+            "Debug",
+            None,
+            "arm64",
+            Some("$(SRCROOT)/Libraries/libmy_app.a"),
+        );
+        let args = args_of(&cmd);
+        assert!(args.contains(
+            &"OTHER_LDFLAGS=$(inherited) -force_load $(SRCROOT)/Libraries/libmy_app.a"
+                .to_string()
+        ));
     }
 
     #[test]
@@ -1273,6 +1332,7 @@ mod tests {
             "Debug",
             Some("iphonesimulator"),
             "arm64",
+            None,
         );
         let args = args_of(&cmd);
         assert!(args.contains(&"-sdk".to_string()));

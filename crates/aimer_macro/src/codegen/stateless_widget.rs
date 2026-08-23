@@ -35,7 +35,7 @@ pub fn derive_stateless_widget(input: TokenStream) -> TokenStream {
     }
 }
 
-/// The `Widget` impl both forms share.
+/// The generated `Widget` and `PortableWidget` implementations both forms share.
 fn stateless_widget_impl(input: &DeriveInput) -> TokenStream {
     let item_name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -85,8 +85,33 @@ fn stateless_widget_impl(input: &DeriveInput) -> TokenStream {
                     #item_name_str,
                 ))
             }
+
             fn debug_name(&self) -> &'static str {
                 #item_name_str
+            }
+        }
+
+        impl #impl_generics aimer::widget::PortableWidget for #item_name #ty_generics #where_clause {
+            #[cfg(feature = "portable-guest")]
+            fn to_portable_node(
+                self,
+                ctx: &mut aimer::widget::portable::PortableBuildContext,
+                source: aimer::widget::portable::SourceFingerprint,
+            ) -> Result<
+                aimer::widget::portable::PortableNodeId,
+                aimer::widget::portable::PortableBuildError,
+            > {
+                let __build_ctx = ctx.build_context();
+                let _aimer_guest_panic_scope =
+                    aimer::widget::portable::__anteros::GuestPanicScope::new(
+                        stringify!(#item_name),
+                        "build",
+                    );
+                aimer::widget::PortableWidget::to_portable_node(
+                    self.build(&__build_ctx),
+                    ctx,
+                    source.child(0u64),
+                )
             }
         }
     }
@@ -110,6 +135,38 @@ mod tests {
         assert!(output.contains("aimer :: widget :: Element :: boxed"));
         assert!(!output.contains("Box < dyn aimer::widget :: Element >"));
         assert!(!output.contains("Box :: new"));
+    }
+
+    #[test]
+    fn generated_widget_lowers_its_build_result_in_portable_guests() {
+        let output = derive_stateless_widget(quote! {
+            struct PortableWidget;
+        })
+        .to_string();
+
+        assert!(output.contains("cfg (feature = \"portable-guest\")"));
+        assert!(output.contains("fn to_portable_node"));
+        assert!(output.contains("ctx . build_context"));
+        assert!(output.contains("GuestPanicScope :: new"));
+        assert!(output.contains("self . build (& __build_ctx)"));
+        assert!(output.contains("source . child (0u64)"));
+        assert!(output.contains("PortableWidget :: to_portable_node"));
+    }
+
+    #[test]
+    fn native_stateless_conversion_remains_outside_the_portable_gate() {
+        let output = derive_stateless_widget(quote! {
+            struct NativeWidget;
+        })
+        .to_string();
+        let cfg = output
+            .find("cfg (feature = \"portable-guest\")")
+            .expect("portable conversion is feature gated");
+        let native = output
+            .find("fn to_element")
+            .expect("native conversion remains generated");
+
+        assert!(native < cfg, "the native method must not be gated");
     }
 
     #[test]

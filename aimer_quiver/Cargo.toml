@@ -17,10 +17,34 @@ raster-thread = []
 # Measure build / encode / present per frame. Off by default so the render path
 # reads no clock at all.
 frame-stats = []
+# Enable the guest-side reflected lowering for integration tests that build an
+# AWIR document and feed it through the native hot-reload materializer.
+portable-guest = [
+    "aimer_widget/portable-guest",
+    "aimer_provider/portable-guest",
+    "aimer_container/portable-guest",
+    "aimer_text/portable-guest",
+]
+# Enable the interpreted runtime and authenticated app-side reload listener.
+# This feature is selected only by `aimer +nightly run -Z hot-reload` host
+# builds; ordinary native debug and release applications keep it disabled.
+wasm-hot-reload = [
+    "dep:aimer_reload_protocol",
+    "dep:aimer_reload_server",
+    "dep:aimer_anteros",
+    "dep:aimer_container",
+    "dep:aimer_flex",
+    "dep:aimer_input",
+    "dep:aimer_text",
+    "aimer_anteros/wasm-hot-reload",
+]
 
 [dependencies]
 
+aimer_animation.workspace = true
 aimer_widget.workspace = true
+aimer_provider.workspace = true
+aimer_style.workspace = true
 aimer_attribute.workspace = true
 aimer_utils = {workspace = true, features = []}
 aimer_events.workspace = true
@@ -29,8 +53,14 @@ aimer_canvas.workspace = true
 aimer_modal.workspace = true
 aimer_venus.workspace = true
 aimer_native.workspace = true
+aimer_reload_protocol = { workspace = true, optional = true }
+aimer_reload_server = { workspace = true, optional = true }
+aimer_anteros = { workspace = true, optional = true }
+aimer_container = { workspace = true, optional = true }
+aimer_flex = { workspace = true, optional = true }
+aimer_input = { workspace = true, optional = true }
+aimer_text = { workspace = true, optional = true }
 wgpu.workspace = true
-
 
 #################
 
@@ -62,3 +92,6 @@ js-sys.workspace = true
 
 console_error_panic_hook.workspace = true
 web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "Node", "HtmlCanvasElement", "Element", "Event", "EventTarget", "CssStyleDeclaration", "WebSocket", "MessageEvent", "ErrorEvent"] }
+
+[dev-dependencies]
+aimer_macro.workspace = true

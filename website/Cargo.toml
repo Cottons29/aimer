@@ -3,19 +3,33 @@ name = "website"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# Native website screens use the full Markdown/SVG stack. Keep those features
+# out of generated guest proof crates so a portable build contains only the
+# explicitly portable application surface.
+default = ["native"]
+native = ["aimer/markdown", "aimer/svg", "aimer/provider", "aimer/markdown-arborium"]
+# Keep the destination-crate feature name aligned with generated widget code.
+portable-guest = ["aimer/portable-guest", "aimer/provider"]
+hot-reload-proof = ["portable-guest", "aimer/wasm-hot-reload"]
+
 
 [lib]
 path = "src/main.rs"
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
-aimer = { path = "..", features = ["markdown", "svg", "provider", "markdown-arborium"] }
+aimer = { path = ".." }
 webbrowser = "1.2.1"
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
+aimer_widget.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = "0.19.3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
+aimer_canvas.workspace = true
+aimer_cli = { path = "../aimer_cli" }
+tempfile.workspace = true

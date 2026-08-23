@@ -15,6 +15,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerEvent;
 use aimer_utils::AnimInstant;
+use aimer_macro::PortableWidget;
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
@@ -76,8 +77,40 @@ use crate::gesture::{
 ///     })
 ///     .child(Text::new("Save"));
 /// ```
+#[allow(dead_code)]
+#[derive(PortableWidget)]
+#[portable_widget(
+    id = "aimer_input::GestureDetector",
+    schema_only
+)]
 pub struct GestureDetector<W = RequiredChild> {
+    // The flat no-argument mirrors give the derive stable callback slots. The
+    // aggregate handler set remains the native hot-path dispatch object.
+    #[portable_callback(async)]
+    on_tap: VoidCallback,
+    #[portable_callback(async)]
+    on_double_press: VoidCallback,
+    #[portable_callback(async)]
+    on_long_press: VoidCallback,
+    #[portable_skip]
+    on_drag_start: DragCallback,
+    #[portable_skip]
+    on_drag_update: DragUpdateCallback,
+    #[portable_callback(async)]
+    on_drag_end: VoidCallback,
+    #[portable_callback(async)]
+    on_right_tap: VoidCallback,
+    #[portable_skip]
+    on_swipe: SwipeCallback,
+    #[portable_skip]
+    on_scroll: ScrollCallback,
+    #[portable_skip]
+    on_scale: ScaleCallback,
+    #[portable_skip]
+    on_gesture: GestureStreamCallback,
+    #[portable_skip]
     handlers: Rc<GestureHandlers>,
+    #[portable_child(discriminator = 0)]
     child: W,
 }
 
@@ -92,6 +125,17 @@ impl GestureDetector {
     #[inline]
     pub fn new() -> Self {
         Self {
+            on_tap: VoidCallback::default(),
+            on_double_press: VoidCallback::default(),
+            on_long_press: VoidCallback::default(),
+            on_drag_start: DragCallback::default(),
+            on_drag_update: DragUpdateCallback::default(),
+            on_drag_end: VoidCallback::default(),
+            on_right_tap: VoidCallback::default(),
+            on_swipe: SwipeCallback::default(),
+            on_scroll: ScrollCallback::default(),
+            on_scale: ScaleCallback::default(),
+            on_gesture: GestureStreamCallback::default(),
             handlers: Rc::new(GestureHandlers::new()),
             child: RequiredChild,
         }
@@ -107,6 +151,8 @@ macro_rules! builder_setters {
                 #[doc = $doc]
                 #[inline]
                 pub fn $setter(mut self, callback: impl Into<$callback>) -> Self {
+                    let callback = callback.into();
+                    self.$setter = callback.clone();
                     self.handlers_mut().$install(callback);
                     self
                 }
@@ -160,6 +206,17 @@ impl<W> GestureDetector<W> {
     #[inline]
     pub fn child<C: Widget>(self, child: C) -> GestureDetector<C> {
         GestureDetector {
+            on_tap: self.on_tap,
+            on_double_press: self.on_double_press,
+            on_long_press: self.on_long_press,
+            on_drag_start: self.on_drag_start,
+            on_drag_update: self.on_drag_update,
+            on_drag_end: self.on_drag_end,
+            on_right_tap: self.on_right_tap,
+            on_swipe: self.on_swipe,
+            on_scroll: self.on_scroll,
+            on_scale: self.on_scale,
+            on_gesture: self.on_gesture,
             handlers: self.handlers,
             child,
         }
@@ -443,6 +500,8 @@ mod tests {
             panic!("not needed for builder tests")
         }
     }
+
+    impl aimer_widget::PortableWidget for TestWidget {}
 
     struct TestElement;
 

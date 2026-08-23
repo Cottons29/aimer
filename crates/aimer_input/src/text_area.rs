@@ -1,11 +1,14 @@
 use std::panic::Location;
 use std::sync::Arc;
 
+use aimer_macro::PortableWidget;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{
     AnyElement, FocusNode, Key, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
 };
+#[cfg(feature = "portable-guest")]
+use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
 
 use crate::TextEditingController;
 use crate::input_field::raw_fields::{ExpandDirection, InputType, TextFieldCallback};
@@ -17,11 +20,65 @@ use crate::input_field::{TextField, TextFieldState};
 /// and keeps the shared text-field editing, focus, decoration, and callback
 /// behavior. Pressing Return inserts a line break; submission remains available
 /// through the platform's modified Return action.
+#[derive(PortableWidget)]
+#[portable_widget(
+    id = "aimer_input::TextArea",
+    validate = validate_portable_text_area
+)]
 pub struct TextArea {
+    // The embedded field owns the controller, focus, styling, and callback
+    // state. Only the independently representable expansion policy is lowered.
+    #[portable_skip]
     field: TextField,
+    #[portable_skip]
     min_lines: usize,
+    #[portable_skip]
     max_lines: Option<usize>,
+    /// Fixed-width guest descriptors for the native line-count configuration.
+    ///
+    /// The native API remains `usize`-based, but the guest contract uses `u32`
+    /// so its representation is identical on every supported target.
+    min_lines_wire: u32,
+    max_lines_wire: Option<u32>,
+    #[portable_optional]
     expand: bool,
+}
+
+#[cfg(feature = "portable-guest")]
+fn validate_portable_text_area(
+    area: &TextArea,
+    _ctx: &PortableBuildContext,
+    source: SourceFingerprint,
+) -> Result<(), PortableBuildError> {
+    let expected_min = u32::try_from(area.min_lines.max(1)).map_err(|_| {
+        PortableBuildError::InvalidPropertyValue {
+            rust_type: "usize",
+        }
+    })?;
+    if area.min_lines_wire != expected_min {
+        return Err(PortableBuildError::UnsupportedProperty {
+            widget: "TextArea",
+            property: "min_lines",
+            source,
+        });
+    }
+
+    let expected_max = match area.max_lines {
+        None => None,
+        Some(value) => Some(u32::try_from(value).map_err(|_| {
+            PortableBuildError::InvalidPropertyValue {
+                rust_type: "usize",
+            }
+        })?),
+    };
+    if area.max_lines_wire != expected_max {
+        return Err(PortableBuildError::UnsupportedProperty {
+            widget: "TextArea",
+            property: "max_lines",
+            source,
+        });
+    }
+    Ok(())
 }
 
 impl TextArea {
@@ -35,6 +92,8 @@ impl TextArea {
             field: TextField::new(),
             min_lines: 3,
             max_lines: None,
+            min_lines_wire: 3,
+            max_lines_wire: None,
             expand: false,
         }
     }
@@ -124,6 +183,7 @@ impl TextArea {
     #[inline]
     pub fn min_lines(mut self, min_lines: usize) -> Self {
         self.min_lines = min_lines;
+        self.min_lines_wire = u32::try_from(min_lines.max(1)).unwrap_or(u32::MAX);
         self
     }
 
@@ -134,7 +194,31 @@ impl TextArea {
     /// raised to the resolved minimum when the field state is created.
     #[inline]
     pub fn max_lines(mut self, max_lines: impl Into<Option<usize>>) -> Self {
-        self.max_lines = max_lines.into();
+        let max_lines = max_lines.into();
+        self.max_lines_wire = max_lines.map(|value| {
+            u32::try_from(value).unwrap_or(u32::MAX)
+        });
+        self.max_lines = max_lines;
+        self
+    }
+
+    /// Applies the bounded guest minimum-line descriptor while materializing a
+    /// fresh area.
+    #[doc(hidden)]
+    #[inline]
+    fn min_lines_wire(mut self, min_lines: u32) -> Self {
+        self.min_lines = min_lines as usize;
+        self.min_lines_wire = min_lines;
+        self
+    }
+
+    /// Applies the bounded guest maximum-line descriptor while materializing a
+    /// fresh area.
+    #[doc(hidden)]
+    #[inline]
+    fn max_lines_wire(mut self, max_lines: u32) -> Self {
+        self.max_lines = Some(max_lines as usize);
+        self.max_lines_wire = Some(max_lines);
         self
     }
 

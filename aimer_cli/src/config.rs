@@ -3,8 +3,131 @@ use std::path::Path;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
+/// Cargo compilation profile selected for an Aimer application run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BuildProfile {
+    /// Fast development compilation with debug assertions.
+    Debug,
+    /// Optimized production compilation.
+    Release,
+}
+
+impl std::fmt::Display for BuildProfile {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Debug => formatter.write_str("debug"),
+            Self::Release => formatter.write_str("release"),
+        }
+    }
+}
+
+/// Execution runtime used for application logic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApplicationRuntime {
+    /// Native Rust code compiled ahead of time.
+    NativeAot,
+    /// WebAssembly application code interpreted by `wasmi`.
+    Wasmi,
+}
+
+impl std::fmt::Display for ApplicationRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NativeAot => formatter.write_str("native-aot"),
+            Self::Wasmi => formatter.write_str("wasmi"),
+        }
+    }
+}
+
+/// Whether a running application may replace its application generation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReloadPolicy {
+    /// Application code remains fixed until the process restarts.
+    Disabled,
+    /// Development-only WebAssembly hot reload is active.
+    HotReload,
+}
+
+impl std::fmt::Display for ReloadPolicy {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Disabled => formatter.write_str("disabled"),
+            Self::HotReload => formatter.write_str("hot-reload"),
+        }
+    }
+}
+
+/// A validated combination of build profile, application runtime, and reload
+/// behavior.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExecutionPolicy {
+    profile: BuildProfile,
+    runtime: ApplicationRuntime,
+    reload: ReloadPolicy,
+}
+
+impl ExecutionPolicy {
+    /// Creates a policy when the requested combination is supported.
+    ///
+    /// Aimer intentionally supports only debug `wasmi` with hot reload,
+    /// debug native AOT without reload, and release native AOT without reload.
+    /// Invalid combinations are rejected instead of being silently coerced.
+    pub fn new(
+        profile: BuildProfile,
+        runtime: ApplicationRuntime,
+        reload: ReloadPolicy,
+    ) -> anyhow::Result<Self> {
+        let allowed = matches!(
+            (profile, runtime, reload),
+            (
+                BuildProfile::Debug,
+                ApplicationRuntime::Wasmi,
+                ReloadPolicy::HotReload
+            ) | (
+                BuildProfile::Debug,
+                ApplicationRuntime::NativeAot,
+                ReloadPolicy::Disabled
+            ) | (
+                BuildProfile::Release,
+                ApplicationRuntime::NativeAot,
+                ReloadPolicy::Disabled
+            )
+        );
+
+        if !allowed {
+            anyhow::bail!(
+                "unsupported execution policy: profile={profile}, runtime={runtime}, reload={reload}; allowed alternatives: debug/wasmi/hot-reload, debug/native-aot/disabled, release/native-aot/disabled"
+            );
+        }
+
+        Ok(Self {
+            profile,
+            runtime,
+            reload,
+        })
+    }
+
+    /// Returns the selected compilation profile.
+    #[inline]
+    pub const fn profile(self) -> BuildProfile {
+        self.profile
+    }
+
+    /// Returns the selected application runtime.
+    #[inline]
+    pub const fn runtime(self) -> ApplicationRuntime {
+        self.runtime
+    }
+
+    /// Returns the selected reload behavior.
+    #[inline]
+    pub const fn reload(self) -> ReloadPolicy {
+        self.reload
+    }
+}
+
 /// File name of the Aimer project manifest.
-pub const MANIFEST_FILE: &str = "aimer.toml";
+pub const MANIFEST_FILE: &str = "Aimer.toml";
 
 /// Fallback package name used when neither `aimer.toml` nor `Cargo.toml`
 /// provide one.
@@ -39,6 +162,43 @@ pub struct PackageMeta {
 pub struct BuildMeta {
     #[serde(default)]
     pub default_target: Option<String>,
+    #[serde(default)]
+    pub hot_reload: Option<HotReloadGuestMeta>,
+}
+
+/// Explicit portable entry used to generate an application's WASM guest.
+///
+/// The package must expose the program type and limits value from a linkable
+/// Rust library target. When `[lib].crate-type` is explicit, it must include
+/// `"lib"` or `"rlib"` so the generated wrapper can use the package as a Rust
+/// dependency. Keeping all three names explicit prevents the CLI from guessing
+/// a Rust type from Cargo metadata or accidentally compiling a native entry
+/// point as interpreted application code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HotReloadGuestMeta {
+    package: String,
+    program: String,
+    limits: String,
+}
+
+impl HotReloadGuestMeta {
+    /// Returns the Cargo package containing portable application behavior.
+    #[inline]
+    pub fn package(&self) -> &str {
+        &self.package
+    }
+
+    /// Returns the exported [`aimer_wasm_guest::GuestProgram`] type path.
+    #[inline]
+    pub fn program(&self) -> &str {
+        &self.program
+    }
+
+    /// Returns the exported [`aimer_wasm_guest::GuestLimits`] value path.
+    #[inline]
+    pub fn limits(&self) -> &str {
+        &self.limits
+    }
 }
 
 /// The `[assets]` section of `aimer.toml`. Lists the files that should be
@@ -103,7 +263,7 @@ impl AimerManifest {
     /// Serialize and write the manifest to `<dir>/aimer.toml`.
     pub fn write_to(&self, dir: &Path) -> anyhow::Result<()> {
         let path = dir.join(MANIFEST_FILE);
-        let contents = toml::to_string_pretty(self).context("serializing aimer.toml")?;
+        let contents = toml::to_string_pretty(self).context("serializing Aimer.toml")?;
         std::fs::write(&path, contents).with_context(|| format!("writing {}", path.display()))?;
         Ok(())
     }
@@ -113,6 +273,12 @@ impl AimerManifest {
         self.build
             .as_ref()
             .and_then(|b| b.default_target.as_deref())
+    }
+
+    /// Portable application entry declared for WASM hot reload, if any.
+    #[inline]
+    pub fn hot_reload_guest(&self) -> Option<&HotReloadGuestMeta> {
+        self.build.as_ref().and_then(|build| build.hot_reload.as_ref())
     }
 }
 
@@ -151,6 +317,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn execution_policy_accepts_only_the_supported_matrix() {
+        let cases = [
+            (BuildProfile::Debug, ApplicationRuntime::Wasmi, ReloadPolicy::HotReload, true),
+            (BuildProfile::Debug, ApplicationRuntime::Wasmi, ReloadPolicy::Disabled, false),
+            (BuildProfile::Debug, ApplicationRuntime::NativeAot, ReloadPolicy::HotReload, false),
+            (BuildProfile::Debug, ApplicationRuntime::NativeAot, ReloadPolicy::Disabled, true),
+            (BuildProfile::Release, ApplicationRuntime::Wasmi, ReloadPolicy::HotReload, false),
+            (BuildProfile::Release, ApplicationRuntime::Wasmi, ReloadPolicy::Disabled, false),
+            (BuildProfile::Release, ApplicationRuntime::NativeAot, ReloadPolicy::HotReload, false),
+            (BuildProfile::Release, ApplicationRuntime::NativeAot, ReloadPolicy::Disabled, true),
+        ];
+
+        for (profile, runtime, reload, allowed) in cases {
+            assert_eq!(
+                ExecutionPolicy::new(profile, runtime, reload).is_ok(),
+                allowed,
+                "profile={profile}, runtime={runtime}, reload={reload}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_execution_policy_reports_the_request_and_allowed_alternatives() {
+        let error = ExecutionPolicy::new(
+            BuildProfile::Release,
+            ApplicationRuntime::Wasmi,
+            ReloadPolicy::HotReload,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("profile=release"));
+        assert!(error.contains("runtime=wasmi"));
+        assert!(error.contains("reload=hot-reload"));
+        assert!(error.contains("debug/wasmi/hot-reload"));
+        assert!(error.contains("debug/native-aot/disabled"));
+        assert!(error.contains("release/native-aot/disabled"));
+    }
+
+    #[test]
     fn manifest_round_trips() {
         let dir = tempfile::tempdir().unwrap();
         let manifest = AimerManifest::new(
@@ -181,11 +387,32 @@ mod tests {
         let mut manifest = AimerManifest::new("app", "0.1.0", "", "", "com.example.app");
         manifest.build = Some(BuildMeta {
             default_target: Some("web".to_string()),
+            ..Default::default()
         });
         let dir = tempfile::tempdir().unwrap();
         manifest.write_to(dir.path()).unwrap();
         let loaded = AimerManifest::load_from(dir.path()).unwrap().unwrap();
         assert_eq!(loaded.default_target(), Some("web"));
+    }
+
+    #[test]
+    fn hot_reload_guest_entry_is_read_from_explicit_build_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(MANIFEST_FILE),
+            "[package]\nname = \"counter_app\"\n\n[build.hot_reload]\npackage = \"counter_app\"\nprogram = \"CounterProgram\"\nlimits = \"HOT_RELOAD_LIMITS\"\n",
+        )
+        .unwrap();
+
+        let loaded = AimerManifest::load_from(dir.path()).unwrap().unwrap();
+        let guest = loaded.hot_reload_guest().unwrap();
+
+        assert_eq!(guest.package(), "counter_app");
+        assert_eq!(guest.program(), "CounterProgram");
+        assert_eq!(guest.limits(), "HOT_RELOAD_LIMITS");
+        assert!(AimerManifest::new("app", "0.1.0", "", "", "com.example.app")
+            .hot_reload_guest()
+            .is_none());
     }
 
     #[test]

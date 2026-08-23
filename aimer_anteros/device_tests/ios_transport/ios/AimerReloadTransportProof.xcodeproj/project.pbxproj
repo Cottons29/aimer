@@ -1,0 +1,48 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 77;
+	objects = {
+		AA0000010000000000000001 = {isa = PBXBuildFile; fileRef = AA0000020000000000000001; };
+		AA0000020000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		AA0000030000000000000001 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AimerReloadTransportProof.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000040000000000000001 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AA0000050000000000000001 = {isa = PBXGroup; children = (AA0000060000000000000001, AA0000070000000000000001); sourceTree = "<group>"; };
+		AA0000060000000000000001 = {isa = PBXGroup; children = (AA0000020000000000000001, AA0000040000000000000001); path = App; sourceTree = "<group>"; };
+		AA0000070000000000000001 = {isa = PBXGroup; children = (AA0000030000000000000001); name = Products; sourceTree = "<group>"; };
+		AA0000080000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AA0000010000000000000001); runOnlyForDeploymentPostprocessing = 0; };
+		AA0000090000000000000001 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		AA00000A0000000000000001 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		AA00000B0000000000000001 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA00000C0000000000000001;
+			buildPhases = (AA0000080000000000000001, AA0000090000000000000001, AA00000A0000000000000001);
+			buildRules = ();
+			dependencies = ();
+			name = AimerReloadTransportProof;
+			productName = AimerReloadTransportProof;
+			productReference = AA0000030000000000000001;
+			productType = "com.apple.product-type.application";
+		};
+		AA00000D0000000000000001 = {
+			isa = PBXProject;
+			attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2700; LastUpgradeCheck = 2700; TargetAttributes = {AA00000B0000000000000001 = {CreatedOnToolsVersion = 27.0;};};};
+			buildConfigurationList = AA00000E0000000000000001;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = AA0000050000000000000001;
+			productRefGroup = AA0000070000000000000001;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (AA00000B0000000000000001);
+		};
+		AA00000F0000000000000001 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos;}; name = Debug;};
+		AA0000100000000000000001 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = YCLCW25V8V; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = App/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; LIBRARY_SEARCH_PATHS = "$(AIMER_RUST_LIBRARY_PATH)"; OTHER_LDFLAGS = ("$(inherited)", "-laimer_reload_transport_device_proof", "-lc", "-lm"); PRODUCT_BUNDLE_IDENTIFIER = "dev.aimers.reload-transport-proof"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug;};
+		AA00000C0000000000000001 = {isa = XCConfigurationList; buildConfigurations = (AA0000100000000000000001); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;};
+		AA00000E0000000000000001 = {isa = XCConfigurationList; buildConfigurations = (AA00000F0000000000000001); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;};
+	};
+	rootObject = AA00000D0000000000000001;
+}

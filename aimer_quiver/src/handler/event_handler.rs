@@ -122,7 +122,7 @@ impl WindowEventHandler {
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 Self::update_scale_factor(&mut app.window_scale, scale_factor);
                 app.sync_headless_metrics(None);
-                if let Some(root) = &app.widget_root {
+                if let Some(root) = app.active_root() {
                     root.invalidate_layout();
                     aimer_widget::notify_window_metrics_changed();
                 }
@@ -142,7 +142,7 @@ impl WindowEventHandler {
             }
 
             WindowEvent::Focused(is_focus) => {
-                if app.widget_root.is_none() {
+                if app.active_root().is_none() {
                     return;
                 }
                 if is_focus {
@@ -287,7 +287,7 @@ impl WindowEventHandler {
         };
         #[allow(clippy::collapsible_if)]
         {
-            if app.widget_root.is_some() {
+            if app.active_root().is_some() {
                 let mut result = app.dispatch_element_event(pos, &event);
                 #[cfg(debug_assertions)]
                 let inspector_handled = app.inspector_enabled();
@@ -299,7 +299,7 @@ impl WindowEventHandler {
                     // the release event even when the finger lifts outside their
                     // bounds — the common case for a fast flick on touch screens.
                     if matches!(&event, ElementEvent::PointerDown(_))
-                        && let Some(root) = &app.widget_root
+                        && let Some(root) = app.active_root()
                     {
                         result = result.merge(broadcast_event(root.as_ref(), &event));
                     }
@@ -329,7 +329,7 @@ impl WindowEventHandler {
         // the next wheel event belongs to a new gesture.
         #[cfg(target_arch = "wasm32")]
         Self::end_web_scroll_gesture(app);
-        if app.widget_root.is_some() {
+        if app.active_root().is_some() {
             // The button reported with a move is the one being held, so a drag
             // started with the secondary button stays a secondary-button drag all
             // the way to its release.
@@ -357,12 +357,12 @@ impl WindowEventHandler {
 
     fn handle_cursor_left<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>) {
         app.cursor_pos = CURSOR_OUTSIDE_POSITION;
-        if app.widget_root.is_some() {
+        if app.active_root().is_some() {
             let pointer = PointerKey::new(PointerSource::Mouse, 0);
             let was_captured = app.event_dispatcher.is_captured(pointer);
             let event = ElementEvent::PointerExited(pointer.source, pointer.id);
             let mut result = app.dispatch_element_event(app.cursor_pos, &event);
-            if !was_captured && let Some(root) = &app.widget_root {
+            if !was_captured && let Some(root) = app.active_root() {
                 result = result.merge(broadcast_event(root.as_ref(), &event));
             }
             if let Some(window) = &app.window
@@ -421,7 +421,7 @@ impl WindowEventHandler {
         };
 
         #[allow(clippy::collapsible_if)]
-        if app.widget_root.is_some() {
+        if app.active_root().is_some() {
             let mut result = app.dispatch_element_event(c, &event);
             #[cfg(debug_assertions)]
             let inspector_handled = app.inspector_enabled();
@@ -429,7 +429,7 @@ impl WindowEventHandler {
             let inspector_handled = false;
             if !result.is_consumed() && !inspector_handled {
                 if matches!(&event, ElementEvent::PointerDown(_))
-                    && let Some(root) = &app.widget_root
+                    && let Some(root) = app.active_root()
                 {
                     result = result.merge(broadcast_event(root.as_ref(), &event));
                 }
@@ -477,7 +477,7 @@ impl WindowEventHandler {
                     action,
                     modifiers,
                 };
-                if app.widget_root.is_some() {
+                if app.active_root().is_some() {
                     let result = app.dispatch_element_event(app.cursor_pos, &ev);
                     let mut handled = result.is_consumed();
                     #[cfg(debug_assertions)]
@@ -550,7 +550,7 @@ impl WindowEventHandler {
                 action,
                 modifiers: modifiers.clone(),
             };
-            if app.widget_root.is_some() {
+            if app.active_root().is_some() {
                 let result = app.dispatch_element_event(app.cursor_pos, &ev);
                 let mut handled = result.is_consumed();
                 #[cfg(debug_assertions)]
@@ -580,7 +580,7 @@ impl WindowEventHandler {
         modifiers: &Modifiers,
         app: &mut AimerApplicationHandler<W>,
     ) {
-        if app.widget_root.is_none() {
+        if app.active_root().is_none() {
             return;
         }
         let mut chars = text.chars();
@@ -656,7 +656,7 @@ impl WindowEventHandler {
         cursor: Option<(usize, usize)>,
         app: &mut AimerApplicationHandler<W>,
     ) {
-        if app.widget_root.is_none() {
+        if app.active_root().is_none() {
             return;
         }
         let event = ElementEvent::ImePreedit { text, cursor };
@@ -688,7 +688,7 @@ impl WindowEventHandler {
            1.0
         };
         let (scroll_delta, kind) = Self::normalize_wheel_delta(delta, app.window_scale);
-        if app.widget_root.is_some() {
+        if app.active_root().is_some() {
             let delta = PhysicalPosition::new(scroll_delta.x  as f64 * DELTA_MULTIPLY, scroll_delta.y as f64 * DELTA_MULTIPLY);
             match kind {
                 aimer_events::element::ScrollDeltaKind::Pixel => {
@@ -874,7 +874,7 @@ impl WindowEventHandler {
         // reserves in it: on a phone, this event is the rotation.
         Self::refresh_safe_area(app);
 
-        if let Some(root) = &app.widget_root {
+        if let Some(root) = app.active_root() {
             root.invalidate_layout();
             aimer_widget::notify_window_metrics_changed();
         }
@@ -938,7 +938,7 @@ impl WindowEventHandler {
         let mut result = app.dispatch_element_event(at, &event);
 
         if app.file_drag.note_answered(result.is_consumed())
-            && let Some(root) = &app.widget_root
+            && let Some(root) = app.active_root()
         {
             let left = ElementEvent::DragLeave {
                 source: PointerSource::Mouse,
@@ -982,7 +982,7 @@ impl WindowEventHandler {
         // reacted to the drag has to hear that it is over, so this one is
         // broadcast rather than hit-tested.
         if matches!(event, ElementEvent::HoveredFileCancelled)
-            && let Some(root) = &app.widget_root
+            && let Some(root) = app.active_root()
         {
             result = result.merge(broadcast_event(root.as_ref(), event));
         }

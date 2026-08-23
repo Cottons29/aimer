@@ -4,7 +4,16 @@ version = "0.1.0"
 edition = "2024"
 resolver = "3"
 
+[features]
+portable-guest = [
+    "dep:aimer_anteros",
+    "aimer_style/portable-guest",
+    "aimer_widget/portable-guest",
+    "aimer_container/portable-guest",
+]
+
 [dependencies]
+aimer_anteros = { workspace = true, optional = true }
 aimer_widget.workspace = true
 aimer_attribute.workspace =  true
 aimer_events.workspace = true

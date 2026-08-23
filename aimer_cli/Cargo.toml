@@ -11,11 +11,13 @@ path = "src/main.rs"
 
 [dependencies]
 aimer_inspector.workspace = true
+aimer_reload_protocol.workspace = true
 aimer_utils.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread"]}
 ansi-to-tui.workspace = true
 clap.workspace = true
 crossterm.workspace = true
+ctrlc.workspace = true
 inquire.workspace = true
 ratatui.workspace = true
 arboard.workspace = true
@@ -32,11 +34,18 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 sha2.workspace = true
 hex.workspace = true
+wasmparser.workspace = true
+wasm-bindgen-cli-support.workspace = true
+walrus.workspace = true
+zeroize.workspace = true
+syn.workspace = true
+proc-macro2.workspace = true
+quote.workspace = true
 [dev-dependencies]
+aimer_reload_server.workspace = true
 tempfile.workspace = true
 
 [build-dependencies]
 chrono.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-

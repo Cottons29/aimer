@@ -137,11 +137,20 @@ pub(crate) fn clear_hover() {
 ///         Container::new().child(ZeroSizedBox)
 ///     });
 /// ```
+#[derive(aimer_widget::PortableWidget)]
+#[portable_widget(id = "aimer_dnd::DragTarget", schema_only)]
 pub struct DragTarget<T, C = RequiredChild> {
+    #[portable_skip]
     will_accept: Option<AcceptPredicate<T>>,
+    #[portable_skip]
     on_accept: Option<AcceptHandler<T>>,
+    // The child is rebuilt from live hover state, so it has no single static
+    // portable child node. Keep the callback on the native path.
+    #[portable_skip]
     child: Option<TargetChild>,
+    #[portable_skip]
     _child: PhantomData<C>,
+    #[portable_skip]
     _payload: PhantomData<T>,
 }
 
@@ -321,6 +330,8 @@ impl<T: 'static> Widget for TargetGate<T> {
     }
 }
 
+impl<T: 'static> aimer_widget::PortableWidget for TargetGate<T> {}
+
 struct RawDragTarget<T> {
     child: AnyElement,
     logic: Rc<TargetLogic<T>>,
@@ -473,5 +484,16 @@ mod tests {
         assert_eq!(*left.borrow(), 0);
         clear_hover();
         assert_eq!(*left.borrow(), 1);
+    }
+
+    #[test]
+    fn completed_drag_target_publishes_a_derived_schema() {
+        use aimer_widget::portable::__anteros::ChildCardinality;
+        use aimer_widget::portable::PortableWidgetSchema;
+
+        assert_eq!(
+            <DragTarget<String, HasChild> as PortableWidgetSchema>::SCHEMA.children(),
+            ChildCardinality::none()
+        );
     }
 }

@@ -61,13 +61,20 @@ pub struct ScrollButton {
     pub active_color: Colors,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_scroll::scrollable::ScrollBar", schema_only)]
 pub struct ScrollBar {
+    #[portable_skip]
     pub track: ScrollTrack,
+    #[portable_skip]
     pub thumb: ScrollThumb,
+    #[portable_skip]
     pub up_button: Option<ScrollButton>,
+    #[portable_skip]
     pub down_button: Option<ScrollButton>,
+    #[portable_skip]
     ctrl: Option<Rc<ScrollState>>,
+    #[portable_skip]
     axis: ScrollAxis,
 }
 
@@ -252,6 +259,8 @@ impl Widget for RawScrollBar {
         Element::boxed(self)
     }
 }
+
+impl aimer_widget::PortableWidget for RawScrollBar {}
 
 impl EventElement for RawScrollBar {}
 impl Rebuildable for RawScrollBar {}

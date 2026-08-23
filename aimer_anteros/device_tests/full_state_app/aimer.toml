@@ -1,0 +1,9 @@
+[application]
+name = "aimer_full_state_app"
+version = "0.0.0"
+group = "dev.aimer.fullstateproof"
+
+[build.hot_reload]
+package = "aimer_full_state_app"
+program = "FullStateGuest"
+limits = "HOT_RELOAD_LIMITS"

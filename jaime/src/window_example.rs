@@ -81,7 +81,7 @@ fn sidebar() -> AnyWidget {
         )
         .color(Color::Rgb(44, 43, 42))
         .child(Column::new().children(vec![
-            navigation_item("⌕", "Search", false),
+            navigation_item("M", "Search", false),
             navigation_item("⌂", "Home", false),
             navigation_item("▦", "New", false),
             navigation_item("◉", "Radio", true),

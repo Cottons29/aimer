@@ -843,27 +843,26 @@ mod tests {
     }
 
     fn build_context(canvas: &'static InnerCanvas) -> BuildContext<'static> {
-        BuildContext {
-            parent_size: ResolvedSize {
+        let mut context = BuildContext::new(
+            Canvas::new(canvas),
+            ResolvedSize {
                 width: 200.0,
                 height: 100.0,
             },
-            canvas: Canvas::new(canvas),
-            scale: 1.0,
-            parent_pos: Default::default(),
-            cursor_pos: Default::default(),
-            box_constraint: BoxConstraint {
-                min_width: 0.0,
-                min_height: 0.0,
-                max_width: 200.0,
-                max_height: 100.0,
-            },
-            visible_rect: None,
-            window: WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
             #[cfg(not(target_arch = "wasm32"))]
-            async_handle: dummy_async_handle(),
-            inherited_states: Default::default(),
-        }
+            dummy_async_handle(),
+        );
+        context.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 200.0,
+            max_height: 100.0,
+        };
+        context
     }
 
     #[test]

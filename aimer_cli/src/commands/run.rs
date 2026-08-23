@@ -1,9 +1,11 @@
 pub mod android;
 pub(crate) mod cargo_build;
 pub(crate) mod cargo_message;
+pub(crate) mod capability_sources;
 pub mod desktop;
 pub(crate) mod framed_block;
 pub(crate) mod helpers;
+pub(crate) mod hot_reload_runtime;
 pub mod ios;
 pub mod macos;
 pub(crate) mod panic_report;
@@ -24,6 +26,7 @@ use std::time::Duration;
 use std::{fmt, process, thread};
 
 use crate::commands::run::utilities::get_project_root;
+use crate::config::{ApplicationRuntime, BuildProfile, ExecutionPolicy, ReloadPolicy};
 use crate::console;
 use crate::errors::AimerError;
 use crate::targets::Targets;
@@ -246,23 +249,45 @@ fn fetch_devices() -> Vec<Device> {
     unique_devices
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PipelineSelection {
+    Native { release: bool },
+    HotReload,
+}
+
+fn native_pipeline_release(policy: ExecutionPolicy) -> PipelineSelection {
+    match (policy.runtime(), policy.reload()) {
+        (ApplicationRuntime::NativeAot, ReloadPolicy::Disabled) => {
+            PipelineSelection::Native {
+                release: policy.profile() == BuildProfile::Release,
+            }
+        }
+        (ApplicationRuntime::Wasmi, ReloadPolicy::HotReload) => PipelineSelection::HotReload,
+        _ => unreachable!("ExecutionPolicy guarantees a supported runtime and reload combination"),
+    }
+}
+
+#[inline]
+fn manifest_is_optional(policy: ExecutionPolicy) -> bool {
+    native_pipeline_release(policy) == PipelineSelection::HotReload
+}
+
 pub fn execute(
     target: Option<String>,
     device: Option<String>,
     no_tui: bool,
-    release: bool,
+    policy: ExecutionPolicy,
+    verbose_widget_ir: bool,
+    inline_render: bool,
 ) -> anyhow::Result<()> {
-    match get_project_root(false) {
-        Ok(item) => {
-            let mut config_path = item;
-            config_path.push("Aimer.toml");
-            if !config_path.exists() {
-                return Err(anyhow!("Aimer.toml not found in project root"));
-            }
-        }
-        Err(_) => {
-            return Err(anyhow!("Aimer.toml not found in project root"));
-        }
+    let selection = native_pipeline_release(policy);
+
+    let project_root = get_project_root(false)
+        .map_err(|_| anyhow!("aimer.toml not found in project root"))?;
+    if crate::config::AimerManifest::load_from(&project_root)?.is_none()
+        && !manifest_is_optional(policy)
+    {
+        return Err(anyhow!("aimer.toml not found in project root"));
     }
     let selected_device = if target.is_some() || device.is_some() || no_tui {
         // Non-interactive (scriptable) mode.
@@ -304,9 +329,30 @@ pub fn execute(
 
     let pkg_name = crate::config::resolve_package_name(std::path::Path::new("."));
 
+    if selection == PipelineSelection::HotReload {
+        return run_hot_reload(
+            project_root,
+            selected_device,
+            pkg_name,
+            policy,
+            verbose_widget_ir,
+        );
+    }
+    let PipelineSelection::Native { release } = selection else {
+        unreachable!("hot reload returned before native console selection")
+    };
+
     if no_tui {
         console::start_no_tui(selected_device, pkg_name, release)
             .context("console exited with an error")?;
+    } else if inline_render {
+        console::start_inline(
+            selected_device,
+            pkg_name,
+            release,
+            policy.reload() == ReloadPolicy::HotReload,
+        )
+            .context("inline console exited with an error")?;
     } else {
         console::start(selected_device, pkg_name, release)
             .context("interactive console exited with an error")?;
@@ -314,11 +360,77 @@ pub fn execute(
     Ok(())
 }
 
+fn run_hot_reload(
+    project_root: std::path::PathBuf,
+    device: Device,
+    package: String,
+    _: ExecutionPolicy,
+    verbose_widget_ir: bool,
+) -> anyhow::Result<()> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    use aimer_cli::hot_reload::pipeline::{ProductionPipelineDriver, run_pipeline};
+    use aimer_cli::hot_reload::system::{SystemDevice, SystemPipelineOperations};
+    use aimer_cli::hot_reload::targets::TargetFamily;
+    use aimer_cli::config::{
+        ApplicationRuntime as LibraryRuntime, BuildProfile as LibraryProfile,
+        ExecutionPolicy as LibraryPolicy, ReloadPolicy as LibraryReload,
+    };
+
+    use self::hot_reload_runtime::CliHotReloadRuntime;
+
+    let family = match device.target {
+        Targets::Macos => TargetFamily::Macos,
+        Targets::Windows => TargetFamily::Windows,
+        Targets::Linux => TargetFamily::Linux,
+        Targets::Android | Targets::AndroidSimulator => TargetFamily::Android,
+        Targets::Ios => TargetFamily::IosDevice,
+        Targets::IosSimulator => TargetFamily::IosSimulator,
+        Targets::Web => TargetFamily::Web,
+        Targets::Terminated => anyhow::bail!("cannot launch the terminated device selection"),
+    };
+    let framework_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| anyhow!("failed to locate the Aimer framework workspace"))?
+        .to_owned();
+    let policy = LibraryPolicy::new(
+        LibraryProfile::Debug,
+        LibraryRuntime::Wasmi,
+        LibraryReload::HotReload,
+    )?;
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let interrupt_shutdown = Arc::clone(&shutdown);
+    ctrlc::set_handler(move || interrupt_shutdown.store(true, Ordering::Release))
+        .context("failed to install hot-reload shutdown handler")?;
+    let system_device = SystemDevice::new(device.name, family, device.id);
+    let operations = SystemPipelineOperations::with_runtime(
+        project_root,
+        framework_root,
+        policy,
+        system_device,
+        package,
+        Arc::new(CliHotReloadRuntime::new()),
+    )
+    .shutdown_signal(shutdown)
+    .widget_ir_diagnostics(verbose_widget_ir)
+    .status_output(|status| eprintln!("{status}"));
+    let mut driver = ProductionPipelineDriver::new(operations);
+    run_pipeline(&mut driver).map_err(anyhow::Error::msg)
+}
+
 /// Resolve a device non-interactively from `--device <id>` and/or `--target
 /// <t>`.
 fn resolve_device(target: Option<String>, device: Option<String>) -> anyhow::Result<Device> {
     let devices = fetch_devices();
+    resolve_device_from(devices, target, device)
+}
 
+fn resolve_device_from(
+    devices: Vec<Device>,
+    target: Option<String>,
+    device: Option<String>,
+) -> anyhow::Result<Device> {
     if let Some(id) = device {
         #[cfg(target_os = "macos")]
         {
@@ -350,12 +462,23 @@ fn resolve_device(target: Option<String>, device: Option<String>) -> anyhow::Res
     let parsed = Targets::try_from(target.as_str())
         .map_err(|_| AimerError::UnknownTarget(target.clone()))?;
 
-    devices
+    let mut matching = devices
         .into_iter()
-        .find(|d| d.target == parsed && d.target != Terminated)
-        .ok_or_else(|| {
-            AimerError::DeviceNotFound(format!("no connected device for target '{target}'")).into()
-        })
+        .filter(|device| device.target == parsed && device.target != Terminated);
+    let Some(selected) = matching.next() else {
+        return Err(
+            AimerError::DeviceNotFound(format!("no connected device for target '{target}'"))
+                .into(),
+        );
+    };
+    let Some(second) = matching.next() else {
+        return Ok(selected);
+    };
+    let mut matching_ids = vec![selected.id, second.id];
+    matching_ids.extend(matching.map(|device| device.id));
+    let device_ids = matching_ids.join(", ");
+
+    Err(AimerError::AmbiguousDevices { target, device_ids }.into())
 }
 
 /// Interactive device picker rendered inline with `crossterm` (the original
@@ -473,6 +596,62 @@ fn pick_device(devices_arc: &Arc<Mutex<Vec<Device>>>) -> anyhow::Result<Option<D
 mod tests {
     use super::*;
 
+    #[test]
+    fn native_pipeline_uses_the_policy_profile() {
+        let debug = ExecutionPolicy::new(
+            BuildProfile::Debug,
+            ApplicationRuntime::NativeAot,
+            ReloadPolicy::Disabled,
+        )
+        .unwrap();
+        let release = ExecutionPolicy::new(
+            BuildProfile::Release,
+            ApplicationRuntime::NativeAot,
+            ReloadPolicy::Disabled,
+        )
+        .unwrap();
+
+        assert_eq!(
+            native_pipeline_release(debug),
+            PipelineSelection::Native { release: false }
+        );
+        assert_eq!(
+            native_pipeline_release(release),
+            PipelineSelection::Native { release: true }
+        );
+    }
+
+    #[test]
+    fn wasm_policy_never_falls_through_to_the_native_pipeline() {
+        let policy = ExecutionPolicy::new(
+            BuildProfile::Debug,
+            ApplicationRuntime::Wasmi,
+            ReloadPolicy::HotReload,
+        )
+        .unwrap();
+
+        assert_eq!(native_pipeline_release(policy), PipelineSelection::HotReload);
+    }
+
+    #[test]
+    fn missing_aimer_manifest_is_allowed_only_for_automatic_hot_reload() {
+        let hot_reload = ExecutionPolicy::new(
+            BuildProfile::Debug,
+            ApplicationRuntime::Wasmi,
+            ReloadPolicy::HotReload,
+        )
+        .unwrap();
+        let native = ExecutionPolicy::new(
+            BuildProfile::Debug,
+            ApplicationRuntime::NativeAot,
+            ReloadPolicy::Disabled,
+        )
+        .unwrap();
+
+        assert!(manifest_is_optional(hot_reload));
+        assert!(!manifest_is_optional(native));
+    }
+
     // ── Device struct ────────────────────────────────────────────────
 
     #[test]
@@ -498,6 +677,51 @@ mod tests {
         assert_eq!(d.name, d2.name);
         assert_eq!(d.target, d2.target);
         assert_eq!(d.id, d2.id);
+    }
+
+    #[test]
+    fn target_selection_rejects_ambiguous_connected_devices() {
+        let devices = vec![
+            Device {
+                name: "iPhone".into(),
+                target: Targets::Ios,
+                id: "phone-1".into(),
+            },
+            Device {
+                name: "iPad".into(),
+                target: Targets::Ios,
+                id: "tablet-2".into(),
+            },
+        ];
+
+        let error = resolve_device_from(devices, Some("ios".into()), None)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("multiple devices match target 'ios'"));
+        assert!(error.contains("--device"));
+        assert!(error.contains("phone-1"));
+        assert!(error.contains("tablet-2"));
+    }
+
+    #[test]
+    fn explicit_device_selection_resolves_one_of_multiple_matching_targets() {
+        let devices = vec![
+            Device {
+                name: "iPhone".into(),
+                target: Targets::Ios,
+                id: "phone-1".into(),
+            },
+            Device {
+                name: "iPad".into(),
+                target: Targets::Ios,
+                id: "tablet-2".into(),
+            },
+        ];
+
+        let selected = resolve_device_from(devices, None, Some("tablet-2".into())).unwrap();
+
+        assert_eq!(selected.id, "tablet-2");
     }
 
     #[test]

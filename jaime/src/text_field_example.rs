@@ -65,3 +65,5 @@ impl Widget for TextFieldExample {
         "TextFieldExample"
     }
 }
+
+impl aimer::PortableWidget for TextFieldExample {}

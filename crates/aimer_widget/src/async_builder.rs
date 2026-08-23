@@ -12,7 +12,8 @@ use crate::widget::AnyWidgetExt;
 use crate::widget::stateful::{SyncChild, carry_child_state};
 use crate::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, Key, LayoutElement, Rebuildable,
-    RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    PortableWidget, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget,
+    VisitorElement, Widget,
 };
 
 /// The current state of an [`AsyncBuilder`] operation.
@@ -76,10 +77,20 @@ pub struct SnapshotBuilder<B, T, E> {
 ///         });
 /// ```
 
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(
+    id = "aimer_widget::AsyncBuilder",
+    schema_only,
+    manual_lowering
+)]
 pub struct AsyncBuilder<K = (), F = RequiredChild, B = RequiredChild> {
+    #[portable_skip]
     request_key: K,
+    #[portable_skip]
     future_factory: F,
+    #[portable_skip]
     snapshot_builder: B,
+    #[portable_skip]
     widget_key: Option<Key>,
 }
 
@@ -342,6 +353,18 @@ where
     }
 }
 
+impl<K, F, Fut, B, T, E> PortableWidget
+    for AsyncBuilder<K, FutureFactory<F, T, E>, SnapshotBuilder<B, T, E>>
+where
+    K: Clone + Eq + 'static,
+    F: Fn() -> Fut + 'static,
+    Fut: Future<Output = Result<T, E>> + 'static,
+    B: Fn(&AsyncSnapshot<T, E>) -> AnyWidget + 'static,
+    T: 'static,
+    E: 'static,
+{
+}
+
 struct AsyncFrame<F, Fut, B, T, E> {
     future_factory: Rc<F>,
     snapshot_builder: Rc<B>,
@@ -382,6 +405,16 @@ where
     fn debug_name(&self) -> &'static str {
         "AsyncFrame"
     }
+}
+
+impl<F, Fut, B, T, E> PortableWidget for AsyncFrame<F, Fut, B, T, E>
+where
+    F: Fn() -> Fut + 'static,
+    Fut: Future<Output = Result<T, E>> + 'static,
+    B: Fn(&AsyncSnapshot<T, E>) -> AnyWidget + 'static,
+    T: 'static,
+    E: 'static,
+{
 }
 
 struct AsyncFrameElement<F, Fut, B, T, E> {
@@ -590,6 +623,8 @@ mod tests {
             self.0
         }
     }
+
+    impl crate::widget::PortableWidget for MarkerWidget {}
 
     struct MarkerElement(&'static str, f32);
 

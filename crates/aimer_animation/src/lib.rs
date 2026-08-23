@@ -12,6 +12,8 @@ pub use control::{
 pub use primitives::{AnimInstant, Animatable, AnimatableExt, Curve, Tween};
 // Widget layer
 pub use widgets::AnimatedBuilder;
+#[doc(hidden)]
+pub use widgets::animated_builder::ensure_portable_native_registrations;
 pub use widgets::{
     Animated, AnimatedSwitcher, AnimationEffect, FadeTransition, ImplicitAnimatedBuilder,
     MorphTransition, Rgba, RotationTransition, ScaleTransition, SlideTransition,

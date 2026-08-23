@@ -1,0 +1,24 @@
+[package]
+name = "aimer_full_state_app"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[[bin]]
+name = "aimer_full_state_app"
+path = "src/main.rs"
+
+[features]
+default = []
+wasm-hot-reload = ["aimer/wasm-hot-reload"]
+
+[dependencies]
+aimer_wasm_guest = { path = "../../../crates/aimer_wasm_guest" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+aimer = { path = "../../.." }
+
+[workspace]

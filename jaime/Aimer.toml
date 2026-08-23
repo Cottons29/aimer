@@ -19,3 +19,10 @@ files = [
     "assets/github-svgrepo-com.png",
     "assets/cat-svgrepo-com.svg"
 ]
+
+##[package]
+##name = "jaime"
+#[build.hot_reload]
+#package = "jaime"
+#program = "MyProgram"
+#limits = "HOT_RELOAD_LIMITS"

@@ -16,7 +16,10 @@
 //! cargo run --example http_request_button
 //! ```
 
-use aimer::style::{FontWeight, LayoutSpacing, TextAlign, TextStyle, Theme, ThemeData};
+use std::future::Future;
+use std::pin::Pin;
+
+use aimer::style::{FontWeight, LayoutSpacing, TextAlign, TextStyle, ThemeData};
 use aimer::*;
 
 /// The URL the button asks for: small, stable, and made for exactly this.
@@ -67,6 +70,23 @@ async fn fetch_example() -> Request {
     }
 }
 
+fn request_callback(
+    updater: StateUpdater<HttpRequestButtonState>,
+) -> impl FnOnce() -> Pin<Box<dyn Future<Output = ()> + 'static>> {
+    move || {
+        Box::pin(async move {
+            if matches!(updater.read_state().request, Request::InFlight) {
+                return;
+            }
+            updater.set_state(|state| state.request = Request::InFlight);
+            let answered = updater.clone();
+
+            let request = fetch_example().await;
+            answered.set_state(move |state| state.request = request);
+        })
+    }
+}
+
 #[widget(Stateful)]
 struct HttpRequestButton;
 
@@ -102,7 +122,7 @@ impl State<HttpRequestButton> for HttpRequestButtonState {
         self.updater = updater;
     }
 
-    fn build(&self, ctx: &BuildContext) -> impl Widget {
+    fn build(&self, _ctx: &BuildContext) -> impl Widget {
         // let theme = ThemeData::of(ctx);
         let theme = ThemeData::light();
 
@@ -112,20 +132,7 @@ impl State<HttpRequestButton> for HttpRequestButtonState {
                 .vertical_alignment(BoxAlignment::Center)
                 .children([
                     Button::new()
-                        .on_press_async({
-                            let panic: Option<i32> = Option::None.unwrap();
-                            let updater = self.updater.clone();
-                            async move || {
-                                if matches!(updater.read_state().request, Request::InFlight) {
-                                    return;
-                                }
-                                updater.set_state(|state| state.request = Request::InFlight);
-                                let answered = updater.clone();
-
-                                let request = fetch_example().await;
-                                answered.set_state(move |state| state.request = request);
-                            }
-                        })
+                        .on_press_async(request_callback(self.updater.clone()))
                         .box_child(
                             Container::new()
                                 .color(theme.primary_color)
@@ -175,5 +182,17 @@ mod tests {
             status_label(&Request::Failed("dns error".to_owned())),
             "Failed: dns error"
         );
+    }
+
+    #[test]
+    fn async_button_builds_without_starting_the_request() {
+        let mut app = AimerApp::start_headless(HttpRequestButton::new());
+
+        app.pump_frames(3);
+    }
+
+    #[test]
+    fn registering_the_async_callback_is_safe_before_dispatch() {
+        let _callback = request_callback(StateUpdater::empty());
     }
 }

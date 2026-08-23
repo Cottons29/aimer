@@ -69,6 +69,8 @@ impl Widget for AppRouter {
     }
 }
 
+impl aimer::PortableWidget for AppRouter {}
+
 impl AppRouter {
     /// The header tab index this route highlights (0 = Home, 1 = Docs, 2 =
     /// Learn).

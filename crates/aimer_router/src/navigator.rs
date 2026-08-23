@@ -64,11 +64,15 @@ fn browser_current_path() -> Option<String> {
 /// WebAssembly, the initial browser path overrides `initial_route` when it
 /// parses successfully, and later stack changes synchronize with browser
 /// history.
+#[derive(aimer_widget::PortableWidget)]
+#[portable_widget(id = "aimer_router::Navigator", schema_only)]
 pub struct Navigator<R>
 where
     R: Route,
 {
+    #[portable_skip]
     pub initial_route: R,
+    #[portable_skip]
     pub routes: fn(R) -> AnyWidget,
 }
 
@@ -569,6 +573,8 @@ mod tests {
         }
     }
 
+    impl aimer_widget::PortableWidget for NavigatorLookupWidget {}
+
     struct NavigatorLookupElement;
 
     impl VisitorElement for NavigatorLookupElement {
@@ -593,6 +599,8 @@ mod tests {
             NavigatorControllerOperationsElement.boxed()
         }
     }
+
+    impl aimer_widget::PortableWidget for NavigatorControllerOperationsWidget {}
 
     struct NavigatorControllerOperationsElement;
 

@@ -28,7 +28,7 @@ mod tests {
     use aimer_space::Alignment;
     use aimer_widget::base::Color;
 
-    use super::{Modal, ModalAnimation};
+    use super::{Anchor, Floating, Modal, ModalAnimation, ModalHost};
 
     #[test]
     fn modal_configuration_survives_child_attachment() {
@@ -84,5 +84,28 @@ mod tests {
         assert!(handle.dismiss());
         assert!(!handle.dismiss());
         assert_eq!(super::host::pending_command_count_for_test(), 2);
+    }
+
+    #[test]
+    fn overlay_widgets_publish_derived_required_child_schemas() {
+        use aimer_widget::portable::__anteros::ChildCardinality;
+        use aimer_widget::portable::PortableWidgetSchema;
+
+        assert_eq!(
+            <Anchor<ZeroSizedBox> as PortableWidgetSchema>::SCHEMA.children(),
+            ChildCardinality::exactly(1)
+        );
+        assert_eq!(
+            <Floating<ZeroSizedBox> as PortableWidgetSchema>::SCHEMA.children(),
+            ChildCardinality::exactly(1)
+        );
+        assert_eq!(
+            <Modal<ZeroSizedBox> as PortableWidgetSchema>::SCHEMA.children(),
+            ChildCardinality::exactly(1)
+        );
+        assert_eq!(
+            <ModalHost<ZeroSizedBox> as PortableWidgetSchema>::SCHEMA.children(),
+            ChildCardinality::exactly(1)
+        );
     }
 }

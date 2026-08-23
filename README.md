@@ -24,23 +24,23 @@ fn main() {
 Cupid is Aimer's high-performance, cross-platform 2D rendering engine. It provides the foundation for drawing the widget
 tree on native platforms.
 
-- **WGPU-powered** — Uses `wgpu` to provide a consistent rendering API across Metal, Vulkan, and DirectX.
-- **Batched Rendering** — Automatically batches draw calls (rectangles, text, images) to minimize GPU overhead.
-- **Hardware Acceleration** — Fully utilizes the GPU for effects like rounded corners, borders, and complex clipping.
-- **Canvas-like API** — Simple and intuitive `CupidCanvas` API for lower-level drawing operations.
-- **High-Quality Typography** — Integrated text layout and glyph rasterization for crisp text at any scale.
+- **WGPU-powered** Uses `wgpu` to provide a consistent rendering API across Metal, Vulkan, and DirectX.
+- **Batched Rendering** Automatically batches draw calls (rectangles, text, images) to minimize GPU overhead.
+- **Hardware Acceleration** Fully utilizes the GPU for effects like rounded corners, borders, and complex clipping.
+- **Canvas-like API** Simple and intuitive `CupidCanvas` API for lower-level drawing operations.
+- **High-Quality Typography** Integrated text layout and glyph rasterization for crisp text at any scale.
 
 ## Features
 
-- **Declarative UI** — Build interfaces with a composable widget tree using a fluent builder pattern
+- **Declarative UI** Build interfaces with a composable widget tree using a fluent builder pattern
   (`Container::new().child(...)`, `Row::new().children(...)`, `Text::new("...")`, etc.).
-- **Stateful Widgets** — Flutter-style `StatefulWidget` / `State` pattern with `StateUpdater` for reactive rebuilds.
-- **Animation System** — `AnimationController` with configurable duration, curves (`EaseIn`, `EaseOut`, `Bounce`, etc.),
+- **Stateful Widgets** Flutter-style `StatefulWidget` / `State` pattern with `StateUpdater` for reactive rebuilds.
+- **Animation System** `AnimationController` with configurable duration, curves (`EaseIn`, `EaseOut`, `Bounce`, etc.),
   and effects (`Opacity`, `Scale`, `Translate`, `Rotate`, `SlideX`, `SlideY`). `⚠️ Unstable `
-- **Layout Engine** — Flexbox-inspired layout with `Row`, `Column`, `Scrollable`...
-- **Cross-Platform Rendering** — Cupid on native platforms (Metal on Apple, Dx3D on Windoes and Vulkan/OpenGl for Linux
+- **Layout Engine** Flexbox-inspired layout with `Row`, `Column`, `Scrollable`...
+- **Cross-Platform Rendering** Cupid on native platforms (Metal on Apple, Dx3D on Windoes and Vulkan/OpenGl for Linux
   and Android) and WebGpu/WebGl on the web.
-- **CLI Tooling** — `Aimer` a cli tool for creating running and builds projects.
+- **CLI Tooling** `Aimer` a cli tool for creating running and builds projects.
 
 ## Getting Started
 
@@ -133,9 +133,9 @@ cd my_aimer && aimer run
     - [ ] Swipe
     - [x] Long press `⚠️ Unstable`
 - [ ] Drag and drop
-    - [x] `Draggable` / `DragTarget<T>` with typed payloads — see `jaime/src/drag_and_drop.rs`
+    - [x] `Draggable` / `DragTarget<T>` with typed payloads, see `jaime/src/drag_and_drop.rs`
     - [x] Feedback painted above every clip boundary, with spring-back on a refused drop `⚠️ Unstable`
-    - [x] `DropZone` for files dragged in from the desktop — see `jaime/src/file_drop_zone.rs`
+    - [x] `DropZone` for files dragged in from the desktop, see `jaime/src/file_drop_zone.rs`
     - [ ] Auto-scroll when dragging near the edge of a `Scrollable`
     - [ ] Reorderable lists
     - [ ] File drop on the web (winit's web backend emits no file-drag events)
@@ -159,10 +159,10 @@ cd my_aimer && aimer run
   - [ ] **Respect system preferences** 
   - [ ] **Touch target sizing**
 
-> ⚠️ Unstable — feature is implemented but may have breaking changes or incomplete edge cases.
+> ⚠️ Unstable feature is implemented but may have breaking changes or incomplete edge cases.
 >
 > ⛔️ Very Unstable – feature is implemented, but the functionality is not stable and has some critical bug that can
 > break the app.
 >
-> ❌ Not Implement Yet — feature is not implemented but may implement in the future.
+> ❌ Not Implement Yet feature is not implemented but may implement in the future.
 >

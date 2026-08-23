@@ -1,5 +1,7 @@
 use std::any::Any;
 use std::cell::{Cell, RefCell, UnsafeCell};
+#[cfg(feature = "portable-guest")]
+use std::cell::Ref;
 use std::collections::{HashMap, VecDeque};
 use std::panic::Location;
 use std::rc::{Rc, Weak};
@@ -7,6 +9,7 @@ use std::rc::{Rc, Weak};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
+#[cfg(not(aimer_portable_guest))]
 use aimer_events::window::request_animation_frame;
 use aimer_utils::error;
 
@@ -211,7 +214,38 @@ impl<S> StateMutationQueue<S> {
 /// require_sync::<aimer_widget::StateUpdater<()>>();
 /// ```
 pub struct StateUpdater<S> {
-    inner: Option<StateUpdaterInner<S>>,
+    inner: Option<StateUpdaterBackend<S>>,
+}
+
+enum StateUpdaterBackend<S> {
+    Native(StateUpdaterInner<S>),
+    #[cfg(feature = "portable-guest")]
+    Portable(crate::portable::state::PortableStateHandle<S>),
+}
+
+/// A checked synchronous borrow returned by portable-enabled state updaters.
+///
+/// Native state keeps its established render-thread reference, while portable
+/// state holds a `RefCell` read borrow for the lifetime of this guard. Both
+/// variants dereference to `S`, preserving ordinary `read_state().field` use.
+#[cfg(feature = "portable-guest")]
+#[doc(hidden)]
+pub enum StateReadGuard<'a, S> {
+    Native(&'a S),
+    Portable(Ref<'a, S>),
+}
+
+#[cfg(feature = "portable-guest")]
+impl<S> std::ops::Deref for StateReadGuard<'_, S> {
+    type Target = S;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Native(state) => state,
+            Self::Portable(state) => state,
+        }
+    }
 }
 
 struct StateUpdaterInner<S> {
@@ -226,11 +260,17 @@ struct StateUpdaterInner<S> {
 impl<S> Clone for StateUpdater<S> {
     fn clone(&self) -> Self {
         Self {
-            inner: self.inner.as_ref().map(|inner| StateUpdaterInner {
-                tx: inner.tx.clone(),
-                state: inner.state.clone(),
-                dirty: inner.dirty.clone(),
-                failure: inner.failure.clone(),
+            inner: self.inner.as_ref().map(|inner| match inner {
+                StateUpdaterBackend::Native(inner) => StateUpdaterBackend::Native(StateUpdaterInner {
+                    tx: inner.tx.clone(),
+                    state: inner.state.clone(),
+                    dirty: inner.dirty.clone(),
+                    failure: inner.failure.clone(),
+                }),
+                #[cfg(feature = "portable-guest")]
+                StateUpdaterBackend::Portable(handle) => {
+                    StateUpdaterBackend::Portable(handle.clone())
+                }
             }),
         }
     }
@@ -247,23 +287,62 @@ impl<S: 'static> StateUpdater<S> {
         failure: Rc<FailureState>,
     ) -> Self {
         Self {
-            inner: Some(StateUpdaterInner {
+            inner: Some(StateUpdaterBackend::Native(StateUpdaterInner {
                 tx,
                 state,
                 dirty,
                 failure,
-            }),
+            })),
         }
     }
 
+    /// Creates the hidden updater backend used by portable generated wrappers.
+    #[cfg(feature = "portable-guest")]
+    #[doc(hidden)]
+    #[inline]
+    pub(crate) fn from_portable(
+        handle: crate::portable::state::PortableStateHandle<S>,
+    ) -> Self {
+        Self { inner: Some(StateUpdaterBackend::Portable(handle)) }
+    }
+
+    #[cfg(not(feature = "portable-guest"))]
     #[track_caller]
     pub fn read_state(&self) -> &S {
-        match self.inner.as_ref().map(|inner| inner.state.clone()) {
-            Some(state) => unsafe {
+        match self.inner.as_ref() {
+            Some(StateUpdaterBackend::Native(inner)) => unsafe {
+                let state = inner.state.clone();
                 (&*state.0.get())
                     .as_ref()
                     .expect("State has already been consumed during reconciliation")
             },
+            None => {
+                let loc = Location::caller();
+                error!("Attempted to read state from an uninitialized StateUpdater");
+                self.beautiful_error(loc);
+                panic!("State is not initialized (see error above)")
+            }
+        }
+    }
+
+    /// Borrows the current state synchronously.
+    ///
+    /// Portable-enabled builds return a dereferencing guard so guest state can
+    /// remain safely checked without changing ordinary field-access syntax.
+    #[cfg(feature = "portable-guest")]
+    #[track_caller]
+    pub fn read_state(&self) -> StateReadGuard<'_, S> {
+        match self.inner.as_ref() {
+            Some(StateUpdaterBackend::Native(inner)) => unsafe {
+                StateReadGuard::Native(
+                    (&*inner.state.0.get())
+                        .as_ref()
+                        .expect("State has already been consumed during reconciliation"),
+                )
+            },
+            Some(StateUpdaterBackend::Portable(handle)) => {
+                StateReadGuard::Portable(handle.borrow())
+            }
             None => {
                 let loc = Location::caller();
                 error!("Attempted to read state from an uninitialized StateUpdater");
@@ -346,14 +425,21 @@ impl<S: 'static> StateUpdater<S> {
                 panic!("State is not initialized (see error above)");
             }
         };
-        if inner.failure.is_failed() {
-            return;
-        }
-        inner.tx.push(Box::new(f));
-        // Only request a redraw if this is the first set_state since the last rebuild.
-        // This coalesces multiple set_state calls into a single redraw request.
-        if !inner.dirty.replace(true) {
-            request_animation_frame()
+        match inner {
+            StateUpdaterBackend::Native(inner) => {
+                if inner.failure.is_failed() {
+                    return;
+                }
+                inner.tx.push(Box::new(f));
+                // Only request a redraw if this is the first set_state since the last rebuild.
+                // This coalesces multiple set_state calls into a single redraw request.
+                if !inner.dirty.replace(true) {
+                    #[cfg(not(aimer_portable_guest))]
+                    request_animation_frame()
+                }
+            }
+            #[cfg(feature = "portable-guest")]
+            StateUpdaterBackend::Portable(handle) => handle.queue(f),
         }
     }
 
@@ -374,13 +460,19 @@ impl<S: 'static> StateUpdater<S> {
                 panic!("State is not initialized (see error above)");
             }
         };
-        // Safety: single-threaded rendering pipeline — no concurrent mutation.
-        let state = unsafe {
-            (&*inner.state.0.get())
-                .as_ref()
-                .expect("State has already been consumed during reconciliation")
-        };
-        f(state)
+        match inner {
+            StateUpdaterBackend::Native(inner) => {
+                // Safety: single-threaded rendering pipeline — no concurrent mutation.
+                let state = unsafe {
+                    (&*inner.state.0.get())
+                        .as_ref()
+                        .expect("State has already been consumed during reconciliation")
+                };
+                f(state)
+            }
+            #[cfg(feature = "portable-guest")]
+            StateUpdaterBackend::Portable(handle) => handle.read(f),
+        }
     }
 
     #[inline]
@@ -1662,19 +1754,16 @@ mod tests {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
             aimer_canvas::Canvas::new(inner)
         };
-        BuildContext {
-            parent_size: Default::default(),
+        BuildContext::new(
             canvas,
-            scale: 1.0,
-            parent_pos: Default::default(),
-            cursor_pos: Default::default(),
-            box_constraint: Default::default(),
-            visible_rect: None,
-            window: WindowHandle::headless(Default::default(), 1.0),
+            Default::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
             #[cfg(not(target_arch = "wasm32"))]
-            async_handle: dummy_async_handle(),
-            inherited_states: Default::default(),
-        }
+            dummy_async_handle(),
+        )
     }
 
     struct TestLeaf;
@@ -1734,6 +1823,8 @@ mod tests {
         }
     }
 
+    impl crate::widget::PortableWidget for InnerProbe {}
+
     struct LeafProbe;
 
     impl Widget for LeafProbe {
@@ -1741,6 +1832,8 @@ mod tests {
             TestLeaf.boxed()
         }
     }
+
+    impl crate::widget::PortableWidget for LeafProbe {}
 
     /// One of two interchangeable "pages" below the keyed element, distinguished
     /// only by the name it builds under — the shape a route's pages have.
@@ -1768,6 +1861,8 @@ mod tests {
             self.name
         }
     }
+
+    impl crate::widget::PortableWidget for ProbePage {}
 
     /// A keyed stateful widget standing where a route transition stands: it
     /// keeps its own state by key, and everything below it does not.
@@ -1811,6 +1906,8 @@ mod tests {
             )
         }
     }
+
+    impl crate::widget::PortableWidget for KeyedOuter {}
 
     struct EventProbeWidget {
         events: Rc<Cell<usize>>,
@@ -1856,6 +1953,8 @@ mod tests {
             .boxed()
         }
     }
+
+    impl crate::widget::PortableWidget for EventProbeChild {}
 
     impl VisitorElement for EventProbeElement {
         fn debug_name(&self) -> &'static str {
@@ -1985,6 +2084,8 @@ mod tests {
             TestLeaf.boxed()
         }
     }
+
+    impl crate::widget::PortableWidget for LifecycleChild {}
 
     impl StatefulWidget for LifecycleWidget {
         type State = LifecycleState;
@@ -2578,6 +2679,8 @@ mod tests {
             StatefulElement::from_widget(self, ctx, "OwnedConfigWidget", None)
         }
     }
+
+    impl crate::widget::PortableWidget for OwnedConfigWidget {}
 
     #[test]
     fn adopt_config_from_consumes_the_new_state() {

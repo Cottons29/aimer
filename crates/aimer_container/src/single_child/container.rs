@@ -2,12 +2,17 @@ use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
-use aimer_macro::Rebuildable;
+use aimer_macro::{PortableWidget, Rebuildable};
 pub use aimer_style::*;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutCache,
     LayoutElement, RequiredChild, VisitorElement, Widget,
+};
+
+#[cfg(feature = "portable-guest")]
+use aimer_widget::portable::{
+    PortableBuildContext, PortableBuildError, SourceFingerprint,
 };
 
 /// A decorated single-child layout box with optional size, spacing, and color.
@@ -19,13 +24,24 @@ use aimer_widget::{
 ///
 /// Attach a child with [`Container::child`] to retain its concrete type, or
 /// with [`Container::box_child`] when branches need a shared erased type.
+#[derive(PortableWidget)]
+#[portable_widget(
+    id = "aimer_container::single_child::Container",
+    validate = validate_portable_container
+)]
 pub struct Container<T = RequiredChild> {
+    #[portable_optional]
     pub(crate) width: Dimension,
+    #[portable_optional]
     pub(crate) height: Dimension,
+    #[portable_optional]
     pub padding: LayoutSpacing,
+    #[portable_optional]
     pub margin: LayoutSpacing,
+    #[portable_optional]
     pub box_decoration: BoxDecoration,
     pub color: Option<Color>,
+    #[portable_child]
     pub child: T,
 }
 
@@ -161,6 +177,28 @@ impl<W: Widget> Widget for Container<W> {
         }
         .boxed()
     }
+}
+
+#[cfg(feature = "portable-guest")]
+fn validate_portable_container<W: Widget>(
+    container: &Container<W>,
+    ctx: &PortableBuildContext,
+    source: SourceFingerprint,
+) -> Result<(), PortableBuildError> {
+    for (dimension, property) in [
+        (container.width, "Container.width"),
+        (container.height, "Container.height"),
+    ] {
+        let valid = match dimension {
+            Dimension::Auto => true,
+            Dimension::Px(value) => value.is_finite() && value >= 0.0,
+            Dimension::Percent(_) => false,
+        };
+        if !valid {
+            return Err(ctx.unsupported_widget(property, source));
+        }
+    }
+    Ok(())
 }
 
 /// #### Low level container element.

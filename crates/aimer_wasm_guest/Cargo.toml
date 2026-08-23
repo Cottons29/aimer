@@ -1,0 +1,11 @@
+[package]
+name = "aimer_wasm_guest"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+wasm-runtime-tests = ["aimer_anteros/wasm-hot-reload"]
+
+[dependencies]
+aimer_anteros = { path = "../../aimer_anteros", default-features = false }

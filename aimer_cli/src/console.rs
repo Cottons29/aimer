@@ -1,12 +1,14 @@
 pub mod input;
+pub mod hotkeys;
+pub mod inline;
 pub mod log_history;
 pub mod state;
+pub mod stage;
 pub mod ui;
 
 use std::fs::File;
 use std::io::{Write, stdout};
 use std::net::{IpAddr, Ipv4Addr};
-use std::path::Path;
 use std::process::Child;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -14,7 +16,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::commands::run::Device;
 use crate::commands::run::pipeline::{self, RunContext};
-use crate::commands::run::utilities::{LogStyling, StyledLog, get_project_root};
+use crate::commands::run::utilities::{LogStyling, get_project_root};
 use crate::targets::Targets;
 use crate::tui::RawModeGuard;
 use aimer_inspector::InspectorServer;
@@ -23,15 +25,12 @@ use anyhow::Context;
 use arboard::Clipboard;
 use crossbeam::channel::Sender;
 use crossterm::event::{
-    Event, KeyCode, KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEventKind,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind,
 };
-use crossterm::execute;
-use crossterm::terminal::supports_keyboard_enhancement;
-use notify::{Event as NotifyEvent, RecursiveMode, Watcher};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 pub use state::{AppState, ConsoleType, PaneView, RunnerEvent, Selection, Status};
+pub use inline::start as start_inline;
 use tokio::runtime::Runtime;
 
 /// Spawn the per-target runner on a background thread, dispatching via the

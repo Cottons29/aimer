@@ -1,10 +1,14 @@
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_macro::{EventElement, Rebuildable};
+use aimer_macro::{EventElement, PortableWidget, Rebuildable};
 use aimer_widget::base::{Color, *};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget,
+};
+#[cfg(feature = "portable-guest")]
+use aimer_widget::portable::{
+    PortableBuildContext, PortableBuildError, SourceFingerprint,
 };
 
 use crate::ZeroSizedBox;
@@ -13,10 +17,20 @@ use crate::ZeroSizedBox;
 ///
 /// Attach a child with [`SizedBox::child`] to retain its concrete type, or with
 /// [`SizedBox::box_child`] when branches need a shared erased type.
+#[derive(PortableWidget)]
+#[portable_widget(
+    id = "aimer_container::single_child::SizedBox",
+    schema_only,
+    validate = validate_portable_sized_box
+)]
 pub struct SizedBox<W: Widget + 'static = ZeroSizedBox> {
+    #[portable_optional]
     width: Dimension,
+    #[portable_optional]
     height: Dimension,
+    #[portable_skip]
     color: Color,
+    #[portable_skip]
     child: Option<W>,
 }
 
@@ -122,6 +136,34 @@ impl<W: Widget + 'static> Widget for SizedBox<W> {
         }
         .boxed()
     }
+}
+
+#[cfg(feature = "portable-guest")]
+fn validate_portable_sized_box<W: Widget + 'static>(
+    sized_box: &SizedBox<W>,
+    ctx: &PortableBuildContext,
+    source: SourceFingerprint,
+) -> Result<(), PortableBuildError> {
+    if sized_box.child.is_some() {
+        return Err(ctx.unsupported_widget("SizedBox.child", source));
+    }
+    if sized_box.color != Color::Transparent {
+        return Err(ctx.unsupported_widget("SizedBox.color", source));
+    }
+    for (dimension, property) in [
+        (sized_box.width, "SizedBox.width"),
+        (sized_box.height, "SizedBox.height"),
+    ] {
+        let valid = match dimension {
+            Dimension::Auto => true,
+            Dimension::Px(value) => value.is_finite() && value >= 0.0,
+            Dimension::Percent(_) => false,
+        };
+        if !valid {
+            return Err(ctx.unsupported_widget(property, source));
+        }
+    }
+    Ok(())
 }
 #[derive(Rebuildable, EventElement)]
 pub struct RawSizedBox<E: Element> {
@@ -263,5 +305,142 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.bounds.get()
+    }
+}
+
+#[cfg(all(test, feature = "portable-guest"))]
+mod portable_tests {
+    use super::*;
+    use aimer_anteros::{
+        PropertyValue, Version, WidgetDocumentView, WidgetProperty, PROPERTY_SIZED_BOX_HEIGHT,
+        PROPERTY_SIZED_BOX_WIDTH, WIDGET_SIZED_BOX,
+    };
+    use aimer_widget::portable::{
+        PortableBuildContext, PortableBuildError, PortableLimits, PortableWidgetLimits,
+        PortableWidgetResource, PortableWidgetSchema, SourceFingerprint, StableId128,
+    };
+    use aimer_widget::PortableWidget;
+
+    fn source(value: u8) -> SourceFingerprint {
+        SourceFingerprint::new(StableId128::from_bytes([value; 16]))
+    }
+
+    fn limits() -> PortableWidgetLimits {
+        PortableWidgetLimits::new(8, 8, 8, 8, 64, 2_048)
+    }
+
+    fn context(limits: PortableWidgetLimits) -> PortableBuildContext {
+        PortableBuildContext::new(
+            7,
+            11,
+            limits,
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn sized_box_publishes_its_reflected_schema() {
+        let schema = <SizedBox<ZeroSizedBox> as PortableWidgetSchema>::SCHEMA;
+
+        assert_eq!(schema.widget().id(), WIDGET_SIZED_BOX);
+        assert_eq!(schema.children().minimum(), 0);
+        assert_eq!(schema.children().maximum(), 0);
+        assert_eq!(schema.properties().len(), 2);
+        assert_eq!(schema.properties()[0].id(), PROPERTY_SIZED_BOX_WIDTH);
+        assert_eq!(schema.properties()[1].id(), PROPERTY_SIZED_BOX_HEIGHT);
+    }
+
+    #[test]
+    fn sized_box_lowers_exact_bounded_widget_ir() {
+        let source = source(5);
+        let mut ctx = context(limits());
+        let expected_key = ctx.slot_for(None, source).to_bytes();
+        let root = SizedBox::new()
+            .width(32.0)
+            .height(16.0)
+            .to_portable_node(&mut ctx, source)
+            .unwrap();
+        let document = ctx.finish_document(root).unwrap();
+        let bytes = document.encode().unwrap();
+        let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
+        let node = view.node(0).unwrap();
+
+        assert_eq!(view.node_count(), 1);
+        assert_eq!(node.widget_type(), WIDGET_SIZED_BOX);
+        assert_eq!(node.widget_schema(), Version::new(1, 0));
+        assert_eq!(node.key().unwrap().as_bytes(), &expected_key);
+        assert_eq!(node.children().count(), 0);
+        assert_eq!(
+            node.properties().collect::<Vec<_>>(),
+            vec![
+                WidgetProperty::new(PROPERTY_SIZED_BOX_WIDTH, PropertyValue::F64(32.0)).optional(),
+                WidgetProperty::new(PROPERTY_SIZED_BOX_HEIGHT, PropertyValue::F64(16.0)).optional(),
+            ]
+        );
+    }
+
+    #[test]
+    fn sized_box_portable_lowering_enforces_property_and_key_limits() {
+        let source = source(6);
+        let mut properties = context(limits().with_max_properties(1));
+        assert!(matches!(
+            SizedBox::new()
+                .width(10.0)
+                .height(20.0)
+                .to_portable_node(&mut properties, source),
+            Err(PortableBuildError::LimitExceeded {
+                resource: PortableWidgetResource::Properties,
+                max: 1,
+                actual: 2,
+            })
+        ));
+
+        let mut keys = context(limits().with_max_keys(0));
+        assert!(matches!(
+            SizedBox::new().to_portable_node(&mut keys, source),
+            Err(PortableBuildError::LimitExceeded {
+                resource: PortableWidgetResource::Keys,
+                max: 0,
+                actual: 1,
+            })
+        ));
+    }
+
+    #[test]
+    fn sized_box_rejects_schema_unsupported_native_features() {
+        let source = source(7);
+        let mut child_context = context(limits());
+        assert!(matches!(
+            SizedBox::new()
+                .child(SizedBox::new())
+                .to_portable_node(&mut child_context, source),
+            Err(PortableBuildError::UnsupportedWidget {
+                widget: "SizedBox.child",
+                source: actual,
+            }) if actual == source
+        ));
+
+        let mut color_context = context(limits());
+        assert!(matches!(
+            SizedBox::new()
+                .color(Color::HexA(0xFFFFFFFF))
+                .to_portable_node(&mut color_context, source),
+            Err(PortableBuildError::UnsupportedWidget {
+                widget: "SizedBox.color",
+                source: actual,
+            }) if actual == source
+        ));
+
+        let mut dimension_context = context(limits());
+        assert!(matches!(
+            SizedBox::new()
+                .width(Dimension::Percent(50.0))
+                .to_portable_node(&mut dimension_context, source),
+            Err(PortableBuildError::UnsupportedWidget {
+                widget: "SizedBox.width",
+                source: actual,
+            }) if actual == source
+        ));
     }
 }

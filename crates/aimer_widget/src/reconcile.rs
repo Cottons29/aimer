@@ -168,6 +168,8 @@ mod tests {
         }
     }
 
+    impl crate::widget::PortableWidget for EmptyWidget {}
+
     struct EmptyLeaf;
     impl VisitorElement for EmptyLeaf {
         fn debug_name(&self) -> &'static str {
@@ -204,6 +206,8 @@ mod tests {
             "ElementWidget"
         }
     }
+
+    impl crate::widget::PortableWidget for ElementWidget {}
 
     /// A minimal `StatefulWidget` for reconcile tests. The state struct
     /// holds a counter and a shared observer that records the most recent
@@ -454,19 +458,16 @@ mod tests {
                 Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
             aimer_canvas::Canvas::new(leaked)
         };
-        BuildContext {
-            parent_size: Default::default(),
+        BuildContext::new(
             canvas,
-            scale: 1.0,
-            parent_pos: Default::default(),
-            cursor_pos: Default::default(),
-            box_constraint: Default::default(),
-            visible_rect: None,
-            window: crate::base::WindowHandle::headless(Default::default(), 1.0),
+            Default::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            crate::base::WindowHandle::headless(Default::default(), 1.0),
             #[cfg(not(target_arch = "wasm32"))]
-            async_handle: dummy_async_handle(),
-            inherited_states: Default::default(),
-        }
+            dummy_async_handle(),
+        )
     }
 
     // ─── Draw-path regression: the DRAWN subtree must reflect set_state ────
@@ -1116,6 +1117,8 @@ mod tests {
         }
     }
 
+    impl crate::widget::PortableWidget for SwitcherMock {}
+
     /// Reads the active route key from context (like `Outlet` reading its
     /// `OutletSlot`) and builds the keyed switcher from it.
     struct OutletMock {
@@ -1136,6 +1139,8 @@ mod tests {
             "Outlet"
         }
     }
+
+    impl crate::widget::PortableWidget for OutletMock {}
 
     fn route_key(route: usize) -> &'static str {
         match route {

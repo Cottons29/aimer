@@ -32,25 +32,24 @@ pub(crate) fn headless_context(width: f32, height: f32) -> BuildContext<'static>
         Canvas::new(leaked)
     };
 
-    BuildContext {
-        parent_size: ResolvedSize { width, height },
+    let mut context = BuildContext::new(
         canvas,
-        scale: 1.0,
-        parent_pos: Default::default(),
-        cursor_pos: Default::default(),
-        box_constraint: BoxConstraint {
-            min_width: 0.0,
-            min_height: 0.0,
-            max_width: width,
-            max_height: height,
-        },
-        visible_rect: None,
-        window: WindowHandle::headless(
+        ResolvedSize { width, height },
+        1.0,
+        Default::default(),
+        Default::default(),
+        WindowHandle::headless(
             winit::dpi::PhysicalSize::new(width.max(1.0) as u32, height.max(1.0) as u32),
             1.0,
         ),
         #[cfg(not(target_arch = "wasm32"))]
-        async_handle: dummy_async_handle(),
-        inherited_states: Default::default(),
-    }
+        dummy_async_handle(),
+    );
+    context.box_constraint = BoxConstraint {
+        min_width: 0.0,
+        min_height: 0.0,
+        max_width: width,
+        max_height: height,
+    };
+    context
 }

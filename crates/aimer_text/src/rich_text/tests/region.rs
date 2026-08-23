@@ -1,6 +1,6 @@
-//! Element tests for texts taking part in a shared [`SelectionSession`], the
-//! multi-widget behaviour a [`SelectionArea`](crate::SelectionArea)
-//! establishes.
+// Element tests for texts taking part in a shared [`SelectionSession`], the
+// multi-widget behaviour a [`SelectionArea`](crate::SelectionArea)
+// establishes.
 
 use std::cell::RefCell;
 use std::rc::Rc;

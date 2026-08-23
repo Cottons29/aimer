@@ -23,6 +23,13 @@ pub enum AimerError {
     /// A requested device could not be located among the available devices.
     #[error("device not found: {0}")]
     DeviceNotFound(String),
+
+    /// A target matched multiple connected devices and needs an explicit ID.
+    #[error("multiple devices match target '{target}'; pass --device <id> ({device_ids})")]
+    AmbiguousDevices {
+        target: String,
+        device_ids: String,
+    },
 }
 
 #[cfg(test)]

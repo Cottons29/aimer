@@ -9,6 +9,7 @@ use crossbeam::channel::Sender;
 use crate::commands::run::Device;
 use crate::commands::run::android::AndroidRunner;
 use crate::commands::run::cargo_build::{CargoBuildTarget, cargo_command, wait_for_child};
+use crate::commands::run::capability_sources::configure_command;
 use crate::commands::run::console::{RunnerEvent, Status};
 use crate::commands::run::desktop::DesktopRunner;
 use crate::commands::run::helpers::set_status;
@@ -157,7 +158,13 @@ pub fn spawn_wasm_pack(tx: Sender<RunnerEvent>, release: bool) {
             "Running wasm-pack build...".to_string(),
         ));
 
-        let mut wasm_build = match cargo_command(&CargoBuildTarget::Web, release)
+        let mut command = cargo_command(&CargoBuildTarget::Web, release);
+        if let Err(error) = configure_command(&mut command) {
+            let _ = tx.send(RunnerEvent::BuildLog(error));
+            let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
+            return;
+        }
+        let mut wasm_build = match command
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

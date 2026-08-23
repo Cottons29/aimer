@@ -1,34 +1,65 @@
 #![allow(dead_code, clippy::main_recursion)]
 
+#[cfg(not(feature = "portable-guest"))]
 pub mod animated;
+#[cfg(not(feature = "portable-guest"))]
 mod animated_theme;
+#[cfg(not(feature = "portable-guest"))]
 mod async_builder;
+#[cfg(not(feature = "portable-guest"))]
 mod color_sync;
+#[cfg(not(feature = "portable-guest"))]
 mod custom_animated_theme;
+#[cfg(not(feature = "portable-guest"))]
 mod custom_font;
+#[cfg(not(feature = "portable-guest"))]
 pub mod drag_and_drop;
+#[cfg(not(feature = "portable-guest"))]
 pub mod file_drop_zone;
+#[cfg(not(feature = "portable-guest"))]
 mod floating;
+#[cfg(not(feature = "portable-guest"))]
 mod focus_node_example;
+#[cfg(not(feature = "portable-guest"))]
 mod http_request_button;
+pub mod hot_reload_proof;
+#[cfg(not(feature = "portable-guest"))]
 mod justify_content_example;
+#[cfg(not(feature = "portable-guest"))]
 mod loading_animation;
+#[cfg(not(feature = "portable-guest"))]
 mod markdown_example;
+#[cfg(not(feature = "portable-guest"))]
 mod modal;
+#[cfg(not(feature = "portable-guest"))]
 mod overflow_behavior_example;
+#[cfg(not(feature = "portable-guest"))]
 mod panic_recovery;
+#[cfg(not(feature = "portable-guest"))]
 mod resizable_example;
+#[cfg(not(feature = "portable-guest"))]
 pub mod routing;
+#[cfg(not(feature = "portable-guest"))]
 mod scroll_and_row;
+#[cfg(not(feature = "portable-guest"))]
 mod selectable_text;
+#[cfg(not(feature = "portable-guest"))]
 mod starter;
+#[cfg(not(feature = "portable-guest"))]
 pub mod stateful;
+#[cfg(not(feature = "portable-guest"))]
 mod stateful_2;
+#[cfg(not(feature = "portable-guest"))]
 mod svg_test;
+#[cfg(not(feature = "portable-guest"))]
 mod system_theme;
+#[cfg(not(feature = "portable-guest"))]
 mod test_animation;
+#[cfg(not(feature = "portable-guest"))]
 pub mod text_area_example;
+#[cfg(not(feature = "portable-guest"))]
 pub mod text_field_example;
+#[cfg(not(feature = "portable-guest"))]
 mod window_example;
 
 #[allow(unused_imports)]
@@ -39,42 +70,60 @@ use aimer::*;
 use aimer::{AimerApp, *};
 
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::animated::start_my_animated_list;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::custom_animated_theme::start_custom_animated_theme_example;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::floating::start_floating_example;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::loading_animation::start_loading_animation_example;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::markdown_example::start_markdown_example;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::markdown_example::start_custom_markdown_example;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::modal::start_modal_example;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::overflow_behavior_example::start_overflow_behavior_example;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::panic_recovery::start_panic_recovery_example;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::justify_content_example::start_justify_content_example;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::resizable_example::start_resizable_example;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::scroll_and_row::test_scroll_and_row;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::stateful::start_counter;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::svg_test::start_svg_test;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::system_theme::start_system_theme_example;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::test_animation::TestFadingAnimation;
 #[allow(unused_imports)]
+#[cfg(not(feature = "portable-guest"))]
 use crate::window_example::start_window_example;
 
 // this is the entry point of the app
-#[main]
+#[cfg(not(feature = "portable-guest"))]
+#[aimer::main]
 fn main() {
     // test_text();
     // stateful_2::start_my_list();
@@ -115,6 +164,14 @@ fn main() {
     // resizable_example::start_resizable_example();
     // justify_content_example::start_justify_content_example()
     // test_image()
+}
+
+#[cfg(feature = "portable-guest")]
+#[aimer::main]
+fn main() {
+    AimerApp::new()
+        .child(hot_reload_proof::proof_root())
+        .run();
 }
 
 
@@ -522,12 +579,22 @@ fn test_image() {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "portable-guest")))]
 mod text_editing_example_tests {
+    use std::any::{Any, TypeId};
     use aimer::Widget;
 
     use crate::text_area_example::TextAreaExample;
     use crate::text_field_example::TextFieldExample;
+
+    #[test]
+    fn test_type_id_stabilization() {
+        let type_id = String::new().type_id();
+        let type_id_2 = String::new().type_id();
+
+        eprintln!("Type ID: {:?}", type_id_2);
+        assert_eq!(format!("{:?}", type_id_2), "TypeId(0x76b642d5894e8c83647b03feb6879c28)");
+    }
 
     #[test]
     fn text_field_example_is_constructible_as_a_widget() {

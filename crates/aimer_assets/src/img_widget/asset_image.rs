@@ -23,12 +23,17 @@ use crate::img_widget::source::ImageSource;
 /// drawn when no loading widget is set. A load or decode failure similarly
 /// draws the [`AssetImage::error_widget`]; without one, the renderer uses its
 /// built-in magenta-and-black error pattern.
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(id = "aimer_assets::AssetImage", schema_only)]
 pub struct AssetImage {
     pub key: String,
     pub width: Dimension,
     pub height: Dimension,
+    #[portable_skip]
     pub fit: BoxFit,
+    #[portable_skip]
     pub error_widget: Option<AnyWidget>,
+    #[portable_skip]
     pub loading_widget: Option<AnyWidget>,
     pub scale: f32,
 }

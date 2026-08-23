@@ -1,0 +1,29 @@
+[package]
+name = "aimer_reload_transport_device_proof"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[[bin]]
+name = "aimer_reload_transport_proof_host"
+path = "src/bin/host.rs"
+
+[[bin]]
+name = "aimer_reload_transport_proof_android_device"
+path = "src/bin/android_device.rs"
+
+[[bin]]
+name = "aimer_reload_transport_proof_android_host"
+path = "src/bin/android_host.rs"
+
+[dependencies]
+aimer_reload_protocol.workspace = true
+aimer_reload_server.workspace = true
+hex.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+aimer_cli.workspace = true

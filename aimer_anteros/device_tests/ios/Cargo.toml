@@ -1,0 +1,11 @@
+[package]
+name = "aimer_wasm_device_proof"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+aimer_anteros = { workspace = true, features = ["wasm-hot-reload"] }

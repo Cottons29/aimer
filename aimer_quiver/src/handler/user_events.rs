@@ -18,7 +18,7 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
 ) {
     match event {
         AimerNativePlatformEvent::ForceBackspace => {
-            if app.widget_root.is_some() {
+            if app.active_root().is_some() {
                 let ev = ElementEvent::KeyInput {
                     key: NamedKey::Backspace,
                     action: KeyAction::Pressed,
@@ -60,7 +60,7 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
             WindowEventHandler::dispatch_ime_preedit(text, cursor, app);
         }
         AimerNativePlatformEvent::TextEditingDelta(delta) => {
-            if app.widget_root.is_some() {
+            if app.active_root().is_some() {
                 let result = app.dispatch_element_event(
                     app.cursor_pos,
                     &ElementEvent::TextEditingDelta(delta),
@@ -76,7 +76,7 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
             // The menu bar already consumed the key press, so this *is* the
             // shortcut: it travels the same positional path a `Ctrl` shortcut
             // takes, which is what makes one widget-side implementation enough.
-            if app.widget_root.is_some() {
+            if app.active_root().is_some() {
                 let ev = shortcut.to_event();
                 let result = app.dispatch_element_event(app.cursor_pos, &ev);
                 let mut handled = result.is_consumed();

@@ -1,0 +1,9 @@
+[package]
+name = "aimer_haptics"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+aimer_anteros.workspace = true
+aimer_macro.workspace = true

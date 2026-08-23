@@ -101,14 +101,28 @@ impl<W: Widget + 'static> GridItem<W> {
 ///                       .children([GridItem::new(SizedBox::new()).at(0, 0),
 ///                                  GridItem::new(SizedBox::new()).at(0, 1)]);
 /// ```
+#[derive(aimer_macro::PortableWidget)]
+#[portable_widget(
+    id = "aimer_grid::grid::Grid",
+    schema_only,
+    manual_lowering
+)]
 pub struct Grid<W: Widget + 'static = AnyWidget> {
+    #[portable_skip]
     columns: Vec<GridTrack>,
+    #[portable_skip]
     rows: Vec<GridTrack>,
+    #[portable_skip]
     column_gap: f32,
+    #[portable_skip]
     row_gap: f32,
+    #[portable_skip]
     horizontal_alignment: GridAlignment,
+    #[portable_skip]
     vertical_alignment: GridAlignment,
+    #[portable_skip]
     overflow: GridOverflow,
+    #[portable_children]
     children: Vec<GridItem<W>>,
 }
 
@@ -278,5 +292,110 @@ impl<W: Widget + 'static> Widget for Grid<W> {
 
     fn debug_name(&self) -> &'static str {
         "Grid"
+    }
+}
+
+impl<W: Widget + 'static> aimer_widget::PortableWidget for Grid<W> {
+    #[cfg(feature = "portable-guest")]
+    fn to_portable_node(
+        self,
+        ctx: &mut aimer_widget::portable::PortableBuildContext,
+        source: aimer_widget::portable::SourceFingerprint,
+    ) -> Result<
+        aimer_widget::portable::PortableNodeId,
+        aimer_widget::portable::PortableBuildError,
+    > {
+        let schema = <Self as aimer_widget::portable::PortableWidgetSchema>::SCHEMA;
+        let children = self
+            .children
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| {
+                aimer_widget::PortableWidget::to_portable_node(
+                    item.child,
+                    ctx,
+                    source
+                        .child(aimer_widget::portable::__anteros::stable_schema_hash64(
+                            "aimer.source:aimer_grid::grid::Grid:children",
+                        ))
+                        .child(index as u64),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        ctx.push_node(
+            schema.widget().id(),
+            schema.widget().min_version(),
+            None,
+            source,
+            &[],
+            &children,
+        )
+    }
+}
+
+#[cfg(all(test, feature = "portable-guest"))]
+mod portable_layout_tests {
+    use aimer_widget::base::BuildContext;
+    use aimer_widget::portable::{
+        PortableBuildContext, PortableLimits, PortableWidgetLimits, PortableWidgetSchema,
+        SourceFingerprint, StableId128,
+    };
+    use aimer_widget::portable::__anteros::{Version, WIDGET_SIZED_BOX, WidgetDocumentView};
+    use aimer_widget::{AnyElement, ErrorWidget, PortableWidget, Widget};
+
+    use super::{Grid, GridItem, GridTrack};
+
+    struct Leaf;
+
+    impl Widget for Leaf {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            ErrorWidget::new("portable leaf").to_element(ctx)
+        }
+    }
+
+    impl PortableWidget for Leaf {
+        fn to_portable_node(
+            self,
+            ctx: &mut PortableBuildContext,
+            source: SourceFingerprint,
+        ) -> Result<aimer_widget::portable::PortableNodeId, aimer_widget::portable::PortableBuildError>
+        {
+            ctx.push_node(
+                WIDGET_SIZED_BOX,
+                Version::new(1, 0),
+                None,
+                source,
+                &[],
+                &[],
+            )
+        }
+    }
+
+    #[test]
+    fn grid_lowers_nested_grid_item_children() {
+        let mut ctx = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(16, 16, 16, 16, 1_024, 8_192),
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap();
+        let root = Grid::new()
+            .columns([GridTrack::Px(100.0)])
+            .rows([GridTrack::Px(40.0)])
+            .children([GridItem::new(Leaf).at(0, 0)])
+            .to_portable_node(
+                &mut ctx,
+                SourceFingerprint::new(StableId128::from_bytes([0x22; 16])),
+            )
+            .unwrap();
+        let schema = <Grid<Leaf> as PortableWidgetSchema>::SCHEMA;
+        let document = ctx.finish_document(root).unwrap();
+        let bytes = document.encode().unwrap();
+        let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
+        let node = view.node(root.index()).unwrap();
+        assert_eq!(node.widget_type(), schema.widget().id());
+        assert_eq!(node.properties().count(), 0);
+        assert_eq!(node.children().collect::<Vec<_>>(), vec![0]);
     }
 }

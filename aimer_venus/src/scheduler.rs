@@ -356,9 +356,6 @@ impl LocalScheduler {
         };
         let mut context = Context::from_waker(&waker);
 
-        #[cfg(debug_assertions)]
-        let started = web_time::Instant::now();
-
         // Cloned rather than borrowed across the poll: the task about to run may
         // install a context of its own, and a live borrow is the one thing that
         // would turn that into a panic. `None` — every test, and the whole
