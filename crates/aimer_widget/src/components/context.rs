@@ -98,7 +98,7 @@ pub enum WindowHandle {
     Native(&'static Window),
     Headless(Arc<HeadlessWindowState>),
     #[cfg(feature = "portable-guest")]
-    Portable,
+    Portable(Arc<HeadlessWindowState>),
 }
 
 impl WindowHandle {
@@ -116,39 +116,66 @@ impl WindowHandle {
         }))
     }
 
+    #[cfg(feature = "portable-guest")]
+    #[doc(hidden)]
+    pub(crate) fn portable() -> Self {
+        Self::Portable(Arc::new(HeadlessWindowState {
+            width: AtomicU32::new(0),
+            height: AtomicU32::new(0),
+            scale_factor: AtomicU64::new(1.0_f64.to_bits()),
+            redraw_requested: AtomicBool::new(false),
+            cursor: Mutex::new(winit::window::CursorIcon::Default),
+        }))
+    }
+
     pub fn inner_size(&self) -> winit::dpi::PhysicalSize<u32> {
         match self {
+            #[cfg(not(aimer_portable_guest))]
             Self::Native(window) => window.inner_size(),
+            #[cfg(aimer_portable_guest)]
+            Self::Native(_) => Default::default(),
             Self::Headless(state) => winit::dpi::PhysicalSize::new(
                 state.width.load(Ordering::Relaxed),
                 state.height.load(Ordering::Relaxed),
             ),
             #[cfg(feature = "portable-guest")]
-            Self::Portable => Default::default(),
+            Self::Portable(state) => winit::dpi::PhysicalSize::new(
+                state.width.load(Ordering::Relaxed),
+                state.height.load(Ordering::Relaxed),
+            ),
         }
     }
 
     pub fn scale_factor(&self) -> f64 {
         match self {
+            #[cfg(not(aimer_portable_guest))]
             Self::Native(window) => window.scale_factor(),
+            #[cfg(aimer_portable_guest)]
+            Self::Native(_) => 1.0,
             Self::Headless(state) => f64::from_bits(state.scale_factor.load(Ordering::Relaxed)),
             #[cfg(feature = "portable-guest")]
-            Self::Portable => 1.0,
+            Self::Portable(state) => f64::from_bits(state.scale_factor.load(Ordering::Relaxed)),
         }
     }
 
     pub fn request_redraw(&self) {
         match self {
+            #[cfg(not(aimer_portable_guest))]
             Self::Native(window) => window.request_redraw(),
+            #[cfg(aimer_portable_guest)]
+            Self::Native(_) => {},
             Self::Headless(state) => state.redraw_requested.store(true, Ordering::Release),
             #[cfg(feature = "portable-guest")]
-            Self::Portable => {}
+            Self::Portable(_) => {}
         }
     }
 
     pub fn set_cursor(&self, cursor: winit::window::CursorIcon) {
         match self {
+            #[cfg(not(aimer_portable_guest))]
             Self::Native(window) => window.set_cursor(cursor),
+            #[cfg(aimer_portable_guest)]
+            Self::Native(_) => {},
             Self::Headless(state) => {
                 *state
                     .cursor
@@ -156,7 +183,7 @@ impl WindowHandle {
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) = cursor;
             }
             #[cfg(feature = "portable-guest")]
-            Self::Portable => {}
+            Self::Portable(_) => {}
         }
     }
 
@@ -171,7 +198,7 @@ impl WindowHandle {
                     .unwrap_or_else(|poisoned| poisoned.into_inner()),
             ),
             #[cfg(feature = "portable-guest")]
-            Self::Portable => None,
+            Self::Portable(_) => None,
         }
     }
 
@@ -189,20 +216,34 @@ impl WindowHandle {
 
     pub fn native_window(&self) -> Option<&'static Window> {
         match self {
+            #[cfg(not(aimer_portable_guest))]
             Self::Native(window) => Some(*window),
+            #[cfg(aimer_portable_guest)]
+            Self::Native(_) => None,
             Self::Headless(_) => None,
             #[cfg(feature = "portable-guest")]
-            Self::Portable => None,
+            Self::Portable(_) => None,
         }
     }
 
     pub fn update_headless_metrics(&self, size: winit::dpi::PhysicalSize<u32>, scale_factor: f64) {
-        if let Self::Headless(state) = self {
-            state.width.store(size.width, Ordering::Relaxed);
-            state.height.store(size.height, Ordering::Relaxed);
-            state
-                .scale_factor
-                .store(scale_factor.to_bits(), Ordering::Relaxed);
+        match self {
+            Self::Headless(state) => {
+                state.width.store(size.width, Ordering::Relaxed);
+                state.height.store(size.height, Ordering::Relaxed);
+                state
+                    .scale_factor
+                    .store(scale_factor.to_bits(), Ordering::Relaxed);
+            }
+            #[cfg(feature = "portable-guest")]
+            Self::Portable(state) => {
+                state.width.store(size.width, Ordering::Relaxed);
+                state.height.store(size.height, Ordering::Relaxed);
+                state
+                    .scale_factor
+                    .store(scale_factor.to_bits(), Ordering::Relaxed);
+            }
+            Self::Native(_) => {}
         }
     }
 
@@ -211,7 +252,7 @@ impl WindowHandle {
             Self::Native(_) => false,
             Self::Headless(state) => state.redraw_requested.swap(false, Ordering::AcqRel),
             #[cfg(feature = "portable-guest")]
-            Self::Portable => false,
+            Self::Portable(_) => false,
         }
     }
 }
@@ -366,6 +407,16 @@ impl<'a> BuildContext<'a> {
     pub fn portable_with_inherited_states(
         inherited_states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
     ) -> BuildContext<'static> {
+        Self::portable_with_window(inherited_states, WindowHandle::portable())
+    }
+
+    #[doc(hidden)]
+    #[cfg(feature = "portable-guest")]
+    #[inline]
+    pub(crate) fn portable_with_window(
+        inherited_states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
+        window: WindowHandle,
+    ) -> BuildContext<'static> {
         BuildContext {
             parent_size: ResolvedSize::default(),
             canvas: BuildCanvas::unavailable(),
@@ -374,7 +425,7 @@ impl<'a> BuildContext<'a> {
             cursor_pos: Vec2d::default(),
             box_constraint: BoxConstraint::default(),
             visible_rect: None,
-            window: WindowHandle::Portable,
+            window,
             #[cfg(not(target_arch = "wasm32"))]
             async_handle: BuildAsyncHandle::unavailable(),
             inherited_states,
@@ -385,7 +436,7 @@ impl<'a> BuildContext<'a> {
     #[cfg(feature = "portable-guest")]
     #[inline]
     pub const fn is_portable(&self) -> bool {
-        matches!(self.window, WindowHandle::Portable)
+        matches!(self.window, WindowHandle::Portable(_))
     }
 
     pub fn insert_state<T: Any>(&self, state: T) {

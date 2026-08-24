@@ -6,7 +6,18 @@ use aimer::style::{
     BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, TextAlign, TextStyle, Theme,
     ThemeData,
 };
-use aimer::{BuildContext, Widget, widget, *};
+use aimer::{BuildContext, Svg, SvgDocument, Widget, widget, *};
+
+const GITHUB_ICON_SVG: &[u8] = include_bytes!("../../assets/github-svgrepo-com.svg");
+
+fn github_icon() -> Svg {
+    Svg::new(
+        SvgDocument::from_svg(GITHUB_ICON_SVG)
+            .expect("the bundled GitHub icon SVG should be valid"),
+    )
+    .width(24)
+    .height(24)
+}
 
 #[widget(Stateless)]
 #[derive(Clone)]
@@ -43,10 +54,7 @@ impl StatelessWidget for HoverableGetStartedButton {
                         .vertical_alignment(BoxAlignment::Center)
                         .horizontal_alignment(BoxAlignment::Center)
                         .children(vec![
-                            AssetImage::new("assets/github-svgrepo-com.png")
-                                .width(24)
-                                .height(24)
-                                .boxed(),
+                            github_icon().boxed(),
                             SizedBox::new().width(20).boxed(),
                             Text::new("Get Started!")
                                 .text_align(TextAlign::MidCenter)
@@ -60,5 +68,15 @@ impl StatelessWidget for HoverableGetStartedButton {
                         ]),
                 ),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_github_icon_is_valid_svg() {
+        assert!(SvgDocument::from_svg(GITHUB_ICON_SVG).is_ok());
     }
 }

@@ -298,15 +298,25 @@ impl PortableEncodeProperty for aimer_attribute::Dimension {
     #[inline]
     fn encode_property(
         self,
-        _context: &mut PortableBuildContext,
+        context: &mut PortableBuildContext,
     ) -> Result<PropertyValue, PortableBuildError> {
-        match self {
-            Self::Px(value) if value.is_finite() => Ok(PropertyValue::F64(value as f64)),
-            Self::Px(_) => Err(PortableBuildError::NonFiniteFloat),
-            Self::Percent(_) | Self::Auto => Err(PortableBuildError::InvalidPropertyValue {
-                rust_type: "aimer_attribute::Dimension",
-            }),
+        const AUTO_TAG: u8 = 0;
+        const PX_TAG: u8 = 1;
+        const PERCENT_TAG: u8 = 2;
+
+        let (tag, value) = match self {
+            Self::Auto => (AUTO_TAG, 0.0),
+            Self::Px(value) => (PX_TAG, value),
+            Self::Percent(value) => (PERCENT_TAG, value),
+        };
+        if !value.is_finite() {
+            return Err(PortableBuildError::NonFiniteFloat);
         }
+        let mut bytes = Vec::with_capacity(6);
+        bytes.push(1);
+        bytes.push(tag);
+        bytes.extend_from_slice(&value.to_le_bytes());
+        context.push_owned_blob(bytes)
     }
 }
 
@@ -353,8 +363,56 @@ mod tests {
         );
         assert_eq!(
             Dimension::Px(12.5).encode_property(&mut context).unwrap(),
-            PropertyValue::F64(12.5),
+            PropertyValue::BlobRef(0),
         );
+    }
+
+    #[test]
+    fn dimension_codec_preserves_each_explicit_unit() {
+        let mut context = context();
+        let dimensions = [
+            Dimension::Auto,
+            Dimension::Px(12.5),
+            Dimension::Percent(37.5),
+        ];
+        let properties = dimensions
+            .iter()
+            .enumerate()
+            .map(|(index, dimension)| {
+                WidgetProperty::new(
+                    PropertyId::new(index as u64 + 1),
+                    (*dimension).encode_property(&mut context).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let node = context
+            .push_node(
+                WidgetSchemaId::new(1),
+                Version::new(1, 0),
+                None,
+                SourceFingerprint::new(StableId128::from_u128(12)),
+                &properties,
+                &[],
+            )
+            .unwrap();
+        let document = context.finish_document(node).unwrap();
+
+        let image = document.encode().unwrap();
+        let view = WidgetDocumentView::decode(&image, document.model_limits()).unwrap();
+        assert_eq!(view.blob(0), Some(&[1, 0, 0, 0, 0, 0][..]));
+        assert_eq!(view.blob(1), Some(&[1, 1, 0, 0, 72, 65][..]));
+        assert_eq!(view.blob(2), Some(&[1, 2, 0, 0, 22, 66][..]));
+        for (index, expected) in dimensions.into_iter().enumerate() {
+            assert_eq!(
+                Dimension::from_awir(
+                    &view,
+                    PropertyId::new(index as u64 + 1),
+                    PropertyValue::BlobRef(index as u32),
+                )
+                .unwrap(),
+                expected,
+            );
+        }
     }
 
     #[test]
@@ -464,8 +522,8 @@ mod tests {
 
         assert!(f32::NAN.encode_property(&mut context).is_err());
         assert!(f64::INFINITY.encode_property(&mut context).is_err());
-        assert!(Dimension::Percent(50.0).encode_property(&mut context).is_err());
-        assert!(Dimension::Auto.encode_property(&mut context).is_err());
+        assert!(Dimension::Px(f32::NAN).encode_property(&mut context).is_err());
+        assert!(Dimension::Percent(f32::INFINITY).encode_property(&mut context).is_err());
 
         let annotated = context
             .encode_property(
@@ -536,8 +594,13 @@ mod tests {
         assert_bidirectional::<Color>();
         assert_bidirectional::<Dimension>();
 
+        let mut context = context();
+        let dimension_value = Dimension::Px(12.5)
+            .encode_property(&mut context)
+            .unwrap();
         let nodes = [WidgetNode::new(WidgetSchemaId::new(1), Version::new(1, 0))];
-        let image = WidgetDocument::new(1, 0, 0, &nodes, &["portable"], &[])
+        let dimension_blob = [1_u8, 1, 0, 0, 72, 65];
+        let image = WidgetDocument::new(1, 0, 0, &nodes, &["portable"], &[&dimension_blob])
             .encode(ModelLimits::new(4_096, 16, 64, 128))
             .unwrap();
         let document = WidgetDocumentView::decode(
@@ -546,7 +609,6 @@ mod tests {
         )
         .unwrap();
         let property = PropertyId::new(7);
-        let mut context = context();
 
         assert_eq!(
             bool::from_awir(&document, property, true.encode_property(&mut context).unwrap())
@@ -652,9 +714,7 @@ mod tests {
             Dimension::from_awir(
                 &document,
                 property,
-                Dimension::Px(12.5)
-                    .encode_property(&mut context)
-                    .unwrap(),
+                dimension_value,
             )
             .unwrap(),
             Dimension::Px(12.5),

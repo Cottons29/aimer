@@ -9,26 +9,33 @@ use std::sync::mpsc::{
 };
 use std::time::Duration;
 
+use aimer_attribute::Dimension;
 use aimer_anteros::{
-    BUILTIN_PORTABLE_WIDGET_SCHEMAS, BUILTIN_WIDGET_SCHEMA_VERSION, CallbackBindings, EventId,
-    ModelError, ModelLimits,
-    PortableWidgetSchemaValidator, PropertyId, PropertyValue, StableId128, Version,
-    WidgetDocumentView, WidgetFactory, WidgetMaterializeError, WidgetNodeView, WidgetSchemaId,
-    WidgetSchemaSupport, disassemble_widget_document, materialize_widget_tree,
+    BUILTIN_PORTABLE_WIDGET_SCHEMAS, BUILTIN_WIDGET_SCHEMA_VERSION, CallbackBindings,
+    EventId, ModelError, ModelLimits, PortableWidgetSchemaValidator, PropertyId, PropertyValue,
+    StableId128, Version, WidgetDocumentView, WidgetFactory, WidgetMaterializeError,
+    WidgetNodeView, WidgetSchemaId, WidgetSchemaSupport, disassemble_widget_document,
+    materialize_widget_tree,
 };
 use aimer_anteros::{ReloadCommit, ReloadStage as RuntimeReloadStage};
 use aimer_animation::Curve;
 use aimer_container::SizedBox;
 use aimer_flex::{BoxAlignment, Column, JustifyContent, OverflowBehavior, Row};
+use aimer_grid::{Grid, GridItem, GridPortableConfig};
 use aimer_input::button::Button;
 use aimer_provider::{Provider, ProviderHandle};
-use aimer_style::{AnimatedTheme, BoxDecoration, LayoutSpacing, ThemeData, ThemeMode};
+use aimer_scroll::{ScrollBar, ScrollPortableConfig, Scrollable};
+use aimer_space::Stack;
+use aimer_style::{
+    AnimatedTheme, BoxDecoration, LayoutSpacing, TextStyle, ThemeData, ThemeMode,
+};
 use aimer_text::{TextButton, TextSource};
 use aimer_widget::base::BuildContext;
 use aimer_widget::portable::{
     PortableMaterializeError, PortableNativeMaterializer, PortableNativeWidgetRegistration,
-    linked_portable_native_widget_registrations, linked_portable_native_widget_schemas,
-    optional_materialized_property, required_materialized_property,
+    PortableMaterializeProperty, linked_portable_native_widget_registrations,
+    linked_portable_native_widget_schemas, optional_materialized_property,
+    required_materialized_property,
 };
 use aimer_widget::{AnyElement, Element, ErrorWidget, Key, StatelessElement, Widget};
 use aimer_reload_protocol::{ReloadCommand, ReloadResult, ReloadStage};
@@ -37,6 +44,7 @@ use aimer_reload_server::ReloadCommandSink;
 mod candidate;
 mod bootstrap;
 mod live;
+mod portable_http;
 
 pub use bootstrap::{initialize_hot_reload_host, take_hot_reload_config};
 pub use candidate::{
@@ -429,35 +437,7 @@ impl<'a> NativeWidgetMaterializerRegistry<'a> {
             }
         }
         let derived_registrations = linked_portable_native_widget_registrations();
-        for (index, registration) in derived_registrations.iter().copied().enumerate() {
-            let widget = registration.schema().widget();
-            if !version_at_least(widget.max_version(), widget.min_version()) {
-                return Err(NativeMaterializerRegistryError::InvalidVersionRange {
-                    widget_type: widget.id(),
-                    minimum: widget.min_version(),
-                    maximum: widget.max_version(),
-                });
-            }
-            for other in &derived_registrations[index + 1..] {
-                let other_widget = other.schema().widget();
-                if widget.id() == other_widget.id()
-                    && version_ranges_overlap(
-                        widget.min_version(),
-                        widget.max_version(),
-                        other_widget.min_version(),
-                        other_widget.max_version(),
-                    )
-                {
-                    return Err(NativeMaterializerRegistryError::OverlappingVersions {
-                        widget_type: widget.id(),
-                        first_minimum: widget.min_version(),
-                        first_maximum: widget.max_version(),
-                        second_minimum: other_widget.min_version(),
-                        second_maximum: other_widget.max_version(),
-                    });
-                }
-            }
-        }
+        validate_derived_native_materializer_registrations(derived_registrations)?;
         for derived in derived_registrations.iter().copied() {
             let widget = derived.schema().widget();
             for registration in registrations {
@@ -513,6 +493,53 @@ impl<'a> NativeWidgetMaterializerRegistry<'a> {
     }
 }
 
+#[inline]
+fn identical_derived_native_materializers(
+    first: PortableNativeWidgetRegistration,
+    second: PortableNativeWidgetRegistration,
+) -> bool {
+    first.schema() == second.schema()
+        && std::ptr::fn_addr_eq(first.materialize(), second.materialize())
+}
+
+fn validate_derived_native_materializer_registrations(
+    derived_registrations: &[PortableNativeWidgetRegistration],
+) -> Result<(), NativeMaterializerRegistryError> {
+    for (index, registration) in derived_registrations.iter().copied().enumerate() {
+        let widget = registration.schema().widget();
+        if !version_at_least(widget.max_version(), widget.min_version()) {
+            return Err(NativeMaterializerRegistryError::InvalidVersionRange {
+                widget_type: widget.id(),
+                minimum: widget.min_version(),
+                maximum: widget.max_version(),
+            });
+        }
+        for other in &derived_registrations[index + 1..] {
+            if identical_derived_native_materializers(registration, *other) {
+                continue;
+            }
+            let other_widget = other.schema().widget();
+            if widget.id() == other_widget.id()
+                && version_ranges_overlap(
+                    widget.min_version(),
+                    widget.max_version(),
+                    other_widget.min_version(),
+                    other_widget.max_version(),
+                )
+            {
+                return Err(NativeMaterializerRegistryError::OverlappingVersions {
+                    widget_type: widget.id(),
+                    first_minimum: widget.min_version(),
+                    first_maximum: widget.max_version(),
+                    second_minimum: other_widget.min_version(),
+                    second_maximum: other_widget.max_version(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeMaterializerKind {
@@ -550,6 +577,26 @@ struct BuiltinPortableCoverageSpec {
 #[cfg(test)]
 const WIDGET_SELECTION_AREA: WidgetSchemaId =
     WidgetSchemaId::from_canonical_name("aimer.widget:aimer_text::SelectionArea");
+#[cfg(test)]
+const WIDGET_EXPANDED: WidgetSchemaId =
+    WidgetSchemaId::from_canonical_name("aimer.widget:aimer_flex::flex::Expanded");
+#[cfg(test)]
+const WIDGET_POSITIONED: WidgetSchemaId =
+    WidgetSchemaId::from_canonical_name("aimer.widget:aimer_space::space::Positioned");
+const WIDGET_STACK: WidgetSchemaId =
+    WidgetSchemaId::from_canonical_name("aimer.widget:aimer_space::space::Stack");
+const WIDGET_GRID: WidgetSchemaId =
+    WidgetSchemaId::from_canonical_name("aimer.widget:aimer_grid::grid::Grid");
+const PROPERTY_GRID_CONFIG: PropertyId =
+    PropertyId::from_canonical_name("aimer.property:aimer_grid::grid::Grid:config");
+const WIDGET_SCROLLABLE: WidgetSchemaId =
+    WidgetSchemaId::from_canonical_name("aimer.widget:aimer_scroll::scrollable::Scrollable");
+const PROPERTY_SCROLLABLE_CONFIG: PropertyId = PropertyId::from_canonical_name(
+    "aimer.property:aimer_scroll::scrollable::Scrollable:config",
+);
+#[cfg(test)]
+const WIDGET_SCROLL_BAR: WidgetSchemaId =
+    WidgetSchemaId::from_canonical_name("aimer.widget:aimer_scroll::scrollable::ScrollBar");
 #[cfg(test)]
 const WIDGET_ASPECT_RATIO: WidgetSchemaId =
     WidgetSchemaId::from_canonical_name("aimer.widget:aimer_container::single_child::AspectRatio");
@@ -603,7 +650,7 @@ const WIDGET_CHILD_BUILDER: WidgetSchemaId =
 // native Widget implementation is unfinished. The audit below resolves each
 // constructor independently from the linked registry and reports its kind.
 #[cfg(test)]
-const BUILTIN_PORTABLE_COVERAGE: [BuiltinPortableCoverageSpec; 25] = [
+const BUILTIN_PORTABLE_COVERAGE: [BuiltinPortableCoverageSpec; 31] = [
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_COLUMN,
         schema_only: true,
@@ -633,6 +680,45 @@ const BUILTIN_PORTABLE_COVERAGE: [BuiltinPortableCoverageSpec; 25] = [
         schema_only: false,
         guest_lowering: GuestLoweringKind::Generated,
         focused_round_trip_test: "portable_builtin_showcase_round_trips_through_host",
+    },
+    BuiltinPortableCoverageSpec {
+        widget_type: WIDGET_EXPANDED,
+        schema_only: false,
+        guest_lowering: GuestLoweringKind::Generated,
+        focused_round_trip_test:
+            "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
+    },
+    BuiltinPortableCoverageSpec {
+        widget_type: WIDGET_POSITIONED,
+        schema_only: false,
+        guest_lowering: GuestLoweringKind::Generated,
+        focused_round_trip_test:
+            "safe_derived_portable_widgets_round_trip_through_linked_host_materializers",
+    },
+    BuiltinPortableCoverageSpec {
+        widget_type: WIDGET_STACK,
+        schema_only: true,
+        guest_lowering: GuestLoweringKind::Generated,
+        focused_round_trip_test: "stack_round_trips_through_its_host_materializer",
+    },
+    BuiltinPortableCoverageSpec {
+        widget_type: WIDGET_GRID,
+        schema_only: true,
+        guest_lowering: GuestLoweringKind::Manual,
+        focused_round_trip_test: "grid_round_trips_layout_configuration_and_children",
+    },
+    BuiltinPortableCoverageSpec {
+        widget_type: WIDGET_SCROLLABLE,
+        schema_only: true,
+        guest_lowering: GuestLoweringKind::Manual,
+        focused_round_trip_test:
+            "scrollable_round_trips_axis_and_scrollbars_through_host_materializer",
+    },
+    BuiltinPortableCoverageSpec {
+        widget_type: WIDGET_SCROLL_BAR,
+        schema_only: true,
+        guest_lowering: GuestLoweringKind::Generated,
+        focused_round_trip_test: "scroll_bar_round_trips_through_host_materializer",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_BUTTON,
@@ -1021,15 +1107,17 @@ impl WidgetSchemaSupport for AimerWidgetFactory<'_> {
             .ok_or(ModelError::NodeIndexOutOfBounds {
                 index: node_index,
                 node_count: document.node_count(),
-            })?;
+        })?;
         for property in node.properties() {
-            validate_property_value(node_index, node.widget_type(), property)?;
+            validate_property_value(document, node_index, node.widget_type(), property)?;
         }
         match node.widget_type() {
             WIDGET_PROVIDER => validate_provider_value(document, node_index, node)?,
             WIDGET_ANIMATED_THEME => {
                 validate_animated_theme_value(document, node_index, node)?
             }
+            WIDGET_GRID => validate_grid_value(document, node_index, node)?,
+            WIDGET_SCROLLABLE => validate_scrollable_value(document, node_index, node)?,
             _ => {}
         }
         Ok(())
@@ -1110,12 +1198,18 @@ const PROPERTY_TEXT_BUTTON_HOVER_COLOR: PropertyId =
     PropertyId::from_canonical_name("aimer.property:aimer_text::TextButton:hover_color");
 const PROPERTY_TEXT_BUTTON_DISABLED_COLOR: PropertyId =
     PropertyId::from_canonical_name("aimer.property:aimer_text::TextButton:disabled_color");
+const PROPERTY_TEXT_BUTTON_STYLE: PropertyId =
+    PropertyId::from_canonical_name("aimer.property:aimer_text::TextButton:style");
+const PROPERTY_TEXT_BUTTON_HOVER_STYLE: PropertyId =
+    PropertyId::from_canonical_name("aimer.property:aimer_text::TextButton:hover_style");
+const PROPERTY_TEXT_BUTTON_DISABLED_STYLE: PropertyId =
+    PropertyId::from_canonical_name("aimer.property:aimer_text::TextButton:disabled_style");
 const EVENT_TEXT_BUTTON_PRESS: EventId =
     EventId::from_canonical_name("aimer.event:aimer_text::TextButton:on_press");
 const EVENT_TEXT_BUTTON_DOUBLE_PRESS: EventId =
     EventId::from_canonical_name("aimer.event:aimer_text::TextButton:on_double_press");
 
-static BUILTIN_NATIVE_MATERIALIZERS: [NativeWidgetMaterializerRegistration; 8] = [
+static BUILTIN_NATIVE_MATERIALIZERS: [NativeWidgetMaterializerRegistration; 11] = [
     NativeWidgetMaterializerRegistration::new(
         WIDGET_COLUMN,
         SCHEMA_V1,
@@ -1133,6 +1227,24 @@ static BUILTIN_NATIVE_MATERIALIZERS: [NativeWidgetMaterializerRegistration; 8] =
         SCHEMA_V1,
         SCHEMA_V1,
         materialize_sized_box,
+    ),
+    NativeWidgetMaterializerRegistration::new(
+        WIDGET_STACK,
+        SCHEMA_V1,
+        SCHEMA_V1,
+        materialize_stack,
+    ),
+    NativeWidgetMaterializerRegistration::new(
+        WIDGET_GRID,
+        SCHEMA_V1,
+        SCHEMA_V1,
+        materialize_grid,
+    ),
+    NativeWidgetMaterializerRegistration::new(
+        WIDGET_SCROLLABLE,
+        SCHEMA_V1,
+        SCHEMA_V1,
+        materialize_scrollable,
     ),
     NativeWidgetMaterializerRegistration::new(
         WIDGET_BUTTON,
@@ -1271,11 +1383,124 @@ fn materialize_row(
 
 fn materialize_sized_box(
     factory: &AimerWidgetFactory<'_>,
-    _document: &WidgetDocumentView<'_>,
+    document: &WidgetDocumentView<'_>,
     node: WidgetNodeView<'_>,
     _children: Vec<AnyElement>,
 ) -> AnyElement {
-    build_sized_box(&node, factory.ctx)
+    build_sized_box(document, &node, factory.ctx)
+}
+
+fn materialize_stack(
+    factory: &AimerWidgetFactory<'_>,
+    _document: &WidgetDocumentView<'_>,
+    _node: WidgetNodeView<'_>,
+    children: Vec<AnyElement>,
+) -> AnyElement {
+    let stack = children.into_iter().fold(Stack::new(), |stack, child| {
+        stack.add_child(RetainedElementWidget(child))
+    });
+    stack.to_element(factory.ctx)
+}
+
+fn materialize_grid(
+    factory: &AimerWidgetFactory<'_>,
+    document: &WidgetDocumentView<'_>,
+    node: WidgetNodeView<'_>,
+    children: Vec<AnyElement>,
+) -> AnyElement {
+    let config = match required_materialized_property::<GridPortableConfig>(
+        document,
+        &node,
+        PROPERTY_GRID_CONFIG,
+    ) {
+        Ok(config) => config,
+        Err(error) => {
+            return ErrorWidget::new(format!("Grid portable configuration error: {error}"))
+                .to_element(factory.ctx);
+        }
+    };
+    if config.items.len() != children.len() {
+        return ErrorWidget::new(format!(
+            "Grid portable configuration has {} items for {} children",
+            config.items.len(),
+            children.len(),
+        ))
+        .to_element(factory.ctx);
+    }
+
+    let GridPortableConfig {
+        columns,
+        rows,
+        column_gap,
+        row_gap,
+        horizontal_alignment,
+        vertical_alignment,
+        overflow,
+        items,
+    } = config;
+    let grid = Grid::new()
+        .columns(columns)
+        .rows(rows)
+        .column_gap(column_gap)
+        .row_gap(row_gap)
+        .horizontal_alignment(horizontal_alignment)
+        .vertical_alignment(vertical_alignment)
+        .overflow(overflow)
+        .children(items.into_iter().zip(children).map(|(item, child)| {
+            let placement = item.placement;
+            let mut grid_item = GridItem::new(RetainedElementWidget(child));
+            if let Some(row) = placement.row {
+                grid_item = grid_item.row(row);
+            }
+            if let Some(column) = placement.column {
+                grid_item = grid_item.column(column);
+            }
+            grid_item = grid_item
+                .row_span(placement.row_span)
+                .column_span(placement.column_span);
+            if let Some(alignment) = item.horizontal_alignment {
+                grid_item = grid_item.horizontal_alignment(alignment);
+            }
+            if let Some(alignment) = item.vertical_alignment {
+                grid_item = grid_item.vertical_alignment(alignment);
+            }
+            grid_item
+        }));
+    grid.to_element(factory.ctx)
+}
+
+fn materialize_scrollable(
+    factory: &AimerWidgetFactory<'_>,
+    document: &WidgetDocumentView<'_>,
+    node: WidgetNodeView<'_>,
+    mut children: Vec<AnyElement>,
+) -> AnyElement {
+    let config = match required_materialized_property::<ScrollPortableConfig>(
+        document,
+        &node,
+        PROPERTY_SCROLLABLE_CONFIG,
+    ) {
+        Ok(config) => config,
+        Err(error) => {
+            return ErrorWidget::new(format!("Scrollable portable configuration error: {error}"))
+                .to_element(factory.ctx);
+        }
+    };
+    let Some(child) = children.pop() else {
+        return ErrorWidget::new("Scrollable portable node is missing its child")
+            .to_element(factory.ctx);
+    };
+    if !children.is_empty() {
+        return ErrorWidget::new("Scrollable portable node has too many children")
+            .to_element(factory.ctx);
+    }
+
+    Scrollable::new()
+        .axis(config.axis)
+        .vertical_scroll_bar(config.vertical_scroll_bar.then(ScrollBar::default))
+        .horizontal_scroll_bar(config.horizontal_scroll_bar.then(ScrollBar::default))
+        .child(RetainedElementWidget(child))
+        .to_element(factory.ctx)
 }
 
 fn materialize_error_widget(
@@ -1325,13 +1550,40 @@ fn materialize_text_button(
     .expect("validated TextButton hover color property is decodable");
     let disabled_color: Option<aimer_widget::base::Color> =
         aimer_widget::portable::optional_materialized_property(
+            document,
+            &node,
+            PROPERTY_TEXT_BUTTON_DISABLED_COLOR,
+        )
+        .expect("validated TextButton disabled color property is decodable");
+    let style: Option<TextStyle> = optional_materialized_property(
         document,
         &node,
-        PROPERTY_TEXT_BUTTON_DISABLED_COLOR,
+        PROPERTY_TEXT_BUTTON_STYLE,
     )
-    .expect("validated TextButton disabled color property is decodable");
+    .expect("validated TextButton style property is decodable");
+    let hover_style: Option<TextStyle> = optional_materialized_property(
+        document,
+        &node,
+        PROPERTY_TEXT_BUTTON_HOVER_STYLE,
+    )
+    .expect("validated TextButton hover style property is decodable");
+    let disabled_style: Option<TextStyle> = optional_materialized_property(
+        document,
+        &node,
+        PROPERTY_TEXT_BUTTON_DISABLED_STYLE,
+    )
+    .expect("validated TextButton disabled style property is decodable");
 
     let mut button = TextButton::new(label).disabled(disabled);
+    if let Some(style) = style {
+        button = button.style(style);
+    }
+    if let Some(style) = hover_style {
+        button = button.hover_style(style);
+    }
+    if let Some(style) = disabled_style {
+        button = button.disabled_style(style);
+    }
     if let Some(color) = color {
         button = button.color(color);
     }
@@ -1670,29 +1922,87 @@ impl Widget for RetainedElementWidget {
 impl aimer_widget::PortableWidget for RetainedElementWidget {}
 
 fn validate_property_value(
+    document: &WidgetDocumentView<'_>,
     node_index: u32,
     widget_type: WidgetSchemaId,
     property: aimer_anteros::WidgetProperty,
 ) -> Result<(), ModelError> {
-    match (widget_type, property.property_id(), property.value()) {
-        (
-            WIDGET_CONTAINER,
-            PROPERTY_CONTAINER_WIDTH | PROPERTY_CONTAINER_HEIGHT,
-            PropertyValue::F64(value),
-        )
-        | (
-            WIDGET_SIZED_BOX,
-            PROPERTY_SIZED_BOX_WIDTH | PROPERTY_SIZED_BOX_HEIGHT,
-            PropertyValue::F64(value),
-        ) if !(0.0..=f32::MAX as f64).contains(&value) => {
-            Err(ModelError::InvalidWidgetPropertyValue {
-                node: node_index,
-                widget_type,
-                property_id: property.property_id(),
-            })
-        }
-        _ => Ok(()),
+    let is_dimension = match widget_type {
+        WIDGET_CONTAINER => matches!(
+            property.property_id(),
+            PROPERTY_CONTAINER_WIDTH | PROPERTY_CONTAINER_HEIGHT
+        ),
+        WIDGET_SIZED_BOX => matches!(
+            property.property_id(),
+            PROPERTY_SIZED_BOX_WIDTH | PROPERTY_SIZED_BOX_HEIGHT
+        ),
+        _ => false,
+    };
+    if !is_dimension {
+        return Ok(());
     }
+
+    let invalid = || ModelError::InvalidWidgetPropertyValue {
+        node: node_index,
+        widget_type,
+        property_id: property.property_id(),
+    };
+    let dimension = Dimension::from_awir(document, property.property_id(), property.value())
+        .map_err(|_| invalid())?;
+    if dimension == Dimension::Auto
+        || matches!(dimension, Dimension::Px(value) if value.is_finite() && value >= 0.0)
+    {
+        Ok(())
+    } else {
+        Err(invalid())
+    }
+}
+
+fn validate_grid_value(
+    document: &WidgetDocumentView<'_>,
+    node_index: u32,
+    node: WidgetNodeView<'_>,
+) -> Result<(), ModelError> {
+    let config = required_materialized_property::<GridPortableConfig>(
+        document,
+        &node,
+        PROPERTY_GRID_CONFIG,
+    )
+    .map_err(|_| ModelError::InvalidWidgetPropertyValue {
+        node: node_index,
+        widget_type: WIDGET_GRID,
+        property_id: PROPERTY_GRID_CONFIG,
+    })?;
+    let count = node.children().len() as u32;
+    let expected = config.items.len() as u32;
+    if count != expected {
+        return Err(ModelError::InvalidWidgetChildCount {
+            node: node_index,
+            widget_type: WIDGET_GRID,
+            count,
+            minimum: expected,
+            maximum: expected,
+        });
+    }
+    Ok(())
+}
+
+fn validate_scrollable_value(
+    document: &WidgetDocumentView<'_>,
+    node_index: u32,
+    node: WidgetNodeView<'_>,
+) -> Result<(), ModelError> {
+    required_materialized_property::<ScrollPortableConfig>(
+        document,
+        &node,
+        PROPERTY_SCROLLABLE_CONFIG,
+    )
+    .map(|_| ())
+    .map_err(|_| ModelError::InvalidWidgetPropertyValue {
+        node: node_index,
+        widget_type: WIDGET_SCROLLABLE,
+        property_id: PROPERTY_SCROLLABLE_CONFIG,
+    })
 }
 
 fn validate_provider_value(
@@ -1896,24 +2206,31 @@ fn pack_provider_version(version: Version) -> i64 {
     (((version.major() as u64) << 32) | version.minor() as u64) as i64
 }
 
-fn build_sized_box(node: &WidgetNodeView<'_>, ctx: &BuildContext) -> AnyElement {
+fn build_sized_box(
+    document: &WidgetDocumentView<'_>,
+    node: &WidgetNodeView<'_>,
+    ctx: &BuildContext,
+) -> AnyElement {
     let mut sized_box = SizedBox::new();
-    if let Some(width) = number_property(node, PROPERTY_SIZED_BOX_WIDTH) {
-        sized_box = sized_box.width(width as f32);
+    if let Some(width) = optional_materialized_property::<Dimension>(
+        document,
+        node,
+        PROPERTY_SIZED_BOX_WIDTH,
+    )
+    .expect("validated SizedBox width is decodable")
+    {
+        sized_box = sized_box.width(width);
     }
-    if let Some(height) = number_property(node, PROPERTY_SIZED_BOX_HEIGHT) {
-        sized_box = sized_box.height(height as f32);
+    if let Some(height) = optional_materialized_property::<Dimension>(
+        document,
+        node,
+        PROPERTY_SIZED_BOX_HEIGHT,
+    )
+    .expect("validated SizedBox height is decodable")
+    {
+        sized_box = sized_box.height(height);
     }
     sized_box.to_element(ctx)
-}
-
-fn number_property(node: &WidgetNodeView<'_>, property_id: PropertyId) -> Option<f64> {
-    node.properties().find_map(|property| {
-        (property.property_id() == property_id).then(|| match property.value() {
-            PropertyValue::F64(value) => value,
-            _ => unreachable!("validated numeric property changed during materialization"),
-        })
-    })
 }
 
 const fn widget_debug_name(widget_type: WidgetSchemaId) -> &'static str {
@@ -1923,6 +2240,8 @@ const fn widget_debug_name(widget_type: WidgetSchemaId) -> &'static str {
         WIDGET_CONTAINER => "Container",
         WIDGET_SIZED_BOX => "SizedBox",
         WIDGET_TEXT => "RawTextWidget",
+        WIDGET_GRID => "Grid",
+        WIDGET_SCROLLABLE => "Scrollable",
         WIDGET_BUTTON => "Button",
         WIDGET_TEXT_BUTTON => "TextButton",
         WIDGET_PROVIDER => "Provider",
@@ -1935,10 +2254,14 @@ const fn widget_debug_name(widget_type: WidgetSchemaId) -> &'static str {
 mod tests {
     use std::cell::RefCell;
 
-    use aimer_anteros::{CallbackBinding, EventId, WidgetDocument, WidgetNode, WidgetProperty};
+    use aimer_anteros::{
+        CallbackBinding, ChildCardinality, EventId, PortableWidgetSchemaMetadata, WidgetDocument,
+        WidgetNode, WidgetProperty, WidgetSchemaMetadata,
+    };
     use aimer_events::element::ElementEvent;
     use aimer_events::pointer::{PointerButton, PointerInfo};
     use aimer_utils::callback::CallbackExecutor;
+    use aimer_widget::AnyWidget;
 
     use super::*;
 
@@ -1949,6 +2272,72 @@ mod tests {
     const LONG_PRESS_ID: StableId128 = StableId128::from_bytes([2; 16]);
     const DOUBLE_PRESS_ID: StableId128 = StableId128::from_bytes([3; 16]);
     const RIGHT_PRESS_ID: StableId128 = StableId128::from_bytes([4; 16]);
+
+    fn derived_materializer(
+        _document: &WidgetDocumentView<'_>,
+        _node: WidgetNodeView<'_>,
+        _children: Vec<AnyWidget>,
+    ) -> Result<AnyWidget, PortableMaterializeError> {
+        Err(PortableMaterializeError::InvalidChildCount {
+            expected: 0,
+            actual: 1,
+        })
+    }
+
+    fn alternate_derived_materializer(
+        _document: &WidgetDocumentView<'_>,
+        _node: WidgetNodeView<'_>,
+        _children: Vec<AnyWidget>,
+    ) -> Result<AnyWidget, PortableMaterializeError> {
+        Err(PortableMaterializeError::InvalidChildCount {
+            expected: 0,
+            actual: 2,
+        })
+    }
+
+    fn derived_schema() -> PortableWidgetSchemaMetadata<'static> {
+        PortableWidgetSchemaMetadata::new(
+            WidgetSchemaMetadata::from_canonical_name(
+                "aimer.widget:test::DerivedMaterializer",
+                SCHEMA_V1,
+                SCHEMA_V1,
+            ),
+            &[],
+            &[],
+            ChildCardinality::none(),
+        )
+    }
+
+    #[test]
+    fn derived_materializer_registry_ignores_identical_linker_duplicates() {
+        let schema = derived_schema();
+        let registrations = [
+            PortableNativeWidgetRegistration::new(schema, derived_materializer),
+            PortableNativeWidgetRegistration::new(schema, derived_materializer),
+        ];
+
+        assert!(validate_derived_native_materializer_registrations(&registrations).is_ok());
+    }
+
+    #[test]
+    fn derived_materializer_registry_rejects_conflicting_linker_duplicates() {
+        let schema = derived_schema();
+        let registrations = [
+            PortableNativeWidgetRegistration::new(schema, derived_materializer),
+            PortableNativeWidgetRegistration::new(schema, alternate_derived_materializer),
+        ];
+
+        assert!(matches!(
+            validate_derived_native_materializer_registrations(&registrations),
+            Err(NativeMaterializerRegistryError::OverlappingVersions {
+                widget_type,
+                first_minimum: SCHEMA_V1,
+                first_maximum: SCHEMA_V1,
+                second_minimum: SCHEMA_V1,
+                second_maximum: SCHEMA_V1,
+            }) if widget_type == schema.widget().id()
+        ));
+    }
 
     #[test]
     fn native_materializer_registry_rejects_overlapping_duplicate_registrations() {
@@ -2043,6 +2432,8 @@ mod tests {
         let coverage = audit_portable_builtin_registry();
         for (widget_type, canonical_name) in [
             (WIDGET_SELECTION_AREA, "aimer.widget:aimer_text::SelectionArea"),
+            (WIDGET_EXPANDED, "aimer.widget:aimer_flex::flex::Expanded"),
+            (WIDGET_POSITIONED, "aimer.widget:aimer_space::space::Positioned"),
             (
                 WIDGET_ASPECT_RATIO,
                 "aimer.widget:aimer_container::single_child::AspectRatio",
@@ -2087,6 +2478,8 @@ mod tests {
     #[test]
     fn safe_derived_portable_widgets_round_trip_through_linked_host_materializers() {
         use aimer_container::{AspectRatio, Opacity, RatioOption, ZeroSizedBox};
+        use aimer_flex::Expanded;
+        use aimer_space::Positioned;
         use aimer_text::SelectionArea;
         use aimer_widget::base::Color;
         use aimer_widget::portable::{
@@ -2115,7 +2508,11 @@ mod tests {
                         Opacity::new().opacity(0.625).child(
                             FocusScope::new()
                                 .traps(false)
-                                .child(ZeroSizedBox::new()),
+                                .child(
+                                    Positioned::new()
+                                        .left(12.0)
+                                        .child(Expanded::new().flex(2.5).child(ZeroSizedBox::new())),
+                                ),
                         ),
                     ),
             )
@@ -2127,6 +2524,313 @@ mod tests {
 
         let _root = materialize_aimer_widget_tree(&image, limits, &host_context(), |_| {})
             .expect("safe derived widgets must use their linked generated materializers");
+
+        let mut flex_guest = PortableBuildContext::new(
+            9,
+            3,
+            PortableWidgetLimits::new(16, 16, 16, 16, 256, 8_192)
+                .with_max_blob_bytes(1_024),
+            PortableLimits::new(16, 32, 256, 512, 8_192),
+        )
+        .unwrap();
+        let flex_root = Expanded::new()
+            .flex(2.5)
+            .child(ZeroSizedBox::new())
+            .to_portable_node(
+                &mut flex_guest,
+                SourceFingerprint::new(
+                    aimer_widget::portable::StableId128::from_bytes([30; 16]),
+                ),
+            )
+            .unwrap();
+        let flex_document = flex_guest.finish_document(flex_root).unwrap();
+        let flex_limits = flex_document.model_limits();
+        let flex_image = flex_document.encode().unwrap();
+        let flex_element =
+            materialize_aimer_widget_tree(&flex_image, flex_limits, &host_context(), |_| {})
+                .expect("Expanded must materialize through the linked host constructor");
+        assert_eq!(
+            flex_element.flex(),
+            Some(2.5),
+            "transparent host wrappers must preserve Expanded's flex factor"
+        );
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn stack_round_trips_through_its_host_materializer() {
+        use aimer_container::ZeroSizedBox;
+        use aimer_space::Stack;
+        use aimer_widget::PortableWidget;
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+        };
+
+        let mut guest = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 1_024),
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap();
+        let source = SourceFingerprint::new(
+            aimer_widget::portable::StableId128::from_bytes([31; 16]),
+        );
+        let root = Stack::new()
+            .add_child(ZeroSizedBox::new())
+            .add_child(ZeroSizedBox::new())
+            .to_portable_node(&mut guest, source)
+            .unwrap();
+        let document = guest.finish_document(root).unwrap();
+        let image = document.encode().unwrap();
+
+        materialize_aimer_widget_tree(&image, document.model_limits(), &host_context(), |_| {})
+            .expect("Stack must have a permanent host materializer");
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn sized_box_round_trips_explicit_dimensions_into_native_layout() {
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+        };
+        use aimer_widget::{LayoutElement, PortableWidget};
+
+        let mut guest = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 1_024).with_max_blob_bytes(128),
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap();
+        let source = SourceFingerprint::new(
+            aimer_widget::portable::StableId128::from_bytes([34; 16]),
+        );
+        let root = SizedBox::new()
+            .width(48)
+            .height(24)
+            .to_portable_node(&mut guest, source)
+            .unwrap();
+        let document = guest.finish_document(root).unwrap();
+        let image = document.encode().unwrap();
+
+        let element = materialize_aimer_widget_tree(
+            &image,
+            document.model_limits(),
+            &host_context(),
+            |_| {},
+        )
+        .expect("SizedBox must materialize through the permanent host");
+        let size = element.computed_size(&host_context());
+
+        assert_eq!(size.width, 48.0);
+        assert_eq!(size.height, 24.0);
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn sized_box_spacers_contribute_to_a_materialized_column() {
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+        };
+        use aimer_widget::{LayoutElement, PortableWidget};
+
+        let mut guest = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 1_024).with_max_blob_bytes(128),
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap();
+        let source = SourceFingerprint::new(
+            aimer_widget::portable::StableId128::from_bytes([35; 16]),
+        );
+        let root = Column::new()
+            .children([
+                SizedBox::new().height(24),
+                SizedBox::new().height(40),
+            ])
+            .to_portable_node(&mut guest, source)
+            .unwrap();
+        let document = guest.finish_document(root).unwrap();
+        let image = document.encode().unwrap();
+
+        let element = materialize_aimer_widget_tree(
+            &image,
+            document.model_limits(),
+            &host_context(),
+            |_| {},
+        )
+        .expect("Column spacers must materialize through the permanent host");
+        let size = element.computed_size(&host_context());
+
+        assert_eq!(size.height, 64.0);
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn sized_box_spacers_survive_scrollable_content_measurement() {
+        use aimer_attribute::{BoxConstraint, ResolvedSize};
+        use aimer_container::{Container, ZeroSizedBox};
+        use aimer_scroll::{ScrollAxis, Scrollable};
+        use aimer_style::LayoutSpacing;
+        use aimer_text::Text;
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+        };
+        use aimer_widget::{LayoutElement, PortableWidget};
+
+        let section = || {
+            Scrollable::new().axis(ScrollAxis::Vertical).child(
+                Container::new()
+                    .padding(LayoutSpacing::new().top(20).bottom(20))
+                    .child(
+                        Column::new().children([
+                            Container::new()
+                                .height(100)
+                                .child(Text::new("Consistence Looking"))
+                                .boxed(),
+                            SizedBox::new().height(24).boxed(),
+                            Container::new()
+                                .height(450)
+                                .child(ZeroSizedBox::new())
+                                .boxed(),
+                            SizedBox::new().height(40).boxed(),
+                            SizedBox::new().height(44).boxed(),
+                            SizedBox::new().height(40).boxed(),
+                        ]),
+                    ),
+            )
+        };
+
+        let mut context = host_context();
+        context.box_constraint = BoxConstraint::new().max_width(800.0).max_height(600.0);
+        context.parent_size = ResolvedSize {
+            width: 800.0,
+            height: 600.0,
+        };
+        let native = section().to_element(&context);
+
+        let mut guest = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(16, 16, 16, 16, 64, 4_096).with_max_blob_bytes(128),
+            PortableLimits::new(16, 32, 128, 256, 4_096),
+        )
+        .unwrap();
+        let source = SourceFingerprint::new(
+            aimer_widget::portable::StableId128::from_bytes([37; 16]),
+        );
+        let root = section().to_portable_node(&mut guest, source).unwrap();
+        let document = guest.finish_document(root).unwrap();
+        let image = document.encode().unwrap();
+        let hot = materialize_aimer_widget_tree(
+            &image,
+            document.model_limits(),
+            &context,
+            |_| {},
+        )
+        .expect("scrollable section must materialize through the permanent host");
+
+        assert_eq!(native.content_size(&context).height, 738.0);
+        assert_eq!(hot.content_size(&context), native.content_size(&context));
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn grid_round_trips_layout_configuration_and_children() {
+        use aimer_container::ZeroSizedBox;
+        use aimer_grid::{Grid, GridItem, GridTrack};
+        use aimer_widget::PortableWidget;
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+        };
+
+        let mut guest = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 128, 4_096).with_max_blob_bytes(256),
+            PortableLimits::new(8, 16, 64, 128, 4_096),
+        )
+        .unwrap();
+        let source = SourceFingerprint::new(
+            aimer_widget::portable::StableId128::from_bytes([32; 16]),
+        );
+        let root = Grid::new()
+            .columns([GridTrack::Px(120.0)])
+            .rows([GridTrack::Px(40.0)])
+            .gap(8.0)
+            .children([GridItem::new(ZeroSizedBox::new()).at(0, 0)])
+            .to_portable_node(&mut guest, source)
+            .unwrap();
+        let document = guest.finish_document(root).unwrap();
+        let image = document.encode().unwrap();
+
+        materialize_aimer_widget_tree(&image, document.model_limits(), &host_context(), |_| {})
+            .expect("Grid must preserve enough layout metadata for host materialization");
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn scrollable_round_trips_axis_and_scrollbars_through_host_materializer() {
+        use aimer_container::ZeroSizedBox;
+        use aimer_scroll::{ScrollAxis, Scrollable};
+        use aimer_widget::PortableWidget;
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+        };
+
+        let mut guest = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 128, 4_096).with_max_blob_bytes(256),
+            PortableLimits::new(8, 16, 64, 128, 4_096),
+        )
+        .unwrap();
+        let source = SourceFingerprint::new(
+            aimer_widget::portable::StableId128::from_bytes([33; 16]),
+        );
+        let root = Scrollable::new()
+            .axis(ScrollAxis::Horizontal)
+            .vertical_scroll_bar(None)
+            .horizontal_scroll_bar(None)
+            .child(ZeroSizedBox::new())
+            .to_portable_node(&mut guest, source)
+            .unwrap();
+        let document = guest.finish_document(root).unwrap();
+        let image = document.encode().unwrap();
+
+        materialize_aimer_widget_tree(&image, document.model_limits(), &host_context(), |_| {})
+            .expect("Scrollable must have a permanent host materializer");
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn scroll_bar_round_trips_through_host_materializer() {
+        use aimer_scroll::ScrollBar;
+        use aimer_widget::PortableWidget;
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+        };
+
+        let mut guest = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 1_024),
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap();
+        let source = SourceFingerprint::new(
+            aimer_widget::portable::StableId128::from_bytes([35; 16]),
+        );
+        let root = ScrollBar::default()
+            .to_portable_node(&mut guest, source)
+            .unwrap();
+        let document = guest.finish_document(root).unwrap();
+        let image = document.encode().unwrap();
+
+        materialize_aimer_widget_tree(&image, document.model_limits(), &host_context(), |_| {})
+            .expect("ScrollBar must have a permanent host materializer");
     }
 
     #[test]
@@ -2249,13 +2953,22 @@ mod tests {
     }
 
     #[test]
-    fn native_dimensions_must_fit_f32_without_losing_finiteness() {
+    fn native_dimensions_reject_negative_sized_box_dimensions() {
         let property = WidgetProperty::new(
             PROPERTY_SIZED_BOX_WIDTH,
-            PropertyValue::F64(f32::MAX as f64 * 2.0),
+            PropertyValue::BlobRef(0),
         );
+        let properties = [property];
+        let nodes = [WidgetNode::new(WIDGET_SIZED_BOX, SCHEMA_V1).properties(&properties)];
+        let negative_px = [1, 1, 0, 0, 128, 191];
+        let image = WidgetDocument::new(1, 1, 0, &nodes, &[], &[&negative_px])
+            .encode(LIMITS)
+            .unwrap();
+        let document = WidgetDocumentView::decode(&image, LIMITS).unwrap();
+        let property = document.node(0).unwrap().properties().next().unwrap();
+
         assert_eq!(
-            validate_property_value(0, WIDGET_SIZED_BOX, property),
+            validate_property_value(&document, 0, WIDGET_SIZED_BOX, property),
             Err(ModelError::InvalidWidgetPropertyValue {
                 node: 0,
                 widget_type: WIDGET_SIZED_BOX,
@@ -2658,6 +3371,44 @@ mod tests {
         let _ = element.on_event(&up());
 
         assert_eq!(*dispatched.borrow(), [PRESS_ID, PRESS_ID, DOUBLE_PRESS_ID]);
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn text_button_materialization_preserves_explicit_style_layout() {
+        use aimer_style::TextStyle;
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+        };
+        use aimer_widget::{LayoutElement, PortableWidget};
+
+        let style = TextStyle::new().font_size(31);
+        let mut guest = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 4_096)
+                .with_max_callbacks(4)
+                .with_max_blob_bytes(128),
+            PortableLimits::new(8, 16, 64, 128, 4_096),
+        )
+        .unwrap();
+        let source = SourceFingerprint::new(
+            aimer_widget::portable::StableId128::from_bytes([36; 16]),
+        );
+        let root = TextButton::new("Open")
+            .style(style)
+            .to_portable_node(&mut guest, source)
+            .unwrap();
+        let document = guest.finish_document(root).unwrap();
+        let image = document.encode().unwrap();
+
+        let native = TextButton::new("Open")
+            .style(style)
+            .to_element(&host_context());
+        let hot = materialize_aimer_widget_tree(&image, document.model_limits(), &host_context(), |_| {})
+            .expect("TextButton must materialize through the permanent host");
+
+        assert_eq!(hot.computed_size(&host_context()), native.computed_size(&host_context()));
     }
 
     #[test]

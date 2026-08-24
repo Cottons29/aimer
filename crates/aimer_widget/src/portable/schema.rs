@@ -2,7 +2,12 @@ use super::identity::{StableHasher, StableSchemaId, StableTypeId};
 
 use aimer_anteros::{
     PortableWidgetSchemaMetadata, PropertyPresence, PropertyValueKind, ValueSchemaMetadata,
+    Version,
 };
+
+pub(crate) const DIMENSION_VALUE_NAME: &str = "aimer.value:aimer_attribute::Dimension";
+pub(crate) const DIMENSION_VALUE_VERSION: Version = Version::new(1, 0);
+pub(crate) const DIMENSION_VALUE_MAXIMUM_ENCODED_BYTES: u32 = 6;
 
 /// The checked conversion between a Rust property type and its AWIR value.
 ///
@@ -169,9 +174,12 @@ impl PortableProperty for f64 {
 }
 
 impl PortableProperty for aimer_attribute::Dimension {
-    const REFLECTION: PortablePropertyReflection = PortablePropertyReflection::new(
-        PropertyValueKind::F64,
-        PortablePropertyConversion::LogicalPixels,
+    const REFLECTION: PortablePropertyReflection = PortablePropertyReflection::custom(
+        ValueSchemaMetadata::from_canonical_name(
+            DIMENSION_VALUE_NAME,
+            DIMENSION_VALUE_VERSION,
+            DIMENSION_VALUE_MAXIMUM_ENCODED_BYTES,
+        ),
     );
 }
 
@@ -431,7 +439,11 @@ mod tests {
         );
         assert_eq!(
             <aimer_attribute::Dimension as PortableProperty>::REFLECTION.conversion(),
-            PortablePropertyConversion::LogicalPixels,
+            PortablePropertyConversion::CustomValue,
+        );
+        assert_eq!(
+            <aimer_attribute::Dimension as PortableProperty>::REFLECTION.value_kind(),
+            PropertyValueKind::BlobRef,
         );
     }
 

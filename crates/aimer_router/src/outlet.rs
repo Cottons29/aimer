@@ -35,9 +35,26 @@ impl OutletSlot {
 /// shell injects an [`OutletSlot`] and the outlet builds the active child from
 /// it. An `Outlet` used without an ancestor shell panics — that is a
 /// programming error, mirroring `NavigatorController::of`.
-#[derive(aimer_widget::PortableWidget)]
-#[portable_widget(id = "aimer_router::Outlet", schema_only)]
 pub struct Outlet;
+
+impl aimer_widget::PortableWidget for Outlet {
+    #[cfg(feature = "portable-guest")]
+    fn to_portable_node(
+        self,
+        ctx: &mut aimer_widget::portable::PortableBuildContext,
+        source: aimer_widget::portable::SourceFingerprint,
+    ) -> Result<
+        aimer_widget::portable::PortableNodeId,
+        aimer_widget::portable::PortableBuildError,
+    > {
+        let build_context = ctx.build_context();
+        let Some(slot) = build_context.get_state::<OutletSlot>() else {
+            return Err(ctx.unsupported_widget("Outlet", source));
+        };
+        let child = slot.build_child(&build_context);
+        aimer_widget::AnyWidgetExt::into_portable_node(child, ctx, source)
+    }
+}
 
 impl Widget for Outlet {
     /// # Panics

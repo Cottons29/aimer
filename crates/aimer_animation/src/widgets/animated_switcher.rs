@@ -42,30 +42,21 @@ fn request_next_frame() {
 ///                           Curve::Linear,
 ///                           ErrorWidget::new("Current page")).child_key("current-page");
 /// ```
-#[derive(aimer_macro::PortableWidget)]
-#[portable_widget(id = "aimer_animation::AnimatedSwitcher", schema_only)]
 pub struct AnimatedSwitcher<T: Widget + 'static> {
     /// The subtree to show, kept as a builder because a cross-fade rebuilds it
     /// once per frame, for as long as the fade lasts.
-    #[portable_child]
     pub child: ChildBuilder,
-    #[portable_skip]
     pub duration: Duration,
-    #[portable_skip]
     pub curve: Curve,
     /// Optional separate curve for the outgoing child. Defaults to `curve`.
-    #[portable_skip]
     pub switch_out_curve: Option<Curve>,
-    #[portable_skip]
     transition_key: Option<Key>,
-    #[portable_skip]
     widget_key: Option<Key>,
     /// The child's type, which the builder erases.
     ///
     /// The switcher's state is bound to it, so switchers that show different
     /// kinds of child stay distinct types and never reconcile onto each
     /// other's state.
-    #[portable_skip]
     marker: PhantomData<T>,
 }
 
@@ -156,6 +147,20 @@ impl<T: Widget + 'static> Widget for AnimatedSwitcher<T> {
         StatefulElement::new_with_name(self, ctx, "AnimatedSwitcher", __key)
             .0
             .boxed()
+    }
+}
+
+impl<T: Widget + 'static> aimer_widget::PortableWidget for AnimatedSwitcher<T> {
+    #[cfg(feature = "portable-guest")]
+    fn to_portable_node(
+        self,
+        ctx: &mut aimer_widget::portable::PortableBuildContext,
+        source: aimer_widget::portable::SourceFingerprint,
+    ) -> Result<
+        aimer_widget::portable::PortableNodeId,
+        aimer_widget::portable::PortableBuildError,
+    > {
+        self.child.into_portable_node(ctx, source.child(0))
     }
 }
 
@@ -402,6 +407,62 @@ mod tests {
 
         assert!(current.old_child.is_none());
         assert!(!current.out_controller.is_animating());
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn portable_lowering_is_transparent_to_the_current_child() {
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+            StableId128,
+        };
+        use aimer_widget::portable::__anteros::{Version, WidgetDocumentView, WIDGET_TEXT};
+        use aimer_widget::{ErrorWidget, PortableWidget};
+
+        struct PortableLeaf;
+
+        impl Widget for PortableLeaf {
+            fn to_element(self, ctx: &BuildContext) -> AnyElement {
+                ErrorWidget::new("portable leaf").to_element(ctx)
+            }
+        }
+
+        impl PortableWidget for PortableLeaf {
+            fn to_portable_node(
+                self,
+                ctx: &mut PortableBuildContext,
+                source: SourceFingerprint,
+            ) -> Result<
+                aimer_widget::portable::PortableNodeId,
+                aimer_widget::portable::PortableBuildError,
+            > {
+                ctx.push_node(WIDGET_TEXT, Version::new(1, 0), None, source, &[], &[])
+            }
+        }
+
+        let mut context = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 2_048),
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap();
+        let root = AnimatedSwitcher::new(
+            Duration::from_millis(100),
+            Curve::Linear,
+            PortableLeaf,
+        )
+        .to_portable_node(
+            &mut context,
+            SourceFingerprint::new(StableId128::from_bytes([9; 16])),
+        )
+        .unwrap();
+        let document = context.finish_document(root).unwrap();
+        let bytes = document.encode().unwrap();
+        let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
+
+        assert_eq!(view.node(view.root_node()).unwrap().widget_type(), WIDGET_TEXT);
+        assert_eq!(view.node_count(), 1);
     }
 
     // ─── Both children are *built* again on every frame of a transition ────

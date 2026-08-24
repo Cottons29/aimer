@@ -8,10 +8,12 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, Key, LayoutElement, Rebuildable,
-    State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
+    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
     carry_element_state,
 };
+#[cfg(feature = "portable-guest")]
+use aimer_widget::AnyWidget;
 
 use crate::control::controller::AnimationController;
 use crate::local_cell::LocalCell;
@@ -21,9 +23,88 @@ use crate::primitives::time::AnimInstant;
 use crate::primitives::tween::Tween;
 
 type ImplicitElementBuilder<T> = dyn Fn(&T, &BuildContext) -> AnyElement;
+#[cfg(feature = "portable-guest")]
+type ImplicitPortableBuilder<T> = dyn Fn(&T) -> AnyWidget;
 
 fn request_next_frame() {
     aimer_events::window::request_animation_frame();
+}
+
+#[cfg(feature = "portable-guest")]
+struct PortableAnimationState<T: Animatable + Clone + PartialEq + 'static> {
+    begin: T,
+    target: T,
+    duration: Duration,
+    curve: Curve,
+    started_at: Option<AnimInstant>,
+}
+
+#[cfg(feature = "portable-guest")]
+impl<T> PortableAnimationState<T>
+where
+    T: Animatable + Clone + PartialEq + 'static,
+{
+    fn new(value: T, duration: Duration, curve: Curve) -> Self {
+        Self {
+            begin: value.clone(),
+            target: value,
+            duration,
+            curve,
+            started_at: None,
+        }
+    }
+
+    fn value_at(&self, now: AnimInstant) -> T {
+        let Some(started_at) = self.started_at else {
+            return self.target.clone();
+        };
+        let progress = if self.duration.is_zero() {
+            1.0
+        } else {
+            (now.duration_since(started_at).as_secs_f32() / self.duration.as_secs_f32())
+                .min(1.0)
+        };
+        self.begin.lerp(&self.target, self.curve.transform(progress))
+    }
+
+    fn update(&mut self, target: T, duration: Duration, curve: Curve) -> (T, bool) {
+        self.update_at(target, duration, curve, AnimInstant::now())
+    }
+
+    fn update_at(
+        &mut self,
+        target: T,
+        duration: Duration,
+        curve: Curve,
+        now: AnimInstant,
+    ) -> (T, bool) {
+        if self.target != target {
+            let current = self.value_at(now);
+            self.begin = current;
+            self.target = target;
+            self.duration = duration;
+            self.curve = curve;
+            self.started_at = (!duration.is_zero()).then_some(now);
+        } else {
+            self.duration = duration;
+            self.curve = curve;
+            if duration.is_zero() {
+                self.started_at = None;
+            }
+        }
+
+        let value = self.value_at(now);
+        let active = self.started_at.is_some();
+        if active
+            && now.duration_since(self.started_at.expect("active animation has a start time"))
+                >= self.duration
+        {
+            self.begin = self.target.clone();
+            self.started_at = None;
+            return (self.target.clone(), false);
+        }
+        (value, active)
+    }
 }
 
 /// A widget that automatically animates when its value changes.
@@ -48,18 +129,13 @@ fn request_next_frame() {
 ///     |width| ErrorWidget::new(format!("Width: {width:.0}")),
 /// );
 /// ```
-#[derive(aimer_macro::PortableWidget)]
-#[portable_widget(id = "aimer_animation::ImplicitAnimatedBuilder", schema_only)]
 pub struct ImplicitAnimatedBuilder<T: Animatable + Clone + PartialEq + 'static> {
-    #[portable_skip]
     pub value: T,
-    #[portable_skip]
     pub duration: Duration,
-    #[portable_skip]
     pub curve: Curve,
-    #[portable_skip]
     builder: Rc<ImplicitElementBuilder<T>>,
-    #[portable_skip]
+    #[cfg(feature = "portable-guest")]
+    portable_builder: Rc<ImplicitPortableBuilder<T>>,
     widget_key: Option<Key>,
 }
 
@@ -75,14 +151,25 @@ where
     pub fn new<F, W>(value: T, duration: Duration, curve: Curve, builder: F) -> Self
     where
         F: Fn(&T) -> W + 'static,
-        W: Widget,
+        W: Widget + 'static,
     {
-        let builder = Rc::new(move |value: &T, ctx: &BuildContext| builder(value).to_element(ctx));
+        let builder = Rc::new(builder);
+        let element_builder = {
+            let builder = Rc::clone(&builder);
+            Rc::new(move |value: &T, ctx: &BuildContext| builder(value).to_element(ctx))
+        };
+        #[cfg(feature = "portable-guest")]
+        let portable_builder = {
+            let builder = Rc::clone(&builder);
+            Rc::new(move |value: &T| builder(value).boxed())
+        };
         Self {
             value,
             duration,
             curve,
-            builder,
+            builder: element_builder,
+            #[cfg(feature = "portable-guest")]
+            portable_builder,
             widget_key: None,
         }
     }
@@ -129,6 +216,39 @@ where
         StatefulElement::new_with_name(self, ctx, "ImplicitAnimatedBuilder", __key)
             .0
             .boxed()
+    }
+}
+
+impl<T> aimer_widget::PortableWidget for ImplicitAnimatedBuilder<T>
+where
+    T: Animatable + Clone + PartialEq + 'static,
+{
+    #[cfg(feature = "portable-guest")]
+    fn to_portable_node(
+        self,
+        ctx: &mut aimer_widget::portable::PortableBuildContext,
+        source: aimer_widget::portable::SourceFingerprint,
+    ) -> Result<
+        aimer_widget::portable::PortableNodeId,
+        aimer_widget::portable::PortableBuildError,
+    > {
+        let slot = ctx.slot_for(self.widget_key.as_ref(), source);
+        let value = self.value;
+        let duration = self.duration;
+        let curve = self.curve;
+        let portable_builder = self.portable_builder;
+        ctx.with_animation_state(
+            slot,
+            || PortableAnimationState::new(value.clone(), duration, curve),
+            |state, ctx| {
+                let (value, active) = state.update(value.clone(), duration, curve);
+                if active {
+                    ctx.request_frame();
+                }
+                let child = portable_builder(&value);
+                aimer_widget::PortableWidget::to_portable_node(child, ctx, source)
+            },
+        )
     }
 }
 
@@ -447,6 +567,123 @@ mod tests {
         ImplicitAnimatedBuilder::new(value, Duration::from_millis(100), Curve::Linear, |_| {
             TestWidget
         })
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn portable_lowering_emits_the_current_built_child() {
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+            PortableWidgetSchema,
+        };
+        use aimer_widget::portable::__anteros::WidgetDocumentView;
+        use aimer_widget::{ErrorWidget, PortableWidget};
+
+        let mut context = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 2_048).with_max_blob_bytes(128),
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap();
+        let root = ImplicitAnimatedBuilder::new(
+            1.0_f32,
+            Duration::from_millis(100),
+            Curve::Linear,
+            |_| ErrorWidget::new("child"),
+        )
+        .to_portable_node(
+            &mut context,
+            SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([7; 16])),
+        )
+        .unwrap();
+        let document = context.finish_document(root).unwrap();
+        let image = document.encode().unwrap();
+        let view = WidgetDocumentView::decode(&image, document.model_limits()).unwrap();
+
+        assert_eq!(
+            view.node(view.root_node()).unwrap().widget_type(),
+            <ErrorWidget as PortableWidgetSchema>::SCHEMA.widget().id(),
+        );
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn portable_target_changes_request_guest_animation_frames() {
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+        };
+        use aimer_widget::ErrorWidget;
+        use aimer_widget::PortableWidget;
+
+        let mut context = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 2_048).with_max_blob_bytes(128),
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap();
+        let source = SourceFingerprint::new(aimer_widget::portable::StableId128::from_bytes([
+            8; 16
+        ]));
+
+        let first = ImplicitAnimatedBuilder::new(
+            0.0_f32,
+            Duration::from_millis(100),
+            Curve::Linear,
+            |_| ErrorWidget::new("child"),
+        )
+        .to_portable_node(&mut context, source)
+        .unwrap();
+        context.finish_document(first).unwrap();
+
+        let second = ImplicitAnimatedBuilder::new(
+            1.0_f32,
+            Duration::from_millis(100),
+            Curve::Linear,
+            |_| ErrorWidget::new("child"),
+        )
+        .to_portable_node(&mut context, source)
+        .unwrap();
+        context.finish_document(second).unwrap();
+
+        assert!(context.has_async_work());
+        assert!(context.take_frame_request());
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn portable_animation_state_interpolates_at_frame_times() {
+        let start = AnimInstant::now();
+        let mut state = PortableAnimationState::new(0.0_f32, Duration::from_millis(100), Curve::Linear);
+
+        assert_eq!(
+            state.update_at(0.0, Duration::from_millis(100), Curve::Linear, start),
+            (0.0, false)
+        );
+        assert_eq!(
+            state.update_at(1.0, Duration::from_millis(100), Curve::Linear, start),
+            (0.0, true)
+        );
+
+        let (middle, active) = state.update_at(
+            1.0,
+            Duration::from_millis(100),
+            Curve::Linear,
+            start + Duration::from_millis(50),
+        );
+        assert!(active);
+        assert!((middle - 0.5).abs() < 0.01);
+
+        assert_eq!(
+            state.update_at(
+                1.0,
+                Duration::from_millis(100),
+                Curve::Linear,
+                start + Duration::from_millis(100),
+            ),
+            (1.0, false)
+        );
     }
 
     #[test]

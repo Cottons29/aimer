@@ -14,6 +14,7 @@ use std::time::{Duration, Instant, SystemTime};
 use aimer_inspector::InspectorServer;
 use anyhow::Context;
 use arboard::Clipboard;
+use colored::Colorize;
 use crossterm::event::Event;
 use crossterm::terminal;
 use tokio::runtime::Runtime;
@@ -21,16 +22,14 @@ use tokio::runtime::Runtime;
 use crate::commands::run::Device;
 use crate::console::hotkeys::{ConsoleAction, ConsolePane, map_key_event};
 use crate::console::stage::{StageBook, StageId, StageKind, StageProgress, StageStatus};
-use crate::console::state::{AppState, RunnerEvent, Status};
+use crate::console::state::{AppState, RunnerEvent, Status, strip_ansi};
 use crate::console::input;
 use crate::targets::Targets;
 use crate::tui::RawModeGuard;
 
 const SPINNERS: [&str; 10] = ["⠋", "⠙", "⠚", "⠞", "⠖", "⠦", "⠴", "⠲", "⠳", "⠓"];
-#[cfg(test)]
-const APPLICATION_TAIL_LINES: usize = 3;
-#[cfg(test)]
-const MAX_EXPANDED_LINES: usize = 200;
+const BUILD_LOCK_WAIT_PREFIX: &str = "Blocking waiting for file lock";
+
 
 /// State shared by the inline renderer and its input handler.
 pub struct InlineSession {
@@ -40,10 +39,11 @@ pub struct InlineSession {
     pub state: AppState,
     /// Retained stage summaries and expansion state.
     pub stages: StageBook,
-    /// Current spinner frame.
+    /// Current live-status spinner frame.
     pub frame: usize,
     hot_reload_enabled: bool,
     notice: Option<String>,
+    build_lock_wait: Option<String>,
 }
 
 impl InlineSession {
@@ -61,6 +61,7 @@ impl InlineSession {
             frame: 0,
             hot_reload_enabled,
             notice: None,
+            build_lock_wait: None,
         }
     }
 
@@ -102,6 +103,7 @@ impl InlineSession {
 
     /// Apply a lifecycle status and update the corresponding stage.
     pub fn apply_status(&mut self, status: Status) {
+        self.build_lock_wait = None;
         self.state.apply_status(status.clone());
         let now = Instant::now();
 
@@ -152,6 +154,7 @@ impl InlineSession {
         self.state.status = Status::Compiling(0);
         self.stages = StageBook::new();
         self.notice("Hot restart requested".to_string());
+        self.build_lock_wait = None;
     }
 
     /// Add a one-line notice to the current application-visible transcript.
@@ -160,6 +163,9 @@ impl InlineSession {
     }
 
     fn push_build_detail(&mut self, message: String) {
+        if message.trim_start().starts_with(BUILD_LOCK_WAIT_PREFIX) {
+            self.build_lock_wait = Some(message.clone());
+        }
         self.state.push_build_log(message.clone());
         let stage = self.ensure_detail_stage(self.build_kind());
         let _ = self.stages.append_detail(stage, message);
@@ -206,6 +212,10 @@ pub struct InlineRenderer<W> {
     committed_stages: Vec<StageId>,
     emitted_details: HashMap<StageId, usize>,
     live_region_active: bool,
+    // A terminal resize can reflow any live line into several physical rows.
+    live_lines: Vec<String>,
+    last_width: usize,
+    separator_pending: bool,
     started: bool,
 }
 
@@ -218,27 +228,36 @@ impl<W: Write> InlineRenderer<W> {
             committed_stages: Vec::new(),
             emitted_details: HashMap::new(),
             live_region_active: false,
+            live_lines: Vec::new(),
+            last_width: 1,
+            separator_pending: false,
             started: false,
         }
     }
 
     /// Forget which stage summaries have already been emitted to scrollback.
     ///
-    /// The managed region is still cleared on the next render. This is used
-    /// when a hot restart replaces the session with a fresh stage sequence.
+    /// The managed region is still cleared on the next render, followed by a
+    /// separator before the fresh stage sequence begins.
     pub fn reset(&mut self) {
         self.committed_stages.clear();
         self.emitted_details.clear();
+        self.separator_pending = true;
     }
 
     /// Render one frame at the supplied terminal width.
     ///
     /// Completed summaries and newly visible details are appended as ordinary
-    /// terminal lines. Only the two-line live region is rewritten, which keeps
-    /// the transcript in scrollback and avoids full-screen redraws.
+    /// terminal lines. Only the live status area — the optional application-log
+    /// separator, active stage, and navbar — is rewritten.
     pub fn render(&mut self, session: &InlineSession, width: usize) -> io::Result<()> {
         let width = width.max(1);
-        self.clear_live_region()?;
+        self.clear_live_region(width)?;
+
+        if self.separator_pending {
+            self.append_line(separator_line(width), width)?;
+            self.separator_pending = false;
+        }
 
         if !self.started {
             self.append_line(format!("◆ Aimer · {}", session.target), width)?;
@@ -260,7 +279,7 @@ impl<W: Write> InlineRenderer<W> {
             .map(|stage| {
                 (
                     stage.id(),
-                    fit_line(render_stage_summary(stage, session.frame, now, false), width),
+                    fit_line(render_stage_summary(stage, now, false), width),
                 )
             })
             .collect();
@@ -269,12 +288,21 @@ impl<W: Write> InlineRenderer<W> {
             self.committed_stages.push(id);
         }
 
-        self.append_expanded_details(session, width)?;
+        let application_details_present = self.append_expanded_details(session, width)?;
+        let application_separator = application_details_present.then(|| separator_line(width));
+        if let Some(separator) = &application_separator {
+            write!(self.writer, "\r\x1b[2K{separator}\n")?;
+        }
 
         let live_stage = render_active_stage(session, width);
         let navbar = render_navbar(session, width);
         write!(self.writer, "\r\x1b[2K{live_stage}\n\r\x1b[2K{navbar}")?;
         self.writer.flush()?;
+        self.live_lines = match application_separator {
+            Some(separator) => vec![separator, live_stage, navbar],
+            None => vec![live_stage, navbar],
+        };
+        self.last_width = width;
         self.live_region_active = true;
         Ok(())
     }
@@ -282,16 +310,27 @@ impl<W: Write> InlineRenderer<W> {
     /// Leave the terminal on a clean line before returning to the shell.
     pub fn finish(&mut self) -> io::Result<()> {
         if self.live_region_active {
-            self.writer.write_all(b"\r\x1b[2K\x1b[1A\r\x1b[2K\r\n")?;
+            let width = terminal::size()
+                .map(|(width, _)| width as usize)
+                .unwrap_or(self.last_width);
+            self.clear_live_region(width)?;
+            self.writer.write_all(b"\r\n")?;
             self.writer.flush()?;
-            self.live_region_active = false;
         }
         Ok(())
     }
 
-    fn clear_live_region(&mut self) -> io::Result<()> {
+    fn clear_live_region(&mut self, width: usize) -> io::Result<()> {
         if self.live_region_active {
-            self.writer.write_all(b"\r\x1b[2K\x1b[1A\r\x1b[2K")?;
+            let rows = self
+                .live_lines
+                .iter()
+                .map(|line| physical_rows(line, width))
+                .sum::<usize>();
+            self.writer.write_all(b"\r\x1b[2K")?;
+            for _ in 1..rows {
+                self.writer.write_all(b"\x1b[1A\r\x1b[2K")?;
+            }
             self.live_region_active = false;
         }
         Ok(())
@@ -302,11 +341,16 @@ impl<W: Write> InlineRenderer<W> {
         write!(self.writer, "\r\x1b[2K{line}\n")
     }
 
+    fn append_empty(&mut self, width: usize) -> io::Result<()> {
+        self.append_line(String::new(), width)
+    }
+
     fn append_expanded_details(
         &mut self,
         session: &InlineSession,
         width: usize,
-    ) -> io::Result<()> {
+    ) -> io::Result<bool> {
+        let mut application_details_present = false;
         for stage in session.stages.stages() {
             if stage.kind() != &StageKind::Application
                 && !stage.is_expanded()
@@ -321,12 +365,17 @@ impl<W: Write> InlineRenderer<W> {
                 .get(&stage.id())
                 .copied()
                 .unwrap_or_default();
+            let is_application = stage.kind() == &StageKind::Application;
+            if is_application && !details.is_empty() {
+                application_details_present = true;
+            }
+            let prefix = detail_prefix(stage.kind());
             for detail in details.iter().skip(emitted) {
-                self.append_line(format!("    {detail}"), width)?;
+                self.append_line(format!("{prefix}{detail}"), width)?;
             }
             self.emitted_details.insert(stage.id(), details.len());
         }
-        Ok(())
+        Ok(application_details_present)
     }
 
     /// Return the wrapped writer after the renderer is no longer needed.
@@ -336,29 +385,59 @@ impl<W: Write> InlineRenderer<W> {
     }
 }
 
+fn physical_rows(line: &str, width: usize) -> usize {
+    // The cursor is at the end of the last live line, so every wrapped row
+    // above it must be cleared before the next frame starts at the top.
+    let width = width.max(1);
+    strip_ansi(line).chars().count().saturating_sub(1) / width + 1
+}
+
+fn separator_line(width: usize) -> String {
+    "─".repeat(width).dimmed().to_string()
+}
+
 #[cfg(test)]
 fn render_lines(session: &InlineSession, width: usize) -> Vec<String> {
     render_managed_lines(session, width, &[])
 }
 
 fn render_active_stage(session: &InlineSession, width: usize) -> String {
-    let mut line = if let Some(id) = session.stages.active()
+    let line = if let Some(message) = &session.build_lock_wait {
+        format!(
+            "  {} {}",
+            SPINNERS[session.frame % SPINNERS.len()],
+            message.yellow().bold()
+        )
+    } else if let Some(id) = session.stages.active()
         && let Some(stage) = session.stages.stage(id)
     {
-        let selected = session.stages.selected() == Some(id);
-        let mut line = render_stage_summary(stage, session.frame, Instant::now(), selected);
-        line.push_str(" · ");
-        line.push_str(status_label(&session.state.status));
-        line
+        let indicator = match stage.status() {
+            StageStatus::Running => SPINNERS[session.frame % SPINNERS.len()],
+            StageStatus::Succeeded => "✓",
+            StageStatus::Failed => "✗",
+            StageStatus::Cancelled => "⊘",
+        };
+        let elapsed = stage
+            .timing()
+            .elapsed()
+            .unwrap_or_else(|| stage.timing().elapsed_at(Instant::now()));
+        format!(
+            "  {indicator} {} {}",
+            styled_stage_label(stage.kind().label()),
+            format_duration(elapsed)
+        )
     } else {
         format!("  status: {}", status_label(&session.state.status))
     };
-
-    if let Some(notice) = &session.notice {
-        line.push_str(" · ");
-        line.push_str(notice);
-    }
     fit_line(line, width)
+}
+
+fn detail_prefix(kind: &StageKind) -> &'static str {
+    if kind == &StageKind::Application {
+        ""
+    } else {
+        "    "
+    }
 }
 
 fn render_navbar(session: &InlineSession, width: usize) -> String {
@@ -366,8 +445,8 @@ fn render_navbar(session: &InlineSession, width: usize) -> String {
     if session.hot_reload_enabled {
         navbar.push_str("r hot-reload · ");
     }
-    navbar.push_str("Shift+R hot-restart · Enter expand · Shift+Q quit");
-    fit_line(navbar, width)
+    navbar.push_str("⇧R hot-restart · ⏎ expand · ⇧Q quit");
+    fit_line(navbar, width).dimmed().to_string()
 }
 
 #[cfg(test)]
@@ -387,7 +466,7 @@ fn render_managed_lines(
             continue;
         }
         let selected = session.stages.selected() == Some(stage.id());
-        lines.push(render_stage_summary(stage, session.frame, now, selected));
+        lines.push(render_stage_summary(stage, now, selected));
 
         let show_tail = stage.kind() == &StageKind::Application
             && stage.status() == StageStatus::Running
@@ -403,7 +482,7 @@ fn render_managed_lines(
                 lines.push(format!("    ... {} earlier lines", start));
             }
             for detail in detail_lines.into_iter().skip(start) {
-                lines.push(format!("    {detail}"));
+                lines.push(format!("{}{}", detail_prefix(stage.kind()), detail));
             }
         }
     }
@@ -420,13 +499,12 @@ fn render_managed_lines(
 
 fn render_stage_summary(
     stage: &crate::console::stage::Stage,
-    frame: usize,
     now: Instant,
     selected: bool,
 ) -> String {
     let marker = if selected { "▸" } else { " " };
     let icon = match stage.status() {
-        StageStatus::Running => SPINNERS[frame % SPINNERS.len()],
+        StageStatus::Running => "□",
         StageStatus::Succeeded => "✓",
         StageStatus::Failed => "✗",
         StageStatus::Cancelled => "⊘",
@@ -442,12 +520,17 @@ fn render_stage_summary(
         .map(|percent| format!(" · {percent}%"))
         .unwrap_or_default();
     format!(
-        "{marker} {icon} {:<28} {}{} · {} lines",
-        stage.kind().label(),
+        "{marker} {icon} {} {}{} · {} lines",
+        styled_stage_label(stage.kind().label()),
         format_duration(elapsed),
         progress,
         detail_lines,
     )
+}
+
+fn styled_stage_label(label: &str) -> String {
+    let padding = " ".repeat(28usize.saturating_sub(label.chars().count()));
+    format!("{}{}", label.bright_cyan().bold(), padding)
 }
 
 fn detail_text_lines(stage: &crate::console::stage::Stage) -> Vec<String> {
@@ -675,6 +758,11 @@ fn copy_focused_pane(session: &InlineSession) {
 }
 
 #[cfg(test)]
+const APPLICATION_TAIL_LINES: usize = 3;
+#[cfg(test)]
+const MAX_EXPANDED_LINES: usize = 200;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -693,8 +781,13 @@ mod tests {
         session.stages.append_detail(id, "cargo check output").unwrap();
         session.stages.finish(id, Instant::now()).unwrap();
 
+        colored::control::set_override(true);
         let lines = render_lines(&session, 120);
-        assert!(lines.iter().any(|line| line.contains("✓ Compile")));
+        let expected_label = "Compile".bright_cyan().bold().to_string();
+        colored::control::unset_override();
+
+        assert!(lines.iter().any(|line| strip_ansi(line).contains("✓ Compile")));
+        assert!(lines.iter().any(|line| line.contains(&expected_label)));
         assert!(!lines.iter().any(|line| line.contains("cargo check output")));
     }
 
@@ -718,7 +811,11 @@ mod tests {
         session.stages.fail(id, Instant::now()).unwrap();
 
         let lines = render_lines(&session, 120);
-        assert!(lines.iter().any(|line| line.contains("✗ Compile")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| strip_ansi(line).contains("✗ Compile"))
+        );
         assert!(lines.iter().any(|line| line.contains("error: failed")));
     }
 
@@ -752,23 +849,90 @@ mod tests {
 
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("window ready"));
+        assert!(output.contains("\r\x1b[2Kwindow ready\n"));
+        assert!(!output.contains("\r\x1b[2K    window ready\n"));
     }
 
     #[test]
-    fn active_stage_spinner_is_rendered_with_the_stage_not_status_controls() {
+    fn build_lock_wait_is_rendered_until_compile_progress_arrives() {
+        let mut session = InlineSession::new(&device());
+        session.apply_event(RunnerEvent::BuildLog(
+            "Blocking waiting for file lock on build directory".into(),
+        ));
+
+        let mut output = Vec::new();
+        colored::control::set_override(true);
+        {
+            let mut renderer = InlineRenderer::new(&mut output);
+            renderer.render(&session, 120).unwrap();
+        }
+        let first_frame_end = output.len();
+
+        session.apply_status(Status::Compiling(1));
+        {
+            let mut renderer = InlineRenderer::new(&mut output);
+            renderer.render(&session, 120).unwrap();
+        }
+
+        let expected_status = "Blocking waiting for file lock on build directory"
+            .yellow()
+            .bold()
+            .to_string();
+        colored::control::unset_override();
+        let first_frame_raw = String::from_utf8_lossy(&output[..first_frame_end]);
+        let first_frame = strip_ansi(&String::from_utf8_lossy(&output[..first_frame_end]));
+        let second_frame = strip_ansi(&String::from_utf8_lossy(&output[first_frame_end..]));
+        assert!(first_frame.contains("⠋ Blocking waiting for file lock on build directory"));
+        assert!(first_frame_raw.contains(&expected_status));
+        assert!(second_frame.contains("⠋ Compile"));
+        assert!(!second_frame.contains("Blocking waiting for file lock"));
+    }
+
+    #[test]
+    fn active_stage_status_uses_a_spinner_and_only_stage_timing() {
         let mut session = InlineSession::new(&device());
         session.apply_status(Status::Compiling(10));
 
         let mut output = Vec::new();
         let mut renderer = InlineRenderer::new(&mut output);
+        colored::control::set_override(true);
         renderer.render(&session, 120).unwrap();
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("\r\x1b[2K▸ ⠋ Compile"));
-        assert!(!output.contains("status: compiling · ⠋ Compile"));
-        assert!(
-            output.find("▸ ⠋ Compile").unwrap() < output.find("Shift+R hot-restart").unwrap()
-        );
+        let expected_label = "Compile".bright_cyan().bold().to_string();
+        let expected_navbar = "  ↑/↓ select · ⇧R hot-restart · ⏎ expand · ⇧Q quit"
+            .dimmed()
+            .to_string();
+        colored::control::unset_override();
+
+        assert!(output.contains(&format!("\r\x1b[2K  ⠋ {}", expected_label)));
+        assert!(!output.contains("▸ □ Compile"));
+        assert!(!output.contains("lines"));
+        assert!(!output.contains(" · compiling"));
+        assert!(output.contains(&expected_navbar));
+    }
+
+    #[test]
+    fn application_log_is_separated_from_the_live_status_row() {
+        let mut session = InlineSession::new(&device());
+        session.apply_status(Status::Running);
+        session.apply_event(RunnerEvent::AppLog("Tab pressed".into()));
+        session.apply_event(RunnerEvent::AppLog("Current route: Home".into()));
+
+        let mut output = Vec::new();
+        let mut renderer = InlineRenderer::new(&mut output);
+        renderer.render(&session, 80).unwrap();
+        renderer.render(&session, 80).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let output_without_style = strip_ansi(&output);
+        let separator = "─".repeat(80);
+        let separator_at = output_without_style
+            .find(&separator)
+            .expect("application separator");
+        assert_eq!(output_without_style.matches(&separator).count(), 2);
+        assert!(separator_at > output_without_style.find("Current route: Home").unwrap());
+        assert!(separator_at < output_without_style.find("⠋ Application").unwrap());
     }
 
     #[test]
@@ -788,7 +952,7 @@ mod tests {
 
         let output = String::from_utf8(output).unwrap();
         assert!(!output.contains("r hot-reload"));
-        assert!(output.contains("Shift+R hot-restart"));
+        assert!(output.contains("⇧R hot-restart"));
     }
 
     #[test]
@@ -831,6 +995,62 @@ mod tests {
     }
 
     #[test]
+    fn narrowing_the_terminal_clears_reflowed_live_rows_before_redrawing() {
+        let session = InlineSession::new(&device());
+        let mut output = Vec::new();
+        let mut renderer = InlineRenderer::new(&mut output);
+
+        renderer.render(&session, 120).unwrap();
+        renderer.render(&session, 40).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert_eq!(output.matches("\x1b[1A").count(), 2);
+    }
+
+    #[test]
+    fn a_hot_restart_starts_the_new_transcript_after_a_separator() {
+        let mut session = InlineSession::new(&device());
+        session.apply_status(Status::Compiling(10));
+        let mut output = Vec::new();
+        let mut renderer = InlineRenderer::new(&mut output);
+
+        renderer.render(&session, 80).unwrap();
+        session.reset_for_restart();
+        renderer.reset();
+        renderer.render(&session, 80).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let output_without_style = strip_ansi(&output);
+        let separator = "─".repeat(80);
+        let separator_at = output_without_style
+            .find(&separator)
+            .expect("restart separator");
+        assert_eq!(output_without_style.matches(&separator).count(), 1);
+        assert!(separator_at < output_without_style.rfind("status: compiling").unwrap());
+    }
+
+    #[test]
+    fn separators_are_dimmed() {
+        let mut session = InlineSession::new(&device());
+        session.apply_status(Status::Running);
+        session.apply_event(RunnerEvent::AppLog("window ready".into()));
+
+        let mut output = Vec::new();
+        let mut renderer = InlineRenderer::new(&mut output);
+        colored::control::set_override(true);
+        renderer.render(&session, 80).unwrap();
+        session.reset_for_restart();
+        renderer.reset();
+        renderer.render(&session, 80).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let expected_separator = "─".repeat(80).dimmed().to_string();
+        colored::control::unset_override();
+
+        assert_eq!(output.matches(&expected_separator).count(), 2);
+    }
+
+    #[test]
     fn completed_stage_summary_is_emitted_to_scrollback_once() {
         let mut session = InlineSession::new(&device());
         let id = session.stages.start(StageKind::Compile, Instant::now());
@@ -842,7 +1062,7 @@ mod tests {
         renderer.render(&session, 120).unwrap();
 
         let output = String::from_utf8(output).unwrap();
-        assert_eq!(output.matches("✓ Compile").count(), 1);
+        assert_eq!(strip_ansi(&output).matches("✓ Compile").count(), 1);
     }
 
     #[test]
@@ -858,7 +1078,7 @@ mod tests {
         renderer.render(&session, 120).unwrap();
 
         let output = String::from_utf8(output).unwrap();
-        assert_eq!(output.matches("✗ Compile").count(), 1);
+        assert_eq!(strip_ansi(&output).matches("✗ Compile").count(), 1);
         assert_eq!(output.matches("error: failed").count(), 1);
     }
 }

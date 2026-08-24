@@ -11,7 +11,7 @@
 
 #[cfg(target_os = "ios")]
 mod ios_haptic;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
 mod web_haptic;
 
 
@@ -224,5 +224,4 @@ mod capability_tests {
         }
     }
 }
-
 

@@ -56,7 +56,11 @@ pub use capability::{
     CapabilityDescriptor, CapabilityEncoder, CapabilityError, CapabilityGeneration,
     CapabilityLimits, CapabilityProvider, CapabilityRegistry, CapabilityRegistryError,
     CapabilityResult, CapabilityStagingClass, CapabilityTransport, GenerationId,
-    StagedCapability,
+    PORTABLE_HTTP_CAPABILITY_ABI_MAJOR, PORTABLE_HTTP_CAPABILITY_NAME,
+    PORTABLE_HTTP_MAX_REQUEST_BYTES, PORTABLE_HTTP_MAX_RESPONSE_BYTES,
+    PORTABLE_HTTP_METHOD_GET, PORTABLE_HTTP_RESPONSE_OVERHEAD_BYTES,
+    StagedCapability, portable_http_capability_id, portable_http_contract_fingerprint,
+    portable_http_max_body_bytes,
     capability_contract_fingerprint,
 };
 #[cfg(target_arch = "wasm32")]
@@ -3176,8 +3180,10 @@ mod portable_schema_metadata_tests {
         PROPERTY_CONTAINER_COLOR, PROPERTY_CONTAINER_HEIGHT,
         PROPERTY_CONTAINER_WIDTH, PROPERTY_CONTAINER_PADDING, PROPERTY_CONTAINER_MARGIN,
         PROPERTY_CONTAINER_BOX_DECORATION, PROPERTY_TEXT_ALIGN, PROPERTY_TEXT_CONTENT,
-        PROPERTY_TEXT_STYLE, ValueSchemaMetadata, ValueTypeId,
-        Version, WIDGET_CONTAINER, WIDGET_TEXT, WidgetDocument, WidgetNode, WidgetProperty,
+        PROPERTY_SIZED_BOX_HEIGHT, PROPERTY_SIZED_BOX_WIDTH, PROPERTY_TEXT_STYLE,
+        ValueSchemaMetadata, ValueTypeId,
+        Version, WIDGET_CONTAINER, WIDGET_SIZED_BOX, WIDGET_TEXT, WidgetDocument, WidgetNode,
+        WidgetProperty,
         WidgetSchemaId, WidgetSchemaMetadata,
         stable_schema_hash64,
         validate_portable_widget_schema_metadata,
@@ -3215,13 +3221,13 @@ mod portable_schema_metadata_tests {
         assert_property(
             container,
             PROPERTY_CONTAINER_WIDTH,
-            PropertyValueKind::F64,
+            PropertyValueKind::BlobRef,
             PropertyPresence::Optional,
         );
         assert_property(
             container,
             PROPERTY_CONTAINER_HEIGHT,
-            PropertyValueKind::F64,
+            PropertyValueKind::BlobRef,
             PropertyPresence::Optional,
         );
         assert_property(
@@ -3249,6 +3255,20 @@ mod portable_schema_metadata_tests {
             PropertyPresence::Optional,
         );
 
+        let sized_box = schema(WIDGET_SIZED_BOX);
+        assert_property(
+            sized_box,
+            PROPERTY_SIZED_BOX_WIDTH,
+            PropertyValueKind::BlobRef,
+            PropertyPresence::Optional,
+        );
+        assert_property(
+            sized_box,
+            PROPERTY_SIZED_BOX_HEIGHT,
+            PropertyValueKind::BlobRef,
+            PropertyPresence::Optional,
+        );
+
         let text = schema(WIDGET_TEXT);
         assert_eq!(text.children(), ChildCardinality::none());
         assert_eq!(text.properties().len(), 3);
@@ -3270,6 +3290,13 @@ mod portable_schema_metadata_tests {
             PropertyValueKind::BlobRef,
             PropertyPresence::Optional,
         );
+    }
+
+    #[test]
+    fn identical_linked_schema_metadata_is_idempotent() {
+        let schema = *schema(WIDGET_TEXT);
+
+        assert!(validate_portable_widget_schema_metadata(&[schema, schema]).is_ok());
     }
 
     #[test]

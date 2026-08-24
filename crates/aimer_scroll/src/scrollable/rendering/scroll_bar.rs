@@ -6,8 +6,10 @@ use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_widget::base::{BuildContext, Color, Colors};
+use aimer_widget::portable::__anteros::{WidgetDocumentView, WidgetNodeView};
+use aimer_widget::portable::PortableMaterializeError;
 use aimer_widget::{AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable,
-    StatefulElement, StatefulWidget, State, StateUpdater, VisitorElement, Widget};
+    AnyWidget, StatefulElement, StatefulWidget, State, StateUpdater, VisitorElement, Widget};
 
 use crate::scrollable::constants::{SCROLLBAR_HIDE_DURATION_MS, SCROLLBAR_SHOW_DURATION_MS};
 use crate::scrollable::controller::{DragMode, ScrollState};
@@ -62,7 +64,10 @@ pub struct ScrollButton {
 }
 
 #[derive(Clone, Default, aimer_macro::PortableWidget)]
-#[portable_widget(id = "aimer_scroll::scrollable::ScrollBar", schema_only)]
+#[portable_widget(
+    id = "aimer_scroll::scrollable::ScrollBar",
+    materializer = materialize_portable_scroll_bar
+)]
 pub struct ScrollBar {
     #[portable_skip]
     pub track: ScrollTrack,
@@ -76,6 +81,20 @@ pub struct ScrollBar {
     ctrl: Option<Rc<ScrollState>>,
     #[portable_skip]
     axis: ScrollAxis,
+}
+
+fn materialize_portable_scroll_bar(
+    _document: &WidgetDocumentView<'_>,
+    _node: WidgetNodeView<'_>,
+    children: Vec<AnyWidget>,
+) -> Result<AnyWidget, PortableMaterializeError> {
+    if !children.is_empty() {
+        return Err(PortableMaterializeError::InvalidChildCount {
+            expected: 0,
+            actual: children.len(),
+        });
+    }
+    Ok(ScrollBar::default().boxed())
 }
 
 impl ScrollBar {

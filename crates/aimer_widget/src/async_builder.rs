@@ -363,6 +363,90 @@ where
     T: 'static,
     E: 'static,
 {
+    #[cfg(feature = "portable-guest")]
+    fn to_portable_node(
+        self,
+        ctx: &mut crate::portable::PortableBuildContext,
+        source: crate::portable::SourceFingerprint,
+    ) -> Result<crate::portable::PortableNodeId, crate::portable::PortableBuildError> {
+        let widget_key = Widget::key(&self);
+        let request_key = self.request_key;
+        let future_factory = self.future_factory.factory;
+        let snapshot_builder = self.snapshot_builder.builder;
+        let slot = ctx.slot_for(widget_key.as_ref(), source);
+
+        // AsyncBuilder is a structural widget in the portable tree: only its
+        // current snapshot child crosses AWIR. The future and the typed
+        // snapshot stay inside the generation-local guest runtime, just as
+        // they do inside the native retained element.
+        ctx.with_animation_state(
+            slot,
+            || {
+                Rc::new(RefCell::new(PortableAsyncBuilderState {
+                    request_key: request_key.clone(),
+                    snapshot: AsyncSnapshot::Waiting,
+                    task_id: None,
+                }))
+            },
+            |shared_state, ctx| {
+                let callback_id = source.identity();
+                let mut state = shared_state.borrow_mut();
+                if state.request_key != request_key {
+                    if let Some(task_id) = state.task_id.take() {
+                        ctx.cancel_async_task(task_id);
+                    }
+                    state.request_key = request_key.clone();
+                    state.snapshot = AsyncSnapshot::Waiting;
+                }
+
+                if state.task_id.is_none()
+                    && matches!(state.snapshot, AsyncSnapshot::Waiting)
+                {
+                    let future = (future_factory)();
+                    let task_state = Rc::clone(shared_state);
+                    let task = Box::pin(async move {
+                        let result = future.await;
+                        let mut state = task_state.borrow_mut();
+                        state.snapshot = match result {
+                            Ok(data) => AsyncSnapshot::Data(data),
+                            Err(error) => AsyncSnapshot::Error(error),
+                        };
+                        state.task_id = None;
+                    });
+                    state.task_id = Some(
+                        ctx.start_async_task(
+                            callback_id,
+                            crate::portable::__anteros::AsyncCallbackSchemaMetadata::new(
+                                crate::portable::__anteros::Version::new(1, 0),
+                                1,
+                                0,
+                            ),
+                            task,
+                        )
+                        .map_err(|error| {
+                            crate::portable::PortableBuildError::Callback(
+                                crate::portable::PortableCallbackError::CallbackFailed {
+                                    id: callback_id,
+                                    message: error.to_string(),
+                                },
+                            )
+                        })?,
+                    );
+                }
+
+                let child = (snapshot_builder)(&state.snapshot);
+                drop(state);
+                child.into_portable_node(ctx, source.child(0))
+            },
+        )
+    }
+}
+
+#[cfg(feature = "portable-guest")]
+struct PortableAsyncBuilderState<K, T, E> {
+    request_key: K,
+    snapshot: AsyncSnapshot<T, E>,
+    task_id: Option<crate::portable::PortableTaskId>,
 }
 
 struct AsyncFrame<F, Fut, B, T, E> {
@@ -990,5 +1074,105 @@ mod tests {
 
         assert_eq!(drops.get(), 1);
         assert_eq!(venus.task_count(), 0);
+    }
+}
+
+#[cfg(all(test, feature = "portable-guest"))]
+mod portable_tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use aimer_anteros::{
+        PROPERTY_TEXT_CONTENT, Version, WIDGET_TEXT, WidgetDocumentView, WidgetProperty,
+    };
+
+    use super::{AsyncBuilder, AsyncSnapshot};
+    use crate::base::BuildContext;
+    use crate::portable::{
+        PortableBuildContext, PortableBuildError, PortableLimits, PortableNodeId,
+        PortableWidgetLimits, SourceFingerprint, StableId128,
+    };
+    use crate::{AnyElement, AnyWidget, PortableWidget, Widget};
+
+    struct PortableText(&'static str);
+
+    impl Widget for PortableText {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            panic!("portable async test must not enter native element construction")
+        }
+    }
+
+    impl PortableWidget for PortableText {
+        fn to_portable_node(
+            self,
+            ctx: &mut PortableBuildContext,
+            source: SourceFingerprint,
+        ) -> Result<PortableNodeId, PortableBuildError> {
+            let content = ctx.push_string(self.0)?;
+            ctx.push_node(
+                WIDGET_TEXT,
+                Version::new(1, 0),
+                None,
+                source,
+                &[WidgetProperty::new(PROPERTY_TEXT_CONTENT, content)],
+                &[],
+            )
+        }
+    }
+
+    fn context() -> PortableBuildContext {
+        PortableBuildContext::new(
+            7,
+            0,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 2_048),
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap()
+    }
+
+    fn source() -> SourceFingerprint {
+        SourceFingerprint::new(StableId128::from_bytes([0xAC; 16]))
+    }
+
+    #[test]
+    fn portable_async_builder_rebuilds_its_snapshot_without_restarting_the_request() {
+        let launches = Rc::new(Cell::new(0));
+        let make_widget = || {
+            let launches = Rc::clone(&launches);
+            AsyncBuilder::new()
+                .future(move || {
+                    launches.set(launches.get() + 1);
+                    async { Ok::<_, &'static str>("ready") }
+                })
+                .child(|snapshot| {
+                    let label = match snapshot {
+                        AsyncSnapshot::Waiting => "waiting",
+                        AsyncSnapshot::Data(value) => value,
+                        AsyncSnapshot::Error(_) => "error",
+                    };
+                    AnyWidget::erase(PortableText(label))
+                })
+        };
+
+        let mut context = context();
+        let first = make_widget()
+            .to_portable_node(&mut context, source())
+            .unwrap();
+        context.finish_document(first).unwrap();
+        assert_eq!(launches.get(), 1);
+        assert_eq!(context.async_task_count(), 1);
+
+        context.run_async_microtasks();
+        assert!(context.take_rebuild_request());
+        assert_eq!(context.async_task_count(), 0);
+
+        let second = make_widget()
+            .to_portable_node(&mut context, source())
+            .unwrap();
+        let document = context.finish_document(second).unwrap();
+        let bytes = document.encode().unwrap();
+        let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
+        assert_eq!(view.string(0), Some("ready"));
+        assert_eq!(launches.get(), 1);
     }
 }

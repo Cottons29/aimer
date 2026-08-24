@@ -11,6 +11,10 @@ use aimer_events::pointer::{PointerInfo, PointerSource};
 use aimer_events::window::request_animation_frame;
 use aimer_utils::callback::{Callback, CallbackExecutor};
 use aimer_widget::base::BuildContext;
+use aimer_widget::portable::__anteros::{PropertyId, WidgetDocumentView, WidgetNodeView};
+use aimer_widget::portable::{
+    PortableMaterializeError, optional_materialized_property, required_materialized_property,
+};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
     Rebuildable, VisitorElement, Widget,
@@ -77,10 +81,11 @@ struct CallbackRule {
 /// # }
 /// ```
 #[derive(aimer_widget::PortableWidget)]
-#[portable_widget(id = "aimer_svg::Svg", schema_only)]
+#[portable_widget(id = "aimer_svg::Svg", materializer = materialize_portable_svg)]
 pub struct Svg {
     #[portable_skip]
     document: SvgDocument,
+    source: String,
     width: Option<Dimension>,
     height: Option<Dimension>,
     #[portable_skip]
@@ -99,8 +104,10 @@ impl Svg {
     /// The intrinsic viewport determines its size, and no style or callback
     /// rules are installed.
     pub fn new(document: SvgDocument) -> Self {
+        let source = document.source().to_owned();
         Self {
             document,
+            source,
             width: None,
             height: None,
             styles: Vec::new(),
@@ -242,6 +249,42 @@ impl Svg {
         });
         Ok(self)
     }
+}
+
+const PROPERTY_SVG_SOURCE: PropertyId =
+    PropertyId::from_canonical_name("aimer.property:aimer_svg::Svg:source");
+const PROPERTY_SVG_WIDTH: PropertyId =
+    PropertyId::from_canonical_name("aimer.property:aimer_svg::Svg:width");
+const PROPERTY_SVG_HEIGHT: PropertyId =
+    PropertyId::from_canonical_name("aimer.property:aimer_svg::Svg:height");
+
+fn materialize_portable_svg(
+    document: &WidgetDocumentView<'_>,
+    node: WidgetNodeView<'_>,
+    children: Vec<AnyWidget>,
+) -> Result<AnyWidget, PortableMaterializeError> {
+    if !children.is_empty() {
+        return Err(PortableMaterializeError::InvalidChildCount {
+            expected: 0,
+            actual: children.len(),
+        });
+    }
+    let source = required_materialized_property::<String>(document, &node, PROPERTY_SVG_SOURCE)?;
+    let svg_document = SvgDocument::from_svg(source).map_err(|_| {
+        PortableMaterializeError::InvalidPropertyValue {
+            property: PROPERTY_SVG_SOURCE,
+        }
+    })?;
+    let width = optional_materialized_property::<Dimension>(document, &node, PROPERTY_SVG_WIDTH)?;
+    let height = optional_materialized_property::<Dimension>(document, &node, PROPERTY_SVG_HEIGHT)?;
+    let mut widget = Svg::new(svg_document);
+    if let Some(width) = width {
+        widget = widget.width(width);
+    }
+    if let Some(height) = height {
+        widget = widget.height(height);
+    }
+    Ok(widget.boxed())
 }
 
 impl Widget for Svg {
@@ -545,8 +588,10 @@ impl RawSvgAsset {
         match self.loader.borrow().state() {
             SvgLoadState::Loading => {}
             SvgLoadState::Ready(document) => {
+                let source = document.source().to_owned();
                 let svg = Svg {
                     document,
+                    source,
                     width: self.width,
                     height: self.height,
                     styles: self.styles.clone(),

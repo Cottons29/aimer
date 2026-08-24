@@ -7,11 +7,6 @@ use aimer::native::haptic::{HapticPattern, Haptics};
 use aimer::style::{FontWeight, TextDecoration, TextStyle, Theme, ThemeData};
 use aimer::*;
 
-#[cfg(feature = "portable-guest")]
-use aimer::portable::{
-    AimerReflectionType, DecodeError, Decoder, EncodeError, Encoder, FieldDescriptor, FieldKind,
-    PortableApply, PortableEncode, StableId128, TypeSchema,
-};
 
 #[widget(Stateful)]
 pub struct SameLookingSection {
@@ -21,65 +16,6 @@ pub struct SameLookingSection {
 pub struct SameLookingSectionState {
     current_index: usize,
     state: StateUpdater<Self>,
-}
-
-#[cfg(feature = "portable-guest")]
-const SAME_LOOKING_SECTION_STATE_FIELDS: &[FieldDescriptor] = &[
-    FieldDescriptor::new("current_index", "usize", FieldKind::Retained),
-    FieldDescriptor::new("state", "StateUpdater<SameLookingSectionState>", FieldKind::Fresh),
-];
-
-#[cfg(feature = "portable-guest")]
-const SAME_LOOKING_SECTION_STATE_SCHEMA: TypeSchema = TypeSchema::new(
-    "SameLookingSectionState",
-    StableId128::from_path(
-        "aimer.type.v1",
-        "website::components::same_looking::SameLookingSectionState",
-    ),
-    SAME_LOOKING_SECTION_STATE_FIELDS,
-);
-
-#[cfg(feature = "portable-guest")]
-impl AimerReflectionType for SameLookingSectionState {
-    const TYPE_ID: StableId128 = StableId128::from_path(
-        "aimer.type.v1",
-        "website::components::same_looking::SameLookingSectionState",
-    );
-
-    fn schema() -> &'static TypeSchema {
-        &SAME_LOOKING_SECTION_STATE_SCHEMA
-    }
-}
-
-#[cfg(feature = "portable-guest")]
-impl PortableEncode for SameLookingSectionState {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
-        encoder.nested(|encoder| {
-            encoder.field(&SAME_LOOKING_SECTION_STATE_FIELDS[0], |encoder| {
-                self.current_index.encode(encoder)
-            })?;
-            encoder.field(&SAME_LOOKING_SECTION_STATE_FIELDS[1], |_| Ok(()))
-        })
-    }
-}
-
-#[cfg(feature = "portable-guest")]
-impl PortableApply for SameLookingSectionState {
-    type Retained = usize;
-
-    fn decode_retained(decoder: &mut Decoder<'_>) -> Result<Self::Retained, DecodeError> {
-        decoder.nested(|decoder| {
-            let current_index = decoder
-                .field(&SAME_LOOKING_SECTION_STATE_FIELDS[0])?
-                .unwrap();
-            let _ = decoder.field::<u8>(&SAME_LOOKING_SECTION_STATE_FIELDS[1])?;
-            Ok(current_index)
-        })
-    }
-
-    fn apply_retained(&mut self, retained: Self::Retained) {
-        self.current_index = retained;
-    }
 }
 
 impl StatefulWidget for SameLookingSection {

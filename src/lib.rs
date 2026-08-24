@@ -68,8 +68,11 @@ pub use aimer_modal::{
 pub use aimer_provider::{
     NotifierProvider, Provider, ProviderContext, ProviderHandle, StoreProvider,
 };
+#[cfg(not(aimer_portable_guest))]
 pub use aimer_quiver as quiver;
+#[cfg(not(aimer_portable_guest))]
 pub use aimer_quiver::frame_stats;
+#[cfg(not(aimer_portable_guest))]
 pub use aimer_quiver::{
     self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions, WindowAttr,
     set_first_frame_rendered_callback,

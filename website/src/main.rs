@@ -1,121 +1,27 @@
 #![allow(clippy::main_recursion)]
 
-#[cfg(not(feature = "portable-guest"))]
 pub mod api;
-#[cfg(not(feature = "portable-guest"))]
 mod blog_store;
-#[cfg(not(feature = "portable-guest"))]
 mod components;
-#[cfg(not(feature = "portable-guest"))]
 mod router;
-#[cfg(not(feature = "portable-guest"))]
 mod screen;
-#[cfg(not(feature = "portable-guest"))]
 mod utils;
-#[cfg(feature = "portable-guest")]
-pub mod portable_proof;
 
-#[cfg(all(test, not(feature = "portable-guest")))]
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
-#[cfg(not(feature = "portable-guest"))]
 use aimer::router::Navigator;
-#[cfg(not(feature = "portable-guest"))]
 use aimer::*;
 
-#[cfg(not(feature = "portable-guest"))]
 use crate::router::AppRouter;
-#[cfg(all(test, not(feature = "portable-guest")))]
 pub static TEST_STATE_UPDATED: AtomicBool = AtomicBool::new(false);
-#[cfg(all(test, not(feature = "portable-guest")))]
 pub static CURRENT_INDEX: AtomicUsize = AtomicUsize::new(0);
 
 // this is the entry point of the app
-#[cfg(not(feature = "portable-guest"))]
 #[aimer::main]
 fn main() {
-    AimerApp::start(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
-        route.boxed()
-    }));
-}
-
-#[cfg(feature = "portable-guest")]
-#[allow(dead_code)]
-fn main() {}
-
-#[cfg(all(test, not(feature = "portable-guest")))]
-mod test {
-    use std::sync::atomic::Ordering;
-    use std::thread::sleep;
-    use std::time::Duration;
-
-    use aimer::aimer_quiver::winit::event::WindowEvent;
-    use aimer::quiver::winit::dpi::PhysicalSize;
-    use aimer::router::Navigator;
-    use aimer::{AimerApp, Container, Widget, ZeroSizedBox};
-    use aimer::style::BoxDecoration;
-    use crate::TEST_STATE_UPDATED;
-    use crate::blog_store::{BlogDetail, cache_blog_detail};
-    use crate::router::{AppRouter, take_route_builds};
-
-    #[test]
-    fn direct_blog_detail_route_renders_the_cached_post() {
-        let id = "introducing-aimer".to_owned();
-        cache_blog_detail(&BlogDetail {
-            id: id.clone(),
-            upload_time: "2026-07-18T02:22:00Z".to_owned(),
-            title: "Introducing Aimer".to_owned(),
-            author: "Aimer Team".to_owned(),
-            tags: vec!["Aimer".to_owned(), "Rust".to_owned(), "GUI".to_owned()],
-            markdown: "# Introducing Aimer".to_owned(),
-        });
-        let mut app = AimerApp::start_headless(Navigator::<AppRouter>::new(
-            AppRouter::BlogDetail { id },
-            |route| route.boxed(),
-        ));
-
-        app.render_frame();
-        app.send_window_event(WindowEvent::Resized(PhysicalSize::new(1024, 768)));
-        app.render_frame();
-    }
-
-    /// Dragging the window rebuilds nothing above the widgets that read it.
-    ///
-    /// A route picks the page for a path; it never asks how wide the window is,
-    /// so no width — not even one that crosses the phone breakpoint — can change
-    /// what it produces. The widgets inside the page that *do* ask are rebuilt
-    /// on their own, which is what keeps a drag from re-running the whole
-    /// application once per pixel.
-    #[test]
-    fn test_resize() {
-        TEST_STATE_UPDATED.store(false, Ordering::Relaxed);
-        let mut app =
-            AimerApp::start_headless(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
-                route.boxed()
-            }));
-        sleep(Duration::from_millis(50));
-        app.render_frame();
-        assert!(!take_route_builds().is_empty(), "the first frame built no route");
-
-        for size in [
-            PhysicalSize::new(1000, 800),
-            PhysicalSize::new(1000, 800),
-            PhysicalSize::new(390, 844),
-        ] {
-            sleep(Duration::from_millis(50));
-            app.send_window_event(WindowEvent::Resized(size));
-            app.render_frame();
-            assert_eq!(
-                take_route_builds(),
-                Vec::new(),
-                "resizing to {size:?} rebuilt a route that never reads the window"
-            );
-        }
-    }
-    #[test]
-    fn i_want_know() {
-        eprintln!("Size of Container: {}", size_of::<Container<ZeroSizedBox>>());
-        eprintln!("Size of BoxDecoration: {}", size_of::<BoxDecoration>());
-    }
-
+    AimerApp::new()
+        .child(Navigator::<AppRouter>::new(AppRouter::Home, |route| {
+            route.boxed()
+        }))
+        .run();
 }

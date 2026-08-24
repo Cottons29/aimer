@@ -11,8 +11,6 @@ use aimer_style::{TextOverflow, TextStyle};
 use aimer_utils::AnimInstant;
 use aimer_utils::callback::{CallbackExecutor, VoidCallback};
 use aimer_widget::base::{BuildContext, Color};
-#[cfg(feature = "portable-guest")]
-use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutCache, LayoutElement,
     Rebuildable, VisitorElement, Widget,
@@ -45,8 +43,7 @@ use crate::text_source::TextSource;
 #[derive(Clone, PortableWidget)]
 #[portable_widget(
     id = "aimer_text::TextButton",
-    schema_only,
-    validate = validate_portable_text_button
+    schema_only
 )]
 pub struct TextButton {
     disabled: bool,
@@ -54,11 +51,11 @@ pub struct TextButton {
     color: Option<Color>,
     hover_color: Option<Color>,
     disabled_color: Option<Color>,
-    #[portable_skip]
+    #[portable_optional]
     style: TextStyle,
-    #[portable_skip]
+    #[portable_optional]
     hover_style: TextStyle,
-    #[portable_skip]
+    #[portable_optional]
     disabled_style: TextStyle,
     #[portable_callback(async)]
     on_press: VoidCallback,
@@ -174,47 +171,6 @@ impl Widget for TextButton {
         }
         .boxed()
     }
-}
-
-#[cfg(feature = "portable-guest")]
-fn validate_portable_text_button(
-    button: &TextButton,
-    _ctx: &PortableBuildContext,
-    source: SourceFingerprint,
-) -> Result<(), PortableBuildError> {
-    for (style, property) in [
-        (&button.style, "style"),
-        (&button.hover_style, "hover_style"),
-        (&button.disabled_style, "disabled_style"),
-    ] {
-        if !is_default_text_style(style) {
-            return Err(PortableBuildError::UnsupportedProperty {
-                widget: "TextButton",
-                property,
-                source,
-            });
-        }
-    }
-    Ok(())
-}
-
-#[cfg(feature = "portable-guest")]
-fn is_default_text_style(style: &TextStyle) -> bool {
-    let default = TextStyle::default();
-    let decoration = style.text_decoration;
-    let default_decoration = default.text_decoration;
-    style.font_size == default.font_size
-        && style.font_family == default.font_family
-        && style.font_style == default.font_style
-        && style.font_weight == default.font_weight
-        && style.color == default.color
-        && style.background_color == default.background_color
-        && style.text_overflow == default.text_overflow
-        && decoration.line == default_decoration.line
-        && decoration.style == default_decoration.style
-        && decoration.color == default_decoration.color
-        && decoration.thickness == default_decoration.thickness
-        && decoration.offset == default_decoration.offset
 }
 
 #[derive(Debug, Default)]
@@ -709,6 +665,9 @@ mod tests {
                 "aimer.property:aimer_text::TextButton:color",
                 "aimer.property:aimer_text::TextButton:hover_color",
                 "aimer.property:aimer_text::TextButton:disabled_color",
+                "aimer.property:aimer_text::TextButton:style",
+                "aimer.property:aimer_text::TextButton:hover_style",
+                "aimer.property:aimer_text::TextButton:disabled_style",
             ]
         );
         assert_eq!(
@@ -746,7 +705,9 @@ mod tests {
         let mut context = PortableBuildContext::new(
             1,
             1,
-            PortableWidgetLimits::new(8, 8, 8, 8, 64, 4_096).with_max_callbacks(4),
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 4_096)
+                .with_max_callbacks(4)
+                .with_max_blob_bytes(128),
             PortableLimits::new(8, 16, 64, 128, 4_096),
         )
         .unwrap();
@@ -756,6 +717,9 @@ mod tests {
             .color(Color::Rgba(1, 2, 3, 4))
             .hover_color(Color::Rgba(5, 6, 7, 8))
             .disabled_color(Color::Rgba(9, 10, 11, 12))
+            .style(TextStyle::default().font_size(14))
+            .hover_style(TextStyle::default().font_size(15))
+            .disabled_style(TextStyle::default().font_size(16))
             .on_press(move || press_calls.set(press_calls.get() | 1))
             .on_double_press(move || double_press_calls.set(double_press_calls.get() | 2))
             .to_portable_node(&mut context, source)
@@ -807,7 +771,9 @@ mod tests {
         let mut context = PortableBuildContext::new(
             1,
             1,
-            PortableWidgetLimits::new(8, 8, 8, 8, 64, 4_096).with_max_callbacks(4),
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 4_096)
+                .with_max_callbacks(4)
+                .with_max_blob_bytes(128),
             PortableLimits::new(8, 16, 64, 128, 4_096),
         )
         .unwrap();
@@ -842,33 +808,27 @@ mod tests {
 
     #[cfg(feature = "portable-guest")]
     #[test]
-    fn text_button_portable_lowering_rejects_native_only_styles() {
+    fn text_button_portable_lowering_encodes_non_default_styles() {
         use aimer_widget::PortableWidget;
         use aimer_widget::portable::{
-            PortableBuildContext, PortableBuildError, PortableLimits, PortableWidgetLimits,
-            SourceFingerprint, StableId128,
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+            StableId128,
         };
 
         let mut context = PortableBuildContext::new(
             1,
             1,
-            PortableWidgetLimits::new(8, 8, 8, 8, 64, 4_096).with_max_callbacks(4),
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 4_096)
+                .with_max_callbacks(4)
+                .with_max_blob_bytes(128),
             PortableLimits::new(8, 16, 64, 128, 4_096),
         )
         .unwrap();
         let source = SourceFingerprint::new(StableId128::from_bytes([7; 16]));
-        let error = TextButton::new("Open")
-            .style(TextStyle::default().text_overflow(TextOverflow::Wrap))
+        let root = TextButton::new("Open")
+            .style(TextStyle::default().font_size(18))
             .to_portable_node(&mut context, source)
-            .unwrap_err();
-
-        assert!(matches!(
-            error,
-            PortableBuildError::UnsupportedProperty {
-                widget: "TextButton",
-                property: "style",
-                ..
-            }
-        ));
+            .unwrap();
+        context.finish_document(root).unwrap();
     }
 }

@@ -22,6 +22,8 @@ pub use fingerprint::{AstFingerprint, fingerprint_expression, fingerprint_source
 pub struct ShadowGuestConfig {
     aimer_root: Option<PathBuf>,
     wasm_guest_root: Option<PathBuf>,
+    portable_webbrowser_root: Option<PathBuf>,
+    portable_reqwest_root: Option<PathBuf>,
 }
 
 impl ShadowGuestConfig {
@@ -45,6 +47,30 @@ impl ShadowGuestConfig {
         self
     }
 
+    /// Sets the local guest-only replacement for the browser-opening crate.
+    ///
+    /// Portable guests cannot import browser globals directly. When an
+    /// application depends on `webbrowser`, shadow generation can replace it
+    /// with this no-browser implementation while native builds retain the
+    /// application's original dependency.
+    #[inline]
+    pub fn portable_webbrowser_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.portable_webbrowser_root = Some(root.into());
+        self
+    }
+
+    /// Sets the guest-only replacement for the network client crate.
+    ///
+    /// Native applications keep their ordinary `reqwest` dependency. A
+    /// portable hot-reload guest instead routes its bounded GET surface
+    /// through Aimer's single capability-call import, so wasm-bindgen browser
+    /// imports cannot leak into the interpreted module.
+    #[inline]
+    pub fn portable_reqwest_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.portable_reqwest_root = Some(root.into());
+        self
+    }
+
     fn canonicalize(&self) -> Result<CanonicalGuestConfig, ShadowError> {
         Ok(CanonicalGuestConfig {
             aimer_root: canonical_crate_root(self.aimer_root.as_deref(), "aimer")?,
@@ -52,6 +78,16 @@ impl ShadowGuestConfig {
                 self.wasm_guest_root.as_deref(),
                 "aimer_wasm_guest",
             )?,
+            portable_webbrowser_root: self
+                .portable_webbrowser_root
+                .as_deref()
+                .map(|root| canonical_crate_root(Some(root), "aimer_portable_webbrowser"))
+                .transpose()?,
+            portable_reqwest_root: self
+                .portable_reqwest_root
+                .as_deref()
+                .map(|root| canonical_crate_root(Some(root), "aimer_portable_reqwest"))
+                .transpose()?,
         })
     }
 }
@@ -59,6 +95,8 @@ impl ShadowGuestConfig {
 pub(crate) struct CanonicalGuestConfig {
     pub aimer_root: PathBuf,
     pub wasm_guest_root: PathBuf,
+    pub portable_webbrowser_root: Option<PathBuf>,
+    pub portable_reqwest_root: Option<PathBuf>,
 }
 
 fn canonical_crate_root(root: Option<&Path>, name: &str) -> Result<PathBuf, ShadowError> {
@@ -382,6 +420,12 @@ fn guest_config() -> ShadowGuestConfig {
     ShadowGuestConfig::new()
         .aimer_root(&workspace)
         .wasm_guest_root(workspace.join("crates/aimer_wasm_guest"))
+        .portable_webbrowser_root(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("portable_webbrowser"),
+        )
+        .portable_reqwest_root(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("portable_reqwest"),
+        )
 }
 
 impl Drop for TempProject {
@@ -477,6 +521,34 @@ fn generic_structs_unions_and_enums_are_left_unmodified() {
 }
 
 #[test]
+fn non_generic_unit_enums_get_portable_state_codecs() {
+    let project = TempProject::new();
+    project.basic(
+        "enum Choice { One, Two }\nstruct Root { choice: Choice }\n#[aimer::main]\nfn main() { AimerApp::new().child(Root { choice: Choice::One }).run(); }\n",
+    );
+
+    let shadow = prepare_shadow_project(&project.app(), &project.output(), ShadowLimits::default()).unwrap();
+    let transformed = compact(&fs::read_to_string(shadow.root().join("src/main.rs")).unwrap());
+
+    assert!(transformed.contains("impl::aimer_widget::portable::PortableEncodeforChoice"));
+    assert!(transformed.contains("impl::aimer_widget::portable::PortableDecodeforChoice"));
+    assert!(transformed.contains("FieldDescriptor::new(\"choice\",\"Choice\",::aimer_widget::portable::FieldKind::Retained)"));
+}
+
+#[test]
+fn external_runtime_controller_fields_are_fresh_state() {
+    let project = TempProject::new();
+    project.basic(
+        "struct State { controller: ScrollController, updater: StateUpdater<State> }\nstruct Root;\n#[aimer::main]\nfn main() { AimerApp::new().child(Root).run(); }\n",
+    );
+
+    let shadow = prepare_shadow_project(&project.app(), &project.output(), ShadowLimits::default()).unwrap();
+    let transformed = compact(&fs::read_to_string(shadow.root().join("src/main.rs")).unwrap());
+
+    assert!(transformed.contains("FieldDescriptor::new(\"controller\",\"ScrollController\",::aimer_widget::portable::FieldKind::Fresh)"));
+}
+
+#[test]
 fn transformed_mini_crate_round_trips_and_reports_active_unsupported_fields() {
     let project = TempProject::new();
     let widget = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crates/aimer_widget");
@@ -507,6 +579,9 @@ struct Nested {
 struct Pair(u32, String);
 #[derive(Debug, PartialEq)]
 struct Marker;
+#[derive(Debug, PartialEq)]
+enum Choice { One, Two }
+pub struct PublicState { choice: Choice }
 
 struct NativeSocket;
 struct Active { count: u32, socket: std::rc::Rc<NativeSocket> }

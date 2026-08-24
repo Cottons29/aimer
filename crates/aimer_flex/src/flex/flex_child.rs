@@ -31,7 +31,7 @@ use aimer_widget::{
 ///                                    Expanded::new().flex(2.0).child(SizedBox::new()),]);
 /// ```
 #[derive(aimer_macro::PortableWidget)]
-#[portable_widget(id = "aimer_flex::flex::Expanded", schema_only)]
+#[portable_widget(id = "aimer_flex::flex::Expanded")]
 pub struct Expanded<W = RequiredChild> {
     /// The flex factor: the child's share of the free main-axis space is
     /// `flex / sum_of_all_flex_factors`. Defaults to `1.0`.

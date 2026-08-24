@@ -7,20 +7,93 @@ use super::raw_grid::{
     GridPlacement, GridTrack, RawGrid, RawGridItem, resolve_placements, resolve_tracks,
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, aimer_macro::PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_grid::grid::GridAlignment",
+    max_encoded_bytes = 16,
+)]
 pub enum GridAlignment {
+    #[portable_value(tag = 0)]
     Start,
+    #[portable_value(tag = 1)]
     Center,
+    #[portable_value(tag = 2)]
     End,
     #[default]
+    #[portable_value(tag = 3)]
     Stretch,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, aimer_macro::PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_grid::grid::GridOverflow",
+    max_encoded_bytes = 16,
+)]
 pub enum GridOverflow {
     #[default]
+    #[portable_value(tag = 0)]
     Clip,
+    #[portable_value(tag = 1)]
     Visible,
+}
+
+/// The portable placement and item-local alignment settings for one Grid item.
+#[derive(Clone, Debug, PartialEq, aimer_macro::PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_grid::grid::GridItemConfig",
+    max_encoded_bytes = 256,
+    max_depth = 8,
+    max_entries = 32,
+)]
+pub struct GridItemConfig {
+    /// The explicit or auto-flow placement of the item.
+    pub placement: GridPlacement,
+    /// An optional alignment overriding the Grid default on the horizontal axis.
+    pub horizontal_alignment: Option<GridAlignment>,
+    /// An optional alignment overriding the Grid default on the vertical axis.
+    pub vertical_alignment: Option<GridAlignment>,
+}
+
+/// Bounded, versioned layout state carried by a portable Grid node.
+#[derive(Clone, Debug, PartialEq, aimer_macro::PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_grid::grid::GridPortableConfig",
+    max_encoded_bytes = 32_768,
+    max_depth = 16,
+    max_entries = 512,
+)]
+pub struct GridPortableConfig {
+    /// The column track definitions.
+    pub columns: Vec<GridTrack>,
+    /// The explicit row track definitions.
+    pub rows: Vec<GridTrack>,
+    /// The gap between columns in logical pixels.
+    pub column_gap: f32,
+    /// The gap between rows in logical pixels.
+    pub row_gap: f32,
+    /// The default horizontal item alignment.
+    pub horizontal_alignment: GridAlignment,
+    /// The default vertical item alignment.
+    pub vertical_alignment: GridAlignment,
+    /// The painting overflow policy.
+    pub overflow: GridOverflow,
+    /// Layout metadata corresponding one-to-one with the structural children.
+    pub items: Vec<GridItemConfig>,
+}
+
+impl Default for GridPortableConfig {
+    fn default() -> Self {
+        Self {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            column_gap: 0.0,
+            row_gap: 0.0,
+            horizontal_alignment: GridAlignment::Stretch,
+            vertical_alignment: GridAlignment::Stretch,
+            overflow: GridOverflow::Clip,
+            items: Vec::new(),
+        }
+    }
 }
 
 pub struct GridItem<W: Widget + 'static> {
@@ -122,9 +195,27 @@ pub struct Grid<W: Widget + 'static = AnyWidget> {
     vertical_alignment: GridAlignment,
     #[portable_skip]
     overflow: GridOverflow,
+    config: GridPortableConfig,
     #[portable_children]
     children: Vec<GridItem<W>>,
 }
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "illumos",
+))]
+#[aimer_widget::portable::__linkme::distributed_slice(
+    aimer_widget::portable::materializer::PORTABLE_NATIVE_WIDGET_SCHEMAS
+)]
+#[linkme(crate = aimer_widget::portable::__linkme)]
+#[allow(non_upper_case_globals)]
+static __AIMER_PORTABLE_NATIVE_SCHEMA_FOR_GRID:
+    aimer_widget::portable::__anteros::PortableWidgetSchemaMetadata<'static> =
+    <Grid as aimer_widget::portable::PortableWidgetSchema>::SCHEMA;
 
 impl Default for Grid<AnyWidget> {
     fn default() -> Self {
@@ -146,6 +237,7 @@ impl Grid<AnyWidget> {
             horizontal_alignment: GridAlignment::Stretch,
             vertical_alignment: GridAlignment::Stretch,
             overflow: GridOverflow::Clip,
+            config: GridPortableConfig::default(),
             children: Vec::new(),
         }
     }
@@ -159,6 +251,7 @@ impl<W: Widget + 'static> Grid<W> {
     /// item content. At least one column is required for a valid layout.
     pub fn columns(mut self, tracks: impl IntoIterator<Item = GridTrack>) -> Self {
         self.columns = tracks.into_iter().collect();
+        self.config.columns = self.columns.clone();
         self
     }
 
@@ -168,6 +261,7 @@ impl<W: Widget + 'static> Grid<W> {
     /// be created by auto-placement when the supplied rows are exhausted.
     pub fn rows(mut self, tracks: impl IntoIterator<Item = GridTrack>) -> Self {
         self.rows = tracks.into_iter().collect();
+        self.config.rows = self.rows.clone();
         self
     }
 
@@ -178,6 +272,8 @@ impl<W: Widget + 'static> Grid<W> {
     pub fn gap(mut self, gap: f32) -> Self {
         self.column_gap = gap.max(0.0);
         self.row_gap = gap.max(0.0);
+        self.config.column_gap = self.column_gap;
+        self.config.row_gap = self.row_gap;
         self
     }
 
@@ -186,6 +282,7 @@ impl<W: Widget + 'static> Grid<W> {
     /// Negative values are clamped to `0.0`. This replaces only the column gap.
     pub fn column_gap(mut self, gap: f32) -> Self {
         self.column_gap = gap.max(0.0);
+        self.config.column_gap = self.column_gap;
         self
     }
 
@@ -194,6 +291,7 @@ impl<W: Widget + 'static> Grid<W> {
     /// Negative values are clamped to `0.0`. This replaces only the row gap.
     pub fn row_gap(mut self, gap: f32) -> Self {
         self.row_gap = gap.max(0.0);
+        self.config.row_gap = self.row_gap;
         self
     }
 
@@ -203,6 +301,7 @@ impl<W: Widget + 'static> Grid<W> {
     /// individual [`GridItem`] overrides this value.
     pub fn horizontal_alignment(mut self, alignment: GridAlignment) -> Self {
         self.horizontal_alignment = alignment;
+        self.config.horizontal_alignment = alignment;
         self
     }
 
@@ -212,6 +311,7 @@ impl<W: Widget + 'static> Grid<W> {
     /// individual [`GridItem`] overrides this value.
     pub fn vertical_alignment(mut self, alignment: GridAlignment) -> Self {
         self.vertical_alignment = alignment;
+        self.config.vertical_alignment = alignment;
         self
     }
 
@@ -222,6 +322,7 @@ impl<W: Widget + 'static> Grid<W> {
     /// track sizing or placement.
     pub fn overflow(mut self, overflow: GridOverflow) -> Self {
         self.overflow = overflow;
+        self.config.overflow = overflow;
         self
     }
 
@@ -234,6 +335,16 @@ impl<W: Widget + 'static> Grid<W> {
         self,
         children: impl IntoIterator<Item = GridItem<C>>,
     ) -> Grid<C> {
+        let children = children.into_iter().collect::<Vec<_>>();
+        let mut config = self.config;
+        config.items = children
+            .iter()
+            .map(|item| GridItemConfig {
+                placement: item.placement,
+                horizontal_alignment: item.horizontal_alignment,
+                vertical_alignment: item.vertical_alignment,
+            })
+            .collect();
         Grid {
             columns: self.columns,
             rows: self.rows,
@@ -242,7 +353,8 @@ impl<W: Widget + 'static> Grid<W> {
             horizontal_alignment: self.horizontal_alignment,
             vertical_alignment: self.vertical_alignment,
             overflow: self.overflow,
-            children: children.into_iter().collect(),
+            config,
+            children,
         }
     }
 }
@@ -306,6 +418,21 @@ impl<W: Widget + 'static> aimer_widget::PortableWidget for Grid<W> {
         aimer_widget::portable::PortableBuildError,
     > {
         let schema = <Self as aimer_widget::portable::PortableWidgetSchema>::SCHEMA;
+        let property_id = aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+            "aimer.property:aimer_grid::grid::Grid:config",
+        );
+        let config = ctx.encode_property_named(
+            property_id,
+            "aimer.property:aimer_grid::grid::Grid:config",
+            source.child(aimer_widget::portable::__anteros::stable_schema_hash64(
+                "aimer.source:aimer_grid::grid::Grid:config",
+            )),
+            self.config,
+        )?;
+        let properties = [aimer_widget::portable::__anteros::WidgetProperty::new(
+            property_id,
+            config,
+        )];
         let children = self
             .children
             .into_iter()
@@ -327,7 +454,7 @@ impl<W: Widget + 'static> aimer_widget::PortableWidget for Grid<W> {
             schema.widget().min_version(),
             None,
             source,
-            &[],
+            &properties,
             &children,
         )
     }
@@ -376,7 +503,8 @@ mod portable_layout_tests {
         let mut ctx = PortableBuildContext::new(
             1,
             1,
-            PortableWidgetLimits::new(16, 16, 16, 16, 1_024, 8_192),
+            PortableWidgetLimits::new(16, 16, 16, 16, 1_024, 8_192)
+                .with_max_blob_bytes(128),
             PortableLimits::new(8, 16, 64, 128, 1_024),
         )
         .unwrap();
@@ -395,7 +523,7 @@ mod portable_layout_tests {
         let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
         let node = view.node(root.index()).unwrap();
         assert_eq!(node.widget_type(), schema.widget().id());
-        assert_eq!(node.properties().count(), 0);
+        assert_eq!(node.properties().count(), 1);
         assert_eq!(node.children().collect::<Vec<_>>(), vec![0]);
     }
 }

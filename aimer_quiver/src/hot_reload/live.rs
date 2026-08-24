@@ -55,7 +55,7 @@ impl LiveReloadConfig {
             protocol,
             security,
             candidate,
-            capabilities: CapabilityRegistry::new(0),
+            capabilities: super::portable_http::default_registry(),
             state_transfer: StateTransferCoordinator::new(),
             max_queued_events: 0,
             widget_ir_diagnostics: false,
@@ -127,6 +127,7 @@ pub struct LiveReloadHost {
     callback_receiver: mpsc::Receiver<StableId128>,
     dropped_callback_events: Arc<AtomicU64>,
     wake: Arc<dyn Fn() + Send + Sync>,
+    callback_wake: Arc<dyn Fn() + Send + Sync>,
     next_event_sequence: u64,
     layout_required: bool,
     reload_diagnostic: Option<String>,
@@ -142,10 +143,45 @@ impl LiveReloadHost {
         scheduler: Rc<LocalScheduler>,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Result<Self, LiveReloadStartError> {
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
+        Self::bind_inner(address, credentials, config, scheduler, wake.clone(), wake)
+    }
+
+    /// Binds a listener with an independent wake for native callback events.
+    ///
+    /// Reload commands and animation polling may share one coalesced frame
+    /// request, but a native callback needs its own event-loop wake. Keeping
+    /// the two callbacks separate prevents an already pending animation frame
+    /// from delaying the callback safe point.
+    pub fn bind_with_callback_wake(
+        address: impl ToSocketAddrs,
+        credentials: SessionCredentials,
+        config: LiveReloadConfig,
+        scheduler: Rc<LocalScheduler>,
+        wake: impl Fn() + Send + Sync + 'static,
+        callback_wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<Self, LiveReloadStartError> {
+        Self::bind_inner(
+            address,
+            credentials,
+            config,
+            scheduler,
+            Arc::new(wake),
+            Arc::new(callback_wake),
+        )
+    }
+
+    fn bind_inner(
+        address: impl ToSocketAddrs,
+        credentials: SessionCredentials,
+        config: LiveReloadConfig,
+        scheduler: Rc<LocalScheduler>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        callback_wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<Self, LiveReloadStartError> {
         if config.max_queued_events == 0 {
             return Err(LiveReloadStartError::InvalidQueueCapacity);
         }
-        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
         let bridge_wake = Arc::clone(&wake);
         let (sink, inbox) = reload_command_bridge_with_wake(1, 0, move || bridge_wake());
         let (callback_sender, callback_receiver) =
@@ -184,6 +220,7 @@ impl LiveReloadHost {
             callback_receiver,
             dropped_callback_events: Arc::new(AtomicU64::new(0)),
             wake,
+            callback_wake,
             next_event_sequence: 1,
             layout_required: false,
             reload_diagnostic: None,
@@ -302,6 +339,7 @@ impl LiveReloadHost {
         generation
             .validate_async_event(event_bytes, self.candidate_limits.model())
             .map_err(|error| LiveReloadError::Callback(error.to_string()))?;
+        set_guest_window_metrics(generation.guest_mut(), ctx)?;
         let image = generation
             .guest_mut()
             .dispatch_async_event(event_bytes, self.candidate_limits.model())
@@ -358,7 +396,7 @@ impl LiveReloadHost {
         )
         .widget_ir_diagnostics(self.widget_ir_diagnostics);
         let callback_sender = self.callback_sender.clone();
-        let callback_wake = Arc::clone(&self.wake);
+        let callback_wake = Arc::clone(&self.callback_wake);
         let dropped_callback_events = Arc::clone(&self.dropped_callback_events);
         let dispatch_callback = move |callback_id| {
             enqueue_callback(
@@ -469,6 +507,7 @@ impl LiveReloadHost {
             return Ok(());
         };
         let generation = coordinator.active_mut().generation_mut();
+        set_guest_window_metrics(generation.guest_mut(), ctx)?;
         let Some(widget_image) = generation
             .guest_mut()
             .poll_async(self.candidate_limits.model())
@@ -511,7 +550,7 @@ impl LiveReloadHost {
             ));
         }
         let callback_sender = self.callback_sender.clone();
-        let callback_wake = Arc::clone(&self.wake);
+        let callback_wake = Arc::clone(&self.callback_wake);
         let dropped_callback_events = Arc::clone(&self.dropped_callback_events);
         let mut root = super::materialize_aimer_widget_tree(
             widget_image.as_bytes(),
@@ -566,6 +605,7 @@ impl LiveReloadHost {
         generation
             .validate_event(&event, self.candidate_limits.model())
             .map_err(|error| LiveReloadError::Callback(error.to_string()))?;
+        set_guest_window_metrics(generation.guest_mut(), ctx)?;
         let Some(widget_image) = generation
             .guest_mut()
             .dispatch_event(&event, self.candidate_limits.model())
@@ -575,6 +615,16 @@ impl LiveReloadHost {
         };
         self.install_widget_image(widget_image, ctx)
     }
+}
+
+fn set_guest_window_metrics(
+    guest: &mut GuestInstance,
+    ctx: &BuildContext,
+) -> Result<(), LiveReloadError> {
+    let size = ctx.window.inner_size();
+    guest
+        .set_window_metrics(size.width, size.height, ctx.window.scale_factor())
+        .map_err(|error| LiveReloadError::Callback(error.to_string()))
 }
 
 const RELOAD_DIAGNOSTIC_SUFFIX: &str = "\n\n[reload diagnostic truncated]";

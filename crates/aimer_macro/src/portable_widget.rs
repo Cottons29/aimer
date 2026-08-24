@@ -924,7 +924,12 @@ fn materializer_target(
         ));
     }
 
-    let replacement: Type = parse_quote!(::aimer_widget::RequiredChild);
+    let replacement: Type = input
+        .generics
+        .type_params()
+        .find(|parameter| parameter.ident == *child_ident)
+        .and_then(|parameter| parameter.default.clone())
+        .unwrap_or_else(|| parse_quote!(::aimer_widget::RequiredChild));
     let mut impl_generics = input.generics.clone();
     TypeReplacement { ident: child_ident, replacement: &replacement }
         .visit_generics_mut(&mut impl_generics);
@@ -937,7 +942,7 @@ fn materializer_target(
             quote!(#lifetime)
         }
         GenericParam::Type(parameter) if parameter.ident == *child_ident => {
-            quote!(::aimer_widget::RequiredChild)
+            quote!(#replacement)
         }
         GenericParam::Type(parameter) => {
             let ident = &parameter.ident;

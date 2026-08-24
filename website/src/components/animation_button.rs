@@ -6,13 +6,6 @@ use aimer::style::{
     BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextAlign, TextStyle, Theme, ThemeData,
 };
 use aimer::*;
-
-#[cfg(feature = "portable-guest")]
-use aimer::portable::{
-    AimerReflectionType, DecodeError, Decoder, EncodeError, Encoder, FieldDescriptor, FieldKind,
-    PortableApply, PortableEncode, StableId128, TypeSchema,
-};
-
 pub(crate) const PLATFORMS: &[&str] = &["macOS", "iOS", "Web", "Android"];
 const PLATFORM_BUTTON_TRANSITION_DURATION: Duration = Duration::from_millis(240);
 
@@ -61,84 +54,6 @@ pub struct AnimatedPlatformButtonListState {
     compact: bool,
     on_selected: Callback<usize, ()>,
     updater: StateUpdater<Self>,
-}
-
-#[cfg(feature = "portable-guest")]
-const ANIMATED_PLATFORM_BUTTON_LIST_STATE_FIELDS: &[FieldDescriptor] = &[
-    FieldDescriptor::new("selected_index", "usize", FieldKind::Retained),
-    FieldDescriptor::new("compact", "bool", FieldKind::Retained),
-    FieldDescriptor::new(
-        "on_selected",
-        "Callback<usize, ()>",
-        FieldKind::Fresh,
-    ),
-    FieldDescriptor::new(
-        "updater",
-        "StateUpdater<AnimatedPlatformButtonListState>",
-        FieldKind::Fresh,
-    ),
-];
-
-#[cfg(feature = "portable-guest")]
-const ANIMATED_PLATFORM_BUTTON_LIST_STATE_SCHEMA: TypeSchema = TypeSchema::new(
-    "AnimatedPlatformButtonListState",
-    StableId128::from_path(
-        "aimer.type.v1",
-        "website::components::animation_button::AnimatedPlatformButtonListState",
-    ),
-    ANIMATED_PLATFORM_BUTTON_LIST_STATE_FIELDS,
-);
-
-#[cfg(feature = "portable-guest")]
-impl AimerReflectionType for AnimatedPlatformButtonListState {
-    const TYPE_ID: StableId128 = StableId128::from_path(
-        "aimer.type.v1",
-        "website::components::animation_button::AnimatedPlatformButtonListState",
-    );
-
-    fn schema() -> &'static TypeSchema {
-        &ANIMATED_PLATFORM_BUTTON_LIST_STATE_SCHEMA
-    }
-}
-
-#[cfg(feature = "portable-guest")]
-impl PortableEncode for AnimatedPlatformButtonListState {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
-        encoder.nested(|encoder| {
-            encoder.field(&ANIMATED_PLATFORM_BUTTON_LIST_STATE_FIELDS[0], |encoder| {
-                self.selected_index.encode(encoder)
-            })?;
-            encoder.field(&ANIMATED_PLATFORM_BUTTON_LIST_STATE_FIELDS[1], |encoder| {
-                self.compact.encode(encoder)
-            })?;
-            encoder.field(&ANIMATED_PLATFORM_BUTTON_LIST_STATE_FIELDS[2], |_| Ok(()))?;
-            encoder.field(&ANIMATED_PLATFORM_BUTTON_LIST_STATE_FIELDS[3], |_| Ok(()))
-        })
-    }
-}
-
-#[cfg(feature = "portable-guest")]
-impl PortableApply for AnimatedPlatformButtonListState {
-    type Retained = (usize, bool);
-
-    fn decode_retained(decoder: &mut Decoder<'_>) -> Result<Self::Retained, DecodeError> {
-        decoder.nested(|decoder| {
-            let selected_index = decoder
-                .field(&ANIMATED_PLATFORM_BUTTON_LIST_STATE_FIELDS[0])?
-                .unwrap();
-            let compact = decoder
-                .field(&ANIMATED_PLATFORM_BUTTON_LIST_STATE_FIELDS[1])?
-                .unwrap();
-            let _ = decoder.field::<u8>(&ANIMATED_PLATFORM_BUTTON_LIST_STATE_FIELDS[2])?;
-            let _ = decoder.field::<u8>(&ANIMATED_PLATFORM_BUTTON_LIST_STATE_FIELDS[3])?;
-            Ok((selected_index, compact))
-        })
-    }
-
-    fn apply_retained(&mut self, retained: Self::Retained) {
-        self.selected_index = retained.0;
-        self.compact = retained.1;
-    }
 }
 
 impl StatefulWidget for AnimatedPlatformButtonList {

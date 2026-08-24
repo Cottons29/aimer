@@ -32,12 +32,19 @@ struct StructInfo {
     adopted: BTreeSet<String>,
 }
 
+#[derive(Clone)]
+struct EnumInfo {
+    unit: bool,
+    portable_value: bool,
+}
+
 struct Model<'a> {
     root: &'a Path,
     package: &'a str,
     runtime: syn::Path,
     files: BTreeMap<PathBuf, Vec<String>>,
     structs: BTreeMap<String, StructInfo>,
+    enums: BTreeMap<String, EnumInfo>,
     aliases: BTreeMap<String, BTreeMap<String, Vec<String>>>,
 }
 
@@ -49,6 +56,7 @@ impl<'a> Model<'a> {
             runtime,
             files: BTreeMap::new(),
             structs: BTreeMap::new(),
+            enums: BTreeMap::new(),
             aliases: BTreeMap::new(),
         }
     }
@@ -96,6 +104,16 @@ impl<'a> Model<'a> {
                         module: module.clone(),
                         fields: item_struct.fields.iter().cloned().collect(),
                         adopted: adopted.get(&key).cloned().unwrap_or_default(),
+                    });
+                }
+                syn::Item::Enum(item_enum) if item_enum.generics.params.is_empty() => {
+                    let key = type_key(&module, &item_enum.ident.to_string());
+                    self.enums.insert(key, EnumInfo {
+                        unit: item_enum
+                            .variants
+                            .iter()
+                            .all(|variant| matches!(variant.fields, syn::Fields::Unit)),
+                        portable_value: has_portable_value_derive(&item_enum.attrs),
                     });
                 }
                 syn::Item::Mod(item_mod) => {
@@ -210,6 +228,26 @@ impl<'a> Model<'a> {
                         Some(self.generate(item_struct, module, &portable_name, &names)?)
                     }
                 }
+                syn::Item::Enum(item_enum)
+                    if item_enum.generics.params.is_empty()
+                        && self
+                            .enums
+                            .get(&type_key(module, &item_enum.ident.to_string()))
+                            .is_some_and(|info| info.unit && !info.portable_value) =>
+                {
+                    let portable_name = format!(
+                        "{}::{}::{}",
+                        self.package,
+                        module.join("::"),
+                        item_enum.ident,
+                    );
+                    let names = GeneratedNames::new(&portable_name);
+                    if existing.contains(&names.schema.to_string()) {
+                        None
+                    } else {
+                        Some(self.generate_enum(item_enum, &portable_name, &names)?)
+                    }
+                }
                 _ => None,
             };
             if let Some(mut generated) = generated {
@@ -230,6 +268,7 @@ impl<'a> Model<'a> {
         let ident = &item.ident;
         let fields_ident = &names.fields;
         let schema_ident = &names.schema;
+        let retained_ident = &names.retained;
         let type_name = syn::LitStr::new(&ident.to_string(), ident.span());
         let portable_name = syn::LitStr::new(portable_name, ident.span());
         let key = type_key(module, &ident.to_string());
@@ -313,18 +352,21 @@ impl<'a> Model<'a> {
             }
         });
 
-        let retained = fields.iter().filter(|field| field.kind == FieldKind::Retained)
+        let retained = fields.iter().enumerate()
+            .filter(|(_, field)| field.kind == FieldKind::Retained)
             .collect::<Vec<_>>();
-        let retained_types = retained.iter().map(|field| {
+        let retained_struct_fields = retained.iter().map(|(index, field)| {
             let cfg = &field.cfg;
+            let name = names.retained_field(*index);
             let ty = &field.ty;
-            if self.direct_partial_source(ty, module) {
-                quote! { #(#cfg)* <#ty as #runtime::PortableApply>::Retained }
+            let retained_type = if self.direct_partial_source(ty, module) {
+                quote! { <#ty as #runtime::PortableApply>::Retained }
             } else {
-                quote! { #(#cfg)* #ty }
-            }
+                quote! { #ty }
+            };
+            quote! { #(#cfg)* #name: #retained_type }
         });
-        let retained_type = quote! { (#(#retained_types,)*) };
+        let retained_type = quote! { #retained_ident };
         let decode_retained = fields.iter().enumerate().map(|(index, field)| {
             let cfg = &field.cfg;
             let descriptor = names.field(index);
@@ -353,31 +395,35 @@ impl<'a> Model<'a> {
             }
         }).collect::<Vec<_>>();
         let retained_values = decode_retained.iter().enumerate().filter_map(|(index, value)| {
-            (fields[index].kind == FieldKind::Retained).then_some(value)
+            (fields[index].kind == FieldKind::Retained).then(|| {
+                let cfg = &fields[index].cfg;
+                let name = names.retained_field(index);
+                quote! { #(#cfg)* #name: #value }
+            })
         });
+        let retained_value = quote! {
+            #retained_ident {
+                #(#retained_values,)*
+            }
+        };
         let validation = decode_retained.iter().enumerate().filter_map(|(index, value)| {
             (fields[index].kind != FieldKind::Retained).then_some(value)
         });
-        let retained_bindings = retained.iter().enumerate().map(|(index, field)| {
-            let cfg = &field.cfg;
-            let binding = format_ident!("__aimer_retained_{index}");
-            quote! { #(#cfg)* #binding }
-        });
-        let apply = retained.iter().enumerate().map(|(index, field)| {
+        let apply = retained.iter().map(|(index, field)| {
             let cfg = &field.cfg;
             let member = &field.member;
-            let binding = format_ident!("__aimer_retained_{index}");
+            let binding = names.retained_field(*index);
             if self.direct_partial_source(&field.ty, module) {
                 let ty = &field.ty;
                 quote! {
                     #(#cfg)*
                     <#ty as #runtime::PortableApply>::apply_retained(
                         &mut self.#member,
-                        #binding,
+                        retained.#binding,
                     );
                 }
             } else {
-                quote! { #(#cfg)* self.#member = #binding; }
+                quote! { #(#cfg)* self.#member = retained.#binding; }
             }
         });
 
@@ -385,6 +431,10 @@ impl<'a> Model<'a> {
             #(#descriptor_constants)*
             #[doc(hidden)]
             const #fields_ident: &[#runtime::FieldDescriptor] = &[#(#descriptor_values,)*];
+            #[doc(hidden)]
+            pub struct #retained_ident {
+                #(#retained_struct_fields,)*
+            }
             #[doc(hidden)]
             const #schema_ident: #runtime::TypeSchema = #runtime::TypeSchema::new(
                 #type_name,
@@ -418,13 +468,89 @@ impl<'a> Model<'a> {
                     decoder.nested(|decoder| {
                         let _ = &mut *decoder;
                         #(#validation)*
-                        Ok((#(#retained_values,)*))
+                        Ok(#retained_value)
                     })
                 }
 
                 fn apply_retained(&mut self, retained: Self::Retained) {
-                    let (#(#retained_bindings,)*) = retained;
                     #(#apply)*
+                }
+            }
+        };
+        syn::parse2::<syn::File>(generated)
+            .map(|file| file.items)
+            .map_err(|error| ShadowError::new(
+                ShadowErrorKind::MalformedSource,
+                format!(
+                    "failed to generate reflection for {}: {error}",
+                    portable_name.value(),
+                ),
+            ))
+    }
+
+    fn generate_enum(
+        &self,
+        item: &syn::ItemEnum,
+        portable_name: &str,
+        names: &GeneratedNames,
+    ) -> Result<Vec<syn::Item>, ShadowError> {
+        let runtime = &self.runtime;
+        let ident = &item.ident;
+        let fields_ident = &names.fields;
+        let schema_ident = &names.schema;
+        let type_name = syn::LitStr::new(&ident.to_string(), ident.span());
+        let portable_name = syn::LitStr::new(portable_name, ident.span());
+        let encode_arms = item.variants.iter().enumerate().map(|(tag, variant)| {
+            let variant_ident = &variant.ident;
+            let tag = tag as u32;
+            quote! { Self::#variant_ident => #tag }
+        });
+        let decode_arms = item.variants.iter().enumerate().map(|(tag, variant)| {
+            let variant_ident = &variant.ident;
+            let tag = tag as u32;
+            quote! { #tag => Ok(Self::#variant_ident) }
+        });
+        let generated = quote! {
+            #[doc(hidden)]
+            const #fields_ident: &[#runtime::FieldDescriptor] = &[];
+            #[doc(hidden)]
+            const #schema_ident: #runtime::TypeSchema = #runtime::TypeSchema::new(
+                #type_name,
+                #runtime::StableId128::from_path("aimer.type.v1", #portable_name),
+                #fields_ident,
+            );
+            impl #runtime::AimerReflectionType for #ident {
+                const TYPE_ID: #runtime::StableTypeId =
+                    #runtime::StableId128::from_path("aimer.type.v1", #portable_name);
+
+                fn schema() -> &'static #runtime::TypeSchema {
+                    &#schema_ident
+                }
+            }
+            impl #runtime::PortableEncode for #ident {
+                fn encode(
+                    &self,
+                    encoder: &mut #runtime::Encoder<'_>,
+                ) -> Result<(), #runtime::EncodeError> {
+                    encoder.nested(|encoder| {
+                        let tag = match self {
+                            #(#encode_arms,)*
+                        };
+                        #runtime::PortableEncode::encode(&tag, encoder)
+                    })
+                }
+            }
+            impl #runtime::PortableDecode for #ident {
+                fn decode(
+                    decoder: &mut #runtime::Decoder<'_>,
+                ) -> Result<Self, #runtime::DecodeError> {
+                    decoder.nested(|decoder| {
+                        let tag = <u32 as #runtime::PortableDecode>::decode(decoder)?;
+                        match tag {
+                            #(#decode_arms,)*
+                            _ => Err(#runtime::DecodeError::InvalidEnumTag(tag)),
+                        }
+                    })
                 }
             }
         };
@@ -466,8 +592,14 @@ impl<'a> Model<'a> {
             syn::Type::Path(path) if path.qself.is_none() => {
                 let Some(last) = path.path.segments.last() else { return false; };
                 let name = last.ident.to_string();
-                if is_primitive(&name) || self.resolve_source(&path.path, module).is_some() {
+                if is_primitive(&name) {
                     return true;
+                }
+                if let Some(key) = self.resolve_source(&path.path, module) {
+                    return self.structs.contains_key(&key)
+                        || self.enums.get(&key).is_some_and(|info| {
+                            info.unit || info.portable_value
+                        });
                 }
                 if matches!(name.as_str(), "Option" | "Vec" | "Box") {
                     return one_type_argument(last)
@@ -496,7 +628,15 @@ impl<'a> Model<'a> {
                 }
                 let Some(last) = path.path.segments.last() else { return false; };
                 let name = last.ident.to_string();
-                if name == "StateUpdater" || name.contains("Callback") || name.ends_with("Handler") {
+                // Runtime controller handles own native resources and cannot be
+                // serialized into the portable state bundle. They are fresh
+                // configuration when imported from a framework crate; source
+                // types were resolved above and still take their normal path.
+                if name == "StateUpdater"
+                    || name.contains("Callback")
+                    || name.ends_with("Handler")
+                    || name.ends_with("Controller")
+                {
                     return true;
                 }
                 matches!(name.as_str(), "Option" | "Vec" | "Box")
@@ -523,17 +663,21 @@ impl<'a> Model<'a> {
                     return true;
                 }
                 if let Some(key) = self.resolve_source(&path.path, module) {
-                    if !visiting.insert(key.clone()) {
-                        return true;
+                    if let Some(info) = self.structs.get(&key) {
+                        if !visiting.insert(key.clone()) {
+                            return true;
+                        }
+                        let complete = info.fields.iter().enumerate().all(|(index, field)| {
+                            let plan = self.field_plan(field, index, info);
+                            plan.kind == FieldKind::Retained
+                                && self.type_fully_decodable(&field.ty, &info.module, visiting)
+                        });
+                        visiting.remove(&key);
+                        return complete;
                     }
-                    let info = &self.structs[&key];
-                    let complete = info.fields.iter().enumerate().all(|(index, field)| {
-                        let plan = self.field_plan(field, index, info);
-                        plan.kind == FieldKind::Retained
-                            && self.type_fully_decodable(&field.ty, &info.module, visiting)
+                    return self.enums.get(&key).is_some_and(|info| {
+                        info.unit || info.portable_value
                     });
-                    visiting.remove(&key);
-                    return complete;
                 }
                 matches!(name.as_str(), "Option" | "Vec" | "Box")
                     && one_type_argument(last)
@@ -571,7 +715,9 @@ impl<'a> Model<'a> {
         }
         let candidates = path_candidates(&segments, module);
         candidates.into_iter().map(|candidate| candidate.join("::"))
-            .find(|candidate| self.structs.contains_key(candidate))
+            .find(|candidate| {
+                self.structs.contains_key(candidate) || self.enums.contains_key(candidate)
+            })
     }
 }
 
@@ -604,6 +750,7 @@ struct FieldPlan {
 struct GeneratedNames {
     fields: syn::Ident,
     schema: syn::Ident,
+    retained: syn::Ident,
 }
 
 impl GeneratedNames {
@@ -613,12 +760,17 @@ impl GeneratedNames {
         Self {
             fields: format_ident!("__AIMER_REFLECTION_FIELDS_{suffix}"),
             schema: format_ident!("__AIMER_REFLECTION_SCHEMA_{suffix}"),
+            retained: format_ident!("__AIMER_PORTABLE_RETAINED_{suffix}"),
         }
     }
 
     fn field(&self, index: usize) -> syn::Ident {
         let schema = self.schema.to_string();
         format_ident!("{schema}_FIELD_{index}")
+    }
+
+    fn retained_field(&self, index: usize) -> syn::Ident {
+        format_ident!("field_{index}")
     }
 }
 
@@ -660,6 +812,13 @@ fn cfg_absence_gate(attributes: &[syn::Attribute]) -> impl ToTokens {
         _ => None,
     });
     quote! { #[cfg(not(all(#(#predicates),*)))] }
+}
+
+fn has_portable_value_derive(attributes: &[syn::Attribute]) -> bool {
+    attributes.iter().any(|attribute| {
+        attribute.path().is_ident("derive")
+            && attribute.meta.to_token_stream().to_string().contains("PortableValue")
+    })
 }
 
 fn adopted_fields(

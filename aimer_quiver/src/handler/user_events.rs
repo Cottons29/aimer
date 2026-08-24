@@ -104,5 +104,11 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
                 window.request_redraw();
             }
         }
+        AimerNativePlatformEvent::HotReloadCallbackReady => {
+            crate::aimer_app::callback_ready_delivered();
+            if let Some(window) = &app.window {
+                window.request_redraw();
+            }
+        }
     }
 }

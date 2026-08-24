@@ -35,6 +35,20 @@ pub trait GuestProgram: Send {
         Ok(())
     }
 
+    /// Publishes the host window metrics used by responsive portable widgets.
+    ///
+    /// The portable guest cannot borrow a native window, so the host supplies
+    /// the physical client size and scale factor before a build or callback.
+    /// Guests that do not read window metrics may keep the default no-op.
+    fn set_window_metrics(
+        &mut self,
+        _width: u32,
+        _height: u32,
+        _scale_factor: f64,
+    ) -> Result<(), GuestError> {
+        Ok(())
+    }
+
     /// Builds the program's current canonical `AWIR` widget tree.
     fn build(&mut self, limits: ModelLimits) -> Result<Vec<u8>, GuestError>;
 
@@ -187,6 +201,15 @@ macro_rules! export_guest {
         #[unsafe(no_mangle)]
         pub extern "C" fn aimer_initialize(generation_id: i64) -> i64 {
             AIMER_EXPORTED_GUEST.initialize(generation_id)
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn aimer_set_window_metrics(
+            width: i32,
+            height: i32,
+            scale_factor_bits: i64,
+        ) -> i32 {
+            AIMER_EXPORTED_GUEST.set_window_metrics(width, height, scale_factor_bits)
         }
 
         #[unsafe(no_mangle)]

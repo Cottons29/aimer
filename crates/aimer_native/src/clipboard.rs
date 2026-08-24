@@ -40,7 +40,7 @@ mod desktop_clipboard;
 mod android_clipboard;
 #[cfg(target_os = "ios")]
 mod ios_clipboard;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
 mod web_clipboard;
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -49,8 +49,21 @@ use desktop_clipboard as platform;
 use android_clipboard as platform;
 #[cfg(target_os = "ios")]
 use ios_clipboard as platform;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
 use web_clipboard as platform;
+
+#[cfg(all(target_arch = "wasm32", aimer_portable_guest))]
+mod platform {
+    use super::ClipboardError;
+
+    pub(super) const fn set_text(_text: &str) -> Result<(), ClipboardError> {
+        Err(ClipboardError::Unsupported)
+    }
+
+    pub(super) fn get_text() -> Result<String, ClipboardError> {
+        Err(ClipboardError::Unsupported)
+    }
+}
 
 /// Why a clipboard operation could not be carried out.
 ///

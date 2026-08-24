@@ -859,6 +859,9 @@ pub fn validate_portable_widget_schema_metadata<'a>(
         validate_callbacks(schema)?;
 
         for other in schemas.iter().copied().skip(schema_index + 1) {
+            if schema == other {
+                continue;
+            }
             validate_widget_pair(schema.widget, other.widget)?;
             validate_schema_pair(schema, other)?;
         }

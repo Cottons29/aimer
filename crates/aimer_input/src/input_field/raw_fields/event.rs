@@ -402,12 +402,10 @@ impl EventElement for RawTextField {
                     let pos = &info.pos;
                     let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
                     let was_hovered = self.is_hovered();
-                    if let Some(w) = get_window() {
-                        if is_inside || self.mouse_held.get().is_some() {
-                            w.set_cursor(winit::window::CursorIcon::Text);
-                        } else {
-                            w.set_cursor(winit::window::CursorIcon::Default);
-                        }
+                    if is_inside || self.mouse_held.get().is_some() {
+                        aimer_utils::cursor::set_cursor(aimer_utils::cursor::CursorIcon::Text);
+                    } else {
+                        aimer_utils::cursor::reset_cursor();
                     }
                     self.set_hovered(is_inside);
 

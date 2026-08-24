@@ -12,12 +12,6 @@ use aimer::{
     StatefulWidget, Text, Widget, widget, *,
 };
 
-#[cfg(feature = "portable-guest")]
-use aimer::portable::{
-    AimerReflectionType, DecodeError, Decoder, EncodeError, Encoder, FieldDescriptor, FieldKind,
-    PortableApply, PortableEncode, StableId128, TypeSchema,
-};
-
 use crate::components::get_started_button::HoverableGetStartedButton;
 use crate::components::same_looking::SameLookingSection;
 #[cfg(test)]
@@ -40,59 +34,6 @@ impl HomePage {
 pub struct HomePageState {
     pub controller: ScrollController,
     pub updater: StateUpdater<Self>,
-}
-
-#[cfg(feature = "portable-guest")]
-const HOME_PAGE_STATE_FIELDS: &[FieldDescriptor] = &[
-    FieldDescriptor::new("controller", "ScrollController", FieldKind::Fresh),
-    FieldDescriptor::new("updater", "StateUpdater<HomePageState>", FieldKind::Fresh),
-];
-
-#[cfg(feature = "portable-guest")]
-const HOME_PAGE_STATE_SCHEMA: TypeSchema = TypeSchema::new(
-    "HomePageState",
-    StableId128::from_path(
-        "aimer.type.v1",
-        "website::screen::home_screen::HomePageState",
-    ),
-    HOME_PAGE_STATE_FIELDS,
-);
-
-#[cfg(feature = "portable-guest")]
-impl AimerReflectionType for HomePageState {
-    const TYPE_ID: StableId128 = StableId128::from_path(
-        "aimer.type.v1",
-        "website::screen::home_screen::HomePageState",
-    );
-
-    fn schema() -> &'static TypeSchema {
-        &HOME_PAGE_STATE_SCHEMA
-    }
-}
-
-#[cfg(feature = "portable-guest")]
-impl PortableEncode for HomePageState {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
-        encoder.nested(|encoder| {
-            encoder.field(&HOME_PAGE_STATE_FIELDS[0], |_| Ok(()))?;
-            encoder.field(&HOME_PAGE_STATE_FIELDS[1], |_| Ok(()))
-        })
-    }
-}
-
-#[cfg(feature = "portable-guest")]
-impl PortableApply for HomePageState {
-    type Retained = ();
-
-    fn decode_retained(decoder: &mut Decoder<'_>) -> Result<Self::Retained, DecodeError> {
-        decoder.nested(|decoder| {
-            let _ = decoder.field::<u8>(&HOME_PAGE_STATE_FIELDS[0])?;
-            let _ = decoder.field::<u8>(&HOME_PAGE_STATE_FIELDS[1])?;
-            Ok(())
-        })
-    }
-
-    fn apply_retained(&mut self, _retained: Self::Retained) {}
 }
 
 impl StatefulWidget for HomePage {

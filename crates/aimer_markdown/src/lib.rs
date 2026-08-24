@@ -58,6 +58,7 @@ fn parse_document(source: Rc<str>) -> Rc<Result<Document, MarkdownError>> {
     DOCUMENT_CACHE.with(|cache| cache.borrow_mut().parse(source))
 }
 
+#[cfg(not(aimer_portable_guest))]
 fn open_web_link_with<E>(
     target: &str,
     opener: impl FnOnce(&str) -> Result<(), E>,
@@ -68,11 +69,15 @@ fn open_web_link_with<E>(
     Some(opener(target))
 }
 
+#[cfg(not(aimer_portable_guest))]
 fn open_web_link(target: Rc<str>) {
     if let Some(Err(error)) = open_web_link_with(&target, webbrowser::open) {
         eprintln!("Failed to open Markdown link '{target}': {error}");
     }
 }
+
+#[cfg(aimer_portable_guest)]
+fn open_web_link(_target: Rc<str>) {}
 
 /// A scrollable Markdown document rendered with native Aimer widgets.
 ///

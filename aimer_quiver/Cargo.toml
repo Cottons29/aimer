@@ -23,6 +23,10 @@ portable-guest = [
     "aimer_widget/portable-guest",
     "aimer_provider/portable-guest",
     "aimer_container/portable-guest",
+    "aimer_flex/portable-guest",
+    "aimer_grid/portable-guest",
+    "aimer_scroll/portable-guest",
+    "aimer_space/portable-guest",
     "aimer_text/portable-guest",
 ]
 # Enable the interpreted runtime and authenticated app-side reload listener.
@@ -32,9 +36,13 @@ wasm-hot-reload = [
     "dep:aimer_reload_protocol",
     "dep:aimer_reload_server",
     "dep:aimer_anteros",
+    "dep:reqwest",
     "dep:aimer_container",
     "dep:aimer_flex",
+    "dep:aimer_grid",
     "dep:aimer_input",
+    "dep:aimer_scroll",
+    "dep:aimer_space",
     "dep:aimer_text",
     "aimer_anteros/wasm-hot-reload",
 ]
@@ -58,8 +66,12 @@ aimer_reload_server = { workspace = true, optional = true }
 aimer_anteros = { workspace = true, optional = true }
 aimer_container = { workspace = true, optional = true }
 aimer_flex = { workspace = true, optional = true }
+aimer_grid = { workspace = true, optional = true }
 aimer_input = { workspace = true, optional = true }
+aimer_scroll = { workspace = true, optional = true }
+aimer_space = { workspace = true, optional = true }
 aimer_text = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true, features = ["blocking"] }
 wgpu.workspace = true
 
 #################

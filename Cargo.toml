@@ -143,7 +143,6 @@ members = [
     "aimer_anteros/device_tests/ios_transport"
 ]
 
-
 [workspace.dependencies]
 aimer_cupid = { path = "aimer_cupid" }
 aimer_cli = { path = "aimer_cli" }
@@ -324,3 +323,9 @@ lto = true
 split-debuginfo = "packed"
 panic = "abort"
 strip = "symbols"
+
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(aimer_portable_guest)'] }
+[workspace.lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(aimer_portable_guest)'] }

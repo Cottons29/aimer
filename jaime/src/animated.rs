@@ -9,11 +9,11 @@ use uuid::Uuid;
 const ANIM_DURATION: Duration = Duration::from_millis(50);
 
 pub fn start_my_animated_list() {
-    AimerApp::start(MyAnimatedList {})
+    AimerApp::start(MyAnimatedList)
 }
 #[allow(non_snake_case)]
 #[widget(Stateful)]
-pub struct MyAnimatedList {}
+pub struct MyAnimatedList;
 
 pub struct ListItem {
     id: String,

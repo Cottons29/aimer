@@ -362,18 +362,29 @@ impl PortableMaterializeProperty for aimer_color::prelude::Color {
 
 impl PortableMaterializeProperty for aimer_attribute::Dimension {
     fn from_awir(
-        _document: &WidgetDocumentView<'_>,
+        document: &WidgetDocumentView<'_>,
         property: PropertyId,
         value: PropertyValue,
     ) -> Result<Self, PortableMaterializeError> {
-        let PropertyValue::F64(value) = value else {
+        let PropertyValue::BlobRef(index) = value else {
             return Err(PortableMaterializeError::InvalidPropertyType { property });
         };
-        let value = value as f32;
-        if value.is_finite() {
-            Ok(Self::Px(value))
-        } else {
+        let blob = document
+            .blob(index)
+            .ok_or(PortableMaterializeError::InvalidPropertyReference { property, index })?;
+        if blob.len() != 6 || blob[0] != 1 {
             Err(PortableMaterializeError::InvalidPropertyValue { property })
+        } else {
+            let value = f32::from_le_bytes(blob[2..6].try_into().unwrap());
+            if !value.is_finite() {
+                return Err(PortableMaterializeError::InvalidPropertyValue { property });
+            }
+            match (blob[1], value) {
+                (0, 0.0) => Ok(Self::Auto),
+                (1, value) => Ok(Self::Px(value)),
+                (2, value) => Ok(Self::Percent(value)),
+                _ => Err(PortableMaterializeError::InvalidPropertyValue { property }),
+            }
         }
     }
 }
@@ -515,7 +526,16 @@ mod tests {
     #[test]
     fn reflected_float_color_and_dimension_conversion_remains_checked() {
         let nodes = [WidgetNode::new(WidgetSchemaId::new(1), Version::new(1, 0))];
-        let image = WidgetDocument::new(0, 0, 0, &nodes, &[], &[])
+        let dimension_px = [1, 1, 0, 0, 42, 66];
+        let dimension_infinity = [1, 1, 0, 0, 128, 127];
+        let image = WidgetDocument::new(
+            0,
+            0,
+            0,
+            &nodes,
+            &[],
+            &[&dimension_px, &dimension_infinity],
+        )
             .encode(LIMITS)
             .unwrap();
         let document = WidgetDocumentView::decode(&image, LIMITS).unwrap();
@@ -549,7 +569,7 @@ mod tests {
             aimer_attribute::Dimension::from_awir(
                 &document,
                 PROPERTY,
-                PropertyValue::F64(42.5),
+                PropertyValue::BlobRef(0),
             )
             .unwrap(),
             aimer_attribute::Dimension::Px(42.5),
@@ -558,7 +578,7 @@ mod tests {
             aimer_attribute::Dimension::from_awir(
                 &document,
                 PROPERTY,
-                PropertyValue::F64(f64::MAX),
+                PropertyValue::BlobRef(1),
             ),
             Err(PortableMaterializeError::InvalidPropertyValue { property: PROPERTY }),
         );

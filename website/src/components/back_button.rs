@@ -10,11 +10,6 @@ use aimer::{
     SvgStyle, Text, Widget, widget,
 };
 
-#[cfg(feature = "portable-guest")]
-use aimer::portable::{
-    AimerReflectionType, DecodeError, Decoder, EncodeError, Encoder, FieldDescriptor, FieldKind,
-    PortableApply, PortableEncode, StableId128, TypeSchema,
-};
 
 #[widget(Stateful)]
 pub struct BlogBackButton {
@@ -45,79 +40,6 @@ pub struct BlogBackButtonState {
     on_click: VoidCallback,
     current_state: Rc<Cell<PointerState>>,
     updater: StateUpdater<Self>,
-}
-
-#[cfg(feature = "portable-guest")]
-const BLOG_BACK_BUTTON_STATE_FIELDS: &[FieldDescriptor] = &[
-    FieldDescriptor::new("is_hover", "bool", FieldKind::Retained),
-    FieldDescriptor::new("on_click", "VoidCallback", FieldKind::Fresh),
-    FieldDescriptor::new(
-        "current_state",
-        "Rc<Cell<PointerState>>",
-        FieldKind::Fresh,
-    ),
-    FieldDescriptor::new(
-        "updater",
-        "StateUpdater<BlogBackButtonState>",
-        FieldKind::Fresh,
-    ),
-];
-
-#[cfg(feature = "portable-guest")]
-const BLOG_BACK_BUTTON_STATE_SCHEMA: TypeSchema = TypeSchema::new(
-    "BlogBackButtonState",
-    StableId128::from_path(
-        "aimer.type.v1",
-        "website::components::back_button::BlogBackButtonState",
-    ),
-    BLOG_BACK_BUTTON_STATE_FIELDS,
-);
-
-#[cfg(feature = "portable-guest")]
-impl AimerReflectionType for BlogBackButtonState {
-    const TYPE_ID: StableId128 = StableId128::from_path(
-        "aimer.type.v1",
-        "website::components::back_button::BlogBackButtonState",
-    );
-
-    fn schema() -> &'static TypeSchema {
-        &BLOG_BACK_BUTTON_STATE_SCHEMA
-    }
-}
-
-#[cfg(feature = "portable-guest")]
-impl PortableEncode for BlogBackButtonState {
-    fn encode(&self, encoder: &mut Encoder<'_>) -> Result<(), EncodeError> {
-        encoder.nested(|encoder| {
-            encoder.field(&BLOG_BACK_BUTTON_STATE_FIELDS[0], |encoder| {
-                self.is_hover.encode(encoder)
-            })?;
-            encoder.field(&BLOG_BACK_BUTTON_STATE_FIELDS[1], |_| Ok(()))?;
-            encoder.field(&BLOG_BACK_BUTTON_STATE_FIELDS[2], |_| Ok(()))?;
-            encoder.field(&BLOG_BACK_BUTTON_STATE_FIELDS[3], |_| Ok(()))
-        })
-    }
-}
-
-#[cfg(feature = "portable-guest")]
-impl PortableApply for BlogBackButtonState {
-    type Retained = bool;
-
-    fn decode_retained(decoder: &mut Decoder<'_>) -> Result<Self::Retained, DecodeError> {
-        decoder.nested(|decoder| {
-            let is_hover = decoder
-                .field(&BLOG_BACK_BUTTON_STATE_FIELDS[0])?
-                .unwrap();
-            let _ = decoder.field::<u8>(&BLOG_BACK_BUTTON_STATE_FIELDS[1])?;
-            let _ = decoder.field::<u8>(&BLOG_BACK_BUTTON_STATE_FIELDS[2])?;
-            let _ = decoder.field::<u8>(&BLOG_BACK_BUTTON_STATE_FIELDS[3])?;
-            Ok(is_hover)
-        })
-    }
-
-    fn apply_retained(&mut self, retained: Self::Retained) {
-        self.is_hover = retained;
-    }
 }
 
 impl StatefulWidget for BlogBackButton {

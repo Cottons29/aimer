@@ -222,6 +222,10 @@ impl<'a> ReloadCandidatePreparer<'a> {
         ctx: &BuildContext,
         dispatch_callback: impl Fn(aimer_anteros::StableId128) + 'static,
     ) -> Result<ReloadSnapshot<GuestInstance, AnyElement>, ReloadCandidatePreparationError> {
+        let window_size = ctx.window.inner_size();
+        candidate
+            .set_window_metrics(window_size.width, window_size.height, ctx.window.scale_factor())
+            .map_err(ReloadCandidatePreparationError::Build)?;
         let widget_image = candidate
             .build(self.limits.model)
             .map_err(ReloadCandidatePreparationError::Build)?;

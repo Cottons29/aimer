@@ -900,6 +900,58 @@ impl GuestInstance {
         }
         Ok(())
     }
+
+    /// Publishes the native window metrics used by responsive portable widgets.
+    ///
+    /// The export is optional so guests produced before viewport propagation
+    /// remain loadable; those guests retain their existing platform defaults.
+    /// Candidate generations may receive metrics before activation because this
+    /// call carries no capability side effects.
+    pub fn set_window_metrics(
+        &mut self,
+        width: u32,
+        height: u32,
+        scale_factor: f64,
+    ) -> Result<(), RuntimeError> {
+        let Some(set_window_metrics) = self.exports.set_window_metrics else {
+            return Ok(());
+        };
+        let width = i32::try_from(width).map_err(|_| {
+            RuntimeError::detail(
+                RuntimeErrorKind::OutputLimit,
+                format!("window width {width} cannot be represented by the guest ABI"),
+            )
+        })?;
+        let height = i32::try_from(height).map_err(|_| {
+            RuntimeError::detail(
+                RuntimeErrorKind::OutputLimit,
+                format!("window height {height} cannot be represented by the guest ABI"),
+            )
+        })?;
+        if !scale_factor.is_finite() || scale_factor <= 0.0 {
+            return Err(RuntimeError::detail(
+                RuntimeErrorKind::GuestStatus,
+                "window scale factor must be finite and positive",
+            ));
+        }
+        self.reset_fuel()?;
+        let status = set_window_metrics
+            .call(&mut self.store, (width, height, scale_factor.to_bits() as i64))
+            .map_err(RuntimeError::execution)?;
+        if status != AbiStatus::Ok as i32 {
+            let status = AbiStatus::try_from(status as u32).map_err(|error| {
+                RuntimeError::detail(
+                    RuntimeErrorKind::GuestStatus,
+                    format!("aimer_set_window_metrics returned an unknown status: {error}"),
+                )
+            })?;
+            return Err(RuntimeError::guest_status(
+                format!("aimer_set_window_metrics returned {status:?}"),
+                self.read_diagnostic(),
+            ));
+        }
+        Ok(())
+    }
     /// Returns the reload-coordinator identity when this guest has capabilities.
     #[inline]
     pub fn generation_id(&self) -> Option<crate::GenerationId> {
@@ -1946,6 +1998,7 @@ struct CallbackStateExports {
     memory: Memory,
     abi_version: TypedFunc<(), i64>,
     initialize: Option<TypedFunc<i64, i64>>,
+    set_window_metrics: Option<TypedFunc<(i32, i32, i64), i32>>,
     alloc: TypedFunc<(i32, i32), i64>,
     dealloc: TypedFunc<(i32, i32, i32), i32>,
     manifest: TypedFunc<(i32, i32), i64>,
@@ -1972,6 +2025,14 @@ impl CallbackStateExports {
                 .map_err(|error| RuntimeError::new(RuntimeErrorKind::Export, error))?,
             initialize: instance
                 .get_func(store, "aimer_initialize")
+                .map(|function| {
+                    function
+                        .typed(store)
+                        .map_err(|error| RuntimeError::new(RuntimeErrorKind::Export, error))
+                })
+                .transpose()?,
+            set_window_metrics: instance
+                .get_func(store, "aimer_set_window_metrics")
                 .map(|function| {
                     function
                         .typed(store)
@@ -2111,10 +2172,11 @@ fn checked_guest_range(
     Ok(end)
 }
 
-const PERSISTENT_EXPORTS: [(&str, ExternalKind); 15] = [
+const PERSISTENT_EXPORTS: [(&str, ExternalKind); 16] = [
     ("memory", ExternalKind::Memory),
     ("aimer_abi_version", ExternalKind::Func),
     ("aimer_initialize", ExternalKind::Func),
+    ("aimer_set_window_metrics", ExternalKind::Func),
     ("aimer_alloc", ExternalKind::Func),
     ("aimer_dealloc", ExternalKind::Func),
     ("aimer_manifest", ExternalKind::Func),
@@ -2217,6 +2279,7 @@ fn validate_persistent_module_shape(
         .zip(seen_exports)
         .find(|((name, _), seen)| {
                 *name != "aimer_initialize"
+                && *name != "aimer_set_window_metrics"
                 && *name != "aimer_diagnostic"
                 && *name != "aimer_migrate_state"
                 && *name != "aimer_poll_async"

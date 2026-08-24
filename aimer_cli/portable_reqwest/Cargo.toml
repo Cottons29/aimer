@@ -1,0 +1,9 @@
+[package]
+name = "aimer_portable_reqwest"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+aimer_anteros = { path = "../../aimer_anteros", default-features = false }

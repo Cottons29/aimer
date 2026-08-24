@@ -84,6 +84,14 @@ thread_local! {
 /// ```
 #[inline]
 pub fn set_cursor(cursor: impl Into<Cursor>) -> bool {
+    #[cfg(aimer_portable_guest)]
+    {
+        let _ = cursor;
+        return false;
+    }
+
+    #[cfg(not(aimer_portable_guest))]
+    {
     // An application without a platform window answers for itself, and says so
     // per thread, so its request never reaches a window belonging to somebody
     // else.
@@ -99,6 +107,8 @@ pub fn set_cursor(cursor: impl Into<Cursor>) -> bool {
         }
         None => false,
     }
+    }
+
 }
 
 /// Ask the window to show the platform's default cursor again.
@@ -238,5 +248,12 @@ mod tests {
         restore_thread_cursor_handler(previous);
 
         assert_eq!(*seen.borrow(), Some(Cursor::Icon(CursorIcon::Default)));
+    }
+
+    #[cfg(aimer_portable_guest)]
+    #[test]
+    fn portable_cursor_requests_do_not_reach_winit() {
+        assert!(!set_cursor(CursorIcon::Pointer));
+        assert!(!reset_cursor());
     }
 }

@@ -1240,9 +1240,7 @@ mod tests {
     }
     #[cfg(feature = "wasm-hot-reload")]
     mod derived_materializer_conflict {
-        use aimer_anteros::{
-            PortableWidgetSchemaMetadataError, PortableWidgetSchemaValidator,
-        };
+        use aimer_anteros::PortableWidgetSchemaValidator;
         use aimer_macro::PortableWidget;
         use aimer_widget::portable::PortableWidgetSchema;
         use aimer_widget::base::{BuildContext, WindowHandle};
@@ -1301,24 +1299,16 @@ mod tests {
             }
         }
 
-        // Inline tests share one linker registry. Keep this deliberately
-        // conflicting pair out of that global registry and validate the same
-        // duplicate-schema invariant locally, so it cannot poison other tests.
+        // Inline tests share one linker registry. Keep this duplicate pair out
+        // of that global registry and verify that identical contracts remain
+        // valid when more than one generic path publishes them.
         #[test]
-        fn overlapping_derived_registrations_fail_before_native_construction() {
+        fn identical_derived_schemas_are_accepted() {
             let schemas = [
                 <FirstConflict as PortableWidgetSchema>::SCHEMA,
                 <SecondConflict as PortableWidgetSchema>::SCHEMA,
             ];
-            let error = PortableWidgetSchemaValidator::new(&schemas)
-                .expect_err("conflicting derived registrations were accepted");
-
-            assert!(matches!(
-                error,
-                PortableWidgetSchemaMetadataError::Widget(
-                    aimer_anteros::WidgetSchemaMetadataError::OverlappingVersions { .. }
-                )
-            ));
+            assert!(PortableWidgetSchemaValidator::new(&schemas).is_ok());
         }
 
         #[allow(dead_code)]
@@ -3275,8 +3265,8 @@ mod tests {
                 PropertyValue::StringRef(0),
             )];
             let sized_box_properties = [
-                WidgetProperty::new(PROPERTY_SIZED_BOX_WIDTH, PropertyValue::F64(12.0)),
-                WidgetProperty::new(PROPERTY_SIZED_BOX_HEIGHT, PropertyValue::F64(8.0)),
+                WidgetProperty::new(PROPERTY_SIZED_BOX_WIDTH, PropertyValue::BlobRef(0)),
+                WidgetProperty::new(PROPERTY_SIZED_BOX_HEIGHT, PropertyValue::BlobRef(1)),
             ];
             let container_properties = [WidgetProperty::new(
                 PROPERTY_CONTAINER_COLOR,
@@ -3312,7 +3302,9 @@ mod tests {
                 WidgetNode::new(WIDGET_TEXT, Version::new(1, 0)).properties(&button_properties),
             ];
             let strings = ["Phase 3", "Card", "Reload"];
-            let image = WidgetDocument::new(7, 1, 0, &nodes, &strings, &[])
+            let width = [1_u8, 1, 0, 0, 64, 65];
+            let height = [1_u8, 1, 0, 0, 0, 65];
+            let image = WidgetDocument::new(7, 1, 0, &nodes, &strings, &[&width, &height])
                 .encode(LIMITS)
                 .unwrap();
 
@@ -3521,11 +3513,13 @@ mod tests {
             assert_eq!(container.widget_type(), WIDGET_CONTAINER);
             assert!(container.properties().any(|property| {
                 property.property_id() == PROPERTY_CONTAINER_WIDTH
-                    && matches!(property.value(), PropertyValue::F64(value) if value == 320.0)
+                    && matches!(property.value(), PropertyValue::BlobRef(index)
+                        if view.blob(index) == Some(&[1, 1, 0, 0, 160, 67][..]))
             }));
             assert!(container.properties().any(|property| {
                 property.property_id() == PROPERTY_CONTAINER_HEIGHT
-                    && matches!(property.value(), PropertyValue::F64(value) if value == 180.0)
+                    && matches!(property.value(), PropertyValue::BlobRef(index)
+                        if view.blob(index) == Some(&[1, 1, 0, 0, 52, 67][..]))
             }));
             for property_id in [
                 PROPERTY_CONTAINER_PADDING,
@@ -3589,12 +3583,19 @@ mod tests {
                     },
                 ),
                 (
-                    encode_single(
-                        WidgetNode::new(WIDGET_SIZED_BOX, Version::new(1, 0)).properties(&[
-                            WidgetProperty::new(PROPERTY_SIZED_BOX_HEIGHT, PropertyValue::F64(-1.0)),
-                        ]),
-                        &[],
-                    ),
+                    {
+                        let invalid_dimension = [1_u8, 1, 0, 0, 128, 191];
+                        encode_single_with_blobs(
+                            WidgetNode::new(WIDGET_SIZED_BOX, Version::new(1, 0)).properties(&[
+                                WidgetProperty::new(
+                                    PROPERTY_SIZED_BOX_HEIGHT,
+                                    PropertyValue::BlobRef(0),
+                                ),
+                            ]),
+                            &[],
+                            &[&invalid_dimension],
+                        )
+                    },
                     ModelError::InvalidWidgetPropertyValue {
                         node: 0,
                         widget_type: WIDGET_SIZED_BOX,
@@ -3604,13 +3605,8 @@ mod tests {
                 (
                     {
                         let children = [1];
-                        let properties = [WidgetProperty::new(
-                            PROPERTY_SIZED_BOX_HEIGHT,
-                            PropertyValue::F64(-1.0),
-                        )];
                         let nodes = [
                             WidgetNode::new(WIDGET_SIZED_BOX, Version::new(1, 0))
-                                .properties(&properties)
                                 .children(&children),
                             WidgetNode::new(WIDGET_SIZED_BOX, Version::new(1, 0)),
                         ];
@@ -3823,6 +3819,16 @@ mod tests {
 
         fn encode_single(node: WidgetNode<'_>, strings: &[&str]) -> Vec<u8> {
             WidgetDocument::new(1, 1, 0, &[node], strings, &[])
+                .encode(LIMITS)
+                .unwrap()
+        }
+
+        fn encode_single_with_blobs(
+            node: WidgetNode<'_>,
+            strings: &[&str],
+            blobs: &[&[u8]],
+        ) -> Vec<u8> {
+            WidgetDocument::new(1, 1, 0, &[node], strings, blobs)
                 .encode(LIMITS)
                 .unwrap()
         }

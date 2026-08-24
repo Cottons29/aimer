@@ -85,6 +85,7 @@ pub fn restore_thread_redraw_requester(previous: Option<Rc<dyn Fn()>>) {
 }
 
 /// The requester installed for this thread, if any.
+#[cfg(not(aimer_portable_guest))]
 fn thread_redraw_requester() -> Option<Rc<dyn Fn()>> {
     THREAD_REDRAW_REQUESTER.with(|slot| slot.borrow().clone())
 }
@@ -136,6 +137,15 @@ where
 /// routes to `request_redraw()` outside the coalescing window. The link pauses
 /// itself once a tick observes no pending request, so the app stays idle when
 /// nothing is animating.
+#[cfg(aimer_portable_guest)]
+pub fn request_animation_frame() {
+    // Portable guests do not own a browser or native event loop. The reload
+    // host polls the guest scheduler at its safe point, so forwarding this
+    // request into winit would pull the browser event-loop ABI into the
+    // capability-only module.
+}
+
+#[cfg(not(aimer_portable_guest))]
 pub fn request_animation_frame() {
     // An application without a platform window schedules its own frames, and
     // says so per thread, so its request never reaches the display link or a
@@ -162,6 +172,7 @@ pub fn request_animation_frame() {
 
 /// Inner implementation — actual redraw request (platform-independent).
 #[cfg_attr(target_os = "ios", allow(dead_code))]
+#[cfg(not(aimer_portable_guest))]
 fn request_animation_frame_inner() {
     if let Some(requester) = REDRAW_REQUESTER.get() {
         requester();

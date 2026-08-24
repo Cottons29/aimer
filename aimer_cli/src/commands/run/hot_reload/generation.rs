@@ -219,7 +219,13 @@ pub fn prepare_automatic_guest(
         ShadowLimits::default(),
         ShadowGuestConfig::new()
             .aimer_root(&workspace_root)
-            .wasm_guest_root(&adapter_root),
+            .wasm_guest_root(&adapter_root)
+            .portable_webbrowser_root(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("portable_webbrowser"),
+            )
+            .portable_reqwest_root(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("portable_reqwest"),
+            ),
     )
     .map_err(GuestGenerationError::Shadow)?;
     let package = shadow.discovery().entry().package().to_owned();

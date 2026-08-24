@@ -953,12 +953,14 @@ mod tests {
             assert_eq!(
                 container.properties(),
                 &[
-                    WidgetProperty::new(PROPERTY_CONTAINER_WIDTH, PropertyValue::F64(320.0)).optional(),
+                    WidgetProperty::new(PROPERTY_CONTAINER_WIDTH, PropertyValue::BlobRef(0)).optional(),
                     WidgetProperty::new(PROPERTY_CONTAINER_COLOR, PropertyValue::Rgba(0x112233FF))
                         .optional(),
-                    WidgetProperty::new(PROPERTY_CONTAINER_HEIGHT, PropertyValue::F64(180.0)).optional(),
+                    WidgetProperty::new(PROPERTY_CONTAINER_HEIGHT, PropertyValue::BlobRef(1)).optional(),
                 ],
             );
+            assert_eq!(graph.blob(0), Some(&[1, 1, 0, 0, 160, 67][..]));
+            assert_eq!(graph.blob(1), Some(&[1, 1, 0, 0, 52, 67][..]));
             let child = container.children().next().unwrap();
             let text = graph.node(child).unwrap();
             assert_eq!(text.widget_type(), WIDGET_TEXT);
@@ -1004,7 +1006,7 @@ mod tests {
             }));
             assert_eq!(
                 container.properties()[0].value_kind(),
-                PropertyValueKind::F64
+                PropertyValueKind::BlobRef
             );
             assert_eq!(
                 container.properties()[2].value_kind(),

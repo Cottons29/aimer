@@ -1688,6 +1688,9 @@ impl LayoutElement for StatefulElement {
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         unsafe { &*self.child.0.get() }.content_size(ctx)
     }
+    fn flex(&self) -> Option<f32> {
+        unsafe { &*self.child.0.get() }.flex()
+    }
     fn get_size_from_child(&self) -> Option<Size> {
         unsafe { &*self.child.0.get() }.get_size_from_child()
     }

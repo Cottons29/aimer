@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, State,
-    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    AnyElement, AnyWidget, AnyWidgetExt, Drawable, Element, EventElement, LayoutElement,
+    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::Route;
@@ -16,12 +16,8 @@ use crate::outlet::{OutletChildBuilder, OutletSlot};
 /// somewhere in its tree — and a builder for the currently active child route.
 /// When built, the shell injects an [`OutletSlot`] into the context so the
 /// descendant outlet can render the child.
-#[derive(aimer_widget::PortableWidget)]
-#[portable_widget(id = "aimer_router::Shell", schema_only)]
 pub struct Shell {
-    #[portable_child]
     frame: AnyWidget,
-    #[portable_skip]
     child_builder: OutletChildBuilder,
 }
 
@@ -54,6 +50,23 @@ impl Shell {
     /// The child is cloned each time the outlet requests it.
     pub fn with_child(frame: impl Widget + 'static, child: impl Widget + Clone + 'static) -> Self {
         Self::new(frame, move |_| child.clone().boxed())
+    }
+}
+
+impl aimer_widget::PortableWidget for Shell {
+    #[cfg(feature = "portable-guest")]
+    fn to_portable_node(
+        self,
+        ctx: &mut aimer_widget::portable::PortableBuildContext,
+        source: aimer_widget::portable::SourceFingerprint,
+    ) -> Result<
+        aimer_widget::portable::PortableNodeId,
+        aimer_widget::portable::PortableBuildError,
+    > {
+        let slot = OutletSlot::new(self.child_builder);
+        ctx.with_state(slot, |ctx| {
+            self.frame.into_portable_node(ctx, source.child(0))
+        })
     }
 }
 
@@ -279,7 +292,7 @@ impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
         })));
 
         // Reflect the active branch's top route in the browser address bar.
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
         if let Some(route) = active_top(&self.branches, self.active) {
             crate::navigator::browser_replace_state(&route.format());
         }
@@ -372,6 +385,8 @@ mod tests {
 
     use aimer_widget::base::{BuildContext, ResolvedSize, WindowHandle};
     use aimer_widget::{Drawable, EventElement, LayoutElement, Rebuildable, VisitorElement};
+
+    use crate::Outlet;
 
     use super::*;
 
@@ -518,5 +533,57 @@ mod tests {
         branch_pop(&mut branches, 5);
         assert_eq!(active_top(&branches, 5), None);
         assert_eq!(branches[0].len(), 1);
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn shell_portable_lowering_replaces_outlet_with_the_active_child() {
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+            StableId128,
+        };
+        use aimer_widget::portable::__anteros::{Version, WidgetDocumentView, WIDGET_TEXT};
+        use aimer_widget::{ErrorWidget, PortableWidget};
+
+        struct PortableLeaf;
+
+        impl Widget for PortableLeaf {
+            fn to_element(self, ctx: &BuildContext) -> AnyElement {
+                ErrorWidget::new("portable leaf").to_element(ctx)
+            }
+        }
+
+        impl PortableWidget for PortableLeaf {
+            fn to_portable_node(
+                self,
+                ctx: &mut PortableBuildContext,
+                source: SourceFingerprint,
+            ) -> Result<
+                aimer_widget::portable::PortableNodeId,
+                aimer_widget::portable::PortableBuildError,
+            > {
+                ctx.push_node(WIDGET_TEXT, Version::new(1, 0), None, source, &[], &[])
+            }
+        }
+
+        let mut context = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 2_048),
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap();
+        let root = Shell::new(Outlet, |_| PortableLeaf.boxed())
+            .to_portable_node(
+                &mut context,
+                SourceFingerprint::new(StableId128::from_bytes([8; 16])),
+            )
+            .unwrap();
+        let document = context.finish_document(root).unwrap();
+        let bytes = document.encode().unwrap();
+        let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
+
+        assert_eq!(view.node(view.root_node()).unwrap().widget_type(), WIDGET_TEXT);
+        assert_eq!(view.node_count(), 1);
     }
 }

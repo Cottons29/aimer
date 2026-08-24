@@ -326,7 +326,7 @@ mod portable_tests {
     }
 
     fn limits() -> PortableWidgetLimits {
-        PortableWidgetLimits::new(8, 8, 8, 8, 64, 2_048)
+        PortableWidgetLimits::new(8, 8, 8, 8, 64, 2_048).with_max_blob_bytes(128)
     }
 
     fn context(limits: PortableWidgetLimits) -> PortableBuildContext {
@@ -374,10 +374,12 @@ mod portable_tests {
         assert_eq!(
             node.properties().collect::<Vec<_>>(),
             vec![
-                WidgetProperty::new(PROPERTY_SIZED_BOX_WIDTH, PropertyValue::F64(32.0)).optional(),
-                WidgetProperty::new(PROPERTY_SIZED_BOX_HEIGHT, PropertyValue::F64(16.0)).optional(),
+                WidgetProperty::new(PROPERTY_SIZED_BOX_WIDTH, PropertyValue::BlobRef(0)).optional(),
+                WidgetProperty::new(PROPERTY_SIZED_BOX_HEIGHT, PropertyValue::BlobRef(1)).optional(),
             ]
         );
+        assert_eq!(view.blob(0), Some(&[1, 1, 0, 0, 0, 66][..]));
+        assert_eq!(view.blob(1), Some(&[1, 1, 0, 0, 128, 65][..]));
     }
 
     #[test]

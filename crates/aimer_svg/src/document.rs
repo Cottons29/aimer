@@ -36,6 +36,7 @@ pub struct SvgDiagnostic {
 
 #[derive(Clone)]
 pub struct SvgDocument {
+    source: Arc<str>,
     scene: Arc<SvgScene>,
     diagnostics: Arc<[SvgDiagnostic]>,
 }
@@ -86,9 +87,14 @@ impl SvgDocument {
         let mut builder = SceneBuilder::new(viewport, metadata, limits);
         builder.add_group(tree.root(), None, 1.0)?;
         Ok(Self {
+            source: Arc::from(source),
             scene: Arc::new(builder.finish()),
             diagnostics: diagnostics.into(),
         })
+    }
+
+    pub(crate) fn source(&self) -> &str {
+        &self.source
     }
 
     pub fn scene(&self) -> &Arc<SvgScene> {

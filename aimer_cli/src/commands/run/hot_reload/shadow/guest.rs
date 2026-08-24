@@ -268,6 +268,8 @@ fn generated_items(
         fn __aimer_generated_build(
             context: &mut ::aimer::portable::PortableBuildContext,
         ) -> Result<Vec<u8>, ::aimer_wasm_guest::GuestError> {
+            context.begin_build();
+            context.take_frame_request();
             context.run_async_microtasks();
             if let Some(failure) = context.take_async_failure() {
                 return Err(__aimer_generated_async_failure(failure));
@@ -288,6 +290,12 @@ fn generated_items(
 
         impl ::aimer_wasm_guest::GuestProgram for __AimerGeneratedGuestProgram {
             fn manifest(&self, limits: ::aimer::anteros::ModelLimits) -> Result<Vec<u8>, ::aimer_wasm_guest::GuestError> {
+                let capabilities = [::aimer::anteros::CapabilityRequirement::new(
+                    ::aimer::anteros::portable_http_capability_id(),
+                    ::aimer::anteros::PORTABLE_HTTP_CAPABILITY_ABI_MAJOR,
+                    ::aimer::anteros::CapabilityPolicy::Optional,
+                    ::aimer::anteros::portable_http_contract_fingerprint(),
+                )];
                 ::aimer::anteros::ApplicationManifest::new(
                     ::aimer::anteros::AbiVersion::new(1, 0),
                     ::aimer::anteros::AbiVersion::new(1, 0),
@@ -295,7 +303,7 @@ fn generated_items(
                     ::aimer::anteros::CALLBACK_EVENT_FORMAT_VERSION,
                     ::aimer::anteros::STATE_FORMAT_VERSION,
                     __AIMER_GENERATED_APPLICATION_ID,
-                    &[],
+                    &capabilities,
                 ).encode(limits).map_err(::aimer_wasm_guest::GuestError::from_model)
             }
 
@@ -310,6 +318,22 @@ fn generated_items(
                 self.generation_id = generation_id;
                 self.built = false;
                 Ok(())
+            }
+
+            fn set_window_metrics(
+                &mut self,
+                width: u32,
+                height: u32,
+                scale_factor: f64,
+            ) -> Result<(), ::aimer_wasm_guest::GuestError> {
+                __AIMER_GENERATED_BUILD_CONTEXT.with(|slot| {
+                    let context = slot.borrow();
+                    let context = context.as_ref().ok_or_else(|| {
+                        __aimer_generated_error(::aimer::anteros::AbiStatus::NotActive)
+                    })?;
+                    context.set_window_metrics(width, height, scale_factor);
+                    Ok(())
+                })
             }
 
             fn build(&mut self, _limits: ::aimer::anteros::ModelLimits) -> Result<Vec<u8>, ::aimer_wasm_guest::GuestError> {
@@ -364,7 +388,8 @@ fn generated_items(
                         __aimer_generated_error(::aimer::anteros::AbiStatus::NotActive)
                     })?;
                     context.run_async_microtasks();
-                    if context.take_rebuild_request() {
+                    let frame_requested = context.take_frame_request();
+                    if frame_requested || context.take_rebuild_request() {
                         __aimer_generated_build(context).map(Some)
                     } else {
                         Ok(None)

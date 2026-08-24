@@ -165,12 +165,14 @@ fn widget_image(
         PROPERTY_TEXT_CONTENT,
         PropertyValue::StringRef(1),
     )];
+    let width = [1_u8, 1, 0, 0, 32, 67];
+    let height = [1_u8, 1, 0, 0, 64, 66];
     let sized_button_properties = [
-        WidgetProperty::new(PROPERTY_CONTAINER_WIDTH, PropertyValue::F64(160.0)),
-        WidgetProperty::new(PROPERTY_CONTAINER_HEIGHT, PropertyValue::F64(48.0)),
-        WidgetProperty::new(PROPERTY_CONTAINER_PADDING, PropertyValue::BlobRef(0)),
-        WidgetProperty::new(PROPERTY_CONTAINER_MARGIN, PropertyValue::BlobRef(1)),
-        WidgetProperty::new(PROPERTY_CONTAINER_BOX_DECORATION, PropertyValue::BlobRef(2)),
+        WidgetProperty::new(PROPERTY_CONTAINER_WIDTH, PropertyValue::BlobRef(0)),
+        WidgetProperty::new(PROPERTY_CONTAINER_HEIGHT, PropertyValue::BlobRef(1)),
+        WidgetProperty::new(PROPERTY_CONTAINER_PADDING, PropertyValue::BlobRef(2)),
+        WidgetProperty::new(PROPERTY_CONTAINER_MARGIN, PropertyValue::BlobRef(3)),
+        WidgetProperty::new(PROPERTY_CONTAINER_BOX_DECORATION, PropertyValue::BlobRef(4)),
         WidgetProperty::new(PROPERTY_CONTAINER_COLOR, PropertyValue::Rgba(0x3366CCFF)),
     ];
     let callbacks = [CallbackBinding::new(
@@ -194,7 +196,7 @@ fn widget_image(
     spacing[0] = 1;
     let mut decoration = [0_u8; 106];
     decoration[0] = 1;
-    let blobs: [&[u8]; 3] = [&spacing, &spacing, &decoration];
+    let blobs: [&[u8]; 5] = [&width, &height, &spacing, &spacing, &decoration];
     WidgetDocument::new(
         generation_id,
         u64::from(counter),

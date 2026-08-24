@@ -64,6 +64,11 @@ pub enum AimerNativePlatformEvent {
     },
     TextEditingDelta(TextEditingDelta),
     FrameReady,
+    /// A live-reload native callback is waiting at the host safe point.
+    ///
+    /// This has its own coalescing slot so an animation frame already waiting
+    /// in the event loop cannot hide the callback's redraw request.
+    HotReloadCallbackReady,
     /// An editing shortcut the macOS menu bar claimed before the window could
     /// see it, handed back to the widget tree. See [`crate::menu`].
     MenuShortcut(crate::menu::MenuShortcut),
@@ -79,6 +84,13 @@ pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerNativePlatformEvent>> = Onc
 /// event loop can deliver them.
 static FRAME_READY_PENDING: AtomicBool = AtomicBool::new(false);
 
+/// Whether a live-reload native callback wake is waiting in the event loop.
+///
+/// Callback delivery and animation polling both end in a redraw, but they are
+/// distinct wake sources: a pending animation request must not suppress the
+/// wake that makes a freshly queued callback visible.
+static CALLBACK_READY_PENDING: AtomicBool = AtomicBool::new(false);
+
 fn try_begin_frame_ready_request(pending: &AtomicBool) -> bool {
     pending
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -89,8 +101,22 @@ fn complete_frame_ready_request(pending: &AtomicBool) {
     pending.store(false, Ordering::Release);
 }
 
+fn try_begin_callback_ready_request(pending: &AtomicBool) -> bool {
+    pending
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+}
+
+fn complete_callback_ready_request(pending: &AtomicBool) {
+    pending.store(false, Ordering::Release);
+}
+
 pub(crate) fn frame_ready_delivered() {
     complete_frame_ready_request(&FRAME_READY_PENDING);
+}
+
+pub(crate) fn callback_ready_delivered() {
+    complete_callback_ready_request(&CALLBACK_READY_PENDING);
 }
 
 /// Asks the event loop for the frame that continues whatever is unfinished.
@@ -112,6 +138,27 @@ fn request_frame_ready() {
     });
     if !sent {
         complete_frame_ready_request(&FRAME_READY_PENDING);
+    }
+}
+
+/// Wakes the event loop for a native callback queued by a hot-reloaded tree.
+///
+/// This deliberately does not share [`FRAME_READY_PENDING`]. An animation can
+/// already have a frame queued when a button callback arrives; sharing that
+/// flag made the callback wait for the animation wake to be delivered before
+/// the host safe point could process it.
+#[cfg(feature = "wasm-hot-reload")]
+fn request_callback_ready() {
+    if !try_begin_callback_ready_request(&CALLBACK_READY_PENDING) {
+        return;
+    }
+    let sent = EVENT_PROXY.get().is_some_and(|proxy| {
+        proxy
+            .send_event(AimerNativePlatformEvent::HotReloadCallbackReady)
+            .is_ok()
+    });
+    if !sent {
+        complete_callback_ready_request(&CALLBACK_READY_PENDING);
     }
 }
 
@@ -1135,12 +1182,13 @@ fn start_event_loop(
     #[cfg(feature = "wasm-hot-reload")]
     let live_reload = live_reload.map(|launch| {
         let session_id = *launch.credentials.session_id();
-        let host = LiveReloadHost::bind(
+        let host = LiveReloadHost::bind_with_callback_wake(
             launch.address,
             launch.credentials,
             launch.config,
             Rc::clone(venus.scheduler()),
             request_frame_ready,
+            request_callback_ready,
         )
         .expect("failed to start configured live reload listener");
         println!(
@@ -1264,6 +1312,21 @@ mod tests {
         complete_frame_ready_request(&pending);
 
         assert!(try_begin_frame_ready_request(&pending));
+    }
+
+    #[test]
+    fn callback_ready_requests_are_independent_of_animation_frame_requests() {
+        let frame_pending = AtomicBool::new(false);
+        let callback_pending = AtomicBool::new(false);
+
+        assert!(try_begin_frame_ready_request(&frame_pending));
+        assert!(try_begin_callback_ready_request(&callback_pending));
+        assert!(!try_begin_callback_ready_request(&callback_pending));
+
+        complete_frame_ready_request(&frame_pending);
+        complete_callback_ready_request(&callback_pending);
+
+        assert!(try_begin_callback_ready_request(&callback_pending));
     }
 
     #[test]

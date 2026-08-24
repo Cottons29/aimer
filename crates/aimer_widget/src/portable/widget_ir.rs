@@ -1308,7 +1308,11 @@ pub struct PortableBuildContext {
     pub(super) live_states: PortableLiveStateRegistry,
     mutations: VecDeque<QueuedMutation>,
     rebuild_requested: bool,
+    frame_requested: bool,
+    animation_states: BTreeMap<StableSlotId, Box<dyn Any>>,
+    animation_slots: BTreeSet<StableSlotId>,
     inherited_states: Rc<RefCell<std::collections::HashMap<TypeId, Rc<dyn Any>>>>,
+    portable_window: crate::base::WindowHandle,
 }
 
 struct PortableStateScopeGuard {
@@ -1375,8 +1379,48 @@ impl PortableBuildContext {
             live_states: PortableLiveStateRegistry::new(),
             mutations: VecDeque::new(),
             rebuild_requested: false,
+            frame_requested: false,
+            animation_states: BTreeMap::new(),
+            animation_slots: BTreeSet::new(),
             inherited_states: Rc::new(RefCell::new(std::collections::HashMap::new())),
+            portable_window: crate::base::WindowHandle::portable(),
         })
+    }
+
+    /// Returns the permanent generation identity attached to this guest
+    /// context.
+    #[doc(hidden)]
+    #[inline]
+    pub const fn generation_id(&self) -> u64 {
+        self.generation_id
+    }
+
+    /// Publishes the logical frame clock before a portable guest build lowers
+    /// widgets. Native and ordinary browser builds keep their own clocks.
+    #[doc(hidden)]
+    #[inline]
+    pub fn begin_build(&self) {
+        #[cfg(aimer_portable_guest)]
+        {
+            aimer_utils::set_portable_frame_time(self.document_revision);
+            aimer_venus::set_portable_frame_time(self.document_revision);
+        }
+    }
+
+    /// Publishes the host window metrics used by the next portable build.
+    ///
+    /// Portable widget code cannot access a native window directly, but
+    /// responsive providers such as `MediaQuery` still need the same physical
+    /// size and scale factor that native layout sees. The values are retained
+    /// by the guest context and shared with every `BuildContext` created while
+    /// lowering this generation.
+    #[doc(hidden)]
+    #[inline]
+    pub fn set_window_metrics(&self, width: u32, height: u32, scale_factor: f64) {
+        self.portable_window.update_headless_metrics(
+            winit::dpi::PhysicalSize::new(width, height),
+            scale_factor,
+        );
     }
 
     /// Replaces the generation's async ceilings before the first task starts.
@@ -1397,7 +1441,10 @@ impl PortableBuildContext {
     #[cfg(feature = "portable-guest")]
     #[inline]
     pub fn build_context(&self) -> crate::base::BuildContext<'static> {
-        crate::base::BuildContext::portable_with_inherited_states(self.inherited_states.clone())
+        crate::base::BuildContext::portable_with_window(
+            self.inherited_states.clone(),
+            self.portable_window.clone(),
+        )
     }
 
     /// Temporarily installs one inherited guest value for a nested lowering.
@@ -1422,6 +1469,50 @@ impl PortableBuildContext {
             previous,
         };
         callback(self)
+    }
+
+    /// Retains one generation-local animation value under a stable widget
+    /// slot while a portable guest is rebuilt for successive frames.
+    ///
+    /// Animation state is deliberately separate from the serialized retained
+    /// state registry: it belongs to the current guest instance and is sampled
+    /// again on the next frame rather than migrated across a hot-reload
+    /// generation. A type change at an existing slot safely starts that slot
+    /// over with `initial`.
+    #[doc(hidden)]
+    pub fn with_animation_state<T, R>(
+        &mut self,
+        slot: StableSlotId,
+        initial: impl FnOnce() -> T,
+        callback: impl FnOnce(&mut T, &mut Self) -> R,
+    ) -> R
+    where
+        T: 'static,
+    {
+        let mut state = self
+            .animation_states
+            .remove(&slot)
+            .and_then(|state| state.downcast::<T>().ok().map(|state| *state))
+            .unwrap_or_else(initial);
+        self.animation_slots.insert(slot);
+        let result = callback(&mut state, self);
+        self.animation_states.insert(slot, Box::new(state));
+        result
+    }
+
+    /// Requests another portable guest build at the next host frame safe
+    /// point.
+    #[doc(hidden)]
+    #[inline]
+    pub fn request_frame(&mut self) {
+        self.frame_requested = true;
+    }
+
+    /// Takes and clears the pending portable guest frame request.
+    #[doc(hidden)]
+    #[inline]
+    pub fn take_frame_request(&mut self) -> bool {
+        std::mem::take(&mut self.frame_requested)
     }
 
     /// Derives a retained slot from an explicit widget key or source fallback.
@@ -1464,7 +1555,7 @@ impl PortableBuildContext {
         hasher.finish()
     }
 
-    fn start_async_task(
+    pub(crate) fn start_async_task(
         &self,
         callback_id: StableId128,
         schema: AsyncCallbackSchemaMetadata,
@@ -1539,7 +1630,9 @@ impl PortableBuildContext {
     /// Returns whether the generation retains a task or has ready scheduler work.
     #[inline]
     pub fn has_async_work(&self) -> bool {
-        self.async_runtime.task_count() != 0 || self.async_runtime.has_ready_work()
+        self.frame_requested
+            || self.async_runtime.task_count() != 0
+            || self.async_runtime.has_ready_work()
     }
 
     /// Returns the number of in-flight guest-owned async callback tasks.
@@ -2007,6 +2100,9 @@ impl PortableBuildContext {
         self.parented.clear();
         self.depths.clear();
         self.slots.clear();
+        self.animation_states
+            .retain(|slot, _| self.animation_slots.contains(slot));
+        self.animation_slots.clear();
         self.live_states.finish_generation();
         Ok(graph)
     }
@@ -2510,6 +2606,21 @@ mod tests {
         });
 
         assert!(context.build_context().get_state::<String>().is_none());
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn portable_build_context_exposes_host_window_metrics() {
+        let context = context();
+        context.set_window_metrics(1_200, 800, 2.0);
+
+        let build = context.build_context();
+        let metrics = crate::WindowMetrics::of(&build.window);
+
+        assert_eq!(metrics.physical_size, winit::dpi::PhysicalSize::new(1_200, 800));
+        assert_eq!(metrics.scale_factor, 2.0);
+        assert_eq!(metrics.logical_size().width, 600.0);
+        assert_eq!(metrics.logical_size().height, 400.0);
     }
 
     fn callback(

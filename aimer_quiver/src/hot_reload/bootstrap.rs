@@ -515,6 +515,7 @@ mod tests {
         let config = DevelopmentHostConfig::cli_safe_profile()
             .model_max_state_entries(23)
             .model_max_widget_nodes(17)
+            .model_max_widget_depth(17)
             .model_max_properties(29)
             .generation_max_retired(9)
             .reload_command_queue_capacity(7)

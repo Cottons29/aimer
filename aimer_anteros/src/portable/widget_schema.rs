@@ -59,6 +59,13 @@ pub const LAYOUT_SPACING_VALUE_VERSION: Version = Version::new(1, 0);
 /// Maximum encoded payload size for one `LayoutSpacing` value.
 pub const LAYOUT_SPACING_VALUE_MAXIMUM_ENCODED_BYTES: u32 = 21;
 
+/// Canonical identity for the versioned `Dimension` value codec.
+pub const DIMENSION_VALUE_NAME: &str = "aimer.value:aimer_attribute::Dimension";
+/// Current `Dimension` value-codec version.
+pub const DIMENSION_VALUE_VERSION: Version = Version::new(1, 0);
+/// Maximum encoded payload size for one `Dimension` value.
+pub const DIMENSION_VALUE_MAXIMUM_ENCODED_BYTES: u32 = 6;
+
 /// Canonical identity for the versioned `BoxDecoration` value codec.
 pub const BOX_DECORATION_VALUE_NAME: &str = "aimer.value:aimer_style::BoxDecoration";
 /// Current `BoxDecoration` value-codec version.
@@ -395,14 +402,24 @@ const FLEX_ROW_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
 const CONTAINER_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
     PropertySchemaMetadata::from_canonical_name(
         PROPERTY_CONTAINER_WIDTH_NAME,
-        PropertyValueKind::F64,
+        PropertyValueKind::BlobRef,
     )
-    .optional(),
+    .optional()
+    .with_value_schema(ValueSchemaMetadata::from_canonical_name(
+        DIMENSION_VALUE_NAME,
+        DIMENSION_VALUE_VERSION,
+        DIMENSION_VALUE_MAXIMUM_ENCODED_BYTES,
+    )),
     PropertySchemaMetadata::from_canonical_name(
         PROPERTY_CONTAINER_HEIGHT_NAME,
-        PropertyValueKind::F64,
+        PropertyValueKind::BlobRef,
     )
-    .optional(),
+    .optional()
+    .with_value_schema(ValueSchemaMetadata::from_canonical_name(
+        DIMENSION_VALUE_NAME,
+        DIMENSION_VALUE_VERSION,
+        DIMENSION_VALUE_MAXIMUM_ENCODED_BYTES,
+    )),
     PropertySchemaMetadata::from_canonical_name(
         PROPERTY_CONTAINER_PADDING_NAME,
         PropertyValueKind::BlobRef,
@@ -442,14 +459,24 @@ const CONTAINER_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
 const SIZED_BOX_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
     PropertySchemaMetadata::from_canonical_name(
         PROPERTY_SIZED_BOX_WIDTH_NAME,
-        PropertyValueKind::F64,
+        PropertyValueKind::BlobRef,
     )
-    .optional(),
+    .optional()
+    .with_value_schema(ValueSchemaMetadata::from_canonical_name(
+        DIMENSION_VALUE_NAME,
+        DIMENSION_VALUE_VERSION,
+        DIMENSION_VALUE_MAXIMUM_ENCODED_BYTES,
+    )),
     PropertySchemaMetadata::from_canonical_name(
         PROPERTY_SIZED_BOX_HEIGHT_NAME,
-        PropertyValueKind::F64,
+        PropertyValueKind::BlobRef,
     )
-    .optional(),
+    .optional()
+    .with_value_schema(ValueSchemaMetadata::from_canonical_name(
+        DIMENSION_VALUE_NAME,
+        DIMENSION_VALUE_VERSION,
+        DIMENSION_VALUE_MAXIMUM_ENCODED_BYTES,
+    )),
 ];
 const TEXT_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
     PropertySchemaMetadata::from_canonical_name(

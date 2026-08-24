@@ -109,6 +109,19 @@ impl<P: GuestProgram> GuestAdapter<P> {
             .map_err(|error| error.with_operation(GuestOperation::Initialize))
     }
 
+    /// Publishes the host window metrics before portable application work.
+    #[inline]
+    pub fn set_window_metrics(
+        &mut self,
+        width: u32,
+        height: u32,
+        scale_factor: f64,
+    ) -> Result<(), GuestError> {
+        self.program
+            .set_window_metrics(width, height, scale_factor)
+            .map_err(|error| error.with_operation(GuestOperation::Initialize))
+    }
+
     /// Produces and validates the current canonical Widget IR image.
     pub fn build(&mut self) -> Result<Vec<u8>, GuestError> {
         let bytes = self
@@ -272,6 +285,25 @@ impl<P: GuestProgram> RawGuest<P> {
     fn initialize(&mut self, generation_id: i64) -> Result<u32, GuestError> {
         self.reject_other_pending_outputs(true, true, true, true, false)?;
         self.adapter.initialize(generation_id as u64)?;
+        Ok(0)
+    }
+
+    fn set_window_metrics(
+        &mut self,
+        width: i32,
+        height: i32,
+        scale_factor_bits: i64,
+    ) -> Result<u32, GuestError> {
+        self.reject_other_pending_outputs(true, true, true, true, false)?;
+        let width = u32::try_from(width).map_err(|_| GuestError::new(AbiStatus::InvalidArgument))?;
+        let height =
+            u32::try_from(height).map_err(|_| GuestError::new(AbiStatus::InvalidArgument))?;
+        let scale_factor = f64::from_bits(scale_factor_bits as u64);
+        if !scale_factor.is_finite() || scale_factor <= 0.0 {
+            return Err(GuestError::new(AbiStatus::InvalidArgument));
+        }
+        self.adapter
+            .set_window_metrics(width, height, scale_factor)?;
         Ok(0)
     }
 
@@ -571,6 +603,20 @@ impl<P: GuestProgram + Default> ExportedGuest<P> {
     #[inline]
     pub fn initialize(&self, generation_id: i64) -> i64 {
         self.with_guest(GuestOperation::Initialize, |guest| guest.initialize(generation_id))
+    }
+
+    #[doc(hidden)]
+    #[inline]
+    pub fn set_window_metrics(
+        &self,
+        width: i32,
+        height: i32,
+        scale_factor_bits: i64,
+    ) -> i32 {
+        let packed = self.with_guest(GuestOperation::Initialize, |guest| {
+            guest.set_window_metrics(width, height, scale_factor_bits)
+        });
+        (packed as u64 >> 32) as i32
     }
 
     #[doc(hidden)]

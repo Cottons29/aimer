@@ -64,6 +64,14 @@ pub(crate) fn enable_guest(
     let relative_root = crate_root.strip_prefix(project_root).map_err(|_| {
         ShadowError::new(ShadowErrorKind::PathEscape, "guest crate root escapes the application")
     })?;
+    rewrite_portable_webbrowser_dependencies(
+        &mut rewritten.value,
+        config.portable_webbrowser_root.as_deref(),
+    );
+    rewrite_portable_reqwest_dependencies(
+        &mut rewritten.value,
+        config.portable_reqwest_root.as_deref(),
+    );
     let root = rewritten.value.as_table_mut().expect("manifest root is a table");
     let package = root.get_mut("package")
         .and_then(toml::Value::as_table_mut)
@@ -319,6 +327,101 @@ fn rewrite_dependencies(
     Ok(())
 }
 
+fn rewrite_portable_webbrowser_dependencies(
+    manifest: &mut toml::Value,
+    shim_root: Option<&Path>,
+) {
+    let Some(shim_root) = shim_root else {
+        return;
+    };
+    let root = manifest.as_table_mut().expect("manifest root is a table");
+    for name in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        if let Some(table) = root.get_mut(name).and_then(toml::Value::as_table_mut) {
+            rewrite_portable_webbrowser_dependency(table, shim_root);
+        }
+    }
+    if let Some(targets) = root.get_mut("target").and_then(toml::Value::as_table_mut) {
+        for target in targets.iter_mut().filter_map(|(_, value)| value.as_table_mut()) {
+            for name in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                if let Some(table) = target.get_mut(name).and_then(toml::Value::as_table_mut) {
+                    rewrite_portable_webbrowser_dependency(table, shim_root);
+                }
+            }
+        }
+    }
+}
+
+fn rewrite_portable_webbrowser_dependency(
+    dependencies: &mut toml::map::Map<String, toml::Value>,
+    shim_root: &Path,
+) {
+    let Some(existing) = dependencies.remove("webbrowser") else {
+        return;
+    };
+    let mut replacement = toml::map::Map::new();
+    replacement.insert(
+        "package".to_owned(),
+        toml::Value::String("aimer_portable_webbrowser".to_owned()),
+    );
+    replacement.insert(
+        "path".to_owned(),
+        toml::Value::String(shim_root.to_string_lossy().into_owned()),
+    );
+    if let toml::Value::Table(existing) = existing {
+        for name in ["features", "optional"] {
+            if let Some(value) = existing.get(name) {
+                replacement.insert(name.to_owned(), value.clone());
+            }
+        }
+    }
+    dependencies.insert("webbrowser".to_owned(), toml::Value::Table(replacement));
+}
+
+fn rewrite_portable_reqwest_dependencies(manifest: &mut toml::Value, shim_root: Option<&Path>) {
+    let Some(shim_root) = shim_root else {
+        return;
+    };
+    let root = manifest.as_table_mut().expect("manifest root is a table");
+    for name in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        if let Some(table) = root.get_mut(name).and_then(toml::Value::as_table_mut) {
+            rewrite_portable_reqwest_dependency(table, shim_root);
+        }
+    }
+    if let Some(targets) = root.get_mut("target").and_then(toml::Value::as_table_mut) {
+        for target in targets.iter_mut().filter_map(|(_, value)| value.as_table_mut()) {
+            for name in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                if let Some(table) = target.get_mut(name).and_then(toml::Value::as_table_mut) {
+                    rewrite_portable_reqwest_dependency(table, shim_root);
+                }
+            }
+        }
+    }
+}
+
+fn rewrite_portable_reqwest_dependency(
+    dependencies: &mut toml::map::Map<String, toml::Value>,
+    shim_root: &Path,
+) {
+    let Some(existing) = dependencies.remove("reqwest") else {
+        return;
+    };
+    let mut replacement = toml::map::Map::new();
+    replacement.insert(
+        "package".to_owned(),
+        toml::Value::String("aimer_portable_reqwest".to_owned()),
+    );
+    replacement.insert(
+        "path".to_owned(),
+        toml::Value::String(shim_root.to_string_lossy().into_owned()),
+    );
+    if let toml::Value::Table(existing) = existing
+        && let Some(optional) = existing.get("optional")
+    {
+        replacement.insert("optional".to_owned(), optional.clone());
+    }
+    dependencies.insert("reqwest".to_owned(), toml::Value::Table(replacement));
+}
+
 fn merge_dependency(base: toml::Value, overrides: toml::map::Map<String, toml::Value>) -> toml::Value {
     let mut table = match base {
         toml::Value::String(version) => {
@@ -355,4 +458,63 @@ fn manifest_io(path: &Path, error: std::io::Error) -> ShadowError {
         ShadowErrorKind::Manifest,
         format!("failed to read manifest path {}: {error}", path.display()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn portable_guest_replaces_webbrowser_with_the_no_browser_shim() {
+        let mut dependencies = toml::map::Map::new();
+        dependencies.insert(
+            "webbrowser".to_owned(),
+            toml::Value::String("1.2.1".to_owned()),
+        );
+
+        rewrite_portable_webbrowser_dependency(&mut dependencies, Path::new("/shim"));
+
+        assert_eq!(
+            dependencies.get("webbrowser"),
+            Some(&toml::Value::Table(toml::map::Map::from_iter([
+                (
+                    "package".to_owned(),
+                    toml::Value::String("aimer_portable_webbrowser".to_owned()),
+                ),
+                (
+                    "path".to_owned(),
+                    toml::Value::String("/shim".to_owned()),
+                ),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn portable_guest_replaces_reqwest_with_the_capability_shim() {
+        let mut dependencies = toml::map::Map::new();
+        dependencies.insert(
+            "reqwest".to_owned(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "workspace".to_owned(),
+                toml::Value::Boolean(true),
+            )])),
+        );
+
+        rewrite_portable_reqwest_dependency(&mut dependencies, Path::new("/shim"));
+
+        assert_eq!(
+            dependencies.get("reqwest"),
+            Some(&toml::Value::Table(toml::map::Map::from_iter([
+                (
+                    "package".to_owned(),
+                    toml::Value::String("aimer_portable_reqwest".to_owned()),
+                ),
+                (
+                    "path".to_owned(),
+                    toml::Value::String("/shim".to_owned()),
+                ),
+            ]))),
+        );
+    }
+
 }

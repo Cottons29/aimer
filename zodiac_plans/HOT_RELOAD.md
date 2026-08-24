@@ -165,8 +165,8 @@ For example, reflection for the `Container` and `Text` fields used here is conce
 
 ```text
 RUST TYPE Container  -> WIDGET hash64("aimer.widget:aimer_container::single_child::Container") 1.0
-  FIELD width         Dimension     -> PROP hash64("aimer.property:...:width") F64
-  FIELD height        Dimension     -> PROP hash64("aimer.property:...:height") F64
+  FIELD width         Dimension     -> PROP hash64("aimer.property:...:width") BLOBREF (versioned unit codec)
+  FIELD height        Dimension     -> PROP hash64("aimer.property:...:height") BLOBREF (versioned unit codec)
   FIELD color         Option<Color> -> PROP hash64("aimer.property:...:color") RGBA, OMIT_IF_NONE
   FIELD child         W             -> CHILD exactly_one
 
@@ -1273,7 +1273,7 @@ Phase 28 implementation status (2026-08-24):
 - The complete Quiver suite passes 204 tests with native listener permissions; the unprivileged sandbox run passes 185
   tests and reports only socket `Operation not permitted` failures.
 
-#### - [x] Phase 29: final application-wide hot-reload proof and cleanup
+#### - [ ] Phase 29: final application-wide hot-reload proof and cleanup
 
 Make the completed portable contract usable as one end-to-end development workflow. This phase is the final proof that
 the CLI can launch and reload the real application surfaces in both `jaime` and `website`, not only isolated fixtures or
@@ -1353,9 +1353,21 @@ Phase 29 proof record (2026-08-24, `nightly-aarch64-apple-darwin`, macOS target)
   suite passes 204 tests, including the complete built-in portability audit.
 - The website host-materializer proof passes with `portable_proof`, and the generated two-generation proof remains
   green after the portable guest feature isolation cleanup.
-- The real Jaime and website CLI launches reached guest build/session startup but were cancelled by the headless
-  environment before a native window/listener became ready. Both runs cleaned `target/aimer-hot-reload`; no real
-  screen-by-screen application inventory or desktop reload commit can be claimed from this environment.
+- A prior headless attempt for both real applications reached guest build/session startup but was cancelled before a
+  native window/listener became ready; that run cleaned `target/aimer-hot-reload` and did not claim a desktop proof.
+- On 2026-08-24, the maintained macOS website launch completed the native proof through the first safe point with:
+
+  ```text
+  MY_PROJECT_DIR=website CARGO_NET_OFFLINE=true cargo run -p aimer_cli -- +nightly run -Z hot-reload -d macos
+  ```
+
+  The guest and host compiled, Xcode reported `** BUILD SUCCEEDED **`, the authenticated listener and Metal renderer
+  started, the initial module uploaded, `committed generation 1` was observed, and the host reported `Current route:
+  Home`. The process was stopped with Ctrl-C after the commit and left no proof-owned process running. No website source,
+  manifest, or test file was modified by this proof.
+- This is an initial-generation launch proof only. The website route/screen inventory, deterministic source edits,
+  second-generation commit, rejection/recovery matrix, and the corresponding native `jaime` run still require a
+  window-capable application test pass before the Phase 29 checkbox can be closed.
 
 The checkbox remains pending until the real native application launches complete on a window-capable device and the
 full application inventory, target matrix, and interactive failure/recovery observations are recorded.

@@ -11,6 +11,50 @@ use crate::{
 
 const CONTRACT_DERIVATION_DOMAIN: &[u8] = b"aimer.capability-contract.v1\0";
 
+/// The canonical capability identity used by generated hot-reload guests for
+/// bounded HTTP GET requests.
+pub const PORTABLE_HTTP_CAPABILITY_NAME: &str = "aimer::portable_http";
+
+/// The wire-contract major version used by the portable HTTP capability.
+pub const PORTABLE_HTTP_CAPABILITY_ABI_MAJOR: u32 = 1;
+
+/// The only method currently exposed by the portable HTTP capability.
+pub const PORTABLE_HTTP_METHOD_GET: u32 = 0;
+
+/// Maximum canonical URL request size accepted by the portable HTTP bridge.
+pub const PORTABLE_HTTP_MAX_REQUEST_BYTES: u32 = 16 * 1024;
+
+/// Maximum complete response image accepted by the portable HTTP bridge.
+///
+/// The generated guest materializes the response before decoding it, so this
+/// ceiling is intentionally kept below the CLI safe profile's 4 MiB linear
+/// memory limit. Keeping the response bounded also leaves room for the guest
+/// runtime, request bytes, and the decoded body to coexist.
+pub const PORTABLE_HTTP_MAX_RESPONSE_BYTES: u32 = 256 * 1024;
+
+/// Bytes occupied by the status and length fields around an HTTP body.
+pub const PORTABLE_HTTP_RESPONSE_OVERHEAD_BYTES: u32 = 2 + 4;
+
+/// Returns the stable identity of the built-in portable HTTP capability.
+#[inline]
+pub fn portable_http_capability_id() -> StableId128 {
+    StableId128::derive_capability(PORTABLE_HTTP_CAPABILITY_NAME)
+}
+
+/// Returns the fingerprint of the built-in portable HTTP wire contract.
+#[inline]
+pub fn portable_http_contract_fingerprint() -> [u8; 32] {
+    capability_contract_fingerprint(
+        b"aimer.portable_http.v1|get(url:string)->(status:u16,body:bytes)",
+    )
+}
+
+/// Returns the maximum body size that fits in a portable HTTP response image.
+#[inline]
+pub const fn portable_http_max_body_bytes() -> u32 {
+    PORTABLE_HTTP_MAX_RESPONSE_BYTES - PORTABLE_HTTP_RESPONSE_OVERHEAD_BYTES
+}
+
 /// Derives a capability contract fingerprint from its canonical wire schema.
 ///
 /// The input is the versioned canonical declaration image produced by Aimer's

@@ -26,7 +26,11 @@ fn request_next_frame() {
 /// Values are clamped to that range for drawing. Layout and event behavior are
 /// delegated to the child.
 #[derive(aimer_macro::PortableWidget)]
-#[portable_widget(id = "aimer_animation::FadeTransition", schema_only)]
+#[portable_widget(
+    id = "aimer_animation::FadeTransition",
+    schema_only,
+    manual_lowering
+)]
 pub struct FadeTransition<T: Widget + 'static> {
     #[portable_skip]
     pub opacity: AnimationController,
@@ -151,7 +155,11 @@ impl_transition_element!(
 /// At value `0.0` the child is at the offset position; at `1.0` it is at its
 /// natural position.
 #[derive(aimer_macro::PortableWidget)]
-#[portable_widget(id = "aimer_animation::SlideTransition", schema_only)]
+#[portable_widget(
+    id = "aimer_animation::SlideTransition",
+    schema_only,
+    manual_lowering
+)]
 pub struct SlideTransition<T: Widget + 'static> {
     #[portable_skip]
     pub position: AnimationController,
@@ -281,7 +289,11 @@ impl LayoutElement for SlideTransitionElement {
 /// A value of `1.0` is the child's natural size. The drawing transform is
 /// centered in the current box constraints; layout itself is unchanged.
 #[derive(aimer_macro::PortableWidget)]
-#[portable_widget(id = "aimer_animation::ScaleTransition", schema_only)]
+#[portable_widget(
+    id = "aimer_animation::ScaleTransition",
+    schema_only,
+    manual_lowering
+)]
 pub struct ScaleTransition<T: Widget + 'static> {
     #[portable_skip]
     pub scale: AnimationController,
@@ -400,7 +412,11 @@ impl LayoutElement for ScaleTransitionElement {
 /// At value 0.0 the child is at 0 rotation; at 1.0 it has completed one full
 /// turn (2π radians).
 #[derive(aimer_macro::PortableWidget)]
-#[portable_widget(id = "aimer_animation::RotationTransition", schema_only)]
+#[portable_widget(
+    id = "aimer_animation::RotationTransition",
+    schema_only,
+    manual_lowering
+)]
 pub struct RotationTransition<T: Widget + 'static> {
     #[portable_skip]
     pub turns: AnimationController,
@@ -511,6 +527,33 @@ impl LayoutElement for RotationTransitionElement {
     }
 }
 
+macro_rules! impl_portable_transition_lowering {
+    ($transition:ident) => {
+        impl<T: Widget + 'static> aimer_widget::PortableWidget for $transition<T> {
+            #[cfg(feature = "portable-guest")]
+            fn to_portable_node(
+                self,
+                ctx: &mut aimer_widget::portable::PortableBuildContext,
+                source: aimer_widget::portable::SourceFingerprint,
+            ) -> Result<
+                aimer_widget::portable::PortableNodeId,
+                aimer_widget::portable::PortableBuildError,
+            > {
+                aimer_widget::PortableWidget::to_portable_node(
+                    self.child,
+                    ctx,
+                    source.child(0),
+                )
+            }
+        }
+    };
+}
+
+impl_portable_transition_lowering!(FadeTransition);
+impl_portable_transition_lowering!(SlideTransition);
+impl_portable_transition_lowering!(ScaleTransition);
+impl_portable_transition_lowering!(RotationTransition);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -602,5 +645,71 @@ mod tests {
         assert_defers_next_frame(SlideTransition::new(controller(), (10.0, 10.0), TestWidget));
         assert_defers_next_frame(ScaleTransition::new(controller(), TestWidget));
         assert_defers_next_frame(RotationTransition::new(controller(), TestWidget));
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn portable_transitions_lower_to_their_current_child() {
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+            StableId128,
+        };
+        use aimer_widget::portable::__anteros::{Version, WidgetDocumentView, WIDGET_TEXT};
+        use aimer_widget::{AnyElement, PortableWidget};
+
+        struct PortableLeaf;
+
+        impl Widget for PortableLeaf {
+            fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+                panic!("portable transition test must not enter native element construction")
+            }
+        }
+
+        impl PortableWidget for PortableLeaf {
+            fn to_portable_node(
+                self,
+                ctx: &mut PortableBuildContext,
+                source: SourceFingerprint,
+            ) -> Result<
+                aimer_widget::portable::PortableNodeId,
+                aimer_widget::portable::PortableBuildError,
+            > {
+                ctx.push_node(WIDGET_TEXT, Version::new(1, 0), None, source, &[], &[])
+            }
+        }
+
+        fn assert_transparent<W: Widget + 'static>(widget: W) {
+            let mut context = PortableBuildContext::new(
+                1,
+                1,
+                PortableWidgetLimits::new(8, 8, 8, 8, 64, 2_048),
+                PortableLimits::new(8, 16, 64, 128, 1_024),
+            )
+            .unwrap();
+            let root = widget
+                .to_portable_node(
+                    &mut context,
+                    SourceFingerprint::new(StableId128::from_bytes([9; 16])),
+                )
+                .unwrap();
+            let document = context.finish_document(root).unwrap();
+            let bytes = document.encode().unwrap();
+            let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
+
+            assert_eq!(view.node_count(), 1);
+            assert_eq!(
+                view.node(view.root_node()).unwrap().widget_type(),
+                WIDGET_TEXT
+            );
+        }
+
+        assert_transparent(FadeTransition::new(controller(), PortableLeaf));
+        assert_transparent(SlideTransition::new(
+            controller(),
+            (10.0, 10.0),
+            PortableLeaf,
+        ));
+        assert_transparent(ScaleTransition::new(controller(), PortableLeaf));
+        assert_transparent(RotationTransition::new(controller(), PortableLeaf));
     }
 }

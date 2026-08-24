@@ -1,0 +1,14 @@
+[package]
+name = "aimer_portable_webbrowser"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[features]
+disable-wsl = []
+hardened = []
+wasm-console = []
+
+[lib]
+path = "src/lib.rs"

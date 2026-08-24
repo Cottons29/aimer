@@ -1,3 +1,5 @@
+#[cfg(feature = "portable-guest")]
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -6,10 +8,10 @@ use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, State,
     StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
-#[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
 use wasm_bindgen::prelude::*;
 
-use crate::Route;
+use crate::{Route, Router};
 
 /// Maximum number of redirect hops resolved before the navigator bails out.
 /// Prevents infinite redirect loops from hanging the app.
@@ -36,7 +38,7 @@ where
     current
 }
 
-#[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
 fn browser_push_state(path: &str) {
     if let Some(window) = web_sys::window() {
         let history = window.history().expect("no history");
@@ -44,7 +46,7 @@ fn browser_push_state(path: &str) {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
 pub(crate) fn browser_replace_state(path: &str) {
     if let Some(window) = web_sys::window() {
         let history = window.history().expect("no history");
@@ -52,7 +54,7 @@ pub(crate) fn browser_replace_state(path: &str) {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
 fn browser_current_path() -> Option<String> {
     web_sys::window().and_then(|w| w.location().pathname().ok())
 }
@@ -64,19 +66,15 @@ fn browser_current_path() -> Option<String> {
 /// WebAssembly, the initial browser path overrides `initial_route` when it
 /// parses successfully, and later stack changes synchronize with browser
 /// history.
-#[derive(aimer_widget::PortableWidget)]
-#[portable_widget(id = "aimer_router::Navigator", schema_only)]
 pub struct Navigator<R>
 where
-    R: Route,
+    R: Route + Router,
 {
-    #[portable_skip]
     pub initial_route: R,
-    #[portable_skip]
     pub routes: fn(R) -> AnyWidget,
 }
 
-impl<R: Route> Navigator<R> {
+impl<R: Route + Router> Navigator<R> {
     /// Creates a navigator with one initial route and a route-to-widget
     /// builder.
     ///
@@ -84,7 +82,7 @@ impl<R: Route> Navigator<R> {
     /// initial route remains the bottom of the in-memory stack.
     pub fn new(initial_route: R, routes: fn(R) -> AnyWidget) -> Self {
         // On WASM, try to restore the initial route from the browser URL
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
         let initial_route = {
             browser_current_path()
                 .and_then(|path| R::parse(&path))
@@ -97,8 +95,49 @@ impl<R: Route> Navigator<R> {
     }
 }
 
+impl<R: Route + Router> aimer_widget::PortableWidget for Navigator<R> {
+    #[cfg(feature = "portable-guest")]
+    fn to_portable_node(
+        self,
+        ctx: &mut aimer_widget::portable::PortableBuildContext,
+        source: aimer_widget::portable::SourceFingerprint,
+    ) -> Result<
+        aimer_widget::portable::PortableNodeId,
+        aimer_widget::portable::PortableBuildError,
+    > {
+        let initial_route = self.initial_route;
+        let slot = ctx.slot_for(None, source);
+        // Callbacks run between portable builds. Keep the controller's route
+        // stack in generation-local retained storage so a rebuild observes the
+        // route pushed by the callback instead of recreating the initial route.
+        ctx.with_animation_state(
+            slot,
+            || {
+                Rc::new(RefCell::new(PortableNavigatorState {
+                    initial_route: initial_route.clone(),
+                    history: vec![initial_route.clone()],
+                }))
+            },
+            |state, ctx| {
+                let controller = portable_navigator_controller(state.clone());
+                let current_route = controller.current_route();
+                ctx.with_state(controller, |ctx| {
+                    let build_context = ctx.build_context();
+                    let effective = resolve_redirect_chain(
+                        current_route,
+                        |route| route.redirect(&build_context),
+                        MAX_REDIRECT_HOPS,
+                    );
+                    let route_widget = Router::build(&effective, &build_context);
+                    aimer_widget::AnyWidgetExt::into_portable_node(route_widget, ctx, source)
+                })
+            },
+        )
+    }
+}
 
-impl<R: Route> Navigator<R> {
+
+impl<R: Route + Router> Navigator<R> {
     /// Shorthand of [`NavigatorController::of`].
     pub fn of(ctx: &BuildContext) -> NavigatorInstance<R> {
         NavigatorController::of(ctx)
@@ -117,7 +156,7 @@ where
 
 impl<R: Route> NavigatorState<R> {
     pub fn push(&self, route: R) {
-        #[cfg(target_arch = "wasm32")]
+          #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
         browser_push_state(&route.format());
         self.updater.set_state(|state| {
             state.history.push(route);
@@ -128,7 +167,7 @@ impl<R: Route> NavigatorState<R> {
         self.updater.set_state(|state| {
             if state.history.len() > 1 {
                 state.history.pop();
-                #[cfg(target_arch = "wasm32")]
+                  #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
                 if let Some(prev) = state.history.last() {
                     browser_replace_state(&prev.format());
                 }
@@ -156,13 +195,13 @@ impl<R: Route> NavigatorState<R> {
         self.updater.set_state(|state| {
             state.history.clear();
             state.history.push(state.initial_route.clone());
-            #[cfg(target_arch = "wasm32")]
+              #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
             browser_replace_state(&state.initial_route.format());
         });
     }
 
     pub fn set_route(&self, route: R) {
-        #[cfg(target_arch = "wasm32")]
+          #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
         browser_replace_state(&route.format());
         self.updater.set_state(|state| {
             state.history.clear();
@@ -171,11 +210,11 @@ impl<R: Route> NavigatorState<R> {
     }
 }
 
-impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
+impl<R: Route + Router> State<Navigator<R>> for NavigatorState<R> {
     fn init_state(&mut self, updater: StateUpdater<Self>) {
         self.updater = updater.clone();
 
-        #[cfg(target_arch = "wasm32")]
+          #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
         {
             let updater_clone = updater;
             let closure = Closure::wrap(Box::new(move |_event: web_sys::PopStateEvent| {
@@ -219,7 +258,7 @@ impl<R: Route> State<Navigator<R>> for NavigatorState<R> {
         });
 
         // Keep the browser address bar in sync with the final, post-redirect route.
-        #[cfg(target_arch = "wasm32")]
+          #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
         if effective.format() != top.format() {
             browser_replace_state(&effective.format());
         }
@@ -465,7 +504,7 @@ impl<R: Route> IntoIterator for NavigatorController<R> {
     }
 }
 
-impl<R: Route> StatefulWidget for Navigator<R> {
+impl<R: Route + Router> StatefulWidget for Navigator<R> {
     type State = NavigatorState<R>;
     fn create_state(self) -> Self::State {
         NavigatorState::<R> {
@@ -477,7 +516,7 @@ impl<R: Route> StatefulWidget for Navigator<R> {
     }
 }
 
-impl<R: Route> Widget for Navigator<R> {
+impl<R: Route + Router> Widget for Navigator<R> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let (child, updater) = StatefulElement::new(self, ctx);
         NavigatorElement {
@@ -528,12 +567,89 @@ fn navigator_controller<R: Route>(
     }
 }
 
+#[cfg(feature = "portable-guest")]
+struct PortableNavigatorState<R> {
+    initial_route: R,
+    history: Vec<R>,
+}
+
+#[cfg(feature = "portable-guest")]
+fn portable_navigator_controller<R: Route>(
+    state: Rc<RefCell<PortableNavigatorState<R>>>,
+) -> NavigatorController<R> {
+    NavigatorController {
+        push_fn: {
+            let state = state.clone();
+            Rc::new(move |route| state.borrow_mut().history.push(route))
+        },
+        pop_fn: {
+            let state = state.clone();
+            Rc::new(move || {
+                let mut state = state.borrow_mut();
+                if state.history.len() > 1 {
+                    state.history.pop();
+                }
+            })
+        },
+        can_pop_fn: {
+            let state = state.clone();
+            Rc::new(move || state.borrow().history.len() > 1)
+        },
+        history_len_fn: {
+            let state = state.clone();
+            Rc::new(move || state.borrow().history.len())
+        },
+        routes_fn: {
+            let state = state.clone();
+            Rc::new(move || state.borrow().history.clone())
+        },
+        contains_route_fn: {
+            let state = state.clone();
+            Rc::new(move |route| {
+                let route = route.format();
+                state
+                    .borrow()
+                    .history
+                    .iter()
+                    .any(|candidate| candidate.format() == route)
+            })
+        },
+        current_route_fn: {
+            let state = state.clone();
+            Rc::new(move || {
+                state
+                    .borrow()
+                    .history
+                    .last()
+                    .expect("History should not be empty")
+                    .clone()
+            })
+        },
+        clear_fn: {
+            let state = state.clone();
+            Rc::new(move || {
+                let mut state = state.borrow_mut();
+                let initial_route = state.initial_route.clone();
+                state.history.clear();
+                state.history.push(initial_route);
+            })
+        },
+        set_route_fn: Rc::new(move |route| {
+            let mut state = state.borrow_mut();
+            state.history.clear();
+            state.history.push(route);
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
 
     use aimer_widget::base::{ResolvedSize, WindowHandle};
     use aimer_widget::{Drawable, EventElement, LayoutElement, Rebuildable, VisitorElement};
+
+    use crate::Router;
 
     use super::*;
 
@@ -542,6 +658,8 @@ mod tests {
         static CURRENT_ROUTE_OBSERVED: Cell<Option<TestRoute>> = const { Cell::new(None) };
         static HISTORY_LENGTH_OBSERVED: Cell<usize> = const { Cell::new(0) };
         static NAVIGATOR_OPERATION_STEP: Cell<u8> = const { Cell::new(0) };
+        #[cfg(feature = "portable-guest")]
+        static PORTABLE_ROUTE_BUILDS: RefCell<Vec<TestRoute>> = const { RefCell::new(Vec::new()) };
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -658,6 +776,128 @@ mod tests {
 
     fn lookup_controller_operations(_: TestRoute) -> AnyWidget {
         NavigatorControllerOperationsWidget.boxed()
+    }
+
+    #[cfg(feature = "portable-guest")]
+    struct PortableRouteWidget;
+
+    #[cfg(feature = "portable-guest")]
+    impl aimer_widget::PortableWidget for PortableRouteWidget {
+        fn to_portable_node(
+            self,
+            ctx: &mut aimer_widget::portable::PortableBuildContext,
+            source: aimer_widget::portable::SourceFingerprint,
+        ) -> Result<
+            aimer_widget::portable::PortableNodeId,
+            aimer_widget::portable::PortableBuildError,
+        > {
+            let navigator = NavigatorController::<TestRoute>::of(&ctx.build_context());
+            let event_kind = aimer_widget::portable::__anteros::EventId::new(1);
+            let callback_id = ctx.callback_id_for(None, source, event_kind);
+            let callback = aimer_widget::portable::PortableCallback::new(
+                event_kind,
+                aimer_widget::portable::__anteros::Version::new(1, 0),
+                callback_id,
+                move || {
+                    navigator.push(TestRoute::Settings);
+                    Ok(())
+                },
+            );
+            ctx.push_node_with_callbacks(
+                aimer_widget::portable::__anteros::WIDGET_TEXT,
+                aimer_widget::portable::__anteros::Version::new(1, 0),
+                None,
+                source,
+                &[],
+                vec![callback],
+                &[],
+            )
+        }
+    }
+
+    #[cfg(feature = "portable-guest")]
+    impl Widget for PortableRouteWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            panic!("portable route widget must not build natively")
+        }
+    }
+
+    #[cfg(feature = "portable-guest")]
+    impl Router for TestRoute {
+        fn build(&self, _ctx: &BuildContext) -> AnyWidget {
+            PORTABLE_ROUTE_BUILDS.with(|routes| routes.borrow_mut().push(*self));
+            PortableRouteWidget.boxed()
+        }
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn navigator_portable_lowering_uses_the_active_router_tree() {
+        use aimer_widget::PortableWidget as _;
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+            StableId128,
+        };
+        use aimer_widget::portable::__anteros::{WidgetDocumentView, WIDGET_TEXT};
+
+        let mut context = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 2_048),
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap();
+        let root = Navigator::new(TestRoute::Home, lookup_route)
+            .to_portable_node(
+                &mut context,
+                SourceFingerprint::new(StableId128::from_bytes([7; 16])),
+            )
+            .unwrap();
+        let document = context.finish_document(root).unwrap();
+        let bytes = document.encode().unwrap();
+        let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
+
+        assert_eq!(view.node(view.root_node()).unwrap().widget_type(), WIDGET_TEXT);
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn navigator_portable_push_survives_the_rebuild_triggered_by_a_callback() {
+        use aimer_widget::PortableWidget as _;
+        use aimer_widget::portable::{PortableBuildContext, PortableLimits, PortableWidgetLimits,
+            SourceFingerprint, StableId128};
+
+        PORTABLE_ROUTE_BUILDS.with(|routes| routes.borrow_mut().clear());
+
+        let mut context = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 8, 8, 8, 64, 2_048),
+            PortableLimits::new(8, 16, 64, 128, 1_024),
+        )
+        .unwrap();
+        let source = SourceFingerprint::new(StableId128::from_bytes([7; 16]));
+        let root = Navigator::new(TestRoute::Home, lookup_route)
+            .to_portable_node(&mut context, source)
+            .unwrap();
+        context.finish_document(root).unwrap();
+
+        let event_kind = aimer_widget::portable::__anteros::EventId::new(1);
+        let callback_id = context.callback_id_for(None, source, event_kind);
+        let callbacks = context.take_callback_registry();
+        callbacks.dispatch(callback_id, &mut context).unwrap();
+        assert!(context.take_rebuild_request());
+
+        let root = Navigator::new(TestRoute::Home, lookup_route)
+            .to_portable_node(&mut context, source)
+            .unwrap();
+        context.finish_document(root).unwrap();
+
+        assert_eq!(
+            PORTABLE_ROUTE_BUILDS.with(|routes| routes.borrow().clone()),
+            vec![TestRoute::Home, TestRoute::Settings],
+            "a callback-triggered portable rebuild must render the pushed route"
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

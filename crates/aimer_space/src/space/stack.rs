@@ -43,6 +43,23 @@ pub struct Stack<W = AnyWidget> {
     pub direction: StackDirection,
 }
 
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "illumos",
+))]
+#[aimer_widget::portable::__linkme::distributed_slice(
+    aimer_widget::portable::materializer::PORTABLE_NATIVE_WIDGET_SCHEMAS
+)]
+#[linkme(crate = aimer_widget::portable::__linkme)]
+#[allow(non_upper_case_globals)]
+static __AIMER_PORTABLE_NATIVE_SCHEMA_FOR_STACK:
+    aimer_widget::portable::__anteros::PortableWidgetSchemaMetadata<'static> =
+    <Stack as aimer_widget::portable::PortableWidgetSchema>::SCHEMA;
+
 impl Default for Stack {
     fn default() -> Self {
         Self::new()

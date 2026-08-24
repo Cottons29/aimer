@@ -38,3 +38,6 @@ aimer_canvas.workspace = true
 aimer_cupid.workspace = true
 tokio.workspace = true
 winit.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(aimer_portable_guest)"] }

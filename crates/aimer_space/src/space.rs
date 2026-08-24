@@ -11,8 +11,8 @@ pub mod stack;
 mod portable_layout_tests {
     use aimer_widget::base::BuildContext;
     use aimer_widget::portable::{
-        PortableBuildContext, PortableLimits, PortableWidgetLimits, PortableWidgetSchema,
-        SourceFingerprint, StableId128,
+        PortableBuildContext, PortableLimits, PortableNativeWidget, PortableWidgetLimits,
+        PortableWidgetSchema, SourceFingerprint, StableId128,
     };
     use aimer_widget::portable::__anteros::{Version, WIDGET_SIZED_BOX, WidgetDocumentView};
     use aimer_widget::{AnyElement, ErrorWidget, PortableWidget, Widget};
@@ -101,6 +101,13 @@ mod portable_layout_tests {
         );
         assert_eq!(node.properties().count(), 2);
         assert_eq!(node.children().count(), 1);
+    }
+
+    #[test]
+    fn positioned_exposes_a_native_materializer_for_hot_reload_hosts() {
+        fn assert_native_materializer<T: PortableNativeWidget>() {}
+
+        assert_native_materializer::<Positioned<aimer_container::ZeroSizedBox>>();
     }
 
     #[test]

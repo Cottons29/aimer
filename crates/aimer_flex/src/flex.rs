@@ -280,6 +280,20 @@ use aimer_widget::portable::{
 use aimer_widget::portable::{PortableBuildContext, PortableBuildError, PortableEncodeProperty};
 pub use flex_child::Expanded;
 pub use flex_list::{FlexList, ListFlex};
+
+#[cfg(test)]
+mod portable_materializer_tests {
+    use aimer_widget::portable::PortableNativeWidget;
+
+    use super::Expanded;
+
+    #[test]
+    fn expanded_exposes_a_native_materializer_for_hot_reload_hosts() {
+        fn assert_materializer<T: PortableNativeWidget>() {}
+
+        assert_materializer::<Expanded>();
+    }
+}
 pub use raw_flex::Flex;
 pub use row_column::{Column, Row};
 

@@ -290,6 +290,9 @@ impl LayoutElement for StatelessElement {
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
         unsafe { &*self.child.0.get() }.content_size(ctx)
     }
+    fn flex(&self) -> Option<f32> {
+        unsafe { &*self.child.0.get() }.flex()
+    }
     fn get_size_from_child(&self) -> Option<Size> {
         unsafe { &*self.child.0.get() }.get_size_from_child()
     }
@@ -374,6 +377,25 @@ mod tests {
     impl EventElement for Leaf {}
     impl Rebuildable for Leaf {}
 
+    /// A child whose flex factor must remain visible through transparent
+    /// element wrappers, as it does for an `Expanded` inside a keyed tree.
+    struct FlexibleLeaf;
+    impl VisitorElement for FlexibleLeaf {
+        fn debug_name(&self) -> &'static str {
+            "FlexibleLeaf"
+        }
+    }
+    impl Drawable for FlexibleLeaf {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl LayoutElement for FlexibleLeaf {
+        fn flex(&self) -> Option<f32> {
+            Some(2.5)
+        }
+    }
+    impl EventElement for FlexibleLeaf {}
+    impl Rebuildable for FlexibleLeaf {}
+
     // The core "ring the bell" wiring for responsive-on-resize:
     // `mark_needs_rebuild` must flip a rebuildable element's dirty flag AND
     // propagate through a non-rebuildable wrapper (e.g. NamedWidget) down to
@@ -398,6 +420,13 @@ mod tests {
             inner_dirty.get(),
             "mark reached the nested rebuildable child"
         );
+    }
+
+    #[test]
+    fn transparent_wrapper_preserves_child_flex_factor() {
+        let wrapper = StatelessElement::wrapper(FlexibleLeaf.boxed(), None, "Wrapper");
+
+        assert_eq!(wrapper.flex(), Some(2.5));
     }
 
     #[test]

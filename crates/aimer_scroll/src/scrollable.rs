@@ -40,6 +40,32 @@ use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
 use crate::scrollable::scroll_bar::{reserved_viewport, track_width};
 
+/// Bounded, versioned configuration preserved when a Scrollable crosses the
+/// portable guest/host boundary.
+#[derive(Clone, Copy, Debug, PartialEq, aimer_macro::PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_scroll::scrollable::ScrollPortableConfig",
+    max_encoded_bytes = 128,
+)]
+pub struct ScrollPortableConfig {
+    /// The axis on which content may overflow.
+    pub axis: ScrollAxis,
+    /// Whether the vertical scrollbar is enabled.
+    pub vertical_scroll_bar: bool,
+    /// Whether the horizontal scrollbar is enabled.
+    pub horizontal_scroll_bar: bool,
+}
+
+impl Default for ScrollPortableConfig {
+    fn default() -> Self {
+        Self {
+            axis: ScrollAxis::Vertical,
+            vertical_scroll_bar: true,
+            horizontal_scroll_bar: true,
+        }
+    }
+}
+
 #[inline]
 fn resolved_parent_extent(min: f32, max: f32, parent: f32) -> f32 {
     let extent = if max.is_finite() && max < f32::MAX {
@@ -102,6 +128,7 @@ pub struct Scrollable<W = RequiredChild> {
     pub vertical_scroll_bar: Option<ScrollBar>,
     #[portable_skip]
     pub horizontal_scroll_bar: Option<ScrollBar>,
+    config: ScrollPortableConfig,
     /// Identity used by live-state reconciliation and, after [`Scrollable::key`]
     /// is called, by `PageStorage`-style teardown persistence.
     ///
@@ -133,6 +160,23 @@ pub struct Scrollable<W = RequiredChild> {
     marker: PhantomData<W>,
 }
 
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "illumos",
+))]
+#[aimer_widget::portable::__linkme::distributed_slice(
+    aimer_widget::portable::materializer::PORTABLE_NATIVE_WIDGET_SCHEMAS
+)]
+#[linkme(crate = aimer_widget::portable::__linkme)]
+#[allow(non_upper_case_globals)]
+static __AIMER_PORTABLE_NATIVE_SCHEMA_FOR_SCROLLABLE:
+    aimer_widget::portable::__anteros::PortableWidgetSchemaMetadata<'static> =
+    <Scrollable as aimer_widget::portable::PortableWidgetSchema>::SCHEMA;
+
 impl Default for Scrollable {
     fn default() -> Self {
         Self::new()
@@ -160,6 +204,7 @@ impl Scrollable {
             key_scroll_strength: 50f32,
             controller: None,
             web_overscroll: OverscrollSources::WEB_DEFAULT,
+            config: ScrollPortableConfig::default(),
             marker: PhantomData,
         }
     }
@@ -185,6 +230,7 @@ impl Scrollable {
             controller: None,
             key_scroll_strength: 50f32,
             web_overscroll: OverscrollSources::WEB_DEFAULT,
+            config: ScrollPortableConfig::default(),
             marker: PhantomData,
         }
     }
@@ -206,6 +252,7 @@ impl Scrollable {
     #[inline]
     pub fn axis(mut self, axis: ScrollAxis) -> Self {
         self.axis = axis;
+        self.config.axis = axis;
         self
     }
 
@@ -215,6 +262,7 @@ impl Scrollable {
     /// controls presentation and does not change [`Scrollable::axis`].
     #[inline]
     pub fn vertical_scroll_bar(mut self, scroll_bar: Option<ScrollBar>) -> Self {
+        self.config.vertical_scroll_bar = scroll_bar.is_some();
         self.vertical_scroll_bar = scroll_bar;
         self
     }
@@ -225,6 +273,7 @@ impl Scrollable {
     /// controls presentation and does not change [`Scrollable::axis`].
     #[inline]
     pub fn horizontal_scroll_bar(mut self, scroll_bar: Option<ScrollBar>) -> Self {
+        self.config.horizontal_scroll_bar = scroll_bar.is_some();
         self.horizontal_scroll_bar = scroll_bar;
         self
     }
@@ -313,6 +362,7 @@ impl Scrollable {
             vertical_scroll_bar: self.vertical_scroll_bar.clone(),
             horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
             web_overscroll: self.web_overscroll,
+            config: self.config,
             marker: PhantomData,
         }
     }
@@ -393,6 +443,17 @@ impl<W: Widget + 'static> aimer_widget::PortableWidget for Scrollable<W> {
         aimer_widget::portable::PortableNodeId,
         aimer_widget::portable::PortableBuildError,
     > {
+        let property_id = aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+            "aimer.property:aimer_scroll::scrollable::Scrollable:config",
+        );
+        let config = ctx.encode_property_named(
+            property_id,
+            "aimer.property:aimer_scroll::scrollable::Scrollable:config",
+            source.child(aimer_widget::portable::__anteros::stable_schema_hash64(
+                "aimer.source:aimer_scroll::scrollable::Scrollable:config",
+            )),
+            self.config,
+        )?;
         let child = self.child.into_portable_node(
             ctx,
             source.child(aimer_widget::portable::__anteros::stable_schema_hash64(
@@ -405,7 +466,10 @@ impl<W: Widget + 'static> aimer_widget::PortableWidget for Scrollable<W> {
             schema.widget().min_version(),
             None,
             source,
-            &[],
+            &[aimer_widget::portable::__anteros::WidgetProperty::new(
+                property_id,
+                config,
+            )],
             &[child],
         )
     }
@@ -1081,7 +1145,8 @@ mod portable_layout_tests {
         PortableBuildContext::new(
             1,
             1,
-            PortableWidgetLimits::new(32, 32, 32, 32, 1_024, 8_192),
+            PortableWidgetLimits::new(32, 32, 32, 32, 1_024, 8_192)
+                .with_max_blob_bytes(64),
             PortableLimits::new(8, 16, 64, 128, 1_024),
         )
         .unwrap()
