@@ -1,14 +1,120 @@
 use aimer_color::prelude::{Color, Colors};
 pub use aimer_cupid::font::{FontFamily, FontStyle, FontWeight};
 
-#[allow(dead_code)]
-#[derive(Default, Clone, Copy)]
+/// Controls the Unicode transformation applied to text before shaping.
+///
+/// Transformations operate on the source text's Unicode scalar values and may
+/// change the number of rendered scalars. Selection and link code must retain
+/// the source ranges when a transform is applied.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextTransform {
+    /// Paints the source text without changing its case.
+    #[default]
+    None,
+    /// Converts each character using Unicode uppercase mapping.
+    Uppercase,
+    /// Converts each character using Unicode lowercase mapping.
+    Lowercase,
+    /// Uppercases the first cased character of each word.
+    Capitalize,
+}
+
+/// Defines the distance between adjacent text baselines.
+///
+/// `Normal` uses the font's natural metrics. `Px` is an absolute logical
+/// pixel line box, while `Factor` multiplies the resolved font size. Numeric
+/// values must be finite; zero and negative resolved line boxes are invalid
+/// during portable lowering.
+#[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub enum LineHeight {
+    /// Uses the natural ascent, descent, and font line gap.
     #[default]
     Normal,
-    Small,
-    Huge,
-    Value(f32),
+    /// Uses an absolute logical-pixel line box, clamped to the natural glyph
+    /// height when it is smaller than the glyphs.
+    Px(f32),
+    /// Uses a positive multiple of the largest font size on the line, again
+    /// clamped to the natural glyph height.
+    Factor(f32),
+}
+
+impl LineHeight {
+    /// Creates an absolute logical-pixel line height.
+    #[inline]
+    pub const fn px(value: f32) -> Self {
+        Self::Px(value)
+    }
+
+    /// Creates a line height relative to the resolved font size.
+    #[inline]
+    pub const fn factor(value: f32) -> Self {
+        Self::Factor(value)
+    }
+}
+
+/// A single glyph shadow painted behind a text run.
+///
+/// Text shadows affect painting only; their offset and blur do not change the
+/// measured advance of the text. Values are logical pixels and are validated
+/// when a style crosses the portable encoding seam.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextShadow {
+    /// Horizontal shadow offset in logical pixels.
+    pub offset_x: f32,
+    /// Vertical shadow offset in logical pixels.
+    pub offset_y: f32,
+    /// Blur radius in logical pixels.
+    pub blur: f32,
+    /// Shadow color, including opacity.
+    pub color: Color,
+}
+
+impl Default for TextShadow {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TextShadow {
+    /// Creates a zero-offset, unblurred, semi-transparent black shadow.
+    #[inline]
+    pub const fn new() -> Self {
+        Self {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            blur: 0.0,
+            color: Color::Rgba(0, 0, 0, 128),
+        }
+    }
+
+    /// Sets the horizontal offset in logical pixels.
+    #[inline]
+    pub const fn offset_x(mut self, offset_x: f32) -> Self {
+        self.offset_x = offset_x;
+        self
+    }
+
+    /// Sets the vertical offset in logical pixels.
+    #[inline]
+    pub const fn offset_y(mut self, offset_y: f32) -> Self {
+        self.offset_y = offset_y;
+        self
+    }
+
+    /// Sets the blur radius in logical pixels.
+    #[inline]
+    pub const fn blur(mut self, blur: f32) -> Self {
+        self.blur = blur;
+        self
+    }
+
+    /// Sets the shadow color.
+    #[inline]
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
+        self.color = color.into();
+        self
+    }
 }
 
 /// The set of decoration lines to draw. Behaves like a small bit-set so several
@@ -221,14 +327,31 @@ pub enum TextAlign {
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextStyle {
+    /// Font size in logical pixels.
     pub font_size: u32,
+    /// Font family used to shape the run.
     pub font_family: FontFamily,
+    /// Font slant used to shape the run.
     pub font_style: FontStyle,
+    /// Font weight used to shape the run.
     pub font_weight: FontWeight,
+    /// Foreground paint color.
     pub color: Color,
+    /// Optional inline background paint; it does not affect text metrics.
     pub background_color: Option<Color>,
+    /// Behavior when the text exceeds its available width.
     pub text_overflow: TextOverflow,
+    /// Lines painted around the glyph run. Decorations remain part of the
+    /// canonical text style rather than being a separate widget property.
     pub text_decoration: TextDecoration,
+    /// Unicode transformation applied before shaping.
+    pub text_transform: TextTransform,
+    /// Additional logical-pixel advance between adjacent rendered graphemes.
+    pub letter_spacing: f32,
+    /// Additional logical-pixel advance for whitespace word separators.
+    pub word_spacing: f32,
+    /// Optional glyph shadow. Shadow paint does not affect layout size.
+    pub text_shadow: Option<TextShadow>,
 }
 
 impl TextStyle {
@@ -286,6 +409,41 @@ impl TextStyle {
         self.text_decoration = text_decoration;
         self
     }
+
+    /// Sets the Unicode transformation applied before shaping.
+    #[inline]
+    pub const fn text_transform(mut self, text_transform: TextTransform) -> Self {
+        self.text_transform = text_transform;
+        self
+    }
+
+    /// Sets the additional advance applied between adjacent glyphs.
+    #[inline]
+    pub const fn letter_spacing(mut self, letter_spacing: f32) -> Self {
+        self.letter_spacing = letter_spacing;
+        self
+    }
+
+    /// Sets the additional advance applied at word boundaries.
+    #[inline]
+    pub const fn word_spacing(mut self, word_spacing: f32) -> Self {
+        self.word_spacing = word_spacing;
+        self
+    }
+
+    /// Adds one glyph shadow behind this text style.
+    #[inline]
+    pub const fn text_shadow(mut self, text_shadow: TextShadow) -> Self {
+        self.text_shadow = Some(text_shadow);
+        self
+    }
+
+    /// Removes the glyph shadow from this text style.
+    #[inline]
+    pub const fn without_text_shadow(mut self) -> Self {
+        self.text_shadow = None;
+        self
+    }
 }
 
 impl Default for TextStyle {
@@ -299,6 +457,10 @@ impl Default for TextStyle {
             background_color: None,
             text_overflow: TextOverflow::Clip,
             text_decoration: TextDecoration::None,
+            text_transform: TextTransform::None,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
+            text_shadow: None,
         }
     }
 }
@@ -315,7 +477,12 @@ pub enum TextOverflow {
 
 #[cfg(test)]
 mod tests {
-    use super::{FontFamily, FontWeight, TextDecorationLine, TextStyle};
+    use aimer_color::prelude::Color;
+
+    use super::{
+        FontFamily, FontWeight, LineHeight, TextDecorationLine, TextShadow, TextStyle,
+        TextTransform,
+    };
 
     #[test]
     fn text_style_selects_a_font_family() {
@@ -358,5 +525,37 @@ mod tests {
         // Bold and heavier cross it.
         assert!(FontWeight::Bold.numeric() >= 600);
         assert!(FontWeight::Bolder.numeric() >= 600);
+    }
+
+    #[test]
+    fn text_style_defaults_keep_new_properties_inert() {
+        let style = TextStyle::default();
+
+        assert_eq!(style.text_transform, TextTransform::None);
+        assert_eq!(style.letter_spacing, 0.0);
+        assert_eq!(style.word_spacing, 0.0);
+        assert_eq!(style.text_shadow, None);
+        assert_eq!(LineHeight::default(), LineHeight::Normal);
+    }
+
+    #[test]
+    fn text_style_builders_store_the_new_run_values() {
+        let shadow = TextShadow::new()
+            .offset_x(1.5)
+            .offset_y(-2.0)
+            .blur(3.0)
+            .color(Color::Rgba(10, 20, 30, 40));
+        let style = TextStyle::new()
+            .text_transform(TextTransform::Uppercase)
+            .letter_spacing(0.5)
+            .word_spacing(-1.25)
+            .text_shadow(shadow);
+
+        assert_eq!(style.text_transform, TextTransform::Uppercase);
+        assert_eq!(style.letter_spacing, 0.5);
+        assert_eq!(style.word_spacing, -1.25);
+        assert_eq!(style.text_shadow, Some(shadow));
+        assert_eq!(LineHeight::Px(24.0), LineHeight::Px(24.0));
+        assert_eq!(LineHeight::Factor(1.5), LineHeight::Factor(1.5));
     }
 }

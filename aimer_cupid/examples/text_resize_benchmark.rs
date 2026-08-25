@@ -77,6 +77,8 @@ fn document(line_count: usize, surface_width: u32) -> Vec<TextDrawRequest> {
             overflow: TextOverflowMode::Wrap,
             horizontal_align: TextHorizontalAlign::Left,
             line_height: None,
+            shadow: None,
+            draw_glyphs: true,
             font_family: FontFamily::SANS_SERIF,
             font_style: FontStyle::Normal,
             font_weight: None,

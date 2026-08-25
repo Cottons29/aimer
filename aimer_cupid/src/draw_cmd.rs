@@ -7,7 +7,7 @@ use hashbrown::DefaultHashBuilder;
 
 use crate::font::{FontFamily, FontStyle, TextLanguage};
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
-use crate::text_pipeline::TextOverflowMode;
+use crate::text_pipeline::{TextOverflowMode, TextShadowRequest};
 use crate::text_pipeline::text_layout::TextHorizontalAlign;
 use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
 
@@ -69,6 +69,8 @@ pub enum DrawCommand {
         font_family: FontFamily,
         font_style: FontStyle,
         font_weight: u16,
+        shadow: Option<TextShadowRequest>,
+        draw_glyphs: bool,
     },
     DrawRichText {
         position: Vec2d,
@@ -338,6 +340,37 @@ impl DrawList {
             font_weight,
         );
     }
+
+    /// Records a shadow-only styled text request. The text pipeline expands
+    /// the request into clipped glyph samples during preparation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_shadow_styled(
+        &mut self,
+        position: Vec2d,
+        text: Arc<str>,
+        font_size: f32,
+        color: Color,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+        shadow: TextShadowRequest,
+    ) {
+        self.commands.push(DrawCommand::DrawText {
+            position,
+            text,
+            font_size,
+            color,
+            bounds_width: None,
+            bounds_height: None,
+            overflow: TextOverflowMode::Clip,
+            horizontal_align: TextHorizontalAlign::Left,
+            font_family,
+            font_style,
+            font_weight,
+            shadow: Some(shadow),
+            draw_glyphs: false,
+        });
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn draw_text_with_overflow(
         &mut self,
@@ -394,6 +427,8 @@ impl DrawList {
             font_family,
             font_style,
             font_weight,
+            shadow: None,
+            draw_glyphs: true,
         });
     }
 
@@ -702,6 +737,52 @@ mod memory_tests {
                 font_family: FontFamily::MONOSPACE,
                 font_style: FontStyle::Italic,
                 font_weight: 700,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn shadow_text_is_recorded_before_the_foreground_request() {
+        let mut list = DrawList::new();
+        list.draw_text_shadow_styled(
+            Vec2d::new(1.0, 2.0),
+            Arc::from("shadow"),
+            16.0,
+            Color::black(),
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            400,
+            TextShadowRequest {
+                offset_x: 2.0,
+                offset_y: 1.0,
+                blur: 3.0,
+                color: [0.0, 0.0, 0.0, 0.5],
+            },
+        );
+        list.draw_text_styled(
+            Vec2d::new(1.0, 2.0),
+            Arc::from("shadow"),
+            16.0,
+            Color::white(),
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            400,
+        );
+
+        assert!(matches!(
+            list.commands().first(),
+            Some(DrawCommand::DrawText {
+                shadow: Some(_),
+                draw_glyphs: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            list.commands().get(1),
+            Some(DrawCommand::DrawText {
+                shadow: None,
+                draw_glyphs: true,
                 ..
             })
         ));

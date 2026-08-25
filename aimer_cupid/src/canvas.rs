@@ -9,6 +9,7 @@ use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::TextOverflowMode;
 use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
 use crate::text_pipeline::text_layout::line_break_opportunities;
+use crate::text_pipeline::TextShadowRequest;
 use crate::utilities::{Color, Rect, TextureId, Vec2d};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -240,6 +241,32 @@ impl CupidCanvas {
             font_family,
             font_style,
             font_weight,
+        );
+    }
+
+    /// Records a shadow-only styled text request for the glyph pipeline.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_shadow_styled(
+        &self,
+        x: f32,
+        y: f32,
+        text: &str,
+        font_size: f32,
+        color: Color,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+        shadow: TextShadowRequest,
+    ) {
+        self.draw_list.borrow_mut().draw_text_shadow_styled(
+            Vec2d::new(x, y),
+            Arc::from(text),
+            font_size,
+            color,
+            font_family,
+            font_style,
+            font_weight,
+            shadow,
         );
     }
 

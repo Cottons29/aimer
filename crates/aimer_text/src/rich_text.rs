@@ -6,13 +6,19 @@ use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_events::pointer::{PointerButton, PointerSource};
 use aimer_macro::{PortableValue, PortableWidget};
 use aimer_style::{
-    FontFamily, FontStyle, FontWeight, TextAlign, TextDecoration, TextDecorationLine,
-    TextDecorationStyle, TextOverflow, TextStyle,
+    FontFamily, FontStyle, FontWeight, LineHeight, TextAlign, TextDecoration, TextDecorationLine,
+    TextDecorationStyle, TextOverflow, TextShadow, TextStyle, TextTransform,
 };
 use aimer_utils::AnimInstant;
 use aimer_utils::callback::{Callback, CallbackExecutor};
 use aimer_widget::base::{BuildContext, Color};
-use aimer_widget::portable::PortableMaterializeError;
+use aimer_widget::portable::{
+    PortableMaterializeError, PortableMaterializeProperty, PortableProperty,
+    PortablePropertyReflection,
+};
+use aimer_widget::portable::__anteros::{PropertyId, PropertyValue, ValueSchemaMetadata, Version};
+#[cfg(feature = "portable-guest")]
+use aimer_widget::portable::{PortableBuildContext, PortableBuildError, PortableEncodeProperty};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, FocusNode, LayoutElement,
     PointerKey, RawFocusable, VisitorElement, Widget,
@@ -88,6 +94,97 @@ struct PortableRichTextStyle {
     background_color: Option<u32>,
     text_decoration: PortableTextDecoration,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::RichTextTextTransform",
+    version = "1.0",
+    max_encoded_bytes = 32,
+)]
+enum PortableRichTextTextTransform {
+    #[portable_value(tag = 0)]
+    None,
+    #[portable_value(tag = 1)]
+    Uppercase,
+    #[portable_value(tag = 2)]
+    Lowercase,
+    #[portable_value(tag = 3)]
+    Capitalize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::RichTextTextShadow",
+    version = "1.0",
+    max_encoded_bytes = 64,
+)]
+struct PortableRichTextTextShadow {
+    offset_x: f32,
+    offset_y: f32,
+    blur: f32,
+    color: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::RichTextStyle",
+    version = "2.0",
+    max_encoded_bytes = 768,
+    max_depth = 8,
+    max_entries = 96,
+    max_string_bytes = 256,
+    max_value_bytes = 192,
+    max_reconstruction_work = 192,
+)]
+struct PortableRichTextStyleV2 {
+    font_size: u32,
+    font_family: PortableFontFamily,
+    font_style: PortableFontStyle,
+    font_weight: PortableFontWeight,
+    color: u32,
+    background_color: Option<u32>,
+    text_decoration: PortableTextDecoration,
+    text_transform: PortableRichTextTextTransform,
+    letter_spacing: f32,
+    word_spacing: f32,
+    text_shadow: Option<PortableRichTextTextShadow>,
+}
+
+#[derive(Clone, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::RichTextSpan",
+    version = "2.0",
+    max_encoded_bytes = 16_384,
+    max_depth = 8,
+    max_entries = 1_024,
+    max_string_bytes = 16_384,
+    max_value_bytes = 4_096,
+    max_reconstruction_work = 4_096,
+)]
+struct PortableRichTextSpanV2 {
+    text: String,
+    style: PortableRichTextStyleV2,
+    link: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_text::RichTextContent",
+    version = "2.0",
+    max_encoded_bytes = 131_072,
+    max_depth = 16,
+    max_entries = 16_384,
+    max_string_bytes = 65_536,
+    max_value_bytes = 16_384,
+    max_reconstruction_work = 32_768,
+)]
+struct PortableRichTextContentV2 {
+    spans: Vec<PortableRichTextSpanV2>,
+    overflow: PortableTextOverflow,
+    text_align: PortableTextAlign,
+}
+
+struct PortableRichTextContentValue(PortableRichTextContentV2);
 
 #[derive(Clone, Copy, Debug, PartialEq, PortableValue)]
 #[portable_value(
@@ -220,6 +317,7 @@ enum PortableTextOverflow {
 }
 
 impl PortableRichTextContent {
+    #[allow(dead_code)]
     fn from_parts(
         span: &TextSpan,
         text_style: &TextStyle,
@@ -239,22 +337,10 @@ impl PortableRichTextContent {
         }
     }
 
-    fn into_widget(
-        self,
-        property: aimer_widget::portable::__anteros::PropertyId,
-    ) -> Result<RichText, PortableMaterializeError> {
-        let spans = self
-            .spans
-            .into_iter()
-            .map(|span| span.into_native(property))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(RichText::new(TextSpan::root(spans))
-            .text_align(self.text_align.into_native())
-            .text_overflow(self.overflow.into_native()))
-    }
 }
 
 impl PortableRichTextSpan {
+    #[allow(dead_code)]
     fn from_resolved(span: ResolvedTextSpan) -> Self {
         Self {
             text: span.text.to_string(),
@@ -263,20 +349,10 @@ impl PortableRichTextSpan {
         }
     }
 
-    fn into_native(
-        self,
-        property: aimer_widget::portable::__anteros::PropertyId,
-    ) -> Result<TextSpan, PortableMaterializeError> {
-        let style = self.style.into_native(property)?;
-        let mut span = TextSpan::new(self.text).style(style);
-        if let Some(link) = self.link {
-            span = span.link(link);
-        }
-        Ok(span)
-    }
 }
 
 impl PortableRichTextStyle {
+    #[allow(dead_code)]
     fn from_native(style: TextStyle) -> Self {
         Self {
             font_size: style.font_size,
@@ -289,21 +365,277 @@ impl PortableRichTextStyle {
         }
     }
 
-    fn into_native(
+}
+
+impl PortableRichTextContentV2 {
+    fn from_parts(
+        span: &TextSpan,
+        text_style: &TextStyle,
+        overflow: Option<TextOverflow>,
+        text_align: TextAlign,
+    ) -> Self {
+        Self {
+            spans: span
+                .flatten(text_style)
+                .into_iter()
+                .map(PortableRichTextSpanV2::from_resolved)
+                .collect(),
+            overflow: PortableTextOverflow::from_native(
+                overflow.unwrap_or(text_style.text_overflow),
+            ),
+            text_align: PortableTextAlign::from_native(text_align),
+        }
+    }
+
+    fn into_widget(
         self,
-        property: aimer_widget::portable::__anteros::PropertyId,
-    ) -> Result<SpanStyle, PortableMaterializeError> {
+        property: PropertyId,
+    ) -> Result<RichText, PortableMaterializeError> {
+        let spans = self
+            .spans
+            .into_iter()
+            .map(|span| span.into_native(property))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(RichText::new(TextSpan::root(spans))
+            .text_align(self.text_align.into_native())
+            .text_overflow(self.overflow.into_native()))
+    }
+}
+
+impl PortableRichTextContent {
+    fn into_v2(self) -> PortableRichTextContentV2 {
+        PortableRichTextContentV2 {
+            spans: self
+                .spans
+                .into_iter()
+                .map(PortableRichTextSpan::into_v2)
+                .collect(),
+            overflow: self.overflow,
+            text_align: self.text_align,
+        }
+    }
+}
+
+impl PortableRichTextSpanV2 {
+    fn from_resolved(span: ResolvedTextSpan) -> Self {
+        Self {
+            text: span.text.to_string(),
+            style: PortableRichTextStyleV2::from_native(span.style),
+            link: span.link.map(|link| link.to_string()),
+        }
+    }
+
+    fn into_native(self, property: PropertyId) -> Result<TextSpan, PortableMaterializeError> {
+        let style = self.style.into_native(property)?;
+        let mut span = TextSpan::new(self.text).style(style);
+        if let Some(link) = self.link {
+            span = span.link(link);
+        }
+        Ok(span)
+    }
+}
+
+impl PortableRichTextSpan {
+    fn into_v2(self) -> PortableRichTextSpanV2 {
+        PortableRichTextSpanV2 {
+            text: self.text,
+            style: self.style.into_v2(),
+            link: self.link,
+        }
+    }
+}
+
+impl PortableRichTextStyleV2 {
+    fn from_native(style: TextStyle) -> Self {
+        Self {
+            font_size: style.font_size,
+            font_family: PortableFontFamily::from_native(style.font_family),
+            font_style: PortableFontStyle::from_native(style.font_style),
+            font_weight: PortableFontWeight::from_native(style.font_weight),
+            color: style.color.as_u32(),
+            background_color: style.background_color.map(|color| color.as_u32()),
+            text_decoration: PortableTextDecoration::from_native(style.text_decoration),
+            text_transform: PortableRichTextTextTransform::from_native(style.text_transform),
+            letter_spacing: style.letter_spacing,
+            word_spacing: style.word_spacing,
+            text_shadow: style
+                .text_shadow
+                .map(PortableRichTextTextShadow::from_native),
+        }
+    }
+
+    fn into_native(self, property: PropertyId) -> Result<SpanStyle, PortableMaterializeError> {
+        if !self.letter_spacing.is_finite() || !self.word_spacing.is_finite() {
+            return Err(PortableMaterializeError::InvalidPropertyValue { property });
+        }
         let mut style = SpanStyle::new()
             .font_size(self.font_size)
             .font_family(self.font_family.into_native(property)?)
             .font_style(self.font_style.into_native())
             .font_weight(self.font_weight.into_native())
             .color(Color::from_primitive(self.color))
-            .text_decoration(self.text_decoration.into_native(property)?);
+            .text_decoration(self.text_decoration.into_native(property)?)
+            .text_transform(self.text_transform.into_native())
+            .letter_spacing(self.letter_spacing)
+            .word_spacing(self.word_spacing);
         if let Some(color) = self.background_color {
             style = style.background_color(Color::from_primitive(color));
         }
+        if let Some(shadow) = self.text_shadow {
+            style = style.text_shadow(shadow.into_native(property)?);
+        }
         Ok(style)
+    }
+}
+
+impl PortableRichTextStyle {
+    fn into_v2(self) -> PortableRichTextStyleV2 {
+        PortableRichTextStyleV2 {
+            font_size: self.font_size,
+            font_family: self.font_family,
+            font_style: self.font_style,
+            font_weight: self.font_weight,
+            color: self.color,
+            background_color: self.background_color,
+            text_decoration: self.text_decoration,
+            text_transform: PortableRichTextTextTransform::None,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
+            text_shadow: None,
+        }
+    }
+}
+
+impl PortableRichTextTextTransform {
+    fn from_native(transform: TextTransform) -> Self {
+        match transform {
+            TextTransform::None => Self::None,
+            TextTransform::Uppercase => Self::Uppercase,
+            TextTransform::Lowercase => Self::Lowercase,
+            TextTransform::Capitalize => Self::Capitalize,
+        }
+    }
+
+    fn into_native(self) -> TextTransform {
+        match self {
+            Self::None => TextTransform::None,
+            Self::Uppercase => TextTransform::Uppercase,
+            Self::Lowercase => TextTransform::Lowercase,
+            Self::Capitalize => TextTransform::Capitalize,
+        }
+    }
+}
+
+impl PortableRichTextTextShadow {
+    fn from_native(shadow: TextShadow) -> Self {
+        Self {
+            offset_x: shadow.offset_x,
+            offset_y: shadow.offset_y,
+            blur: shadow.blur,
+            color: shadow.color.as_u32(),
+        }
+    }
+
+    fn into_native(self, property: PropertyId) -> Result<TextShadow, PortableMaterializeError> {
+        if !self.offset_x.is_finite()
+            || !self.offset_y.is_finite()
+            || !self.blur.is_finite()
+            || self.blur < 0.0
+        {
+            return Err(PortableMaterializeError::InvalidPropertyValue { property });
+        }
+        Ok(TextShadow {
+            offset_x: self.offset_x,
+            offset_y: self.offset_y,
+            blur: self.blur,
+            color: Color::from_primitive(self.color),
+        })
+    }
+}
+
+impl PortableRichTextContentValue {
+    fn from_parts(
+        span: &TextSpan,
+        text_style: &TextStyle,
+        overflow: Option<TextOverflow>,
+        text_align: TextAlign,
+    ) -> Self {
+        Self(PortableRichTextContentV2::from_parts(
+            span,
+            text_style,
+            overflow,
+            text_align,
+        ))
+    }
+
+    fn into_widget(self, property: PropertyId) -> Result<RichText, PortableMaterializeError> {
+        self.0.into_widget(property)
+    }
+}
+
+impl PortableProperty for PortableRichTextContentValue {
+    const REFLECTION: PortablePropertyReflection = PortablePropertyReflection::custom(
+        ValueSchemaMetadata::from_canonical_name(
+            "aimer.value:aimer_text::RichTextContent",
+            Version::new(2, 0),
+            131_072,
+        ),
+    );
+}
+
+impl PortableMaterializeProperty for PortableRichTextContentValue {
+    fn from_awir(
+        document: &aimer_widget::portable::__anteros::WidgetDocumentView<'_>,
+        property: PropertyId,
+        value: PropertyValue,
+    ) -> Result<Self, PortableMaterializeError> {
+        let PropertyValue::BlobRef(index) = value else {
+            return Err(PortableMaterializeError::InvalidPropertyType { property });
+        };
+        let bytes = document.blob(index).ok_or(
+            PortableMaterializeError::InvalidPropertyReference { property, index },
+        )?;
+        if bytes.len() < 4 {
+            return Err(PortableMaterializeError::InvalidPropertyValue { property });
+        }
+        let version = Version::new(
+            u16::from_le_bytes([bytes[0], bytes[1]]),
+            u16::from_le_bytes([bytes[2], bytes[3]]),
+        );
+        if version == Version::new(1, 0) {
+            let content = <PortableRichTextContent as aimer_widget::portable::PortableValue>::decode_value(
+                bytes,
+                version,
+            )
+            .map_err(|_| PortableMaterializeError::InvalidPropertyValue { property })?;
+            return Ok(Self(content.into_v2()));
+        }
+        if version == Version::new(2, 0) {
+            let content = <PortableRichTextContentV2 as aimer_widget::portable::PortableValue>::decode_value(
+                bytes,
+                version,
+            )
+            .map_err(|_| PortableMaterializeError::InvalidPropertyValue { property })?;
+            return Ok(Self(content));
+        }
+        Err(PortableMaterializeError::InvalidPropertyValue { property })
+    }
+}
+
+#[cfg(feature = "portable-guest")]
+impl PortableEncodeProperty for PortableRichTextContentValue {
+    fn encode_property(
+        self,
+        context: &mut PortableBuildContext,
+    ) -> Result<PropertyValue, PortableBuildError> {
+        let bytes = <PortableRichTextContentV2 as aimer_widget::portable::PortableValue>::encode_value(
+            &self.0,
+        )
+        .map_err(|error| PortableBuildError::ValueCodec {
+            rust_type: core::any::type_name::<PortableRichTextContentV2>(),
+            message: error.to_string(),
+        })?;
+        context.push_owned_blob(bytes)
     }
 }
 
@@ -491,6 +823,12 @@ impl PortableTextOverflow {
 /// and disabled selection. Wrapping lays text onto multiple lines; ellipsis
 /// truncates the first line to the available width. Selectable text supports
 /// pointer selection and the platform select-all and copy shortcuts.
+/// Transformation, letter spacing, word spacing, decoration, and glyph shadow
+/// are run-level style values: the base [`TextStyle`] is inherited and
+/// [`SpanStyle`] can override each value for a nested span. Line height and
+/// first-line indentation are paragraph values shared by every span. A text
+/// transform can change the number of rendered graphemes, but source ranges
+/// remain tied to the original span text for selection and links.
 /// Portable guest lowering retains span text, resolved styles, link targets,
 /// alignment, overflow, and the reflected interaction properties. The
 /// [`RichText::on_link`] closure remains native-only because closures are not
@@ -524,12 +862,16 @@ pub struct RichText {
     overflow: Option<TextOverflow>,
     #[portable_skip]
     text_align: TextAlign,
+    #[portable_optional]
+    line_height: LineHeight,
+    #[portable_optional]
+    text_indent: f32,
     #[portable_skip]
     on_link: LinkCallback,
     link_hover_color: Option<Color>,
     selectable: bool,
     selection_color: Option<Color>,
-    content: PortableRichTextContent,
+    content: PortableRichTextContentValue,
 }
 
 impl RichText {
@@ -539,12 +881,15 @@ impl RichText {
     pub fn new(span: TextSpan) -> Self {
         let text_style = TextStyle::default();
         let text_align = TextAlign::default();
-        let content = PortableRichTextContent::from_parts(&span, &text_style, None, text_align);
+        let content =
+            PortableRichTextContentValue::from_parts(&span, &text_style, None, text_align);
         Self {
             span,
             text_style,
             overflow: None,
             text_align,
+            line_height: LineHeight::default(),
+            text_indent: 0.0,
             on_link: LinkCallback::default(),
             link_hover_color: None,
             selectable: false,
@@ -554,7 +899,7 @@ impl RichText {
     }
 
     fn refresh_portable_content(&mut self) {
-        self.content = PortableRichTextContent::from_parts(
+        self.content = PortableRichTextContentValue::from_parts(
             &self.span,
             &self.text_style,
             self.overflow,
@@ -571,11 +916,70 @@ impl RichText {
         self
     }
 
+    /// Sets the Unicode transformation inherited by spans without an
+    /// explicit override.
+    #[inline]
+    pub fn text_transform(mut self, text_transform: TextTransform) -> Self {
+        self.text_style.text_transform = text_transform;
+        self.refresh_portable_content();
+        self
+    }
+
+    /// Sets the additional advance between adjacent rendered graphemes.
+    #[inline]
+    pub fn letter_spacing(mut self, letter_spacing: f32) -> Self {
+        self.text_style.letter_spacing = letter_spacing;
+        self.refresh_portable_content();
+        self
+    }
+
+    /// Sets the additional advance at whitespace boundaries.
+    #[inline]
+    pub fn word_spacing(mut self, word_spacing: f32) -> Self {
+        self.text_style.word_spacing = word_spacing;
+        self.refresh_portable_content();
+        self
+    }
+
+    /// Adds one glyph shadow inherited by spans without an explicit override.
+    #[inline]
+    pub fn text_shadow(mut self, text_shadow: TextShadow) -> Self {
+        self.text_style.text_shadow = Some(text_shadow);
+        self.refresh_portable_content();
+        self
+    }
+
+    /// Removes the glyph shadow inherited by spans without an explicit
+    /// override.
+    #[inline]
+    pub fn without_text_shadow(mut self) -> Self {
+        self.text_style.text_shadow = None;
+        self.refresh_portable_content();
+        self
+    }
+
     /// Sets the alignment of each laid-out line within the available width.
     #[inline]
     pub fn text_align(mut self, text_align: TextAlign) -> Self {
         self.text_align = text_align;
         self.refresh_portable_content();
+        self
+    }
+
+    /// Sets the distance between adjacent paragraph baselines.
+    #[inline]
+    pub fn line_height(mut self, line_height: LineHeight) -> Self {
+        self.line_height = line_height;
+        self
+    }
+
+    /// Sets the first-line paragraph indent in logical pixels.
+    ///
+    /// A negative value is a hanging indent: the first line starts before the
+    /// paragraph's normal origin while subsequent lines use the normal origin.
+    #[inline]
+    pub fn text_indent(mut self, text_indent: f32) -> Self {
+        self.text_indent = text_indent;
         self
     }
 
@@ -646,11 +1050,52 @@ fn validate_portable_rich_text(
 ) -> Result<(), aimer_widget::portable::PortableBuildError> {
     if text
         .content
+        .0
         .spans
         .iter()
         .any(|span| matches!(span.style.font_family, PortableFontFamily::Custom(_)))
     {
         return Err(ctx.unsupported_widget("RichText::custom_font_family", source));
+    }
+    if !text.text_indent.is_finite() {
+        return Err(aimer_widget::portable::PortableBuildError::InvalidPropertyValue {
+            rust_type: "RichText::text_indent",
+        });
+    }
+    if matches!(text.line_height, LineHeight::Px(value) | LineHeight::Factor(value)
+        if !value.is_finite() || value <= 0.0)
+    {
+        return Err(aimer_widget::portable::PortableBuildError::InvalidPropertyValue {
+            rust_type: "RichText::line_height",
+        });
+    }
+    for span in &text.content.0.spans {
+        if !span.style.text_decoration.offset.is_finite()
+            || span
+                .style
+                .text_decoration
+                .thickness
+                .is_some_and(|value| !value.is_finite())
+        {
+            return Err(aimer_widget::portable::PortableBuildError::InvalidPropertyValue {
+                rust_type: "RichText::span_text_decoration",
+            });
+        }
+        if !span.style.letter_spacing.is_finite() || !span.style.word_spacing.is_finite() {
+            return Err(aimer_widget::portable::PortableBuildError::InvalidPropertyValue {
+                rust_type: "RichText::span_spacing",
+            });
+        }
+        if let Some(shadow) = span.style.text_shadow
+            && (!shadow.offset_x.is_finite()
+                || !shadow.offset_y.is_finite()
+                || !shadow.blur.is_finite()
+                || shadow.blur < 0.0)
+        {
+            return Err(aimer_widget::portable::PortableBuildError::InvalidPropertyValue {
+                rust_type: "RichText::span_text_shadow",
+            });
+        }
     }
     Ok(())
 }
@@ -671,7 +1116,8 @@ fn materialize_portable_rich_text(
         aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
             "aimer.property:aimer_text::RichText:content",
         );
-    let content: PortableRichTextContent = aimer_widget::portable::required_materialized_property(
+    let content: PortableRichTextContentValue =
+        aimer_widget::portable::required_materialized_property(
         document,
         &node,
         content_property,
@@ -697,6 +1143,20 @@ fn materialize_portable_rich_text(
             "aimer.property:aimer_text::RichText:selection_color",
         ),
     )?;
+    let line_height: Option<LineHeight> = aimer_widget::portable::optional_materialized_property(
+        document,
+        &node,
+        aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+            "aimer.property:aimer_text::RichText:line_height",
+        ),
+    )?;
+    let text_indent: Option<f32> = aimer_widget::portable::optional_materialized_property(
+        document,
+        &node,
+        aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+            "aimer.property:aimer_text::RichText:text_indent",
+        ),
+    )?;
 
     let mut widget = content.into_widget(content_property)?;
     if let Some(color) = link_hover_color {
@@ -707,6 +1167,12 @@ fn materialize_portable_rich_text(
     }
     if let Some(color) = selection_color {
         widget = widget.selection_color(color);
+    }
+    if let Some(line_height) = line_height {
+        widget = widget.line_height(line_height);
+    }
+    if let Some(text_indent) = text_indent {
+        widget = widget.text_indent(text_indent);
     }
     Ok(widget.boxed())
 }
@@ -730,7 +1196,13 @@ impl Widget for RichText {
             .selection_color
             .unwrap_or_else(|| binding.session.selection_color());
         RawRichText {
-            paragraph: Paragraph::new(spans, self.text_align, self.resolved_overflow()),
+            paragraph: Paragraph::with_layout(
+                spans,
+                self.text_align,
+                self.resolved_overflow(),
+                self.line_height,
+                self.text_indent,
+            ),
             plain_text,
             on_link: self.on_link.clone(),
             link_hover_color: self.link_hover_color,
@@ -1286,7 +1758,7 @@ mod tests {
     use aimer_attribute::{Bounds, Vec2d};
     use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
     use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
-    use aimer_style::{TextAlign, TextOverflow, TextStyle};
+    use aimer_style::{LineHeight, TextAlign, TextOverflow, TextStyle, TextTransform};
     use aimer_widget::base::{Color, WindowHandle};
     use aimer_widget::{EventElement, FocusNode, PointerKey};
 
@@ -1298,6 +1770,18 @@ mod tests {
     use crate::selection::selectable::{SelectionCoordinator, TextGeometry};
     use crate::selection::session::SelectionSession;
     use crate::text_span::{ResolvedTextSpan, layout_resolved_spans};
+
+    #[test]
+    fn rich_text_keeps_paragraph_values_with_the_widget() {
+        let rich_text = super::RichText::new(crate::TextSpan::new("Aimer"))
+            .text_style(TextStyle::new().text_transform(TextTransform::Lowercase))
+            .line_height(LineHeight::Factor(1.5))
+            .text_indent(12.0);
+
+        assert_eq!(rich_text.text_style.text_transform, TextTransform::Lowercase);
+        assert_eq!(rich_text.line_height, LineHeight::Factor(1.5));
+        assert_eq!(rich_text.text_indent, 12.0);
+    }
 
     /// Builds a standalone registration: its own session with a single slot,
     /// which is what a `RichText` outside a selection region gets.
@@ -2327,6 +2811,8 @@ mod tests {
                 .map(|property| property.canonical_name())
                 .collect::<Vec<_>>(),
             vec![
+                "aimer.property:aimer_text::RichText:line_height",
+                "aimer.property:aimer_text::RichText:text_indent",
                 "aimer.property:aimer_text::RichText:link_hover_color",
                 "aimer.property:aimer_text::RichText:selectable",
                 "aimer.property:aimer_text::RichText:selection_color",
@@ -2355,6 +2841,8 @@ mod tests {
                 .map(|property| property.canonical_name())
                 .collect::<Vec<_>>(),
             vec![
+                "aimer.property:aimer_text::RichText:line_height",
+                "aimer.property:aimer_text::RichText:text_indent",
                 "aimer.property:aimer_text::RichText:link_hover_color",
                 "aimer.property:aimer_text::RichText:selectable",
                 "aimer.property:aimer_text::RichText:selection_color",
@@ -2395,6 +2883,10 @@ mod tests {
         let mut expected = schema
             .properties()
             .iter()
+            .filter(|property| {
+                !property.canonical_name().ends_with(":line_height")
+                    && !property.canonical_name().ends_with(":text_indent")
+            })
             .map(|property| property.id())
             .collect::<Vec<_>>();
         expected.sort_unstable();
@@ -2412,9 +2904,105 @@ mod tests {
 
     #[cfg(feature = "portable-guest")]
     #[test]
+    fn rich_text_paragraph_properties_lower_as_optional_values() {
+        use aimer_anteros::{PropertyValue, WidgetDocumentView};
+        use aimer_widget::portable::{
+            PortableBuildContext, PortableLimits, PortableWidgetLimits, SourceFingerprint,
+            StableId128,
+        };
+        use aimer_widget::PortableWidget;
+
+        let mut context = PortableBuildContext::new(
+            1,
+            1,
+            PortableWidgetLimits::new(8, 16, 8, 8, 64, 16_384).with_max_blob_bytes(16_384),
+            PortableLimits::new(8, 32, 128, 256, 16_384),
+        )
+        .unwrap();
+        let root = super::RichText::new(crate::TextSpan::new("paragraph"))
+            .line_height(LineHeight::Px(24.0))
+            .text_indent(-8.0)
+            .to_portable_node(
+                &mut context,
+                SourceFingerprint::new(StableId128::from_bytes([12; 16])),
+            )
+            .unwrap();
+        let document = context.finish_document(root).unwrap();
+        let bytes = document.encode().unwrap();
+        let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
+        let node = view.node(root.index()).unwrap();
+        let line_height_property =
+            aimer_anteros::PropertyId::from_canonical_name(
+                "aimer.property:aimer_text::RichText:line_height",
+            );
+        let text_indent_property = aimer_anteros::PropertyId::from_canonical_name(
+            "aimer.property:aimer_text::RichText:text_indent",
+        );
+        assert!(node.properties().any(|property| {
+            property.property_id() == line_height_property
+                && matches!(property.value(), PropertyValue::BlobRef(_))
+        }));
+        assert!(node.properties().any(|property| {
+            property.property_id() == text_indent_property
+                && property.value() == PropertyValue::F64(-8.0)
+        }));
+        super::materialize_portable_rich_text(&view, node, Vec::new()).unwrap();
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn rich_text_v1_content_materializes_with_new_defaults() {
+        use aimer_anteros::{
+            ModelLimits, PropertyValue, Version, WidgetDocument, WidgetDocumentView, WidgetNode,
+            WidgetSchemaId,
+        };
+        use aimer_widget::portable::{PortableMaterializeProperty, PortableValue};
+
+        let legacy = super::PortableRichTextContent::from_parts(
+            &crate::TextSpan::new("legacy"),
+            &TextStyle::default(),
+            None,
+            TextAlign::TopLeft,
+        );
+        let blob = legacy.encode_value().unwrap();
+        let nodes = [WidgetNode::new(WidgetSchemaId::new(1), Version::new(1, 0))];
+        let image = WidgetDocument::new(
+            1,
+            1,
+            0,
+            &nodes,
+            &[],
+            &[&blob],
+        )
+        .encode(ModelLimits::new(4_096, 4, 64, 4_096))
+        .unwrap();
+        let document = WidgetDocumentView::decode(
+            &image,
+            ModelLimits::new(4_096, 4, 64, 4_096),
+        )
+        .unwrap();
+        let value = super::PortableRichTextContentValue::from_awir(
+            &document,
+            aimer_anteros::PropertyId::new(7),
+            PropertyValue::BlobRef(0),
+        )
+        .unwrap();
+
+        assert_eq!(value.0.spans.len(), 1);
+        assert_eq!(
+            value.0.spans[0].style.text_transform,
+            super::PortableRichTextTextTransform::None
+        );
+        assert_eq!(value.0.spans[0].style.letter_spacing, 0.0);
+        assert_eq!(value.0.spans[0].style.word_spacing, 0.0);
+        assert!(value.0.spans[0].style.text_shadow.is_none());
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
     fn rich_text_content_round_trips_through_guest_ir_and_native_materializer() {
         use aimer_anteros::{PropertyValue, WidgetDocumentView};
-        use aimer_style::FontWeight;
+        use aimer_style::{FontWeight, LineHeight, TextShadow, TextTransform};
         use aimer_widget::portable::{
             PortableBuildContext, PortableLimits, PortableNativeWidget, PortableValue,
             PortableWidgetLimits, SourceFingerprint, StableId128, PortableWidgetSchema,
@@ -2437,8 +3025,17 @@ mod tests {
             )
             .child(crate::TextSpan::new("world").link("/docs")),
         )
+        .text_style(
+            TextStyle::new()
+                .text_transform(TextTransform::Uppercase)
+                .letter_spacing(0.5)
+                .word_spacing(1.0)
+                .text_shadow(TextShadow::new().offset_x(1.0).offset_y(2.0).blur(3.0)),
+        )
         .text_align(TextAlign::MidCenter)
         .wrapped()
+        .line_height(LineHeight::Factor(1.5))
+        .text_indent(8.0)
         .on_link(LinkCallback::default())
         .link_hover_color(Color::Rgba(5, 6, 7, 8))
         .selectable()
@@ -2466,15 +3063,22 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        let content = super::PortableRichTextContent::decode_value(
+        let content = super::PortableRichTextContentV2::decode_value(
             blob,
-            super::PortableRichTextContent::SCHEMA.version(),
+            super::PortableRichTextContentV2::SCHEMA.version(),
         )
         .unwrap();
 
         assert_eq!(content.spans.len(), 2);
         assert_eq!(content.spans[0].text, "Hello ");
         assert_eq!(content.spans[0].style.font_weight, super::PortableFontWeight::Bold);
+        assert_eq!(
+            content.spans[0].style.text_transform,
+            super::PortableRichTextTextTransform::Uppercase
+        );
+        assert_eq!(content.spans[0].style.letter_spacing, 0.5);
+        assert_eq!(content.spans[0].style.word_spacing, 1.0);
+        assert!(content.spans[0].style.text_shadow.is_some());
         assert_eq!(content.spans[1].text, "world");
         assert_eq!(content.spans[1].link.as_deref(), Some("/docs"));
         assert_eq!(content.text_align, super::PortableTextAlign::MidCenter);

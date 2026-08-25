@@ -76,9 +76,16 @@ pub const BOX_DECORATION_VALUE_MAXIMUM_ENCODED_BYTES: u32 = u32::MAX;
 /// Canonical identity for the versioned `TextStyle` value codec.
 pub const TEXT_STYLE_VALUE_NAME: &str = "aimer.value:aimer_style::TextStyle";
 /// Current `TextStyle` value-codec version.
-pub const TEXT_STYLE_VALUE_VERSION: Version = Version::new(1, 0);
+pub const TEXT_STYLE_VALUE_VERSION: Version = Version::new(2, 0);
 /// Maximum encoded payload size for one `TextStyle` value.
 pub const TEXT_STYLE_VALUE_MAXIMUM_ENCODED_BYTES: u32 = 128;
+
+/// Canonical identity for the versioned `LineHeight` value codec.
+pub const LINE_HEIGHT_VALUE_NAME: &str = "aimer.value:aimer_style::LineHeight";
+/// Current `LineHeight` value-codec version.
+pub const LINE_HEIGHT_VALUE_VERSION: Version = Version::new(1, 0);
+/// Maximum encoded payload size for one `LineHeight` value.
+pub const LINE_HEIGHT_VALUE_MAXIMUM_ENCODED_BYTES: u32 = 5;
 
 /// Canonical identity for the provider's stable value-type property.
 pub const PROPERTY_PROVIDER_TYPE_NAME: &str =
@@ -214,6 +221,12 @@ pub const PROPERTY_TEXT_STYLE: PropertyId =
 /// Optional text alignment used by the text schema.
 pub const PROPERTY_TEXT_ALIGN: PropertyId =
     PropertyId::from_canonical_name(PROPERTY_TEXT_ALIGN_NAME);
+/// Optional line-height value used by the text schema.
+pub const PROPERTY_TEXT_LINE_HEIGHT: PropertyId =
+    PropertyId::from_canonical_name(PROPERTY_TEXT_LINE_HEIGHT_NAME);
+/// Optional first-line indentation used by the text schema.
+pub const PROPERTY_TEXT_INDENT: PropertyId =
+    PropertyId::from_canonical_name(PROPERTY_TEXT_INDENT_NAME);
 
 /// Canonical identity retained for the Container width property.
 pub const PROPERTY_CONTAINER_WIDTH_NAME: &str =
@@ -275,6 +288,11 @@ pub const PROPERTY_TEXT_CONTENT_NAME: &str = "aimer.property:aimer_text::Text:te
 pub const PROPERTY_TEXT_STYLE_NAME: &str = "aimer.property:aimer_text::Text:text_style";
 /// Canonical identity for the optional Text alignment property.
 pub const PROPERTY_TEXT_ALIGN_NAME: &str = "aimer.property:aimer_text::Text:text_align";
+/// Canonical identity for the optional Text line-height property.
+pub const PROPERTY_TEXT_LINE_HEIGHT_NAME: &str =
+    "aimer.property:aimer_text::Text:line_height";
+/// Canonical identity for the optional Text indentation property.
+pub const PROPERTY_TEXT_INDENT_NAME: &str = "aimer.property:aimer_text::Text:text_indent";
 
 /// Canonical identity for the animated-theme value-type property.
 pub const PROPERTY_ANIMATED_THEME_TYPE_NAME: &str =
@@ -498,6 +516,21 @@ const TEXT_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
         TEXT_STYLE_VALUE_VERSION,
         TEXT_STYLE_VALUE_MAXIMUM_ENCODED_BYTES,
     )),
+    PropertySchemaMetadata::from_canonical_name(
+        PROPERTY_TEXT_LINE_HEIGHT_NAME,
+        PropertyValueKind::BlobRef,
+    )
+    .optional()
+    .with_value_schema(ValueSchemaMetadata::from_canonical_name(
+        LINE_HEIGHT_VALUE_NAME,
+        LINE_HEIGHT_VALUE_VERSION,
+        LINE_HEIGHT_VALUE_MAXIMUM_ENCODED_BYTES,
+    )),
+    PropertySchemaMetadata::from_canonical_name(
+        PROPERTY_TEXT_INDENT_NAME,
+        PropertyValueKind::F64,
+    )
+    .optional(),
 ];
 const PROVIDER_VALUE_SCHEMA: ValueSchemaMetadata<'static> = ValueSchemaMetadata::from_canonical_name(
     "aimer.value:aimer_provider::ProviderSnapshot",

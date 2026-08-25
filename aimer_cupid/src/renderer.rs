@@ -9,7 +9,9 @@ use crate::pipeline_cache;
 use crate::rect_pipeline::{RectInstance, RectPipeline};
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::svg_pipeline::SvgPipeline;
-use crate::text_pipeline::{RichTextSpan, TextDecorationDraw, TextDrawRequest, TextPipelineV2};
+use crate::text_pipeline::{
+    RichTextSpan, TextDecorationDraw, TextDrawRequest, TextPipelineV2, TextShadowRequest,
+};
 use crate::utilities::{Color, Mat3, Rect};
 
 struct ClipState {
@@ -65,6 +67,23 @@ impl Default for AlphaState {
 fn apply_alpha(mut color: [f32; 4], alpha: f32) -> [f32; 4] {
     color[3] *= alpha;
     color
+}
+
+fn transform_text_shadow(
+    shadow: TextShadowRequest,
+    transform: &Mat3,
+    alpha: f32,
+) -> TextShadowRequest {
+    let offset_x = transform.cols[0][0] * shadow.offset_x
+        + transform.cols[1][0] * shadow.offset_y;
+    let offset_y = transform.cols[0][1] * shadow.offset_x
+        + transform.cols[1][1] * shadow.offset_y;
+    TextShadowRequest {
+        offset_x,
+        offset_y,
+        color: apply_alpha(shadow.color, alpha),
+        ..shadow
+    }
 }
 
 /// Builds the GPU rect instance(s) for a single `FillRect` command.
@@ -615,8 +634,13 @@ impl Renderer {
                     font_family,
                     font_style,
                     font_weight,
+                    shadow,
+                    draw_glyphs,
                 } => {
                     let (tx, ty) = current_transform.transform_point(position.x, position.y);
+                    let shadow = shadow.map(|shadow| {
+                        transform_text_shadow(shadow, &current_transform, alpha_state.current())
+                    });
                     let idx = self.text_requests.len();
                     self.text_requests.push(TextDrawRequest {
                         x: tx,
@@ -629,6 +653,8 @@ impl Renderer {
                         overflow: *overflow,
                         horizontal_align: *horizontal_align,
                         line_height: None,
+                        shadow,
+                        draw_glyphs: *draw_glyphs,
                         font_family: *font_family,
                         font_style: *font_style,
                         font_weight: Some(*font_weight),
@@ -669,6 +695,8 @@ impl Renderer {
                         horizontal_align:
                             crate::text_pipeline::text_layout::TextHorizontalAlign::Left,
                         line_height: None,
+                        shadow: None,
+                        draw_glyphs: true,
                         font_family: crate::font::FontFamily::SANS_SERIF,
                         font_style: crate::font::FontStyle::Normal,
                         font_weight: None,
@@ -1215,6 +1243,25 @@ mod tests {
             apply_alpha([0.1, 0.2, 0.3, 0.8], 0.25),
             [0.1, 0.2, 0.3, 0.2]
         );
+    }
+
+    #[test]
+    fn text_shadow_transform_scales_offset_and_canvas_alpha() {
+        let shadow = transform_text_shadow(
+            TextShadowRequest {
+                offset_x: 2.0,
+                offset_y: -1.0,
+                blur: 3.0,
+                color: [0.1, 0.2, 0.3, 0.8],
+            },
+            &Mat3::scale(2.0, 3.0),
+            0.25,
+        );
+
+        assert_eq!(shadow.offset_x, 4.0);
+        assert_eq!(shadow.offset_y, -3.0);
+        assert_eq!(shadow.blur, 3.0);
+        assert_eq!(shadow.color, [0.1, 0.2, 0.3, 0.2]);
     }
 
     #[test]

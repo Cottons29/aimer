@@ -2,6 +2,8 @@ use aimer_widget::portable::__anteros::{
     BOX_DECORATION_VALUE_MAXIMUM_ENCODED_BYTES, BOX_DECORATION_VALUE_NAME,
     BOX_DECORATION_VALUE_VERSION, LAYOUT_SPACING_VALUE_MAXIMUM_ENCODED_BYTES,
     LAYOUT_SPACING_VALUE_NAME, LAYOUT_SPACING_VALUE_VERSION,
+    LINE_HEIGHT_VALUE_MAXIMUM_ENCODED_BYTES, LINE_HEIGHT_VALUE_NAME,
+    LINE_HEIGHT_VALUE_VERSION,
     TEXT_STYLE_VALUE_MAXIMUM_ENCODED_BYTES, TEXT_STYLE_VALUE_NAME, TEXT_STYLE_VALUE_VERSION,
     PropertyId, PropertyValue, ValueSchemaMetadata, WidgetDocumentView,
 };
@@ -20,8 +22,8 @@ use super::box_decoration::border_radius::BorderRadius;
 use super::box_decoration::box_shadow::{BoxShadow, ShadowSide};
 use super::layout_spacing::{LayoutSpacing, Spacing};
 use super::text_style::{
-    FontFamily, FontStyle, FontWeight, TextAlign, TextDecoration, TextDecorationLine,
-    TextDecorationStyle, TextOverflow, TextStyle,
+    FontFamily, FontStyle, FontWeight, LineHeight, TextAlign, TextDecoration,
+    TextDecorationLine, TextDecorationStyle, TextOverflow, TextShadow, TextStyle, TextTransform,
 };
 use aimer_attribute::Dimension;
 use aimer_color::prelude::Color;
@@ -84,7 +86,8 @@ impl PortableEncodeProperty for TextAlign {
 // different version until an explicit migration path is added.
 const LAYOUT_SPACING_WIRE_VERSION: u8 = 1;
 const BOX_DECORATION_WIRE_VERSION: u8 = 1;
-const TEXT_STYLE_WIRE_VERSION: u8 = 1;
+const TEXT_STYLE_WIRE_VERSION: u8 = 2;
+const LINE_HEIGHT_WIRE_VERSION: u8 = 1;
 
 // Canonical enum tags. Do not renumber an existing tag; append a new tag and
 // advance the value codec version when the old meaning cannot be preserved.
@@ -133,6 +136,13 @@ const TEXT_DECORATION_DOUBLE_TAG: u8 = 1;
 const TEXT_DECORATION_DOTTED_TAG: u8 = 2;
 const TEXT_DECORATION_DASHED_TAG: u8 = 3;
 const TEXT_DECORATION_WAVY_TAG: u8 = 4;
+const TEXT_TRANSFORM_NONE_TAG: u8 = 0;
+const TEXT_TRANSFORM_UPPERCASE_TAG: u8 = 1;
+const TEXT_TRANSFORM_LOWERCASE_TAG: u8 = 2;
+const TEXT_TRANSFORM_CAPITALIZE_TAG: u8 = 3;
+const LINE_HEIGHT_NORMAL_TAG: u8 = 0;
+const LINE_HEIGHT_PX_TAG: u8 = 1;
+const LINE_HEIGHT_FACTOR_TAG: u8 = 2;
 
 impl PortableProperty for LayoutSpacing {
     const REFLECTION: PortablePropertyReflection =
@@ -209,7 +219,8 @@ impl PortableProperty for TextStyle {
 }
 
 impl PortableMaterializeProperty for TextStyle {
-    /// Decodes the complete version-one text style from one bounded AWIR blob.
+    /// Decodes the version-one or version-two text style from one bounded AWIR
+    /// blob. Version one remains accepted with the new properties at defaults.
     fn from_awir(
         document: &WidgetDocumentView<'_>,
         property: PropertyId,
@@ -217,7 +228,10 @@ impl PortableMaterializeProperty for TextStyle {
     ) -> Result<Self, PortableMaterializeError> {
         let blob = property_blob(document, property, value)?;
         let mut reader = WireReader::new(blob, property);
-        reader.require_version(TEXT_STYLE_WIRE_VERSION)?;
+        let version = reader.u8()?;
+        if version != 1 && version != TEXT_STYLE_WIRE_VERSION {
+            return Err(reader.invalid_value());
+        }
         let style = TextStyle {
             font_size: reader.u32()?,
             font_family: FontFamily::from_raw(reader.u64()?),
@@ -227,6 +241,18 @@ impl PortableMaterializeProperty for TextStyle {
             background_color: reader.optional_color()?,
             text_overflow: reader.text_overflow()?,
             text_decoration: reader.text_decoration()?,
+            text_transform: if version == 1 {
+                TextTransform::None
+            } else {
+                reader.text_transform()?
+            },
+            letter_spacing: if version == 1 { 0.0 } else { reader.f32()? },
+            word_spacing: if version == 1 { 0.0 } else { reader.f32()? },
+            text_shadow: if version == 1 {
+                None
+            } else {
+                reader.optional_text_shadow()?
+            },
         };
         reader.finish()?;
         Ok(style)
@@ -257,6 +283,10 @@ impl PortableEncodeProperty for TextStyle {
         push_optional_color(&mut bytes, self.text_decoration.color);
         push_optional_f32(&mut bytes, self.text_decoration.thickness);
         push_f32(&mut bytes, self.text_decoration.offset);
+        push_text_transform(&mut bytes, self.text_transform);
+        push_f32(&mut bytes, self.letter_spacing);
+        push_f32(&mut bytes, self.word_spacing);
+        push_optional_text_shadow(&mut bytes, self.text_shadow);
         context.push_owned_blob(bytes)
     }
 }
@@ -266,7 +296,122 @@ fn validate_text_style(style: &TextStyle) -> Result<(), PortableBuildError> {
     if let Some(thickness) = style.text_decoration.thickness {
         validate_finite(thickness)?;
     }
-    validate_finite(style.text_decoration.offset)
+    validate_finite(style.text_decoration.offset)?;
+    validate_finite(style.letter_spacing)?;
+    validate_finite(style.word_spacing)?;
+    if let Some(shadow) = style.text_shadow {
+        validate_finite(shadow.offset_x)?;
+        validate_finite(shadow.offset_y)?;
+        validate_finite(shadow.blur)?;
+        if shadow.blur < 0.0 {
+            return Err(PortableBuildError::InvalidPropertyValue {
+                rust_type: "TextStyle::text_shadow.blur",
+            });
+        }
+    }
+    Ok(())
+}
+
+impl PortableProperty for LineHeight {
+    const REFLECTION: PortablePropertyReflection =
+        PortablePropertyReflection::custom(ValueSchemaMetadata::from_canonical_name(
+            LINE_HEIGHT_VALUE_NAME,
+            LINE_HEIGHT_VALUE_VERSION,
+            LINE_HEIGHT_VALUE_MAXIMUM_ENCODED_BYTES,
+        ));
+}
+
+impl PortableMaterializeProperty for LineHeight {
+    fn from_awir(
+        document: &WidgetDocumentView<'_>,
+        property: PropertyId,
+        value: PropertyValue,
+    ) -> Result<Self, PortableMaterializeError> {
+        let blob = property_blob(document, property, value)?;
+        let mut reader = WireReader::new(blob, property);
+        reader.require_version(LINE_HEIGHT_WIRE_VERSION)?;
+        let line_height = match reader.u8()? {
+            LINE_HEIGHT_NORMAL_TAG => Self::Normal,
+            LINE_HEIGHT_PX_TAG => {
+                let value = reader.f32()?;
+                if value <= 0.0 {
+                    return Err(reader.invalid_value());
+                }
+                Self::Px(value)
+            }
+            LINE_HEIGHT_FACTOR_TAG => {
+                let value = reader.f32()?;
+                if value <= 0.0 {
+                    return Err(reader.invalid_value());
+                }
+                Self::Factor(value)
+            }
+            _ => return Err(reader.invalid_value()),
+        };
+        reader.finish()?;
+        Ok(line_height)
+    }
+}
+
+#[cfg(feature = "portable-guest")]
+impl PortableEncodeProperty for LineHeight {
+    fn encode_property(
+        self,
+        context: &mut PortableBuildContext,
+    ) -> Result<PropertyValue, PortableBuildError> {
+        let mut bytes = Vec::with_capacity(LINE_HEIGHT_VALUE_MAXIMUM_ENCODED_BYTES as usize);
+        bytes.push(LINE_HEIGHT_WIRE_VERSION);
+        match self {
+            Self::Normal => bytes.push(LINE_HEIGHT_NORMAL_TAG),
+            Self::Px(value) => {
+                validate_positive_finite(value)?;
+                bytes.push(LINE_HEIGHT_PX_TAG);
+                push_f32(&mut bytes, value);
+            }
+            Self::Factor(value) => {
+                validate_positive_finite(value)?;
+                bytes.push(LINE_HEIGHT_FACTOR_TAG);
+                push_f32(&mut bytes, value);
+            }
+        }
+        context.push_owned_blob(bytes)
+    }
+}
+
+#[cfg(feature = "portable-guest")]
+fn validate_positive_finite(value: f32) -> Result<(), PortableBuildError> {
+    validate_finite(value)?;
+    if value > 0.0 {
+        Ok(())
+    } else {
+        Err(PortableBuildError::InvalidPropertyValue {
+            rust_type: "aimer_style::LineHeight",
+        })
+    }
+}
+
+#[cfg(feature = "portable-guest")]
+fn push_text_transform(bytes: &mut Vec<u8>, transform: TextTransform) {
+    bytes.push(match transform {
+        TextTransform::None => TEXT_TRANSFORM_NONE_TAG,
+        TextTransform::Uppercase => TEXT_TRANSFORM_UPPERCASE_TAG,
+        TextTransform::Lowercase => TEXT_TRANSFORM_LOWERCASE_TAG,
+        TextTransform::Capitalize => TEXT_TRANSFORM_CAPITALIZE_TAG,
+    });
+}
+
+#[cfg(feature = "portable-guest")]
+fn push_optional_text_shadow(bytes: &mut Vec<u8>, shadow: Option<TextShadow>) {
+    match shadow {
+        None => bytes.push(OPTIONAL_NONE_TAG),
+        Some(shadow) => {
+            bytes.push(OPTIONAL_SOME_TAG);
+            push_f32(bytes, shadow.offset_x);
+            push_f32(bytes, shadow.offset_y);
+            push_f32(bytes, shadow.blur);
+            push_color(bytes, shadow.color);
+        }
+    }
 }
 
 #[cfg(feature = "portable-guest")]
@@ -735,6 +880,16 @@ impl<'a> WireReader<'a> {
         }
     }
 
+    fn text_transform(&mut self) -> Result<TextTransform, PortableMaterializeError> {
+        match self.u8()? {
+            TEXT_TRANSFORM_NONE_TAG => Ok(TextTransform::None),
+            TEXT_TRANSFORM_UPPERCASE_TAG => Ok(TextTransform::Uppercase),
+            TEXT_TRANSFORM_LOWERCASE_TAG => Ok(TextTransform::Lowercase),
+            TEXT_TRANSFORM_CAPITALIZE_TAG => Ok(TextTransform::Capitalize),
+            _ => Err(self.invalid_value()),
+        }
+    }
+
     fn text_decoration(&mut self) -> Result<TextDecoration, PortableMaterializeError> {
         let line = TextDecorationLine::from_bits(self.u8()?)
             .ok_or_else(|| self.invalid_value())?;
@@ -767,6 +922,27 @@ impl<'a> WireReader<'a> {
         match self.u8()? {
             OPTIONAL_NONE_TAG => Ok(None),
             OPTIONAL_SOME_TAG => self.f32().map(Some),
+            _ => Err(self.invalid_value()),
+        }
+    }
+
+    fn optional_text_shadow(&mut self) -> Result<Option<TextShadow>, PortableMaterializeError> {
+        match self.u8()? {
+            OPTIONAL_NONE_TAG => Ok(None),
+            OPTIONAL_SOME_TAG => {
+                let offset_x = self.f32()?;
+                let offset_y = self.f32()?;
+                let blur = self.f32()?;
+                if blur < 0.0 {
+                    return Err(self.invalid_value());
+                }
+                Ok(Some(TextShadow {
+                    offset_x,
+                    offset_y,
+                    blur,
+                    color: self.color()?,
+                }))
+            }
             _ => Err(self.invalid_value()),
         }
     }
@@ -872,11 +1048,16 @@ mod tests {
     };
     #[cfg(feature = "portable-guest")]
     use aimer_widget::portable::__anteros::WidgetProperty;
+    #[cfg(feature = "portable-guest")]
+    use super::{
+        FONT_STYLE_NORMAL_TAG, FONT_WEIGHT_NORMAL_TAG, OPTIONAL_NONE_TAG,
+        TEXT_DECORATION_SOLID_TAG, TEXT_OVERFLOW_WRAP_TAG,
+    };
 
     use super::super::layout_spacing::{LayoutSpacing, Spacing};
     use super::super::text_style::{
-        FontFamily, FontStyle, FontWeight, TextDecoration, TextDecorationLine,
-        TextDecorationStyle, TextOverflow, TextStyle,
+        FontFamily, FontStyle, FontWeight, LineHeight, TextDecoration, TextDecorationLine,
+        TextDecorationStyle, TextOverflow, TextShadow, TextStyle, TextTransform,
     };
     use crate::{
         BorderRadius, BorderSlice, BorderStyle, BoxBorder, BoxDecoration, BoxOutline, BoxShadow,
@@ -933,8 +1114,34 @@ mod tests {
             schema.canonical_name(),
             "aimer.value:aimer_style::TextStyle"
         );
-        assert_eq!(schema.version(), Version::new(1, 0));
+        assert_eq!(schema.version(), Version::new(2, 0));
         assert_eq!(schema.maximum_encoded_bytes(), 128);
+    }
+
+    #[test]
+    fn line_height_reflects_its_versioned_blob_schema() {
+        let reflection = <LineHeight as PortableProperty>::REFLECTION;
+        let schema = reflection.value_schema().unwrap();
+
+        assert_eq!(
+            schema.canonical_name(),
+            "aimer.value:aimer_style::LineHeight"
+        );
+        assert_eq!(schema.version(), Version::new(1, 0));
+        assert_eq!(schema.maximum_encoded_bytes(), 5);
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn line_height_guest_encoding_round_trips_each_form() {
+        for value in [
+            LineHeight::Normal,
+            LineHeight::Px(24.0),
+            LineHeight::Factor(1.5),
+        ] {
+            let blob = encode_blob(value);
+            assert_eq!(materialize_line_height(&blob), value);
+        }
     }
 
     #[cfg(feature = "portable-guest")]
@@ -948,6 +1155,16 @@ mod tests {
             .color(Color::Rgba(10, 20, 30, 40))
             .background_color(Color::Rgba(50, 60, 70, 80))
             .text_overflow(TextOverflow::Value(3))
+            .text_transform(TextTransform::Uppercase)
+            .letter_spacing(0.75)
+            .word_spacing(-1.25)
+            .text_shadow(
+                TextShadow::new()
+                    .offset_x(2.0)
+                    .offset_y(-1.0)
+                    .blur(3.0)
+                    .color(Color::Rgba(11, 12, 13, 14)),
+            )
             .text_decoration(
                 TextDecoration::new()
                     .line(TextDecorationLine::UNDERLINE | TextDecorationLine::ITALIC)
@@ -960,6 +1177,65 @@ mod tests {
         let blob = encode_blob(style);
         assert!(blob.len() <= 128);
         assert_eq!(materialize_text_style(&blob), style);
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn text_style_version_one_decodes_with_new_values_at_defaults() {
+        let mut blob = vec![1_u8];
+        blob.extend_from_slice(&19_u32.to_le_bytes());
+        blob.extend_from_slice(&FontFamily::SANS_SERIF.raw().to_le_bytes());
+        blob.push(FONT_STYLE_NORMAL_TAG);
+        blob.push(FONT_WEIGHT_NORMAL_TAG);
+        blob.extend_from_slice(&Color::BLACK.as_u32().to_le_bytes());
+        blob.push(OPTIONAL_NONE_TAG);
+        blob.push(TEXT_OVERFLOW_WRAP_TAG);
+        blob.push(TextDecorationLine::NONE.bits());
+        blob.push(TEXT_DECORATION_SOLID_TAG);
+        blob.push(OPTIONAL_NONE_TAG);
+        blob.push(OPTIONAL_NONE_TAG);
+        blob.extend_from_slice(&0.0_f32.to_bits().to_le_bytes());
+
+        let style = materialize_text_style(&blob);
+        assert_eq!(style.font_size, 19);
+        assert_eq!(style.text_overflow, TextOverflow::Wrap);
+        assert_eq!(style.text_transform, TextTransform::None);
+        assert_eq!(style.letter_spacing, 0.0);
+        assert_eq!(style.word_spacing, 0.0);
+        assert_eq!(style.text_shadow, None);
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn text_style_v2_rejects_unknown_transform_non_finite_spacing_and_bad_shadow() {
+        let base = TextStyle::default();
+
+        let mut unknown_transform = encode_blob(base);
+        unknown_transform[29] = 99;
+        assert_invalid_text_style_blob(&unknown_transform);
+
+        let mut non_finite_spacing = encode_blob(TextStyle::default());
+        non_finite_spacing[30..34].copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
+        assert_invalid_text_style_blob(&non_finite_spacing);
+
+        let mut bad_shadow = encode_blob(TextStyle::new().text_shadow(TextShadow::new()));
+        bad_shadow[47..51].copy_from_slice(&(-1.0_f32).to_bits().to_le_bytes());
+        assert_invalid_text_style_blob(&bad_shadow);
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn line_height_rejects_unknown_tags_non_finite_values_and_non_positive_values() {
+        let mut non_finite = vec![1, 1];
+        non_finite.extend_from_slice(&f32::NAN.to_bits().to_le_bytes());
+        for blob in [
+            vec![1, 99],
+            non_finite,
+            vec![1, 1, 0, 0, 0, 0],
+            vec![1, 2, 0, 0, 0, 0],
+        ] {
+            assert_invalid_line_height_blob(&blob);
+        }
     }
 
     #[test]
@@ -1378,6 +1654,41 @@ mod tests {
         let image = widget_document(blob);
         let document = WidgetDocumentView::decode(&image, LIMITS).unwrap();
         TextStyle::from_awir(&document, PROPERTY, PropertyValue::BlobRef(0)).unwrap()
+    }
+
+    #[cfg(feature = "portable-guest")]
+    fn assert_invalid_text_style_blob(blob: &[u8]) {
+        let image = widget_document(blob);
+        let document = WidgetDocumentView::decode(&image, LIMITS).unwrap();
+        assert!(matches!(
+            TextStyle::from_awir(&document, PROPERTY, PropertyValue::BlobRef(0)),
+            Err(
+                aimer_widget::portable::PortableMaterializeError::InvalidPropertyValue {
+                    property: PROPERTY,
+                }
+            )
+        ));
+    }
+
+    #[cfg(feature = "portable-guest")]
+    fn materialize_line_height(blob: &[u8]) -> LineHeight {
+        let image = widget_document(blob);
+        let document = WidgetDocumentView::decode(&image, LIMITS).unwrap();
+        LineHeight::from_awir(&document, PROPERTY, PropertyValue::BlobRef(0)).unwrap()
+    }
+
+    #[cfg(feature = "portable-guest")]
+    fn assert_invalid_line_height_blob(blob: &[u8]) {
+        let image = widget_document(blob);
+        let document = WidgetDocumentView::decode(&image, LIMITS).unwrap();
+        assert!(matches!(
+            LineHeight::from_awir(&document, PROPERTY, PropertyValue::BlobRef(0)),
+            Err(
+                aimer_widget::portable::PortableMaterializeError::InvalidPropertyValue {
+                    property: PROPERTY,
+                }
+            )
+        ));
     }
 
     fn complete_decoration_blob() -> Vec<u8> {

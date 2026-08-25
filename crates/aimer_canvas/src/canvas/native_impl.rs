@@ -6,7 +6,7 @@ use aimer_color::prelude::Color;
 use aimer_cupid::canvas::CupidCanvas;
 use aimer_cupid::font::{FontFamily, FontStyle, TextLanguage};
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
-use aimer_cupid::text_pipeline::TextOverflowMode;
+use aimer_cupid::text_pipeline::{TextOverflowMode, TextShadowRequest};
 use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
 use aimer_cupid::utilities::Color as CupidColor;
 
@@ -142,6 +142,43 @@ impl CanvasRendering for CupidCanvas {
             font_family,
             font_style,
             font_weight,
+        );
+    }
+
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_shadow_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+        offset: Vec2d,
+        blur: f32,
+    ) {
+        if color.as_u32() >> 24 == 0 {
+            return;
+        }
+        let shadow = TextShadowRequest {
+            offset_x: offset.x,
+            offset_y: offset.y,
+            blur,
+            color: CupidColor::from(color).to_array(),
+        };
+        CupidCanvas::draw_text_shadow_styled(
+            self,
+            pos.x,
+            pos.y,
+            text,
+            font_size,
+            CupidColor::from(color),
+            font_family,
+            font_style,
+            font_weight,
+            shadow,
         );
     }
 

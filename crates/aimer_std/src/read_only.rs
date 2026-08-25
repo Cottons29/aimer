@@ -598,3 +598,169 @@ where
         fmt::Display::fmt(self.get(), formatter)
     }
 }
+
+trait SharedValue<T: ?Sized> {
+    fn get(&self) -> &T;
+}
+
+impl<Owner, Field, Select> SharedValue<Field> for SharedRef<Owner, Field, Select>
+where
+    Owner: 'static,
+    Field: ?Sized + 'static,
+    Select: for<'a> Fn(&'a Owner) -> &'a Field + 'static,
+{
+    #[inline]
+    fn get(&self) -> &Field {
+        SharedRef::get(self)
+    }
+}
+
+struct ProjectedShareRef<T: ?Sized + 'static, U: ?Sized + 'static, Select> {
+    source: ShareRef<T>,
+    select: Select,
+    target: PhantomData<*const U>,
+}
+
+impl<T, U, Select> SharedValue<U> for ProjectedShareRef<T, U, Select>
+where
+    T: ?Sized + 'static,
+    U: ?Sized + 'static,
+    Select: for<'a> Fn(&'a T) -> &'a U,
+{
+    #[inline]
+    fn get(&self) -> &U {
+        (self.select)(self.source.get())
+    }
+}
+
+/// A type-erased, owning read-only reference to a shared value.
+///
+/// `ShareRef<T>` is the stable interface for APIs that need to retain a
+/// projected value without knowing the owner or selector types used to obtain
+/// it. Cloning the handle clones its ownership reference; it never clones the
+/// selected value. The returned borrow from [`ShareRef::get`] is tied to the
+/// handle, so the owner remains alive for every access.
+///
+/// Use [`ShareRef::from_shared_ref`] to adapt a [`SharedRef`] produced by
+/// [`Shared::project`], or [`ShareRef::from_rc`] for an existing [`Rc`].
+pub struct ShareRef<T: ?Sized + 'static> {
+    value: Rc<dyn SharedValue<T>>,
+}
+
+impl<T: ?Sized + 'static> ShareRef<T> {
+    /// Adapts a generic owning projection into the type-erased shared handle.
+    ///
+    /// This erases only the owner and selector types. The projected value is
+    /// not copied.
+    #[must_use]
+    #[inline]
+    pub fn from_shared_ref<Owner, Select>(reference: SharedRef<Owner, T, Select>) -> Self
+    where
+        Owner: 'static,
+        Select: for<'a> Fn(&'a Owner) -> &'a T + 'static,
+    {
+        Self {
+            value: Rc::new(reference),
+        }
+    }
+
+    /// Creates a shared handle from an existing [`Rc`].
+    ///
+    /// The `Rc` is retained without cloning its value. Use [`ShareRef::project`]
+    /// to narrow a `ShareRef<String>` to a `ShareRef<str>` without copying the
+    /// string contents.
+    #[must_use]
+    #[inline]
+    pub fn from_rc(rc: &Rc<T>) -> Self {
+        Self::from_shared_ref(SharedRef::from_rc(rc))
+    }
+
+    /// Projects this handle to a borrowed subvalue without cloning it.
+    #[must_use]
+    #[inline]
+    pub fn project<U, Select>(self, select: Select) -> ShareRef<U>
+    where
+        U: ?Sized + 'static,
+        Select: for<'a> Fn(&'a T) -> &'a U + 'static,
+    {
+        ShareRef {
+            value: Rc::new(ProjectedShareRef {
+                source: self,
+                select,
+                target: PhantomData,
+            }),
+        }
+    }
+
+    /// Borrows the retained value.
+    #[must_use]
+    #[inline]
+    pub fn get(&self) -> &T {
+        self.value.get()
+    }
+}
+
+impl<T: ?Sized + 'static> Clone for ShareRef<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            value: Rc::clone(&self.value),
+        }
+    }
+}
+
+impl<T: ?Sized + 'static> Deref for ShareRef<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &T {
+        self.get()
+    }
+}
+
+impl<T: ?Sized + 'static> AsRef<T> for ShareRef<T> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        self.get()
+    }
+}
+
+impl<T: ?Sized + fmt::Debug + 'static> fmt::Debug for ShareRef<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.get(), formatter)
+    }
+}
+
+impl<T: ?Sized + fmt::Display + 'static> fmt::Display for ShareRef<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.get(), formatter)
+    }
+}
+
+#[cfg(test)]
+mod share_ref_tests {
+    use super::{ShareRef, Shared};
+    use std::rc::Rc;
+
+    #[test]
+    fn from_rc_borrows_the_original_string_allocation() {
+        let value: Rc<str> = Rc::from("shared");
+        let reference = ShareRef::from_rc(&value);
+
+        assert!(std::ptr::eq(reference.get(), value.as_ref()));
+    }
+
+    #[test]
+    fn projected_reference_borrows_the_original_field() {
+        struct State {
+            title: String,
+        }
+
+        let state = Shared::new(State {
+            title: String::from("projected"),
+        });
+        let reference = ShareRef::from_shared_ref(state.project(|state| &state.title));
+
+        assert!(std::ptr::eq(reference.get(), &state.title));
+    }
+}

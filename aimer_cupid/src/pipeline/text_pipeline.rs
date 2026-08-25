@@ -162,6 +162,61 @@ fn glyph_intersects_clip(position: [f32; 2], size: [f32; 2], clip: [f32; 4]) -> 
 }
 
 #[inline]
+fn shadow_padding(shadow: TextShadowRequest) -> f32 {
+    let offset_x = shadow
+        .offset_x
+        .is_finite()
+        .then_some(shadow.offset_x.abs())
+        .unwrap_or(0.0);
+    let offset_y = shadow
+        .offset_y
+        .is_finite()
+        .then_some(shadow.offset_y.abs())
+        .unwrap_or(0.0);
+    let blur = shadow
+        .blur
+        .is_finite()
+        .then_some(shadow.blur.max(0.0))
+        .unwrap_or(0.0);
+    offset_x.max(offset_y) + blur
+}
+
+#[inline]
+fn shadow_intersects_clip(
+    position: [f32; 2],
+    size: [f32; 2],
+    shadow: TextShadowRequest,
+    clip: [f32; 4],
+) -> bool {
+    let offset_x = shadow
+        .offset_x
+        .is_finite()
+        .then_some(shadow.offset_x)
+        .unwrap_or(0.0);
+    let offset_y = shadow
+        .offset_y
+        .is_finite()
+        .then_some(shadow.offset_y)
+        .unwrap_or(0.0);
+    let blur = shadow
+        .blur
+        .is_finite()
+        .then_some(shadow.blur.max(0.0))
+        .unwrap_or(0.0);
+    glyph_intersects_clip(
+        [position[0] + offset_x - blur, position[1] + offset_y - blur],
+        [size[0] + 2.0 * blur, size[1] + 2.0 * blur],
+        clip,
+    )
+}
+
+#[inline]
+fn shadow_is_visible(color: [f32; 4]) -> bool {
+    color.get(3).copied().unwrap_or(0.0).is_finite()
+        && color.get(3).copied().unwrap_or(0.0) > 0.0
+}
+
+#[inline]
 fn normalize_pixel_uv_rect(pixel_rect: [f32; 4], atlas_width: u32, atlas_height: u32) -> [f32; 4] {
     let width = atlas_width as f32;
     let height = atlas_height as f32;
@@ -271,6 +326,21 @@ impl TextDecorationDraw {
     }
 }
 
+/// Paint data for one glyph shadow. The text pipeline expands blurred shadows
+/// into a small, bounded sample set so the same atlas, clip, opacity, and
+/// transform path is used as the foreground glyphs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextShadowRequest {
+    /// Horizontal offset in physical pixels.
+    pub offset_x: f32,
+    /// Vertical offset in physical pixels.
+    pub offset_y: f32,
+    /// Blur radius in physical pixels.
+    pub blur: f32,
+    /// RGBA paint color.
+    pub color: [f32; 4],
+}
+
 pub struct TextDrawRequest {
     pub x: f32,
     pub y: f32,
@@ -284,6 +354,11 @@ pub struct TextDrawRequest {
     pub overflow: TextOverflowMode,
     pub horizontal_align: TextHorizontalAlign,
     pub line_height: Option<f32>,
+    /// Optional glyph shadow painted before the foreground run.
+    pub shadow: Option<TextShadowRequest>,
+    /// Whether this request also paints its foreground glyphs. Shadow-only
+    /// requests are used by the canvas convenience API.
+    pub draw_glyphs: bool,
     pub font_family: FontFamily,
     pub font_style: FontStyle,
     pub font_weight: Option<u16>,
@@ -1206,11 +1281,13 @@ impl TextPipelineV2 {
             // only ever errs toward keeping text — `glyph_intersects_clip`
             // does the precise per-glyph check afterwards. Non-positive extents
             // are left alone so `known_extent` still reads them as unbounded.
-            let pad = req
+            let glyph_pad = req
                 .spans
                 .iter()
                 .map(|span| span.font_size.unwrap_or(req.font_size))
                 .fold(req.font_size, f32::max);
+            let shadow_pad = req.shadow.map_or(0.0, shadow_padding);
+            let pad = glyph_pad + shadow_pad;
             let bounds = [
                 req.x - pad,
                 req.y - pad,
@@ -1489,7 +1566,11 @@ impl TextPipelineV2 {
                         .map_or(0.0, |offsets| offsets[pg.line_index]);
                     let position =
                         snap_to_pixel_grid([pg.x + cursor_x + line_offset, pg.y + cursor_y]);
-                    if !glyph_intersects_clip(position, size, req.clip_rect) {
+                    let foreground_visible = glyph_intersects_clip(position, size, req.clip_rect);
+                    let shadow_visible = req.shadow.is_some_and(|shadow| {
+                        shadow_intersects_clip(position, size, shadow, req.clip_rect)
+                    });
+                    if !foreground_visible && !shadow_visible {
                         continue;
                     }
                     let instance = GlyphInstance {
@@ -1509,18 +1590,62 @@ impl TextPipelineV2 {
                         _pad: [0.0; 2],
                     };
 
-                    if target_color_list {
-                        self.color_instances.push(instance);
-                    } else {
-                        self.instances.push(instance);
-                        if is_bold
-                            && self
-                                .rasterizer
-                                .glyph_needs_synthetic_bold(key, font_weight)
-                        {
-                            let mut bold = instance;
-                            bold.position[0] += (pg.font_size * 0.03).max(0.5);
-                            self.instances.push(bold);
+                    if let Some(shadow) = req.shadow
+                        && shadow_visible
+                        && shadow_is_visible(shadow.color)
+                    {
+                        let offset_x = shadow
+                            .offset_x
+                            .is_finite()
+                            .then_some(shadow.offset_x)
+                            .unwrap_or(0.0);
+                        let offset_y = shadow
+                            .offset_y
+                            .is_finite()
+                            .then_some(shadow.offset_y)
+                            .unwrap_or(0.0);
+                        let blur = shadow
+                            .blur
+                            .is_finite()
+                            .then_some(shadow.blur.max(0.0))
+                            .unwrap_or(0.0);
+                        let sample_count = if blur == 0.0 { 1 } else { 8 };
+                        let shadow_coverage_exponent = coverage_exponent(shadow.color);
+                        for sample in 0..sample_count {
+                            let (blur_x, blur_y) = if sample_count == 1 {
+                                (0.0, 0.0)
+                            } else {
+                                let angle =
+                                    sample as f32 * std::f32::consts::TAU / sample_count as f32;
+                                (angle.cos() * blur, angle.sin() * blur)
+                            };
+                            let mut shadow_instance = instance;
+                            shadow_instance.position[0] += offset_x + blur_x;
+                            shadow_instance.position[1] += offset_y + blur_y;
+                            shadow_instance.color = shadow.color;
+                            shadow_instance.coverage_exponent = shadow_coverage_exponent;
+                            if target_color_list {
+                                self.color_instances.push(shadow_instance);
+                            } else {
+                                self.instances.push(shadow_instance);
+                            }
+                        }
+                    }
+
+                    if req.draw_glyphs && foreground_visible {
+                        if target_color_list {
+                            self.color_instances.push(instance);
+                        } else {
+                            self.instances.push(instance);
+                            if is_bold
+                                && self
+                                    .rasterizer
+                                    .glyph_needs_synthetic_bold(key, font_weight)
+                            {
+                                let mut bold = instance;
+                                bold.position[0] += (pg.font_size * 0.03).max(0.5);
+                                self.instances.push(bold);
+                            }
                         }
                     }
                 }
@@ -1735,8 +1860,9 @@ impl TextPipelineV2 {
 #[cfg(test)]
 mod tests {
     use super::{
-        TextDecorationDraw, coverage_exponent, glyph_intersects_clip, glyph_quad_size,
-        normalize_pixel_uv_rect, snap_to_pixel_grid,
+        TextDecorationDraw, TextShadowRequest, coverage_exponent, glyph_intersects_clip,
+        glyph_quad_size, normalize_pixel_uv_rect, shadow_intersects_clip, shadow_is_visible,
+        shadow_padding, snap_to_pixel_grid,
     };
 
     /// How many atlas texels one pixel of `quad_size` spans.
@@ -1789,6 +1915,31 @@ mod tests {
             [20.0, 20.0],
             [0.0, 0.0, 100.0, 100.0],
         ));
+    }
+
+    #[test]
+    fn shadow_culling_keeps_a_shadow_inside_an_otherwise_outside_clip() {
+        let shadow = TextShadowRequest {
+            offset_x: -24.0,
+            offset_y: 0.0,
+            blur: 2.0,
+            color: [0.0, 0.0, 0.0, 0.5],
+        };
+
+        assert!(shadow_intersects_clip(
+            [105.0, 10.0],
+            [8.0, 12.0],
+            shadow,
+            [0.0, 0.0, 100.0, 100.0],
+        ));
+        assert_eq!(shadow_padding(shadow), 26.0);
+    }
+
+    #[test]
+    fn transparent_or_non_finite_shadow_alpha_paints_nothing() {
+        assert!(!shadow_is_visible([0.0, 0.0, 0.0, 0.0]));
+        assert!(!shadow_is_visible([0.0, 0.0, 0.0, f32::NAN]));
+        assert!(shadow_is_visible([0.0, 0.0, 0.0, 0.5]));
     }
 
     #[test]

@@ -915,6 +915,7 @@ impl PortableTextStyle {
             background_color: self.background_color.map(Color::from_primitive),
             text_overflow: self.text_overflow.into_native(),
             text_decoration: self.text_decoration.into_native()?,
+            ..TextStyle::default()
         })
     }
 }

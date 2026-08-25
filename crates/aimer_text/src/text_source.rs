@@ -2,6 +2,7 @@ use std::fmt;
 use std::ops::Deref;
 use std::rc::Rc;
 
+use aimer_std::read_only::ShareRef;
 use aimer_widget::portable::{
     PortableMaterializeError, PortableMaterializeProperty, PortableProperty,
     PortablePropertyReflection,
@@ -10,28 +11,34 @@ use aimer_widget::portable::__anteros::{PropertyId, PropertyValue};
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{PortableBuildContext, PortableBuildError, PortableEncodeProperty};
 
-/// A text payload that is either a `'static` literal or reference-counted,
-/// owned string data.
+/// A text payload that is either a `'static` literal or shared string data.
 ///
 /// [`Text`](crate::Text) and [`RawTextWidget`](crate::RawTextWidget) rebuild
 /// every frame, so the common case — a label built from a string literal —
-/// must not pay an allocation on every rebuild. `Rc<str>` cannot help here:
+/// must not pay an allocation on every rebuild. `Rc<str>` cannot help a static
+/// `&str` here:
 /// constructing one from a `&str` or `String` always allocates and copies,
 /// because its layout places the strong/weak counters next to the string
 /// bytes in one block. `TextSource` instead keeps the `&'static str` case as a
-/// bare pointer, and only falls back to an `Rc<str>` for data that is
-/// genuinely owned or shared.
+/// bare pointer, uses `Rc<str>` for directly shared strings, and retains a
+/// [`ShareRef<str>`] when the text is projected from another shared owner.
 ///
 /// # Example
 ///
 /// ```
-/// use aimer_text::Text;
+/// use std::rc::Rc;
+///
+/// use aimer_text::{ShareRef, Text};
 ///
 /// // No allocation: the literal is stored as a `&'static str`.
 /// let label = Text::new("Aimer");
 ///
 /// // One allocation, same as constructing an `Rc<str>` directly.
 /// let counter = Text::new(format!("Count: {}", 3));
+///
+/// // A shared string retains its source without copying its bytes.
+/// let shared: Rc<str> = Rc::from("Shared label");
+/// let shared_label = Text::new(ShareRef::from_rc(&shared));
 /// ```
 #[derive(Clone)]
 pub enum TextSource {
@@ -45,6 +52,9 @@ pub enum TextSource {
     /// Cloning this variant is a refcount bump. Constructing it from a
     /// `String` allocates once, exactly like building an `Rc<str>` directly.
     Shared(Rc<str>),
+    /// An owning, read-only projected string. Cloning this variant clones the
+    /// shared handle without copying the selected string.
+    ShareRef(ShareRef<str>),
 }
 
 impl TextSource {
@@ -54,20 +64,24 @@ impl TextSource {
         match self {
             TextSource::Static(text) => text,
             TextSource::Shared(text) => text,
+            TextSource::ShareRef(text) => text,
         }
     }
 
     /// Returns a reference-counted handle to this text.
     ///
     /// [`TextSource::Shared`] is cloned for free; [`TextSource::Static`]
-    /// allocates once to produce the handle. Use this only at the boundary
-    /// that actually needs an `Rc<str>` — for example, registering selectable
-    /// text with a selection session — rather than on every rebuild.
+    /// allocates once to produce the handle. [`TextSource::ShareRef`] copies
+    /// into a new `Rc<str>` because the current selection boundary requires
+    /// that concrete handle. Use this only at the boundary that actually
+    /// needs an `Rc<str>` — for example, registering selectable text with a
+    /// selection session — rather than on every rebuild.
     #[inline]
     pub fn to_rc(&self) -> Rc<str> {
         match self {
             TextSource::Static(text) => Rc::from(*text),
             TextSource::Shared(text) => Rc::clone(text),
+            TextSource::ShareRef(text) => Rc::from(text.as_ref()),
         }
     }
 }
@@ -139,6 +153,20 @@ impl From<Rc<str>> for TextSource {
     }
 }
 
+impl From<ShareRef<str>> for TextSource {
+    #[inline]
+    fn from(text: ShareRef<str>) -> Self {
+        TextSource::ShareRef(text)
+    }
+}
+
+impl From<ShareRef<String>> for TextSource {
+    #[inline]
+    fn from(text: ShareRef<String>) -> Self {
+        TextSource::from(text.project(String::as_str))
+    }
+}
+
 impl PortableProperty for TextSource {
     const REFLECTION: PortablePropertyReflection = PortablePropertyReflection::string_ref();
 }
@@ -171,6 +199,7 @@ impl PortableEncodeProperty for TextSource {
 
 #[cfg(test)]
 mod tests {
+    use aimer_std::read_only::{ShareRef, Shared};
     use super::*;
 
     #[test]
@@ -199,6 +228,44 @@ mod tests {
         let source = TextSource::from("literal");
         let rc = source.to_rc();
         assert_eq!(&*rc, "literal");
+    }
+
+    #[test]
+    fn shared_ref_from_rc_keeps_text_alive_after_the_source_rc_is_dropped() {
+        let rc: Rc<str> = Rc::from("shared-ref");
+        let source = TextSource::from(ShareRef::from_rc(&rc));
+
+        drop(rc);
+
+        assert_eq!(source.as_str(), "shared-ref");
+    }
+
+    #[test]
+    fn projected_shared_string_keeps_its_owner_alive_without_copying_the_text() {
+        struct State {
+            title: String,
+        }
+
+        let state = Shared::new(State {
+            title: String::from("projected"),
+        });
+        let title = ShareRef::from_shared_ref(state.project(|state| &state.title))
+            .project(String::as_str);
+        let source = TextSource::from(title);
+
+        drop(state);
+
+        assert_eq!(source.as_str(), "projected");
+    }
+
+    #[test]
+    fn shared_string_is_projected_to_text_without_copying_the_source_value() {
+        let value = Rc::new(String::from("shared-string"));
+        let source = TextSource::from(ShareRef::from_rc(&value));
+
+        drop(value);
+
+        assert_eq!(source.as_str(), "shared-string");
     }
 
     #[test]

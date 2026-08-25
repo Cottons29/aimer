@@ -7,6 +7,8 @@ use aimer_style::*;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{TextOverflowMode, *};
 
+use crate::paragraph::Paragraph;
+use crate::text_span::ResolvedTextSpan;
 use crate::text_source::TextSource;
 
 /// Low-level element that lays out and paints one run of text.
@@ -19,6 +21,8 @@ pub struct RawTextWidget {
     pub text: TextSource,
     pub text_style: TextStyle,
     pub text_align: TextAlign,
+    pub line_height: LineHeight,
+    pub text_indent: f32,
     pub cache: LayoutCache,
     pub _typeface: Mutex<Option<()>>,
 }
@@ -31,6 +35,59 @@ impl RawTextWidget {
             self.text_style.font_size as f32
         };
         base * scale
+    }
+
+    fn uses_paragraph_layout(&self) -> bool {
+        self.line_height != LineHeight::Normal
+            || self.text_indent != 0.0
+            || self.text_style.text_transform != TextTransform::None
+            || self.text_style.letter_spacing != 0.0
+            || self.text_style.word_spacing != 0.0
+            || self.text_style.text_shadow.is_some()
+    }
+
+    fn paragraph(&self) -> Paragraph {
+        Paragraph::with_layout(
+            vec![ResolvedTextSpan::plain(self.text.to_rc(), self.text_style)],
+            self.text_align,
+            self.text_style.text_overflow,
+            self.line_height,
+            self.text_indent,
+        )
+    }
+
+    fn draw_paragraph(&self, ctx: &BuildContext) {
+        let paragraph = self.paragraph();
+        let layout = paragraph.prepare(ctx);
+        let vertical_offset = match self.text_align {
+            TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => 0.0,
+            TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => {
+                (ctx.parent_size.height - layout.size.height).max(0.0) / 2.0
+            }
+            TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => {
+                (ctx.parent_size.height - layout.size.height).max(0.0)
+            }
+        };
+
+        ctx.canvas.save();
+        if vertical_offset != 0.0 {
+            ctx.canvas.translate((0.0, vertical_offset).into());
+        }
+        let clipped = paragraph.needs_clip();
+        if clipped {
+            ctx.canvas.set_clip(
+                (0.0, 0.0).into(),
+                ResolvedSize {
+                    width: paragraph.available_width(ctx),
+                    height: ctx.parent_size.height,
+                },
+            );
+        }
+        paragraph.draw_spans(ctx, &layout, |span| span.style.color, |_, _| {});
+        if clipped {
+            ctx.canvas.clear_clip();
+        }
+        ctx.canvas.restore();
     }
 }
 
@@ -64,6 +121,10 @@ impl Drawable for RawTextWidget {
                     *hovered = Some((self.debug_name(), l_start, l_end));
                 }
             }
+        }
+        if self.uses_paragraph_layout() {
+            self.draw_paragraph(ctx);
+            return;
         }
         let font_size = self.font_size(ctx.scale);
         let width = ctx.parent_size.width;
@@ -284,6 +345,9 @@ fn vertical_alignment_baseline(
 
 impl LayoutElement for RawTextWidget {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        if self.uses_paragraph_layout() {
+            return self.paragraph().prepare(ctx).size;
+        }
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
             return cached;

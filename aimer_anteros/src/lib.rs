@@ -156,7 +156,8 @@ pub use widget_schema::{
     PROPERTY_SIZED_BOX_WIDTH, PROPERTY_SIZED_BOX_WIDTH_NAME, PROPERTY_TEXT_CONTENT,
     PROPERTY_BUTTON_DECORATION, PROPERTY_BUTTON_DECORATION_NAME,
     PROPERTY_TEXT_ALIGN, PROPERTY_TEXT_ALIGN_NAME, PROPERTY_TEXT_CONTENT_NAME, PROPERTY_TEXT_STYLE,
-    PROPERTY_TEXT_STYLE_NAME, WIDGET_BUTTON,
+    PROPERTY_TEXT_STYLE_NAME, PROPERTY_TEXT_LINE_HEIGHT, PROPERTY_TEXT_LINE_HEIGHT_NAME,
+    PROPERTY_TEXT_INDENT, PROPERTY_TEXT_INDENT_NAME, WIDGET_BUTTON,
     WIDGET_BUTTON_NAME, WIDGET_COLUMN,
     WIDGET_COLUMN_NAME, WIDGET_CONTAINER, WIDGET_CONTAINER_NAME, WIDGET_ROW, WIDGET_ROW_NAME,
     PROPERTY_ROW_GAPS, PROPERTY_ROW_GAPS_NAME, PROPERTY_ROW_HORIZONTAL_ALIGNMENT,
@@ -181,7 +182,8 @@ pub use widget_schema::{
     PROPERTY_ANIMATED_THEME_VALUE, PROPERTY_ANIMATED_THEME_VALUE_NAME,
     THEME_VALUE_MAXIMUM_ENCODED_BYTES, WIDGET_ANIMATED_THEME, WIDGET_ANIMATED_THEME_NAME,
     WIDGET_PROVIDER, WIDGET_PROVIDER_NAME, TEXT_STYLE_VALUE_MAXIMUM_ENCODED_BYTES,
-    TEXT_STYLE_VALUE_NAME, TEXT_STYLE_VALUE_VERSION,
+    TEXT_STYLE_VALUE_NAME, TEXT_STYLE_VALUE_VERSION, LINE_HEIGHT_VALUE_MAXIMUM_ENCODED_BYTES,
+    LINE_HEIGHT_VALUE_NAME, LINE_HEIGHT_VALUE_VERSION,
 };
 
 #[cfg(test)]
@@ -3180,6 +3182,7 @@ mod portable_schema_metadata_tests {
         PROPERTY_CONTAINER_COLOR, PROPERTY_CONTAINER_HEIGHT,
         PROPERTY_CONTAINER_WIDTH, PROPERTY_CONTAINER_PADDING, PROPERTY_CONTAINER_MARGIN,
         PROPERTY_CONTAINER_BOX_DECORATION, PROPERTY_TEXT_ALIGN, PROPERTY_TEXT_CONTENT,
+        PROPERTY_TEXT_INDENT, PROPERTY_TEXT_LINE_HEIGHT,
         PROPERTY_SIZED_BOX_HEIGHT, PROPERTY_SIZED_BOX_WIDTH, PROPERTY_TEXT_STYLE,
         ValueSchemaMetadata, ValueTypeId,
         Version, WIDGET_CONTAINER, WIDGET_SIZED_BOX, WIDGET_TEXT, WidgetDocument, WidgetNode,
@@ -3271,7 +3274,7 @@ mod portable_schema_metadata_tests {
 
         let text = schema(WIDGET_TEXT);
         assert_eq!(text.children(), ChildCardinality::none());
-        assert_eq!(text.properties().len(), 3);
+        assert_eq!(text.properties().len(), 5);
         assert_property(
             text,
             PROPERTY_TEXT_CONTENT,
@@ -3288,6 +3291,18 @@ mod portable_schema_metadata_tests {
             text,
             PROPERTY_TEXT_STYLE,
             PropertyValueKind::BlobRef,
+            PropertyPresence::Optional,
+        );
+        assert_property(
+            text,
+            PROPERTY_TEXT_LINE_HEIGHT,
+            PropertyValueKind::BlobRef,
+            PropertyPresence::Optional,
+        );
+        assert_property(
+            text,
+            PROPERTY_TEXT_INDENT,
+            PropertyValueKind::F64,
             PropertyPresence::Optional,
         );
     }

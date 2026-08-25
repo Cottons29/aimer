@@ -4,7 +4,7 @@ pub mod selectable_text;
 use std::sync::Mutex;
 
 use aimer_macro::PortableWidget;
-use aimer_style::{TextAlign, TextOverflow, TextStyle};
+use aimer_style::{LineHeight, TextAlign, TextOverflow, TextShadow, TextStyle, TextTransform};
 use aimer_widget::base::BuildContext;
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{
@@ -27,7 +27,11 @@ const DEFAULT_SELECTION_COLOR: aimer_widget::base::Color =
 /// Text uses [`TextStyle::default`] and [`TextAlign::default`] unless replaced.
 /// Overflow behavior comes from the active style; use [`Text::wrapped`] or
 /// [`Text::ellipsis`] for the common modes. Unlike [`crate::RichText`], this
-/// widget does not provide spans, links, or selection.
+/// widget does not provide spans, links, or selection. Run-level properties
+/// such as transformation, spacing, decoration, and glyph shadow belong to
+/// [`TextStyle`]; the forwarding builders below only update that canonical
+/// style. Line height and first-line indentation belong to the paragraph and
+/// affect layout, wrapping, hit geometry, and painting together.
 ///
 /// # Example
 ///
@@ -53,6 +57,10 @@ pub struct Text {
     text_align: TextAlign,
     #[portable_optional]
     text_style: TextStyle,
+    #[portable_optional]
+    line_height: LineHeight,
+    #[portable_optional]
+    text_indent: f32,
 }
 
 impl Text {
@@ -67,6 +75,8 @@ impl Text {
             text: text.into(),
             text_align: TextAlign::default(),
             text_style: TextStyle::default(),
+            line_height: LineHeight::default(),
+            text_indent: 0.0,
         }
     }
 
@@ -90,6 +100,58 @@ impl Text {
     #[inline]
     pub fn text_style(mut self, text_style: TextStyle) -> Self {
         self.text_style = text_style;
+        self
+    }
+
+    /// Sets the Unicode transformation applied before shaping.
+    #[inline]
+    pub fn text_transform(mut self, text_transform: TextTransform) -> Self {
+        self.text_style.text_transform = text_transform;
+        self
+    }
+
+    /// Sets the additional advance between adjacent rendered graphemes.
+    #[inline]
+    pub fn letter_spacing(mut self, letter_spacing: f32) -> Self {
+        self.text_style.letter_spacing = letter_spacing;
+        self
+    }
+
+    /// Sets the additional advance at whitespace boundaries.
+    #[inline]
+    pub fn word_spacing(mut self, word_spacing: f32) -> Self {
+        self.text_style.word_spacing = word_spacing;
+        self
+    }
+
+    /// Adds one glyph shadow behind the text.
+    #[inline]
+    pub fn text_shadow(mut self, text_shadow: TextShadow) -> Self {
+        self.text_style.text_shadow = Some(text_shadow);
+        self
+    }
+
+    /// Removes the glyph shadow from the text.
+    #[inline]
+    pub fn without_text_shadow(mut self) -> Self {
+        self.text_style.text_shadow = None;
+        self
+    }
+
+    /// Sets the distance between adjacent paragraph baselines.
+    #[inline]
+    pub fn line_height(mut self, line_height: LineHeight) -> Self {
+        self.line_height = line_height;
+        self
+    }
+
+    /// Sets the first-line paragraph indent in logical pixels.
+    ///
+    /// A negative value is a hanging indent: the first line starts before the
+    /// paragraph's normal origin while subsequent lines use the normal origin.
+    #[inline]
+    pub fn text_indent(mut self, text_indent: f32) -> Self {
+        self.text_indent = text_indent;
         self
     }
     /// Sets overflow behavior on the current style.
@@ -163,12 +225,34 @@ fn materialize_portable_text(
         &node,
         style_property,
     )?;
+    let line_height_property = aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+        "aimer.property:aimer_text::Text:line_height",
+    );
+    let line_height = aimer_widget::portable::optional_materialized_property::<LineHeight>(
+        document,
+        &node,
+        line_height_property,
+    )?;
+    let text_indent_property = aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+        "aimer.property:aimer_text::Text:text_indent",
+    );
+    let text_indent = aimer_widget::portable::optional_materialized_property::<f32>(
+        document,
+        &node,
+        text_indent_property,
+    )?;
     let mut widget = Text::new(text);
     if let Some(alignment) = alignment {
         widget = widget.text_align(alignment);
     }
     if let Some(style) = style {
         widget = widget.text_style(style);
+    }
+    if let Some(line_height) = line_height {
+        widget = widget.line_height(line_height);
+    }
+    if let Some(text_indent) = text_indent {
+        widget = widget.text_indent(text_indent);
     }
     Ok(widget.boxed())
 }
@@ -187,6 +271,8 @@ impl Widget for Text {
                 self.text.to_rc(),
                 self.text_style,
                 self.text_align,
+                self.line_height,
+                self.text_indent,
                 DEFAULT_SELECTION_COLOR,
             )
             .boxed();
@@ -195,6 +281,8 @@ impl Widget for Text {
             text: self.text,
             text_style: self.text_style,
             text_align: self.text_align,
+            line_height: self.line_height,
+            text_indent: self.text_indent,
             cache: LayoutCache::new(),
             _typeface: Mutex::new(None),
         }
@@ -208,17 +296,19 @@ mod tests {
 
     use aimer_attribute::{ResolvedSize, Vec2d};
     use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_style::{LineHeight, TextStyle, TextTransform};
     #[cfg(feature = "portable-guest")]
     use aimer_anteros::{
-        PROPERTY_TEXT_ALIGN, PROPERTY_TEXT_CONTENT, PROPERTY_TEXT_STYLE, PropertyValue, Version,
-        WIDGET_TEXT, WidgetDocumentView, WidgetProperty,
+        PROPERTY_TEXT_ALIGN, PROPERTY_TEXT_CONTENT, PROPERTY_TEXT_INDENT,
+        PROPERTY_TEXT_LINE_HEIGHT, PROPERTY_TEXT_STYLE, PropertyValue, Version, WIDGET_TEXT,
+        WidgetDocumentView, WidgetProperty,
     };
     #[cfg(feature = "portable-guest")]
     use aimer_color::prelude::Colors;
     #[cfg(feature = "portable-guest")]
     use aimer_style::{
         FontFamily, FontStyle, FontWeight, TextAlign, TextDecoration, TextDecorationLine,
-        TextDecorationStyle, TextOverflow, TextStyle,
+        TextDecorationStyle, TextOverflow,
     };
     use aimer_widget::base::{BuildContext, WindowHandle};
     #[cfg(feature = "portable-guest")]
@@ -226,7 +316,9 @@ mod tests {
         PortableBuildContext, PortableBuildError, PortableLimits, PortableWidgetLimits,
         PortableWidgetResource, SourceFingerprint, StableId128,
     };
-    use aimer_widget::{PortableWidget, Widget};
+    use aimer_widget::Widget;
+    #[cfg(feature = "portable-guest")]
+    use aimer_widget::PortableWidget;
 
     use super::Text;
     use crate::selection::selectable::{SelectionCoordinator, SelectionScope};
@@ -234,6 +326,23 @@ mod tests {
 
     /// The debug name of the non-selectable fast path.
     const RAW_TEXT_NAME: &str = "RawTextWidget";
+
+    #[test]
+    fn text_builder_keeps_paragraph_values_with_the_widget() {
+        let text = Text::new("Aimer")
+            .text_style(
+                TextStyle::new()
+                    .text_transform(TextTransform::Uppercase)
+                    .letter_spacing(0.5),
+            )
+            .line_height(LineHeight::Px(24.0))
+            .text_indent(-8.0);
+
+        assert_eq!(text.text_style.text_transform, TextTransform::Uppercase);
+        assert_eq!(text.text_style.letter_spacing, 0.5);
+        assert_eq!(text.line_height, LineHeight::Px(24.0));
+        assert_eq!(text.text_indent, -8.0);
+    }
 
     fn context<'a>(canvas: Canvas<'a>, runtime: &'a tokio::runtime::Runtime) -> BuildContext<'a> {
         BuildContext::new(
@@ -367,6 +476,38 @@ mod tests {
                 WidgetProperty::new(PROPERTY_TEXT_ALIGN, PropertyValue::I64(3)).optional(),
             ]
         );
+        super::materialize_portable_text(&view, node, Vec::new()).unwrap();
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn text_paragraph_properties_lower_as_optional_values() {
+        let mut context = portable_context(portable_limits());
+        let root = Text::new("text")
+            .line_height(LineHeight::Px(24.0))
+            .text_indent(-8.0)
+            .to_portable_node(&mut context, portable_source(9))
+            .unwrap();
+        let document = context.finish_document(root).unwrap();
+        let bytes = document.encode().unwrap();
+        let view = WidgetDocumentView::decode(&bytes, document.model_limits()).unwrap();
+        let node = view.node(root.index()).unwrap();
+        let properties = node.properties().collect::<Vec<_>>();
+
+        assert!(properties.iter().any(|property| {
+            property.property_id() == PROPERTY_TEXT_LINE_HEIGHT
+                && matches!(property.value(), PropertyValue::BlobRef(_))
+        }));
+        assert!(properties.iter().any(|property| {
+            property.property_id() == PROPERTY_TEXT_INDENT
+                && property.value() == PropertyValue::F64(-8.0)
+        }));
+        assert!(!properties
+            .iter()
+            .any(|property| property.property_id() == PROPERTY_TEXT_STYLE));
+        assert!(!properties
+            .iter()
+            .any(|property| property.property_id() == PROPERTY_TEXT_ALIGN));
         super::materialize_portable_text(&view, node, Vec::new()).unwrap();
     }
 

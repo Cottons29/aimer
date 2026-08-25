@@ -737,6 +737,8 @@ impl RawTextField {
             text: TextSource::Shared(Rc::from(text)),
             text_style: *style,
             text_align: align,
+            line_height: Default::default(),
+            text_indent: 0.0,
             cache: LayoutCache::new(),
             _typeface: std::sync::Mutex::new(None),
         }

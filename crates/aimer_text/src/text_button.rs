@@ -269,6 +269,8 @@ impl RawTextButton {
             text: self.widget.label.clone(),
             text_style: self.active_style(),
             text_align: Default::default(),
+            line_height: Default::default(),
+            text_indent: 0.0,
             cache: LayoutCache::new(),
             _typeface: Mutex::new(None),
         }

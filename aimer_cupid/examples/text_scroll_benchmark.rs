@@ -76,6 +76,8 @@ fn document(line_count: usize, scroll_offset: f32) -> Vec<TextDrawRequest> {
             overflow: TextOverflowMode::Clip,
             horizontal_align: TextHorizontalAlign::Left,
             line_height: None,
+            shadow: None,
+            draw_glyphs: true,
             font_family: FontFamily::SANS_SERIF,
             font_style: FontStyle::Normal,
             font_weight: None,

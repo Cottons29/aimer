@@ -5,14 +5,17 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use aimer_attribute::ResolvedSize;
-use aimer_style::{FontStyle, TextAlign, TextDecorationLine, TextOverflow};
+use aimer_style::{FontStyle, LineHeight, TextAlign, TextDecorationLine, TextOverflow};
 use aimer_widget::base::{BuildContext, Color};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::paragraph::geometry::{
     PreparedBackground, prepare_background_runs, vertical_span_is_visible,
 };
-use crate::text_span::{ResolvedTextSpan, ellipsize_first_line, layout_resolved_spans};
+use crate::text_span::{
+    ResolvedTextSpan, adjusted_grapheme_advance, adjusted_width, ellipsize_first_line,
+    layout_resolved_spans_with_indent,
+};
 
 /// One painted run of text: a maximal slice of a single span that shares a
 /// line, in element-local physical pixels.
@@ -20,6 +23,7 @@ pub(crate) struct PreparedFragment {
     pub span_index: usize,
     pub text: String,
     pub source_range: Option<Range<usize>>,
+    pub rendered_source_ranges: Vec<Range<usize>>,
     pub line: usize,
     pub x: f32,
     pub baseline: f32,
@@ -101,6 +105,8 @@ pub(crate) struct Paragraph {
     spans: Vec<ResolvedTextSpan>,
     text_align: TextAlign,
     overflow: TextOverflow,
+    line_height: LineHeight,
+    text_indent: f32,
     layout_cache: RefCell<Option<(PreparedLayoutKey, Rc<PreparedLayout>)>>,
 }
 
@@ -108,10 +114,31 @@ impl Paragraph {
     /// Creates a paragraph over already resolved spans.
     #[inline]
     pub fn new(spans: Vec<ResolvedTextSpan>, text_align: TextAlign, overflow: TextOverflow) -> Self {
+        Self::with_layout(
+            spans,
+            text_align,
+            overflow,
+            LineHeight::default(),
+            0.0,
+        )
+    }
+
+    /// Creates a paragraph with its paragraph-level line-height and first-line
+    /// indentation settings.
+    #[inline]
+    pub fn with_layout(
+        spans: Vec<ResolvedTextSpan>,
+        text_align: TextAlign,
+        overflow: TextOverflow,
+        line_height: LineHeight,
+        text_indent: f32,
+    ) -> Self {
         Self {
             spans,
             text_align,
             overflow,
+            line_height,
+            text_indent,
             layout_cache: RefCell::new(None),
         }
     }
@@ -168,31 +195,43 @@ impl Paragraph {
 
     fn compute_layout(&self, ctx: &BuildContext) -> PreparedLayout {
         let wrap_width = self.wrap_width(ctx);
-        let mut layout = layout_resolved_spans(&self.spans, wrap_width, |text, style| {
-            let font_size = style.font_size.max(1) as f32 * ctx.scale;
-            ctx.canvas.measure_text_styled(
-                text,
-                font_size,
-                style.font_family,
-                style.font_style,
-                style.font_weight.numeric(),
-            )
-        });
+        let first_line_indent = self
+            .text_indent
+            .is_finite()
+            .then_some(self.text_indent)
+            .unwrap_or(0.0)
+            * ctx.scale;
+        let mut layout = layout_resolved_spans_with_indent(
+            &self.spans,
+            wrap_width,
+            first_line_indent,
+            |text, style| {
+                let font_size = style.font_size.max(1) as f32 * ctx.scale;
+                ctx.canvas.measure_text_styled(
+                    text,
+                    font_size,
+                    style.font_family,
+                    style.font_style,
+                    style.font_weight.numeric(),
+                )
+            },
+        );
         if matches!(self.overflow, TextOverflow::Ellipsis) {
             ellipsize_first_line(&mut layout, &self.spans, wrap_width, |text, style| {
-                ctx.canvas.measure_text_styled(
+                adjusted_width(text, style, &mut |text, style| ctx.canvas.measure_text_styled(
                     text,
                     style.font_size.max(1) as f32 * ctx.scale,
                     style.font_family,
                     style.font_style,
                     style.font_weight.numeric(),
-                )
+                ))
             });
         }
 
         let mut line_ascent = vec![0.0_f32; layout.line_count];
         let mut line_descent = vec![0.0_f32; layout.line_count];
         let mut line_gap = vec![0.0_f32; layout.line_count];
+        let mut line_font_size = vec![0.0_f32; layout.line_count];
         let mut line_width = vec![0.0_f32; layout.line_count];
         for fragment in &layout.fragments {
             let style = self.spans[fragment.span_index].style;
@@ -207,6 +246,8 @@ impl Paragraph {
             line_ascent[fragment.line] = line_ascent[fragment.line].max(metrics.ascent);
             line_descent[fragment.line] = line_descent[fragment.line].max(-metrics.descent);
             line_gap[fragment.line] = line_gap[fragment.line].max(metrics.line_gap);
+            line_font_size[fragment.line] =
+                line_font_size[fragment.line].max(style.font_size.max(1) as f32 * ctx.scale);
             line_width[fragment.line] = line_width[fragment.line].max(fragment.x + fragment.width);
         }
         for line_break in &layout.line_breaks {
@@ -226,17 +267,24 @@ impl Paragraph {
             }
         }
 
+        let natural_line_heights = (0..layout.line_count)
+            .map(|line| line_ascent[line] + line_descent[line] + line_gap[line])
+            .collect::<Vec<_>>();
+        let line_heights = natural_line_heights
+            .iter()
+            .enumerate()
+            .map(|(line, natural)| {
+                self.resolved_line_height(*natural, line_font_size[line])
+            })
+            .collect::<Vec<_>>();
         let mut line_top = vec![0.0; layout.line_count];
         for line in 1..layout.line_count {
-            line_top[line] = line_top[line - 1]
-                + line_ascent[line - 1]
-                + line_descent[line - 1]
-                + line_gap[line - 1];
+            line_top[line] = line_top[line - 1] + line_heights[line - 1];
         }
         let height = layout
             .line_count
             .checked_sub(1)
-            .map(|last| line_top[last] + line_ascent[last] + line_descent[last])
+            .map(|last| line_top[last] + line_heights[last])
             .unwrap_or(0.0);
         let natural_width = line_width.iter().copied().fold(0.0, f32::max);
         let width = if matches!(self.overflow, TextOverflow::Wrap) {
@@ -254,6 +302,7 @@ impl Paragraph {
                     span_index: fragment.span_index,
                     text: fragment.text,
                     source_range: fragment.source_range,
+                    rendered_source_ranges: fragment.rendered_source_ranges,
                     line: fragment.line,
                     x: fragment.x + line_offset,
                     baseline: line_top[fragment.line] + line_ascent[fragment.line],
@@ -266,15 +315,6 @@ impl Paragraph {
             .collect::<Vec<_>>();
         let graphemes = self.measure_graphemes(ctx, &fragments);
         let backgrounds = prepare_background_runs(&fragments, &self.spans);
-        let line_heights = (0..layout.line_count)
-            .map(|line| {
-                if line + 1 < layout.line_count {
-                    line_top[line + 1] - line_top[line]
-                } else {
-                    line_ascent[line] + line_descent[line]
-                }
-            })
-            .collect::<Vec<_>>();
         let line_breaks = layout
             .line_breaks
             .into_iter()
@@ -303,6 +343,16 @@ impl Paragraph {
         }
     }
 
+    fn resolved_line_height(&self, natural: f32, font_size: f32) -> f32 {
+        let requested = match self.line_height {
+            LineHeight::Normal => natural,
+            LineHeight::Px(value) if value.is_finite() => value,
+            LineHeight::Factor(value) if value.is_finite() => value * font_size,
+            LineHeight::Px(_) | LineHeight::Factor(_) => natural,
+        };
+        requested.max(natural).max(0.0)
+    }
+
     fn line_offset(&self, width: f32, line_width: f32) -> f32 {
         match self.text_align {
             TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
@@ -320,23 +370,43 @@ impl Paragraph {
     ) -> Vec<GraphemeBox> {
         let mut graphemes = Vec::new();
         for (fragment_index, fragment) in fragments.iter().enumerate() {
-            let Some(source_range) = &fragment.source_range else {
+            if fragment.source_range.is_none() && fragment.rendered_source_ranges.is_empty() {
                 continue;
-            };
+            }
             let style = self.spans[fragment.span_index].style;
             let font_size = style.font_size.max(1) as f32 * ctx.scale;
             let mut x = fragment.x;
-            for (offset, grapheme) in fragment.text.grapheme_indices(true) {
-                let width = ctx.canvas.measure_text_styled(
+            let rendered_graphemes = fragment.text.graphemes(true).collect::<Vec<_>>();
+            for (index, (offset, grapheme)) in fragment.text.grapheme_indices(true).enumerate() {
+                let width = adjusted_grapheme_advance(
                     grapheme,
-                    font_size,
-                    style.font_family,
-                    style.font_style,
-                    style.font_weight.numeric(),
+                    &style,
+                    index,
+                    rendered_graphemes.len(),
+                    &mut |text, style| {
+                        ctx.canvas.measure_text_styled(
+                            text,
+                            font_size,
+                            style.font_family,
+                            style.font_style,
+                            style.font_weight.numeric(),
+                        )
+                    },
                 );
+                let source_range = if fragment.rendered_source_ranges.is_empty() {
+                    fragment
+                        .source_range
+                        .as_ref()
+                        .map(|range| range.start + offset..range.start + offset + grapheme.len())
+                } else {
+                    fragment.rendered_source_ranges.get(index).cloned()
+                };
+                let Some(source_range) = source_range else {
+                    x += width;
+                    continue;
+                };
                 graphemes.push(GraphemeBox {
-                    source_range: source_range.start + offset
-                        ..source_range.start + offset + grapheme.len(),
+                    source_range,
                     fragment_index,
                     x,
                     width,
@@ -397,15 +467,101 @@ impl Paragraph {
             if italic {
                 ctx.canvas.set_italic(true);
             }
-            ctx.canvas.draw_text_styled(
-                &fragment.text,
-                (fragment.x, fragment.baseline).into(),
-                font_size,
-                color,
-                span.style.font_family,
-                span.style.font_style,
-                span.style.font_weight.numeric(),
-            );
+            let has_spacing = span.style.letter_spacing.is_finite()
+                && span.style.word_spacing.is_finite()
+                && (span.style.letter_spacing != 0.0 || span.style.word_spacing != 0.0);
+            if let Some(shadow) = span.style.text_shadow
+                && shadow.color.as_u32() >> 24 != 0
+            {
+                if has_spacing {
+                    let rendered_graphemes = fragment.text.graphemes(true).collect::<Vec<_>>();
+                    let mut x = 0.0;
+                    for (index, grapheme) in rendered_graphemes.iter().enumerate() {
+                        ctx.canvas.draw_text_shadow_styled(
+                            grapheme,
+                            (fragment.x + x, fragment.baseline).into(),
+                            font_size,
+                            shadow.color,
+                            span.style.font_family,
+                            span.style.font_style,
+                            span.style.font_weight.numeric(),
+                            (
+                                shadow.offset_x * ctx.scale,
+                                shadow.offset_y * ctx.scale,
+                            )
+                                .into(),
+                            shadow.blur * ctx.scale,
+                        );
+                        x += adjusted_grapheme_advance(
+                            grapheme,
+                            &span.style,
+                            index,
+                            rendered_graphemes.len(),
+                            &mut |text, style| {
+                                ctx.canvas.measure_text_styled(
+                                    text,
+                                    font_size,
+                                    style.font_family,
+                                    style.font_style,
+                                    style.font_weight.numeric(),
+                                )
+                            },
+                        );
+                    }
+                } else {
+                    ctx.canvas.draw_text_shadow_styled(
+                        &fragment.text,
+                        (fragment.x, fragment.baseline).into(),
+                        font_size,
+                        shadow.color,
+                        span.style.font_family,
+                        span.style.font_style,
+                        span.style.font_weight.numeric(),
+                        (shadow.offset_x * ctx.scale, shadow.offset_y * ctx.scale).into(),
+                        shadow.blur * ctx.scale,
+                    );
+                }
+            }
+            if has_spacing {
+                let rendered_graphemes = fragment.text.graphemes(true).collect::<Vec<_>>();
+                let mut x = 0.0;
+                for (index, grapheme) in rendered_graphemes.iter().enumerate() {
+                    ctx.canvas.draw_text_styled(
+                        grapheme,
+                        (fragment.x + x, fragment.baseline).into(),
+                        font_size,
+                        color,
+                        span.style.font_family,
+                        span.style.font_style,
+                        span.style.font_weight.numeric(),
+                    );
+                    x += adjusted_grapheme_advance(
+                        grapheme,
+                        &span.style,
+                        index,
+                        rendered_graphemes.len(),
+                        &mut |text, style| {
+                            ctx.canvas.measure_text_styled(
+                                text,
+                                font_size,
+                                style.font_family,
+                                style.font_style,
+                                style.font_weight.numeric(),
+                            )
+                        },
+                    );
+                }
+            } else {
+                ctx.canvas.draw_text_styled(
+                    &fragment.text,
+                    (fragment.x, fragment.baseline).into(),
+                    font_size,
+                    color,
+                    span.style.font_family,
+                    span.style.font_style,
+                    span.style.font_weight.numeric(),
+                );
+            }
             if italic {
                 ctx.canvas.set_italic(false);
             }
@@ -470,10 +626,10 @@ impl Paragraph {
 mod tests {
     use std::rc::Rc;
 
-    use aimer_style::TextStyle;
+    use aimer_style::{LineHeight, TextStyle};
     use aimer_widget::base::Color;
 
-    use super::display_color;
+    use super::{Paragraph, display_color};
     use crate::text_span::ResolvedTextSpan;
 
     #[test]
@@ -499,6 +655,77 @@ mod tests {
             display_color(&plain, None, Some(hover_color)),
             plain.style.color
         );
+    }
+
+    #[test]
+    fn line_height_resolves_natural_absolute_and_factor_forms() {
+        let paragraph = super::Paragraph::with_layout(
+            Vec::new(),
+            aimer_style::TextAlign::TopLeft,
+            aimer_style::TextOverflow::Clip,
+            aimer_style::LineHeight::Px(40.0),
+            0.0,
+        );
+        assert_eq!(paragraph.resolved_line_height(20.0, 16.0), 40.0);
+
+        let factor = super::Paragraph::with_layout(
+            Vec::new(),
+            aimer_style::TextAlign::TopLeft,
+            aimer_style::TextOverflow::Clip,
+            aimer_style::LineHeight::Factor(1.5),
+            0.0,
+        );
+        assert_eq!(factor.resolved_line_height(20.0, 16.0), 24.0);
+
+        let normal = super::Paragraph::new(
+            Vec::new(),
+            aimer_style::TextAlign::TopLeft,
+            aimer_style::TextOverflow::Clip,
+        );
+        assert_eq!(normal.resolved_line_height(20.0, 16.0), 20.0);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn explicit_line_height_controls_every_line_box_and_final_height() {
+        use aimer_attribute::{ResolvedSize, Vec2d};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_style::{TextAlign, TextOverflow};
+        use aimer_widget::base::{BuildContext, WindowHandle};
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        let paragraph = Paragraph::with_layout(
+            vec![ResolvedTextSpan::plain(
+                Rc::from("first\nsecond"),
+                TextStyle::new().font_size(16),
+            )],
+            TextAlign::TopLeft,
+            TextOverflow::Clip,
+            LineHeight::Px(40.0),
+            0.0,
+        );
+
+        let layout = paragraph.prepare(&context);
+
+        assert_eq!(layout.line_heights, vec![40.0, 40.0]);
+        assert_eq!(layout.size.height, 80.0);
+        assert_eq!(layout.fragments[1].baseline - layout.fragments[0].baseline, 40.0);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

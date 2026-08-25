@@ -29,6 +29,7 @@ mod system_theme;
 mod test_animation;
 pub mod text_area_example;
 pub mod text_field_example;
+mod text_properties_example;
 mod window_example;
 
 #[allow(unused_imports)]
@@ -71,6 +72,8 @@ use crate::system_theme::start_system_theme_example;
 #[allow(unused_imports)]
 use crate::test_animation::TestFadingAnimation;
 #[allow(unused_imports)]
+use crate::text_properties_example::start_text_properties_example;
+#[allow(unused_imports)]
 use crate::window_example::start_window_example;
 
 // this is the entry point of the app
@@ -92,7 +95,8 @@ fn main() {
     // start_markdown_example();
     // start_custom_markdown_example();
     // start_panic_recovery_example();
-    start_window_example();
+//    start_window_example();
+     start_text_properties_example();
     // start_resizable_example();
     // test_scroll_and_row();
     // start_svg_test();

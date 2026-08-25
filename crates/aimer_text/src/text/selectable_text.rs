@@ -4,7 +4,7 @@ use std::rc::Rc;
 use aimer_attribute::ResolvedSize;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerButton, PointerSource};
-use aimer_style::{TextAlign, TextStyle};
+use aimer_style::{LineHeight, TextAlign, TextStyle};
 use aimer_utils::AnimInstant;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
@@ -48,15 +48,19 @@ impl RawSelectableText {
         text: Rc<str>,
         text_style: TextStyle,
         text_align: TextAlign,
+        line_height: LineHeight,
+        text_indent: f32,
         fallback_color: Color,
     ) -> Self {
         let binding = SelectionBinding::new(ctx, Rc::clone(&text), fallback_color);
         let selection_color = binding.session.selection_color();
         Self {
-            paragraph: Paragraph::new(
+            paragraph: Paragraph::with_layout(
                 vec![ResolvedTextSpan::plain(Rc::clone(&text), text_style)],
                 text_align,
                 text_style.text_overflow,
+                line_height,
+                text_indent,
             ),
             text,
             selection_color,

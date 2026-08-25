@@ -168,6 +168,7 @@ aimer_router = { path = "crates/aimer_router" }
 aimer_inspector = { path = "crates/aimer_inspector" }
 aimer_assets = { path = "crates/aimer_assets" }
 aimer_style = { path = "crates/aimer_style" }
+aimer_std = { path = "crates/aimer_std" }
 aimer_macro = { path = "crates/aimer_macro" }
 aimer_provider = { path = "crates/aimer_provider" }
 aimer_svg = { path = "crates/aimer_svg" }

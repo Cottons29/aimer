@@ -22,6 +22,7 @@ aimer_modal.workspace = true
 aimer_ctxmenu.workspace = true
 aimer_native.workspace = true
 aimer_utils.workspace = true
+aimer_std.workspace = true
 unicode-linebreak.workspace = true
 unicode-segmentation.workspace = true
 

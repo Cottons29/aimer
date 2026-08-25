@@ -56,6 +56,55 @@ pub trait CanvasRendering: Clone {
         let _ = (font_family, font_style);
         self.draw_text(text, pos, font_size, color, font_weight);
     }
+
+    /// Paints a glyph shadow behind a styled text run.
+    ///
+    /// Implementations may replace the portable multi-sample fallback with a
+    /// dedicated text-shadow pipeline. The fallback deliberately uses glyph
+    /// draws rather than rectangle shadows, so clipping, opacity, and canvas
+    /// transforms remain the same as the text they follow.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_shadow_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+        offset: Vec2d,
+        blur: f32,
+    ) {
+        if color.as_u32() >> 24 == 0 {
+            return;
+        }
+        let blur = blur.is_finite().then_some(blur.max(0.0)).unwrap_or(0.0);
+        let samples = if blur == 0.0 { 1 } else { 8 };
+        for sample in 0..samples {
+            let (blur_x, blur_y) = if samples == 1 {
+                (0.0, 0.0)
+            } else {
+                let angle = sample as f32 * core::f32::consts::TAU / samples as f32;
+                (angle.cos() * blur, angle.sin() * blur)
+            };
+            self.save();
+            self.translate(Vec2d {
+                x: offset.x + blur_x,
+                y: offset.y + blur_y,
+            });
+            self.draw_text_styled(
+                text,
+                pos,
+                font_size,
+                color,
+                font_family,
+                font_style,
+                font_weight,
+            );
+            self.restore();
+        }
+    }
     #[allow(clippy::too_many_arguments)]
     fn draw_text_wrapped(
         &self,
@@ -514,6 +563,35 @@ impl<'a> AimerCanvas<'a> {
             font_family,
             font_style,
             font_weight,
+        );
+    }
+
+    /// Paints a glyph shadow behind a styled text run.
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_shadow_styled(
+        &self,
+        text: &str,
+        pos: Vec2d,
+        font_size: f32,
+        color: Color,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+        offset: Vec2d,
+        blur: f32,
+    ) {
+        CanvasRendering::draw_text_shadow_styled(
+            self.inner,
+            text,
+            pos,
+            font_size,
+            color,
+            font_family,
+            font_style,
+            font_weight,
+            offset,
+            blur,
         );
     }
 
