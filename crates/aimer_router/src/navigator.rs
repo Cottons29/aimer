@@ -778,6 +778,13 @@ mod tests {
         NavigatorControllerOperationsWidget.boxed()
     }
 
+    #[cfg(not(feature = "portable-guest"))]
+    impl Router for TestRoute {
+        fn build(&self, _ctx: &BuildContext) -> AnyWidget {
+            lookup_route(*self)
+        }
+    }
+
     #[cfg(feature = "portable-guest")]
     struct PortableRouteWidget;
 
