@@ -44,7 +44,7 @@ const BAR_HEIGHT: f32 = 44.0;
 /// restricted set of sides does: only its right edge is a handle, and every
 /// other band belongs to its child — cursor included.
 pub fn start_resizable_example() {
-    AimerApp::start(ResizableShowcase::new().boxed())
+    AimerApp::start(crate::theme::provide(ResizableShowcase::new().boxed()))
 }
 
 #[widget(Stateful)]
@@ -85,18 +85,20 @@ impl State<ResizableShowcase> for ResizableShowcaseState {
         self.updater = updater;
     }
 
-    fn build(&self, _: &BuildContext) -> impl Widget {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let app_theme = ThemeData::copied(ctx);
+
         Container::new()
-            .color(Color::Rgb(17, 24, 39))
+            .color(app_theme.background_color)
             .padding(LayoutSpacing::all(Spacing::Px(32)))
             .child(Column::new().children(vec![
-                self.title(),
-                self.readout(),
-                self.zone_readout(),
+                self.title(app_theme),
+                self.readout(app_theme),
+                self.zone_readout(app_theme),
                 SizedBox::new().height(16).boxed(),
-                self.panel(),
+                self.panel(app_theme),
                 SizedBox::new().height(24).boxed(),
-                self.width_only_bar(),
+                self.width_only_bar(app_theme),
             ]))
     }
 }
@@ -117,7 +119,7 @@ fn zone_name(zone: Direction) -> &'static str {
 }
 
 impl ResizableShowcaseState {
-    fn title(&self) -> AnyWidget {
+    fn title(&self, app_theme: ThemeData) -> AnyWidget {
         Container::new()
             .height(Dimension::Px(34.0))
             .child(
@@ -126,14 +128,14 @@ impl ResizableShowcaseState {
                     .text_style(
                         TextStyle::new()
                             .font_size(24)
-                            .color(Color::WHITE),
+                            .color(app_theme.on_background_color),
                     ),
             )
             .boxed()
     }
 
     /// The live size, refreshed by `on_resize` on every drag step.
-    fn readout(&self) -> AnyWidget {
+    fn readout(&self, app_theme: ThemeData) -> AnyWidget {
         Container::new()
             .height(Dimension::Px(24.0))
             .child(
@@ -145,14 +147,14 @@ impl ResizableShowcaseState {
                 .text_style(
                     TextStyle::new()
                         .font_size(16)
-                        .color(Color::Rgb(148, 163, 184)),
+                        .color(crate::theme::muted_text(&app_theme)),
                 ),
             )
             .boxed()
     }
 
     /// The side the pointer is over, refreshed by `on_resize_zone`.
-    fn zone_readout(&self) -> AnyWidget {
+    fn zone_readout(&self, app_theme: ThemeData) -> AnyWidget {
         Container::new()
             .height(Dimension::Px(24.0))
             .child(
@@ -161,7 +163,7 @@ impl ResizableShowcaseState {
                     .text_style(
                         TextStyle::new()
                             .font_size(16)
-                            .color(Color::Rgb(96, 165, 250)),
+                            .color(app_theme.primary_color),
                     ),
             )
             .boxed()
@@ -175,7 +177,7 @@ impl ResizableShowcaseState {
     ///
     /// `on_resize_zone` writes the side under the pointer, which is how the
     /// second readout knows what a click would grab before anything is dragged.
-    fn panel(&self) -> AnyWidget {
+    fn panel(&self, app_theme: ThemeData) -> AnyWidget {
         let updater = self.updater.clone();
         let zone_updater = self.updater.clone();
 
@@ -200,13 +202,13 @@ impl ResizableShowcaseState {
                     .padding(LayoutSpacing::all(Spacing::Px(20)))
                     .box_decoration(
                         BoxDecoration::new()
-                            .background_color(Color::Rgb(30, 41, 59))
+                            .background_color(app_theme.surface_color)
                             .border_radius(12)
                             .border(BoxBorder::all(
                                 BorderSlice::new()
                                     .stroke(Dimension::Px(2.0))
                                     .style(BorderStyle::Solid)
-                                    .color(Color::Rgba(59, 130, 246, 180)),
+                                    .color(app_theme.primary_color.with_alpha(0.70)),
                             )),
                     )
                     .child(
@@ -221,7 +223,7 @@ impl ResizableShowcaseState {
                         .text_style(
                             TextStyle::new()
                                 .font_size(15)
-                                .color(Color::WHITE),
+                                .color(app_theme.on_surface_color),
                         ),
                     ),
             )
@@ -233,7 +235,7 @@ impl ResizableShowcaseState {
     /// can be live: `Direction::RIGHT` here, `Direction::RIGHT |
     /// Direction::BOTTOM_RIGHT` to add one corner, `Direction::ALL -
     /// Direction::TOP_EDGES` to keep everything but the top.
-    fn width_only_bar(&self) -> AnyWidget {
+    fn width_only_bar(&self, app_theme: ThemeData) -> AnyWidget {
         Resizable::new()
             .width(BAR_WIDTH)
             .height(BAR_HEIGHT)
@@ -247,12 +249,12 @@ impl ResizableShowcaseState {
                     .padding(LayoutSpacing::all(Spacing::Px(12)))
                     .box_decoration(
                         BoxDecoration::new()
-                            .background_color(Color::Rgb(30, 41, 59))
+                            .background_color(app_theme.surface_color)
                             .border_radius(10)
                             .border(BoxBorder::all(
                                 BorderSlice::new()
                                     .stroke(Dimension::Px(2.0))
-                                    .color(Color::Rgb(34, 197, 94)),
+                                    .color(app_theme.primary_color.lighten(0.12)),
                             )),
                     )
                     .child(
@@ -261,7 +263,7 @@ impl ResizableShowcaseState {
                             .text_style(
                                 TextStyle::new()
                                     .font_size(14)
-                                    .color(Color::Rgb(203, 213, 225)),
+                                    .color(crate::theme::muted_text(&app_theme)),
                             ),
                     ),
             )

@@ -6,10 +6,12 @@ use aimer::style::*;
 use aimer::*;
 use uuid::Uuid;
 
+use crate::theme;
+
 const ANIM_DURATION: Duration = Duration::from_millis(50);
 
 pub fn start_my_animated_list() {
-    AimerApp::start(MyAnimatedList)
+    AimerApp::start(theme::provide(MyAnimatedList))
 }
 #[allow(non_snake_case)]
 #[widget(Stateful)]
@@ -52,7 +54,9 @@ impl State<MyAnimatedList> for MyListState {
         self.updater = _updater;
     }
 
-    fn build(&self, _: &BuildContext) -> impl Widget {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let theme = ThemeData::copied(ctx);
+
         {
             let now = AnimInstant::now();
             let has_dismissed = self
@@ -75,7 +79,7 @@ impl State<MyAnimatedList> for MyListState {
                         Container::new()
                             .height(Dimension::Px(90.0))
                             .box_decoration(BoxDecoration::new()
-                                .background_color(Colors::Gray.alpha(120)))
+                                .background_color(theme.surface_color))
                             .child(
                                 Row::new()
                                     .vertical_alignment(BoxAlignment::Center)
@@ -86,7 +90,7 @@ impl State<MyAnimatedList> for MyListState {
                                                     .text_align(TextAlign::MidCenter)
                                                     .text_style(TextStyle::new()
                                                         .font_size(20)
-                                                        .color(Colors::Black))
+                                                        .color(theme.on_surface_color))
                                             ).boxed(),
                                         Container::new()
                                              .height(Dimension::Px(50.0))
@@ -113,14 +117,17 @@ impl State<MyAnimatedList> for MyListState {
                                                             });
                                                         }
                                                     })
-                                                    .decoration(BoxDecoration::new().background_color(Colors::Gray))
+                                                    .decoration(
+                                                        BoxDecoration::new()
+                                                            .background_color(theme.primary_color),
+                                                    )
                                                     .child(
                                                         Container::new()
                                                             .child(
                                                                 Text::new("Add Item")
                                                                     .text_align(TextAlign::MidCenter)
                                                                     .text_style(TextStyle::new()
-                                                                        .color(Colors::Black)
+                                                                        .color(theme.on_primary_color)
                                                                         .font_size(15))
                                                             )
                                                     )
@@ -135,7 +142,7 @@ impl State<MyAnimatedList> for MyListState {
                                         AnimationEffect::SlideX { from: -1.0, to: 0.0 },
                                         Container::new()
                                             .margin(LayoutSpacing { top: Spacing::Px(10), ..Default::default() })
-                                            .color(Colors::Blue.alpha(100).into())
+                                            .color(theme.surface_color)
                                             .height(Dimension::Px(50.0))
                                             .child(
                                                 Row::new()
@@ -146,7 +153,7 @@ impl State<MyAnimatedList> for MyListState {
                                                                 Text::new(format!("Item : {}", item.text))
                                                                     .text_align(TextAlign::MidLeft)
                                                                     .text_style(TextStyle::new()
-                                                                        .color(Colors::Black)
+                                                                        .color(theme.on_surface_color)
                                                                         .font_size(15))
                                                             ).boxed(),
                                                         Container::new()
@@ -170,7 +177,10 @@ impl State<MyAnimatedList> for MyListState {
                                                                             });
                                                                         }
                                                                     })
-                                                                    .decoration(BoxDecoration::new().background_color(Colors::Gray))
+                                                                    .decoration(
+                                                                        BoxDecoration::new()
+                                                                            .background_color(theme.primary_color),
+                                                                    )
                                                                     .child(
                                                                         Container::new()
                                                                             .height(Dimension::Px(50.0))
@@ -179,7 +189,7 @@ impl State<MyAnimatedList> for MyListState {
                                                                                 Text::new("Delete")
                                                                                     .text_align(TextAlign::MidCenter)
                                                                                     .text_style(TextStyle::new()
-                                                                                        .color(Colors::Black)
+                                                                                        .color(theme.on_primary_color)
                                                                                         .font_size(15))
                                                                             )
                                                                     )

@@ -258,9 +258,12 @@ mod tests {
 }
 
 pub fn state_router() {
-    AimerApp::start(Navigator::<AppRouting>::new(AppRouting::Home, |route| {
-        route.boxed()
-    }))
+    AimerApp::start(crate::theme::provide(state_router_widget()))
+}
+
+/// Builds the generated-route showcase without starting an application.
+pub fn state_router_widget() -> impl Widget {
+    Navigator::<AppRouting>::new(AppRouting::Home, |route| route.boxed())
 }
 
 /// Launch the tabbed stateful-shell demo: three branches (Feed, Notifications,
@@ -268,9 +271,9 @@ pub fn state_router() {
 ///
 /// ## This is not working yet, I will update it
 pub fn tab_shell_app() {
-    AimerApp::start(StatefulShell::<TabRoute>::new(
+    AimerApp::start(crate::theme::provide(StatefulShell::<TabRoute>::new(
         vec![TabRoute::Feed, TabRoute::Notifications, TabRoute::Profile],
         tab_frame,
         tab_child,
-    ))
+    )))
 }

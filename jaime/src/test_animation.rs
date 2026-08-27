@@ -3,9 +3,9 @@ use std::time::Duration;
 use aimer::Dimension::Percent;
 use aimer::animation::{AnimatedSwitcher, Curve};
 use aimer::provider::media_query::MediaQuery;
-use aimer::style::{FontWeight, LayoutSpacing, Spacing, TextDecoration, TextStyle};
+use aimer::style::{FontWeight, LayoutSpacing, Spacing, TextDecoration, TextStyle, Theme, ThemeData};
 use aimer::{
-    AnyWidget, AssetImage, BoxAlignment, BuildContext, Color, Column, Container, Dimension, Row,
+    AnyWidget, AssetImage, BoxAlignment, BuildContext, Column, Container, Dimension, Row,
     SizedBox, State, StateUpdater, StatefulWidget, Text, TextButton, Widget, widget,
 };
 
@@ -64,8 +64,10 @@ impl State<TestFadingAnimation> for SameLookingSectionState {
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let app_theme = ThemeData::copied(ctx);
+
         Container::new()
-            .color(Color::WHITE)
+            .color(app_theme.background_color)
             .padding(app_padding(ctx))
             .child(
                 Column::new()
@@ -77,7 +79,7 @@ impl State<TestFadingAnimation> for SameLookingSectionState {
                                 Text::new("Consistence Looking").text_style(
                                     TextStyle::new()
                                         .font_size(mobile_title(ctx))
-                                        .color(Color::BLACK)
+                                        .color(app_theme.on_background_color)
                                         .font_weight(FontWeight::Bolder)
                                         .text_decoration(TextDecoration::Underline),
                                 ),
@@ -93,7 +95,7 @@ impl State<TestFadingAnimation> for SameLookingSectionState {
                             .horizontal_alignment(BoxAlignment::Center)
                             .vertical_alignment(BoxAlignment::Center)
                             .gaps(LayoutSpacing::horizontal(Spacing::Px(8)))
-                            .children(self.build_platform_button_list(ctx))
+                            .children(self.build_platform_button_list(app_theme))
                             .boxed(),
                         SizedBox::new().height(40).boxed(),
                     ]),
@@ -102,7 +104,7 @@ impl State<TestFadingAnimation> for SameLookingSectionState {
 }
 
 impl SameLookingSectionState {
-    fn build_platform_button_list(&self, _ctx: &BuildContext) -> Vec<AnyWidget> {
+    fn build_platform_button_list(&self, app_theme: ThemeData) -> Vec<AnyWidget> {
         let selected = self.current_index;
         PLATFORMS
             .iter()
@@ -123,9 +125,9 @@ impl SameLookingSectionState {
                             TextStyle::new()
                                 .font_size(20)
                                 .color(if is_selected {
-                                    Color::BLUE
+                                    app_theme.primary_color
                                 } else {
-                                    Color::BLACK
+                                    app_theme.on_background_color
                                 })
                                 .font_weight(font_weight)
                                 .text_decoration(if is_selected {
@@ -138,9 +140,9 @@ impl SameLookingSectionState {
                             TextStyle::new()
                                 .font_size(20)
                                 .color(if is_selected {
-                                    Color::BLUE
+                                    app_theme.primary_color
                                 } else {
-                                    Color::BLUE.lighten(0.6)
+                                    app_theme.primary_color.lighten(0.22)
                                 })
                                 .font_weight(font_weight)
                                 .text_decoration(TextDecoration::Underline),

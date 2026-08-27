@@ -1,19 +1,23 @@
 use aimer::style::{LayoutSpacing, Spacing, TextDecoration, TextOverflow, TextStyle};
 use aimer::{
-    AimerApp, Color, Container, Flex, FontStyle, FontWeight, FlexDirection, RichText,
+    AimerApp, Container, Flex, FontStyle, FontWeight, FlexDirection, RichText,
     SelectionArea, SizedBox, SpanStyle, Text, TextSpan, Widget,
 };
 
+use crate::theme;
+
 pub fn selectable_text_example() -> impl Widget {
+    let app_theme = theme::app_theme();
+
     Container::new()
-        .color(Color::WHITE)
+        .color(app_theme.background_color)
         .padding(LayoutSpacing::all(Spacing::Px(32)))
         .child(
             Flex::new()
                 .direction(FlexDirection::Column)
                 .children([
                     Text::new("Selectable text region")
-                        .text_style(TextStyle::new().font_size(30).color(Color::BLACK))
+                        .text_style(TextStyle::new().font_size(30).color(app_theme.on_background_color))
                         .boxed(),
                     SizedBox::new().height(16).boxed(),
                     Text::new(
@@ -22,7 +26,7 @@ pub fn selectable_text_example() -> impl Widget {
                     .text_style(
                         TextStyle::new()
                         .font_size(16)
-                        .color(Color::GRAY)
+                        .color(theme::muted_text(&app_theme))
                         .text_overflow(TextOverflow::Wrap)
                     )
                     .boxed(),
@@ -30,11 +34,11 @@ pub fn selectable_text_example() -> impl Widget {
                     Container::new()
                         // .width(Percent(50.0))
                         .padding(LayoutSpacing::all(Spacing::Px(20)))
-                        .color(Color::Rgb(245, 247, 250))
-                        .child(SelectionArea::new().selection_color(Color::Rgba(51, 153, 255, 96)).child(
+                        .color(theme::raised_surface(&app_theme))
+                        .child(SelectionArea::new().selection_color(app_theme.primary_color.with_alpha(0.38)).child(
                             Flex::new().direction(FlexDirection::Column).children([
                                 Text::new("A heading that joins the selection")
-                                    .text_style(TextStyle::new().font_size(24).color(Color::BLACK))
+                                    .text_style(TextStyle::new().font_size(24).color(app_theme.on_surface_color))
                                     .boxed(),
                                 SizedBox::new().height(12).boxed(),
                                 RichText::new(TextSpan::root([
@@ -49,17 +53,17 @@ pub fn selectable_text_example() -> impl Widget {
                                     ),
                                     TextSpan::new(", colors, wrapped lines, and Unicode: "),
                                     TextSpan::new("Aimer • 你好 • សួស្តី • 👩‍💻")
-                                        .style(SpanStyle::new().color(Color::BLUE)),
+                                        .style(SpanStyle::new().color(app_theme.primary_color)),
                                     TextSpan::new(
                                         "\n\nThe copied value is plain text, without style metadata.",
                                     ),
                                 ]))
                                 .text_overflow(TextOverflow::Wrap)
-                                .text_style(TextStyle::new().font_size(20).color(Color::BLACK))
+                                .text_style(TextStyle::new().font_size(20).color(app_theme.on_surface_color))
                                 .boxed(),
                                 SizedBox::new().height(12).boxed(),
                                 Text::new("A caption, selectable because it sits inside the region.")
-                                    .text_style(TextStyle::new().font_size(14).color(Color::GRAY))
+                                    .text_style(TextStyle::new().font_size(14).color(theme::muted_text(&app_theme)))
                                     .wrapped()
                                     .boxed(),
                             ]),
@@ -70,7 +74,7 @@ pub fn selectable_text_example() -> impl Widget {
 }
 
 pub fn start_selectable_text_example() {
-    AimerApp::start(selectable_text_example());
+    AimerApp::start(crate::theme::provide(selectable_text_example()));
 }
 
 #[cfg(test)]

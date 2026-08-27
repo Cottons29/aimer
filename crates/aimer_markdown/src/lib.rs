@@ -87,10 +87,12 @@ fn open_web_link(_target: Rc<str>) {}
 /// to the platform clipboard. Unlabelled fences keep the header without showing
 /// a language name.
 #[derive(Clone, aimer_widget::PortableWidget)]
-#[portable_widget(id = "aimer_markdown::MarkdownViewer", schema_only)]
+#[portable_widget(
+    id = "aimer_markdown::MarkdownViewer",
+    materializer = materialize_markdown_viewer,
+)]
 pub struct MarkdownViewer {
-    #[portable_skip]
-    source: Rc<str>,
+    source: Option<String>,
     #[portable_skip]
     theme: MarkdownTheme,
     #[portable_skip]
@@ -105,11 +107,51 @@ pub struct MarkdownViewer {
     typed_custom_blocks: Vec<(BlockRule, custom::TypedCustomBlockBuilder)>,
     #[portable_skip]
     typed_custom_inlines: Vec<(InlineRule, custom::TypedCustomInlineBuilder)>,
-    #[portable_skip]
+    #[portable_optional]
     padding: LayoutSpacing,
     scrollable: bool,
     #[portable_skip]
     key: Key,
+}
+
+fn materialize_markdown_viewer(
+    document: &aimer_widget::portable::__anteros::WidgetDocumentView<'_>,
+    node: aimer_widget::portable::__anteros::WidgetNodeView<'_>,
+    children: Vec<AnyWidget>,
+) -> Result<AnyWidget, aimer_widget::portable::PortableMaterializeError> {
+    if !children.is_empty() {
+        return Err(aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
+            expected: 0,
+            actual: children.len(),
+        });
+    }
+    let source = aimer_widget::portable::optional_materialized_property::<String>(
+        document,
+        &node,
+        aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+            "aimer.property:aimer_markdown::MarkdownViewer:source",
+        ),
+    )?
+    .unwrap_or_default();
+    let padding = aimer_widget::portable::optional_materialized_property::<LayoutSpacing>(
+        document,
+        &node,
+        aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+            "aimer.property:aimer_markdown::MarkdownViewer:padding",
+        ),
+    )?;
+    let scrollable = aimer_widget::portable::required_materialized_property::<bool>(
+        document,
+        &node,
+        aimer_widget::portable::__anteros::PropertyId::from_canonical_name(
+            "aimer.property:aimer_markdown::MarkdownViewer:scrollable",
+        ),
+    )?;
+    let mut viewer = MarkdownViewer::new().source(source).scrollable(scrollable);
+    if let Some(padding) = padding {
+        viewer = viewer.padding(padding);
+    }
+    Ok(viewer.boxed())
 }
 
 impl Default for MarkdownViewer {
@@ -125,7 +167,7 @@ impl MarkdownViewer {
     /// default.
     pub fn new() -> Self {
         Self {
-            source: Rc::from(""),
+            source: None,
             theme: MarkdownTheme::default(),
             link_handler: Some(Rc::new(open_web_link)),
             image_resolver: Rc::new(default_image_resolver),
@@ -146,7 +188,13 @@ impl MarkdownViewer {
 
     /// Sets the Markdown source rendered by this viewer.
     pub fn markdown(mut self, source: impl Into<Rc<str>>) -> Self {
-        self.source = source.into();
+        self.source = Some(source.into().to_string());
+        self
+    }
+
+    #[inline]
+    fn source(mut self, source: String) -> Self {
+        self.source = Some(source);
         self
     }
 
@@ -290,11 +338,12 @@ impl Widget for MarkdownViewer {
             .into_iter()
             .chain(typed_inline_rules)
             .collect::<Vec<_>>();
+        let source = Rc::from(self.source.as_deref().unwrap_or(""));
         let document = if block_rules.is_empty() && inline_rules.is_empty() {
-            parse_document(self.source.clone())
+            parse_document(source)
         } else {
             Rc::new(Document::parse_with_rules(
-                &self.source,
+                &source,
                 &block_rules,
                 &inline_rules,
             ))
@@ -335,7 +384,7 @@ impl Widget for MarkdownViewer {
     }
 
     fn text_content(&self) -> Option<&str> {
-        Some(&self.source)
+        Some(self.source.as_deref().unwrap_or(""))
     }
 }
 
@@ -457,5 +506,30 @@ mod tests {
         let _viewer = MarkdownViewer::new()
             .typed_block::<Alert>()
             .typed_inline::<Mention>();
+    }
+
+    #[test]
+    fn viewer_portable_schema_retains_source_and_layout_configuration() {
+        use aimer_widget::portable::{PortableNativeWidget, PortableWidgetSchema};
+
+        fn assert_native_materializer<T: PortableNativeWidget>() {}
+        assert_native_materializer::<MarkdownViewer>();
+
+        let schema = <MarkdownViewer as PortableWidgetSchema>::SCHEMA;
+        let properties = schema.properties();
+
+        assert_eq!(properties.len(), 3);
+        assert_eq!(
+            properties
+                .iter()
+                .map(|property| property.canonical_name())
+                .collect::<Vec<_>>(),
+            vec![
+                "aimer.property:aimer_markdown::MarkdownViewer:source",
+                "aimer.property:aimer_markdown::MarkdownViewer:padding",
+                "aimer.property:aimer_markdown::MarkdownViewer:scrollable",
+            ]
+        );
+        assert_eq!(schema.widget().canonical_name(), "aimer.widget:aimer_markdown::MarkdownViewer");
     }
 }

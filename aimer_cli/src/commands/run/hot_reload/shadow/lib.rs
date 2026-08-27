@@ -549,6 +549,21 @@ fn external_runtime_controller_fields_are_fresh_state() {
 }
 
 #[test]
+fn interior_mutable_shared_runtime_fields_are_fresh_state() {
+    let project = TempProject::new();
+    project.basic(
+        "struct PointerState; struct State { current_state: std::rc::Rc<std::cell::Cell<PointerState>> }\nstruct Root;\n#[aimer::main]\nfn main() { AimerApp::new().child(Root).run(); }\n",
+    );
+
+    let shadow = prepare_shadow_project(&project.app(), &project.output(), ShadowLimits::default()).unwrap();
+    let transformed = compact(&fs::read_to_string(shadow.root().join("src/main.rs")).unwrap());
+
+    assert!(transformed.contains(
+        "FieldDescriptor::new(\"current_state\",\"std::rc::Rc<std::cell::Cell<PointerState>>\",::aimer_widget::portable::FieldKind::Fresh)",
+    ));
+}
+
+#[test]
 fn transformed_mini_crate_round_trips_and_reports_active_unsupported_fields() {
     let project = TempProject::new();
     let widget = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crates/aimer_widget");

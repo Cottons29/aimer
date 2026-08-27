@@ -1,5 +1,7 @@
-use aimer::style::{LayoutSpacing, Spacing};
-use aimer::{AimerApp, AsyncBuilder, AsyncSnapshot, Color, Container, Text, Widget};
+use aimer::style::{LayoutSpacing, Spacing, TextStyle};
+use aimer::{AimerApp, AsyncBuilder, AsyncSnapshot, Container, Text, Widget};
+
+use crate::theme;
 
 const EXAMPLE_URL: &str = "https://example.com";
 
@@ -23,19 +25,25 @@ fn snapshot_message(snapshot: &AsyncSnapshot<String, String>) -> String {
 }
 
 pub fn async_builder_example() -> impl Widget {
+    let app_theme = theme::app_theme();
+
     Container::new()
         .padding(LayoutSpacing::all(Spacing::Px(24)))
-        .color(Color::WHITE)
+        .color(app_theme.background_color)
         .child(
             AsyncBuilder::new()
                 .request_key(EXAMPLE_URL)
                 .future(fetch_example)
-                .child(|snapshot| Text::new(snapshot_message(snapshot)).boxed()),
+                .child(move |snapshot| {
+                    Text::new(snapshot_message(snapshot))
+                        .text_style(TextStyle::new().color(app_theme.on_background_color))
+                        .boxed()
+                }),
         )
 }
 
 pub fn start_async_builder_example() {
-    AimerApp::start(async_builder_example());
+    AimerApp::start(crate::theme::provide(async_builder_example()));
 }
 
 #[cfg(test)]

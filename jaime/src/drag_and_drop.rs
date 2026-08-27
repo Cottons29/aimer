@@ -9,11 +9,7 @@ use aimer::style::*;
 use aimer::*;
 
 /// The three columns of the board.
-const COLUMNS: [(&str, Color); 3] = [
-    ("Todo", Color::Rgb(59, 130, 246)),
-    ("Doing", Color::Rgb(234, 179, 8)),
-    ("Done", Color::Rgb(34, 197, 94)),
-];
+const COLUMNS: [&str; 3] = ["Todo", "Doing", "Done"];
 
 /// The column a card cannot be dragged into while it is locked.
 const LOCKED_COLUMN: usize = 2;
@@ -23,7 +19,7 @@ const COLUMN_WIDTH: f32 = 240.0;
 
 /// Starts the kanban board showcase.
 pub fn start_drag_and_drop_example() {
-    AimerApp::start(DragBoard::new().boxed())
+    AimerApp::start(crate::theme::provide(DragBoard::new().boxed()))
 }
 
 /// Identifies one card. This is the payload a drag carries, and the reason a
@@ -107,19 +103,21 @@ impl State<DragBoard> for DragBoardState {
         self.updater = updater;
     }
 
-    fn build(&self, _: &BuildContext) -> impl Widget {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let app_theme = ThemeData::copied(ctx);
+
         Container::new()
-            .color(Color::Rgb(17, 24, 39))
+            .color(app_theme.background_color)
             .padding(LayoutSpacing::all(Spacing::Px(32)))
             .child(
                 Column::new()
                     .horizontal_alignment(BoxAlignment::Start)
                     .children(vec![
-                        heading("Drag and drop: move a card between columns"),
+                        heading("Drag and drop: move a card between columns", app_theme),
                         subheading(match self.last_refused {
                             Some(title) => format!("\u{201c}{title}\u{201d} was refused by Done"),
                             None => "Drag a card. The locked one cannot reach Done.".to_owned(),
-                        }),
+                        }, app_theme),
                         SizedBox::new().height(24).boxed(),
                         Expanded::new()
                             .child(
@@ -128,7 +126,7 @@ impl State<DragBoard> for DragBoardState {
                                     .gaps(LayoutSpacing::all(Spacing::Px(16)))
                                     .children(
                                         (0..COLUMNS.len())
-                                            .map(|index| self.column(index))
+                                            .map(|index| self.column(index, app_theme))
                                             .collect::<Vec<AnyWidget>>(),
                                     ),
                             )
@@ -145,8 +143,13 @@ impl DragBoardState {
     /// the cards as *data* and builds the tiles each time. A widget cannot be
     /// captured and reused: erased widgets are not clonable, by design — they
     /// are the throwaway side of the tree.
-    fn column(&self, index: usize) -> AnyWidget {
-        let (title, accent) = COLUMNS[index];
+    fn column(&self, index: usize, app_theme: ThemeData) -> AnyWidget {
+        let title = COLUMNS[index];
+        let accent = match index {
+            0 => app_theme.primary_color,
+            1 => app_theme.primary_color.lighten(0.15),
+            _ => app_theme.primary_color.lighten(0.30),
+        };
         let cards: Vec<Card> = self
             .cards
             .iter()
@@ -169,9 +172,9 @@ impl DragBoardState {
             .child(move |state: DragTargetState| {
                 let tiles = cards
                     .iter()
-                    .map(|card| draggable_card(card, builder.clone()))
+                    .map(|card| draggable_card(card, builder.clone(), app_theme))
                     .collect::<Vec<AnyWidget>>();
-                column_body(title, accent, state, tiles)
+                column_body(title, accent, state, tiles, app_theme)
             })
             .boxed()
     }
@@ -190,21 +193,25 @@ impl DragBoardState {
 
 /// One draggable card. Its feedback is the same tile, and the space it came
 /// from is dimmed while it travels.
-fn draggable_card(card: &Card, updater: StateUpdater<DragBoardState>) -> AnyWidget {
+fn draggable_card(
+    card: &Card,
+    updater: StateUpdater<DragBoardState>,
+    app_theme: ThemeData,
+) -> AnyWidget {
     let id = card.id;
     let title = card.title;
     let locked = card.locked;
 
     Draggable::new()
         .data(id)
-        .feedback(move || card_tile(title, locked, 1.0))
-        .child_when_dragging(card_tile(title, locked, 0.25))
+        .feedback(move || card_tile(title, locked, 1.0, app_theme))
+        .child_when_dragging(card_tile(title, locked, 0.25, app_theme))
         .on_drag_completed(move |accepted| {
             if !accepted {
                 updater.set_state(move |state| state.last_refused = Some(title));
             }
         })
-        .child(card_tile(title, locked, 1.0))
+        .child(card_tile(title, locked, 1.0, app_theme))
         .boxed()
 }
 
@@ -215,11 +222,12 @@ fn column_body(
     accent: Color,
     state: DragTargetState,
     cards: Vec<AnyWidget>,
+    app_theme: ThemeData,
 ) -> AnyWidget {
     let border = match (state.is_hovered, state.will_accept) {
         (true, true) => accent,
-        (true, false) => Color::Rgb(239, 68, 68),
-        _ => Color::Rgb(55, 65, 81),
+        (true, false) => app_theme.primary_color.darken(0.35),
+        _ => crate::theme::muted_text(&app_theme),
     };
 
     Container::new()
@@ -228,7 +236,7 @@ fn column_body(
         .padding(LayoutSpacing::all(Spacing::Px(12)))
         .box_decoration(
             BoxDecoration::new()
-                .background_color(Color::Rgb(31, 41, 55))
+                .background_color(app_theme.surface_color)
                 .border_radius(14)
                 .border(BoxBorder::all(
                     BorderSlice::new()
@@ -263,11 +271,16 @@ fn column_heading(title: &'static str, accent: Color) -> AnyWidget {
 
 /// One card tile, at `alpha` so the same shape serves as content, feedback and
 /// the dimmed placeholder left behind.
-fn card_tile(title: &'static str, locked: bool, alpha: f32) -> AnyWidget {
+fn card_tile(
+    title: &'static str,
+    locked: bool,
+    alpha: f32,
+    app_theme: ThemeData,
+) -> AnyWidget {
     let background = if locked {
-        Color::Rgb(76, 29, 29).with_alpha(alpha)
+        app_theme.primary_color.darken(0.35).with_alpha(alpha)
     } else {
-        Color::Rgb(55, 65, 81).with_alpha(alpha)
+        app_theme.background_color.lighten(0.12).with_alpha(alpha)
     };
 
     Container::new()
@@ -283,31 +296,31 @@ fn card_tile(title: &'static str, locked: bool, alpha: f32) -> AnyWidget {
             Text::new(title).text_align(TextAlign::MidLeft).text_style(
                 TextStyle::new()
                     .font_size(15)
-                    .color(Color::WHITE.with_alpha(alpha)),
+                    .color(app_theme.on_surface_color.with_alpha(alpha)),
             ),
         )
         .boxed()
 }
 
-fn heading(text: &'static str) -> AnyWidget {
+fn heading(text: &'static str, app_theme: ThemeData) -> AnyWidget {
     Container::new()
         .height(Dimension::Px(34.0))
         .child(
             Text::new(text)
                 .text_align(TextAlign::MidLeft)
-                .text_style(TextStyle::new().font_size(24).color(Color::WHITE)),
+                .text_style(TextStyle::new().font_size(24).color(app_theme.on_background_color)),
         )
         .boxed()
 }
 
-fn subheading(text: String) -> AnyWidget {
+fn subheading(text: String, app_theme: ThemeData) -> AnyWidget {
     Container::new()
         .height(Dimension::Px(24.0))
         .child(
             Text::new(text).text_align(TextAlign::MidLeft).text_style(
                 TextStyle::new()
                     .font_size(15)
-                    .color(Color::Rgb(148, 163, 184)),
+                    .color(crate::theme::muted_text(&app_theme)),
             ),
         )
         .boxed()

@@ -1,12 +1,12 @@
 #![allow(dead_code, clippy::main_recursion)]
 
-// pub mod animated;
+mod animated;
 mod animated_theme;
 mod async_builder;
 mod color_sync;
 mod custom_animated_theme;
 mod custom_font;
-// pub mod drag_and_drop;
+mod drag_and_drop;
 pub mod file_drop_zone;
 mod floating;
 mod focus_node_example;
@@ -19,14 +19,15 @@ mod overflow_behavior_example;
 mod panic_recovery;
 mod resizable_example;
 pub mod routing;
-mod scroll_and_row;
 mod selectable_text;
+mod showcase;
 mod starter;
 pub mod stateful;
 mod stateful_2;
 mod svg_test;
 mod system_theme;
 mod test_animation;
+mod theme;
 pub mod text_area_example;
 pub mod text_field_example;
 mod text_properties_example;
@@ -36,89 +37,28 @@ mod window_example;
 use aimer::style::*;
 #[allow(unused_imports)]
 use aimer::*;
-#[allow(unused_imports)]
-use aimer::{AimerApp, *};
-
-// #[allow(unused_imports)]
-// use crate::animated::start_my_animated_list;
-#[allow(unused_imports)]
-use crate::custom_animated_theme::start_custom_animated_theme_example;
-#[allow(unused_imports)]
-use crate::floating::start_floating_example;
-#[allow(unused_imports)]
-use crate::loading_animation::start_loading_animation_example;
-#[allow(unused_imports)]
-use crate::markdown_example::start_markdown_example;
-#[allow(unused_imports)]
-use crate::markdown_example::start_custom_markdown_example;
-#[allow(unused_imports)]
-use crate::modal::start_modal_example;
-#[allow(unused_imports)]
-use crate::overflow_behavior_example::start_overflow_behavior_example;
-#[allow(unused_imports)]
-use crate::panic_recovery::start_panic_recovery_example;
-#[allow(unused_imports)]
-use crate::justify_content_example::start_justify_content_example;
-#[allow(unused_imports)]
-use crate::resizable_example::start_resizable_example;
-#[allow(unused_imports)]
-use crate::scroll_and_row::test_scroll_and_row;
-#[allow(unused_imports)]
-use crate::stateful::start_counter;
-#[allow(unused_imports)]
-use crate::svg_test::start_svg_test;
-#[allow(unused_imports)]
-use crate::system_theme::start_system_theme_example;
-#[allow(unused_imports)]
-use crate::test_animation::TestFadingAnimation;
-#[allow(unused_imports)]
-use crate::text_properties_example::start_text_properties_example;
-#[allow(unused_imports)]
-use crate::window_example::start_window_example;
+use aimer::native::macos_windowing::MacosWindowing;
 
 // this is the entry point of the app
 #[aimer::main]
 fn main() {
-    // test_text();
-    // stateful_2::start_my_list();
-    // start_counter();
-    // test_positioned()
-    // async_builder::start_async_builder_example()
-    // test_scrollable()
-    // test_scrollable_row()
-    // start_modal_example();
-    // start_floating_example();
-    // routing::tab_shell_app();
-    // routing::state_router()
-    // drag_and_drop::start_drag_and_drop_example();
-    // file_drop_zone::start_file_drop_zone_example();
-    // start_markdown_example();
-    // start_custom_markdown_example();
-    // start_panic_recovery_example();
-//    start_window_example();
-     start_text_properties_example();
-    // start_resizable_example();
-    // test_scroll_and_row();
-    // start_svg_test();
-    // panic_recovery::start_panic_recovery_example()
-    // start_custom_animated_theme_example()
-    // start_system_theme_example()
-    // system_theme::start_system_theme_example();
-    // test_text()
-    // start_loading_animation_example()
-    // floating::start_floating_example();
-    // file_drop_zone::start_file_drop_zone_example()
-    // drag_and_drop::start_drag_and_drop_example();
-    // selectable_text::start_selectable_text_example();
-    // text_area_example::start_text_area_example();
-    // text_field_example::start_text_field_example();
-    // focus_node_example::start_focus_node_example()
-    // http_request_button::start_http_request_button()
-    // start_overflow_behavior_example();
-    // start_justify_content_example();
-    // resizable_example::start_resizable_example();
-    // justify_content_example::start_justify_content_example()
-    // test_image()
+    AimerApp::new()
+        .setup(|| {
+            MacosWindowing::new()
+                .titlebar_transparent(true)
+                .title_hidden(true)
+                .fullsize_content_view(true)
+                .traffic_light_position(16.0, 14.0)
+                .has_shadow(true)
+                .accepts_first_mouse(true)
+                .install();
+        })
+        .child(
+            AnimatedTheme::new()
+                .data(theme::app_theme())
+                .child(showcase::ExampleShowcase::new()),
+        )
+        .run();
 }
 
 #[allow(unused)]
@@ -527,8 +467,8 @@ fn test_image() {
 
 #[cfg(all(test, not(feature = "portable-guest")))]
 mod text_editing_example_tests {
-    use std::any::{Any, TypeId};
     use aimer::Widget;
+    use std::any::{Any, TypeId};
 
     use crate::text_area_example::TextAreaExample;
     use crate::text_field_example::TextFieldExample;

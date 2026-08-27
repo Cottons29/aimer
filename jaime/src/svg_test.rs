@@ -67,13 +67,14 @@ fn test_image() {
     )
 }
 
-pub fn start_svg_test() {
+/// Builds the animated SVG showcase without starting an application.
+pub fn svg_example() -> impl aimer::Widget {
     let document = SvgDocument::from_svg(include_bytes!("../assets/cat-svgrepo-com.svg"))
         .expect("the bundled cat SVG should be valid");
     let controller = AnimationController::with_millis(1_200, Curve::Linear);
     controller.forward_from_first_tick();
 
-    AimerApp::start(AnimatedBuilder::new(controller, move |progress| {
+    AnimatedBuilder::new(controller, move |progress| {
         let entrance = drawing_entrance(progress);
         Svg::new(document.clone())
             .style(
@@ -84,7 +85,11 @@ pub fn start_svg_test() {
             )
             .width(Dimension::Px(320.0 * 2.0))
             .height(Dimension::Px(320.0 * 2.0))
-    }));
+    })
+}
+
+pub fn start_svg_test() {
+    AimerApp::start(svg_example())
 }
 
 #[cfg(test)]

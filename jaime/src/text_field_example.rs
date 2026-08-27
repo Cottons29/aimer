@@ -5,7 +5,7 @@ use aimer::*;
 
 /// Starts the single-line text-field showcase.
 pub fn start_text_field_example() {
-    AimerApp::start(TextFieldExample::new().boxed())
+    AimerApp::start(crate::theme::provide(TextFieldExample::new().boxed()))
 }
 
 /// Demonstrates a controlled single-line field with submission handling.
@@ -32,8 +32,10 @@ impl Default for TextFieldExample {
 
 impl Widget for TextFieldExample {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let theme = ThemeData::copied(ctx);
+
         Container::new()
-            .color(Colors::White.into())
+            .color(theme.background_color)
             .padding(LayoutSpacing::all(Spacing::Px(32)))
             .child(
                 Column::new().children(vec![
@@ -42,11 +44,15 @@ impl Widget for TextFieldExample {
                             TextStyle::new()
                                 .font_size(28)
                                 .font_weight(FontWeight::Bold)
-                                .color(Colors::Black),
+                                .color(theme.on_background_color),
                         )
                         .boxed(),
                     Text::new("Single-line input. Press Return to submit.")
-                        .text_style(TextStyle::new().font_size(16).color(Colors::Gray))
+                        .text_style(
+                            TextStyle::new()
+                                .font_size(16)
+                                .color(crate::theme::muted_text(&theme)),
+                        )
                         .boxed(),
                     TextField::new()
                         .controller(self.controller.clone())

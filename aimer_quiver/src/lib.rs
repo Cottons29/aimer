@@ -3056,7 +3056,7 @@ mod tests {
         use std::rc::Rc;
 
         use aimer_anteros::{
-            BUILTIN_PORTABLE_WIDGET_SCHEMAS, CallbackBinding, ModelError, ModelLimits, PropertyId,
+            BUILTIN_PORTABLE_WIDGET_SCHEMAS, CallbackBinding, EventId, ModelError, ModelLimits, PropertyId,
             PropertyValue,
             StableId128 as WireStableId128, Version,
             WidgetDocument, WidgetMaterializeError, WidgetNode, WidgetProperty, WidgetSchemaId,
@@ -3100,6 +3100,82 @@ mod tests {
         const LIMITS: ModelLimits = ModelLimits::new(8_192, 64, 256, 256).max_widget_depth(16);
         const CALLBACK_ID: WireStableId128 = WireStableId128::from_bytes([0x31; 16]);
         const BUTTON_KEY: WireStableId128 = WireStableId128::from_bytes([0x41; 16]);
+
+        #[test]
+        fn gesture_detector_materializes_its_child_and_callback_binding() {
+            let gesture_type = WidgetSchemaId::from_canonical_name(
+                "aimer.widget:aimer_input::GestureDetector",
+            );
+            let tap_event = EventId::from_canonical_name(
+                "aimer.event:aimer_input::GestureDetector:on_tap",
+            );
+            let callbacks = [CallbackBinding::new(tap_event, Version::new(1, 0), CALLBACK_ID)];
+            let text_properties = [WidgetProperty::new(
+                PROPERTY_TEXT_CONTENT,
+                PropertyValue::StringRef(0),
+            )];
+            let text = WidgetNode::new(WIDGET_TEXT, Version::new(1, 0))
+                .properties(&text_properties);
+            let children = [0];
+            let gesture = WidgetNode::new(gesture_type, Version::new(1, 0))
+                .callbacks(&callbacks)
+                .children(&children);
+            let nodes = [text, gesture];
+            let image = WidgetDocument::new(1, 1, 1, &nodes, &["back"], &[])
+                .encode(LIMITS)
+                .unwrap();
+
+            let root = materialize_aimer_widget_tree(&image, LIMITS, &context(), |_| {});
+
+            let root = match root {
+                Ok(root) => root,
+                Err(error) => panic!("GestureDetector materialization failed: {error}"),
+            };
+            assert_eq!(root.debug_name(), "GestureDetector");
+        }
+
+        #[test]
+        fn mouse_region_materializes_its_child_and_callback_bindings() {
+            let region_type = WidgetSchemaId::from_canonical_name(
+                "aimer.widget:aimer_input::MouseRegion",
+            );
+            let enter_event = EventId::from_canonical_name(
+                "aimer.event:aimer_input::MouseRegion:on_hover_enter",
+            );
+            let exit_event = EventId::from_canonical_name(
+                "aimer.event:aimer_input::MouseRegion:on_hover_exit",
+            );
+            let callbacks = [
+                CallbackBinding::new(enter_event, Version::new(1, 0), CALLBACK_ID),
+                CallbackBinding::new(
+                    exit_event,
+                    Version::new(1, 0),
+                    WireStableId128::from_bytes([0x32; 16]),
+                ),
+            ];
+            let text_properties = [WidgetProperty::new(
+                PROPERTY_TEXT_CONTENT,
+                PropertyValue::StringRef(0),
+            )];
+            let text = WidgetNode::new(WIDGET_TEXT, Version::new(1, 0))
+                .properties(&text_properties);
+            let children = [0];
+            let region = WidgetNode::new(region_type, Version::new(1, 0))
+                .callbacks(&callbacks)
+                .children(&children);
+            let nodes = [text, region];
+            let image = WidgetDocument::new(1, 1, 1, &nodes, &["back"], &[])
+                .encode(LIMITS)
+                .unwrap();
+
+            let root = materialize_aimer_widget_tree(&image, LIMITS, &context(), |_| {});
+
+            let root = match root {
+                Ok(root) => root,
+                Err(error) => panic!("MouseRegion materialization failed: {error}"),
+            };
+            assert_eq!(root.debug_name(), "MouseRegion");
+        }
 
         #[derive(aimer_macro::PortableWidget)]
         #[portable_widget(id = "aimer_quiver.tests.DerivedLabel")]

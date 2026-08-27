@@ -24,6 +24,10 @@ pub const WIDGET_BUTTON_NAME: &str = "aimer.widget:aimer_input::Button";
 pub const WIDGET_PROVIDER_NAME: &str = "aimer.widget:aimer_provider::Provider";
 /// Canonical identity for a portable animated theme scope.
 pub const WIDGET_ANIMATED_THEME_NAME: &str = "aimer.widget:aimer_style::AnimatedTheme";
+/// Canonical identity for the transparent gesture recognizer wrapper.
+pub const WIDGET_GESTURE_DETECTOR_NAME: &str = "aimer.widget:aimer_input::GestureDetector";
+/// Canonical identity for the transparent hover-tracking wrapper.
+pub const WIDGET_MOUSE_REGION_NAME: &str = "aimer.widget:aimer_input::MouseRegion";
 
 /// Schema identifier for a vertical flex container.
 pub const WIDGET_COLUMN: WidgetSchemaId = WidgetSchemaId::from_canonical_name(WIDGET_COLUMN_NAME);
@@ -44,6 +48,12 @@ pub const WIDGET_PROVIDER: WidgetSchemaId = WidgetSchemaId::from_canonical_name(
 /// Schema identifier for a portable animated theme scope.
 pub const WIDGET_ANIMATED_THEME: WidgetSchemaId =
     WidgetSchemaId::from_canonical_name(WIDGET_ANIMATED_THEME_NAME);
+/// Schema identifier for a transparent gesture recognizer wrapper.
+pub const WIDGET_GESTURE_DETECTOR: WidgetSchemaId =
+    WidgetSchemaId::from_canonical_name(WIDGET_GESTURE_DETECTOR_NAME);
+/// Schema identifier for a transparent hover-tracking wrapper.
+pub const WIDGET_MOUSE_REGION: WidgetSchemaId =
+    WidgetSchemaId::from_canonical_name(WIDGET_MOUSE_REGION_NAME);
 
 /// The oldest and current schema version supported by the built-in widgets.
 ///
@@ -348,6 +358,49 @@ pub const EVENT_BUTTON_DOUBLE_PRESS_NAME: &str =
 /// Canonical identity retained for the Button right-press callback.
 pub const EVENT_BUTTON_RIGHT_PRESS_NAME: &str =
     "aimer.event:aimer_input::Button:on_right_press";
+
+/// Primary completed-press event emitted by the gesture detector schema.
+pub const EVENT_GESTURE_DETECTOR_TAP: EventId =
+    EventId::from_canonical_name(EVENT_GESTURE_DETECTOR_TAP_NAME);
+/// Completed double-press event emitted by the gesture detector schema.
+pub const EVENT_GESTURE_DETECTOR_DOUBLE_PRESS: EventId =
+    EventId::from_canonical_name(EVENT_GESTURE_DETECTOR_DOUBLE_PRESS_NAME);
+/// Recognized long-press event emitted by the gesture detector schema.
+pub const EVENT_GESTURE_DETECTOR_LONG_PRESS: EventId =
+    EventId::from_canonical_name(EVENT_GESTURE_DETECTOR_LONG_PRESS_NAME);
+/// Completed drag event emitted by the gesture detector schema.
+pub const EVENT_GESTURE_DETECTOR_DRAG_END: EventId =
+    EventId::from_canonical_name(EVENT_GESTURE_DETECTOR_DRAG_END_NAME);
+/// Completed secondary-button press event emitted by the gesture detector schema.
+pub const EVENT_GESTURE_DETECTOR_RIGHT_TAP: EventId =
+    EventId::from_canonical_name(EVENT_GESTURE_DETECTOR_RIGHT_TAP_NAME);
+/// Canonical identity for the gesture detector's primary tap callback.
+pub const EVENT_GESTURE_DETECTOR_TAP_NAME: &str =
+    "aimer.event:aimer_input::GestureDetector:on_tap";
+/// Canonical identity for the gesture detector's double-press callback.
+pub const EVENT_GESTURE_DETECTOR_DOUBLE_PRESS_NAME: &str =
+    "aimer.event:aimer_input::GestureDetector:on_double_press";
+/// Canonical identity for the gesture detector's long-press callback.
+pub const EVENT_GESTURE_DETECTOR_LONG_PRESS_NAME: &str =
+    "aimer.event:aimer_input::GestureDetector:on_long_press";
+/// Canonical identity for the gesture detector's drag-end callback.
+pub const EVENT_GESTURE_DETECTOR_DRAG_END_NAME: &str =
+    "aimer.event:aimer_input::GestureDetector:on_drag_end";
+/// Canonical identity for the gesture detector's secondary-tap callback.
+pub const EVENT_GESTURE_DETECTOR_RIGHT_TAP_NAME: &str =
+    "aimer.event:aimer_input::GestureDetector:on_right_tap";
+/// Hover-enter event emitted by the mouse-region schema.
+pub const EVENT_MOUSE_REGION_HOVER_ENTER: EventId =
+    EventId::from_canonical_name(EVENT_MOUSE_REGION_HOVER_ENTER_NAME);
+/// Hover-exit event emitted by the mouse-region schema.
+pub const EVENT_MOUSE_REGION_HOVER_EXIT: EventId =
+    EventId::from_canonical_name(EVENT_MOUSE_REGION_HOVER_EXIT_NAME);
+/// Canonical identity for the mouse region's hover-enter callback.
+pub const EVENT_MOUSE_REGION_HOVER_ENTER_NAME: &str =
+    "aimer.event:aimer_input::MouseRegion:on_hover_enter";
+/// Canonical identity for the mouse region's hover-exit callback.
+pub const EVENT_MOUSE_REGION_HOVER_EXIT_NAME: &str =
+    "aimer.event:aimer_input::MouseRegion:on_hover_exit";
 
 /// Canonical identity for the Button's normal decoration property.
 pub const PROPERTY_BUTTON_DECORATION_NAME: &str =
@@ -659,8 +712,55 @@ const BUTTON_PROPERTIES: &[PropertySchemaMetadata<'static>] = &[
     )),
 ];
 
+const GESTURE_DETECTOR_CALLBACKS: &[CallbackSchemaMetadata<'static>] = &[
+    CallbackSchemaMetadata::from_canonical_name(
+        EVENT_GESTURE_DETECTOR_TAP_NAME,
+        BUILTIN_WIDGET_SCHEMA_VERSION,
+        1,
+    )
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+    CallbackSchemaMetadata::from_canonical_name(
+        EVENT_GESTURE_DETECTOR_DOUBLE_PRESS_NAME,
+        BUILTIN_WIDGET_SCHEMA_VERSION,
+        1,
+    )
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+    CallbackSchemaMetadata::from_canonical_name(
+        EVENT_GESTURE_DETECTOR_LONG_PRESS_NAME,
+        BUILTIN_WIDGET_SCHEMA_VERSION,
+        1,
+    )
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+    CallbackSchemaMetadata::from_canonical_name(
+        EVENT_GESTURE_DETECTOR_DRAG_END_NAME,
+        BUILTIN_WIDGET_SCHEMA_VERSION,
+        1,
+    )
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+    CallbackSchemaMetadata::from_canonical_name(
+        EVENT_GESTURE_DETECTOR_RIGHT_TAP_NAME,
+        BUILTIN_WIDGET_SCHEMA_VERSION,
+        1,
+    )
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+];
+const MOUSE_REGION_CALLBACKS: &[CallbackSchemaMetadata<'static>] = &[
+    CallbackSchemaMetadata::from_canonical_name(
+        EVENT_MOUSE_REGION_HOVER_ENTER_NAME,
+        BUILTIN_WIDGET_SCHEMA_VERSION,
+        1,
+    )
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+    CallbackSchemaMetadata::from_canonical_name(
+        EVENT_MOUSE_REGION_HOVER_EXIT_NAME,
+        BUILTIN_WIDGET_SCHEMA_VERSION,
+        1,
+    )
+    .with_async_schema(AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 64, 4_096)),
+];
+
 /// Complete portable metadata for every built-in AWIR widget schema.
-pub const BUILTIN_PORTABLE_WIDGET_SCHEMAS: [PortableWidgetSchemaMetadata<'static>; 8] = [
+pub const BUILTIN_PORTABLE_WIDGET_SCHEMAS: [PortableWidgetSchemaMetadata<'static>; 10] = [
     PortableWidgetSchemaMetadata::new(
         builtin_widget_schema(WIDGET_COLUMN_NAME),
         FLEX_COLUMN_PROPERTIES,
@@ -707,6 +807,18 @@ pub const BUILTIN_PORTABLE_WIDGET_SCHEMAS: [PortableWidgetSchemaMetadata<'static
         builtin_widget_schema(WIDGET_ANIMATED_THEME_NAME),
         ANIMATED_THEME_PROPERTIES,
         &[],
+        ChildCardinality::exactly(1),
+    ),
+    PortableWidgetSchemaMetadata::new(
+        builtin_widget_schema(WIDGET_GESTURE_DETECTOR_NAME),
+        &[],
+        GESTURE_DETECTOR_CALLBACKS,
+        ChildCardinality::exactly(1),
+    ),
+    PortableWidgetSchemaMetadata::new(
+        builtin_widget_schema(WIDGET_MOUSE_REGION_NAME),
+        &[],
+        MOUSE_REGION_CALLBACKS,
         ChildCardinality::exactly(1),
     ),
 ];

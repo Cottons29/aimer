@@ -42,6 +42,36 @@ real frame path.
 
 Primary target: the pure numeric part of `aimer_flex`.
 
+#### Existing optimization baseline
+
+Before evaluating SIMD, measure the algorithmic optimizations that the current
+Flex implementation already provides:
+
+- **Virtualized windows:** `FlexList` materializes and draws only the visible
+  child range instead of building the entire list.
+- **Declared item extent:** when every item extent is supplied, the list can
+  calculate its total size arithmetically without measuring any child first.
+- **Estimated item extent:** when no extent is supplied, the list can measure
+  one visible child, predict the remaining extent, and lazily correct rows as
+  they become visible.
+- **Uniform stride storage:** when children resolve to the same size, the
+  layout stores one size and a stride, then computes each offset as
+  `index * stride` instead of storing every offset.
+- **Visible-range lookup:** uniform layouts locate the visible range with
+  arithmetic; varying layouts use binary search over their offsets.
+- **Conditional work:** flex-weight storage is allocated only when flex
+  children exist, and layer sorting runs only when a child requests a
+  non-default layer.
+- **Layout reuse:** the measured layout is shared by the size and draw passes
+  and cached while its constraints and scale remain unchanged.
+
+These are algorithmic optimizations, not SIMD. They are the baseline for every
+benchmark, and they often matter more than vectorizing the final weight-share
+calculation. In particular, a container with `Expanded` children currently
+needs conservative full remeasurement because each child's share depends on
+the other flex children; profile that cost before optimizing the arithmetic
+kernel.
+
 - [x] Benchmark `distribute_flex_space` in
       [flex_child.rs](crates/aimer_flex/src/flex/flex_child.rs), including zero,
       negative, sparse, uniform, and large weight arrays.
@@ -422,6 +452,10 @@ minimum iOS/Android device or profiler and is intentionally not inferred from
 desktop or compile-only results.
 
 ## Implementation phases
+
+Framework-wide optimization is tracked separately in
+[FW_OPTIMIZE.md](FW_OPTIMIZE.md). Its measurements inform the SIMD candidate
+gate but are not part of this plan.
 
 ### Phase 0 — Baseline and profiling
 

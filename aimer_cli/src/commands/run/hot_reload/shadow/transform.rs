@@ -98,7 +98,10 @@ impl<'a> Model<'a> {
         let adopted = adopted_fields(items, &module);
         for item in items {
             match item {
-                syn::Item::Struct(item_struct) if item_struct.generics.params.is_empty() => {
+                syn::Item::Struct(item_struct)
+                    if item_struct.generics.params.is_empty()
+                        && !item_struct.ident.to_string().starts_with("__AIMER_") =>
+                {
                     let key = type_key(&module, &item_struct.ident.to_string());
                     self.structs.insert(key.clone(), StructInfo {
                         module: module.clone(),
@@ -214,7 +217,10 @@ impl<'a> Model<'a> {
         let mut generated_items = Vec::new();
         for item in items {
             let generated = match item {
-                syn::Item::Struct(item_struct) if item_struct.generics.params.is_empty() => {
+                syn::Item::Struct(item_struct)
+                    if item_struct.generics.params.is_empty()
+                        && !item_struct.ident.to_string().starts_with("__AIMER_") =>
+                {
                     let portable_name = format!(
                         "{}::{}::{}",
                         self.package,
@@ -638,6 +644,27 @@ impl<'a> Model<'a> {
                     || name.ends_with("Controller")
                 {
                     return true;
+                }
+                // Interior-mutable cells and their shared ownership wrappers
+                // describe generation-local runtime state, not a portable
+                // value. Treat the cell itself as fresh, and propagate that
+                // classification through Rc/Arc/Weak so fields such as
+                // Rc<Cell<PointerState>> do not block a callback rebuild.
+                if matches!(
+                    name.as_str(),
+                    "Cell"
+                        | "RefCell"
+                        | "UnsafeCell"
+                        | "OnceCell"
+                        | "OnceLock"
+                        | "Mutex"
+                        | "RwLock"
+                ) {
+                    return true;
+                }
+                if matches!(name.as_str(), "Rc" | "Arc" | "Weak") {
+                    return one_type_argument(last)
+                        .is_some_and(|inner| self.type_is_fresh(inner, module));
                 }
                 matches!(name.as_str(), "Option" | "Vec" | "Box")
                     && one_type_argument(last).is_some_and(|inner| self.type_is_fresh(inner, module))

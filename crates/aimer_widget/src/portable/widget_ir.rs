@@ -1407,6 +1407,49 @@ impl PortableBuildContext {
         }
     }
 
+    /// Runs one guest build transaction and discards its incomplete document
+    /// if the build returns an error.
+    ///
+    /// Portable lowering constructs children before parents, so a failed
+    /// callback can leave nodes, callbacks, and state slots partially claimed.
+    /// Retaining those claims would make the next safe-point retry fail with a
+    /// misleading duplicate-slot error. The completed document, callbacks,
+    /// retained state values, and async tasks remain intact; only the failed
+    /// document construction is rolled back.
+    #[doc(hidden)]
+    pub fn with_build_transaction<R, E>(
+        &mut self,
+        build: impl FnOnce(&mut Self) -> Result<R, E>,
+    ) -> Result<R, E> {
+        let result = build(self);
+        if result.is_err() {
+            self.abort_build();
+        }
+        result
+    }
+
+    /// Discards the incomplete document currently being lowered.
+    #[doc(hidden)]
+    pub fn abort_build(&mut self) {
+        self.nodes.clear();
+        self.strings.clear();
+        self.string_indices.clear();
+        self.blobs.clear();
+        self.blob_indices.clear();
+        self.parented.clear();
+        self.depths.clear();
+        self.slots.clear();
+        self.building_callbacks.clear();
+        self.document_bytes = DOCUMENT_HEADER_BYTES;
+        self.property_count = 0;
+        self.callback_count = 0;
+        self.child_count = 0;
+        self.animation_slots.clear();
+        self.rebuild_requested = false;
+        self.frame_requested = false;
+        self.live_states.abort_build();
+    }
+
     /// Publishes the host window metrics used by the next portable build.
     ///
     /// Portable widget code cannot access a native window directly, but

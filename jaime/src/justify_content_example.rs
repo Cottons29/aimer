@@ -1,21 +1,27 @@
-use aimer::style::{BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextAlign, TextStyle};
-use aimer::{AimerApp, AnyWidget, Color, Column, Container, JustifyContent, Row, Text, Widget};
+use aimer::style::{
+    BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight, LayoutSpacing, Spacing,
+    TextAlign, TextStyle, ThemeData,
+};
+use aimer::{AimerApp, AnyWidget, Column, Container, JustifyContent, Row, Text, Widget};
+
+use crate::theme;
 
 const DEMO_WIDTH: f32 = 640.0;
 const DEMO_HEIGHT: f32 = 56.0;
 const ITEM_SIZE: f32 = 36.0;
 
-/// Starts a showcase of the six [`JustifyContent`] modes.
+/// Builds a showcase of the six [`JustifyContent`] modes.
 ///
 /// Each row has the same available width and the same three children, making
 /// the difference between positional alignment and free-space distribution
 /// visible at a glance.
-pub fn start_justify_content_example() {
-    AimerApp::start(
-        Container::new()
+pub fn justify_content_example() -> impl Widget {
+    let app_theme = theme::app_theme();
+
+    Container::new()
             // .width(700)
             .padding(LayoutSpacing::all(Spacing::Px(28)))
-            .color(Color::Rgb(245, 245, 245))
+            .color(app_theme.background_color)
             .child(
                 Column::new()
                     .gaps(LayoutSpacing::all(Spacing::Px(12)))
@@ -25,7 +31,7 @@ pub fn start_justify_content_example() {
                                 TextStyle::new()
                                     .font_size(28)
                                     .font_weight(FontWeight::Bold)
-                                    .color(Color::BLACK),
+                                    .color(app_theme.on_background_color),
                             )
                             .boxed(),
                         Text::new(
@@ -34,21 +40,24 @@ pub fn start_justify_content_example() {
                         .text_style(
                             TextStyle::new()
                                 .font_size(16)
-                                .color(Color::Rgb(55, 65, 81)),
+                                .color(theme::muted_text(&app_theme)),
                         )
                         .boxed(),
-                        demo(JustifyContent::Start),
-                        demo(JustifyContent::Center),
-                        demo(JustifyContent::End),
-                        demo(JustifyContent::SpaceBetween),
-                        demo(JustifyContent::SpaceAround),
-                        demo(JustifyContent::SpaceEvenly),
+                        demo(JustifyContent::Start, app_theme),
+                        demo(JustifyContent::Center, app_theme),
+                        demo(JustifyContent::End, app_theme),
+                        demo(JustifyContent::SpaceBetween, app_theme),
+                        demo(JustifyContent::SpaceAround, app_theme),
+                        demo(JustifyContent::SpaceEvenly, app_theme),
                     ]),
-            ),
-    );
+            )
 }
 
-fn demo(justify_content: JustifyContent) -> AnyWidget {
+pub fn start_justify_content_example() {
+    AimerApp::start(crate::theme::provide(justify_content_example()));
+}
+
+fn demo(justify_content: JustifyContent, app_theme: ThemeData) -> AnyWidget {
     Column::new()
         .gaps(LayoutSpacing::all(Spacing::Px(4)))
         .children([
@@ -56,34 +65,38 @@ fn demo(justify_content: JustifyContent) -> AnyWidget {
                 .text_style(
                     TextStyle::new()
                         .font_size(14)
-                        .color(Color::Rgb(31, 41, 55)),
+                        .color(theme::muted_text(&app_theme)),
                 )
                 .boxed(),
             Container::new()
                 // .width(DEMO_WIDTH)
                 // .height(DEMO_HEIGHT)
                 .padding(LayoutSpacing::all(Spacing::Px(10)))
-                .color(Color::WHITE)
+                .color(theme::raised_surface(&app_theme))
                 .child(
                     Row::new()
                         .justify_content(justify_content)
-                        .children([item("A"), item("B"), item("C")]),
+                        .children([
+                            item("A", app_theme),
+                            item("B", app_theme),
+                            item("C", app_theme),
+                        ]),
                 )
                 .boxed(),
         ])
         .boxed()
 }
 
-fn item(label: &'static str) -> AnyWidget {
+fn item(label: &'static str, app_theme: ThemeData) -> AnyWidget {
     Container::new()
         .width(ITEM_SIZE)
         .height(ITEM_SIZE)
-        .color(Color::PURPLE)
+        .color(app_theme.primary_color.darken(0.08))
         .box_decoration(
             BoxDecoration::new().border(BoxBorder::all(
                 BorderSlice::new()
                     .stroke(1)
-                    .color(Color::BLACK)
+                    .color(app_theme.on_surface_color)
                     .style(BorderStyle::Solid),
             )),
         )
@@ -93,7 +106,7 @@ fn item(label: &'static str) -> AnyWidget {
                 .text_style(
                 TextStyle::new()
                     .font_size(14)
-                    .color(Color::WHITE),
+                    .color(app_theme.on_primary_color),
             ),
         )
         .boxed()

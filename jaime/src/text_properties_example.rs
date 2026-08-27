@@ -3,9 +3,11 @@ use aimer::style::{
     TextDecorationLine, TextOverflow, TextShadow, TextStyle, TextTransform,
 };
 use aimer::{
-    AimerApp, AnyWidget, Color, Column, Container, RichText, ScrollAxis, Scrollable, SpanStyle,
+    AimerApp, AnyWidget, Column, Container, RichText, ScrollAxis, Scrollable, SpanStyle,
     Text, TextSpan, Widget,
 };
+
+use crate::theme;
 
 const SOURCE_SAMPLE: &str =
     "Straße / café\u{301} / 你好 / សួស្តី — mixed CASE and spaces\nA second line keeps wrapping visible.";
@@ -14,21 +16,22 @@ const PARAGRAPH_SAMPLE: &str =
 
 /// Starts the public text-properties showcase used for manual visual checks.
 pub fn start_text_properties_example() {
-    AimerApp::start(text_properties_example());
+    AimerApp::start(theme::provide(text_properties_example()));
 }
 
 /// Builds a constrained, scrollable page covering every supported text property.
 pub fn text_properties_example() -> impl Widget {
+    let app_theme = theme::app_theme();
     let base = TextStyle::new()
         .font_size(16)
         .font_weight(FontWeight::Normal)
-        .color(Color::BLACK)
+        .color(app_theme.on_background_color)
         .text_overflow(TextOverflow::Wrap);
     let shadow = TextShadow::new()
         .offset_x(3.0)
         .offset_y(3.0)
         .blur(2.0)
-        .color(Color::Rgba(0, 0, 0, 120));
+        .color(app_theme.background_color.with_alpha(0.85));
 
     let content = Column::new()
         .gaps(LayoutSpacing::all(Spacing::Px(16)))
@@ -59,7 +62,7 @@ pub fn text_properties_example() -> impl Widget {
         .boxed();
 
     Container::new()
-        .color(Color::Rgb(245, 245, 245))
+        .color(app_theme.background_color)
         .padding(LayoutSpacing::all(Spacing::Px(24)))
         .child(
             Scrollable::new()
@@ -69,23 +72,29 @@ pub fn text_properties_example() -> impl Widget {
 }
 
 fn heading(text: &'static str) -> AnyWidget {
+    let app_theme = theme::app_theme();
+
     Text::new(text)
         .text_style(
             TextStyle::new()
                 .font_size(28)
                 .font_weight(FontWeight::Bold)
-                .color(Color::BLACK),
+                .color(app_theme.on_background_color),
         )
         .boxed()
 }
 
 fn explanation(text: &'static str) -> AnyWidget {
+    let app_theme = theme::app_theme();
+
     Text::new(text)
-        .text_style(TextStyle::new().font_size(15).color(Color::Rgb(55, 65, 81)))
+        .text_style(TextStyle::new().font_size(15).color(theme::muted_text(&app_theme)))
         .boxed()
 }
 
 fn section(label: &'static str, description: &'static str, sample: AnyWidget) -> AnyWidget {
+    let app_theme = theme::app_theme();
+
     Column::new()
         .gaps(LayoutSpacing::all(Spacing::Px(6)))
         .children([
@@ -94,14 +103,14 @@ fn section(label: &'static str, description: &'static str, sample: AnyWidget) ->
                     TextStyle::new()
                         .font_size(18)
                         .font_weight(FontWeight::Bold)
-                        .color(Color::BLACK),
+                        .color(app_theme.on_background_color),
                 )
                 .boxed(),
             Text::new(description)
-                .text_style(TextStyle::new().font_size(13).color(Color::Rgb(75, 85, 99)))
+                .text_style(TextStyle::new().font_size(13).color(theme::muted_text(&app_theme)))
                 .boxed(),
             Container::new()
-                .color(Color::WHITE)
+                .color(theme::raised_surface(&app_theme))
                 .padding(LayoutSpacing::all(Spacing::Px(12)))
                 .child(sample)
                 .boxed(),
@@ -110,14 +119,16 @@ fn section(label: &'static str, description: &'static str, sample: AnyWidget) ->
 }
 
 fn labeled_sample(label: &'static str, sample: AnyWidget) -> AnyWidget {
+    let app_theme = theme::app_theme();
+
     Column::new()
         .gaps(LayoutSpacing::all(Spacing::Px(4)))
         .children([
             Text::new(label)
-                .text_style(TextStyle::new().font_size(13).color(Color::Rgb(31, 41, 55)))
+                .text_style(TextStyle::new().font_size(13).color(theme::muted_text(&app_theme)))
                 .boxed(),
             Container::new()
-                .color(Color::WHITE)
+                .color(theme::raised_surface(&app_theme))
                 .padding(LayoutSpacing::all(Spacing::Px(10)))
                 .child(sample)
                 .boxed(),
@@ -260,19 +271,20 @@ fn indent_samples(base: TextStyle) -> AnyWidget {
 }
 
 fn rich_text_sample(base: TextStyle, shadow: TextShadow) -> AnyWidget {
+    let app_theme = theme::app_theme();
     let transformed = TextSpan::new(" transformed Straße ").style(
         SpanStyle::new()
             .text_transform(TextTransform::Uppercase)
             .letter_spacing(0.8)
             .text_decoration(TextDecoration::new().line(TextDecorationLine::UNDERLINE))
-            .color(Color::Rgb(30, 64, 175)),
+            .color(app_theme.primary_color),
     );
     let linked = TextSpan::new("selectable link")
         .style(
             SpanStyle::new()
                 .word_spacing(2.0)
                 .text_shadow(shadow)
-                .color(Color::Rgb(185, 28, 28)),
+                .color(app_theme.primary_color.lighten(0.10)),
         )
         .link("https://aimer.dev/text-properties");
 

@@ -1,7 +1,9 @@
 use std::rc::Rc;
 
 use aimer::macros::widget;
-use aimer::style::{BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextAlign, TextStyle};
+use aimer::style::{
+    BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextAlign, TextStyle, Theme, ThemeData,
+};
 use aimer::*;
 
 const JAIME_MARKDOWN: &str = include_str!("../assets/JAIME.md");
@@ -47,10 +49,12 @@ impl MarkdownCustomBlock for TypedCallout {
         })
     }
 
-    fn build(props: &Self::Props, _ctx: &aimer::BuildContext) -> AnyWidget {
+    fn build(props: &Self::Props, ctx: &aimer::BuildContext) -> AnyWidget {
+        let app_theme = ThemeData::copied(ctx);
+
         Container::new()
             .padding(LayoutSpacing::all(Spacing::Px(16)))
-            .color(Color::Rgb(243, 244, 246))
+            .color(app_theme.surface_color)
             .child(
                 Column::new().children([
                     Text::new("Typed block")
@@ -97,13 +101,15 @@ pub fn jaime_markdown_source() -> &'static str {
 pub fn jaime_markdown_content() -> MarkdownViewer {
     MarkdownViewer::new()
         .padding(LayoutSpacing::all(Spacing::Px(16)))
-        .theme(MarkdownTheme::default())
+        .theme(crate::theme::markdown_theme())
         .markdown(jaime_markdown_source())
 }
 
 pub fn jaime_markdown_viewer() -> impl Widget {
+    let app_theme = crate::theme::app_theme();
+
     Container::new()
-        .color(Color::WHITE)
+        .color(app_theme.background_color)
         .child(jaime_markdown_content())
 }
 
@@ -112,7 +118,7 @@ fn custom_markdown_content_with_press(on_press: impl Fn() + 'static) -> Markdown
 
     MarkdownViewer::new()
         .padding(LayoutSpacing::all(Spacing::Px(16)))
-        .theme(MarkdownTheme::default())
+        .theme(crate::theme::markdown_theme())
         .markdown(CUSTOM_MARKDOWN)
         .custom_block(
             MarkdownBlockRule::new(
@@ -125,18 +131,21 @@ fn custom_markdown_content_with_press(on_press: impl Fn() + 'static) -> Markdown
             |data| {
                 Container::new()
                     .padding(LayoutSpacing::all(Spacing::Px(16)))
-                    .color(Color::Rgb(239, 246, 255))
+                    .color(crate::theme::recessed_surface(&crate::theme::app_theme()))
                     .child(
                         Column::new().children([
                             Text::new("Custom block")
                                 .text_style(
                                     TextStyle::new()
                                         .font_weight(FontWeight::Bold)
-                                        .color(Color::Rgb(30, 64, 175)),
+                                        .color(crate::theme::app_theme().primary_color),
                                 )
                                 .boxed(),
                             Text::new(data.text.trim().to_owned())
-                                .text_style(TextStyle::new().color(Color::Rgb(30, 41, 59)))
+                                .text_style(
+                                    TextStyle::new()
+                                        .color(crate::theme::app_theme().on_surface_color),
+                                )
                                 .boxed(),
                         ]),
                     )
@@ -156,17 +165,21 @@ fn custom_markdown_content_with_press(on_press: impl Fn() + 'static) -> Markdown
                 Button::new()
                     .decoration(
                         BoxDecoration::new()
-                            .background_color(Color::Rgb(37, 99, 235))
+                            .background_color(crate::theme::app_theme().primary_color)
                             .border_radius(6),
                     )
                     .hover_decoration(
                         BoxDecoration::new()
-                            .background_color(Color::Rgb(29, 78, 216))
+                            .background_color(
+                                crate::theme::app_theme().primary_color.darken(0.08),
+                            )
                             .border_radius(6),
                     )
                     .press_decoration(
                         BoxDecoration::new()
-                            .background_color(Color::Rgb(30, 64, 175))
+                            .background_color(
+                                crate::theme::app_theme().primary_color.darken(0.18),
+                            )
                             .border_radius(6),
                     )
                     .on_press(move || on_press())
@@ -180,7 +193,7 @@ fn custom_markdown_content_with_press(on_press: impl Fn() + 'static) -> Markdown
                                 TextStyle::new()
 
                                     .font_weight(FontWeight::Bold)
-                                    .color(Color::WHITE),
+                                    .color(crate::theme::app_theme().on_primary_color),
                             )),
                     )
                     .boxed()
@@ -195,7 +208,7 @@ pub fn custom_markdown_content() -> MarkdownViewer {
 pub fn typed_custom_markdown_content() -> MarkdownViewer {
     MarkdownViewer::new()
         .padding(LayoutSpacing::all(Spacing::Px(16)))
-        .theme(MarkdownTheme::default())
+        .theme(crate::theme::markdown_theme())
         .markdown(TYPED_CUSTOM_MARKDOWN)
         .typed_block::<TypedCallout>()
         .typed_inline::<TypedMention>()
@@ -231,11 +244,12 @@ impl State<CustomMarkdownExample> for CustomMarkdownExampleState {
         self.updater = updater;
     }
 
-    fn build(&self, _ctx: &aimer::BuildContext) -> impl Widget {
+    fn build(&self, ctx: &aimer::BuildContext) -> impl Widget {
+        let app_theme = ThemeData::copied(ctx);
         let updater = self.updater.clone();
         Column::new().children([
             Text::new(format!("Button presses: {}", self.presses))
-                .text_style(TextStyle::new().color(Color::Rgb(30, 41, 59)))
+                .text_style(TextStyle::new().color(app_theme.on_background_color))
                 .boxed(),
             custom_markdown_content_with_press(move || {
                 println!("Button pressed");
@@ -247,8 +261,10 @@ impl State<CustomMarkdownExample> for CustomMarkdownExampleState {
 }
 
 pub fn custom_markdown_viewer() -> impl Widget {
+    let app_theme = crate::theme::app_theme();
+
     Container::new()
-        .color(Color::WHITE)
+        .color(app_theme.background_color)
         .child(
             Row::new()
                 .children([
@@ -259,11 +275,11 @@ pub fn custom_markdown_viewer() -> impl Widget {
 }
 
 pub fn start_custom_markdown_example() {
-    AimerApp::start(custom_markdown_viewer());
+    AimerApp::start(crate::theme::provide(custom_markdown_viewer()));
 }
 
 pub fn start_markdown_example() {
-    AimerApp::start(jaime_markdown_viewer());
+    AimerApp::start(crate::theme::provide(jaime_markdown_viewer()));
 }
 
 #[cfg(test)]

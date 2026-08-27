@@ -56,9 +56,16 @@ pub fn start_custom_animated_theme_example() {
 struct CustomAnimatedThemeExample {}
 
 impl CustomAnimatedThemeExample {
+    /// Creates the custom animated-theme showcase.
+    #[inline]
     fn new() -> Self {
         Self {}
     }
+}
+
+/// Builds the custom animated-theme showcase without starting an application.
+pub fn custom_animated_theme_example() -> impl Widget {
+    CustomAnimatedThemeExample::new()
 }
 
 struct CustomAnimatedThemeExampleState {

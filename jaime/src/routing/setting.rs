@@ -14,8 +14,9 @@ pub struct SettingPage {}
 impl StatelessWidget for SettingPage {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         debug!("Building SettingPage");
+        let theme = ThemeData::copied(ctx);
 
-        Container::new().child(
+        Container::new().color(theme.background_color).child(
             Column::new()
                 .horizontal_alignment(BoxAlignment::Center)
                 .vertical_alignment(BoxAlignment::Center)
@@ -26,7 +27,7 @@ impl StatelessWidget for SettingPage {
                 .children(vec![
                     Text::new("Setting Page")
                         .text_align(TextAlign::MidCenter)
-                        .text_style(TextStyle::new().color(Colors::Black))
+                        .text_style(TextStyle::new().color(theme.on_background_color))
                         .boxed(),
                     Row::new()
                         .gaps(LayoutSpacing {
@@ -41,7 +42,9 @@ impl StatelessWidget for SettingPage {
                                         navi.pop();
                                     }
                                 })
-                                .decoration(BoxDecoration::new().background_color(Colors::Blue))
+                                .decoration(
+                                    BoxDecoration::new().background_color(theme.primary_color),
+                                )
                                 .child(
                                     Container::new()
                                         .width(Dimension::Px(200.0))
@@ -49,7 +52,9 @@ impl StatelessWidget for SettingPage {
                                         .child(
                                             Text::new("Back")
                                                 .text_align(TextAlign::MidCenter)
-                                                .text_style(TextStyle::new().color(Colors::White)),
+                                                .text_style(
+                                                    TextStyle::new().color(theme.on_primary_color),
+                                                ),
                                         ),
                                 )
                                 .boxed(),
@@ -62,7 +67,9 @@ impl StatelessWidget for SettingPage {
                                         });
                                     }
                                 })
-                                .decoration(BoxDecoration::new().background_color(Colors::Blue))
+                                .decoration(
+                                    BoxDecoration::new().background_color(theme.primary_color),
+                                )
                                 .child(
                                     Container::new()
                                         .width(Dimension::Px(200.0))
@@ -70,7 +77,9 @@ impl StatelessWidget for SettingPage {
                                         .child(
                                             Text::new("Profile Page")
                                                 .text_align(TextAlign::MidCenter)
-                                                .text_style(TextStyle::new().color(Colors::White)),
+                                                .text_style(
+                                                    TextStyle::new().color(theme.on_primary_color),
+                                                ),
                                         ),
                                 )
                                 .boxed(),

@@ -268,24 +268,26 @@ fn generated_items(
         fn __aimer_generated_build(
             context: &mut ::aimer::portable::PortableBuildContext,
         ) -> Result<Vec<u8>, ::aimer_wasm_guest::GuestError> {
-            context.begin_build();
-            context.take_frame_request();
-            context.run_async_microtasks();
-            if let Some(failure) = context.take_async_failure() {
-                return Err(__aimer_generated_async_failure(failure));
-            }
-            context.apply_queued_mutations().map_err(__aimer_generated_map_build_error)?;
-            let root = #root_path();
-            let source = ::aimer::portable::SourceFingerprint::new(
-                ::aimer::portable::StableId128::from_bytes(#source),
-            );
-            let node = ::aimer::PortableWidget::to_portable_node(
-                root,
-                context,
-                source,
-            ).map_err(__aimer_generated_map_build_error)?;
-            let document = context.finish_document(node).map_err(__aimer_generated_map_build_error)?;
-            document.encode().map_err(__aimer_generated_map_build_error)
+            context.with_build_transaction(|context| {
+                context.begin_build();
+                context.take_frame_request();
+                context.run_async_microtasks();
+                if let Some(failure) = context.take_async_failure() {
+                    return Err(__aimer_generated_async_failure(failure));
+                }
+                context.apply_queued_mutations().map_err(__aimer_generated_map_build_error)?;
+                let root = #root_path();
+                let source = ::aimer::portable::SourceFingerprint::new(
+                    ::aimer::portable::StableId128::from_bytes(#source),
+                );
+                let node = ::aimer::PortableWidget::to_portable_node(
+                    root,
+                    context,
+                    source,
+                ).map_err(__aimer_generated_map_build_error)?;
+                let document = context.finish_document(node).map_err(__aimer_generated_map_build_error)?;
+                document.encode().map_err(__aimer_generated_map_build_error)
+            })
         }
 
         impl ::aimer_wasm_guest::GuestProgram for __AimerGeneratedGuestProgram {

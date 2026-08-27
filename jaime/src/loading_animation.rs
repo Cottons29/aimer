@@ -3,9 +3,11 @@ use std::time::Duration;
 use aimer::animation::{AnimationController, Curve, RotationTransition};
 use aimer::style::{FontWeight, TextAlign, TextStyle};
 use aimer::{
-    AimerApp, BoxAlignment, Color, Column, Container, Dimension, SizedBox, Svg, SvgDocument,
+    AimerApp, BoxAlignment, Column, Container, Dimension, SizedBox, Svg, SvgDocument,
     SvgError, Text, Widget,
 };
+
+use crate::theme;
 
 const LOADING_CYCLE: Duration = Duration::from_millis(1500);
 const LOADING_ICON_SIZE: f32 = 96.0;
@@ -22,25 +24,25 @@ fn loading_icon_document() -> Result<SvgDocument, SvgError> {
     SvgDocument::from_svg(include_bytes!("../assets/loading-1-svgrepo-com.svg"))
 }
 
-/// Starts a centered loading indicator driven by an infinitely repeating
+/// Builds a centered loading indicator driven by an infinitely repeating
 /// animation.
 ///
 /// [`RotationTransition`] advances the controller on each rendered frame and
 /// rotates the bundled SVG icon around its center. The linear cycle repeats
 /// until the application closes, demonstrating a loading state that needs no
 /// timers or manual redraw requests.
-pub fn start_loading_animation_example() {
+pub fn loading_animation_example() -> impl Widget {
+    let app_theme = theme::app_theme();
     let controller = loading_controller();
     let icon =
         Svg::new(loading_icon_document().expect("the bundled loading icon SVG should be valid"))
             .width(Dimension::Px(LOADING_ICON_SIZE))
             .height(Dimension::Px(LOADING_ICON_SIZE));
 
-    AimerApp::start(
-        Container::new()
+    Container::new()
             .width(Dimension::Percent(100.0))
             .height(Dimension::Percent(100.0))
-            .color(Color::WHITE)
+            .color(app_theme.background_color)
             .child(
                 Column::new()
                     .horizontal_alignment(BoxAlignment::Center)
@@ -54,12 +56,15 @@ pub fn start_loading_animation_example() {
                                 TextStyle::new()
                                     .font_size(24)
                                     .font_weight(FontWeight::Bold)
-                                    .color(Color::BLACK),
+                                    .color(app_theme.on_background_color),
                             )
                             .boxed(),
                     ]),
-            ),
-    )
+            )
+}
+
+pub fn start_loading_animation_example() {
+    AimerApp::start(crate::theme::provide(loading_animation_example()))
 }
 
 #[cfg(test)]

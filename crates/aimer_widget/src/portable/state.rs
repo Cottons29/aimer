@@ -124,6 +124,11 @@ impl PortableLiveStateRegistry {
         self.claimed.clear();
     }
 
+    #[inline]
+    pub(super) fn abort_build(&mut self) {
+        self.claimed.clear();
+    }
+
     pub(super) fn drain_all(
         &self,
         registry: &mut super::StateRegistry,
@@ -570,6 +575,33 @@ mod tests {
             PortableBuildError::State(StateRegistryError::TypeMismatch { slot_id, .. })
                 if slot_id == state_slot
         ));
+    }
+
+    #[test]
+    fn failed_build_releases_claimed_slots_for_the_next_attempt() {
+        let initializations = Rc::new(Cell::new(0));
+        let state_slot = slot(41);
+        let mut context = context();
+
+        let failed = context.with_build_transaction(|context| {
+            context.seed_stateful_state::<CounterWidget>(
+                state_slot,
+                CounterState::new(1, "failed", initializations.clone()),
+            )?;
+            Err::<(), PortableBuildError>(PortableBuildError::IncompleteTree)
+        });
+        assert!(matches!(failed, Err(PortableBuildError::IncompleteTree)));
+
+        context
+            .with_build_transaction(|context| {
+                context.seed_stateful_state::<CounterWidget>(
+                    state_slot,
+                    CounterState::new(2, "retry", initializations),
+                )?;
+                finish_generation(context, 410);
+                Ok::<(), PortableBuildError>(())
+            })
+            .unwrap();
     }
 
     #[test]

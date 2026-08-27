@@ -4,6 +4,8 @@ use aimer::{
     AimerApp, AnyElement, AnyWidget, BuildContext, Color, Container, Dimension, Row, SizedBox,
     StatelessWidget, Widget,
 };
+use aimer::Dimension::Percent;
+
 #[allow(unused)]
 pub struct ColorSync;
 
@@ -42,12 +44,14 @@ impl StatelessWidget for ColorSync {
             .iter()
             .map(|color| {
                 SizedBox::new()
-                    .width(Dimension::Percent(100.0))
+                    .width(Percent(100.0))
                     .color(*color)
                     .boxed()
             })
             .collect();
         Container::new()
+            .width(Percent(100.0))
+            .height(Percent(100.0))
             .padding(LayoutSpacing::all(Spacing::Px(10)))
             .child(Row::new().children(children))
     }

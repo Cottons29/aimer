@@ -13,14 +13,16 @@ pub struct HomeWidget {}
 impl StatelessWidget for HomeWidget {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         debug!("Building HomeWidget");
-        Container::new().color(Colors::Green.into()).child(
+        let theme = ThemeData::copied(ctx);
+
+        Container::new().color(theme.background_color).child(
             Column::new()
                 .horizontal_alignment(BoxAlignment::Center)
                 .vertical_alignment(BoxAlignment::Center)
                 .children(vec![
                     Text::new("Home Page")
                         .text_align(TextAlign::MidCenter)
-                        .text_style(TextStyle::new().color(Colors::Black))
+                        .text_style(TextStyle::new().color(theme.on_background_color))
                         .boxed(),
                     Row::new()
                         .gaps(LayoutSpacing {
@@ -35,7 +37,9 @@ impl StatelessWidget for HomeWidget {
                                         navi.push(AppRouting::Settings);
                                     }
                                 })
-                                .decoration(BoxDecoration::new().background_color(Colors::Blue))
+                                .decoration(
+                                    BoxDecoration::new().background_color(theme.primary_color),
+                                )
                                 .child(
                                     Container::new()
                                         .width(Dimension::Px(200.0))
@@ -43,7 +47,9 @@ impl StatelessWidget for HomeWidget {
                                         .child(
                                             Text::new("Setting")
                                                 .text_align(TextAlign::MidCenter)
-                                                .text_style(TextStyle::new().color(Colors::White)),
+                                                .text_style(
+                                                    TextStyle::new().color(theme.on_primary_color),
+                                                ),
                                         ),
                                 )
                                 .boxed(),
@@ -56,7 +62,9 @@ impl StatelessWidget for HomeWidget {
                                         });
                                     }
                                 })
-                                .decoration(BoxDecoration::new().background_color(Colors::Blue))
+                                .decoration(
+                                    BoxDecoration::new().background_color(theme.primary_color),
+                                )
                                 .child(
                                     Container::new()
                                         .width(Dimension::Px(200.0))
@@ -64,7 +72,9 @@ impl StatelessWidget for HomeWidget {
                                         .child(
                                             Text::new("Profile")
                                                 .text_align(TextAlign::MidCenter)
-                                                .text_style(TextStyle::new().color(Colors::White)),
+                                                .text_style(
+                                                    TextStyle::new().color(theme.on_primary_color),
+                                                ),
                                         ),
                                 )
                                 .boxed(),

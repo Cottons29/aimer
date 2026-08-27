@@ -32,7 +32,7 @@ use aimer::*;
 
 /// Starts the focus showcase.
 pub fn start_focus_node_example() {
-    AimerApp::start(FocusNodeExample::new().boxed())
+    AimerApp::start(crate::theme::provide(FocusNodeExample::new().boxed()))
 }
 
 /// Which of the two boxes is meant.
@@ -79,13 +79,14 @@ const BORDER_STROKE: f32 = 3.0;
 /// );
 /// ```
 fn box_decoration(focused: bool) -> BoxDecoration {
+    let app_theme = crate::theme::app_theme();
     let border_color = if focused {
-        Colors::Blue
+        app_theme.primary_color
     } else {
-        Colors::Transparent
+        Color::Transparent
     };
     BoxDecoration::new()
-        .background_color(Colors::White)
+        .background_color(app_theme.surface_color)
         .border_radius((12, 12, 12, 12))
         .border(BoxBorder::all(
             BorderSlice::new()
@@ -165,7 +166,11 @@ impl FocusNodeExampleState {
                     .box_child(
                         Text::new(which.label())
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(20).color(Colors::Black)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(20)
+                                    .color(crate::theme::app_theme().on_surface_color),
+                            ),
                     ),
             )
     }
@@ -178,7 +183,12 @@ impl FocusNodeExampleState {
     /// lands on a button, which is not focusable, and therefore drops focus —
     /// the request recorded by the handler is granted afterwards, before the
     /// same click is finished with.
-    fn focus_button(&self, label: &'static str, node: Option<FocusNode>) -> AnyWidget {
+    fn focus_button(
+        &self,
+        label: &'static str,
+        node: Option<FocusNode>,
+        app_theme: ThemeData,
+    ) -> AnyWidget {
         Container::new()
             .width(Dimension::Px(160.0))
             .height(Dimension::Px(44.0))
@@ -197,13 +207,17 @@ impl FocusNodeExampleState {
                     })
                     .decoration(
                         BoxDecoration::new()
-                            .background_color(Colors::Blue)
+                            .background_color(app_theme.primary_color)
                             .border_radius((8, 8, 8, 8)),
                     )
                     .child(
                         Text::new(label)
                             .text_align(TextAlign::MidCenter)
-                            .text_style(TextStyle::new().font_size(15).color(Colors::White)),
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(15)
+                                    .color(app_theme.on_primary_color),
+                            ),
                     ),
             )
     }
@@ -217,13 +231,14 @@ impl State<FocusNodeExample> for FocusNodeExampleState {
         self.updater = updater;
     }
 
-    fn build(&self, _: &BuildContext) -> impl Widget {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let app_theme = ThemeData::copied(ctx);
         let owner = match self.focused {
             Some(which) => which.label(),
             None => "nothing",
         };
         Container::new()
-            .color(Colors::White.into())
+            .color(app_theme.background_color)
             .padding(LayoutSpacing::all(Spacing::Px(32)))
             .child(
                 Column::new()
@@ -235,11 +250,15 @@ impl State<FocusNodeExample> for FocusNodeExampleState {
                                 TextStyle::new()
                                     .font_size(28)
                                     .font_weight(FontWeight::Bold)
-                                    .color(Colors::Black),
+                                    .color(app_theme.on_background_color),
                             )
                             .boxed(),
                         Text::new("Click a box, press Tab, or use the buttons.")
-                            .text_style(TextStyle::new().font_size(16).color(Colors::Gray))
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(16)
+                                    .color(crate::theme::muted_text(&app_theme)),
+                            )
                             .boxed(),
                         Row::new()
                             .gaps(LayoutSpacing::new().right(24))
@@ -249,14 +268,26 @@ impl State<FocusNodeExample> for FocusNodeExampleState {
                             ])
                             .boxed(),
                         Text::new(format!("Focused: {owner}"))
-                            .text_style(TextStyle::new().font_size(16).color(Colors::Black))
+                            .text_style(
+                                TextStyle::new()
+                                    .font_size(16)
+                                    .color(app_theme.on_background_color),
+                            )
                             .boxed(),
                         Row::new()
                             .gaps(LayoutSpacing::new().right(12))
                             .children([
-                                self.focus_button("Focus first", Some(self.first.clone())),
-                                self.focus_button("Focus second", Some(self.second.clone())),
-                                self.focus_button("Clear focus", None),
+                                self.focus_button(
+                                    "Focus first",
+                                    Some(self.first.clone()),
+                                    app_theme,
+                                ),
+                                self.focus_button(
+                                    "Focus second",
+                                    Some(self.second.clone()),
+                                    app_theme,
+                                ),
+                                self.focus_button("Clear focus", None, app_theme),
                             ])
                             .boxed(),
                     ]),

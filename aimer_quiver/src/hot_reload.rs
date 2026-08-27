@@ -23,6 +23,8 @@ use aimer_container::SizedBox;
 use aimer_flex::{BoxAlignment, Column, JustifyContent, OverflowBehavior, Row};
 use aimer_grid::{Grid, GridItem, GridPortableConfig};
 use aimer_input::button::Button;
+use aimer_input::gesture::gesture_detector::GestureDetector;
+use aimer_input::mouse_region::MouseRegion;
 use aimer_provider::{Provider, ProviderHandle};
 use aimer_scroll::{ScrollBar, ScrollPortableConfig, Scrollable};
 use aimer_space::Stack;
@@ -74,6 +76,10 @@ pub use aimer_anteros::{
     PROPERTY_ANIMATED_THEME_VALUE, THEME_DATA_VALUE_VERSION, WIDGET_ANIMATED_THEME,
     WIDGET_BUTTON, WIDGET_COLUMN, WIDGET_CONTAINER, WIDGET_PROVIDER, WIDGET_ROW,
     WIDGET_SIZED_BOX, WIDGET_TEXT,
+    EVENT_GESTURE_DETECTOR_DRAG_END, EVENT_GESTURE_DETECTOR_DOUBLE_PRESS,
+    EVENT_GESTURE_DETECTOR_LONG_PRESS, EVENT_GESTURE_DETECTOR_RIGHT_TAP,
+    EVENT_GESTURE_DETECTOR_TAP, EVENT_MOUSE_REGION_HOVER_ENTER, EVENT_MOUSE_REGION_HOVER_EXIT,
+    WIDGET_GESTURE_DETECTOR, WIDGET_MOUSE_REGION,
 };
 
 const BRIDGE_QUEUE_FULL: u32 = 0x7001;
@@ -650,7 +656,7 @@ const WIDGET_CHILD_BUILDER: WidgetSchemaId =
 // native Widget implementation is unfinished. The audit below resolves each
 // constructor independently from the linked registry and reports its kind.
 #[cfg(test)]
-const BUILTIN_PORTABLE_COVERAGE: [BuiltinPortableCoverageSpec; 31] = [
+const BUILTIN_PORTABLE_COVERAGE: [BuiltinPortableCoverageSpec; 33] = [
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_COLUMN,
         schema_only: true,
@@ -749,6 +755,19 @@ const BUILTIN_PORTABLE_COVERAGE: [BuiltinPortableCoverageSpec; 31] = [
         schema_only: true,
         guest_lowering: GuestLoweringKind::Generated,
         focused_round_trip_test: "portable_builtin_showcase_round_trips_through_host",
+    },
+    BuiltinPortableCoverageSpec {
+        widget_type: WIDGET_GESTURE_DETECTOR,
+        schema_only: true,
+        guest_lowering: GuestLoweringKind::Generated,
+        focused_round_trip_test:
+            "gesture_detector_materializes_its_child_and_callback_binding",
+    },
+    BuiltinPortableCoverageSpec {
+        widget_type: WIDGET_MOUSE_REGION,
+        schema_only: true,
+        guest_lowering: GuestLoweringKind::Generated,
+        focused_round_trip_test: "mouse_region_materializes_its_child_and_callback_bindings",
     },
     BuiltinPortableCoverageSpec {
         widget_type: WIDGET_SELECTION_AREA,
@@ -1209,7 +1228,7 @@ const EVENT_TEXT_BUTTON_PRESS: EventId =
 const EVENT_TEXT_BUTTON_DOUBLE_PRESS: EventId =
     EventId::from_canonical_name("aimer.event:aimer_text::TextButton:on_double_press");
 
-static BUILTIN_NATIVE_MATERIALIZERS: [NativeWidgetMaterializerRegistration; 11] = [
+static BUILTIN_NATIVE_MATERIALIZERS: [NativeWidgetMaterializerRegistration; 13] = [
     NativeWidgetMaterializerRegistration::new(
         WIDGET_COLUMN,
         SCHEMA_V1,
@@ -1275,6 +1294,18 @@ static BUILTIN_NATIVE_MATERIALIZERS: [NativeWidgetMaterializerRegistration; 11] 
         SCHEMA_V1,
         SCHEMA_V1,
         materialize_text_button,
+    ),
+    NativeWidgetMaterializerRegistration::new(
+        WIDGET_GESTURE_DETECTOR,
+        SCHEMA_V1,
+        SCHEMA_V1,
+        materialize_gesture_detector,
+    ),
+    NativeWidgetMaterializerRegistration::new(
+        WIDGET_MOUSE_REGION,
+        SCHEMA_V1,
+        SCHEMA_V1,
+        materialize_mouse_region,
     ),
 ];
 
@@ -1597,6 +1628,40 @@ fn materialize_text_button(
         .to_element(factory.ctx)
 }
 
+fn materialize_gesture_detector(
+    factory: &AimerWidgetFactory<'_>,
+    _document: &WidgetDocumentView<'_>,
+    node: WidgetNodeView<'_>,
+    mut children: Vec<AnyElement>,
+) -> AnyElement {
+    let child = children
+        .pop()
+        .expect("validated GestureDetector has exactly one child");
+    debug_assert!(children.is_empty());
+    bind_gesture_detector_callbacks(
+        GestureDetector::new(),
+        node.callbacks(),
+        &factory.dispatch_callback,
+    )
+    .child(RetainedElementWidget(child))
+    .to_element(factory.ctx)
+}
+
+fn materialize_mouse_region(
+    factory: &AimerWidgetFactory<'_>,
+    _document: &WidgetDocumentView<'_>,
+    node: WidgetNodeView<'_>,
+    mut children: Vec<AnyElement>,
+) -> AnyElement {
+    let child = children
+        .pop()
+        .expect("validated MouseRegion has exactly one child");
+    debug_assert!(children.is_empty());
+    bind_mouse_region_callbacks(MouseRegion::new(), node.callbacks(), &factory.dispatch_callback)
+        .child(RetainedElementWidget(child))
+        .to_element(factory.ctx)
+}
+
 fn materialize_button(
     factory: &AimerWidgetFactory<'_>,
     document: &WidgetDocumentView<'_>,
@@ -1886,6 +1951,62 @@ fn bind_button_callbacks(
         }
     }
     button
+}
+
+fn bind_gesture_detector_callbacks(
+    mut detector: GestureDetector,
+    callbacks: CallbackBindings<'_>,
+    dispatch_callback: &Rc<dyn Fn(StableId128)>,
+) -> GestureDetector {
+    for callback in callbacks {
+        let callback_id = callback.callback_id();
+        match callback.event_kind() {
+            EVENT_GESTURE_DETECTOR_TAP => {
+                let dispatch_callback = Rc::clone(dispatch_callback);
+                detector = detector.on_tap(move || dispatch_callback(callback_id));
+            }
+            EVENT_GESTURE_DETECTOR_DOUBLE_PRESS => {
+                let dispatch_callback = Rc::clone(dispatch_callback);
+                detector = detector.on_double_press(move || dispatch_callback(callback_id));
+            }
+            EVENT_GESTURE_DETECTOR_LONG_PRESS => {
+                let dispatch_callback = Rc::clone(dispatch_callback);
+                detector = detector.on_long_press(move || dispatch_callback(callback_id));
+            }
+            EVENT_GESTURE_DETECTOR_DRAG_END => {
+                let dispatch_callback = Rc::clone(dispatch_callback);
+                detector = detector.on_drag_end(move || dispatch_callback(callback_id));
+            }
+            EVENT_GESTURE_DETECTOR_RIGHT_TAP => {
+                let dispatch_callback = Rc::clone(dispatch_callback);
+                detector = detector.on_right_tap(move || dispatch_callback(callback_id));
+            }
+            _ => unreachable!("validated GestureDetector callback changed during materialization"),
+        }
+    }
+    detector
+}
+
+fn bind_mouse_region_callbacks(
+    mut region: MouseRegion,
+    callbacks: CallbackBindings<'_>,
+    dispatch_callback: &Rc<dyn Fn(StableId128)>,
+) -> MouseRegion {
+    for callback in callbacks {
+        let callback_id = callback.callback_id();
+        match callback.event_kind() {
+            EVENT_MOUSE_REGION_HOVER_ENTER => {
+                let dispatch_callback = Rc::clone(dispatch_callback);
+                region = region.on_hover_enter(move || dispatch_callback(callback_id));
+            }
+            EVENT_MOUSE_REGION_HOVER_EXIT => {
+                let dispatch_callback = Rc::clone(dispatch_callback);
+                region = region.on_hover_exit(move || dispatch_callback(callback_id));
+            }
+            _ => unreachable!("validated MouseRegion callback changed during materialization"),
+        }
+    }
+    region
 }
 
 fn bind_text_button_callbacks(

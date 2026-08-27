@@ -19,7 +19,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use aimer::style::{FontWeight, LayoutSpacing, TextAlign, TextStyle, ThemeData};
+use aimer::style::{FontWeight, LayoutSpacing, TextAlign, TextStyle, Theme, ThemeData};
 use aimer::*;
 
 /// The URL the button asks for: small, stable, and made for exactly this.
@@ -60,8 +60,13 @@ async fn fetch_example() -> Request {
         Err(error) => return Request::Failed(error.to_string()),
     };
 
-    let status = response.status().as_u16();
-    match response.text().await {
+    let status = response
+        .status()
+        .as_u16();
+    match response
+        .text()
+        .await
+    {
         Ok(body) => Request::Answered {
             status,
             bytes: body.len(),
@@ -75,7 +80,12 @@ fn request_callback(
 ) -> impl FnOnce() -> Pin<Box<dyn Future<Output = ()> + 'static>> {
     move || {
         Box::pin(async move {
-            if matches!(updater.read_state().request, Request::InFlight) {
+            if matches!(
+                updater
+                    .read_state()
+                    .request,
+                Request::InFlight
+            ) {
                 return;
             }
             updater.set_state(|state| state.request = Request::InFlight);
@@ -96,6 +106,11 @@ impl HttpRequestButton {
     fn new() -> Self {
         Self
     }
+}
+
+/// Builds the HTTP request showcase without starting an application.
+pub fn http_request_button_example() -> impl Widget {
+    HttpRequestButton::new()
 }
 
 struct HttpRequestButtonState {
@@ -122,43 +137,46 @@ impl State<HttpRequestButton> for HttpRequestButtonState {
         self.updater = updater;
     }
 
-    fn build(&self, _ctx: &BuildContext) -> impl Widget {
-        // let theme = ThemeData::of(ctx);
-        let theme = ThemeData::light();
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let theme = ThemeData::copied(ctx);
 
-        Container::new().color(theme.background_color).child(
-            Column::new()
-                .horizontal_alignment(BoxAlignment::Center)
-                .vertical_alignment(BoxAlignment::Center)
-                .children([
-                    Button::new()
-                        .on_press_async(request_callback(self.updater.clone()))
-                        .box_child(
-                            Container::new()
-                                .color(theme.primary_color)
-                                .width(200)
-                                .padding(LayoutSpacing::all(12))
-                                .child(
-                                    Text::new("Fetch example.com")
-                                        .text_align(TextAlign::MidCenter)
-                                        .text_style(
-                                            TextStyle::new()
-                                                .color(theme.on_background_color)
-                                                .font_weight(FontWeight::Bold),
-                                        ),
-                                ),
-                        ),
-                    SizedBox::new().height(16).boxed(),
-                    Text::new(status_label(&self.request))
-                        .text_style(TextStyle::new().color(theme.on_background_color))
-                        .boxed(),
-                ]),
-        )
+        Container::new()
+            .color(theme.background_color)
+            .child(
+                Column::new()
+                    .horizontal_alignment(BoxAlignment::Center)
+                    .vertical_alignment(BoxAlignment::Center)
+                    .children([
+                        Container::new()
+                            .color(theme.primary_color)
+                            .width(200)
+                            .padding(LayoutSpacing::all(12))
+                            .box_child(
+                                Button::new()
+                                    .on_press_async(request_callback(self.updater.clone()))
+                                    .box_child(
+                                        Text::new("Fetch example.com")
+                                            .text_align(TextAlign::MidCenter)
+                                            .text_style(
+                                                TextStyle::new()
+                                                    .color(theme.on_background_color)
+                                                    .font_weight(FontWeight::Bold),
+                                            ),
+                                    ),
+                            ),
+                        SizedBox::new()
+                            .height(16)
+                            .boxed(),
+                        Text::new(status_label(&self.request))
+                            .text_style(TextStyle::new().color(theme.on_background_color))
+                            .boxed(),
+                    ]),
+            )
     }
 }
 
 pub fn start_http_request_button() {
-    AimerApp::start(HttpRequestButton::new());
+    AimerApp::start(crate::theme::provide(HttpRequestButton::new()));
 }
 
 #[cfg(test)]

@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
-use aimer::callback::VoidCallback;
 use aimer::macros::widget;
 use aimer::style::*;
 use aimer::{AimerApp, *};
 
+use crate::theme;
+
 // this is the entry point of the app
 pub fn start_counter() {
     // simply start the app with AimerApp::start
-    AimerApp::start(CounterWidget::new(1).boxed())
+    AimerApp::start(theme::provide(CounterWidget::new(1).boxed()))
 }
 
 // creating a widget with state
@@ -56,11 +57,12 @@ impl State<CounterWidget> for CounterState {
     }
 
     // build the widget with state
-    fn build(&self, _: &BuildContext) -> impl Widget {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
         // debug!("self.count: {}", self.count);
         let updater = self.updater.clone();
+        let theme = ThemeData::copied(ctx);
         Container::new()
-            .color(Color::WHITE)
+            .color(theme.background_color)
             .padding(LayoutSpacing {
                 top: Spacing::Px(20),
                 ..Default::default()
@@ -72,11 +74,11 @@ impl State<CounterWidget> for CounterState {
                     .horizontal_alignment(BoxAlignment::Center)
                     .children([
                         Text::new("Widget with State")
-                            .text_style(TextStyle::new().font_size(25).color(Colors::Black))
+                            .text_style(TextStyle::new().font_size(25).color(theme.on_background_color))
                             .boxed(),
                         SizedBox::new().height(50).boxed(),
                         Text::new(format!("Clicked: {}", self.count,))
-                            .text_style(TextStyle::new().font_size(25).color(Colors::Black))
+                            .text_style(TextStyle::new().font_size(25).color(theme.on_background_color))
                             .boxed(),
                         SizedBox::new().height(50).boxed(),
                         Container::new()
@@ -98,7 +100,10 @@ impl State<CounterWidget> for CounterState {
                                             state.count += 1;
                                         });
                                     })
-                                    .decoration(BoxDecoration::new().background_color(Color::BLUE))
+                                    .decoration(
+                                        BoxDecoration::new()
+                                            .background_color(theme.primary_color),
+                                    )
                                     .child(
                                         Text::new(if self.on_loading {
                                             "Loading..."
@@ -106,7 +111,9 @@ impl State<CounterWidget> for CounterState {
                                             "Click Me"
                                         })
                                         .text_align(TextAlign::MidCenter)
-                                        .text_style(TextStyle::new().color(Color::WHITE)),
+                                        .text_style(
+                                            TextStyle::new().color(theme.on_primary_color),
+                                        ),
                                     )
                                     .boxed(),
                             )
@@ -130,7 +137,10 @@ impl State<CounterWidget> for CounterState {
                                             });
                                         }
                                     })
-                                    .decoration(BoxDecoration::new().background_color(Color::BLUE))
+                                    .decoration(
+                                        BoxDecoration::new()
+                                            .background_color(theme.primary_color),
+                                    )
                                     .child(
                                         Text::new(if self.on_loading {
                                             "Loading..."
@@ -138,7 +148,9 @@ impl State<CounterWidget> for CounterState {
                                             "Click Me"
                                         })
                                         .text_align(TextAlign::MidCenter)
-                                        .text_style(TextStyle::new().color(Color::WHITE)),
+                                        .text_style(
+                                            TextStyle::new().color(theme.on_primary_color),
+                                        ),
                                     )
                                     .boxed(),
                             )

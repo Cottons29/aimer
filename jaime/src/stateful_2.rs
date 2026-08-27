@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 #[allow(unused)]
 pub fn start_my_list() {
-    AimerApp::start(MyList::new().boxed())
+    AimerApp::start(crate::theme::provide(MyList::new().boxed()))
 }
 
 #[widget(Stateful)]
@@ -56,9 +56,11 @@ impl State<MyList> for MyListState {
         self.updater = _updater;
     }
 
-    fn build(&self, _: &BuildContext) -> impl Widget {
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let theme = ThemeData::copied(ctx);
+
         Container::new()
-            .color(Colors::White.into())
+            .color(theme.background_color)
             .padding(LayoutSpacing { top: Spacing::Px(105), ..Default::default() })
             .child(
                 Column::new()
@@ -66,7 +68,7 @@ impl State<MyList> for MyListState {
                         Container::new()
                             .height(Dimension::Px(90.0))
                             .box_decoration(BoxDecoration::new()
-                                .background_color(Colors::Gray.alpha(128)))
+                                .background_color(theme.surface_color))
                             .padding(LayoutSpacing::vertical(Spacing::Px(10)))
                             .child(
                                 Row::new()
@@ -80,7 +82,7 @@ impl State<MyList> for MyListState {
                                                     .text_align(TextAlign::MidLeft)
                                                     .text_style(TextStyle::new()
                                                         .font_size(20)
-                                                        .color(Colors::Black))
+                                                        .color(theme.on_surface_color))
                                             ).boxed(),
 
                                         Expanded::new()
@@ -106,45 +108,45 @@ impl State<MyList> for MyListState {
                                                     })
                                                     .prompt("Input any here....")
                                                     .decoration(BoxDecoration::new()
-                                                        .background_color(Colors::Gray.alpha(140))
+                                                        .background_color(crate::theme::recessed_surface(&theme))
                                                         .border(BoxBorder::all(
                                                             BorderSlice::new()
                                                                 .style(BorderStyle::Solid)
-                                                                .color(Colors::Black)
+                                                                .color(theme.on_surface_color)
                                                                 .stroke(2),
                                                         ))
                                                         .outline(BoxOutline::all(
                                                             BorderSlice::new()
                                                                 .style(BorderStyle::Solid)
-                                                                .color(Colors::Black)
+                                                                .color(theme.on_surface_color)
                                                                 .stroke(2),
                                                         )))
                                                     .hover_decoration(BoxDecoration::new()
-                                                        .background_color(Colors::Gray.alpha(70))
+                                                        .background_color(theme.surface_color)
                                                         .border(BoxBorder::all(
                                                             BorderSlice::new()
                                                                 .style(BorderStyle::Solid)
-                                                                .color(Colors::Black)
+                                                                .color(theme.on_surface_color)
                                                                 .stroke(2),
                                                         ))
                                                         .outline(BoxOutline::all(
                                                             BorderSlice::new()
                                                                 .style(BorderStyle::Solid)
-                                                                .color(Colors::Green)
+                                                                .color(theme.primary_color)
                                                                 .stroke(2),
                                                         )))
                                                     .focus_decoration(BoxDecoration::new()
-                                                        .background_color(Colors::Gray.alpha(10))
+                                                        .background_color(theme.background_color)
                                                         .border(BoxBorder::all(
                                                             BorderSlice::new()
                                                                 .style(BorderStyle::Solid)
-                                                                .color(Colors::Green)
+                                                                .color(theme.primary_color)
                                                                 .stroke(2),
                                                         ))
                                                         .outline(BoxOutline::all(
                                                             BorderSlice::new()
                                                                 .style(BorderStyle::Solid)
-                                                                .color(Colors::Black)
+                                                                .color(theme.on_surface_color)
                                                                 .stroke(2),
                                                         )))
                                             ).boxed(),),
@@ -171,11 +173,11 @@ impl State<MyList> for MyListState {
                                                         }
                                                     })
                                                     .decoration(BoxDecoration::new()
-                                                        .background_color(Colors::Gray.alpha(150))
+                                                        .background_color(theme.primary_color)
                                                         .border(BoxBorder::all(
                                                             BorderSlice::new()
                                                                 .style(BorderStyle::Solid)
-                                                                .color(Colors::Black)
+                                                                .color(theme.on_primary_color)
                                                                 .stroke(2),
                                                         ))
                                                         .outline(BoxOutline::all(
@@ -190,7 +192,7 @@ impl State<MyList> for MyListState {
                                                                 Text::new("Add Item")
                                                                     .text_align(TextAlign::MidCenter)
                                                                     .text_style(TextStyle::new()
-                                                                        .color(Colors::Black)
+                                                                        .color(theme.on_primary_color)
                                                                         .font_size(15))
                                                             )
                                                     )
@@ -202,7 +204,7 @@ impl State<MyList> for MyListState {
                                 .children(self.list.iter().map(|item| {
                                     Container::new()
                                         .margin(LayoutSpacing { top: Spacing::Px(10), ..Default::default() })
-                                        .color(Colors::Blue.alpha(15).into())
+                                        .color(theme.surface_color)
                                         .height(Dimension::Px(50.0))
                                         .child(
                                             Row::new()
@@ -215,7 +217,7 @@ impl State<MyList> for MyListState {
                                                                     Text::new(format!("Item : {}", item.text))
                                                                         .text_align(TextAlign::MidLeft)
                                                                         .text_style(TextStyle::new()
-                                                                            .color(Colors::Black)
+                                                                            .color(theme.on_surface_color)
                                                                             .font_size(15))
                                                                 ),
                                                         ).boxed(),
@@ -234,14 +236,17 @@ impl State<MyList> for MyListState {
                                                                         });
                                                                     }
                                                                 })
-                                                                .decoration(BoxDecoration::new().background_color(Colors::Gray))
+                                                                .decoration(
+                                                                    BoxDecoration::new()
+                                                                        .background_color(theme.primary_color),
+                                                                )
                                                                 .child(
                                                                     Container::new()
                                                                         .child(
                                                                             Text::new("Delete")
                                                                                 .text_align(TextAlign::MidCenter)
                                                                                 .text_style(TextStyle::new()
-                                                                                    .color(Colors::Black)
+                                                                                    .color(theme.on_primary_color)
                                                                                     .font_size(15))
                                                                         )
                                                                 )

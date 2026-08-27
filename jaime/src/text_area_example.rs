@@ -3,9 +3,11 @@
 use aimer::style::*;
 use aimer::*;
 
+use crate::theme;
+
 /// Starts the multiline text-area showcase.
 pub fn start_text_area_example() {
-    AimerApp::start(TextAreaExample::new().boxed())
+    AimerApp::start(theme::provide(TextAreaExample::new().boxed()))
 }
 
 /// Demonstrates wrapped multiline input with bounded vertical growth.
@@ -34,11 +36,12 @@ impl Default for TextAreaExample {
 }
 
 impl StatelessWidget for TextAreaExample {
-    fn build(&self, _: &BuildContext) -> impl Widget {
-        let text_style = TextStyle::new().font_size(16).color(Colors::Black);
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let theme = ThemeData::copied(ctx);
+        let text_style = TextStyle::new().font_size(16).color(theme.on_surface_color);
 
         Container::new()
-            .color(Colors::White.into())
+            .color(theme.background_color)
             .padding(LayoutSpacing::all(Spacing::Px(32)))
             .child(
                 Column::new().children(vec![
@@ -47,17 +50,17 @@ impl StatelessWidget for TextAreaExample {
                             TextStyle::new()
                                 .font_size(28)
                                 .font_weight(FontWeight::Bold)
-                                .color(Colors::Black),
+                                .color(theme.on_background_color),
                         )
                         .boxed(),
                     Text::new("Multiline input with soft wrapping and vertical scrolling.")
-                        .text_style(text_style.color(Colors::Gray))
+                        .text_style(text_style.color(crate::theme::muted_text(&theme)))
                         .boxed(),
                     TextArea::new()
                         .controller(self.controller.clone())
                         .hint("Write a longer message")
-                        .hint_style(text_style.color(Color::GRAY.with_alpha(0.5)))
-                        .text_style(text_style.color(Colors::Black))
+                        .hint_style(text_style.color(theme::muted_text(&theme).with_alpha(0.7)))
+                        .text_style(text_style.color(theme.on_surface_color))
                         .min_lines(1)
                         .max_lines(Some(10))
                         .padding(LayoutSpacing::all(Spacing::Px(12)))

@@ -26,7 +26,9 @@ impl ProfilePage {
 impl StatelessWidget for ProfilePage {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         debug!("Building HomeWidget");
-        Container::new().child(
+        let theme = ThemeData::copied(ctx);
+
+        Container::new().color(theme.background_color).child(
             Column::new()
                 .horizontal_alignment(BoxAlignment::Center)
                 .vertical_alignment(BoxAlignment::Center)
@@ -37,7 +39,7 @@ impl StatelessWidget for ProfilePage {
                 .children(vec![
                     Text::new(format!("Hello, {}", self.name))
                         .text_align(TextAlign::MidCenter)
-                        .text_style(TextStyle::new().color(Colors::Black))
+                        .text_style(TextStyle::new().color(theme.on_background_color))
                         .boxed(),
                     Row::new()
                         .gaps(LayoutSpacing {
@@ -53,7 +55,9 @@ impl StatelessWidget for ProfilePage {
                                         println!("Loading the response from example.com");
                                     }
                                 })
-                                .decoration(BoxDecoration::new().background_color(Colors::Blue))
+                                .decoration(
+                                    BoxDecoration::new().background_color(theme.primary_color),
+                                )
                                 .child(
                                     Container::new()
                                         .width(Dimension::Px(200.0))
@@ -61,7 +65,9 @@ impl StatelessWidget for ProfilePage {
                                         .child(
                                             Text::new("Back")
                                                 .text_align(TextAlign::MidCenter)
-                                                .text_style(TextStyle::new().color(Colors::White)),
+                                                .text_style(
+                                                    TextStyle::new().color(theme.on_primary_color),
+                                                ),
                                         ),
                                 )
                                 .boxed(),
@@ -72,7 +78,9 @@ impl StatelessWidget for ProfilePage {
                                         navi.push(AppRouting::Settings);
                                     }
                                 })
-                                .decoration(BoxDecoration::new().background_color(Colors::Blue))
+                                .decoration(
+                                    BoxDecoration::new().background_color(theme.primary_color),
+                                )
                                 .child(
                                     Container::new()
                                         .width(Dimension::Px(200.0))
@@ -80,7 +88,9 @@ impl StatelessWidget for ProfilePage {
                                         .child(
                                             Text::new("Setting page")
                                                 .text_align(TextAlign::MidCenter)
-                                                .text_style(TextStyle::new().color(Colors::White)),
+                                                .text_style(
+                                                    TextStyle::new().color(theme.on_primary_color),
+                                                ),
                                         ),
                                 )
                                 .boxed(),
