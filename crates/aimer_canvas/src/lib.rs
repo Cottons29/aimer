@@ -2,5 +2,7 @@ mod canvas;
 
 pub use canvas::{
     AimerCanvas as Canvas, CanvasRendering, FontFamily, FontStyle, InnerCanvas,
-    TextHorizontalAlign, TextOverflowMode,
+    RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION, RETAINED_LAYER_MAX_TILES_PER_FRAME,
+    RETAINED_LAYER_TILE_SIZE, RetainedDrawList, RetainedLayerContent, TextHorizontalAlign,
+    TextOverflowMode,
 };

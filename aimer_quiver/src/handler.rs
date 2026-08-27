@@ -32,6 +32,7 @@ use aimer_venus::Venus;
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{AnyElement, EventDispatcher, EventResult, Widget};
 use std::any::Any;
+#[cfg(debug_assertions)]
 use std::cell::Cell;
 use std::rc::Rc;
 #[cfg(feature = "wasm-hot-reload")]
@@ -295,7 +296,6 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub pending_resize: Option<PhysicalSize<u32>>,
     pub(crate) startup_hooks: Vec<StartupHook>,
     pub(crate) startup_resources: Vec<Box<dyn Any>>,
-    pub start_up_frames: Cell<u8>,
     pub active_touch_id: Option<u64>,
     /// The UI-thread runtime this application's frames are scheduled by.
     ///
@@ -449,6 +449,25 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         self.venus.run_idle(&budget);
         self.venus.end_frame();
 
+//        #[cfg(debug_assertions)]
+//        if let Some((breakdown, content)) = crate::frame_stats::take_debug_report() {
+//            aimer_utils::debug!(
+//                "[frame-stats] frames={} build={:.2}ms encode={:.2}ms present={:.2}ms nodes/frame={:.1} commands/frame={:.1} retained-layers/frame={:.1} text/frame={:.1} image-draws/frame={:.1} image-uploads/frame={:.1} text-cache-hit/frame={:.1} text-cache-miss/frame={:.1}",
+//                content.frames,
+//                breakdown.build.average().as_secs_f64() * 1_000.0,
+//                breakdown.encode.average().as_secs_f64() * 1_000.0,
+//                breakdown.present.average().as_secs_f64() * 1_000.0,
+//                content.average_drawn_nodes(),
+//                content.average_draw_commands(),
+//                content.average_retained_layers(),
+//                content.average_text_commands(),
+//                content.average_image_draws(),
+//                content.average_image_uploads(),
+//                content.text_cache_hits as f64 / content.frames as f64,
+//                content.average_text_cache_misses(),
+//            );
+//        }
+
         if self.venus.has_ready_work() {
             self.request_animation_frame();
         }
@@ -586,6 +605,8 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
     /// canvas scope so a widget that leaves a transform behind cannot leak it
     /// into the next frame.
     pub(crate) fn draw(&mut self, canvas: &aimer_canvas::InnerCanvas, width: u32, height: u32) {
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        let inner_canvas = canvas;
         let canvas = aimer_canvas::Canvas::new(canvas);
         let mut build_ctx = BuildContext::new(
             canvas,
@@ -631,6 +652,10 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             .or(self.widget_root.as_ref());
         #[cfg(not(feature = "wasm-hot-reload"))]
         let root = self.widget_root.as_ref();
+
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        aimer_widget::reset_draw_traversal_count();
+
         {
             if let Some(root) = root {
                 #[cfg(feature = "wasm-hot-reload")]
@@ -675,6 +700,19 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             build_ctx.canvas.save();
             overlay.draw(&build_ctx);
             build_ctx.canvas.restore();
+        }
+
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        {
+            let draw_list = inner_canvas.draw_list();
+            let draw_list_stats = draw_list.stats();
+            let (text_cache_hits, text_cache_misses) = inner_canvas.text_cache_stats();
+            crate::frame_stats::record_frame_content(
+                aimer_widget::take_draw_traversal_count(),
+                draw_list_stats,
+                text_cache_hits,
+                text_cache_misses,
+            );
         }
     }
 }
@@ -856,15 +894,6 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
             if let Some(window) = &self.window {
                 window.request_redraw();
             }
-        }
-        if self.start_up_frames.get() > 0 {
-            let Some(window) = self.window.as_ref() else {
-                return;
-            };
-            window.request_redraw();
-            self.start_up_frames.set(self.start_up_frames.get() - 1);
-            // debug!("About to wait, {} frames left",
-            // self.start_up_frames.get());
         }
         #[cfg(debug_assertions)]
         self.poll_inspector_frames();

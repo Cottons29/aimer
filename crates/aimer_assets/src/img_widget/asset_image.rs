@@ -160,6 +160,7 @@ impl Widget for AssetImage {
             cache: LayoutCache::new(),
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),
+            cached_texture_epoch: Cell::new(0),
             scale: self.scale,
         }
         .boxed()

@@ -42,7 +42,6 @@ impl StatelessWidget for BlogListPage {
                             .child(
                                 Column::new()
                                     .horizontal_alignment(BoxAlignment::Start)
-                                    .overflow(OverflowBehavior::Wrap)
                                     .vertical_alignment(BoxAlignment::Start)
                                     .children([
                                         SizedBox::new().height(32).boxed(),

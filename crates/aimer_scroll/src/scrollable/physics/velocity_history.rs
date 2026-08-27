@@ -124,7 +124,9 @@ impl VelocityHistory {
 
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
     use std::time::Duration;
+    use std::time::Instant;
 
     use aimer_attribute::position::Vec2d;
     use aimer_utils::AnimInstant;
@@ -335,5 +337,49 @@ mod tests {
 
         assert_eq!(velocity.y, 0.0);
         assert!((dt - rest.as_secs_f32()).abs() < 1e-3);
+    }
+
+    #[test]
+    #[ignore = "manual numeric-kernel profile"]
+    fn profile_velocity_history() {
+        const MEASURED: usize = 4_096;
+        const WARMUP: usize = 512;
+        const ROUNDS: usize = 7;
+
+        for (name, count) in [("recent-1", 1), ("recent-8", 8), ("recent-24", 24)] {
+            let mut samples = Vec::with_capacity(ROUNDS);
+            let mut checksum = 0.0;
+            for _ in 0..ROUNDS {
+                let now = AnimInstant::now();
+                let mut history = VelocityHistory::new();
+                for index in 0..count {
+                    let age = Duration::from_micros((count - index) as u64 * 2_000);
+                    history.push(
+                        Vec2d {
+                            x: index as f32,
+                            y: -(index as f32),
+                        },
+                        0.002,
+                        now - age,
+                    );
+                }
+
+                for _ in 0..WARMUP {
+                    checksum = black_box(checksum + history.velocity_at(now).y);
+                }
+
+                let start = Instant::now();
+                for _ in 0..MEASURED {
+                    checksum = black_box(checksum + history.velocity_at(now).y);
+                }
+                samples.push(start.elapsed().as_secs_f64() * 1e6 / MEASURED as f64);
+            }
+
+            samples.sort_by(f64::total_cmp);
+            let p50 = samples[ROUNDS / 2];
+            let p95 = samples[(ROUNDS * 95).div_ceil(100) - 1];
+            println!("{name}: p50 {p50:.3} us, p95 {p95:.3} us");
+            assert!(checksum.is_finite());
+        }
     }
 }

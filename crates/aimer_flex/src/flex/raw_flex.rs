@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use crate::flex::children_source::{ChildrenSource, EagerChildren};
-use crate::flex::flex_layout::{FlexLayout, FlexLayoutCache};
+use crate::flex::flex_layout::{FlexLayout, FlexLayoutCache, LayerOrder};
 use crate::flex::flex_list::FlexList;
 use crate::flex::{BoxAlignment, FlexDirection, JustifyContent, OverflowBehavior};
 use aimer_attribute::position::Vec2d;
@@ -306,6 +306,142 @@ impl RawFlex {
     }
 }
 
+impl RawFlex {
+    /// Prepares the same layout table used by ordinary painting, without
+    /// tying the result to one visible rectangle. Dynamic-island painting is
+    /// only enabled for eager children, so the complete order can be reused
+    /// for the static prefix while the live context still culls dynamic rows.
+    fn prepare_paint_partition(
+        &self,
+        ctx: &BuildContext,
+    ) -> Option<(Rc<FlexLayout>, (f32, f32))> {
+        let (gap_x, gap_y) = self.resole_gaps(ctx);
+        let mut layout = self.flex_layout(ctx);
+        let mut distribution = self.main_distribution(ctx, layout.total(), layout.len());
+        let mut range = self.painted_range(ctx, &layout, distribution);
+
+        self.children.window(range.clone(), ctx);
+
+        for _ in 0..RECONCILE_PASSES {
+            let outcome = self.reconcile(ctx, &layout, &range);
+            if matches!(outcome, Reconciled::Matched) {
+                break;
+            }
+            let rebuilt = matches!(outcome, Reconciled::Stale);
+            if rebuilt {
+                layout = self.measure_layout(ctx);
+            } else {
+                ctx.window.request_redraw();
+            }
+            distribution = self.main_distribution(ctx, layout.total(), layout.len());
+            range = self.painted_range(ctx, &layout, distribution);
+            self.children.window(range.clone(), ctx);
+            if rebuilt {
+                break;
+            }
+        }
+
+        self.cache
+            .set_computed(ctx.box_constraint, scale_bits_of(ctx), layout.total());
+        self.layout.set_painted(&range);
+        Some((layout, distribution))
+    }
+
+    /// Visits a flex's complete paint order while giving stable and dynamic
+    /// children the context appropriate to their consumer. The static context
+    /// deliberately has no viewport rectangle; the live context keeps the
+    /// normal cache-window culling contract.
+    fn visit_paint_partition(
+        &self,
+        retained_ctx: &BuildContext,
+        live_ctx: &BuildContext,
+        layout: &FlexLayout,
+        distribution: (f32, f32),
+        order: &LayerOrder,
+        range: Range<usize>,
+        draw_stable: &mut dyn FnMut(
+            &dyn Element,
+            &BuildContext,
+            Vec2d,
+            Option<ResolvedSize>,
+        ),
+        draw_dynamic: &mut dyn FnMut(
+            &dyn Element,
+            &BuildContext,
+            Vec2d,
+            Option<ResolvedSize>,
+        ),
+    ) {
+        let is_row = self.is_row();
+        let max_w = retained_ctx.box_constraint.max_width;
+        let max_h = retained_ctx.box_constraint.max_height;
+        let scale = retained_ctx.scale.max(1.0);
+        let clip = (self.overflow_behavior == OverflowBehavior::Hidden).then_some(
+            ResolvedSize {
+                width: max_w,
+                height: max_h,
+            },
+        );
+
+        order.visit(range, |index| {
+            let Some(child) = self.children.get(index) else {
+                return;
+            };
+            let child_size = layout.size(index);
+            let main = distribution.0
+                + layout.offset(index) as f32
+                + distribution.1 * index as f32;
+            let (offset_x, offset_y) = if is_row {
+                (
+                    main,
+                    align_offset(self.vertical_alignment, (max_h - child_size.height).max(0.0)),
+                )
+            } else {
+                (
+                    align_offset(self.horizontal_alignment, (max_w - child_size.width).max(0.0)),
+                    main,
+                )
+            };
+            let offset = Vec2d {
+                x: (offset_x * scale).round() / scale,
+                y: (offset_y * scale).round() / scale,
+            };
+            let stable = child.is_paint_stable();
+            let base_ctx = if stable { retained_ctx } else { live_ctx };
+            if !stable
+                && !live_ctx.is_rect_visible(
+                    offset_x,
+                    offset_y,
+                    child_size.width,
+                    child_size.height,
+                )
+            {
+                return;
+            }
+
+            let child_ctx = BuildContext {
+                parent_size: child_size,
+                box_constraint: BoxConstraint {
+                    min_width: 0.0,
+                    min_height: 0.0,
+                    max_width: child_size.width,
+                    max_height: child_size.height,
+                },
+                visible_rect: base_ctx.visible_rect.map(|(x, y, width, height)| {
+                    (x - offset_x, y - offset_y, width, height)
+                }),
+                ..base_ctx.clone()
+            };
+
+            if stable {
+                draw_stable(child, &child_ctx, offset, clip);
+            } else {
+                draw_dynamic(child, &child_ctx, offset, clip);
+            }
+        });
+    }
+}
+
 /// How often one frame reconciles its table with the children it is about to
 /// paint.
 ///
@@ -416,6 +552,15 @@ impl RawFlex {
     /// visible rectangle and nothing else — never re-measures the child list.
     fn flex_layout(&self, ctx: &BuildContext) -> Rc<FlexLayout> {
         if let Some(layout) = self.layout.get(ctx.box_constraint, scale_bits_of(ctx)) {
+            return layout;
+        }
+        if let Some(layout) = self
+            .layout
+            .get_stale_stable(ctx.box_constraint, scale_bits_of(ctx))
+            && layout.stable_children_match(self.children.as_ref())
+        {
+            self.layout
+                .set(ctx.box_constraint, scale_bits_of(ctx), Rc::clone(&layout));
             return layout;
         }
         self.measure_layout(ctx)
@@ -690,10 +835,28 @@ impl RawFlex {
         layout: &FlexLayout,
         distribution: (f32, f32),
     ) -> Range<usize> {
-        let Some((vx, vy, vw, vh)) = ctx.visible_rect else {
-            return 0..layout.len();
+        let (start, extent) = match ctx.visible_rect {
+            Some((vx, vy, vw, vh)) => {
+                if self.is_row() {
+                    (vx, vw)
+                } else {
+                    (vy, vh)
+                }
+            }
+            None if self.overflow_behavior == OverflowBehavior::Hidden => {
+                // Hidden overflow establishes a finite painting box even at
+                // the root, where no ancestor has supplied visible_rect. Keep
+                // the child window aligned with that box so painting and hit
+                // testing do not walk eager children that the clip discards.
+                let extent = if self.is_row() {
+                    ctx.box_constraint.max_width
+                } else {
+                    ctx.box_constraint.max_height
+                };
+                (0.0, extent)
+            }
+            None => return 0..layout.len(),
         };
-        let (start, extent) = if self.is_row() { (vx, vw) } else { (vy, vh) };
         let (leading, between) = distribution;
         if between == 0.0 {
             let start = (start - leading) as f64;
@@ -793,21 +956,12 @@ impl Drawable for RawFlex {
             .set_computed(ctx.box_constraint, scale_bits_of(ctx), layout.total());
         self.layout.set_painted(&range);
 
-        // Children paint in layer order. Most lists never leave layer zero, so
-        // the sort is skipped unless a child actually asked to be lifted.
-        let mut order: Vec<(u32, usize)> = Vec::with_capacity(range.len().min(64));
-        let mut layered = false;
-        for index in range {
-            let Some(child) = self.children.get(index) else {
-                continue;
-            };
-            let layer = child.layer();
-            layered |= layer != 0;
-            order.push((layer, index));
-        }
-        if layered {
-            order.sort_by_key(|(layer, _)| *layer);
-        }
+        // Children paint in layer order. The order is structural for this
+        // element generation and the current painted range, so cached frames
+        // reuse it without rebuilding or sorting a vector.
+        let order = self.layout.cached_layer_order(range.clone(), |index| {
+            self.children.get(index).map(|child| child.layer())
+        });
 
         // Round child positions to device pixels so that adjacent backgrounds
         // always tile without sub-pixel seams.  Without this, a fractional
@@ -816,9 +970,9 @@ impl Drawable for RawFlex {
         // GPU anti-aliasing blends the gap with the parent background (white).
         let scale = ctx.scale.max(1.0);
 
-        for (_, index) in order {
+        order.visit(range, |index| {
             let Some(child) = self.children.get(index) else {
-                continue;
+                return;
             };
             let child_size = layout.size(index);
             let c_w = child_size.width;
@@ -841,13 +995,8 @@ impl Drawable for RawFlex {
 
             // The index range only bounds the main axis, so a child can still
             // sit outside the viewport across it.
-            if let Some((vx, vy, vw, vh)) = ctx.visible_rect
-                && (offset_x + c_w < vx
-                    || offset_x > vx + vw
-                    || offset_y + c_h < vy
-                    || offset_y > vy + vh)
-            {
-                continue;
+            if !ctx.is_rect_visible(offset_x, offset_y, c_w, c_h) {
+                return;
             }
 
             let draw_ctx = BuildContext {
@@ -871,13 +1020,92 @@ impl Drawable for RawFlex {
             draw_ctx.canvas.translate(Vec2d { x: rx, y: ry });
             Self::render_child(child, &draw_ctx);
             draw_ctx.canvas.restore();
-        }
+        });
 
         // Pop the clip pushed by overflow_behavior.apply_overflow_behave()
         if self.overflow_behavior == OverflowBehavior::Hidden {
             ctx.canvas.clear_clip();
         }
         ctx.canvas.restore();
+    }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        self.overflow_behavior != OverflowBehavior::Wrap && self.children.is_paint_stable()
+    }
+
+    #[doc(hidden)]
+    fn draw_paint_islands(
+        &self,
+        retained_ctx: &BuildContext,
+        live_ctx: &BuildContext,
+        draw_stable: &mut dyn FnMut(
+            &dyn Element,
+            &BuildContext,
+            Vec2d,
+            Option<ResolvedSize>,
+        ),
+        draw_dynamic: &mut dyn FnMut(
+            &dyn Element,
+            &BuildContext,
+            Vec2d,
+            Option<ResolvedSize>,
+        ),
+    ) -> bool {
+        // A windowed source's live children are created and retired as the
+        // viewport moves, so retaining one of its rows independently would
+        // outlive the source's structural contract. Wrapping also changes the
+        // two-dimensional placement in a way this one-axis partition cannot
+        // represent. Both cases remain on the ordinary direct path.
+        if self.overflow_behavior == OverflowBehavior::Wrap || self.children.is_windowed() {
+            return false;
+        }
+
+        let Some((layout, distribution)) = self.prepare_paint_partition(live_ctx) else {
+            return false;
+        };
+        let range = 0..self.children.len();
+        let order = self
+            .layout
+            .cached_layer_order(range.clone(), |index| {
+                self.children.get(index).map(|child| child.layer())
+            });
+
+        // One retained layer is emitted before the dynamic suffix. A dynamic
+        // child interleaved with a later stable child would require several
+        // independent layers (and can multiply the texture budget), so it is
+        // deliberately rejected before either callback can paint.
+        let mut saw_stable = false;
+        let mut saw_dynamic = false;
+        let mut dynamic_started = false;
+        let mut stable_after_dynamic = false;
+        order.visit(range.clone(), |index| {
+            let Some(child) = self.children.get(index) else {
+                return;
+            };
+            if child.is_paint_stable() {
+                saw_stable = true;
+                stable_after_dynamic |= dynamic_started;
+            } else {
+                saw_dynamic = true;
+                dynamic_started = true;
+            }
+        });
+        if !saw_stable || !saw_dynamic || stable_after_dynamic {
+            return false;
+        }
+
+        self.visit_paint_partition(
+            retained_ctx,
+            live_ctx,
+            &layout,
+            distribution,
+            &order,
+            range,
+            draw_stable,
+            draw_dynamic,
+        );
+        true
     }
 }
 
@@ -898,6 +1126,12 @@ impl VisitorElement for RawFlex {
 }
 
 impl EventElement for RawFlex {
+    /// The event and visual child views are the same retained source.
+    #[inline]
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.children.visit(visitor);
+    }
+
     /// Offers every child that exists, painted or not.
     ///
     /// Focus and broadcast delivery use this, so an off-screen input field of an
@@ -921,6 +1155,21 @@ impl EventElement for RawFlex {
             return self.event_children(visitor);
         };
         for index in range.start..range.end.min(self.children.len()) {
+            if let Some(child) = self.children.get(index) {
+                visitor(child);
+            }
+        }
+    }
+
+    /// Visits the painted range in the order pointer routing consumes it, so a
+    /// large sibling group does not materialize a temporary reverse-order
+    /// buffer for every event.
+    #[inline]
+    fn hit_test_children_reversed<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        let Some(range) = self.layout.painted() else {
+            return self.children.visit_reversed(visitor);
+        };
+        for index in (range.start..range.end.min(self.children.len())).rev() {
             if let Some(child) = self.children.get(index) {
                 visitor(child);
             }

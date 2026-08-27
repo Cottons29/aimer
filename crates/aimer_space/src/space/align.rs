@@ -126,24 +126,38 @@ impl Drawable for RawAlign {
     fn draw(&self, ctx: &BuildContext) {
         let child_size = self.child.computed_size(ctx);
         let (offset_x, offset_y) = alignment_offset(self.alignment, ctx.parent_size, child_size);
-        let mut child_ctx = ctx.clone();
-        child_ctx.parent_size = child_size;
-        child_ctx.box_constraint = BoxConstraint {
+        let child_constraint = BoxConstraint {
             min_width: 0.0,
             min_height: 0.0,
             max_width: child_size.width,
             max_height: child_size.height,
         };
-        child_ctx.visible_rect = ctx
-            .visible_rect
-            .map(|(x, y, width, height)| (x - offset_x, y - offset_y, width, height));
+        let can_reuse_context = offset_x == 0.0
+            && offset_y == 0.0
+            && child_size == ctx.parent_size
+            && child_constraint == ctx.box_constraint;
 
         ctx.canvas.save();
-        ctx.canvas.translate(Vec2d {
-            x: offset_x,
-            y: offset_y,
-        });
-        self.child.draw(&child_ctx);
+        if can_reuse_context {
+            // The child already fills the parent and receives the same
+            // constraints, so cloning the context and translating by zero
+            // would only add work. Keep the save/restore pair: it protects
+            // siblings if a child leaves canvas state behind.
+            self.child.draw(ctx);
+        } else {
+            let mut child_ctx = ctx.clone();
+            child_ctx.parent_size = child_size;
+            child_ctx.box_constraint = child_constraint;
+            child_ctx.visible_rect = ctx
+                .visible_rect
+                .map(|(x, y, width, height)| (x - offset_x, y - offset_y, width, height));
+
+            ctx.canvas.translate(Vec2d {
+                x: offset_x,
+                y: offset_y,
+            });
+            self.child.draw(&child_ctx);
+        }
         ctx.canvas.restore();
     }
 }

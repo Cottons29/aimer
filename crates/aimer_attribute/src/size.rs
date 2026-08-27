@@ -58,10 +58,8 @@ impl Size {
 
 /// # The resolved pixel size after layout.
 ///
-///
-/// - f32 for non-wasm32 targets,
-///
-/// - f64 for wasm32
+/// The representation is `f32` on every supported target, including
+/// WebAssembly.
 #[derive(Copy, Clone, Default, Debug, PartialEq)]
 pub struct ResolvedSize {
     pub width: f32,

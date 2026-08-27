@@ -250,6 +250,9 @@ impl StaggeredAnimation {
 
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
+    use std::time::Instant;
+
     use super::*;
     use crate::primitives::curve::Curve;
 
@@ -312,5 +315,66 @@ mod tests {
         // At t=125ms, all should be started
         anim.tick(start + Duration::from_millis(125));
         assert!(anim.started.iter().all(|&s| s));
+    }
+
+    fn profile_collection_ticks(
+        name: &str,
+        mut tick: impl FnMut(AnimInstant) -> Vec<f32>,
+    ) {
+        const MEASURED: usize = 2_048;
+        const WARMUP: usize = 128;
+        const ROUNDS: usize = 7;
+
+        let frame_time = AnimInstant::now() + Duration::from_millis(16);
+        let mut samples = Vec::with_capacity(ROUNDS);
+        let mut checksum = 0.0;
+        for _ in 0..ROUNDS {
+            for _ in 0..WARMUP {
+                let values = tick(frame_time);
+                checksum = black_box(checksum + values.iter().copied().sum::<f32>());
+                black_box(values);
+            }
+
+            let start = Instant::now();
+            for _ in 0..MEASURED {
+                let values = tick(frame_time);
+                checksum = black_box(checksum + values.iter().copied().sum::<f32>());
+                black_box(values);
+            }
+            samples.push(start.elapsed().as_secs_f64() * 1e6 / MEASURED as f64);
+        }
+
+        samples.sort_by(f64::total_cmp);
+        let p50 = samples[ROUNDS / 2];
+        let p95 = samples[(ROUNDS * 95).div_ceil(100) - 1];
+        println!("{name}: p50 {p50:.3} us, p95 {p95:.3} us");
+        assert!(checksum.is_finite());
+    }
+
+    #[test]
+    #[ignore = "manual numeric-kernel profile"]
+    fn profile_collection_animation_ticks() {
+        for count in [1, 8, 64, 256] {
+            let mut parallel = ParallelAnimation::new(
+                (0..count)
+                    .map(|_| AnimationController::with_millis(60_000, Curve::Linear))
+                    .collect(),
+            );
+            parallel.forward();
+            profile_collection_ticks(&format!("parallel {count} controllers"), |now| {
+                parallel.tick(now)
+            });
+
+            let mut staggered = StaggeredAnimation::new(
+                (0..count)
+                    .map(|_| AnimationController::with_millis(60_000, Curve::Linear))
+                    .collect(),
+                Duration::from_millis(1),
+            );
+            staggered.forward();
+            profile_collection_ticks(&format!("staggered {count} controllers"), |now| {
+                staggered.tick(now)
+            });
+        }
     }
 }

@@ -204,6 +204,43 @@ struct TextureEntry {
     #[allow(dead_code)]
     texture: wgpu::Texture,
     bytes: u64,
+    last_used_frame: u64,
+    /// Explicitly addressed textures are owned by the caller and cannot be
+    /// reconstructed by an image source after eviction.
+    evictable: bool,
+}
+
+const IMAGE_TEXTURE_CACHE_BUDGET_BYTES: u64 = 128 * 1024 * 1024;
+const IMAGE_TEXTURE_IDLE_FRAMES: u64 = 120;
+
+#[derive(Clone, Copy)]
+struct TextureCacheEntryInfo {
+    id: TextureId,
+    bytes: u64,
+    last_used_frame: u64,
+    evictable: bool,
+}
+
+fn select_texture_evictions(
+    current_frame: u64,
+    budget_bytes: u64,
+    idle_frames: u64,
+    total_bytes: u64,
+    mut entries: Vec<TextureCacheEntryInfo>,
+) -> Vec<TextureId> {
+    entries.retain(|entry| entry.evictable && entry.last_used_frame < current_frame);
+    entries.sort_unstable_by_key(|entry| entry.last_used_frame);
+
+    let mut remaining_bytes = total_bytes;
+    let mut evictions = Vec::new();
+    for entry in entries {
+        let idle = current_frame.saturating_sub(entry.last_used_frame);
+        if idle >= idle_frames || remaining_bytes > budget_bytes {
+            remaining_bytes = remaining_bytes.saturating_sub(entry.bytes);
+            evictions.push(entry.id);
+        }
+    }
+    evictions
 }
 
 pub struct ImagePipeline {
@@ -233,6 +270,8 @@ pub struct ImagePipeline {
     /// The `(width, height, is_srgb)` the viewport uniform was last written
     /// for, so an unchanged viewport costs no upload at all.
     last_viewport: Option<(u32, u32, bool)>,
+    /// Monotonic frame number used by the image cache's idle-age policy.
+    frame_index: u64,
 }
 
 impl ImagePipeline {
@@ -385,6 +424,7 @@ impl ImagePipeline {
             frame_instances: Vec::new(),
             upload: FrameUpload::new(),
             last_viewport: None,
+            frame_index: 0,
         }
     }
 
@@ -399,7 +439,9 @@ impl ImagePipeline {
     ) -> TextureId {
         let id = self.next_id;
         self.next_id += 1;
-        self.upload_image_with_id(device, queue, id, width, height, data);
+        // The caller owns this generated ID and may not retain the source
+        // bytes, so keep it alongside other explicit uploads.
+        self.upload_image_with_id_internal(device, queue, id, width, height, data, false);
         id
     }
 
@@ -468,6 +510,8 @@ impl ImagePipeline {
                     bind_group,
                     texture,
                     bytes: width as u64 * height as u64 * 4,
+                    last_used_frame: self.frame_index,
+                    evictable: true,
                 });
                 true
             }
@@ -488,6 +532,7 @@ impl ImagePipeline {
         height: u32,
         is_srgb: bool,
     ) {
+        self.frame_index = self.frame_index.saturating_add(1);
         self.frame_instance_offset = 0;
         self.frame_instances.clear();
         let previous_capacity = self.instance_policy.capacity();
@@ -526,6 +571,19 @@ impl ImagePipeline {
         height: u32,
         data: &[u8],
     ) {
+        self.upload_image_with_id_internal(device, queue, id, width, height, data, false);
+    }
+
+    fn upload_image_with_id_internal(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        id: TextureId,
+        width: u32,
+        height: u32,
+        data: &[u8],
+        evictable: bool,
+    ) {
         let (width, height, data) = constrain_rgba8(
             width,
             height,
@@ -533,10 +591,12 @@ impl ImagePipeline {
             device.limits().max_texture_dimension_2d,
         );
         // In-place update if the texture exists and dimensions match.
-        if let Some(entry) = self.textures.get(&id) {
+        if let Some(entry) = self.textures.get_mut(&id) {
             let size = entry.texture.size();
             if size.width == width && size.height == height {
                 upload_rgba8(queue, &entry.texture, width, height, data.as_ref());
+                entry.last_used_frame = self.frame_index;
+                entry.evictable = evictable;
                 return;
             }
         }
@@ -579,6 +639,8 @@ impl ImagePipeline {
                 bind_group,
                 texture,
                 bytes: width as u64 * height as u64 * 4,
+                last_used_frame: self.frame_index,
+                evictable,
             },
         );
     }
@@ -587,12 +649,66 @@ impl ImagePipeline {
         self.textures.remove(&id).is_some()
     }
 
+    /// Creates an image bind group for a renderer-owned texture view.
+    ///
+    /// Retained scroll layers use the same sampling shader as ordinary images,
+    /// but their textures are render targets owned by [`Renderer`](crate::renderer::Renderer)
+    /// rather than decoded image-cache entries. Keeping bind-group creation
+    /// here makes both paths share the sampler and layout without registering a
+    /// compositor texture in the evictable image cache.
+    pub(crate) fn create_external_bind_group(
+        &self,
+        device: &wgpu::Device,
+        view: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("retained layer image bind group"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        })
+    }
+
     pub fn texture_count(&self) -> usize {
         self.textures.len()
     }
 
     pub fn texture_bytes(&self) -> u64 {
         self.textures.values().map(|entry| entry.bytes).sum()
+    }
+
+    /// Selects old, reconstructible textures for deferred removal.
+    ///
+    /// Current-frame textures are protected so a large cache cannot evict an
+    /// image while its render pass is still being assembled. Older textures
+    /// are reclaimed after a grace period, and the same candidates are used to
+    /// bring the cache back under its byte budget.
+    pub(crate) fn eviction_candidates(&self) -> Vec<TextureId> {
+        let entries = self
+            .textures
+            .iter()
+            .map(|(&id, entry)| TextureCacheEntryInfo {
+                id,
+                bytes: entry.bytes,
+                last_used_frame: entry.last_used_frame,
+                evictable: entry.evictable,
+            })
+            .collect();
+        select_texture_evictions(
+            self.frame_index,
+            IMAGE_TEXTURE_CACHE_BUDGET_BYTES,
+            IMAGE_TEXTURE_IDLE_FRAMES,
+            self.texture_bytes(),
+            entries,
+        )
     }
 
     pub fn instance_buffer_bytes(&self) -> u64 {
@@ -620,10 +736,40 @@ impl ImagePipeline {
             return;
         }
 
-        let entry = match self.textures.get(&texture_id) {
-            Some(e) => e,
-            None => return,
+        let Some(bind_group) = self.textures.get_mut(&texture_id).map(|entry| {
+            entry.last_used_frame = self.frame_index;
+            entry.bind_group.clone()
+        }) else {
+            return;
         };
+
+        self.draw_batch_with_bind_group(device, queue, pass, &bind_group, instances);
+    }
+
+    /// Draws a batch with a renderer-owned texture view that is not part of the
+    /// decoded-image cache.
+    pub(crate) fn draw_external_batch(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pass: &mut wgpu::RenderPass<'_>,
+        bind_group: &wgpu::BindGroup,
+        instances: &[ImageInstance],
+    ) {
+        self.draw_batch_with_bind_group(device, queue, pass, bind_group, instances);
+    }
+
+    fn draw_batch_with_bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pass: &mut wgpu::RenderPass<'_>,
+        bind_group: &wgpu::BindGroup,
+        instances: &[ImageInstance],
+    ) {
+        if instances.is_empty() {
+            return;
+        }
 
         let end = self.frame_instance_offset + instances.len();
         if end > self.instance_policy.capacity() {
@@ -654,7 +800,7 @@ impl ImagePipeline {
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
-        pass.set_bind_group(1, &entry.bind_group, &[]);
+        pass.set_bind_group(1, bind_group, &[]);
         pass.set_vertex_buffer(0, self.instance_buffer.slice(byte_offset..));
         pass.draw(0..6, 0..instances.len() as u32);
 
@@ -675,6 +821,9 @@ impl ImagePipeline {
 
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
+    use std::time::Instant;
+
     use super::*;
 
     #[test]
@@ -708,6 +857,76 @@ mod tests {
         };
 
         assert_eq!(instance.alpha, 0.35);
+    }
+
+    #[test]
+    fn texture_eviction_keeps_current_and_explicit_textures() {
+        let evictions = select_texture_evictions(
+            10,
+            100,
+            3,
+            200,
+            vec![
+                TextureCacheEntryInfo {
+                    id: 1,
+                    bytes: 80,
+                    last_used_frame: 10,
+                    evictable: true,
+                },
+                TextureCacheEntryInfo {
+                    id: 2,
+                    bytes: 40,
+                    last_used_frame: 8,
+                    evictable: true,
+                },
+                TextureCacheEntryInfo {
+                    id: 3,
+                    bytes: 30,
+                    last_used_frame: 7,
+                    evictable: true,
+                },
+                TextureCacheEntryInfo {
+                    id: 4,
+                    bytes: 50,
+                    last_used_frame: 6,
+                    evictable: false,
+                },
+            ],
+        );
+
+        assert_eq!(evictions, vec![3, 2]);
+    }
+
+    #[test]
+    fn texture_eviction_reclaims_idle_entries_even_under_budget() {
+        let evictions = select_texture_evictions(
+            20,
+            1_000,
+            5,
+            120,
+            vec![
+                TextureCacheEntryInfo {
+                    id: 1,
+                    bytes: 40,
+                    last_used_frame: 15,
+                    evictable: true,
+                },
+                TextureCacheEntryInfo {
+                    id: 2,
+                    bytes: 40,
+                    last_used_frame: 14,
+                    evictable: true,
+                },
+                TextureCacheEntryInfo {
+                    id: 3,
+                    bytes: 40,
+                    last_used_frame: 19,
+                    evictable: true,
+                },
+            ],
+        );
+
+        assert_eq!(evictions, vec![2, 1]);
     }
 
     #[test]
@@ -754,5 +973,113 @@ mod tests {
 
         assert_eq!((width, height), (1, 1));
         assert_eq!(data.as_ref(), &[0; 4]);
+    }
+
+    #[test]
+    fn unaligned_rgba8_data_can_use_the_borrowed_path() {
+        let mut storage = vec![0; 17];
+        storage[1..].fill(255);
+
+        let (width, height, data) = constrain_rgba8(2, 2, &storage[1..], 4);
+
+        assert_eq!((width, height), (2, 2));
+        assert!(matches!(&data, Cow::Borrowed(_)));
+        assert_eq!(data.as_ref(), &[255; 16]);
+    }
+
+    fn patterned_rgba8(width: u32, height: u32) -> Vec<u8> {
+        let mut data = Vec::with_capacity(width as usize * height as usize * 4);
+        for index in 0..width as usize * height as usize {
+            data.extend_from_slice(&[
+                index as u8,
+                index.wrapping_mul(3) as u8,
+                index.wrapping_mul(7) as u8,
+                255,
+            ]);
+        }
+        data
+    }
+
+    fn consume_image_result(result: (u32, u32, Cow<'_, [u8]>), checksum: &mut u64) {
+        let (width, height, data) = black_box(result);
+        let data = black_box(data);
+        let first = data.as_ref().first().copied().unwrap_or_default();
+        let last = data.as_ref().last().copied().unwrap_or_default();
+        *checksum = black_box(
+            checksum
+                .wrapping_add(width as u64)
+                .wrapping_add(height as u64)
+                .wrapping_add(data.len() as u64)
+                .wrapping_add(first as u64)
+                .wrapping_add(last as u64),
+        );
+    }
+
+    #[test]
+    #[ignore = "manual image/bulk-data profile"]
+    fn profile_image_bulk_operations() {
+        const ROUNDS: usize = 7;
+
+        let cases = [
+            ("invalid-placeholder", 0, 0, 256, 4_096, 512),
+            ("borrowed-256x256", 256, 256, 1_024, 4_096, 512),
+            ("lanczos-256x128-to-128x64", 256, 128, 128, 16, 4),
+            ("lanczos-512x256-to-128x64", 512, 256, 128, 8, 2),
+            ("lanczos-1024x512-to-256x128", 1_024, 512, 256, 4, 1),
+        ];
+        let mut checksum = 0u64;
+
+        for (name, width, height, max_dimension, measured, warmup) in cases {
+            let data = patterned_rgba8(width, height);
+            let mut samples = Vec::with_capacity(ROUNDS);
+            for _ in 0..ROUNDS {
+                for _ in 0..warmup {
+                    consume_image_result(
+                        constrain_rgba8(width, height, &data, max_dimension),
+                        &mut checksum,
+                    );
+                }
+
+                let start = Instant::now();
+                for _ in 0..measured {
+                    consume_image_result(
+                        constrain_rgba8(width, height, &data, max_dimension),
+                        &mut checksum,
+                    );
+                }
+                samples.push(start.elapsed().as_secs_f64() * 1e6 / measured as f64);
+            }
+
+            samples.sort_by(f64::total_cmp);
+            let p50 = samples[ROUNDS / 2];
+            let p95 = samples[(ROUNDS * 95).div_ceil(100) - 1];
+            println!("{name}: p50 {p50:.3} us, p95 {p95:.3} us");
+        }
+
+        let source = patterned_rgba8(513, 257);
+        let mut samples = Vec::with_capacity(ROUNDS);
+        for _ in 0..ROUNDS {
+            for _ in 0..32 {
+                consume_image_result(
+                    (129, 65, Cow::Owned(resize_rgba8_nearest(513, 257, &source, 129, 65))),
+                    &mut checksum,
+                );
+            }
+
+            let start = Instant::now();
+            for _ in 0..256 {
+                consume_image_result(
+                    (129, 65, Cow::Owned(resize_rgba8_nearest(513, 257, &source, 129, 65))),
+                    &mut checksum,
+                );
+            }
+            samples.push(start.elapsed().as_secs_f64() * 1e6 / 256.0);
+        }
+        samples.sort_by(f64::total_cmp);
+        let p50 = samples[ROUNDS / 2];
+        let p95 = samples[(ROUNDS * 95).div_ceil(100) - 1];
+        println!("nearest-odd-513x257-to-129x65: p50 {p50:.3} us, p95 {p95:.3} us");
+
+        assert_ne!(checksum, 0);
     }
 }

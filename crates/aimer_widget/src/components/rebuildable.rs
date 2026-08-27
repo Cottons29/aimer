@@ -1,5 +1,5 @@
 use crate::base::BuildContext;
-use crate::components::element::{Element, VisitorElement};
+use crate::components::element::{Element, VisitorElement, element_tree_generation};
 
 // Rebuild capabilities
 pub trait Rebuildable: VisitorElement {
@@ -61,4 +61,21 @@ pub trait Rebuildable: VisitorElement {
             child.mark_needs_rebuild();
         });
     }
+
+    /// Returns the last installed-tree generation observed by this subtree.
+    ///
+    /// The erased element owner records this value around rebuild and draw
+    /// calls. Layout containers can use it to distinguish an unchanged child
+    /// from one whose generated descendants were replaced, even when another
+    /// branch advanced the global tree generation.
+    #[inline]
+    fn subtree_generation(&self) -> u64 {
+        element_tree_generation()
+    }
+
+    /// Records the installed-tree generation that a reconciliation committed
+    /// for this subtree.
+    #[inline]
+    #[allow(unused_variables)]
+    fn set_subtree_generation(&self, generation: u64) {}
 }

@@ -109,6 +109,9 @@ impl<T: Pod> FrameUpload<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
+    use std::time::Instant;
+
     use super::*;
 
     #[test]
@@ -186,5 +189,66 @@ mod tests {
 
         assert!(!gate.needs_upload(&[7, 8]));
         assert!(gate.needs_upload(&[1, 2, 3]));
+    }
+
+    #[test]
+    #[ignore = "manual bulk-data profile"]
+    fn profile_bulk_upload_operations() {
+        const ROUNDS: usize = 7;
+
+        let cases = [
+            ("empty", 0, 1_024),
+            ("small-64b", 16, 1_024),
+            ("medium-4kb", 1_024, 128),
+            ("large-256kb", 65_536, 16),
+            ("large-4mb", 1_048_576, 2),
+        ];
+        let mut checksum = 0u64;
+
+        for (name, word_count, measured) in cases {
+            let data: Vec<u32> = (0..word_count)
+                .map(|index| (index as u32).wrapping_mul(0x9e37_79b9))
+                .collect();
+
+            let mut compare_samples = Vec::with_capacity(ROUNDS);
+            let mut gate = FrameUpload::new();
+            gate.mark_uploaded(&data);
+            for _ in 0..ROUNDS {
+                for _ in 0..2 {
+                    checksum = checksum.wrapping_add(black_box(gate.needs_upload(&data)) as u64);
+                }
+
+                let start = Instant::now();
+                for _ in 0..measured {
+                    checksum = checksum.wrapping_add(black_box(gate.needs_upload(&data)) as u64);
+                }
+                compare_samples.push(start.elapsed().as_secs_f64() * 1e6 / measured as f64);
+            }
+
+            let mut copy_samples = Vec::with_capacity(ROUNDS);
+            for _ in 0..ROUNDS {
+                for _ in 0..2 {
+                    gate.mark_uploaded(&data);
+                    black_box(gate.uploaded.as_ptr());
+                }
+
+                let start = Instant::now();
+                for _ in 0..measured {
+                    gate.mark_uploaded(&data);
+                    black_box(gate.uploaded.as_ptr());
+                }
+                copy_samples.push(start.elapsed().as_secs_f64() * 1e6 / measured as f64);
+            }
+
+            compare_samples.sort_by(f64::total_cmp);
+            copy_samples.sort_by(f64::total_cmp);
+            let compare_p50 = compare_samples[ROUNDS / 2];
+            let compare_p95 = compare_samples[(ROUNDS * 95).div_ceil(100) - 1];
+            let copy_p50 = copy_samples[ROUNDS / 2];
+            let copy_p95 = copy_samples[(ROUNDS * 95).div_ceil(100) - 1];
+            println!("{name}: compare p50 {compare_p50:.3} us, p95 {compare_p95:.3} us; copy p50 {copy_p50:.3} us, p95 {copy_p95:.3} us");
+        }
+
+        black_box(&mut checksum);
     }
 }

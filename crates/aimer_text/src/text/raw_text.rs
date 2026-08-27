@@ -309,6 +309,14 @@ impl Drawable for RawTextWidget {
             }
         }
     }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        // Text records immutable draw requests and has no event geometry or
+        // asynchronous state of its own. Rebuild/layout/scale generations in
+        // the retaining owner still retire this stream when its inputs change.
+        true
+    }
 }
 
 impl VisitorElement for RawTextWidget {

@@ -106,6 +106,11 @@ pub use crate::components::diagnostics::{
 pub use crate::components::drawable::Drawable;
 pub use crate::components::element::{
     Element, ElementId, ElementPath, EventDispatcher, element_tree_generation,
+    layout_invalidation_generation, rebuild_invalidation_generation,
+};
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
+pub use crate::components::element::{
+    reset_draw_traversal_count, take_draw_traversal_count,
 };
 pub use crate::components::event_element::{
     CaptureRequest, EventElement, EventResult, FollowUp, PointerKey,

@@ -31,10 +31,13 @@ use std::rc::Rc;
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::size::ResolvedSize;
 use aimer_widget::base::BuildContext;
+use aimer_widget::ElementId;
 
 use crate::flex::FlexDirection;
 use crate::flex::children_source::ChildrenSource;
-use crate::flex::flex_child::distribute_flex_space;
+use crate::flex::flex_child::distribute_flex_space_in_place;
+#[cfg(test)]
+use crate::flex::flex_child::distribute_flex_space_in_place_scalar_reference;
 
 /// Marks a child that does not participate in flex distribution.
 ///
@@ -56,6 +59,26 @@ enum Origin {
     Declared,
     /// One child was measured and the rest are assumed to match it.
     Estimated,
+}
+
+/// Results produced by the dynamic child-measurement phase of a flex pass.
+///
+/// `flex_weights` starts as a child-kind table: negative entries identify
+/// regular children and non-negative entries identify flex children. The
+/// numeric phase replaces the non-negative entries with their allocated
+/// shares, after which the flex children are measured with those shares.
+struct MeasuredChildren {
+    /// Resolved child sizes, with default placeholders for flex children until
+    /// their allocated constraints have been applied.
+    sizes: Vec<ResolvedSize>,
+    /// Flex factors, or their allocated shares after numeric resolution.
+    flex_weights: Vec<f32>,
+    /// Main-axis extent consumed by regular children.
+    sized_main: f32,
+    /// Stable identity and generation metadata collected while measuring.
+    child_metadata: Vec<(ElementId, u64)>,
+    /// Whether every child seen during measurement was layout-stable.
+    stable_children: bool,
 }
 
 /// Exact extents recorded for the children of a predicted table.
@@ -134,6 +157,11 @@ pub(crate) struct FlexLayout {
     stride: Option<f64>,
     /// Number of children the table describes.
     len: usize,
+    /// Stable identity and last installed-tree generation of each direct child,
+    /// when every child opted into generation-independent sizing.
+    child_metadata: Vec<(ElementId, u64)>,
+    /// Whether every direct child opted into generation-independent sizing.
+    stable_children: bool,
     /// Size of the container itself, gaps included.
     total: ResolvedSize,
     /// Whether any child was sized by flex distribution.
@@ -155,7 +183,7 @@ impl FlexLayout {
     ///
     /// Non-flex children keep the intrinsic size they report under an unbounded
     /// main axis; flex children are measured with their share of the leftover
-    /// space, exactly as [`distribute_flex_space`] hands it out. `gap_main` is
+    /// space, exactly as [`distribute_flex_space_in_place`] hands it out. `gap_main` is
     /// the resolved spacing inserted between two adjacent children.
     ///
     /// Measuring requires every child to exist, so a child the source has not
@@ -182,58 +210,163 @@ impl FlexLayout {
         };
 
         let mut child_ctx = ctx.clone();
+        let mut measured = Self::measure_children(
+            is_row,
+            max_cross,
+            children,
+            &mut child_ctx,
+        );
+        let has_flex = !measured.flex_weights.is_empty();
+
+        // This phase only operates on contiguous scalar data. It deliberately
+        // does not borrow or inspect a child, so a future numeric kernel can
+        // replace it without crossing the dynamic element boundary.
+        Self::resolve_flex_space(
+            max_main,
+            measured.sized_main,
+            total_gap,
+            &mut measured.flex_weights,
+        );
+        Self::measure_flex_children(
+            is_row,
+            max_main,
+            max_cross,
+            children,
+            &mut child_ctx,
+            &mut measured,
+        );
+
+        let mut layout = Self::from_sizes(measured.sizes, is_row, gap_main, has_flex);
+        layout.child_metadata = measured.child_metadata;
+        layout.stable_children = measured.stable_children && !layout.has_flex;
+        layout
+    }
+
+    /// Measures regular children and records flex factors without doing any
+    /// numeric flex-space resolution.
+    ///
+    /// This is the dynamic half of [`FlexLayout::build`]. Calls into
+    /// `Element::computed_size` stay here, where trait dispatch and child
+    /// ownership are explicit and cannot leak into the numeric phase.
+    fn measure_children(
+        is_row: bool,
+        max_cross: f32,
+        children: &dyn ChildrenSource,
+        child_ctx: &mut BuildContext,
+    ) -> MeasuredChildren {
+        let len = children.len();
         let mut sizes: Vec<ResolvedSize> = Vec::with_capacity(len);
+        let mut child_metadata = Vec::new();
+        let mut stable_children = true;
         // Allocated on first sight of a flex child; a plain list never pays for
         // it.
-        let mut weights: Vec<f32> = Vec::new();
+        let mut flex_weights: Vec<f32> = Vec::new();
         let mut sized_main: f32 = 0.0;
 
         for index in 0..len {
             let Some(child) = children.get(index) else {
+                stable_children = false;
+                child_metadata.clear();
                 sizes.push(ResolvedSize::default());
                 continue;
             };
+            if stable_children && child.is_layout_stable() {
+                child_metadata.push((child.id(), child.subtree_generation()));
+            } else if stable_children {
+                stable_children = false;
+                child_metadata.clear();
+            }
             if let Some(flex) = child.flex() {
-                if weights.is_empty() {
-                    weights = vec![NOT_FLEX; len];
+                if flex_weights.is_empty() {
+                    flex_weights = vec![NOT_FLEX; len];
                 }
-                weights[index] = flex.max(0.0);
+                flex_weights[index] = flex.max(0.0);
                 sizes.push(ResolvedSize::default());
                 continue;
             }
 
             set_main(&mut child_ctx.box_constraint, is_row, f32::MAX);
             set_cross(&mut child_ctx.box_constraint, is_row, max_cross);
-            let size = child.computed_size(&child_ctx);
+            let size = child.computed_size(child_ctx);
             sized_main += main_of(size, is_row);
             sizes.push(size);
         }
 
-        if !weights.is_empty() {
-            let shares = if max_main == f32::MAX {
-                vec![f32::MAX; len]
-            } else {
-                distribute_flex_space((max_main - sized_main - total_gap).max(0.0), &weights)
-            };
+        MeasuredChildren {
+            sizes,
+            flex_weights,
+            sized_main,
+            child_metadata,
+            stable_children,
+        }
+    }
 
-            for index in 0..len {
-                if weights[index] < 0.0 {
-                    continue;
-                }
-                let Some(child) = children.get(index) else {
-                    continue;
-                };
-                set_main(&mut child_ctx.box_constraint, is_row, shares[index]);
-                set_cross(&mut child_ctx.box_constraint, is_row, max_cross);
-                let mut size = child.computed_size(&child_ctx);
-                if weights[index] > 0.0 && shares[index] != f32::MAX {
-                    set_main_of(&mut size, is_row, shares[index]);
-                }
-                sizes[index] = size;
-            }
+    /// Resolves flex factors into main-axis shares using only scalar data.
+    #[inline]
+    fn resolve_flex_space(
+        max_main: f32,
+        sized_main: f32,
+        total_gap: f32,
+        flex_weights: &mut [f32],
+    ) {
+        if flex_weights.is_empty() {
+            return;
         }
 
-        Self::from_sizes(sizes, is_row, gap_main, !weights.is_empty())
+        if max_main == f32::MAX {
+            for weight in flex_weights {
+                if *weight > 0.0 {
+                    *weight = f32::MAX;
+                }
+            }
+        } else {
+            distribute_flex_space_in_place(
+                (max_main - sized_main - total_gap).max(0.0),
+                flex_weights,
+            );
+        }
+    }
+
+    /// Measures flex children after their scalar shares have been resolved.
+    ///
+    /// The second set of `computed_size` calls remains dynamic by design. Only
+    /// the share calculation above is a candidate for a numeric kernel.
+    fn measure_flex_children(
+        is_row: bool,
+        max_main: f32,
+        max_cross: f32,
+        children: &dyn ChildrenSource,
+        child_ctx: &mut BuildContext,
+        measured: &mut MeasuredChildren,
+    ) {
+        if measured.flex_weights.is_empty() {
+            return;
+        }
+
+        for index in 0..measured.sizes.len() {
+            let encoded_weight = measured.flex_weights[index];
+            if encoded_weight < 0.0 {
+                continue;
+            }
+            let Some(child) = children.get(index) else {
+                continue;
+            };
+            // Negative zero marks a zero-weight flex child. It still gets
+            // a zero constraint, but must not overwrite its intrinsic
+            // measured size with `set_main_of`.
+            let share = if max_main == f32::MAX && encoded_weight == 0.0 {
+                f32::MAX
+            } else {
+                encoded_weight
+            };
+            set_main(&mut child_ctx.box_constraint, is_row, share);
+            set_cross(&mut child_ctx.box_constraint, is_row, max_cross);
+            let mut size = child.computed_size(child_ctx);
+            if !encoded_weight.is_sign_negative() && share != f32::MAX {
+                set_main_of(&mut size, is_row, share);
+            }
+            measured.sizes[index] = size;
+        }
     }
 
     /// Builds the table for a list whose children all occupy `main` along the
@@ -306,6 +439,8 @@ impl FlexLayout {
             sizes: vec![size],
             stride: Some(stride),
             len,
+            child_metadata: Vec::new(),
+            stable_children: false,
             total: sized(main_total as f32, cross, is_row),
             has_flex: false,
             origin,
@@ -341,6 +476,8 @@ impl FlexLayout {
                 sizes,
                 stride: Some(stride),
                 len,
+                child_metadata: Vec::new(),
+                stable_children: false,
                 total: sized(main_total as f32, cross_max, is_row),
                 has_flex,
                 origin: Origin::Measured,
@@ -365,6 +502,8 @@ impl FlexLayout {
             sizes,
             stride: None,
             len,
+            child_metadata: Vec::new(),
+            stable_children: false,
             total: sized(main_total as f32, cross_max, is_row),
             has_flex,
             origin: Origin::Measured,
@@ -380,6 +519,35 @@ impl FlexLayout {
     #[inline]
     pub(crate) fn has_flex(&self) -> bool {
         self.has_flex
+    }
+
+    /// Whether every direct child reported a size that can survive an
+    /// unrelated element-tree generation change.
+    #[inline]
+    pub(crate) fn can_reuse_stable_children(&self) -> bool {
+        self.stable_children
+            && !self.has_flex
+            && self.child_metadata.len() == self.len
+    }
+
+    /// Returns whether the stable direct-child metadata still describes
+    /// `children` after a generation change.
+    pub(crate) fn stable_children_match(&self, children: &dyn ChildrenSource) -> bool {
+        if !self.can_reuse_stable_children() || children.len() != self.len {
+            return false;
+        }
+
+        for index in 0..self.len {
+            let Some(child) = children.get(index) else {
+                return false;
+            };
+            let (id, generation) = self.child_metadata[index];
+            if child.id() != id || child.subtree_generation() != generation
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// Whether the table was derived from a declared item extent.
@@ -614,7 +782,44 @@ struct CachedTable {
     constraint: BoxConstraint,
     scale_bits: u32,
     generation: u64,
+    layout_generation: u64,
     layout: Rc<FlexLayout>,
+}
+
+/// The order in which a painted child range should be visited.
+#[derive(Clone)]
+pub(crate) enum LayerOrder {
+    /// Every child in the range is on the default layer, so the range can be
+    /// visited directly without allocating an order table.
+    Unlayered,
+    /// Children sorted from the lowest layer to the highest layer.
+    Sorted(Rc<[(u32, usize)]>),
+}
+
+impl LayerOrder {
+    /// Visits the indices in paint order, avoiding an order allocation for an
+    /// unlayered range.
+    #[inline]
+    pub(crate) fn visit(&self, range: Range<usize>, mut visitor: impl FnMut(usize)) {
+        match self {
+            Self::Unlayered => {
+                for index in range {
+                    visitor(index);
+                }
+            }
+            Self::Sorted(order) => {
+                for &(_, index) in order.iter() {
+                    visitor(index);
+                }
+            }
+        }
+    }
+}
+
+struct CachedLayerOrder {
+    generation: u64,
+    range: (usize, usize),
+    order: LayerOrder,
 }
 
 /// Holds one flex container's [`FlexLayout`] between frames.
@@ -632,12 +837,15 @@ struct CachedTable {
 /// waited on — retires it. A container that itself never rebuilt would
 /// otherwise keep reporting the extent its content had before the swap, and a
 /// scroll view above it would never learn that there is something to scroll.
+/// The table also carries the layout-invalidation generation, so an explicit
+/// resize/layout invalidation retires it without walking the child list.
 ///
 /// A declared or predicted table is kept across generations, see
 /// [`FlexLayout::describes_measured_children`].
 pub(crate) struct FlexLayoutCache {
     table: UnsafeCell<Option<CachedTable>>,
     painted: Cell<Option<(usize, usize)>>,
+    paint_order: UnsafeCell<Option<CachedLayerOrder>>,
 }
 
 impl FlexLayoutCache {
@@ -647,6 +855,7 @@ impl FlexLayoutCache {
         Self {
             table: UnsafeCell::new(None),
             painted: Cell::new(None),
+            paint_order: UnsafeCell::new(None),
         }
     }
 
@@ -661,8 +870,33 @@ impl FlexLayoutCache {
         if cached.constraint != constraint || cached.scale_bits != scale_bits {
             return None;
         }
+        if cached.layout_generation != aimer_widget::layout_invalidation_generation() {
+            return None;
+        }
         if cached.generation != aimer_widget::element_tree_generation()
             && cached.layout.describes_measured_children()
+        {
+            return None;
+        }
+        Some(Rc::clone(&cached.layout))
+    }
+
+    /// Returns a measured table whose generation is stale but whose children
+    /// may still be generation-independent.
+    #[inline]
+    pub(crate) fn get_stale_stable(
+        &self,
+        constraint: BoxConstraint,
+        scale_bits: u32,
+    ) -> Option<Rc<FlexLayout>> {
+        let slot = unsafe { &*self.table.get() };
+        let cached = slot.as_ref()?;
+        if cached.constraint != constraint
+            || cached.scale_bits != scale_bits
+            || cached.layout_generation != aimer_widget::layout_invalidation_generation()
+            || cached.generation == aimer_widget::element_tree_generation()
+            || !cached.layout.describes_measured_children()
+            || !cached.layout.can_reuse_stable_children()
         {
             return None;
         }
@@ -677,8 +911,58 @@ impl FlexLayoutCache {
             constraint,
             scale_bits,
             generation: aimer_widget::element_tree_generation(),
+            layout_generation: aimer_widget::layout_invalidation_generation(),
             layout,
         });
+    }
+
+    /// Returns the cached paint order for `range`, rebuilding it only when the
+    /// range or element-tree generation changes.
+    ///
+    /// Layer is structural element state: a generated child replacement
+    /// advances the element-tree generation, while scrolling a windowed list
+    /// changes the painted range. Those two keys make reusing the order safe
+    /// without rescanning every child's layer on every frame.
+    #[inline]
+    pub(crate) fn cached_layer_order(
+        &self,
+        range: Range<usize>,
+        mut layer_of: impl FnMut(usize) -> Option<u32>,
+    ) -> LayerOrder {
+        let generation = aimer_widget::element_tree_generation();
+        let key = (range.start, range.end);
+        let cached = unsafe { &*self.paint_order.get() };
+        if let Some(cached) = cached.as_ref()
+            && cached.generation == generation
+            && cached.range == key
+        {
+            return cached.order.clone();
+        }
+
+        let mut order = Vec::with_capacity(range.len().min(64));
+        let mut layered = false;
+        for index in range {
+            let Some(layer) = layer_of(index) else {
+                continue;
+            };
+            layered |= layer != 0;
+            order.push((layer, index));
+        }
+
+        let order = if layered {
+            order.sort_by_key(|(layer, _)| *layer);
+            LayerOrder::Sorted(Rc::from(order.into_boxed_slice()))
+        } else {
+            LayerOrder::Unlayered
+        };
+
+        let slot = unsafe { &mut *self.paint_order.get() };
+        *slot = Some(CachedLayerOrder {
+            generation,
+            range: key,
+            order: order.clone(),
+        });
+        order
     }
 
     /// Takes over the table and painted range of the cache this one replaces.
@@ -709,6 +993,12 @@ impl FlexLayoutCache {
         if self.painted.get().is_none() {
             self.painted.set(old.painted.get());
         }
+        // The replacement may contain different layer-bearing children even
+        // when its layout table can be adopted. Recompute paint order on its
+        // first draw instead of carrying an order for the old elements.
+        unsafe {
+            *self.paint_order.get() = None;
+        }
     }
 
     /// Drops the table and the painted range.
@@ -716,6 +1006,7 @@ impl FlexLayoutCache {
     pub(crate) fn invalidate(&self) {
         unsafe {
             *self.table.get() = None;
+            *self.paint_order.get() = None;
         }
         self.painted.set(None);
     }
@@ -812,10 +1103,184 @@ mod tests {
     //! Tests for the cached main-axis table built in
     //! [`flex_layout`](super).
 
+    use std::cell::Cell;
+    use std::hint::black_box;
+    use std::time::Instant;
+
     use super::*;
     use crate::flex::raw_flex::justify_distribution;
     use crate::flex::JustifyContent;
 
+
+    #[test]
+    fn cached_layer_order_reuses_a_sorted_range() {
+        let cache = FlexLayoutCache::new();
+        let layers = [4, 1, 3, 2];
+        let calls = Cell::new(0);
+
+        let first = cache.cached_layer_order(0..layers.len(), |index| {
+            calls.set(calls.get() + 1);
+            Some(layers[index])
+        });
+        let LayerOrder::Sorted(order) = first else {
+            panic!("nonzero layers must produce a sorted order");
+        };
+        assert_eq!(order.as_ref(), &[(1, 1), (2, 3), (3, 2), (4, 0)]);
+        assert_eq!(calls.get(), layers.len());
+
+        let second = cache.cached_layer_order(0..layers.len(), |_| {
+            panic!("a matching generation and range must use the cache")
+        });
+        let LayerOrder::Sorted(order) = second else {
+            panic!("the cached result must retain its layer state");
+        };
+        assert_eq!(order.as_ref(), &[(1, 1), (2, 3), (3, 2), (4, 0)]);
+    }
+
+    #[test]
+    fn cached_layer_order_invalidates_with_the_layout_cache() {
+        let cache = FlexLayoutCache::new();
+        let calls = Cell::new(0);
+
+        let first = cache.cached_layer_order(0..3, |index| {
+            calls.set(calls.get() + 1);
+            Some(index as u32 + 1)
+        });
+        assert!(matches!(first, LayerOrder::Sorted(_)));
+        assert_eq!(calls.get(), 3);
+
+        cache.invalidate();
+        let second = cache.cached_layer_order(0..3, |index| {
+            calls.set(calls.get() + 1);
+            Some(index as u32 + 1)
+        });
+        assert!(matches!(second, LayerOrder::Sorted(_)));
+        assert_eq!(calls.get(), 6);
+
+        let unlayered = cache.cached_layer_order(3..6, |_| Some(0));
+        assert!(matches!(unlayered, LayerOrder::Unlayered));
+    }
+
+    #[test]
+    #[ignore = "manual numeric-kernel profile"]
+    fn profile_size_table_construction() {
+        const MEASURED: usize = 64;
+        const WARMUP: usize = 16;
+        const ROUNDS: usize = 7;
+
+        let cases: [(&str, Vec<ResolvedSize>); 4] = [
+            ("uniform-256", (0..256).map(|_| sized(800.0, 20.0, false)).collect()),
+            (
+                "uniform-2048",
+                (0..2_048).map(|_| sized(800.0, 20.0, false)).collect(),
+            ),
+            (
+                "varying-256",
+                (0..256)
+                    .map(|index| sized(800.0, 20.0 + (index % 5) as f32, false))
+                    .collect(),
+            ),
+            (
+                "varying-2048",
+                (0..2_048)
+                    .map(|index| sized(800.0, 20.0 + (index % 5) as f32, false))
+                    .collect(),
+            ),
+        ];
+
+        for (name, template) in cases {
+            let mut samples = Vec::with_capacity(ROUNDS);
+            let mut checksum = 0.0;
+            for _ in 0..ROUNDS {
+                let inputs: Vec<_> = (0..WARMUP + MEASURED)
+                    .map(|_| template.clone())
+                    .collect();
+                let mut inputs = inputs.into_iter();
+
+                for _ in 0..WARMUP {
+                    let layout = black_box(FlexLayout::from_sizes(
+                        black_box(inputs.next().expect("warmup input")),
+                        false,
+                        0.0,
+                        false,
+                    ));
+                    checksum = black_box(checksum + layout.total().height);
+                }
+
+                let start = Instant::now();
+                for _ in 0..MEASURED {
+                    let layout = black_box(FlexLayout::from_sizes(
+                        black_box(inputs.next().expect("measured input")),
+                        false,
+                        0.0,
+                        false,
+                    ));
+                    checksum = black_box(checksum + layout.total().height);
+                }
+                samples.push(start.elapsed().as_secs_f64() * 1e6 / MEASURED as f64);
+            }
+
+            samples.sort_by(f64::total_cmp);
+            let p50 = samples[ROUNDS / 2];
+            let p95 = samples[(ROUNDS * 95).div_ceil(100) - 1];
+            println!("{name}: p50 {p50:.3} us, p95 {p95:.3} us");
+            assert!(checksum.is_finite());
+        }
+    }
+
+    #[test]
+    fn flex_space_resolution_keeps_non_flex_slots_and_zero_markers() {
+        let mut weights = [NOT_FLEX, 1.0, 0.0, 2.0];
+
+        FlexLayout::resolve_flex_space(600.0, 100.0, 10.0, &mut weights);
+
+        assert_eq!(weights[0], NOT_FLEX);
+        assert!((weights[1] - 163.33333).abs() < 0.001);
+        assert_eq!(weights[2], 0.0);
+        assert!(weights[2].is_sign_negative());
+        assert!((weights[3] - 326.66666).abs() < 0.001);
+    }
+
+    #[test]
+    fn selected_flex_dispatch_preserves_layout_positions_and_sizes() {
+        let mut selected = [NOT_FLEX, 1.0, 0.0, 2.0, 3.0, NOT_FLEX];
+        let mut scalar = selected;
+        let remaining = 1_000.0 - 95.0 - 20.0;
+
+        FlexLayout::resolve_flex_space(1_000.0, 95.0, 20.0, &mut selected);
+        distribute_flex_space_in_place_scalar_reference(remaining, &mut scalar[1..5]);
+
+        let build = |weights: &[f32]| {
+            let regular_sizes = [40.0, 0.0, 0.0, 0.0, 0.0, 55.0];
+            let sizes = weights
+                .iter()
+                .enumerate()
+                .map(|(index, weight)| {
+                    let main = if *weight > 0.0 {
+                        *weight
+                    } else if *weight == 0.0 {
+                        0.0
+                    } else {
+                        regular_sizes[index]
+                    };
+                    sized(main, 24.0 + index as f32, false)
+                })
+                .collect();
+            FlexLayout::from_sizes(sizes, false, 4.0, true)
+        };
+
+        let selected_layout = build(&selected);
+        let scalar_layout = build(&scalar);
+        assert_eq!(selected_layout.len(), scalar_layout.len());
+        assert!((selected_layout.total().height - scalar_layout.total().height).abs() < 1.0e-3);
+
+        for index in 0..selected_layout.len() {
+            let selected_size = selected_layout.size(index);
+            let scalar_size = scalar_layout.size(index);
+            assert!((selected_size.height - scalar_size.height).abs() < 1.0e-3);
+            assert!((selected_layout.offset(index) - scalar_layout.offset(index)).abs() < 1.0e-3);
+        }
+    }
 
     fn column_of(sizes: &[(f32, f32)], gap: f32) -> FlexLayout {
         let sizes = sizes

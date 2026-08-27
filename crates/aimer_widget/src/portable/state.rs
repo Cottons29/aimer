@@ -47,7 +47,9 @@ impl<S> PortableStateHandle<S> {
     #[inline]
     pub(crate) fn queue(&self, mutation: impl FnOnce(&mut S) + 'static) {
         self.mutations.borrow_mut().push_back(Box::new(mutation));
-        self.dirty.set(true);
+        if !self.dirty.replace(true) {
+            crate::components::element::advance_rebuild_invalidation_generation();
+        }
     }
 
     #[inline]

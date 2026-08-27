@@ -62,6 +62,19 @@ pub mod render_ctx {
         }
     }
 
+    /// Whether deferred off-screen text preparation should keep the window
+    /// rendering after this frame.
+    ///
+    /// Off-screen preparation is opportunistic: the next real frame (scroll,
+    /// animation, input, or another state change) prepares whatever has become
+    /// visible. Treating the deferred tail as its own frame source keeps a
+    /// settled page in a render loop while it prepares content the user cannot
+    /// see, which is especially expensive on native debug Metal builds.
+    #[inline]
+    fn should_request_text_preparation_frame(_has_postponed_text_preparation: bool) -> bool {
+        false
+    }
+
     /// Everything downstream of the widget walk: the GPU context and the
     /// renderer.
     ///
@@ -111,13 +124,12 @@ pub mod render_ctx {
             );
             encode.finish(FramePhase::Encode);
 
-            // A frame prepares text beyond the viewport edges so a line is
-            // ready before it scrolls in, and stops when its budget runs out.
-            // What it stopped short of is invisible, so this frame is correct
-            // as it stands — but nothing else will ask for the rest, and the
-            // arrival frame would pay for it. One more frame finishes it while
-            // the user is still reading.
-            if self.renderer.has_postponed_text_preparation() {
+            // Deferred off-screen text is advisory and must not keep a settled
+            // page repainting. A later scroll or other real frame will prepare
+            // the text that has become visible.
+            if should_request_text_preparation_frame(
+                self.renderer.has_postponed_text_preparation(),
+            ) {
                 aimer_events::window::request_animation_frame();
             }
 
@@ -409,6 +421,11 @@ pub mod render_ctx {
                 api.render_frame(|_, _, _| unreachable!()),
                 PresentOutcome::Dropped
             );
+        }
+
+        #[test]
+        fn postponed_off_screen_text_does_not_schedule_an_idle_frame() {
+            assert!(!should_request_text_preparation_frame(true));
         }
     }
 }

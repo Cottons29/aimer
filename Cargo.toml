@@ -57,6 +57,8 @@ tokio = { workspace = true, features = ["rt", "time"] }
 markdown = []
 provider = []
 svg = []
+# Benchmark control: compare the release flex path with its scalar kernel.
+force-scalar = ["aimer_flex/force-scalar"]
 # Present frames from a dedicated raster thread. Off by default — see the
 # feature notes in `aimer_quiver/Cargo.toml`.
 raster-thread = ["aimer_quiver/raster-thread"]

@@ -1,9 +1,13 @@
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use aimer_utils::debug;
 
 use crate::custom_pipeline::{CustomPipeline, CustomPipelineSlot, RenderContext};
-use crate::draw_cmd::{DrawCommand, DrawList};
+use crate::draw_cmd::{
+    DrawCommand, DrawList, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION,
+    RetainedLayerContent,
+};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::pipeline_cache;
 use crate::rect_pipeline::{RectInstance, RectPipeline};
@@ -69,6 +73,14 @@ fn apply_alpha(mut color: [f32; 4], alpha: f32) -> [f32; 4] {
     color
 }
 
+#[inline]
+fn transform_scales(transform: &Mat3) -> (f32, f32) {
+    (
+        (transform.cols[0][0].powi(2) + transform.cols[0][1].powi(2)).sqrt(),
+        (transform.cols[1][0].powi(2) + transform.cols[1][1].powi(2)).sqrt(),
+    )
+}
+
 fn transform_text_shadow(
     shadow: TextShadowRequest,
     transform: &Mat3,
@@ -107,12 +119,11 @@ fn build_fill_rect_instances(
     outline_width: [f32; 4],
     outline_color: Color,
     current_transform: &Mat3,
+    scale_x: f32,
+    scale_y: f32,
     clip: Option<&ClipState>,
     alpha: f32,
 ) -> (RectInstance, Option<RectInstance>) {
-    let sx = (current_transform.cols[0][0].powi(2) + current_transform.cols[0][1].powi(2)).sqrt();
-    let sy = (current_transform.cols[1][0].powi(2) + current_transform.cols[1][1].powi(2)).sqrt();
-
     let ol = outline_width[3]; // left
     let or = outline_width[1]; // right
     let ot = outline_width[0]; // top
@@ -127,14 +138,14 @@ fn build_fill_rect_instances(
 
     let mut scaled_br = border_radius;
     for r in &mut scaled_br {
-        *r *= sx;
-    } // Assuming uniform scale for simplicity, or use sx
+        *r *= scale_x;
+    } // Assuming uniform scale for simplicity, or use scale_x
 
     let mut scaled_bw = border_width;
-    scaled_bw[0] *= sy; // top
-    scaled_bw[1] *= sx; // right
-    scaled_bw[2] *= sy; // bottom
-    scaled_bw[3] *= sx; // left
+    scaled_bw[0] *= scale_y; // top
+    scaled_bw[1] *= scale_x; // right
+    scaled_bw[2] *= scale_y; // bottom
+    scaled_bw[3] *= scale_x; // left
 
     let clip_rect = clip_to_array(clip);
     let clip_radii = clip_border_radius(clip);
@@ -147,10 +158,10 @@ fn build_fill_rect_instances(
             .transform_point(rect.x + rect.width + or, rect.y + rect.height + ob);
 
         let mut scaled_ow = outline_width;
-        scaled_ow[0] *= sy; // top
-        scaled_ow[1] *= sx; // right
-        scaled_ow[2] *= sy; // bottom
-        scaled_ow[3] *= sx; // left
+        scaled_ow[0] *= scale_y; // top
+        scaled_ow[1] *= scale_x; // right
+        scaled_ow[2] *= scale_y; // bottom
+        scaled_ow[3] *= scale_x; // left
 
         RectInstance {
             position: [ep1x.min(ep2x), ep1y.min(ep2y)],
@@ -202,6 +213,10 @@ enum ResolvedKind {
         texture_id: u32,
         instance: ImageInstance,
     },
+    Layer {
+        layer_id: u64,
+        instance: ImageInstance,
+    },
     /// Index into `text_requests` (and the text pipeline's per-request ranges).
     /// Kept in draw order so text is painted at its own z-position instead of
     /// on top of everything at the end.
@@ -247,6 +262,8 @@ fn resolve_svg_item(
 pub struct RendererMemoryStats {
     pub image_texture_count: usize,
     pub image_texture_bytes: u64,
+    pub retained_layer_count: usize,
+    pub retained_layer_bytes: u64,
     pub glyph_atlas_bytes: u64,
     pub glyph_bitmap_cache_entries: usize,
     pub glyph_bitmap_cache_bytes: usize,
@@ -263,6 +280,21 @@ struct MultisampleTarget {
     width: u32,
     height: u32,
     sample_count: u32,
+}
+
+const RETAINED_LAYER_CACHE_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
+const RETAINED_LAYER_IDLE_FRAMES: u64 = 120;
+
+struct RetainedLayer {
+    content: Arc<RetainedLayerContent>,
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
+    bytes: u64,
+    last_used_frame: u64,
+    is_srgb: bool,
 }
 
 impl MultisampleTarget {
@@ -302,6 +334,26 @@ impl MultisampleTarget {
     }
 }
 
+fn retained_layer_dimensions(rect: Rect, max_dimension: u32) -> Option<(u32, u32)> {
+    if !rect.width.is_finite()
+        || !rect.height.is_finite()
+        || rect.width <= 0.0
+        || rect.height <= 0.0
+        || max_dimension == 0
+    {
+        return None;
+    }
+
+    let width = rect.width.ceil().max(1.0) as u64;
+    let height = rect.height.ceil().max(1.0) as u64;
+    let bytes = width.checked_mul(height)?.checked_mul(4)?;
+    let max_dimension = max_dimension.min(RETAINED_LAYER_MAX_DIMENSION);
+    (width <= u64::from(max_dimension)
+        && height <= u64::from(max_dimension)
+        && bytes <= RETAINED_LAYER_MAX_BYTES)
+        .then_some((width as u32, height as u32))
+}
+
 pub struct Renderer {
     pub rect_pipeline: RectPipeline,
     pub text_pipeline: TextPipelineV2,
@@ -328,6 +380,10 @@ pub struct Renderer {
     textures_to_remove: Vec<u32>,
     multisample_target: Option<MultisampleTarget>,
     antialiasing: crate::AntiAlias,
+    retained_layers: HashMap<u64, RetainedLayer>,
+    active_retained_layers: HashSet<u64>,
+    retained_layer_candidates: Vec<(u64, u64, u64)>,
+    frame_index: u64,
 }
 
 impl Renderer {
@@ -364,6 +420,10 @@ impl Renderer {
             textures_to_remove: Vec::new(),
             multisample_target: None,
             antialiasing,
+            retained_layers: HashMap::new(),
+            active_retained_layers: HashSet::new(),
+            retained_layer_candidates: Vec::new(),
+            frame_index: 0,
         };
 
         debug!(
@@ -391,6 +451,12 @@ impl Renderer {
         RendererMemoryStats {
             image_texture_count: self.image_pipeline.texture_count(),
             image_texture_bytes: self.image_pipeline.texture_bytes(),
+            retained_layer_count: self.retained_layers.len(),
+            retained_layer_bytes: self
+                .retained_layers
+                .values()
+                .map(|layer| layer.bytes)
+                .sum(),
             glyph_atlas_bytes: self.text_pipeline.glyph_atlas_bytes(),
             glyph_bitmap_cache_entries: self.text_pipeline.cached_glyph_count(),
             glyph_bitmap_cache_bytes: self.text_pipeline.glyph_bitmap_cache_bytes(),
@@ -485,6 +551,168 @@ impl Renderer {
         is_srgb: bool,
         draw_list: &DrawList,
     ) {
+        self.frame_index = self.frame_index.saturating_add(1);
+        self.active_retained_layers.clear();
+        self.prepare_retained_layers(device, queue, is_srgb, draw_list);
+        self.render_impl(device, queue, view, width, height, is_srgb, draw_list);
+        self.reclaim_retained_layers();
+    }
+
+    fn prepare_retained_layers(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        is_srgb: bool,
+        draw_list: &DrawList,
+    ) {
+        for command in draw_list.commands() {
+            let DrawCommand::RetainedLayer {
+                layer_id,
+                rect,
+                content,
+            } = command
+            else {
+                continue;
+            };
+
+            self.active_retained_layers.insert(*layer_id);
+            self.prepare_retained_layer(
+                device, queue, is_srgb, *layer_id, *rect, content,
+            );
+        }
+    }
+
+    fn prepare_retained_layer(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        is_srgb: bool,
+        layer_id: u64,
+        rect: Rect,
+        content: &Arc<RetainedLayerContent>,
+    ) -> bool {
+        let Some((layer_width, layer_height)) = retained_layer_dimensions(
+            rect,
+            device.limits().max_texture_dimension_2d,
+        ) else {
+            return false;
+        };
+
+        let same_layer = self.retained_layers.get(&layer_id).is_some_and(|layer| {
+            layer.width == layer_width
+                && layer.height == layer_height
+                && layer.is_srgb == is_srgb
+                && Arc::ptr_eq(&layer.content, content)
+        });
+        if same_layer {
+            if let Some(layer) = self.retained_layers.get_mut(&layer_id) {
+                layer.last_used_frame = self.frame_index;
+            }
+            return true;
+        }
+
+        let replace_target = self
+            .retained_layers
+            .get(&layer_id)
+            .is_none_or(|layer| layer.width != layer_width || layer.height != layer_height);
+        if replace_target {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("retained scroll layer"),
+                size: wgpu::Extent3d {
+                    width: layer_width,
+                    height: layer_height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let bind_group = self
+                .image_pipeline
+                .create_external_bind_group(device, &view);
+            self.retained_layers.insert(
+                layer_id,
+                RetainedLayer {
+                    content: content.clone(),
+                    _texture: texture,
+                    view,
+                    bind_group,
+                    width: layer_width,
+                    height: layer_height,
+                    bytes: layer_width as u64 * layer_height as u64 * 4,
+                    last_used_frame: self.frame_index,
+                    is_srgb,
+                },
+            );
+        } else if let Some(layer) = self.retained_layers.get_mut(&layer_id) {
+            layer.content = content.clone();
+            layer.last_used_frame = self.frame_index;
+            layer.is_srgb = is_srgb;
+        }
+
+        let Some(view) = self
+            .retained_layers
+            .get(&layer_id)
+            .map(|layer| layer.view.clone())
+        else {
+            return false;
+        };
+        let layer_draw_list = content.to_draw_list();
+        self.render_impl(
+            device,
+            queue,
+            &view,
+            layer_width,
+            layer_height,
+            is_srgb,
+            &layer_draw_list,
+        );
+        true
+    }
+
+    fn reclaim_retained_layers(&mut self) {
+        let mut total_bytes = self
+            .retained_layers
+            .values()
+            .map(|layer| layer.bytes)
+            .sum::<u64>();
+        self.retained_layer_candidates.clear();
+        self.retained_layer_candidates.extend(
+            self.retained_layers
+                .iter()
+                .filter(|(id, _)| !self.active_retained_layers.contains(id))
+                .map(|(&id, layer)| (id, layer.last_used_frame, layer.bytes)),
+        );
+        self.retained_layer_candidates
+            .sort_unstable_by_key(|(_, last_used, _)| *last_used);
+
+        for (layer_id, last_used_frame, bytes) in self.retained_layer_candidates.iter().copied() {
+            let idle = self.frame_index.saturating_sub(last_used_frame);
+            if idle < RETAINED_LAYER_IDLE_FRAMES && total_bytes <= RETAINED_LAYER_CACHE_BUDGET_BYTES
+            {
+                break;
+            }
+            if self.retained_layers.remove(&layer_id).is_some() {
+                total_bytes = total_bytes.saturating_sub(bytes);
+            }
+        }
+    }
+
+    fn render_impl(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        draw_list: &DrawList,
+    ) {
         self.transform_stack.clear();
         self.clip_stack.clear();
         self.text_requests.clear();
@@ -499,6 +727,7 @@ impl Renderer {
         }
 
         let mut current_transform = Mat3::identity();
+        let mut current_scales = (1.0, 1.0);
         let mut alpha_state = AlphaState::new();
         // Canvas-level italic state applied to plain `DrawText` (rich text carries
         // italic per span). Reset each frame; toggled by `SetItalic`.
@@ -514,10 +743,12 @@ impl Renderer {
                     self.transform_stack.push(current_transform);
                     alpha_state.save();
                     current_transform = matrix.pixel_aligned();
+                    current_scales = transform_scales(&current_transform);
                 }
                 DrawCommand::PopTransform => {
                     if let Some(prev) = self.transform_stack.pop() {
                         current_transform = prev;
+                        current_scales = transform_scales(&current_transform);
                     }
                     alpha_state.restore();
                 }
@@ -528,9 +759,7 @@ impl Renderer {
                     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
                     let (p2x, p2y) = current_transform
                         .transform_point(rect.x + rect.width, rect.y + rect.height);
-                    let sx = (current_transform.cols[0][0].powi(2)
-                        + current_transform.cols[0][1].powi(2))
-                    .sqrt();
+                    let (sx, _) = current_scales;
 
                     let new_rect = Rect::new(
                         p1x.min(p2x),
@@ -582,6 +811,8 @@ impl Renderer {
                         *outline_width,
                         *outline_color,
                         &current_transform,
+                        current_scales.0,
+                        current_scales.1,
                         self.clip_stack.last(),
                         alpha_state.current(),
                     );
@@ -731,12 +962,7 @@ impl Renderer {
                     // The band is authored in local coordinates; transform its
                     // top-left and scale the extents so decoration follows any
                     // active scale/translation just like the text it underlines.
-                    let sx = (current_transform.cols[0][0].powi(2)
-                        + current_transform.cols[0][1].powi(2))
-                    .sqrt();
-                    let sy = (current_transform.cols[1][0].powi(2)
-                        + current_transform.cols[1][1].powi(2))
-                    .sqrt();
+                    let (sx, sy) = current_scales;
                     let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
                     let (p2x, p2y) = current_transform
                         .transform_point(rect.x + rect.width, rect.y + rect.height);
@@ -777,6 +1003,7 @@ impl Renderer {
                 }
                 DrawCommand::SetTransform { matrix } => {
                     current_transform = matrix.pixel_aligned();
+                    current_scales = transform_scales(&current_transform);
                 }
                 DrawCommand::SetAlpha { alpha } => {
                     alpha_state.set(*alpha);
@@ -808,6 +1035,30 @@ impl Renderer {
                             },
                         },
                     });
+                }
+                DrawCommand::RetainedLayer {
+                    layer_id, rect, ..
+                } => {
+                    let (p1x, p1y) = current_transform.transform_point(rect.x, rect.y);
+                    let (p2x, p2y) = current_transform
+                        .transform_point(rect.x + rect.width, rect.y + rect.height);
+                    if self.retained_layers.contains_key(layer_id) {
+                        self.resolved.push(ResolvedCmd {
+                            kind: ResolvedKind::Layer {
+                                layer_id: *layer_id,
+                                instance: ImageInstance {
+                                    position: [p1x.min(p2x), p1y.min(p2y)],
+                                    size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
+                                    uv_offset: [0.0, 0.0],
+                                    uv_scale: [1.0, 1.0],
+                                    clip_rect: clip_to_array(self.clip_stack.last()),
+                                    clip_border_radius:
+                                        clip_border_radius(self.clip_stack.last()),
+                                    alpha: alpha_state.current(),
+                                },
+                            },
+                        });
+                    }
                 }
                 DrawCommand::LoadImage {
                     bytes,
@@ -850,12 +1101,7 @@ impl Renderer {
                     inset,
                     side_params,
                 } => {
-                    let sx = (current_transform.cols[0][0].powi(2)
-                        + current_transform.cols[0][1].powi(2))
-                    .sqrt();
-                    let sy = (current_transform.cols[1][0].powi(2)
-                        + current_transform.cols[1][1].powi(2))
-                    .sqrt();
+                    let (sx, sy) = current_scales;
 
                     let offset_x = shadow_params[0];
                     let offset_y = shadow_params[1];
@@ -1030,7 +1276,9 @@ impl Renderer {
             for cmd in &self.resolved {
                 match cmd.kind {
                     ResolvedKind::Rect(_) => total_rect_instances += 1,
-                    ResolvedKind::Image { .. } => total_image_instances += 1,
+                    ResolvedKind::Image { .. } | ResolvedKind::Layer { .. } => {
+                        total_image_instances += 1
+                    }
                     _ => {}
                 }
             }
@@ -1097,6 +1345,33 @@ impl Renderer {
                         }
                         current_texture_id = Some(*texture_id);
                         image_batch.push(*instance);
+                    }
+                    ResolvedKind::Layer {
+                        layer_id,
+                        instance,
+                    } => {
+                        self.rect_pipeline.flush(&mut pass);
+                        if let Some(tid) = current_texture_id.take()
+                            && !image_batch.is_empty()
+                        {
+                            self.image_pipeline.draw_batch(
+                                device,
+                                queue,
+                                &mut pass,
+                                tid,
+                                &image_batch,
+                            );
+                            image_batch.clear();
+                        }
+                        if let Some(layer) = self.retained_layers.get(layer_id) {
+                            self.image_pipeline.draw_external_batch(
+                                device,
+                                queue,
+                                &mut pass,
+                                &layer.bind_group,
+                                std::slice::from_ref(instance),
+                            );
+                        }
                     }
                     ResolvedKind::Text(index) => {
                         let index = *index;
@@ -1193,9 +1468,27 @@ impl Renderer {
         self.rect_pipeline.end_frame(queue);
         self.image_pipeline.end_frame(queue);
 
+        // Image bind groups stay alive through the submitted pass. Select old
+        // cache entries now, then release them only after submission and mark
+        // their canvas metadata stale so source-backed widgets can reload.
+        let auto_evictions = self
+            .image_pipeline
+            .eviction_candidates()
+            .into_iter()
+            .filter(|id| {
+                !self.textures_to_remove.contains(id)
+                    && !draw_list.has_live_texture_reference(*id)
+            })
+            .collect::<Vec<_>>();
+        self.textures_to_remove
+            .extend(auto_evictions.iter().copied());
+
         queue.submit(std::iter::once(encoder.finish()));
         for texture_id in self.textures_to_remove.drain(..) {
             self.image_pipeline.remove_texture(texture_id);
+        }
+        for texture_id in auto_evictions {
+            draw_list.mark_texture_evicted(texture_id);
         }
     }
 }
@@ -1208,7 +1501,9 @@ impl Drop for Renderer {
 
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
     use std::sync::Arc;
+    use std::time::Instant;
 
     use super::*;
     use crate::svg::{SvgScene, SvgViewport};
@@ -1265,6 +1560,15 @@ mod tests {
     }
 
     #[test]
+    fn transform_scales_matches_transformed_axes() {
+        let transform = Mat3::rotate(0.23).mul(&Mat3::scale(1.1, 0.8));
+        let (scale_x, scale_y) = transform_scales(&transform);
+
+        assert!((scale_x - 1.1).abs() < 1e-5);
+        assert!((scale_y - 0.8).abs() < 1e-5);
+    }
+
+    #[test]
     fn render_dimensions_require_nonzero_width_and_height() {
         assert!(has_renderable_dimensions(1, 1));
         assert!(!has_renderable_dimensions(0, 1));
@@ -1301,6 +1605,8 @@ mod tests {
             [0.0; 4],
             Color::red(),
             &Mat3::identity(),
+            1.0,
+            1.0,
             None,
             1.0,
         );
@@ -1325,6 +1631,8 @@ mod tests {
             outline_width,
             Color::red(),
             &Mat3::identity(),
+            1.0,
+            1.0,
             None,
             1.0,
         );
@@ -1390,5 +1698,131 @@ mod tests {
         assert_eq!(item.clip_rect, [4.0, 5.0, 30.0, 40.0]);
         assert_eq!(item.clip_border_radius, [3.0; 4]);
         assert_eq!(item.opacity, 0.4);
+    }
+
+    #[test]
+    #[ignore = "manual numeric-kernel profile"]
+    fn profile_rect_render_preparation() {
+        const MEASURED: usize = 512;
+        const WARMUP: usize = 128;
+        const ROUNDS: usize = 7;
+
+        let cases = [
+            ("identity-unclipped-256", 256, Mat3::identity(), false, false),
+            (
+                "scaled-clipped-1024",
+                1_024,
+                Mat3::translate(12.0, 18.0).mul(&Mat3::scale(1.25, 0.9)),
+                true,
+                false,
+            ),
+            (
+                "rotated-outlined-2048",
+                2_048,
+                Mat3::translate(42.0, -17.0)
+                    .mul(&Mat3::rotate(0.23))
+                    .mul(&Mat3::scale(1.1, 0.8)),
+                true,
+                true,
+            ),
+        ];
+
+        let mut checksum = 0.0;
+        for (name, count, transform, clipped, outlined) in cases {
+            let rects: Vec<Rect> = (0..count)
+                .map(|index| {
+                    let column = (index % 32) as f32;
+                    let row = (index / 32) as f32;
+                    Rect::new(
+                        column * 19.0 + (index % 3) as f32 * 0.25,
+                        row * 13.0 - (index % 5) as f32 * 0.125,
+                        16.0 + (index % 7) as f32,
+                        10.0 + (index % 11) as f32,
+                    )
+                })
+                .collect();
+            let clip = clipped.then(|| ClipState {
+                rect: Rect::new(4.0, 8.0, 640.0, 480.0),
+                border_radius: [6.0, 7.0, 8.0, 9.0],
+            });
+            let border_radius = [2.0, 3.0, 4.0, 5.0];
+            let border_width = [1.0, 2.0, 1.0, 2.0];
+            let outline_width = if outlined {
+                [1.0, 2.0, 1.5, 2.5]
+            } else {
+                [0.0; 4]
+            };
+            let scales = transform_scales(&transform);
+
+            let mut samples = Vec::with_capacity(ROUNDS);
+            for _ in 0..ROUNDS {
+                for rect in rects.iter().take(WARMUP.min(rects.len())) {
+                    let (main, outline) = build_fill_rect_instances(
+                        *rect,
+                        Color::white(),
+                        border_radius,
+                        border_width,
+                        Color::black(),
+                        outline_width,
+                        Color::red(),
+                        &transform,
+                        scales.0,
+                        scales.1,
+                        clip.as_ref(),
+                        0.8,
+                    );
+                    black_box((main, outline));
+                    checksum = black_box(
+                        checksum
+                            + main.position[0]
+                            + main.position[1]
+                            + main.size[0]
+                            + main.size[1]
+                            + main.color[3]
+                            + outline
+                                .map(|instance| instance.position[0] + instance.size[1])
+                                .unwrap_or(0.0),
+                    );
+                }
+
+                let start = Instant::now();
+                for rect in rects.iter().cycle().take(MEASURED) {
+                    let (main, outline) = build_fill_rect_instances(
+                        *rect,
+                        Color::white(),
+                        border_radius,
+                        border_width,
+                        Color::black(),
+                        outline_width,
+                        Color::red(),
+                        &transform,
+                        scales.0,
+                        scales.1,
+                        clip.as_ref(),
+                        0.8,
+                    );
+                    black_box((main, outline));
+                    checksum = black_box(
+                        checksum
+                            + main.position[0]
+                            + main.position[1]
+                            + main.size[0]
+                            + main.size[1]
+                            + main.color[3]
+                            + outline
+                                .map(|instance| instance.position[0] + instance.size[1])
+                                .unwrap_or(0.0),
+                    );
+                }
+                samples.push(start.elapsed().as_secs_f64() * 1e6 / MEASURED as f64);
+            }
+
+            samples.sort_by(f64::total_cmp);
+            let p50 = samples[ROUNDS / 2];
+            let p95 = samples[(ROUNDS * 95).div_ceil(100) - 1];
+            println!("{name}: p50 {p50:.3} us, p95 {p95:.3} us");
+        }
+
+        assert!(checksum.is_finite());
     }
 }

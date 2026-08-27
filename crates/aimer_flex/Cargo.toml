@@ -9,6 +9,9 @@ portable-guest = [
     "aimer_style/portable-guest",
     "aimer_widget/portable-guest",
 ]
+# Keeps the release benchmark able to compare the optimized kernel with the
+# compiler-optimized scalar implementation on the same workload.
+force-scalar = []
 
 [dependencies]
 aimer_anteros = { workspace = true, optional = true }

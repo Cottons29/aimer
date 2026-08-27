@@ -512,6 +512,12 @@ impl Rebuildable for RawFocusable {
 }
 
 impl EventElement for RawFocusable {
+    /// This wrapper exposes one child through both structural views.
+    #[inline]
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
+
     /// Offers this region as a focus target, unless it is ignored.
     ///
     /// Answering `None` is the whole of [`FocusBehavior::Ignore`]: a target that

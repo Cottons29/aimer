@@ -22,7 +22,7 @@ mod lazy_tests {
     use crate::flex::test_support::{
         CountingChild, ResizingChild, dummy_build_context, replace_a_generated_subtree,
     };
-    use crate::flex::FlexDirection;
+    use crate::flex::{FlexDirection, OverflowBehavior};
 
     const CHILD_COUNT: usize = 100_000;
     const CHILD_HEIGHT: f32 = 80.0;
@@ -109,6 +109,71 @@ mod lazy_tests {
         column.hit_test_children(&mut |_| hit_tested += 1);
 
         assert_eq!(hit_tested, drawn.get());
+    }
+
+    /// A hidden root flex has a finite painting box even when no ancestor
+    /// supplied a visible rectangle. Its child window should therefore stay
+    /// proportional to that box instead of retaining every eager child.
+    #[test]
+    fn hidden_flex_without_visible_rect_culls_children_to_its_bounds() {
+        let measured = Rc::new(Cell::new(0));
+        let drawn = Rc::new(Cell::new(0));
+        let column = tall_column(&measured, &drawn);
+        let ctx = dummy_build_context(200.0, VIEWPORT, None);
+
+        column.draw(&ctx);
+
+        let visible = (VIEWPORT / CHILD_HEIGHT).ceil() as usize + 1;
+        assert!(
+            drawn.get() > 0 && drawn.get() <= visible,
+            "painted {} children for a {VIEWPORT}px hidden flex",
+            drawn.get()
+        );
+
+        let mut hit_tested = 0;
+        column.hit_test_children(&mut |_| hit_tested += 1);
+        assert_eq!(hit_tested, drawn.get());
+    }
+
+    /// An unrelated generated subtree advances the global generation, but it
+    /// must not force a stable child list to measure every child again.
+    #[test]
+    fn stable_children_reuse_their_measured_layout_after_unrelated_rebuild() {
+        let measured = Rc::new(Cell::new(0));
+        let drawn = Rc::new(Cell::new(0));
+        let column = RawFlex::new(
+            FlexDirection::Column,
+            (0..256)
+                .map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, &measured, &drawn))
+                .collect(),
+            "Column",
+        );
+        let ctx = dummy_build_context(200.0, VIEWPORT, Some((0.0, 0.0, 200.0, VIEWPORT)));
+
+        assert_eq!(column.computed_size(&ctx).height, 256.0 * CHILD_HEIGHT);
+        measured.set(0);
+        replace_a_generated_subtree(&ctx);
+
+        assert_eq!(column.computed_size(&ctx).height, 256.0 * CHILD_HEIGHT);
+        assert_eq!(measured.get(), 0);
+    }
+
+    /// Visible overflow is an explicit request to keep children outside the
+    /// flex box in the painting and hit-testing set.
+    #[test]
+    fn visible_flex_without_visible_rect_keeps_overflowing_children() {
+        let measured = Rc::new(Cell::new(0));
+        let drawn = Rc::new(Cell::new(0));
+        let mut column = tall_column(&measured, &drawn);
+        column.overflow_behavior = OverflowBehavior::Visible;
+        let ctx = dummy_build_context(200.0, VIEWPORT, None);
+
+        column.draw(&ctx);
+
+        assert_eq!(drawn.get(), CHILD_COUNT);
+        let mut hit_tested = 0;
+        column.hit_test_children(&mut |_| hit_tested += 1);
+        assert_eq!(hit_tested, CHILD_COUNT);
     }
 
     /// Focus and broadcast delivery must still reach every child, painted or

@@ -1,4 +1,6 @@
+#[cfg(any(debug_assertions, test))]
 use std::cell::Cell;
+#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
 use std::net::IpAddr;
 #[cfg(feature = "wasm-hot-reload")]
 use std::net::SocketAddr;
@@ -12,7 +14,7 @@ use aimer_cupid::AntiAlias;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use aimer_events::text_editing::NativeTextRange;
 use aimer_events::text_editing::TextEditingDelta;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
 use aimer_inspector::InspectorAppHandle;
 use aimer_modal::ModalHost;
 use aimer_utils::info;
@@ -113,6 +115,7 @@ fn complete_callback_ready_request(pending: &AtomicBool) {
 
 pub(crate) fn frame_ready_delivered() {
     complete_frame_ready_request(&FRAME_READY_PENDING);
+    crate::frame_stats::record_display_tick();
 }
 
 pub(crate) fn callback_ready_delivered() {
@@ -129,8 +132,10 @@ pub(crate) fn callback_ready_delivered() {
 /// runtime's notifier when a worker finishes while the loop is parked.
 fn request_frame_ready() {
     if !try_begin_frame_ready_request(&FRAME_READY_PENDING) {
+        crate::frame_stats::record_frame_request_coalesced();
         return;
     }
+    crate::frame_stats::record_frame_request_accepted();
     let sent = EVENT_PROXY.get().is_some_and(|proxy| {
         proxy
             .send_event(AimerNativePlatformEvent::FrameReady)
@@ -652,7 +657,6 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 inspector_prev_enabled: Cell::new(false),
                 #[cfg(debug_assertions)]
                 inspector_redraw_frames: Cell::new(0),
-                start_up_frames: Cell::new(0),
                 active_touch_id: None,
                 venus,
                 file_drag: crate::handler::file_drag::FileDrag::new(),
@@ -715,6 +719,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         self.window.take_redraw_request();
 
         self.app.begin_frame();
+        let build = crate::frame_stats::PhaseTimer::start();
         self.apply_pending_resize();
 
         let canvas = aimer_canvas::Canvas::new(&self.canvas);
@@ -725,6 +730,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         self.app
             .frame_drawer(window)
             .draw(&self.canvas, width, height);
+        build.finish(crate::frame_stats::FramePhase::Build);
 
         self.app.end_frame();
 
@@ -827,6 +833,27 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     /// Returns and clears whether application code requested another frame.
     pub fn take_redraw_request(&self) -> bool {
         self.window.take_redraw_request()
+    }
+
+    /// Returns redraw coalescing counters for the headless display-tick
+    /// driver.
+    ///
+    /// Headless rendering does not have a native event-loop wake, so its
+    /// counters describe the equivalent request bit: one accepted request can
+    /// represent many producers until the next rendered tick consumes it.
+    /// Native applications use [`crate::frame_stats::frame_request_stats`]
+    /// for the event-loop wake counters instead.
+    #[doc(hidden)]
+    pub fn frame_request_stats(&self) -> crate::frame_stats::FrameRequestStats {
+        let (accepted, coalesced, display_ticks) = self
+            .window
+            .headless_redraw_request_counts()
+            .unwrap_or_default();
+        crate::frame_stats::FrameRequestStats {
+            accepted,
+            coalesced,
+            display_ticks,
+        }
     }
 
     /// Returns the debug listener endpoint selected for this application.
@@ -1247,7 +1274,6 @@ fn start_event_loop(
         inspector_prev_enabled: Cell::new(false),
         #[cfg(debug_assertions)]
         inspector_redraw_frames: Cell::new(0),
-        start_up_frames: Cell::new(255),
         active_touch_id: None,
         venus,
         file_drag: crate::handler::file_drag::FileDrag::new(),
@@ -2235,6 +2261,36 @@ mod tests {
         app.send_window_event(WindowEvent::Focused(true));
 
         assert_eq!(cancels.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn wheel_input_uses_the_frame_synchronized_requester() {
+        let mut app = AimerApp::start_headless(ScrollRecordingWidget {
+            events: Arc::new(Mutex::new(Vec::new())),
+        });
+        app.render_frame();
+        let _ = app.take_redraw_request();
+
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counted = requests.clone();
+        let previous = aimer_events::window::set_thread_redraw_requester(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+        });
+
+        WindowEventHandler::handle_mouse_wheel(
+            MouseScrollDelta::LineDelta(0.0, -2.0),
+            TouchPhase::Moved,
+            &mut app.app,
+        );
+
+        aimer_events::window::restore_thread_redraw_requester(previous);
+
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "wheel input must use the frame-synchronized request path"
+        );
+        assert!(app.app.scroll_smoother.is_active());
     }
 
     #[test]

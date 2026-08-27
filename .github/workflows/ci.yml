@@ -19,7 +19,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
         with:
-          targets: aarch64-apple-darwin, wasm32-unknown-unknown
+          targets: x86_64-apple-darwin, aarch64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim, wasm32-unknown-unknown
           components: clippy
 
       - name: Cache cargo
@@ -30,3 +30,6 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+      - name: Check SIMD dispatch targets and scalar fallback
+        run: bash scripts/simd_target_checks.sh

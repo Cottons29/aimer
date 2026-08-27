@@ -14,7 +14,7 @@ use aimer_events::window::request_animation_frame;
 use aimer_utils::error;
 
 use crate::base::*;
-use crate::components::element::identities_are_compatible;
+use crate::components::element::{DirtySource, identities_are_compatible};
 use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
 use crate::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
@@ -146,11 +146,11 @@ impl FailureState {
 fn recover_failure(
     failure: &FailureState,
     failed: &Cell<bool>,
-    dirty: &Cell<bool>,
+    dirty_source: &DirtySource,
     diagnostic: PanicDiagnostic,
 ) -> AnyElement {
     failed.set(true);
-    dirty.set(false);
+    dirty_source.clear();
     if failure.record(&diagnostic) {
         diagnostic.into_error_element()
     } else {
@@ -253,7 +253,7 @@ struct StateUpdaterInner<S> {
     tx: Rc<StateMutationQueue<S>>,
     /// Shared state for synchronous reads on the render thread.
     state: Rc<SyncState<S>>,
-    dirty: Rc<Cell<bool>>,
+    dirty_source: Rc<DirtySource>,
     failure: Rc<FailureState>,
 }
 
@@ -264,7 +264,7 @@ impl<S> Clone for StateUpdater<S> {
                 StateUpdaterBackend::Native(inner) => StateUpdaterBackend::Native(StateUpdaterInner {
                     tx: inner.tx.clone(),
                     state: inner.state.clone(),
-                    dirty: inner.dirty.clone(),
+                    dirty_source: inner.dirty_source.clone(),
                     failure: inner.failure.clone(),
                 }),
                 #[cfg(feature = "portable-guest")]
@@ -278,19 +278,19 @@ impl<S> Clone for StateUpdater<S> {
 
 impl<S: 'static> StateUpdater<S> {
     /// Create a new `StateUpdater` from a channel sender, shared state, and a
-    /// dirty flag.
+    /// tracked dirty source.
     #[inline]
     fn with(
         tx: Rc<StateMutationQueue<S>>,
         state: Rc<SyncState<S>>,
-        dirty: Rc<Cell<bool>>,
+        dirty_source: Rc<DirtySource>,
         failure: Rc<FailureState>,
     ) -> Self {
         Self {
             inner: Some(StateUpdaterBackend::Native(StateUpdaterInner {
                 tx,
                 state,
-                dirty,
+                dirty_source,
                 failure,
             })),
         }
@@ -433,7 +433,7 @@ impl<S: 'static> StateUpdater<S> {
                 inner.tx.push(Box::new(f));
                 // Only request a redraw if this is the first set_state since the last rebuild.
                 // This coalesces multiple set_state calls into a single redraw request.
-                if !inner.dirty.replace(true) {
+                if inner.dirty_source.mark() {
                     #[cfg(not(aimer_portable_guest))]
                     request_animation_frame()
                 }
@@ -567,6 +567,7 @@ pub type RebuildCallBack = dyn Fn(&BuildContext) -> AnyElement;
 struct KeyedStateEntry {
     rebuild_fn: Weak<RebuildCallBack>,
     dirty: Weak<Cell<bool>>,
+    dirty_source: Weak<DirtySource>,
     failed: Weak<Cell<bool>>,
     failure: Weak<FailureState>,
     state_revision: Weak<Cell<u64>>,
@@ -578,6 +579,7 @@ struct KeyedStateEntry {
 struct LiveKeyedState {
     rebuild_fn: Rc<RebuildCallBack>,
     dirty: Rc<Cell<bool>>,
+    dirty_source: Rc<DirtySource>,
     failed: Rc<Cell<bool>>,
     failure: Rc<FailureState>,
     state_revision: Rc<Cell<u64>>,
@@ -644,6 +646,7 @@ pub struct StatefulElement {
     /// for why the live element must share the flag the preserved state's
     /// captured updater flips.
     pub dirty: RefCell<Rc<Cell<bool>>>,
+    pub(crate) dirty_source: RefCell<Rc<DirtySource>>,
     rebuild_fn: SyncRebuildFn,
     /// Monotonically increasing generation counter. Incremented on each rebuild
     /// so that multiple `set_state` calls between frames only trigger one
@@ -651,6 +654,10 @@ pub struct StatefulElement {
     rebuild_generation: Cell<u64>,
     /// The generation at which the last rebuild was performed.
     last_rebuilt_generation: Cell<u64>,
+    /// Last invalidation generation whose descendant rebuild work was visited.
+    /// Clean stateful elements can skip their retained subtree until a state,
+    /// dependency, or explicit dirty mark advances the generation.
+    rebuild_invalidation_generation: Cell<u64>,
     /// Shared revision incremented whenever a queued state mutation is applied.
     /// Used to disambiguate duplicate keyed copies retained by transitions.
     state_revision: RefCell<Rc<Cell<u64>>>,
@@ -748,7 +755,7 @@ impl StatefulElement {
                 (live.adopt_config_fn)(fresh_state_any.as_ref())
             }) {
                 live.failed.set(true);
-                live.dirty.set(false);
+                live.dirty_source.clear();
                 let diagnostic = diagnostic.with_site(key_ref.diagnostic_site());
                 live.failure.record(&diagnostic);
                 return Err(diagnostic);
@@ -759,9 +766,11 @@ impl StatefulElement {
                 let element = StatefulElement {
                     child: SyncChild(UnsafeCell::new(child)),
                     dirty: RefCell::new(live.dirty),
+                    dirty_source: RefCell::new(live.dirty_source),
                     rebuild_fn: SyncRebuildFn(UnsafeCell::new(live.rebuild_fn)),
                     rebuild_generation: Cell::new(0),
                     last_rebuilt_generation: Cell::new(0),
+                    rebuild_invalidation_generation: Cell::new(u64::MAX),
                     state_revision: RefCell::new(live.state_revision),
                     debug_name: Cell::new(debug_name),
                     key,
@@ -782,6 +791,7 @@ impl StatefulElement {
 
         let dirty = Rc::new(Cell::new(false));
         let build_consumer = BuildConsumer::new(dirty.clone());
+        let dirty_source = build_consumer.dirty_source();
 
         let tx = Rc::new(StateMutationQueue::default());
 
@@ -794,7 +804,7 @@ impl StatefulElement {
         let init_updater = StateUpdater::with(
             tx.clone(),
             state_cell.clone(),
-            dirty.clone(),
+            dirty_source.clone(),
             failure.clone(),
         );
 
@@ -816,7 +826,7 @@ impl StatefulElement {
         let consumer_for_rebuild = build_consumer.clone();
         let failure_for_rebuild = failure.clone();
         let failed_for_rebuild = failed.clone();
-        let dirty_for_rebuild = dirty.clone();
+        let dirty_source_for_rebuild = dirty_source.clone();
         let rebuild_fn: Rc<RebuildCallBack> = Rc::new(move |ctx| {
             if let Some(error) = failure_for_rebuild.error_element() {
                 return error;
@@ -837,7 +847,7 @@ impl StatefulElement {
                 return recover_failure(
                     &failure_for_rebuild,
                     &failed_for_rebuild,
-                    &dirty_for_rebuild,
+                    &dirty_source_for_rebuild,
                     diagnostic,
                 );
             }
@@ -854,7 +864,7 @@ impl StatefulElement {
                             return recover_failure(
                                 &failure_for_rebuild,
                                 &failed_for_rebuild,
-                                &dirty_for_rebuild,
+                                &dirty_source_for_rebuild,
                                 diagnostic,
                             )
                         }
@@ -867,7 +877,7 @@ impl StatefulElement {
                     Err(diagnostic) => recover_failure(
                         &failure_for_rebuild,
                         &failed_for_rebuild,
-                        &dirty_for_rebuild,
+                        &dirty_source_for_rebuild,
                         diagnostic,
                     ),
                 }
@@ -919,14 +929,21 @@ impl StatefulElement {
                 }
             }
         });
-        let updater = StateUpdater::with(tx, state_cell, dirty.clone(), failure.clone());
+        let updater = StateUpdater::with(
+            tx,
+            state_cell,
+            dirty_source.clone(),
+            failure.clone(),
+        );
 
         let element = StatefulElement {
             child: SyncChild(UnsafeCell::new(child)),
             dirty: RefCell::new(dirty),
+            dirty_source: RefCell::new(dirty_source),
             rebuild_fn: SyncRebuildFn(UnsafeCell::new(rebuild_fn)),
             rebuild_generation: Cell::new(0),
             last_rebuilt_generation: Cell::new(0),
+            rebuild_invalidation_generation: Cell::new(u64::MAX),
             state_revision: RefCell::new(state_revision),
             debug_name: Cell::new(debug_name),
             key,
@@ -963,8 +980,19 @@ impl StatefulElement {
     /// This avoids destroying and recreating the entire subtree when only a
     /// deeply-nested element's state has changed.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        let invalidation_generation =
+            crate::components::element::rebuild_invalidation_generation();
+        let dirty = self.dirty.borrow().get();
+        if !dirty
+            && self.rebuild_invalidation_generation.get() == invalidation_generation
+        {
+            return;
+        }
+        self.rebuild_invalidation_generation
+            .set(invalidation_generation);
+
         if self.failed.get() {
-            self.dirty.borrow().set(false);
+            self.dirty_source.borrow().clear();
             if let Some(error) = self.failure.error_element() {
                 unsafe {
                     *self.child.0.get() = error;
@@ -1038,7 +1066,7 @@ impl StatefulElement {
             *self.child.0.get() = new_child;
         }
 
-        self.dirty.borrow().set(false);
+        self.dirty_source.borrow().clear();
         self.rebuild_generation.fetch_add(1);
         self.last_rebuilt_generation
             .set(self.rebuild_generation.get());
@@ -1342,7 +1370,7 @@ impl StatefulElement {
         Some(StateUpdater::with(
             sender,
             state,
-            self.dirty.borrow().clone(),
+            self.dirty_source.borrow().clone(),
             self.failure.clone(),
         ))
     }
@@ -1380,7 +1408,7 @@ impl StatefulElement {
                 self.failure.record_message(message.clone());
                 old.failure.record_message(message);
                 self.failed.set(true);
-                self.dirty.borrow().set(false);
+                self.dirty_source.borrow().clear();
                 if let Some(error) = self.failure.error_element() {
                     unsafe {
                         *self.child.0.get() = error;
@@ -1411,6 +1439,7 @@ impl StatefulElement {
 
         // Adopt the OLD element's dirty flag so the *live* element
         *self.dirty.borrow_mut() = old.dirty.borrow().clone();
+        *self.dirty_source.borrow_mut() = old.dirty_source.borrow().clone();
         *self.state_revision.borrow_mut() = old.state_revision.borrow().clone();
 
         // Refresh the *configuration* stored in the preserved live state from
@@ -1449,7 +1478,7 @@ impl StatefulElement {
                 }
                 old.failed.set(true);
                 self.failed.set(true);
-                self.dirty.borrow().set(false);
+                self.dirty_source.borrow().clear();
                 let cur_gen = self.rebuild_generation.get();
                 self.last_rebuilt_generation.set(cur_gen);
                 return;
@@ -1514,7 +1543,7 @@ impl StatefulElement {
         // context. Leaving it dirty would rebuild the replacement again while
         // its ancestors are still reconciling, producing fresh nested state
         // that can overwrite the live subtree.
-        self.dirty.borrow().set(false);
+        self.dirty_source.borrow().clear();
         let cur_gen = self.rebuild_generation.get();
         self.last_rebuilt_generation.set(cur_gen);
     }
@@ -1535,6 +1564,7 @@ fn lookup_keyed_state(key: &crate::key::Key, debug_name: &'static str) -> Option
         Some(LiveKeyedState {
             rebuild_fn: entry.rebuild_fn.upgrade()?,
             dirty: entry.dirty.upgrade()?,
+            dirty_source: entry.dirty_source.upgrade()?,
             failed,
             failure,
             state_revision: entry.state_revision.upgrade()?,
@@ -1574,6 +1604,7 @@ fn register_keyed_state(element: &StatefulElement) {
             KeyedStateEntry {
                 rebuild_fn: Rc::downgrade(&rebuild_fn),
                 dirty: Rc::downgrade(&element.dirty.borrow()),
+                dirty_source: Rc::downgrade(&element.dirty_source.borrow()),
                 failed: Rc::downgrade(&failed),
                 failure: Rc::downgrade(&failure),
                 state_revision: Rc::downgrade(&element.state_revision.borrow()),
@@ -1719,12 +1750,22 @@ impl Rebuildable for StatefulElement {
     }
 
     fn mark_needs_rebuild(&self) {
-        // Safety: single-threaded rendering pipeline.
-        let child = unsafe { &*self.child.0.get() };
-        if !child.is_carry_state() {
-            self.dirty.borrow().set(true);
-        }
-        child.mark_needs_rebuild();
+        let _mark = crate::components::element::begin_rebuild_mark();
+        crate::components::element::with_rebuild_invalidation(|| {
+            // Safety: single-threaded rendering pipeline.
+            let child = unsafe { &*self.child.0.get() };
+            let carries_child_state = child.is_carry_state();
+            if !carries_child_state {
+                self.dirty_source.borrow().mark();
+            }
+            child.mark_needs_rebuild();
+            if carries_child_state {
+                // The child owns the rebuildable state, but custom carrying
+                // elements do not publish a path for their own dirty work.
+                // Explicit recursive marks therefore use the safe fallback.
+                crate::components::element::invalidate_dirty_paths();
+            }
+        });
     }
 }
 
@@ -1781,6 +1822,56 @@ mod tests {
     impl LayoutElement for TestLeaf {}
     impl EventElement for TestLeaf {}
     impl Rebuildable for TestLeaf {}
+
+    struct RebuildCountLeaf {
+        rebuilds: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for RebuildCountLeaf {
+        fn debug_name(&self) -> &'static str {
+            "RebuildCountLeaf"
+        }
+    }
+
+    impl Drawable for RebuildCountLeaf {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl LayoutElement for RebuildCountLeaf {}
+    impl EventElement for RebuildCountLeaf {}
+
+    impl Rebuildable for RebuildCountLeaf {
+        fn rebuild_if_dirty(&self, _ctx: &BuildContext) {
+            self.rebuilds.set(self.rebuilds.get() + 1);
+        }
+    }
+
+    struct DirtyStateWidget {
+        builds: Rc<Cell<usize>>,
+    }
+
+    struct DirtyState {
+        builds: Rc<Cell<usize>>,
+    }
+
+    impl StatefulWidget for DirtyStateWidget {
+        type State = DirtyState;
+
+        fn create_state(self) -> Self::State {
+            DirtyState {
+                builds: self.builds,
+            }
+        }
+    }
+
+    impl State<DirtyStateWidget> for DirtyState {
+        fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            self.builds.set(self.builds.get() + 1);
+            crate::ErrorWidget::new("state").boxed()
+        }
+    }
 
     /// An unkeyed stateful widget that records which of its states built the
     /// subtree that is live.
@@ -2051,6 +2142,49 @@ mod tests {
             visits: visits.clone(),
         }
         .boxed()
+    }
+
+    #[test]
+    fn state_updater_rebuilds_only_its_dirty_subtree() {
+        let context = dummy_build_context();
+        let builds = Rc::new(Cell::new(0));
+        let (stateful, updater) = StatefulElement::new_with_name(
+            DirtyStateWidget {
+                builds: builds.clone(),
+            },
+            &context,
+            "DirtyStateWidget",
+            None,
+        );
+        let clean_rebuilds = Rc::new(Cell::new(0));
+        let visits = Rc::new(RefCell::new(Vec::new()));
+        let root = TraversalElement {
+            id: 0,
+            children: vec![
+                StatelessElement::wrapper(
+                    RebuildCountLeaf {
+                        rebuilds: clean_rebuilds.clone(),
+                    }
+                    .boxed(),
+                    None,
+                    "CleanSibling",
+                )
+                .boxed(),
+                stateful.boxed(),
+            ],
+            visits,
+        }
+        .boxed();
+
+        root.rebuild_if_dirty(&context);
+        clean_rebuilds.set(0);
+        builds.set(0);
+
+        updater.set_state(|_| {});
+        root.rebuild_if_dirty(&context);
+
+        assert_eq!(clean_rebuilds.get(), 0);
+        assert_eq!(builds.get(), 1);
     }
 
     #[derive(Clone, Copy, Eq, PartialEq)]

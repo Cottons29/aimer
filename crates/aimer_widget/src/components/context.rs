@@ -15,6 +15,8 @@ use aimer_canvas::Canvas;
 use tokio::runtime::Handle;
 use winit::window::Window;
 
+use crate::components::element::DirtySource;
+
 /// A canvas available to native builds and deliberately unavailable to
 /// portable widget-description builds.
 ///
@@ -90,6 +92,9 @@ pub struct HeadlessWindowState {
     height: AtomicU32,
     scale_factor: AtomicU64,
     redraw_requested: AtomicBool,
+    redraw_request_count: AtomicU64,
+    coalesced_redraw_count: AtomicU64,
+    display_tick_count: AtomicU64,
     cursor: Mutex<winit::window::CursorIcon>,
 }
 
@@ -112,6 +117,9 @@ impl WindowHandle {
             height: AtomicU32::new(size.height),
             scale_factor: AtomicU64::new(scale_factor.to_bits()),
             redraw_requested: AtomicBool::new(false),
+            redraw_request_count: AtomicU64::new(0),
+            coalesced_redraw_count: AtomicU64::new(0),
+            display_tick_count: AtomicU64::new(0),
             cursor: Mutex::new(winit::window::CursorIcon::Default),
         }))
     }
@@ -124,6 +132,9 @@ impl WindowHandle {
             height: AtomicU32::new(0),
             scale_factor: AtomicU64::new(1.0_f64.to_bits()),
             redraw_requested: AtomicBool::new(false),
+            redraw_request_count: AtomicU64::new(0),
+            coalesced_redraw_count: AtomicU64::new(0),
+            display_tick_count: AtomicU64::new(0),
             cursor: Mutex::new(winit::window::CursorIcon::Default),
         }))
     }
@@ -164,7 +175,13 @@ impl WindowHandle {
             Self::Native(window) => window.request_redraw(),
             #[cfg(aimer_portable_guest)]
             Self::Native(_) => {},
-            Self::Headless(state) => state.redraw_requested.store(true, Ordering::Release),
+            Self::Headless(state) => {
+                if state.redraw_requested.swap(true, Ordering::AcqRel) {
+                    state.coalesced_redraw_count.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    state.redraw_request_count.fetch_add(1, Ordering::Relaxed);
+                }
+            }
             #[cfg(feature = "portable-guest")]
             Self::Portable(_) => {}
         }
@@ -250,9 +267,30 @@ impl WindowHandle {
     pub fn take_redraw_request(&self) -> bool {
         match self {
             Self::Native(_) => false,
-            Self::Headless(state) => state.redraw_requested.swap(false, Ordering::AcqRel),
+            Self::Headless(state) => {
+                let pending = state.redraw_requested.swap(false, Ordering::AcqRel);
+                if pending {
+                    state.display_tick_count.fetch_add(1, Ordering::Relaxed);
+                }
+                pending
+            }
             #[cfg(feature = "portable-guest")]
             Self::Portable(_) => false,
+        }
+    }
+
+    /// Returns headless redraw-request counters for native acceptance probes.
+    #[doc(hidden)]
+    pub fn headless_redraw_request_counts(&self) -> Option<(u64, u64, u64)> {
+        match self {
+            Self::Headless(state) => Some((
+                state.redraw_request_count.load(Ordering::Relaxed),
+                state.coalesced_redraw_count.load(Ordering::Relaxed),
+                state.display_tick_count.load(Ordering::Relaxed),
+            )),
+            Self::Native(_) => None,
+            #[cfg(feature = "portable-guest")]
+            Self::Portable(_) => None,
         }
     }
 }
@@ -279,7 +317,7 @@ pub struct BuildContext<'a> {
 
 #[doc(hidden)]
 pub struct BuildConsumer {
-    dirty: Rc<Cell<bool>>,
+    dirty_source: Rc<DirtySource>,
     cleanups: RefCell<Vec<Box<dyn FnOnce()>>>,
     dependencies: RefCell<HashSet<usize>>,
 }
@@ -287,10 +325,14 @@ pub struct BuildConsumer {
 impl BuildConsumer {
     pub fn new(dirty: Rc<Cell<bool>>) -> Rc<Self> {
         Rc::new(Self {
-            dirty,
+            dirty_source: DirtySource::new(dirty.clone()),
             cleanups: RefCell::new(Vec::new()),
             dependencies: RefCell::new(HashSet::new()),
         })
+    }
+
+    pub(crate) fn dirty_source(&self) -> Rc<DirtySource> {
+        self.dirty_source.clone()
     }
 
     pub(crate) fn begin_build(&self) {
@@ -309,7 +351,7 @@ impl BuildConsumer {
     }
 
     pub fn mark_needs_rebuild(&self) {
-        self.dirty.set(true);
+        self.dirty_source.mark();
     }
 }
 
@@ -381,6 +423,38 @@ impl<'a> BuildContext<'a> {
             async_handle: BuildAsyncHandle::native(async_handle),
             inherited_states: Rc::new(RefCell::new(HashMap::new())),
         }
+    }
+
+    /// Returns whether a known rectangle in this context can overlap the
+    /// current viewport.
+    ///
+    /// The rectangle and [`BuildContext::visible_rect`] use the same local
+    /// coordinates. A missing viewport, an invalid rectangle, or invalid
+    /// viewport dimensions is treated conservatively as visible so unknown
+    /// bounds are never under-culled. Rectangles that only touch at an edge
+    /// are also visible, matching the canvas clipping convention.
+    #[inline]
+    pub fn is_rect_visible(&self, x: f32, y: f32, width: f32, height: f32) -> bool {
+        let Some((vx, vy, vw, vh)) = self.visible_rect else {
+            return true;
+        };
+        if !x.is_finite()
+            || !y.is_finite()
+            || !width.is_finite()
+            || !height.is_finite()
+            || width < 0.0
+            || height < 0.0
+            || !vx.is_finite()
+            || !vy.is_finite()
+            || !vw.is_finite()
+            || !vh.is_finite()
+            || vw < 0.0
+            || vh < 0.0
+        {
+            return true;
+        }
+
+        x + width >= vx && x <= vx + vw && y + height >= vy && y <= vy + vh
     }
 
     /// Creates the resource-free context passed to portable `build` methods.
@@ -606,6 +680,31 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn headless_redraw_requests_coalesce_until_the_next_display_tick() {
+        let window = WindowHandle::headless(Default::default(), 1.0);
+
+        window.request_redraw();
+        window.request_redraw();
+        window.request_redraw();
+
+        assert_eq!(
+            window.headless_redraw_request_counts(),
+            Some((1, 2, 0))
+        );
+        assert!(window.take_redraw_request());
+        assert_eq!(
+            window.headless_redraw_request_counts(),
+            Some((1, 2, 1))
+        );
+
+        window.request_redraw();
+        assert_eq!(
+            window.headless_redraw_request_counts(),
+            Some((2, 2, 1))
+        );
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn dummy_async_handle() -> tokio::runtime::Handle {
         use std::sync::OnceLock;
@@ -688,6 +787,21 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(*context.get_state::<u32>().unwrap(), 1);
+    }
+
+    #[test]
+    fn rect_visibility_is_conservative_and_edge_inclusive() {
+        let mut context = context();
+        assert!(context.is_rect_visible(10.0, 10.0, 10.0, 10.0));
+
+        context.visible_rect = Some((0.0, 0.0, 100.0, 100.0));
+        assert!(context.is_rect_visible(100.0, 20.0, 10.0, 10.0));
+        assert!(!context.is_rect_visible(101.0, 20.0, 10.0, 10.0));
+        assert!(!context.is_rect_visible(20.0, 101.0, 10.0, 10.0));
+
+        assert!(context.is_rect_visible(f32::NAN, 0.0, 10.0, 10.0));
+        context.visible_rect = Some((0.0, 0.0, f32::NAN, 100.0));
+        assert!(context.is_rect_visible(200.0, 200.0, 10.0, 10.0));
     }
 
     #[test]

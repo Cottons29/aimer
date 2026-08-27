@@ -484,7 +484,7 @@ use std::rc::Rc;
 use aimer_attribute::size::ResolvedSize;
 use aimer_widget::{
     Drawable, Key, LayoutElement, State, StateUpdater, StatefulElement, StatefulWidget,
-    VisitorElement, carry_element_state,
+    VisitorElement, Widget, carry_element_state,
 };
 
 use super::*;
@@ -612,6 +612,48 @@ impl LayoutElement for LeafElement {
         ResolvedSize {
             width: 10.0,
             height: self.height,
+        }
+    }
+}
+
+struct PaintIslandLeaf {
+    stable: bool,
+}
+
+impl Widget for PaintIslandLeaf {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+        PaintIslandLeafElement {
+            stable: self.stable,
+        }
+        .boxed()
+    }
+}
+
+impl aimer_widget::PortableWidget for PaintIslandLeaf {}
+
+struct PaintIslandLeafElement {
+    stable: bool,
+}
+
+impl VisitorElement for PaintIslandLeafElement {
+    fn debug_name(&self) -> &'static str {
+        "PaintIslandLeaf"
+    }
+}
+impl aimer_widget::EventElement for PaintIslandLeafElement {}
+impl aimer_widget::Rebuildable for PaintIslandLeafElement {}
+impl Drawable for PaintIslandLeafElement {
+    fn draw(&self, _ctx: &BuildContext) {}
+
+    fn is_paint_stable(&self) -> bool {
+        self.stable
+    }
+}
+impl LayoutElement for PaintIslandLeafElement {
+    fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+        ResolvedSize {
+            width: 10.0,
+            height: 10.0,
         }
     }
 }
@@ -851,6 +893,30 @@ fn list_lays_out_like_an_equivalent_children_call() {
         .to_element(&ctx);
 
     assert_eq!(listed.computed_size(&ctx), explicit.computed_size(&ctx));
+}
+
+#[test]
+fn eager_column_exposes_a_stable_prefix_and_dynamic_suffix() {
+    let ctx = dummy_build_context(100.0, 100.0, None);
+    let element = Column::new()
+        .children([
+            PaintIslandLeaf { stable: true },
+            PaintIslandLeaf { stable: false },
+        ])
+        .to_element(&ctx);
+    let mut stable_calls = 0;
+    let mut dynamic_calls = 0;
+
+    let handled = element.draw_paint_islands(
+        &ctx,
+        &ctx,
+        &mut |_element, _ctx, _offset, _clip| stable_calls += 1,
+        &mut |_element, _ctx, _offset, _clip| dynamic_calls += 1,
+    );
+
+    assert!(handled);
+    assert_eq!(stable_calls, 1);
+    assert_eq!(dynamic_calls, 1);
 }
 
 #[test]

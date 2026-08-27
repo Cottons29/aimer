@@ -109,11 +109,17 @@ impl Rebuildable for StatelessElement {
     }
 
     fn mark_needs_rebuild(&self) {
-        // eprintln!("[diag] StatelessElement.mark_needs_rebuild");
-        self.dirty.set(true);
-        // Safety: single-threaded rendering pipeline.
-        let child = unsafe { &*self.child.0.get() };
-        child.mark_needs_rebuild();
+        let _mark = crate::components::element::begin_rebuild_mark();
+        crate::components::element::with_rebuild_invalidation(|| {
+            self.dirty_source.mark();
+            // Safety: single-threaded rendering pipeline.
+            let child = unsafe { &*self.child.0.get() };
+            child.mark_needs_rebuild();
+        });
+    }
+
+    fn option_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
     }
 }
 
@@ -122,10 +128,15 @@ pub struct StatelessElement {
     /// `visit_children<'a>` can still hand out `&'a` references to it.
     pub(crate) child: SyncChild,
     pub(crate) dirty: Rc<Cell<bool>>,
+    pub(crate) dirty_source: Rc<crate::components::element::DirtySource>,
     /// Re-runs the source widget's `build()` (re-reading `MediaQuery`).
     /// `None` for pure wrappers (e.g. `NamedWidget`) that cannot rebuild
     /// themselves.
     pub(crate) rebuild_fn: Option<Rc<RebuildCallBack>>,
+    /// Last invalidation generation whose descendant rebuild work was visited.
+    /// A clean element can skip the entire retained subtree until a state,
+    /// dependency, or explicit dirty mark advances the generation.
+    rebuild_invalidation_generation: Cell<u64>,
     pub key: Option<crate::key::Key>,
     pub debug_name: &'static str,
     pub bounds: Cell<Option<(Vec2d, Vec2d)>>,
@@ -140,6 +151,7 @@ impl StatelessElement {
     ) -> Self {
         let dirty = Rc::new(Cell::new(false));
         let consumer = BuildConsumer::new(dirty.clone());
+        let dirty_source = consumer.dirty_source();
         let rebuild_fn: Rc<RebuildCallBack> = Rc::new(rebuild_fn);
         let child = ctx.with_build_consumer(consumer.clone(), |ctx| {
             build_or_error(debug_name, BuildPhase::Build, || rebuild_fn(ctx))
@@ -152,7 +164,9 @@ impl StatelessElement {
         Self {
             child: SyncChild(UnsafeCell::new(child)),
             dirty,
+            dirty_source,
             rebuild_fn: Some(rebuild),
+            rebuild_invalidation_generation: Cell::new(u64::MAX),
             key,
             debug_name,
             bounds: Cell::new(None),
@@ -169,10 +183,13 @@ impl StatelessElement {
         key: Option<crate::key::Key>,
         debug_name: &'static str,
     ) -> Self {
+        let dirty = Rc::new(Cell::new(false));
         Self {
             child: SyncChild(UnsafeCell::new(child)),
-            dirty: Rc::new(Cell::new(false)),
+            dirty_source: crate::components::element::DirtySource::new(dirty.clone()),
+            dirty,
             rebuild_fn: Some(Rc::new(rebuild_fn)),
+            rebuild_invalidation_generation: Cell::new(u64::MAX),
             key,
             debug_name,
             bounds: Cell::new(None),
@@ -186,10 +203,13 @@ impl StatelessElement {
         key: Option<crate::key::Key>,
         debug_name: &'static str,
     ) -> Self {
+        let dirty = Rc::new(Cell::new(false));
         Self {
             child: SyncChild(UnsafeCell::new(child)),
-            dirty: Rc::new(Cell::new(false)),
+            dirty_source: crate::components::element::DirtySource::new(dirty.clone()),
+            dirty,
             rebuild_fn: None,
+            rebuild_invalidation_generation: Cell::new(u64::MAX),
             key,
             debug_name,
             bounds: Cell::new(None),
@@ -199,10 +219,21 @@ impl StatelessElement {
     /// If dirty, rebuild the child and preserve live state from the old
     /// subtree.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        let invalidation_generation =
+            crate::components::element::rebuild_invalidation_generation();
+        if !self.dirty.get()
+            && self.rebuild_invalidation_generation.get() == invalidation_generation
+        {
+            return;
+        }
+        self.rebuild_invalidation_generation
+            .set(invalidation_generation);
+
         let Some(rebuild_fn) = self.rebuild_fn.clone() else {
             // Pure wrapper: cannot rebuild itself, only propagate.
             let child = unsafe { &*self.child.0.get() };
             child.rebuild_if_dirty(ctx);
+            self.dirty_source.clear();
             return;
         };
 
@@ -232,7 +263,7 @@ impl StatelessElement {
             *self.child.0.get() = new_child;
         }
 
-        self.dirty.set(false);
+        self.dirty_source.clear();
     }
 }
 
@@ -272,6 +303,15 @@ impl Drawable for StatelessElement {
         // Safety: single-threaded rendering pipeline.
         let child = unsafe { &*self.child.0.get() };
         child.draw(ctx);
+    }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        // A self-rebuilding element may replace its child on the next dirty
+        // pass, so only a pure wrapper can transparently expose the child's
+        // retained-paint contract.
+        self.rebuild_fn.is_none()
+            && unsafe { &*self.child.0.get() }.is_paint_stable()
     }
 }
 
@@ -377,6 +417,53 @@ mod tests {
     impl EventElement for Leaf {}
     impl Rebuildable for Leaf {}
 
+    struct CountingLeaf {
+        rebuilds: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for CountingLeaf {
+        fn debug_name(&self) -> &'static str {
+            "CountingLeaf"
+        }
+    }
+
+    impl Drawable for CountingLeaf {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl LayoutElement for CountingLeaf {}
+    impl EventElement for CountingLeaf {}
+
+    impl Rebuildable for CountingLeaf {
+        fn rebuild_if_dirty(&self, _ctx: &BuildContext) {
+            self.rebuilds.set(self.rebuilds.get() + 1);
+        }
+    }
+
+    struct SiblingBranch {
+        children: Vec<AnyElement>,
+    }
+
+    impl VisitorElement for SiblingBranch {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            for child in &self.children {
+                visitor(child.as_ref());
+            }
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "SiblingBranch"
+        }
+    }
+
+    impl Drawable for SiblingBranch {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl LayoutElement for SiblingBranch {}
+    impl EventElement for SiblingBranch {}
+    impl Rebuildable for SiblingBranch {}
+
     /// A child whose flex factor must remain visible through transparent
     /// element wrappers, as it does for an `Expanded` inside a keyed tree.
     struct FlexibleLeaf;
@@ -420,6 +507,281 @@ mod tests {
             inner_dirty.get(),
             "mark reached the nested rebuildable child"
         );
+    }
+
+    #[test]
+    fn clean_wrapper_does_not_rescan_unchanged_subtree() {
+        let rebuilds = Rc::new(Cell::new(0));
+        let wrapper = StatelessElement::wrapper(
+            CountingLeaf {
+                rebuilds: rebuilds.clone(),
+            }
+            .boxed(),
+            None,
+            "Wrapper",
+        );
+        let context = dummy_build_context();
+
+        wrapper.rebuild_if_dirty(&context);
+        wrapper.rebuild_if_dirty(&context);
+        assert_eq!(rebuilds.get(), 1);
+
+        wrapper.mark_needs_rebuild();
+        wrapper.rebuild_if_dirty(&context);
+        assert_eq!(rebuilds.get(), 2);
+    }
+
+    #[test]
+    fn dirty_subtree_does_not_rebuild_clean_sibling() {
+        let clean_rebuilds = Rc::new(Cell::new(0));
+        let dirty_rebuilds = Rc::new(Cell::new(0));
+        let root = SiblingBranch {
+            children: vec![
+                StatelessElement::wrapper(
+                    CountingLeaf {
+                        rebuilds: clean_rebuilds.clone(),
+                    }
+                    .boxed(),
+                    None,
+                    "CleanSibling",
+                )
+                .boxed(),
+                StatelessElement::wrapper(
+                    CountingLeaf {
+                        rebuilds: dirty_rebuilds.clone(),
+                    }
+                    .boxed(),
+                    None,
+                    "DirtySibling",
+                )
+                .boxed(),
+            ],
+        }
+        .boxed();
+        let context = dummy_build_context();
+
+        root.rebuild_if_dirty(&context);
+        clean_rebuilds.set(0);
+        dirty_rebuilds.set(0);
+
+        let mut marked = false;
+        root.visit_children(&mut |child| {
+            if child.debug_name() == "DirtySibling" {
+                child.mark_needs_rebuild();
+                marked = true;
+            }
+        });
+        assert!(marked, "the test did not find the intended dirty sibling");
+
+        root.rebuild_if_dirty(&context);
+
+        assert_eq!(clean_rebuilds.get(), 0);
+        assert_eq!(dirty_rebuilds.get(), 1);
+    }
+
+    #[test]
+    fn dirty_subtree_index_is_used_by_direct_draw() {
+        let clean_rebuilds = Rc::new(Cell::new(0));
+        let dirty_rebuilds = Rc::new(Cell::new(0));
+        let root = SiblingBranch {
+            children: vec![
+                StatelessElement::wrapper(
+                    CountingLeaf {
+                        rebuilds: clean_rebuilds.clone(),
+                    }
+                    .boxed(),
+                    None,
+                    "CleanSibling",
+                )
+                .boxed(),
+                StatelessElement::wrapper(
+                    CountingLeaf {
+                        rebuilds: dirty_rebuilds.clone(),
+                    }
+                    .boxed(),
+                    None,
+                    "DirtySibling",
+                )
+                .boxed(),
+            ],
+        }
+        .boxed();
+        let context = dummy_build_context();
+
+        root.draw(&context);
+        clean_rebuilds.set(0);
+        dirty_rebuilds.set(0);
+
+        root.visit_children(&mut |child| {
+            if child.debug_name() == "DirtySibling" {
+                child.mark_needs_rebuild();
+            }
+        });
+        root.draw(&context);
+
+        assert_eq!(clean_rebuilds.get(), 0);
+        assert_eq!(dirty_rebuilds.get(), 1);
+    }
+
+    #[test]
+    fn independent_subtree_walk_falls_back_to_the_full_root() {
+        let clean_rebuilds = Rc::new(Cell::new(0));
+        let dirty_rebuilds = Rc::new(Cell::new(0));
+        let root = SiblingBranch {
+            children: vec![
+                StatelessElement::wrapper(
+                    CountingLeaf {
+                        rebuilds: clean_rebuilds.clone(),
+                    }
+                    .boxed(),
+                    None,
+                    "CleanSibling",
+                )
+                .boxed(),
+                StatelessElement::wrapper(
+                    CountingLeaf {
+                        rebuilds: dirty_rebuilds.clone(),
+                    }
+                    .boxed(),
+                    None,
+                    "DirtySibling",
+                )
+                .boxed(),
+            ],
+        }
+        .boxed();
+        let context = dummy_build_context();
+
+        root.rebuild_if_dirty(&context);
+        clean_rebuilds.set(0);
+        dirty_rebuilds.set(0);
+
+        root.visit_children(&mut |child| {
+            if child.debug_name() == "DirtySibling" {
+                child.rebuild_if_dirty(&context);
+            }
+        });
+        clean_rebuilds.set(0);
+        dirty_rebuilds.set(0);
+
+        root.visit_children(&mut |child| {
+            if child.debug_name() == "DirtySibling" {
+                child.mark_needs_rebuild();
+            }
+        });
+        root.rebuild_if_dirty(&context);
+
+        assert_eq!(clean_rebuilds.get(), 1);
+        assert_eq!(dirty_rebuilds.get(), 1);
+    }
+
+    #[test]
+    fn multiple_dirty_subtrees_release_only_their_own_paths() {
+        let clean_rebuilds = Rc::new(Cell::new(0));
+        let first_rebuilds = Rc::new(Cell::new(0));
+        let second_rebuilds = Rc::new(Cell::new(0));
+        let root = SiblingBranch {
+            children: vec![
+                StatelessElement::wrapper(
+                    CountingLeaf {
+                        rebuilds: clean_rebuilds.clone(),
+                    }
+                    .boxed(),
+                    None,
+                    "CleanSibling",
+                )
+                .boxed(),
+                StatelessElement::wrapper(
+                    CountingLeaf {
+                        rebuilds: first_rebuilds.clone(),
+                    }
+                    .boxed(),
+                    None,
+                    "FirstDirtySibling",
+                )
+                .boxed(),
+                StatelessElement::wrapper(
+                    CountingLeaf {
+                        rebuilds: second_rebuilds.clone(),
+                    }
+                    .boxed(),
+                    None,
+                    "SecondDirtySibling",
+                )
+                .boxed(),
+            ],
+        }
+        .boxed();
+        let context = dummy_build_context();
+
+        root.rebuild_if_dirty(&context);
+        clean_rebuilds.set(0);
+        first_rebuilds.set(0);
+        second_rebuilds.set(0);
+
+        root.visit_children(&mut |child| {
+            if matches!(child.debug_name(), "FirstDirtySibling" | "SecondDirtySibling") {
+                child.mark_needs_rebuild();
+            }
+        });
+        root.rebuild_if_dirty(&context);
+        assert_eq!(clean_rebuilds.get(), 0);
+        assert_eq!(first_rebuilds.get(), 1);
+        assert_eq!(second_rebuilds.get(), 1);
+
+        clean_rebuilds.set(0);
+        first_rebuilds.set(0);
+        second_rebuilds.set(0);
+        root.visit_children(&mut |child| {
+            if child.debug_name() == "FirstDirtySibling" {
+                child.mark_needs_rebuild();
+            }
+        });
+        root.rebuild_if_dirty(&context);
+
+        assert_eq!(clean_rebuilds.get(), 0);
+        assert_eq!(first_rebuilds.get(), 1);
+        assert_eq!(second_rebuilds.get(), 0);
+    }
+
+    #[test]
+    fn custom_dirty_mark_keeps_the_conservative_fallback() {
+        let first_rebuilds = Rc::new(Cell::new(0));
+        let second_rebuilds = Rc::new(Cell::new(0));
+        let root = SiblingBranch {
+            children: vec![
+                StatelessElement::wrapper(
+                    CountingLeaf {
+                        rebuilds: first_rebuilds.clone(),
+                    }
+                    .boxed(),
+                    None,
+                    "FirstSibling",
+                )
+                .boxed(),
+                StatelessElement::wrapper(
+                    CountingLeaf {
+                        rebuilds: second_rebuilds.clone(),
+                    }
+                    .boxed(),
+                    None,
+                    "SecondSibling",
+                )
+                .boxed(),
+            ],
+        }
+        .boxed();
+        let context = dummy_build_context();
+
+        root.rebuild_if_dirty(&context);
+        first_rebuilds.set(0);
+        second_rebuilds.set(0);
+
+        root.mark_needs_rebuild();
+        root.rebuild_if_dirty(&context);
+
+        assert_eq!(first_rebuilds.get(), 1);
+        assert_eq!(second_rebuilds.get(), 1);
     }
 
     #[test]

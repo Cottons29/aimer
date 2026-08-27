@@ -6,6 +6,10 @@ resolver = "3"
 publish = false
 description = "Isolated experiments for Aimer's core ownership model, published nowhere and depended on by nothing"
 
+[features]
+# Forward the release flex benchmark control to the root framework dependency.
+force-scalar = ["aimer/force-scalar"]
+
 [dependencies]
 aimer_rubick.workspace = true
 
@@ -21,6 +25,7 @@ aimer_rubick.workspace = true
 [dev-dependencies]
 aimer = { path = ".." }
 aimer_canvas.workspace = true
+aimer_widget.workspace = true
 aimer_legacy = { package = "aimer", git = "https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-1" }
 aimer_canvas_legacy = { package = "aimer_canvas", git = "https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-1" }
 

@@ -1009,11 +1009,52 @@ impl TextPipelineV2 {
     /// Only text that could not show a pixel is ever left behind, so a frame
     /// that reports `true` rendered exactly what it owed the screen — but the
     /// content a viewport asked for ahead of itself is not ready yet, and will
-    /// cost its owner the arrival frame unless another frame picks it up. The
-    /// presenter turns this into a frame request.
+    /// cost its owner the arrival frame unless another frame picks it up. A
+    /// presenter may use this as a hint while another frame source, such as
+    /// active scrolling, is already keeping the render loop alive.
     #[inline]
     pub fn has_postponed_preparation(&self) -> bool {
         self.postponed_preparation
+    }
+
+    /// Returns whether an off-screen request is missing a final positioned
+    /// layout. A layout hit needs no ahead-of-view executor work; visible
+    /// requests still go through the mandatory path below because their glyphs
+    /// may have to be prepared for this frame.
+    #[inline]
+    fn request_has_layout_miss(&self, req: &TextDrawRequest) -> bool {
+        let synthesized: [RichTextSpan; 1];
+        let spans: &[RichTextSpan] = if req.spans.is_empty() {
+            synthesized = [RichTextSpan::new(req.text.clone())];
+            &synthesized
+        } else {
+            &req.spans
+        };
+
+        spans.iter().any(|span| {
+            let font_size = span.font_size.unwrap_or(req.font_size);
+            let font_weight = span
+                .font_weight
+                .or(req.font_weight)
+                .unwrap_or(FontWeight::Normal.numeric());
+            let layout_width = match req.overflow {
+                TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
+                TextOverflowMode::Clip => 0.0,
+            };
+            let keys = span_layout_keys(
+                &self.shaping_cache,
+                &span.text,
+                font_size,
+                req.font_family,
+                req.font_style,
+                font_weight,
+                req.language,
+                layout_width,
+            );
+            self.layout_cache
+                .peek_with_fallback(&keys.primary, keys.fallback.as_ref())
+                .is_none()
+        })
     }
 
     /// Shapes, lays out and rasterizes everything `requests` need that the
@@ -1306,7 +1347,12 @@ impl TextPipelineV2 {
                 on_screen.push(req);
             } else {
                 visible[index] = false;
-                ahead_of_view.push((index, req));
+                // The scroll cache window deliberately includes nearby
+                // content, but a cache hit must not start shaping/layout
+                // executor work just because it is off-screen.
+                if self.request_has_layout_miss(req) {
+                    ahead_of_view.push((index, req));
+                }
             }
         }
 
@@ -1320,9 +1366,8 @@ impl TextPipelineV2 {
                 // Laying the tail out now would spend the budget on layouts
                 // keyed by a width the next resize frame invalidates, and
                 // flood the layout cache with entries nothing will read. The
-                // tail is postponed instead: the presenter keeps a frame
-                // coming, and the first one at a settled size prepares it at
-                // the width that will actually be drawn.
+                // tail is postponed instead: a later real frame prepares it
+                // at the width that will actually be drawn.
                 self.postponed_preparation = true;
             } else {
                 let mut chunk_requests = Vec::with_capacity(PREPARATION_CHUNK);

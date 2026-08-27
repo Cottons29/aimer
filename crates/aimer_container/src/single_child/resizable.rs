@@ -629,6 +629,12 @@ impl<E: Element + 'static> Rebuildable for RawResizable<E> {
 }
 
 impl<E: Element> EventElement for RawResizable<E> {
+    /// Resizing changes handling, not the single-child structural shape.
+    #[inline]
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(&self.child);
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         match event {
             ElementEvent::PointerDown(info) => {
@@ -790,7 +796,9 @@ impl<E: Element> Drawable for RawResizable<E> {
         child_ctx.box_constraint.max_height = size.height;
         child_ctx.parent_size = size;
 
-        self.child.draw(&child_ctx);
+        if ctx.is_rect_visible(0.0, 0.0, size.width, size.height) {
+            self.child.draw(&child_ctx);
+        }
 
         ctx.canvas.clear_clip();
         ctx.canvas.restore();
@@ -823,6 +831,83 @@ mod tests {
     impl Rebuildable for StubChild {}
     impl Drawable for StubChild {
         fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    struct DrawProbe {
+        draws: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for DrawProbe {
+        fn debug_name(&self) -> &'static str {
+            "DrawProbe"
+        }
+    }
+
+    impl EventElement for DrawProbe {}
+    impl LayoutElement for DrawProbe {}
+    impl Rebuildable for DrawProbe {}
+    impl Drawable for DrawProbe {
+        fn draw(&self, _ctx: &BuildContext) {
+            self.draws.set(self.draws.get() + 1);
+        }
+    }
+
+    fn draw_context(visible_rect: Option<(f32, f32, f32, f32)>) -> BuildContext<'static> {
+        let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+        let mut context = BuildContext::new(
+            aimer_canvas::Canvas::new(inner),
+            ResolvedSize {
+                width: 100.0,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+        context.box_constraint.max_width = 100.0;
+        context.box_constraint.max_height = 100.0;
+        context.visible_rect = visible_rect;
+        context
+    }
+
+    fn drawing_resizable(draws: Rc<Cell<usize>>) -> RawResizable<DrawProbe> {
+        RawResizable {
+            size: Cell::new(ResolvedSize {
+                width: 100.0,
+                height: 100.0,
+            }),
+            min: ResolvedSize::default(),
+            max: ResolvedSize {
+                width: f32::MAX,
+                height: f32::MAX,
+            },
+            band: ResizeBand::inside(8.0),
+            direction: Direction::ALL,
+            on_resize: Callback::default(),
+            on_resize_zone: Callback::default(),
+            bounds: CacheBounds::new(),
+            active: Cell::new(None),
+            grab: Cell::new(Grab::IDLE),
+            hovered: Cell::new(None),
+            child: DrawProbe { draws },
+        }
+    }
+
+    #[tokio::test]
+    async fn offscreen_resizable_skips_child_inside_its_clip() {
+        let draws = Rc::new(Cell::new(0));
+        let element = drawing_resizable(draws.clone());
+        let mut ctx = draw_context(Some((0.0, 101.0, 100.0, 20.0)));
+
+        element.draw(&ctx);
+
+        assert_eq!(draws.get(), 0);
+
+        ctx.visible_rect = Some((0.0, 0.0, 100.0, 100.0));
+        element.draw(&ctx);
+        assert_eq!(draws.get(), 1);
     }
 
     /// A resizable laid out over the top-left `200x100` corner, with an `8`

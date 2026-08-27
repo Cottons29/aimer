@@ -263,6 +263,7 @@ impl<T, E> AsyncRuntime<T, E> {
             Err(error) => AsyncSnapshot::Error(error),
         };
         inner.revision = inner.revision.wrapping_add(1);
+        crate::components::element::advance_rebuild_invalidation_generation();
     }
 }
 

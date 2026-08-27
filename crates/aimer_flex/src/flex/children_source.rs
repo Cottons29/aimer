@@ -117,6 +117,19 @@ pub(crate) trait ChildrenSource {
     /// Visits every materialized child in index order.
     fn visit<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element));
 
+    /// Visits every materialized child in reverse index order.
+    ///
+    /// The default preserves the contract for custom sources. The built-in
+    /// eager and windowed sources override it so routed hit testing does not
+    /// allocate a temporary reverse-order buffer.
+    fn visit_reversed<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        let mut children = Vec::new();
+        self.visit(&mut |child| children.push(child));
+        for child in children.into_iter().rev() {
+            visitor(child);
+        }
+    }
+
     /// Index of the first materialized child, when any exists.
     ///
     /// A container that wants to measure one representative child asks for this
@@ -132,6 +145,14 @@ pub(crate) trait ChildrenSource {
     /// called.
     #[inline]
     fn is_windowed(&self) -> bool {
+        false
+    }
+
+    /// Whether this source can expose a complete, side-effect-free paint
+    /// subtree. Windowed sources stay conservative because their live window
+    /// changes with scrolling and their rows may be created or retired.
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
         false
     }
 
@@ -202,8 +223,20 @@ impl ChildrenSource for EagerChildren {
     }
 
     #[inline]
+    fn visit_reversed<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        for child in self.0.iter().rev() {
+            visitor(child.as_ref());
+        }
+    }
+
+    #[inline]
     fn live_start(&self) -> Option<usize> {
         (!self.0.is_empty()).then_some(0)
+    }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        self.0.iter().all(|child| child.is_paint_stable())
     }
 }
 
@@ -445,6 +478,14 @@ where
     fn visit<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         let live = unsafe { &*self.live.get() };
         for element in &live.elements {
+            visitor(AnyElement::as_ref(element));
+        }
+    }
+
+    #[inline]
+    fn visit_reversed<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        let live = unsafe { &*self.live.get() };
+        for element in live.elements.iter().rev() {
             visitor(AnyElement::as_ref(element));
         }
     }

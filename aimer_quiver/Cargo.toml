@@ -14,9 +14,9 @@ default = []
 # meaningful share of the frame. Ignored on wasm32, which has no thread the
 # WebGPU objects could move to.
 raster-thread = []
-# Measure build / encode / present per frame. Off by default so the render path
-# reads no clock at all.
-frame-stats = []
+# Measure build / encode / present per frame. Release builds read no clock when
+# this is off; native debug builds keep timing enabled for scroll profiling.
+frame-stats = ["aimer_widget/frame-stats"]
 # Enable the guest-side reflected lowering for integration tests that build an
 # AWIR document and feed it through the native hot-reload materializer.
 portable-guest = [

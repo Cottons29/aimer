@@ -2,7 +2,7 @@ use std::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::draw_cmd::DrawList;
+use crate::draw_cmd::{DrawList, RetainedDrawList, RetainedLayerContent, TextureRegistry};
 use crate::font::{FontFamily, FontStyle, FontWeight, TextLanguage};
 use crate::lru_map::LruMap;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
@@ -55,6 +55,7 @@ const METRICS_CACHE_CAPACITY: usize = 4096;
 #[derive(Clone)]
 pub struct CupidCanvas {
     draw_list: Rc<RefCell<DrawList>>,
+    texture_registry: Arc<TextureRegistry>,
     rasterizer: Rc<RefCell<GlyphRasterizer>>,
     metrics_cache: Rc<RefCell<LruMap<TextMetricsKey, CachedTextMetrics>>>,
     /// The language subsequent text is written in — see
@@ -65,35 +66,82 @@ pub struct CupidCanvas {
     /// current value here as well: a field that paints its text in a Chinese
     /// face must not place its caret with a Japanese face's advances.
     text_language: Rc<Cell<Option<TextLanguage>>>,
+    /// Debug-only counters for the text metrics cache. They are per-frame so
+    /// scroll profiling can distinguish cache misses from command recording.
+    #[cfg(debug_assertions)]
+    metrics_cache_hits: Rc<Cell<u64>>,
+    #[cfg(debug_assertions)]
+    metrics_cache_misses: Rc<Cell<u64>>,
 }
 
 impl CupidCanvas {
     pub fn new() -> Self {
+        let texture_registry = Arc::new(TextureRegistry::default());
         Self {
-            draw_list: Rc::new(RefCell::new(DrawList::new())),
+            draw_list: Rc::new(RefCell::new(DrawList::with_texture_registry(
+                texture_registry.clone(),
+            ))),
+            texture_registry,
             rasterizer: Rc::new(RefCell::new(GlyphRasterizer::new())),
             metrics_cache: Rc::new(RefCell::new(LruMap::new(METRICS_CACHE_CAPACITY))),
             text_language: Rc::new(Cell::new(None)),
+            #[cfg(debug_assertions)]
+            metrics_cache_hits: Rc::new(Cell::new(0)),
+            #[cfg(debug_assertions)]
+            metrics_cache_misses: Rc::new(Cell::new(0)),
+        }
+    }
+
+    /// Creates a short-lived recording canvas that shares the parent's text,
+    /// font, metrics, and texture state.
+    ///
+    /// The returned canvas starts with an identity transform and an empty draw
+    /// list. It is intended for side-effect-free static subtrees: take its
+    /// draw list, call [`DrawList::retained_snapshot`], then replay that local
+    /// stream on the parent canvas with [`Self::replay_retained`].
+    #[inline]
+    pub fn fork_for_recording(&self) -> Self {
+        Self {
+            draw_list: Rc::new(RefCell::new(DrawList::with_texture_registry(
+                self.texture_registry.clone(),
+            ))),
+            texture_registry: self.texture_registry.clone(),
+            rasterizer: self.rasterizer.clone(),
+            metrics_cache: self.metrics_cache.clone(),
+            text_language: Rc::new(Cell::new(self.text_language.get())),
+            #[cfg(debug_assertions)]
+            metrics_cache_hits: self.metrics_cache_hits.clone(),
+            #[cfg(debug_assertions)]
+            metrics_cache_misses: self.metrics_cache_misses.clone(),
         }
     }
 
     pub fn begin_frame(&self) {
         self.draw_list.borrow_mut().clear();
+        #[cfg(debug_assertions)]
+        {
+            self.metrics_cache_hits.set(0);
+            self.metrics_cache_misses.set(0);
+        }
     }
 
     /// Moves the frame recorded so far out of the canvas.
     ///
     /// The returned list owns its command buffer, so it can be handed to
     /// another thread for encoding while the canvas keeps serving the next
-    /// frame. Ownership must come back through [`recycle_draw_list`] before the
-    /// next [`begin_frame`], otherwise the allocation is dropped and the
-    /// texture-size table the list carries is lost.
+    /// frame. Ownership should come back through [`recycle_draw_list`] before
+    /// the next [`begin_frame`] so command and local metadata allocations are
+    /// reused; the shared texture registry preserves image sizes while a frame
+    /// is in flight.
     ///
     /// [`recycle_draw_list`]: CupidCanvas::recycle_draw_list
     /// [`begin_frame`]: CupidCanvas::begin_frame
     #[inline]
     pub fn take_draw_list(&self) -> DrawList {
-        std::mem::take(&mut *self.draw_list.borrow_mut())
+        let mut current = self.draw_list.borrow_mut();
+        let mut next = DrawList::with_texture_registry(self.texture_registry.clone());
+        std::mem::swap(&mut *current, &mut next);
+        next
     }
 
     /// Gives a list taken by [`take_draw_list`] back to the canvas so its
@@ -103,6 +151,53 @@ impl CupidCanvas {
     #[inline]
     pub fn recycle_draw_list(&self, draw_list: DrawList) {
         *self.draw_list.borrow_mut() = draw_list;
+    }
+
+    /// Replays a local-coordinate retained stream under the canvas's current
+    /// transform. Returns `false` only if a future stream implementation
+    /// rejects the replay; current snapshots are validated before exposure.
+    #[inline]
+    pub fn replay_retained(&self, retained: &RetainedDrawList) -> bool {
+        let base = *self.draw_list.borrow().current_transform();
+        self.draw_list
+            .borrow_mut()
+            .append_retained(retained, base);
+        true
+    }
+
+    /// Records a renderer-owned retained layer at the current canvas state.
+    ///
+    /// The layer payload is not expanded into the current command buffer. The
+    /// renderer rasterizes it once and reuses the resulting texture until the
+    /// payload is replaced. The current transform, clip, and alpha state still
+    /// apply to the layer's composite draw.
+    #[inline]
+    pub fn draw_retained_layer(
+        &self,
+        layer_id: u64,
+        width: f32,
+        height: f32,
+        content: Arc<RetainedLayerContent>,
+    ) {
+        self.draw_retained_layer_at(layer_id, 0.0, 0.0, width, height, content);
+    }
+
+    /// Records a renderer-owned retained layer at a local content position.
+    #[inline]
+    pub fn draw_retained_layer_at(
+        &self,
+        layer_id: u64,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        content: Arc<RetainedLayerContent>,
+    ) {
+        self.draw_list.borrow_mut().draw_retained_layer(
+            layer_id,
+            Rect::new(x, y, width, height),
+            content,
+        );
     }
 
     pub fn register_font_bytes(&self, bytes: Vec<u8>) -> Option<crate::text_layout::FontId> {
@@ -515,8 +610,15 @@ impl CupidCanvas {
             language,
         };
         if let Some(cached) = self.metrics_cache.borrow_mut().get(&key) {
+            #[cfg(debug_assertions)]
+            self.metrics_cache_hits
+                .set(self.metrics_cache_hits.get().saturating_add(1));
             return cached.metrics;
         }
+
+        #[cfg(debug_assertions)]
+        self.metrics_cache_misses
+            .set(self.metrics_cache_misses.get().saturating_add(1));
 
         let mut rasterizer = self.rasterizer.borrow_mut();
         // Measuring character by character would let an ideograph pick a face the
@@ -901,8 +1003,40 @@ impl CupidCanvas {
         self.draw_list.borrow()
     }
 
+    /// Returns this frame's text metrics cache hits and misses.
+    ///
+    /// The counters are reset by [`Self::begin_frame`]. Release builds return
+    /// zeroes so profiling support does not add state or synchronization to
+    /// the production canvas.
+    #[inline]
+    pub fn text_cache_stats(&self) -> (u64, u64) {
+        #[cfg(debug_assertions)]
+        {
+            return (
+                self.metrics_cache_hits.get(),
+                self.metrics_cache_misses.get(),
+            );
+        }
+        #[cfg(not(debug_assertions))]
+        (0, 0)
+    }
+
     pub fn get_image_size(&self, texture_id: TextureId) -> Option<(u32, u32)> {
         self.draw_list.borrow().get_texture_size(texture_id)
+    }
+
+    /// Returns the generation of renderer-side image-cache changes.
+    #[inline]
+    pub fn texture_cache_epoch(&self) -> u64 {
+        self.draw_list.borrow().texture_cache_epoch()
+    }
+
+    /// Returns whether an image ID still refers to available canvas image
+    /// metadata. The renderer marks automatically evicted textures unavailable
+    /// while retaining their dimensions so source providers can reload them.
+    #[inline]
+    pub fn is_texture_available(&self, texture_id: TextureId) -> bool {
+        self.draw_list.borrow().is_texture_available(texture_id)
     }
 }
 
@@ -939,6 +1073,19 @@ mod family_metrics_tests {
 
         assert_ne!(sans.width, mono.width);
         assert_eq!(canvas.metrics_cache.borrow().len(), 2);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn metrics_cache_records_hits_and_misses() {
+        let canvas = CupidCanvas::new();
+
+        assert_eq!(canvas.text_cache_stats(), (0, 0));
+        canvas.measure_text_metrics("cached", 16.0, 200.0);
+        assert_eq!(canvas.text_cache_stats(), (0, 1));
+
+        canvas.measure_text_metrics("cached", 16.0, 200.0);
+        assert_eq!(canvas.text_cache_stats(), (1, 1));
     }
 
     #[test]

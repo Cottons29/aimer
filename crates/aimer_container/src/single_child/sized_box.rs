@@ -242,6 +242,10 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
         }
     }
 
+    fn is_layout_stable(&self) -> bool {
+        matches!((self.width, self.height), (Dimension::Px(_), Dimension::Px(_)))
+    }
+
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {

@@ -100,6 +100,11 @@ impl Drawable for RawOpacity {
         self.child.draw(ctx);
         ctx.canvas.restore_alpha();
     }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        self.child.is_paint_stable()
+    }
 }
 
 impl LayoutElement for RawOpacity {

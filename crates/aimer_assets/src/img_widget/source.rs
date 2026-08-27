@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::hash::Hash;
 #[cfg(not(target_arch = "wasm32"))]
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use aimer_utils::error;
@@ -14,10 +16,99 @@ type FileCacheMap = Mutex<HashMap<PathBuf, DiskImageState>>;
 static NETWORK_CACHE: Lazy<Mutex<HashMap<String, NetworkImageState>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 pub(crate) static FILE_CACHE: Lazy<FileCacheMap> = Lazy::new(|| Mutex::new(HashMap::new()));
+static NETWORK_CACHE_ACCESS: Lazy<Mutex<HashMap<String, u64>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+static FILE_CACHE_ACCESS: Lazy<Mutex<HashMap<PathBuf, u64>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 /// Cache of decoded bundled assets, keyed by their registered lookup key.
 #[cfg(not(target_arch = "wasm32"))]
 static ASSET_CACHE: Lazy<Mutex<HashMap<String, DiskImageState>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+#[cfg(not(target_arch = "wasm32"))]
+static ASSET_CACHE_ACCESS: Lazy<Mutex<HashMap<String, u64>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Decoded pixels are much larger than the small `Loaded(texture_id, ...)`
+/// records. Keep a generous working set, then release cold decoded entries;
+/// the GPU cache has its own byte budget and protects textures referenced by
+/// the current draw list.
+const DECODED_CACHE_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+const DECODED_CACHE_MAX_ENTRIES: usize = 512;
+const DECODED_CACHE_IDLE_ACCESSES: u64 = 128;
+static DECODED_CACHE_ACCESS_CLOCK: AtomicU64 = AtomicU64::new(0);
+
+#[inline]
+fn next_cache_access() -> u64 {
+    DECODED_CACHE_ACCESS_CLOCK
+        .fetch_add(1, Ordering::Relaxed)
+        .wrapping_add(1)
+}
+
+#[inline]
+fn touch_cache_key<K: Clone + Eq + Hash>(access: &mut HashMap<K, u64>, key: &K) -> u64 {
+    let tick = next_cache_access();
+    access.insert(key.clone(), tick);
+    tick
+}
+
+#[inline]
+fn remove_cache_key<K: Eq + Hash>(access: &mut HashMap<K, u64>, key: &K) {
+    access.remove(key);
+}
+
+/// Evicts only cold entries. A visible image is touched by its provider on
+/// every draw, so it remains inside the idle grace period and cannot be
+/// evicted merely because another image was decoded. If the active working
+/// set itself exceeds the budget, it is retained until entries become cold;
+/// correctness and visible-content residency take precedence over a hard
+/// byte cap.
+fn prune_decoded_cache<K, S>(
+    cache: &mut HashMap<K, S>,
+    access: &mut HashMap<K, u64>,
+    now: u64,
+    decoded_bytes: impl Fn(&S) -> usize,
+    is_loading: impl Fn(&S) -> bool,
+) where
+    K: Clone + Eq + Hash,
+{
+    let mut total_bytes = cache.values().map(&decoded_bytes).sum::<usize>();
+    let mut candidates = cache
+        .iter()
+        .filter_map(|(key, state)| {
+            if is_loading(state) {
+                return None;
+            }
+            Some((
+                key.clone(),
+                access.get(key).copied().unwrap_or(0),
+                decoded_bytes(state),
+            ))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_unstable_by_key(|(_, last_access, _)| *last_access);
+
+    for (key, last_access, bytes) in candidates {
+        let idle = now.saturating_sub(last_access);
+        if idle < DECODED_CACHE_IDLE_ACCESSES {
+            continue;
+        }
+        if bytes > 0 || cache.len() > DECODED_CACHE_MAX_ENTRIES {
+            if cache.remove(&key).is_some() {
+                total_bytes = total_bytes.saturating_sub(bytes);
+                remove_cache_key(access, &key);
+            }
+        }
+        if total_bytes <= DECODED_CACHE_BUDGET_BYTES
+            && cache.len() <= DECODED_CACHE_MAX_ENTRIES
+        {
+            // Do not scan the remaining cold tail once both bounds are met;
+            // keeping it would only make a later visible hit pay a decode.
+            break;
+        }
+    }
+
+    access.retain(|key, _| cache.contains_key(key));
+}
 
 #[derive(Clone, Debug)]
 enum NetworkImageState {
@@ -44,6 +135,64 @@ pub(crate) enum DiskImageState {
     Ready(Vec<u8>, u32, u32, u32, u32),
     Loaded(u32, u32, u32),
     Error(String),
+}
+
+#[inline]
+fn disk_decoded_bytes(state: &DiskImageState) -> usize {
+    match state {
+        DiskImageState::Ready(bytes, ..) => bytes.capacity(),
+        DiskImageState::Loading | DiskImageState::Loaded(..) | DiskImageState::Error(..) => 0,
+    }
+}
+
+#[inline]
+fn disk_is_loading(state: &DiskImageState) -> bool {
+    matches!(state, DiskImageState::Loading)
+}
+
+#[inline]
+fn prune_disk_cache<K: Clone + Eq + Hash>(
+    cache: &mut HashMap<K, DiskImageState>,
+    access: &mut HashMap<K, u64>,
+    now: u64,
+) {
+    prune_decoded_cache(
+        cache,
+        access,
+        now,
+        disk_decoded_bytes,
+        disk_is_loading,
+    );
+}
+
+#[inline]
+fn network_decoded_bytes(state: &NetworkImageState) -> usize {
+    match state {
+        NetworkImageState::Ready(bytes, ..) => bytes.capacity(),
+        NetworkImageState::Loading
+        | NetworkImageState::Loaded(..)
+        | NetworkImageState::Error(..) => 0,
+    }
+}
+
+#[inline]
+fn network_is_loading(state: &NetworkImageState) -> bool {
+    matches!(state, NetworkImageState::Loading)
+}
+
+#[inline]
+fn prune_network_cache(
+    cache: &mut HashMap<String, NetworkImageState>,
+    access: &mut HashMap<String, u64>,
+    now: u64,
+) {
+    prune_decoded_cache(
+        cache,
+        access,
+        now,
+        network_decoded_bytes,
+        network_is_loading,
+    );
 }
 #[allow(dead_code)]
 const BROWSER_IMAGE_MAX_DIMENSION: u32 = 2048;
@@ -148,6 +297,23 @@ impl ImageSource {
     pub fn load_image(ctx: &BuildContext, path: &PathBuf) -> ImageResult {
         {
             let mut cache = FILE_CACHE.lock().unwrap();
+            let stale = matches!(
+                cache.get(path),
+                Some(DiskImageState::Loaded(id, ..))
+                    if !ctx.canvas.is_texture_available(*id)
+            );
+            if stale {
+                cache.remove(path);
+                remove_cache_key(&mut FILE_CACHE_ACCESS.lock().unwrap(), path);
+            }
+            if cache.contains_key(path) {
+                let now = touch_cache_key(&mut FILE_CACHE_ACCESS.lock().unwrap(), path);
+                prune_disk_cache(
+                    &mut cache,
+                    &mut FILE_CACHE_ACCESS.lock().unwrap(),
+                    now,
+                );
+            }
             match cache.get_mut(path) {
                 Some(DiskImageState::Loaded(id, width, height)) => {
                     ctx.canvas.set_texture_size(*id, *width, *height);
@@ -172,10 +338,11 @@ impl ImageSource {
         // into view does not block the frame for hundreds of milliseconds.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            FILE_CACHE
-                .lock()
-                .unwrap()
-                .insert(path.clone(), DiskImageState::Loading);
+            let mut cache = FILE_CACHE.lock().unwrap();
+            let mut access = FILE_CACHE_ACCESS.lock().unwrap();
+            let now = touch_cache_key(&mut access, path);
+            cache.insert(path.clone(), DiskImageState::Loading);
+            prune_disk_cache(&mut cache, &mut access, now);
             let path_buf = path.clone();
             let window = ctx.window.clone();
             ctx.async_handle.spawn_blocking(move || {
@@ -187,7 +354,11 @@ impl ImageSource {
                     }
                     Err(_) => DiskImageState::Error("Failed to load image".into()),
                 };
-                FILE_CACHE.lock().unwrap().insert(path_buf, state);
+                let mut cache = FILE_CACHE.lock().unwrap();
+                let mut access = FILE_CACHE_ACCESS.lock().unwrap();
+                let now = touch_cache_key(&mut access, &path_buf);
+                cache.insert(path_buf.clone(), state);
+                prune_disk_cache(&mut cache, &mut access, now);
                 window.request_redraw();
             });
             ImageResult::Loading
@@ -197,10 +368,11 @@ impl ImageSource {
         // decoder (much faster than the Rust `image` crate compiled to wasm).
         #[cfg(target_arch = "wasm32")]
         {
-            FILE_CACHE
-                .lock()
-                .unwrap()
-                .insert(path.clone(), DiskImageState::Loading);
+            let mut cache = FILE_CACHE.lock().unwrap();
+            let mut access = FILE_CACHE_ACCESS.lock().unwrap();
+            let now = touch_cache_key(&mut access, path);
+            cache.insert(path.clone(), DiskImageState::Loading);
+            prune_disk_cache(&mut cache, &mut access, now);
             let url = path.to_string_lossy().to_string();
             let path_buf = path.clone();
             let window = ctx.window.clone();
@@ -214,7 +386,11 @@ impl ImageSource {
                     },
                     Err(e) => DiskImageState::Error(e),
                 };
-                FILE_CACHE.lock().unwrap().insert(path_buf, state);
+                let mut cache = FILE_CACHE.lock().unwrap();
+                let mut access = FILE_CACHE_ACCESS.lock().unwrap();
+                let now = touch_cache_key(&mut access, &path_buf);
+                cache.insert(path_buf.clone(), state);
+                prune_disk_cache(&mut cache, &mut access, now);
                 window.request_redraw();
             });
             ImageResult::Loading
@@ -234,6 +410,27 @@ impl ImageSource {
     pub fn load_asset_image(ctx: &BuildContext, key: &str) -> ImageResult {
         {
             let mut cache = ASSET_CACHE.lock().unwrap();
+            let stale = matches!(
+                cache.get(key),
+                Some(DiskImageState::Loaded(id, ..))
+                    if !ctx.canvas.is_texture_available(*id)
+            );
+            if stale {
+                cache.remove(key);
+                remove_cache_key(&mut ASSET_CACHE_ACCESS.lock().unwrap(), &key.to_string());
+            }
+            if cache.contains_key(key) {
+                let key_owned = key.to_string();
+                let now = touch_cache_key(
+                    &mut ASSET_CACHE_ACCESS.lock().unwrap(),
+                    &key_owned,
+                );
+                prune_disk_cache(
+                    &mut cache,
+                    &mut ASSET_CACHE_ACCESS.lock().unwrap(),
+                    now,
+                );
+            }
             match cache.get_mut(key) {
                 Some(DiskImageState::Loaded(id, width, height)) => {
                     ctx.canvas.set_texture_size(*id, *width, *height);
@@ -255,11 +452,12 @@ impl ImageSource {
 
         // Cache miss: read + decode the asset off the render thread so scrolling
         // it into view does not block the frame.
-        ASSET_CACHE
-            .lock()
-            .unwrap()
-            .insert(key.to_string(), DiskImageState::Loading);
+        let mut cache = ASSET_CACHE.lock().unwrap();
+        let mut access = ASSET_CACHE_ACCESS.lock().unwrap();
         let key_owned = key.to_string();
+        let now = touch_cache_key(&mut access, &key_owned);
+        cache.insert(key_owned.clone(), DiskImageState::Loading);
+        prune_disk_cache(&mut cache, &mut access, now);
         let window = ctx.window.clone();
         ctx.async_handle.spawn_blocking(move || {
             let state = match Self::load_asset_bytes(&key_owned) {
@@ -275,7 +473,11 @@ impl ImageSource {
                 },
                 Err(err) => DiskImageState::Error(err),
             };
-            ASSET_CACHE.lock().unwrap().insert(key_owned, state);
+            let mut cache = ASSET_CACHE.lock().unwrap();
+            let mut access = ASSET_CACHE_ACCESS.lock().unwrap();
+            let now = touch_cache_key(&mut access, &key_owned);
+            cache.insert(key_owned.clone(), state);
+            prune_disk_cache(&mut cache, &mut access, now);
             window.request_redraw();
         });
         ImageResult::Loading
@@ -352,6 +554,23 @@ impl ImageSource {
         headers: &HashMap<String, String>,
     ) -> ImageResult {
         let mut cache = NETWORK_CACHE.lock().unwrap();
+        let stale = matches!(
+            cache.get(url),
+            Some(NetworkImageState::Loaded(id, ..))
+                if !ctx.canvas.is_texture_available(*id)
+        );
+        if stale {
+            cache.remove(url);
+            remove_cache_key(&mut NETWORK_CACHE_ACCESS.lock().unwrap(), &url.to_string());
+        }
+        if cache.contains_key(url) {
+            let now = touch_cache_key(&mut NETWORK_CACHE_ACCESS.lock().unwrap(), &url.to_string());
+            prune_network_cache(
+                &mut cache,
+                &mut NETWORK_CACHE_ACCESS.lock().unwrap(),
+                now,
+            );
+        }
         match cache.get_mut(url) {
             Some(NetworkImageState::Loaded(id, width, height)) => {
                 ctx.canvas.set_texture_size(*id, *width, *height);
@@ -367,8 +586,11 @@ impl ImageSource {
             Some(NetworkImageState::Loading) => ImageResult::Loading,
             Some(NetworkImageState::Error(err)) => ImageResult::Error(err.to_string()),
             None => {
-                cache.insert(url.to_string(), NetworkImageState::Loading);
                 let url = url.to_string();
+                let mut access = NETWORK_CACHE_ACCESS.lock().unwrap();
+                let now = touch_cache_key(&mut access, &url);
+                cache.insert(url.clone(), NetworkImageState::Loading);
+                prune_network_cache(&mut cache, &mut access, now);
                 let headers = headers.clone();
                 let window = ctx.window.clone();
 
@@ -381,7 +603,10 @@ impl ImageSource {
                             error!("Error to fetch network image : {}", err);
                             // error!("Image URL: {url}");
                             let mut cache = NETWORK_CACHE.lock().unwrap();
-                            cache.insert(url, NetworkImageState::Error(err.to_string()));
+                            let mut access = NETWORK_CACHE_ACCESS.lock().unwrap();
+                            let now = touch_cache_key(&mut access, &url);
+                            cache.insert(url.clone(), NetworkImageState::Error(err.to_string()));
+                            prune_network_cache(&mut cache, &mut access, now);
                             window.request_redraw();
                         }
                     }
@@ -403,7 +628,13 @@ impl ImageSource {
                             Err(err) => {
                                 error!("Failed to fetch network image ({}): {}", url_clone, err);
                                 let mut cache = NETWORK_CACHE.lock().unwrap();
-                                cache.insert(url_clone, NetworkImageState::Error(err.to_string()));
+                                let mut access = NETWORK_CACHE_ACCESS.lock().unwrap();
+                                let now = touch_cache_key(&mut access, &url_clone);
+                                cache.insert(
+                                    url_clone.clone(),
+                                    NetworkImageState::Error(err.to_string()),
+                                );
+                                prune_network_cache(&mut cache, &mut access, now);
                                 window.request_redraw();
                             }
                         }
@@ -435,11 +666,15 @@ impl ImageSource {
             Self::decode_image_browser(&bytes).await?;
 
         let mut cache = NETWORK_CACHE.lock().unwrap();
+        let mut access = NETWORK_CACHE_ACCESS.lock().unwrap();
         cache.insert(
             url.to_string(),
             NetworkImageState::Ready(rgba, upload_width, upload_height, width, height),
         );
+        let now = touch_cache_key(&mut access, &url.to_string());
+        prune_network_cache(&mut cache, &mut access, now);
         drop(cache);
+        drop(access);
         window.request_redraw();
 
         Ok(())
@@ -634,11 +869,17 @@ impl ImageSource {
                 let mut cache = NETWORK_CACHE
                     .lock()
                     .map_err(|err| format!("Failed to lock network cache: {}", err))?;
+                let mut access = NETWORK_CACHE_ACCESS
+                    .lock()
+                    .map_err(|err| format!("Failed to lock network cache access: {}", err))?;
                 cache.insert(
                     url.to_string(),
                     NetworkImageState::Ready(rgba_bytes, width, height, width, height),
                 );
+                let now = touch_cache_key(&mut access, &url.to_string());
+                prune_network_cache(&mut cache, &mut access, now);
                 drop(cache);
+                drop(access);
                 window.request_redraw();
                 Ok(())
             }
@@ -652,7 +893,12 @@ impl ImageSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{constrained_browser_image_size, image_mime_type};
+    use std::collections::HashMap;
+
+    use super::{
+        constrained_browser_image_size, image_mime_type, prune_decoded_cache,
+        DECODED_CACHE_BUDGET_BYTES, DECODED_CACHE_IDLE_ACCESSES,
+    };
 
     #[test]
     fn detects_browser_supported_image_mime_types() {
@@ -672,5 +918,52 @@ mod tests {
         assert_eq!(constrained_browser_image_size(4096, 2048), (2048, 1024));
         assert_eq!(constrained_browser_image_size(2048, 4096), (1024, 2048));
         assert_eq!(constrained_browser_image_size(1024, 512), (1024, 512));
+    }
+
+    #[test]
+    fn decoded_cache_prunes_cold_entries_but_keeps_visible_and_loading_work() {
+        struct Entry {
+            bytes: usize,
+            loading: bool,
+        }
+
+        let now = DECODED_CACHE_IDLE_ACCESSES + 1;
+        let mut cache = HashMap::from([
+            (
+                "cold",
+                Entry {
+                    bytes: DECODED_CACHE_BUDGET_BYTES,
+                    loading: false,
+                },
+            ),
+            (
+                "visible",
+                Entry {
+                    bytes: DECODED_CACHE_BUDGET_BYTES,
+                    loading: false,
+                },
+            ),
+            (
+                "loading",
+                Entry {
+                    bytes: DECODED_CACHE_BUDGET_BYTES,
+                    loading: true,
+                },
+            ),
+        ]);
+        let mut access = HashMap::from([("cold", 0), ("visible", now), ("loading", 0)]);
+
+        prune_decoded_cache(
+            &mut cache,
+            &mut access,
+            now,
+            |entry| entry.bytes,
+            |entry| entry.loading,
+        );
+
+        assert!(!cache.contains_key("cold"));
+        assert!(cache.contains_key("visible"));
+        assert!(cache.contains_key("loading"));
+        assert!(!access.contains_key("cold"));
     }
 }

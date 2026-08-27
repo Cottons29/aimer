@@ -94,13 +94,6 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
         AimerNativePlatformEvent::FrameReady => {
             crate::aimer_app::frame_ready_delivered();
             if let Some(window) = &app.window {
-                // println!("FrameReady");
-                // const SETTLE_FRAMES: u8 = 3;
-                // app.start_up_frames.set(
-                //     app.start_up_frames
-                //         .get()
-                //         .max(SETTLE_FRAMES),
-                // );
                 window.request_redraw();
             }
         }

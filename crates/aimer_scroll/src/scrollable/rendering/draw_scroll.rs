@@ -36,6 +36,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
     fn draw(&self, ctx: &BuildContext) {
         // println!("Scrollable drawing child: {})", self.child.debug_name() );
 
+        let scrolling_before_draw = self.ctrl.is_scrolling.get();
+
         let (raw_viewport_w, raw_viewport_h) = self.viewport_size(ctx);
         // debug!("View port size: {:?} x {:?}", raw_viewport_w, raw_viewport_h);
         // Cap viewport size to avoid precision issues with f32::MAX in
@@ -118,7 +120,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // logical offset actually moved since the last frame (epsilon-guarded), so
         // it covers drags, wheel/keyboard, momentum, spring-back and programmatic
         // scrolls without emitting on idle frames.
-        self.ctrl.notify_scroll();
+        let moved = self.ctrl.notify_scroll();
+        self.ctrl.record_draw_frame(scrolling_before_draw, moved);
 
         // Write-back: persist the live position so a full teardown/re-create can
         // restore it (see `scroll_storage`). Stored in logical (unscaled) pixels
@@ -189,8 +192,15 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             travel,
         ));
 
-        // Draw child content
-        self.child.draw(&child_ctx);
+        // The viewport clip makes the content rectangle a known paint bound.
+        // Check it before entering the erased child so an off-screen scrollable
+        // still updates its physics and bounds without walking its content.
+        if ctx.is_rect_visible(0.0, 0.0, viewport_w, viewport_h) {
+            #[cfg(not(feature = "portable-guest"))]
+            self.draw_child_with_retained_paint(ctx, &child_ctx, content_size);
+            #[cfg(feature = "portable-guest")]
+            self.child.draw(&child_ctx);
+        }
 
         // Restore before drawing scrollbars (they are separate in-flow children).
         ctx.canvas.clear_clip();

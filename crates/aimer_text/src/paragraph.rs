@@ -7,6 +7,7 @@ use std::rc::Rc;
 use aimer_attribute::ResolvedSize;
 use aimer_style::{FontStyle, LineHeight, TextAlign, TextDecorationLine, TextOverflow};
 use aimer_widget::base::{BuildContext, Color};
+use aimer_widget::layout_invalidation_generation;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::paragraph::geometry::{
@@ -71,6 +72,7 @@ pub(crate) struct PreparedLayout {
 struct PreparedLayoutKey {
     width_bits: u32,
     scale_bits: u32,
+    layout_generation: u64,
 }
 
 /// Resolves the color a span is painted with, letting a hovered link override
@@ -173,6 +175,7 @@ impl Paragraph {
         let key = PreparedLayoutKey {
             width_bits: width.to_bits(),
             scale_bits: ctx.scale.to_bits(),
+            layout_generation: layout_invalidation_generation(),
         };
         if let Some((cached_key, layout)) = self.layout_cache.borrow().as_ref()
             && *cached_key == key

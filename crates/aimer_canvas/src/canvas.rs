@@ -4,6 +4,10 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 pub use aimer_cupid::canvas::TextMetrics;
+pub use aimer_cupid::draw_cmd::{
+    RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION, RETAINED_LAYER_MAX_TILES_PER_FRAME,
+    RETAINED_LAYER_TILE_SIZE, RetainedDrawList, RetainedLayerContent,
+};
 pub use aimer_cupid::font::TextLanguage;
 pub use aimer_cupid::font::{FontFamily, FontStyle};
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
@@ -218,6 +222,22 @@ pub trait CanvasRendering: Clone {
         overrides: Arc<[SvgNodeStyleOverride]>,
     );
     fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)>;
+    /// Returns the generation of renderer-side image-cache changes.
+    ///
+    /// Image widgets use this cheap generation check to avoid probing the
+    /// cache on every draw. Backends without automatic image eviction may keep
+    /// the default value.
+    fn texture_cache_epoch(&self) -> u64 {
+        0
+    }
+    /// Returns whether an image ID can still be used by the canvas.
+    ///
+    /// The default derives availability from the retained intrinsic-size
+    /// metadata. Native backends override it when their renderer can evict
+    /// textures independently of the draw list.
+    fn is_texture_available(&self, image_id: u32) -> bool {
+        self.get_image_size(image_id).is_some()
+    }
     fn set_clip(&self, pos: Vec2d, size: ResolvedSize);
     fn set_clip_rounded(&self, pos: Vec2d, size: ResolvedSize, border_radius: [f32; 4]);
     fn clear_clip(&self);
@@ -415,6 +435,47 @@ impl<'a> AimerCanvas<'a> {
 
     pub fn get_inner_canvas(&self) -> &Canvas {
         self.inner
+    }
+
+    /// Creates a short-lived canvas for recording a static subtree in local
+    /// coordinates while sharing the parent's text, font, and texture state.
+    #[inline]
+    pub fn fork_for_recording(&self) -> InnerCanvas {
+        self.inner.fork_for_recording()
+    }
+
+    /// Replays a retained local-coordinate subtree under the canvas's current
+    /// transform and clip state.
+    #[inline]
+    pub fn replay_retained(&self, retained: &RetainedDrawList) -> bool {
+        self.inner.replay_retained(retained)
+    }
+
+    /// Records a compositor-style retained layer at the current canvas state.
+    #[inline]
+    pub fn draw_retained_layer(
+        &self,
+        layer_id: u64,
+        width: f32,
+        height: f32,
+        content: Arc<RetainedLayerContent>,
+    ) {
+        self.draw_retained_layer_at(layer_id, 0.0, 0.0, width, height, content);
+    }
+
+    /// Records a renderer-owned retained layer at a local content position.
+    #[inline]
+    pub fn draw_retained_layer_at(
+        &self,
+        layer_id: u64,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        content: Arc<RetainedLayerContent>,
+    ) {
+        self.inner
+            .draw_retained_layer_at(layer_id, x, y, width, height, content);
     }
 }
 
@@ -776,6 +837,18 @@ impl<'a> AimerCanvas<'a> {
     #[inline]
     pub fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)> {
         CanvasRendering::get_image_size(self.inner, image_id)
+    }
+
+    /// Returns the generation of renderer-side image-cache changes.
+    #[inline]
+    pub fn texture_cache_epoch(&self) -> u64 {
+        CanvasRendering::texture_cache_epoch(self.inner)
+    }
+
+    /// Returns whether an image ID can still be used by the canvas.
+    #[inline]
+    pub fn is_texture_available(&self, image_id: u32) -> bool {
+        CanvasRendering::is_texture_available(self.inner, image_id)
     }
 
     #[allow(dead_code)]

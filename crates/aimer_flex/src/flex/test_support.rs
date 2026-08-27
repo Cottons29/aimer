@@ -151,6 +151,10 @@ impl Drawable for CountingChild {
 }
 
 impl LayoutElement for CountingChild {
+    fn is_layout_stable(&self) -> bool {
+        true
+    }
+
     fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
         self.measured.set(self.measured.get() + 1);
         self.size

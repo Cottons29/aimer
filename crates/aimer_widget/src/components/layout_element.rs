@@ -54,6 +54,19 @@ pub trait LayoutElement: VisitorElement {
         None
     }
 
+    /// Returns whether this element's resolved size is independent of its
+    /// descendants and runtime state for the same constraint and scale.
+    ///
+    /// Layout containers use this opt-in to retain a measured child size when
+    /// an unrelated generated subtree advances the global element-tree
+    /// generation. Implementations must return `true` only when the answer to
+    /// [`LayoutElement::computed_size`] cannot change without replacing the
+    /// element itself.
+    #[inline]
+    fn is_layout_stable(&self) -> bool {
+        false
+    }
+
     /// get the size from the child when parent has no size explicit
     fn get_size_from_child(&self) -> Option<Size> {
         if let Some(s) = self.size() {

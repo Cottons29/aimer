@@ -649,6 +649,12 @@ impl<W: Widget + 'static> ScrollableState<W> {
             vel_accum: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             vel_sample_time: Cell::new(None),
             is_scrolling: Cell::new(false),
+            #[cfg(debug_assertions)]
+            session_input_events: Cell::new(0),
+            #[cfg(debug_assertions)]
+            session_draw_frames: Cell::new(0),
+            #[cfg(debug_assertions)]
+            session_moved_frames: Cell::new(0),
             // Left empty here; `live_scroll_state` re-shares any
             // app-registered
             // scroll-lifecycle callbacks when it attaches the controller.
@@ -797,6 +803,9 @@ impl Widget for ScrollableFrame {
             horizontal_bar_height,
             bounds: CacheBounds::with_vec2d(child_ctx.parent_pos),
             event_dispatcher: RefCell::new(aimer_widget::EventDispatcher::new()),
+            layout_cache: Default::default(),
+            #[cfg(not(feature = "portable-guest"))]
+            paint_cache: Default::default(),
         }
         .boxed()
     }

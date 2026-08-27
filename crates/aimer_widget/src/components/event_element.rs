@@ -1,6 +1,8 @@
 use std::hash::{Hash, Hasher};
+use aimer_attribute::position::Vec2d;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
+use smallvec::SmallVec;
 
 use crate::Element;
 use crate::components::element::VisitorElement;
@@ -272,6 +274,30 @@ pub trait EventElement: VisitorElement {
         self.visit_children(visitor);
     }
 
+    /// Visit the children that make up this element's structural tree.
+    ///
+    /// Focus traversal and reconciliation need the union of the event and
+    /// visual child views. Elements whose two views have one canonical child
+    /// source can override this method to avoid walking and de-duplicating
+    /// that source twice. An override must visit every child exposed by either
+    /// [`Self::event_children`] or [`VisitorElement::visit_children`] exactly
+    /// once, in structural order.
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        let mut children: SmallVec<[&'a dyn Element; 8]> = SmallVec::new();
+        self.event_children(&mut |child| children.push(child));
+        self.visit_children(&mut |child| {
+            if !children
+                .iter()
+                .any(|existing| std::ptr::eq(*existing, child))
+            {
+                children.push(child);
+            }
+        });
+        for child in children {
+            visitor(child);
+        }
+    }
+
     /// Visit children that a pointer could plausibly hit.
     ///
     /// Position-based dispatch uses this hook instead of
@@ -287,6 +313,51 @@ pub trait EventElement: VisitorElement {
     fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.event_children(visitor);
     }
+
+    /// Visit hit-test children in the order routed pointer dispatch examines
+    /// them.
+    ///
+    /// The default collects the ordinary hit-test view and reverses it, which
+    /// preserves the existing topmost-first behavior for custom elements. Large
+    /// child containers can override this to walk their retained storage in
+    /// reverse directly and avoid a temporary child buffer.
+    fn hit_test_children_reversed<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        let mut children: SmallVec<[&'a dyn Element; 32]> = SmallVec::new();
+        self.hit_test_children(&mut |child| children.push(child));
+        for child in children.into_iter().rev() {
+            visitor(child);
+        }
+    }
+
+    /// Visit hit-test children that could contain a pointer at `pos`.
+    ///
+    /// The default delegates to the existing position-independent hook, so
+    /// current element implementations retain their behavior. Containers with
+    /// a retained spatial index may override this to skip known-outside
+    /// children without affecting focus or broadcast traversal.
+    #[inline]
+    fn hit_test_children_at<'a>(
+        &'a self,
+        _pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        self.hit_test_children(visitor);
+    }
+
+    /// Visit position-aware hit-test children in routed topmost-first order.
+    ///
+    /// The default preserves custom [`EventElement::hit_test_children_reversed`]
+    /// implementations. Large containers can override this to query retained
+    /// bounds directly.
+    #[inline]
+    fn hit_test_children_at_reversed<'a>(
+        &'a self,
+        _pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        self.hit_test_children_reversed(visitor);
+    }
+
 }
 
 #[cfg(test)]

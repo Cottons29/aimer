@@ -348,6 +348,16 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
+    fn texture_cache_epoch(&self) -> u64 {
+        CupidCanvas::texture_cache_epoch(self)
+    }
+
+    #[inline]
+    fn is_texture_available(&self, image_id: u32) -> bool {
+        CupidCanvas::is_texture_available(self, image_id)
+    }
+
+    #[inline]
     fn set_clip(&self, pos: Vec2d, size: ResolvedSize) {
         CupidCanvas::set_clip(self, pos.x, pos.y, size.width, size.height);
     }

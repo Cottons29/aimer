@@ -148,6 +148,14 @@ fn dispatch_child_event<E: Element>(
 }
 
 impl<E: Element> EventElement for RawScrollableContainer<E> {
+    /// Event dispatch is handled by the nested dispatcher, but focus and
+    /// reconciliation still need the child and live scroll bars from the
+    /// visual structural view.
+    #[inline]
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.visit_children(visitor);
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         if let Some(cursor_pos) = event.get_pointer_pos() {
             self.ctrl.cursor_pos.set(Some(cursor_pos));
@@ -335,6 +343,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     *is_direct_manipulation,
                 ) {
                     self.ctrl.begin_scroll();
+                    self.ctrl.record_input_event();
                     aimer_events::window::request_animation_frame();
                 }
                 true
@@ -400,6 +409,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         self.ctrl.drag_mode.set(DragMode::None);
                         self.ctrl.last_pointer_pos.set(Some(*p));
                         self.ctrl.begin_scroll();
+                        self.ctrl.record_input_event();
                         aimer_events::window::request_animation_frame();
                         return child_result.merge(EventResult::consumed().with_redraw());
                     }
@@ -417,6 +427,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         self.ctrl.drag_mode.set(DragMode::None);
                         self.ctrl.last_pointer_pos.set(Some(*p));
                         self.ctrl.begin_scroll();
+                        self.ctrl.record_input_event();
                         aimer_events::window::request_animation_frame();
                         return child_result.merge(EventResult::consumed().with_redraw());
                     }
@@ -561,6 +572,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             offset = self.ctrl.clamp_offset(offset);
                         }
                         self.ctrl.scroll_offset.set(offset);
+                        self.ctrl.record_input_event();
                     }
                     self.ctrl.last_pointer_pos.set(Some(*p));
                     aimer_events::window::request_animation_frame();
@@ -653,6 +665,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     // moves the offset with no residual momentum, so the draw loop
                     // reports it settled (and fires `end`) on the next frame.
                     self.ctrl.begin_scroll();
+                    self.ctrl.record_input_event();
                     aimer_events::window::request_animation_frame();
                     true
                 } else {
@@ -717,23 +730,7 @@ impl<E: Element> LayoutElement for RawScrollableContainer<E> {
     }
 
     fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        let (viewport_w, viewport_h) = self.viewport_size(ctx);
-        let mut child_ctx = ctx.clone();
-        child_ctx.box_constraint.min_width = child_ctx.box_constraint.min_width.min(viewport_w);
-        child_ctx.box_constraint.min_height = child_ctx.box_constraint.min_height.min(viewport_h);
-        child_ctx.box_constraint.max_width = viewport_w;
-        child_ctx.box_constraint.max_height = viewport_h;
-        child_ctx.parent_size = ResolvedSize {
-            width: viewport_w,
-            height: viewport_h,
-        };
-        match self.ctrl.axis {
-            ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
-            ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
-        }
-        let res = self.child.computed_size(&child_ctx);
-        // println!("Content Computed Size: {:?}", res);
-        res
+        self.cached_content_size(ctx)
     }
 }
 

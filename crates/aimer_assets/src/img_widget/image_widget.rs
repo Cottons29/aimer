@@ -112,6 +112,7 @@ impl Widget for Image {
             error_element: None,
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),
+            cached_texture_epoch: Cell::new(0),
             scale: self.scale,
         }
         .boxed()
@@ -133,6 +134,10 @@ pub struct RawImageWidget<P: ImageProvider> {
     pub loading_element: Option<AnyElement>,
     pub error_element: Option<AnyElement>,
     pub cached_id: UnsafeCell<Option<ImageResult>>,
+    /// Last renderer image-cache generation observed by this retained widget.
+    /// A changed generation triggers one exact availability check, keeping
+    /// ordinary image draws free of synchronization or cache probing.
+    pub cached_texture_epoch: Cell<u64>,
     pub scale: f32,
 }
 
@@ -197,10 +202,31 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
         }
         let size = self.computed_size(ctx);
         let image_result = if let Some(result) = unsafe { &*self.cached_id.get() } {
-            if result == &ImageResult::Loading {
+            let cache_invalidated = match result {
+                Success(id) => {
+                    let epoch = ctx.canvas.texture_cache_epoch();
+                    let invalidated = epoch != self.cached_texture_epoch.get()
+                        && !ctx.canvas.is_texture_available(*id);
+                    self.cached_texture_epoch.set(epoch);
+                    invalidated
+                }
+                _ => false,
+            };
+            if cache_invalidated {
+                unsafe { *self.cached_id.get() = None };
                 let r = self.source.get_image(ctx);
                 if r != ImageResult::Loading {
                     unsafe { *self.cached_id.get() = Some(r.clone()) };
+                    self.cached_texture_epoch
+                        .set(ctx.canvas.texture_cache_epoch());
+                }
+                r
+            } else if result == &ImageResult::Loading {
+                let r = self.source.get_image(ctx);
+                if r != ImageResult::Loading {
+                    unsafe { *self.cached_id.get() = Some(r.clone()) };
+                    self.cached_texture_epoch
+                        .set(ctx.canvas.texture_cache_epoch());
                 }
                 r
             } else {
@@ -210,6 +236,8 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
             let result = self.source.get_image(ctx);
             if result != ImageResult::Loading {
                 unsafe { *self.cached_id.get() = Some(result.clone()) };
+                self.cached_texture_epoch
+                    .set(ctx.canvas.texture_cache_epoch());
             }
             result
         };

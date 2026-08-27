@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
@@ -184,6 +186,7 @@ impl<W: Widget> Widget for Positioned<W> {
             bottom: self.bottom,
             transform: self.transform,
             layer: self.layer,
+            bounds: Cell::new(None),
         }
         .boxed()
     }
@@ -223,6 +226,7 @@ pub struct RawPositionedElement<E: Element> {
     pub(crate) bottom: Dimension,
     pub(crate) transform: Transform,
     pub(crate) layer: u32,
+    pub(crate) bounds: Cell<Option<(Vec2d, Vec2d)>>,
 }
 
 impl<E: Element> RawPositionedElement<E> {
@@ -239,6 +243,7 @@ impl<E: Element> RawPositionedElement<E> {
             bottom: Dimension::Auto,
             transform: Default::default(),
             layer: 0,
+            bounds: Cell::new(None),
         }
     }
 
@@ -261,6 +266,10 @@ impl<E: Element> RawPositionedElement<E> {
 
 impl<E: Element> Drawable for RawPositionedElement<E> {
     fn draw(&self, ctx: &BuildContext) {
+        // A position or non-identity transform can change the wrapper's
+        // screen rectangle. Unknown transforms stay uncached so bounded
+        // pointer descent never under-culls a child.
+        self.bounds.set(None);
         // debug!("Positioned::draw");
         let is_auto = self.top == Dimension::Auto
             && self.left == Dimension::Auto
@@ -294,6 +303,29 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
                     - self.bottom.resolve(ctx.parent_size.height, ctx.scale)
                     - child_size.height;
             }
+        }
+
+        if let Some((transform_x, transform_y)) = match self.transform {
+            Transform::Translate(tx, ty) => Some((tx, ty)),
+            Transform::TranslateX(tx) => Some((tx, 0.0)),
+            Transform::TranslateY(ty) => Some((0.0, ty)),
+            Transform::None => Some((0.0, 0.0)),
+            Transform::Scale(..)
+            | Transform::ScaleX(..)
+            | Transform::ScaleY(..)
+            | Transform::Rotate(..) => None,
+        } {
+            let (start_x, start_y) = ctx.canvas.get_transform_translation();
+            let scale = ctx.scale;
+            let l_start = Vec2d {
+                x: (start_x + offset_x + transform_x) / scale,
+                y: (start_y + offset_y + transform_y) / scale,
+            };
+            let l_end = Vec2d {
+                x: (start_x + offset_x + transform_x + child_size.width) / scale,
+                y: (start_y + offset_y + transform_y + child_size.height) / scale,
+            };
+            self.bounds.set(Some((l_start, l_end)));
         }
 
         ctx.canvas.translate(Vec2d {
@@ -402,6 +434,13 @@ impl<E: Element> VisitorElement for RawPositionedElement<E> {
 }
 
 impl<E: Element> EventElement for RawPositionedElement<E> {
+    /// Positioned hides its child from visual traversal because it renders the
+    /// child itself, but the event view is the structural child view.
+    #[inline]
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(&self.child);
+    }
+
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(&self.child);
     }
@@ -410,6 +449,11 @@ impl<E: Element> EventElement for RawPositionedElement<E> {
 impl<E: Element> LayoutElement for RawPositionedElement<E> {
     fn layer(&self) -> u32 {
         self.layer
+    }
+
+    #[inline]
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.bounds.get()
     }
 }
 
@@ -521,6 +565,7 @@ mod tests {
             bottom: Default::default(),
             transform: Default::default(),
             layer: 0,
+            bounds: Cell::new(None),
         };
 
         // `visit_children` is intentionally empty (no double-render).

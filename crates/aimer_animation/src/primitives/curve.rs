@@ -154,6 +154,9 @@ fn bezier_derivative(t: f32, p1: f32, p2: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
+    use std::time::Instant;
+
     use super::*;
 
     #[test]
@@ -243,6 +246,47 @@ mod tests {
                 (curve.transform(1.0) - 1.0).abs() < 1e-6,
                 "{curve:?} at 1.0"
             );
+        }
+    }
+
+    #[test]
+    #[ignore = "manual numeric-kernel profile"]
+    fn profile_curve_transform() {
+        const MEASURED: usize = 1_024;
+        const WARMUP: usize = 128;
+        const ROUNDS: usize = 7;
+
+        let cases = [
+            ("linear", Curve::Linear),
+            ("ease-in-out", Curve::EaseInOut),
+            ("bounce-out", Curve::BounceOut),
+            ("elastic-out", Curve::ElasticOut),
+            ("cubic-bezier", Curve::CubicBezier(0.17, 0.74, 0.30, 1.0)),
+            ("fast-out-slow-in", Curve::FastOutSlowIn),
+        ];
+
+        for (name, curve) in cases {
+            let mut samples = Vec::with_capacity(ROUNDS);
+            let mut checksum = 0.0;
+            for _ in 0..ROUNDS {
+                for index in 0..WARMUP {
+                    let t = index as f32 / WARMUP as f32;
+                    checksum = black_box(checksum + curve.transform(t));
+                }
+
+                let start = Instant::now();
+                for index in 0..MEASURED {
+                    let t = index as f32 / MEASURED as f32;
+                    checksum = black_box(checksum + curve.transform(t));
+                }
+                samples.push(start.elapsed().as_secs_f64() * 1e6 / MEASURED as f64);
+            }
+
+            samples.sort_by(f64::total_cmp);
+            let p50 = samples[ROUNDS / 2];
+            let p95 = samples[(ROUNDS * 95).div_ceil(100) - 1];
+            println!("{name}: p50 {p50:.3} us, p95 {p95:.3} us");
+            assert!(checksum.is_finite());
         }
     }
 }

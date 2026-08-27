@@ -99,21 +99,23 @@ impl<T: Animatable + Clone> KeyframeAnimation<T> {
             return self.frames.last().unwrap().1.value.clone();
         }
 
-        // Find bounding keyframes
-        for i in 0..self.frames.len() - 1 {
-            let (f0, ref kf0) = self.frames[i];
-            let (f1, ref kf1) = self.frames[i + 1];
-
-            if t >= f0 && t <= f1 {
-                let range = f1 - f0;
-                let local_t = if range > 0.0 { (t - f0) / range } else { 0.0 };
-                let curved_t = kf1.curve.transform(local_t);
-                return kf0.value.lerp(&kf1.value, curved_t);
-            }
+        // A NaN progress value used to miss every interval and fall through
+        // to the last keyframe. Preserve that behavior before the binary
+        // search, whose lower-bound index would otherwise be zero.
+        if t.is_nan() {
+            return self.frames.last().unwrap().1.value.clone();
         }
 
-        // Fallback (should not reach here)
-        self.frames.last().unwrap().1.value.clone()
+        // Find the first keyframe at or after `t`; the preceding entry is the
+        // lower bound. Using `<` rather than `<=` preserves the old linear
+        // scan's choice of the first interval when fractions are duplicated.
+        let upper_index = self.frames.partition_point(|frame| frame.0 < t);
+        let (f0, ref kf0) = self.frames[upper_index - 1];
+        let (f1, ref kf1) = self.frames[upper_index];
+        let range = f1 - f0;
+        let local_t = if range > 0.0 { (t - f0) / range } else { 0.0 };
+        let curved_t = kf1.curve.transform(local_t);
+        kf0.value.lerp(&kf1.value, curved_t)
     }
 
     /// Returns the number of keyframes.
@@ -141,6 +143,9 @@ impl<T: Animatable + Clone> Animatable for KeyframeAnimation<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
+    use std::time::Instant;
+
     use super::*;
 
     #[test]
@@ -189,6 +194,26 @@ mod tests {
     }
 
     #[test]
+    fn test_duplicate_fractions_keep_the_first_interval() {
+        let anim = KeyframeAnimation::with_curves(&[
+            (0.0, 0.0f32, Curve::Linear),
+            (0.5, 10.0, Curve::Linear),
+            (0.5, 20.0, Curve::Linear),
+            (1.0, 30.0, Curve::Linear),
+        ]);
+
+        assert_eq!(anim.at(0.5), 10.0);
+        assert!((anim.at(0.75) - 25.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_nan_progress_falls_back_to_the_last_keyframe() {
+        let anim = KeyframeAnimation::from_values(&[(0.0, 10.0f32), (1.0, 100.0)]);
+
+        assert_eq!(anim.at(f32::NAN), 100.0);
+    }
+
+    #[test]
     fn test_tuple_keyframes() {
         let anim =
             KeyframeAnimation::from_values(&[(0.0, (0.0f32, 0.0f32)), (1.0, (100.0, 200.0))]);
@@ -201,5 +226,45 @@ mod tests {
     fn test_len() {
         let anim = KeyframeAnimation::from_values(&[(0.0, 0.0f32), (0.5, 50.0), (1.0, 100.0)]);
         assert_eq!(anim.len(), 3);
+    }
+
+    #[test]
+    #[ignore = "manual numeric-kernel profile"]
+    fn profile_keyframe_lookup() {
+        const MEASURED: usize = 4_096;
+        const WARMUP: usize = 512;
+        const ROUNDS: usize = 7;
+
+        for count in [2, 8, 32, 256, 2_048] {
+            let values: Vec<_> = (0..count)
+                .map(|index| {
+                    let fraction = index as f32 / (count - 1) as f32;
+                    (fraction, index as f32 * 3.0)
+                })
+                .collect();
+            let animation = KeyframeAnimation::from_values(&values);
+            let mut samples = Vec::with_capacity(ROUNDS);
+            let mut checksum = 0.0;
+
+            for _ in 0..ROUNDS {
+                for index in 0..WARMUP {
+                    let t = ((index * 37) % 997) as f32 / 996.0;
+                    checksum = black_box(checksum + animation.at(t));
+                }
+
+                let start = Instant::now();
+                for index in 0..MEASURED {
+                    let t = ((index * 37) % 997) as f32 / 996.0;
+                    checksum = black_box(checksum + animation.at(t));
+                }
+                samples.push(start.elapsed().as_secs_f64() * 1e6 / MEASURED as f64);
+            }
+
+            samples.sort_by(f64::total_cmp);
+            let p50 = samples[ROUNDS / 2];
+            let p95 = samples[(ROUNDS * 95).div_ceil(100) - 1];
+            println!("{count} keyframes: p50 {p50:.3} us, p95 {p95:.3} us");
+            assert!(checksum.is_finite());
+        }
     }
 }

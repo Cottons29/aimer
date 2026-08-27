@@ -28,6 +28,11 @@ impl ZeroSizedBox {
 
 impl Drawable for ZeroSizedBox {
     fn draw(&self, _: &BuildContext) {}
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        true
+    }
 }
 
 impl VisitorElement for ZeroSizedBox {

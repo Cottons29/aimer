@@ -166,6 +166,14 @@ pub struct ScrollState {
     /// `on_scroll_end` callbacks so each fires exactly once per session (on
     /// the idle↔scrolling edge), never once per frame.
     pub(crate) is_scrolling: Cell<bool>,
+    /// Debug-only counters for one scroll session. They live on the shared
+    /// state because input and draw paths both contribute to the same gesture.
+    #[cfg(debug_assertions)]
+    pub(crate) session_input_events: Cell<u64>,
+    #[cfg(debug_assertions)]
+    pub(crate) session_draw_frames: Cell<u64>,
+    #[cfg(debug_assertions)]
+    pub(crate) session_moved_frames: Cell<u64>,
     /// Fired once when a scroll session begins (idle → scrolling); receives the
     /// current logical offset. Shared in from the [`ScrollController`] on
     /// attach.
@@ -243,6 +251,15 @@ impl ScrollState {
         self.vel_accum.set(prev.vel_accum.get());
         self.vel_sample_time.set(prev.vel_sample_time.get());
         self.is_scrolling.set(prev.is_scrolling.get());
+        #[cfg(debug_assertions)]
+        {
+            self.session_input_events
+                .set(prev.session_input_events.get());
+            self.session_draw_frames
+                .set(prev.session_draw_frames.get());
+            self.session_moved_frames
+                .set(prev.session_moved_frames.get());
+        }
         self.last_reported_offset
             .set(prev.last_reported_offset.get());
         self.last_drawn_offset.set(prev.last_drawn_offset.get());
@@ -480,6 +497,12 @@ impl ScrollState {
     /// so it is safe to call on every drag move / wheel tick.
     pub(crate) fn begin_scroll(&self) {
         if !self.is_scrolling.replace(true) {
+            #[cfg(debug_assertions)]
+            {
+                self.session_input_events.set(0);
+                self.session_draw_frames.set(0);
+                self.session_moved_frames.set(0);
+            }
             // Clone the handle out (cheap `Rc` bump) before invoking so a callback
             // that touches the controller can't re-enter a live `RefCell` borrow.
             let cb = self.on_scroll_start.borrow().clone();
@@ -498,13 +521,37 @@ impl ScrollState {
         }
     }
 
+    /// Records one accepted input event in the active debug scroll session.
+    #[inline]
+    pub(crate) fn record_input_event(&self) {
+        #[cfg(debug_assertions)]
+        self.session_input_events
+            .set(self.session_input_events.get().saturating_add(1));
+    }
+
+    /// Records one frame requested by the active debug scroll session.
+    #[inline]
+    pub(crate) fn record_draw_frame(&self, active: bool, moved: bool) {
+        #[cfg(debug_assertions)]
+        if active {
+            self.session_draw_frames
+                .set(self.session_draw_frames.get().saturating_add(1));
+            if moved {
+                self.session_moved_frames
+                    .set(self.session_moved_frames.get().saturating_add(1));
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        let _ = (active, moved);
+    }
+
     /// Fire [`on_scroll`](Self::on_scroll) with the current logical offset, but
     /// only when it has actually moved (beyond [`SCROLL_NOTIFY_EPSILON`]) since
     /// the last report. Level-triggered: call it once per drawn frame after the
     /// offset is finalized; the epsilon guard collapses idle frames and
     /// sub-pixel jitter to no-ops. The very first call only establishes the
     /// baseline, so the initial render never emits a spurious update.
-    pub(crate) fn notify_scroll(&self) {
+    pub(crate) fn notify_scroll(&self) -> bool {
         let current = self.logical_offset();
         let moved = match self.last_reported_offset.get() {
             Some(prev) => {
@@ -520,6 +567,7 @@ impl ScrollState {
             let cb = self.on_scroll.borrow().clone();
             cb.call(current);
         }
+        moved
     }
 }
 
@@ -1608,6 +1656,12 @@ impl ScrollState {
             vel_accum: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             vel_sample_time: Cell::new(None),
             is_scrolling: Cell::new(false),
+            #[cfg(debug_assertions)]
+            session_input_events: Cell::new(0),
+            #[cfg(debug_assertions)]
+            session_draw_frames: Cell::new(0),
+            #[cfg(debug_assertions)]
+            session_moved_frames: Cell::new(0),
             on_scroll_start: RefCell::new(Callback::default()),
             on_scroll_end: RefCell::new(Callback::default()),
             on_scroll: RefCell::new(Callback::default()),

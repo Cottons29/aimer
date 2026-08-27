@@ -13,10 +13,11 @@
 //! buys nothing unless they are a meaningful share of the frame, and it costs an
 //! extra frame of latency. This module is the measurement that decides it.
 //!
-//! Instrumentation is compiled out unless the `frame-stats` feature is enabled:
-//! with the feature off, [`PhaseTimer::start`] reads no clock and
-//! [`PhaseTimer::finish`] does nothing, so the timing calls in the render path
-//! cost nothing at all.
+//! Release instrumentation is compiled out unless the `frame-stats` feature is
+//! enabled. Native debug builds collect the timing and content counters used
+//! by the scroll profiling workflow; with both debug assertions and the
+//! feature off, [`PhaseTimer::start`] reads no clock and
+//! [`PhaseTimer::finish`] does nothing.
 //!
 //! # Examples
 //!
@@ -97,6 +98,141 @@ pub struct FrameBreakdown {
     pub encode: PhaseSamples,
     /// Presentation of the encoded image.
     pub present: PhaseSamples,
+}
+
+/// Counts the UI work recorded for a group of frames.
+///
+/// These values describe the build-side workload. They are deliberately kept
+/// separate from [`FrameBreakdown`], whose encode and present samples may run
+/// on a different thread when raster offloading is enabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FrameContentStats {
+    /// Number of frames represented by the counters.
+    pub frames: u64,
+    /// Number of retained elements reached by drawing.
+    pub drawn_nodes: u64,
+    /// Number of commands recorded into the frame draw lists.
+    pub draw_commands: u64,
+    /// Number of compositor-style retained layers recorded into the frame.
+    pub retained_layers: u64,
+    /// Number of text and text-decoration commands recorded.
+    pub text_commands: u64,
+    /// Number of already-loaded texture draw commands recorded.
+    pub image_draws: u64,
+    /// Number of image-byte upload commands recorded.
+    pub image_uploads: u64,
+    /// Number of text metrics cache hits.
+    pub text_cache_hits: u64,
+    /// Number of text metrics cache misses.
+    pub text_cache_misses: u64,
+}
+
+impl FrameContentStats {
+    #[inline]
+    fn average(value: u64, frames: u64) -> f64 {
+        if frames == 0 {
+            0.0
+        } else {
+            value as f64 / frames as f64
+        }
+    }
+
+    /// Average number of drawn retained elements per frame.
+    #[inline]
+    pub fn average_drawn_nodes(&self) -> f64 {
+        Self::average(self.drawn_nodes, self.frames)
+    }
+
+    /// Average number of recorded draw commands per frame.
+    #[inline]
+    pub fn average_draw_commands(&self) -> f64 {
+        Self::average(self.draw_commands, self.frames)
+    }
+
+    /// Average number of retained compositor layers per frame.
+    #[inline]
+    pub fn average_retained_layers(&self) -> f64 {
+        Self::average(self.retained_layers, self.frames)
+    }
+
+    /// Average number of text commands per frame.
+    #[inline]
+    pub fn average_text_commands(&self) -> f64 {
+        Self::average(self.text_commands, self.frames)
+    }
+
+    /// Average number of image draws per frame.
+    #[inline]
+    pub fn average_image_draws(&self) -> f64 {
+        Self::average(self.image_draws, self.frames)
+    }
+
+    /// Average number of image uploads per frame.
+    #[inline]
+    pub fn average_image_uploads(&self) -> f64 {
+        Self::average(self.image_uploads, self.frames)
+    }
+
+    /// Average number of text metrics cache misses per frame.
+    #[inline]
+    pub fn average_text_cache_misses(&self) -> f64 {
+        Self::average(self.text_cache_misses, self.frames)
+    }
+}
+
+/// Counts frame-wake requests around the native display/event-loop tick.
+///
+/// `accepted` is a request that occupied the one pending wake slot;
+/// `coalesced` is a request made while that slot was already occupied; and
+/// `display_ticks` is a delivered `FrameReady` wake. The counters describe
+/// scheduling pressure, not rendered-frame count — a platform may merge or
+/// defer a redraw after the wake is delivered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FrameRequestStats {
+    /// Requests that successfully occupied the pending frame-wake slot.
+    pub accepted: u64,
+    /// Requests folded into an already pending frame wake.
+    pub coalesced: u64,
+    /// Native display/event-loop ticks that consumed a pending frame wake.
+    pub display_ticks: u64,
+}
+
+#[derive(Debug, Default)]
+struct FrameRequestAccumulator {
+    accepted: AtomicU64,
+    coalesced: AtomicU64,
+    display_ticks: AtomicU64,
+}
+
+impl FrameRequestAccumulator {
+    #[inline]
+    fn accepted(&self) {
+        self.accepted.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn coalesced(&self) {
+        self.coalesced.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn display_tick(&self) {
+        self.display_ticks.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> FrameRequestStats {
+        FrameRequestStats {
+            accepted: self.accepted.load(Ordering::Relaxed),
+            coalesced: self.coalesced.load(Ordering::Relaxed),
+            display_ticks: self.display_ticks.load(Ordering::Relaxed),
+        }
+    }
+
+    fn reset(&self) {
+        self.accepted.store(0, Ordering::Relaxed);
+        self.coalesced.store(0, Ordering::Relaxed);
+        self.display_ticks.store(0, Ordering::Relaxed);
+    }
 }
 
 impl FrameBreakdown {
@@ -219,6 +355,74 @@ impl AtomicPhase {
     }
 }
 
+/// Lock-free accumulation for build-side frame content counters.
+#[derive(Debug, Default)]
+struct FrameContentAccumulator {
+    frames: AtomicU64,
+    drawn_nodes: AtomicU64,
+    draw_commands: AtomicU64,
+    retained_layers: AtomicU64,
+    text_commands: AtomicU64,
+    image_draws: AtomicU64,
+    image_uploads: AtomicU64,
+    text_cache_hits: AtomicU64,
+    text_cache_misses: AtomicU64,
+}
+
+impl FrameContentAccumulator {
+    #[inline]
+    fn record(
+        &self,
+        drawn_nodes: u64,
+        draw_list: aimer_cupid::draw_cmd::DrawListStats,
+        text_cache_hits: u64,
+        text_cache_misses: u64,
+    ) {
+        self.frames.fetch_add(1, Ordering::Relaxed);
+        self.drawn_nodes.fetch_add(drawn_nodes, Ordering::Relaxed);
+        self.draw_commands
+            .fetch_add(draw_list.commands as u64, Ordering::Relaxed);
+        self.retained_layers
+            .fetch_add(draw_list.retained_layers as u64, Ordering::Relaxed);
+        self.text_commands
+            .fetch_add(draw_list.text_commands as u64, Ordering::Relaxed);
+        self.image_draws
+            .fetch_add(draw_list.image_draws as u64, Ordering::Relaxed);
+        self.image_uploads
+            .fetch_add(draw_list.image_uploads as u64, Ordering::Relaxed);
+        self.text_cache_hits
+            .fetch_add(text_cache_hits, Ordering::Relaxed);
+        self.text_cache_misses
+            .fetch_add(text_cache_misses, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> FrameContentStats {
+        FrameContentStats {
+            frames: self.frames.load(Ordering::Relaxed),
+            drawn_nodes: self.drawn_nodes.load(Ordering::Relaxed),
+            draw_commands: self.draw_commands.load(Ordering::Relaxed),
+            retained_layers: self.retained_layers.load(Ordering::Relaxed),
+            text_commands: self.text_commands.load(Ordering::Relaxed),
+            image_draws: self.image_draws.load(Ordering::Relaxed),
+            image_uploads: self.image_uploads.load(Ordering::Relaxed),
+            text_cache_hits: self.text_cache_hits.load(Ordering::Relaxed),
+            text_cache_misses: self.text_cache_misses.load(Ordering::Relaxed),
+        }
+    }
+
+    fn reset(&self) {
+        self.frames.store(0, Ordering::Relaxed);
+        self.drawn_nodes.store(0, Ordering::Relaxed);
+        self.draw_commands.store(0, Ordering::Relaxed);
+        self.retained_layers.store(0, Ordering::Relaxed);
+        self.text_commands.store(0, Ordering::Relaxed);
+        self.image_draws.store(0, Ordering::Relaxed);
+        self.image_uploads.store(0, Ordering::Relaxed);
+        self.text_cache_hits.store(0, Ordering::Relaxed);
+        self.text_cache_misses.store(0, Ordering::Relaxed);
+    }
+}
+
 static FRAME_STATS: FrameAccumulator = FrameAccumulator {
     build: AtomicPhase {
         samples: AtomicU64::new(0),
@@ -234,10 +438,31 @@ static FRAME_STATS: FrameAccumulator = FrameAccumulator {
     },
 };
 
+static FRAME_CONTENT_STATS: FrameContentAccumulator = FrameContentAccumulator {
+    frames: AtomicU64::new(0),
+    drawn_nodes: AtomicU64::new(0),
+    draw_commands: AtomicU64::new(0),
+    retained_layers: AtomicU64::new(0),
+    text_commands: AtomicU64::new(0),
+    image_draws: AtomicU64::new(0),
+    image_uploads: AtomicU64::new(0),
+    text_cache_hits: AtomicU64::new(0),
+    text_cache_misses: AtomicU64::new(0),
+};
+
+static FRAME_REQUEST_STATS: FrameRequestAccumulator = FrameRequestAccumulator {
+    accepted: AtomicU64::new(0),
+    coalesced: AtomicU64::new(0),
+    display_ticks: AtomicU64::new(0),
+};
+
+#[cfg(debug_assertions)]
+const DEBUG_REPORT_INTERVAL: u64 = 30;
+
 /// The frame breakdown accumulated so far.
 ///
 /// Every phase reads zero unless the crate was built with the `frame-stats`
-/// feature.
+/// feature or with native debug assertions enabled.
 #[inline]
 pub fn frame_breakdown() -> FrameBreakdown {
     FRAME_STATS.snapshot()
@@ -252,10 +477,94 @@ pub fn reset_frame_breakdown() {
     FRAME_STATS.reset();
 }
 
+/// The build-side content counters accumulated so far.
+#[inline]
+pub fn frame_content_stats() -> FrameContentStats {
+    FRAME_CONTENT_STATS.snapshot()
+}
+
+/// Drop every build-side content sample collected so far.
+#[inline]
+pub fn reset_frame_content_stats() {
+    FRAME_CONTENT_STATS.reset();
+}
+
+/// The native frame-wake counters accumulated so far.
+#[inline]
+pub fn frame_request_stats() -> FrameRequestStats {
+    FRAME_REQUEST_STATS.snapshot()
+}
+
+/// Drop every native frame-wake counter collected so far.
+#[inline]
+pub fn reset_frame_request_stats() {
+    FRAME_REQUEST_STATS.reset();
+}
+
+/// Records a request that occupied the native pending frame-wake slot.
+#[doc(hidden)]
+#[inline]
+pub fn record_frame_request_accepted() {
+    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    FRAME_REQUEST_STATS.accepted();
+}
+
+/// Records a request folded into an already pending native frame wake.
+#[doc(hidden)]
+#[inline]
+pub fn record_frame_request_coalesced() {
+    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    FRAME_REQUEST_STATS.coalesced();
+}
+
+/// Records a delivered native display/event-loop tick.
+#[doc(hidden)]
+#[inline]
+pub fn record_display_tick() {
+    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    FRAME_REQUEST_STATS.display_tick();
+}
+
+/// Records one frame's draw traversal and command-stream workload.
+#[doc(hidden)]
+#[inline]
+pub fn record_frame_content(
+    drawn_nodes: u64,
+    draw_list: aimer_cupid::draw_cmd::DrawListStats,
+    text_cache_hits: u64,
+    text_cache_misses: u64,
+) {
+    FRAME_CONTENT_STATS.record(
+        drawn_nodes,
+        draw_list,
+        text_cache_hits,
+        text_cache_misses,
+    );
+}
+
+/// Takes a periodic debug report and resets the two frame accumulators.
+///
+/// The windowed handler calls this after a completed frame. Returning a report
+/// every thirty build frames keeps the terminal useful during a long scroll
+/// without adding a log call to the hot path itself.
+#[doc(hidden)]
+#[cfg(debug_assertions)]
+pub(crate) fn take_debug_report() -> Option<(FrameBreakdown, FrameContentStats)> {
+    let content = FRAME_CONTENT_STATS.snapshot();
+    if content.frames < DEBUG_REPORT_INTERVAL {
+        return None;
+    }
+    FRAME_CONTENT_STATS.reset();
+    let breakdown = FRAME_STATS.snapshot();
+    FRAME_STATS.reset();
+    Some((breakdown, content))
+}
+
 /// A running measurement of one [`FramePhase`].
 ///
-/// Zero-sized and inert unless the `frame-stats` feature is enabled, so the
-/// render path can time itself unconditionally.
+/// Zero-sized and inert in release builds unless the `frame-stats` feature is
+/// enabled, so the render path can time itself unconditionally. Native debug
+/// builds keep the timers active for scroll profiling.
 ///
 /// # Examples
 ///
@@ -270,7 +579,7 @@ pub fn reset_frame_breakdown() {
 pub struct PhaseTimer {
     // `AnimInstant` rather than `std::time::Instant`: the web backend times the
     // same phases, and `std`'s clock is unsupported there.
-    #[cfg(feature = "frame-stats")]
+    #[cfg(any(feature = "frame-stats", debug_assertions))]
     started: aimer_utils::AnimInstant,
 }
 
@@ -279,7 +588,7 @@ impl PhaseTimer {
     #[inline]
     pub fn start() -> Self {
         Self {
-            #[cfg(feature = "frame-stats")]
+            #[cfg(any(feature = "frame-stats", debug_assertions))]
             started: aimer_utils::AnimInstant::now(),
         }
     }
@@ -287,9 +596,9 @@ impl PhaseTimer {
     /// Attribute the elapsed time to `phase`.
     #[inline]
     pub fn finish(self, phase: FramePhase) {
-        #[cfg(feature = "frame-stats")]
+        #[cfg(any(feature = "frame-stats", debug_assertions))]
         FRAME_STATS.record(phase, self.started.elapsed());
-        #[cfg(not(feature = "frame-stats"))]
+        #[cfg(not(any(feature = "frame-stats", debug_assertions)))]
         let _ = phase;
     }
 }
@@ -355,6 +664,25 @@ mod tests {
     }
 
     #[test]
+    fn frame_request_stats_distinguish_coalesced_wakes_from_display_ticks() {
+        let accumulator = FrameRequestAccumulator::default();
+
+        accumulator.accepted();
+        accumulator.coalesced();
+        accumulator.coalesced();
+        accumulator.display_tick();
+
+        assert_eq!(
+            accumulator.snapshot(),
+            FrameRequestStats {
+                accepted: 1,
+                coalesced: 2,
+                display_ticks: 1,
+            }
+        );
+    }
+
+    #[test]
     fn an_empty_breakdown_has_nothing_to_offload() {
         assert_eq!(FrameBreakdown::default().offloadable_share(), 0.0);
     }
@@ -399,5 +727,49 @@ mod tests {
         let encode = SHARED.snapshot().encode;
         assert_eq!(encode.samples, 400);
         assert_eq!(encode.total, Duration::from_nanos(4000));
+    }
+
+    #[test]
+    fn frame_content_accumulates_and_averages_work() {
+        let accumulator = FrameContentAccumulator::default();
+
+        accumulator.record(
+            10,
+            aimer_cupid::draw_cmd::DrawListStats {
+                commands: 20,
+                retained_layers: 3,
+                text_commands: 8,
+                image_draws: 2,
+                image_uploads: 1,
+            },
+            4,
+            1,
+        );
+        accumulator.record(
+            6,
+            aimer_cupid::draw_cmd::DrawListStats {
+                commands: 10,
+                retained_layers: 0,
+                text_commands: 2,
+                image_draws: 0,
+                image_uploads: 3,
+            },
+            2,
+            3,
+        );
+
+        let stats = accumulator.snapshot();
+        assert_eq!(stats.frames, 2);
+        assert_eq!(stats.drawn_nodes, 16);
+        assert_eq!(stats.draw_commands, 30);
+        assert_eq!(stats.retained_layers, 3);
+        assert_eq!(stats.text_commands, 10);
+        assert_eq!(stats.image_draws, 2);
+        assert_eq!(stats.image_uploads, 4);
+        assert_eq!(stats.text_cache_hits, 6);
+        assert_eq!(stats.text_cache_misses, 4);
+        assert_eq!(stats.average_drawn_nodes(), 8.0);
+        assert_eq!(stats.average_draw_commands(), 15.0);
+        assert_eq!(stats.average_retained_layers(), 1.5);
     }
 }

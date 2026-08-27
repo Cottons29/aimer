@@ -123,6 +123,11 @@ impl Drawable for RawScalable {
     fn draw(&self, ctx: &BuildContext) {
         self.child.draw(&self.child_context(ctx));
     }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        self.child.is_paint_stable()
+    }
 }
 
 impl LayoutElement for RawScalable {

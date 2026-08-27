@@ -452,7 +452,19 @@ impl<T: Element> Drawable for RawContainer<T> {
             .visible_rect
             .map(|(vx, vy, vw, vh)| (vx - inset_x, vy - inset_y, vw, vh));
 
-        self.child.draw(&child_ctx);
+        // The child may intentionally paint outside its measured content into
+        // the padding area, so use the complete clipping region rather than
+        // the child's nominal content bounds. That keeps unknown child bounds
+        // conservative while still skipping the whole subtree when the clip
+        // itself is outside the ancestor viewport.
+        if ctx.is_rect_visible(
+            m_left + clip_x,
+            m_top + clip_y,
+            clip_w,
+            clip_h,
+        ) {
+            self.child.draw(&child_ctx);
+        }
         ctx.canvas.clear_clip();
         ctx.canvas.restore();
     }
@@ -469,6 +481,12 @@ impl<T: Element> VisitorElement for RawContainer<T> {
 }
 
 impl<T: Element> EventElement for RawContainer<T> {
+    /// The opaque container has one child in both structural views.
+    #[inline]
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(&self.child);
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         // An opaque container occludes lower `Stack` layers: a wheel / trackpad
         // `Scroll` that lands on it must not fall through to a `Scrollable`
@@ -759,10 +777,32 @@ impl<T: Element> LayoutElement for RawContainer<T> {
 mod tests {
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::cell::Cell;
+    use std::rc::Rc;
 
     use super::*;
     use crate::SizedBox;
     use aimer_widget::base::WindowHandle;
+    use aimer_widget::{Drawable, EventElement, LayoutElement, Rebuildable, VisitorElement};
+
+    struct DrawProbe {
+        draws: Rc<Cell<usize>>,
+    }
+
+    impl Drawable for DrawProbe {
+        fn draw(&self, _ctx: &BuildContext) {
+            self.draws.set(self.draws.get() + 1);
+        }
+    }
+
+    impl EventElement for DrawProbe {}
+    impl LayoutElement for DrawProbe {}
+    impl Rebuildable for DrawProbe {}
+
+    impl VisitorElement for DrawProbe {
+        fn debug_name(&self) -> &'static str {
+            "DrawProbe"
+        }
+    }
 
     /// Counts every call that reaches the system allocator on this thread.
     ///
@@ -831,6 +871,54 @@ mod tests {
             box_shadow: vec![BoxShadow::default(), BoxShadow::default()],
             ..BoxDecoration::default()
         }
+    }
+
+    #[tokio::test]
+    async fn offscreen_container_skips_unknown_child_draw_but_keeps_traversal_views() {
+        let draws = Rc::new(Cell::new(0));
+        let container = RawContainer::new(DrawProbe {
+            draws: draws.clone(),
+        });
+        let mut ctx = context();
+        ctx.parent_size = ResolvedSize {
+            width: 100.0,
+            height: 100.0,
+        };
+        ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 100.0,
+            max_height: 100.0,
+        };
+        ctx.visible_rect = Some((0.0, 101.0, 100.0, 20.0));
+
+        container.draw(&ctx);
+
+        assert_eq!(
+            draws.get(),
+            0,
+            "a clipped container must not dynamically dispatch an offscreen child"
+        );
+
+        let mut structural = 0;
+        container.structural_children(&mut |_| structural += 1);
+        assert_eq!(structural, 1);
+
+        let mut events = 0;
+        container.event_children(&mut |_| events += 1);
+        assert_eq!(events, 1);
+
+        let mut hit_test = 0;
+        container.hit_test_children(&mut |_| hit_test += 1);
+        assert_eq!(hit_test, 1);
+
+        ctx.visible_rect = Some((0.0, 0.0, 100.0, 100.0));
+        container.draw(&ctx);
+        assert_eq!(
+            draws.get(),
+            1,
+            "an unknown-bounds child remains drawable when its clipping parent is visible"
+        );
     }
 
     #[test]

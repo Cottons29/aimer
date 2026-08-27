@@ -36,7 +36,9 @@ mod deferred_frame_uploads {
     //! Runs against the first available adapter; skips (with a note) on machines
     //! without one.
 
-    use crate::draw_cmd::DrawList;
+    use std::sync::Arc;
+
+    use crate::draw_cmd::{DrawList, RetainedLayerContent};
     use crate::renderer::Renderer;
     use crate::utilities::{Color, Rect};
     use aimer_utils::SyncFuture;
@@ -229,6 +231,42 @@ mod deferred_frame_uploads {
         assert_dominant(&pixels, 2, 2, 1, "swapped background");
         assert_dominant(&pixels, 20, 20, 2, "image after swap");
         assert_dominant(&pixels, 44, 44, 0, "swapped square");
+    }
+
+    #[test]
+    fn retained_layer_is_rasterized_and_then_composited_at_a_new_offset() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut renderer = Renderer::new(&device, FORMAT);
+
+        let mut recorded = DrawList::new();
+        recorded.fill_rect(
+            Rect::new(0.0, 0.0, 16.0, 16.0),
+            Color::red(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        let content = Arc::new(RetainedLayerContent::from_snapshot(
+            recorded
+                .retained_snapshot()
+                .expect("the layer content should be retainable"),
+        ));
+
+        let mut first_frame = DrawList::new();
+        first_frame.draw_retained_layer(7, Rect::new(4.0, 4.0, 16.0, 16.0), content.clone());
+        let first = render_and_read(&device, &queue, &mut renderer, &first_frame);
+        assert_dominant(&first, 8, 8, 0, "first retained layer position");
+        assert_eq!(renderer.memory_stats().retained_layer_count, 1);
+
+        let mut second_frame = DrawList::new();
+        second_frame.draw_retained_layer(7, Rect::new(12.0, 12.0, 16.0, 16.0), content);
+        let second = render_and_read(&device, &queue, &mut renderer, &second_frame);
+        assert_dominant(&second, 16, 16, 0, "composited retained layer position");
+        assert_eq!(renderer.memory_stats().retained_layer_count, 1);
+        assert_eq!(pixel(&second, 8, 8)[3], 0, "the layer should have moved");
     }
 
     #[test]

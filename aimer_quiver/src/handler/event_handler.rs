@@ -699,9 +699,12 @@ impl WindowEventHandler {
                 }
             }
 
-            if let Some(window) = &app.window {
-                window.request_redraw();
-            }
+            // Keep wheel input on the same frame-synchronized path as the
+            // scroll step delivered during `begin_frame`. A direct redraw here
+            // can race that later request and make one input burst produce an
+            // extra native frame; the platform requester coalesces the wake
+            // until the display loop delivers it.
+            aimer_events::window::request_animation_frame();
         }
     }
 

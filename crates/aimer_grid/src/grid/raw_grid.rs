@@ -434,7 +434,7 @@ pub(crate) struct RawGrid {
     pub vertical_alignment: GridAlignment,
     pub overflow: GridOverflow,
     pub children: Vec<RawGridItem>,
-    pub layout_cache: RefCell<Vec<(BoxConstraint, u32, Rc<GridLayout>)>>,
+    pub layout_cache: RefCell<Vec<(BoxConstraint, u32, u64, Rc<GridLayout>)>>,
 }
 
 #[derive(Clone)]
@@ -447,12 +447,15 @@ pub(crate) struct GridLayout {
 
 impl RawGrid {
     fn layout_grid(&self, ctx: &BuildContext) -> Result<Rc<GridLayout>, GridError> {
-        if let Some((_, _, layout)) =
+        let layout_generation = aimer_widget::layout_invalidation_generation();
+        if let Some((_, _, _, layout)) =
             self.layout_cache
                 .borrow()
                 .iter()
-                .find(|(constraint, scale_bits, _)| {
-                    *constraint == ctx.box_constraint && *scale_bits == ctx.scale.to_bits()
+                .find(|(constraint, scale_bits, generation, _)| {
+                    *constraint == ctx.box_constraint
+                        && *scale_bits == ctx.scale.to_bits()
+                        && *generation == layout_generation
                 })
         {
             return Ok(Rc::clone(layout));
@@ -546,9 +549,12 @@ impl RawGrid {
             rows,
             size,
         });
-        self.layout_cache.borrow_mut().push((
+        let mut cache = self.layout_cache.borrow_mut();
+        cache.retain(|(_, _, generation, _)| *generation == layout_generation);
+        cache.push((
             ctx.box_constraint,
             ctx.scale.to_bits(),
+            layout_generation,
             Rc::clone(&layout),
         ));
         Ok(layout)
@@ -677,8 +683,25 @@ impl Drawable for RawGrid {
 }
 
 impl EventElement for RawGrid {
+    /// The event and visual child views expose the same grid-item children.
+    #[inline]
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        for item in &self.children {
+            visitor(item.child.as_ref());
+        }
+    }
+
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for item in &self.children {
+            visitor(item.child.as_ref());
+        }
+    }
+
+    /// Visits grid items in reverse retained order so routed pointer events do
+    /// not allocate a temporary sibling buffer for large grids.
+    #[inline]
+    fn hit_test_children_reversed<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        for item in self.children.iter().rev() {
             visitor(item.child.as_ref());
         }
     }

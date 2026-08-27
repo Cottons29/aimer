@@ -94,6 +94,9 @@ pub(crate) fn advance_damped_spring(
 
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
+    use std::time::Instant;
+
     use super::*;
     use crate::scrollable::constants::SNAP_EPSILON;
 
@@ -213,5 +216,45 @@ mod tests {
             assert!(x >= 0.0, "ζ = 2.5 crossed the edge: {x}");
         }
         assert!(x < 100.0);
+    }
+
+    #[test]
+    #[ignore = "manual numeric-kernel profile"]
+    fn profile_spring_integration() {
+        const MEASURED: usize = 1_024;
+        const WARMUP: usize = 128;
+        const ROUNDS: usize = 7;
+
+        let cases = [
+            ("120hz-frame", 1.0 / 120.0),
+            ("60hz-frame", 1.0 / 60.0),
+            ("30hz-frame", 1.0 / 30.0),
+            ("stutter-frame", 0.05),
+        ];
+
+        for (name, dt) in cases {
+            let mut samples = Vec::with_capacity(ROUNDS);
+            let mut checksum = 0.0;
+            for _ in 0..ROUNDS {
+                let mut x = 100.0;
+                let mut v = 0.0;
+                for _ in 0..WARMUP {
+                    (x, v) = black_box(advance_overscroll_spring(x, v, dt));
+                }
+
+                let start = Instant::now();
+                for _ in 0..MEASURED {
+                    (x, v) = black_box(advance_overscroll_spring(x, v, dt));
+                }
+                samples.push(start.elapsed().as_secs_f64() * 1e6 / MEASURED as f64);
+                checksum = black_box(checksum + x + v);
+            }
+
+            samples.sort_by(f64::total_cmp);
+            let p50 = samples[ROUNDS / 2];
+            let p95 = samples[(ROUNDS * 95).div_ceil(100) - 1];
+            println!("{name}: p50 {p50:.3} us, p95 {p95:.3} us");
+            assert!(checksum.is_finite());
+        }
     }
 }

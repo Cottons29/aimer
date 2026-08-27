@@ -15,13 +15,8 @@ use std::cell::Cell;
 /// It also supports an automatic size value, `Auto`, which can be used when the
 /// size should be determined by layout or content rules.
 ///
-/// ### Conditional Compilation
-/// The `Px` and `Percent` variants are conditionally compiled to support
-/// different architectures:
-/// - For non-WebAssembly targets, `Px` and `Percent` use `f32` as the
-///   underlying type.
-/// - For WebAssembly targets, `Px` and `Percent` use `f64` as the underlying
-///   type.
+/// `Px` and `Percent` use `f32` as their underlying type on every supported
+/// target, including WebAssembly.
 ///
 /// ### Traits
 /// The `Dimension` enum derives the following traits:

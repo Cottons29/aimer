@@ -3,7 +3,7 @@ use std::cell::UnsafeCell;
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::size::ResolvedSize;
 
-use crate::components::element::element_tree_generation;
+use crate::components::element::{element_tree_generation, layout_invalidation_generation};
 
 /// One memoized measurement together with everything that decides whether it
 /// still describes the element.
@@ -11,7 +11,8 @@ use crate::components::element::element_tree_generation;
 struct Measurement {
     constraint: BoxConstraint,
     scale_bits: u32,
-    generation: u64,
+    tree_generation: u64,
+    layout_generation: u64,
     size: ResolvedSize,
 }
 
@@ -19,10 +20,17 @@ impl Measurement {
     /// `true` when the measurement was taken under `constraint` and
     /// `scale_bits`, and nothing has replaced a generated subtree since.
     #[inline]
-    fn describes(&self, constraint: BoxConstraint, scale_bits: u32, generation: u64) -> bool {
+    fn describes(
+        &self,
+        constraint: BoxConstraint,
+        scale_bits: u32,
+        tree_generation: u64,
+        layout_generation: u64,
+    ) -> bool {
         self.constraint == constraint
             && self.scale_bits == scale_bits
-            && self.generation == generation
+            && self.tree_generation == tree_generation
+            && self.layout_generation == layout_generation
     }
 }
 
@@ -33,10 +41,11 @@ impl Measurement {
 /// instantly. yeah it saves the CPU and GPU and reduces power consuming :))
 ///
 /// The key also carries the [element-tree
-/// generation](crate::element_tree_generation) the measurement was taken in. An
-/// element measures its children, so a measurement only describes the element
-/// for as long as the subtree below it is the one that was measured. Replacing
-/// a generated subtree — a `setState`, or an
+/// generation](crate::element_tree_generation) and layout-invalidation
+/// generation the measurement was taken in. An element measures its children,
+/// so a measurement only describes the element for as long as the subtree below
+/// it is the one that was measured. Replacing a generated subtree — a
+/// `setState`, or an
 /// [`AsyncBuilder`](crate::AsyncBuilder) swapping its loading state for the data
 /// it waited on — advances that generation, which retires every measurement
 /// taken before it. Without this an ancestor that itself never rebuilt, such as
@@ -44,7 +53,8 @@ impl Measurement {
 /// out the height the content had while it was still loading, and the scroll
 /// view would decide there is nothing to scroll.
 ///
-/// The generation only moves when the element tree actually changes shape, so a
+/// The tree generation only moves when the element tree changes shape, while
+/// the layout generation moves when a caller explicitly invalidates layout. A
 /// frame that merely animates or scrolls still reads straight from the cache.
 ///
 /// # Examples
@@ -76,8 +86,8 @@ impl LayoutCache {
         }
     }
 
-    /// Returns cached computed_size if constraint, scale and element tree are
-    /// unchanged, otherwise None.
+    /// Returns cached computed_size if constraint, scale, element tree, and
+    /// layout invalidation generation are unchanged, otherwise None.
     pub fn get_computed(&self, constraint: BoxConstraint, scale_bits: u32) -> Option<ResolvedSize> {
         let guard = unsafe { &*self.computed.get() };
         Self::read(guard, constraint, scale_bits)
@@ -89,8 +99,8 @@ impl LayoutCache {
         *guard = Some(Self::measurement(constraint, scale_bits, size));
     }
 
-    /// Returns cached content_size if constraint, scale and element tree are
-    /// unchanged, otherwise None.
+    /// Returns cached content_size if constraint, scale, element tree, and
+    /// layout invalidation generation are unchanged, otherwise None.
     pub fn get_content(&self, constraint: BoxConstraint, scale_bits: u32) -> Option<ResolvedSize> {
         let guard = unsafe { &*self.content.get() };
         Self::read(guard, constraint, scale_bits)
@@ -119,7 +129,8 @@ impl LayoutCache {
         Measurement {
             constraint,
             scale_bits,
-            generation: element_tree_generation(),
+            tree_generation: element_tree_generation(),
+            layout_generation: layout_invalidation_generation(),
             size,
         }
     }
@@ -132,7 +143,12 @@ impl LayoutCache {
     ) -> Option<ResolvedSize> {
         let measurement = slot.as_ref()?;
         measurement
-            .describes(constraint, scale_bits, element_tree_generation())
+            .describes(
+                constraint,
+                scale_bits,
+                element_tree_generation(),
+                layout_invalidation_generation(),
+            )
             .then_some(measurement.size)
     }
 }
@@ -200,5 +216,18 @@ mod tests {
 
         assert_eq!(cache.get_computed(constraint, scale_bits), None);
         assert_eq!(cache.get_content(constraint, scale_bits), None);
+    }
+
+    #[test]
+    fn layout_invalidation_retires_a_cached_measurement() {
+        let cache = LayoutCache::new();
+        let constraint = BoxConstraint::new();
+        let scale_bits = 1.0_f32.to_bits();
+        cache.set_computed(constraint, scale_bits, size(40.0));
+        assert_eq!(cache.get_computed(constraint, scale_bits), Some(size(40.0)));
+
+        crate::components::element::advance_layout_invalidation_generation();
+
+        assert_eq!(cache.get_computed(constraint, scale_bits), None);
     }
 }

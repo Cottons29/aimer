@@ -1,6 +1,7 @@
 use std::any::TypeId;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::num::NonZeroU64;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use aimer_attribute::position::Vec2d;
@@ -23,19 +24,220 @@ use crate::{AnyElement, Drawable, Key};
 
 type EventChildren<'a> = SmallVec<[&'a dyn Element; 32]>;
 
-#[cfg(test)]
-thread_local! {
-    static ROUTED_EVENT_SCRATCH_CONSTRUCTIONS: Cell<usize> = const { Cell::new(0) };
-}
-
-fn new_routed_event_scratch<'a>() -> EventChildren<'a> {
-    #[cfg(test)]
-    ROUTED_EVENT_SCRATCH_CONSTRUCTIONS.with(|count| count.set(count.get() + 1));
-    EventChildren::new()
-}
-
 static NEXT_ELEMENT_ID: AtomicU64 = AtomicU64::new(1);
 static ELEMENT_TREE_GENERATION: AtomicU64 = AtomicU64::new(0);
+static REBUILD_INVALIDATION_GENERATION: AtomicU64 = AtomicU64::new(0);
+static LAYOUT_INVALIDATION_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    /// Nested `mark_needs_rebuild` calls share one invalidation generation.
+    /// Marking a large tree is already recursive; it must not also perform one
+    /// atomic increment per descendant.
+    static REBUILD_INVALIDATION_DEPTH: Cell<usize> = const { Cell::new(0) };
+
+    /// Revisions are kept outside [`ElementNode`] so adding stable-layout
+    /// tracking does not change the inline-erased element size. Only elements
+    /// that opt into generation-independent sizing create entries here.
+    static STABLE_SUBTREE_GENERATIONS: RefCell<HashMap<ElementId, u64>> =
+        RefCell::new(HashMap::new());
+
+    /// Number of dirty rebuild sources whose root-relative path crosses each
+    /// retained element. Counts keep shared ancestors indexed until every
+    /// dirty source below them has been rebuilt.
+    static DIRTY_SUBTREE_COUNTS: RefCell<HashMap<ElementId, usize>> =
+        RefCell::new(HashMap::new());
+
+    /// The path index is usable only after one complete walk of the retained
+    /// tree without a structural replacement or an untracked invalidation.
+    static DIRTY_PATHS_READY: Cell<bool> = const { Cell::new(false) };
+    static DIRTY_INDEXED_ROOTS: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
+    static DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL: Cell<bool> = const { Cell::new(false) };
+    static REBUILD_TRAVERSAL_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static REBUILD_PATH: RefCell<Vec<ElementId>> = RefCell::new(Vec::new());
+    static REBUILD_FORCE_DESCEND_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static REBUILD_MARK_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static DRAW_DEPTH: Cell<usize> = const { Cell::new(0) };
+    /// Paint invalidation metadata is retained for the current pair of
+    /// rebuild/tree generations so a retained scroll tile can distinguish a
+    /// local dirty element from an unrelated branch's rebuild.
+    static PAINT_INVALIDATION_EPOCH: Cell<Option<(u64, u64)>> = const { Cell::new(None) };
+    static PAINT_INVALIDATED_ELEMENTS: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
+    static PAINT_INVALIDATED_SUBTREES: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
+    static PAINT_INVALIDATION_UNKNOWN: Cell<bool> = const { Cell::new(false) };
+    /// One identity set per retained recording operation. A stack keeps a
+    /// nested scroll's recording isolated from the tile currently being
+    /// recorded by its parent.
+    static PAINT_TRACKING_STACK: RefCell<Vec<HashSet<ElementId>>> = RefCell::new(Vec::new());
+    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    static DRAW_TRAVERSAL_COUNT: Cell<u64> = const { Cell::new(0) };
+}
+
+fn sync_paint_invalidation_epoch() {
+    let epoch = (
+        REBUILD_INVALIDATION_GENERATION.load(Ordering::Acquire),
+        ELEMENT_TREE_GENERATION.load(Ordering::Acquire),
+    );
+    let changed = PAINT_INVALIDATION_EPOCH.with(|current| {
+        let previous = current.get();
+        if previous.map(|previous| previous.0) == Some(epoch.0) {
+            current.set(Some(epoch));
+            false
+        } else {
+            current.set(Some(epoch));
+            true
+        }
+    });
+    if changed {
+        PAINT_INVALIDATED_ELEMENTS.with(|elements| elements.borrow_mut().clear());
+        PAINT_INVALIDATED_SUBTREES.with(|subtrees| subtrees.borrow_mut().clear());
+        PAINT_INVALIDATION_UNKNOWN.with(|unknown| unknown.set(false));
+    }
+}
+
+fn record_paint_invalidation_path(path: &[ElementId]) {
+    let Some(element) = path.last().copied() else {
+        return;
+    };
+    sync_paint_invalidation_epoch();
+    PAINT_INVALIDATED_ELEMENTS.with(|elements| {
+        elements.borrow_mut().insert(element);
+    });
+    PAINT_INVALIDATED_SUBTREES.with(|subtrees| {
+        subtrees.borrow_mut().extend(path.iter().copied());
+    });
+}
+
+fn record_current_paint_invalidation(element: ElementId) {
+    REBUILD_PATH.with(|path| {
+        let path = path.borrow();
+        if path.is_empty() {
+            record_paint_invalidation_path(&[element]);
+        } else {
+            record_paint_invalidation_path(&path);
+        }
+    });
+}
+
+fn mark_paint_invalidations_unknown() {
+    sync_paint_invalidation_epoch();
+    PAINT_INVALIDATION_UNKNOWN.with(|unknown| unknown.set(true));
+}
+
+/// Starts collecting the logical element identities reached by one retained
+/// paint recording operation.
+#[doc(hidden)]
+pub fn begin_paint_tracking() {
+    PAINT_TRACKING_STACK.with(|stack| stack.borrow_mut().push(HashSet::new()));
+}
+
+/// Finishes the innermost retained paint recording operation and returns the
+/// identities it reached. The returned set is empty when tracking was not
+/// active.
+#[doc(hidden)]
+pub fn take_paint_tracking() -> Vec<ElementId> {
+    PAINT_TRACKING_STACK.with(|stack| {
+        stack
+            .borrow_mut()
+            .pop()
+            .map(|elements| elements.into_iter().collect())
+            .unwrap_or_default()
+    })
+}
+
+#[inline]
+fn record_paint_element(element: ElementId) {
+    PAINT_TRACKING_STACK.with(|stack| {
+        if let Some(elements) = stack.borrow_mut().last_mut() {
+            elements.insert(element);
+        }
+    });
+}
+
+/// Returns whether an element in the current invalidation epoch was marked as
+/// dirty or rebuilt.
+#[doc(hidden)]
+pub fn paint_element_was_invalidated(element: ElementId) -> bool {
+    sync_paint_invalidation_epoch();
+    PAINT_INVALIDATED_ELEMENTS.with(|elements| elements.borrow().contains(&element))
+}
+
+/// Returns whether the current invalidation epoch crossed a retained subtree.
+#[doc(hidden)]
+pub fn paint_subtree_was_invalidated(root: ElementId) -> bool {
+    sync_paint_invalidation_epoch();
+    PAINT_INVALIDATED_SUBTREES.with(|subtrees| subtrees.borrow().contains(&root))
+}
+
+/// Returns whether all known paint invalidations in the current epoch could be
+/// attributed to an element path. Unknown producers must use the conservative
+/// complete-cache invalidation path.
+#[doc(hidden)]
+pub fn paint_invalidations_are_known() -> bool {
+    sync_paint_invalidation_epoch();
+    PAINT_INVALIDATION_UNKNOWN.with(|unknown| !unknown.get())
+}
+
+/// Resets the draw traversal counter for the next measured frame.
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
+pub fn reset_draw_traversal_count() {
+    DRAW_TRAVERSAL_COUNT.with(|count| count.set(0));
+}
+
+/// Takes the number of retained element draw calls observed since the last
+/// reset. A draw call is counted for every element reached by the drawable
+/// traversal, including a scroll container whose children may be culled.
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
+pub fn take_draw_traversal_count() -> u64 {
+    DRAW_TRAVERSAL_COUNT.with(Cell::get)
+}
+
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[inline]
+fn record_draw_traversal() {
+    DRAW_TRAVERSAL_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+}
+
+struct RebuildInvalidationGuard;
+
+impl Drop for RebuildInvalidationGuard {
+    fn drop(&mut self) {
+        REBUILD_INVALIDATION_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
+pub(crate) struct RebuildMarkGuard;
+
+impl Drop for RebuildMarkGuard {
+    fn drop(&mut self) {
+        REBUILD_MARK_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
+pub(crate) fn begin_rebuild_mark() -> (RebuildMarkGuard, bool) {
+    let outermost = REBUILD_MARK_DEPTH.with(|depth| {
+        let outermost = depth.get() == 0;
+        depth.set(depth.get() + 1);
+        outermost
+    });
+    (RebuildMarkGuard, outermost)
+}
+
+struct DrawGuard;
+
+impl Drop for DrawGuard {
+    fn drop(&mut self) {
+        DRAW_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
+fn begin_draw() -> (DrawGuard, bool) {
+    let outermost = DRAW_DEPTH.with(|depth| {
+        let outermost = depth.get() == 0;
+        depth.set(depth.get() + 1);
+        outermost
+    });
+    (DrawGuard, outermost)
+}
 
 /// Identifies one logical element for as long as it remains in the element tree.
 ///
@@ -59,6 +261,218 @@ impl ElementId {
     #[inline]
     pub const fn get(self) -> u64 {
         self.0.get()
+    }
+}
+
+/// Tracks one built-in self-rebuilding element's dirty flag and current path.
+/// The source is shared with the build consumer or state updater that can mark
+/// the element outside the retained-tree walk.
+pub(crate) struct DirtySource {
+    dirty: Rc<Cell<bool>>,
+    path: RefCell<Option<Rc<[ElementId]>>>,
+    indexed: Cell<bool>,
+}
+
+impl DirtySource {
+    pub(crate) fn new(dirty: Rc<Cell<bool>>) -> Rc<Self> {
+        Rc::new(Self {
+            dirty,
+            path: RefCell::new(None),
+            indexed: Cell::new(false),
+        })
+    }
+
+    /// Marks the source dirty and returns whether it was clean before this
+    /// call.
+    #[inline]
+    pub(crate) fn mark(&self) -> bool {
+        if self.dirty.get() {
+            if !self.indexed.get() {
+                invalidate_dirty_paths();
+            }
+            return false;
+        }
+        let mut first = false;
+        with_rebuild_invalidation(|| {
+            first = !self.dirty.replace(true);
+            if first {
+                let path = self.path.borrow().clone();
+                if let Some(path) = path.as_deref() {
+                    record_paint_invalidation_path(path);
+                    add_dirty_path(path);
+                    self.indexed.set(true);
+                } else {
+                    mark_paint_invalidations_unknown();
+                    invalidate_dirty_paths();
+                }
+            }
+        });
+        first
+    }
+
+    #[inline]
+    pub(crate) fn clear(&self) {
+        self.dirty.set(false);
+        let path = self.path.borrow().clone();
+        if self.indexed.replace(false)
+            && let Some(path) = path.as_deref()
+        {
+            remove_dirty_path(path);
+        }
+    }
+
+    /// Associates the source with the current root-relative path. Stable paths
+    /// are left in place so clean frames do not allocate.
+    pub(crate) fn set_path(&self, path: &[ElementId]) {
+        let old_path = self.path.borrow().clone();
+        if old_path.as_deref() == Some(path) {
+            return;
+        }
+
+        let old_root = old_path.as_deref().and_then(|path| path.first()).copied();
+        let new_root = path.first().copied();
+        if old_root.is_some() && old_root != new_root {
+            // A source path is relative to the traversal root. If a subtree
+            // was walked independently, its metadata cannot safely answer a
+            // later walk from the retained application root.
+            invalidate_dirty_paths();
+        }
+
+        if self.indexed.replace(false)
+            && let Some(old_path) = old_path.as_deref()
+        {
+            remove_dirty_path(old_path);
+        }
+
+        let new_path: Rc<[ElementId]> = Rc::from(path.to_vec());
+        *self.path.borrow_mut() = Some(new_path.clone());
+
+        if self.dirty.get() {
+            record_paint_invalidation_path(&new_path);
+            add_dirty_path(&new_path);
+            self.indexed.set(true);
+        }
+    }
+}
+
+impl Drop for DirtySource {
+    fn drop(&mut self) {
+        if self.indexed.get()
+            && let Some(path) = self.path.get_mut().as_deref()
+        {
+            remove_dirty_path(path);
+        }
+    }
+}
+
+fn add_dirty_path(path: &[ElementId]) {
+    DIRTY_SUBTREE_COUNTS.with(|counts| {
+        let mut counts = counts.borrow_mut();
+        for id in path {
+            *counts.entry(*id).or_default() += 1;
+        }
+    });
+}
+
+fn remove_dirty_path(path: &[ElementId]) {
+    DIRTY_SUBTREE_COUNTS.with(|counts| {
+        let mut counts = counts.borrow_mut();
+        for id in path {
+            let Some(count) = counts.get_mut(id) else {
+                continue;
+            };
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(id);
+            }
+        }
+    });
+}
+
+fn dirty_path_contains(id: ElementId) -> bool {
+    DIRTY_SUBTREE_COUNTS.with(|counts| counts.borrow().contains_key(&id))
+}
+
+pub(crate) fn invalidate_dirty_paths() {
+    DIRTY_PATHS_READY.with(|ready| ready.set(false));
+    DIRTY_INDEXED_ROOTS.with(|roots| roots.borrow_mut().clear());
+    if REBUILD_TRAVERSAL_DEPTH.with(|depth| depth.get() > 0) {
+        DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL.with(|invalidated| invalidated.set(true));
+    }
+}
+
+struct RebuildTraversalGuard {
+    outermost: bool,
+    complete: bool,
+    root: ElementId,
+}
+
+impl Drop for RebuildTraversalGuard {
+    fn drop(&mut self) {
+        REBUILD_TRAVERSAL_DEPTH.with(|depth| depth.set(depth.get() - 1));
+        if self.outermost
+            && self.complete
+            && !DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL.with(Cell::get)
+        {
+            DIRTY_INDEXED_ROOTS.with(|roots| {
+                roots.borrow_mut().insert(self.root);
+            });
+            DIRTY_PATHS_READY.with(|ready| ready.set(true));
+        }
+    }
+}
+
+fn begin_rebuild_traversal(root: ElementId) -> RebuildTraversalGuard {
+    let outermost = REBUILD_TRAVERSAL_DEPTH.with(|depth| {
+        let outermost = depth.get() == 0;
+        if outermost {
+            DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL.with(|invalidated| invalidated.set(false));
+        }
+        depth.set(depth.get() + 1);
+        outermost
+    });
+    RebuildTraversalGuard {
+        outermost,
+        complete: false,
+        root,
+    }
+}
+
+struct RebuildPathGuard;
+
+impl RebuildPathGuard {
+    fn push(id: ElementId) -> Self {
+        REBUILD_PATH.with(|path| path.borrow_mut().push(id));
+        Self
+    }
+}
+
+impl Drop for RebuildPathGuard {
+    fn drop(&mut self) {
+        REBUILD_PATH.with(|path| {
+            path.borrow_mut().pop();
+        });
+    }
+}
+
+struct RebuildDescendGuard {
+    active: bool,
+}
+
+impl RebuildDescendGuard {
+    fn enter(active: bool) -> Self {
+        if active {
+            REBUILD_FORCE_DESCEND_DEPTH.with(|depth| depth.set(depth.get() + 1));
+        }
+        Self { active }
+    }
+}
+
+impl Drop for RebuildDescendGuard {
+    fn drop(&mut self) {
+        if self.active {
+            REBUILD_FORCE_DESCEND_DEPTH.with(|depth| depth.set(depth.get() - 1));
+        }
     }
 }
 
@@ -166,12 +580,21 @@ impl<E: Element + 'static> LayoutElement for ElementNode<E> {
         self.element.flex()
     }
 
+    fn is_layout_stable(&self) -> bool {
+        self.element.is_layout_stable()
+    }
+
     fn get_size_from_child(&self) -> Option<Size> {
         self.element.get_size_from_child()
     }
 
     fn invalidate_layout(&self) {
-        self.element.invalidate_layout();
+        // Layout caches carry this generation in their keys, so invalidating
+        // the retained root is one marker write rather than a recursive walk
+        // through every child. The concrete element's old recursive method is
+        // still available when a caller owns that concrete element directly;
+        // erased trees use this boundary for the normal frame path.
+        advance_layout_invalidation_generation();
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
@@ -181,11 +604,60 @@ impl<E: Element + 'static> LayoutElement for ElementNode<E> {
 
 impl<E: Element + 'static> Rebuildable for ElementNode<E> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        let mut traversal = begin_rebuild_traversal(self.id.get());
+        let _path = RebuildPathGuard::push(self.id.get());
+        let own_dirty = element_has_dirty_work(&self.element);
+        let path_ready = DIRTY_PATHS_READY.with(Cell::get)
+            && (REBUILD_TRAVERSAL_DEPTH.with(|depth| depth.get() > 1)
+                || DIRTY_INDEXED_ROOTS.with(|roots| roots.borrow().contains(&self.id.get())));
+        let forced_descend = REBUILD_FORCE_DESCEND_DEPTH.with(|depth| depth.get() > 0);
+        if path_ready
+            && !forced_descend
+            && !own_dirty
+            && !dirty_path_contains(self.id.get())
+        {
+            traversal.complete = true;
+            return;
+        }
+
+        set_element_rebuild_path(&self.element);
+        let _descend = RebuildDescendGuard::enter(own_dirty);
+        let before = element_tree_generation();
         self.element.rebuild_if_dirty(ctx);
+        let after = element_tree_generation();
+        if after != before {
+            self.set_subtree_generation(after);
+        }
+        if own_dirty || after != before {
+            record_current_paint_invalidation(self.id.get());
+        }
+        traversal.complete = true;
     }
 
     fn adopt_runtime_state_from(&self, old: &dyn Element) {
+        let before = element_tree_generation();
         self.element.adopt_runtime_state_from(old);
+        let after = element_tree_generation();
+        if after != before {
+            self.set_subtree_generation(after);
+        }
+    }
+
+    fn subtree_generation(&self) -> u64 {
+        if !self.element.is_layout_stable() {
+            return element_tree_generation();
+        }
+        STABLE_SUBTREE_GENERATIONS.with(|generations| {
+            generations.borrow().get(&self.id.get()).copied().unwrap_or(0)
+        })
+    }
+
+    fn set_subtree_generation(&self, generation: u64) {
+        if self.element.is_layout_stable() {
+            STABLE_SUBTREE_GENERATIONS.with(|generations| {
+                generations.borrow_mut().insert(self.id.get(), generation);
+            });
+        }
     }
 
     fn option_any(&self) -> Option<&dyn std::any::Any> {
@@ -205,8 +677,71 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
     }
 
     fn mark_needs_rebuild(&self) {
-        self.element.mark_needs_rebuild();
+        let (_mark, outermost) = begin_rebuild_mark();
+        let has_rebuild_source = element_has_rebuild_source(&self.element);
+        // The erased owner is the boundary used by the retained tree. Keep one
+        // invalidation generation for the complete recursive mark, including
+        // custom containers that implement their own forwarding method.
+        let unknown = outermost && !has_rebuild_source;
+        with_rebuild_invalidation(|| {
+            if unknown {
+                // A custom rebuild producer has no path to publish. Preserve
+                // the old conservative behavior so its mark can never make
+                // the index incorrectly skip work.
+                mark_paint_invalidations_unknown();
+                invalidate_dirty_paths();
+            }
+            self.element.mark_needs_rebuild();
+        });
+        // A stateful element may delegate the mark to a carrying child without
+        // marking itself. If that child contains an untracked custom producer,
+        // the retained path index has no source to point at; fall back to the
+        // conservative walk for this explicit recursive mark.
+        if outermost && has_rebuild_source && !element_has_dirty_work(&self.element) {
+            mark_paint_invalidations_unknown();
+            invalidate_dirty_paths();
+        }
     }
+}
+
+fn element_has_rebuild_source(element: &dyn Element) -> bool {
+    let Some(value) = element.option_any() else {
+        return false;
+    };
+    value.is::<crate::widget::stateless::StatelessElement>()
+        || value.is::<crate::widget::stateful::StatefulElement>()
+}
+
+fn element_has_dirty_work(element: &dyn Element) -> bool {
+    let Some(value) = element.option_any() else {
+        return false;
+    };
+    if let Some(stateless) = value
+        .downcast_ref::<crate::widget::stateless::StatelessElement>()
+    {
+        return stateless.dirty.get();
+    }
+    value
+        .downcast_ref::<crate::widget::stateful::StatefulElement>()
+        .is_some_and(|stateful| stateful.dirty.borrow().get())
+}
+
+fn set_element_rebuild_path(element: &dyn Element) {
+    let Some(value) = element.option_any() else {
+        return;
+    };
+    REBUILD_PATH.with(|path| {
+        let path = path.borrow();
+        if let Some(stateless) = value
+            .downcast_ref::<crate::widget::stateless::StatelessElement>()
+        {
+            stateless.dirty_source.set_path(&path);
+        } else if let Some(stateful) = value
+            .downcast_ref::<crate::widget::stateful::StatefulElement>()
+        {
+            stateful.dirty_source.borrow().set_path(&path);
+        }
+    });
 }
 
 impl<E: Element + 'static> EventElement for ElementNode<E> {
@@ -230,14 +765,86 @@ impl<E: Element + 'static> EventElement for ElementNode<E> {
         self.element.event_children(visitor);
     }
 
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.element.structural_children(visitor);
+    }
+
     fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.element.hit_test_children(visitor);
     }
+
+    fn hit_test_children_reversed<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.element.hit_test_children_reversed(visitor);
+    }
+
+    fn hit_test_children_at<'a>(
+        &'a self,
+        pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        self.element.hit_test_children_at(pos, visitor);
+    }
+
+    fn hit_test_children_at_reversed<'a>(
+        &'a self,
+        pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        self.element.hit_test_children_at_reversed(pos, visitor);
+    }
+
 }
 
 impl<E: Element + 'static> Drawable for ElementNode<E> {
     fn draw(&self, ctx: &BuildContext) {
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        record_draw_traversal();
+        record_paint_element(self.id.get());
+        let (_draw, outermost) = begin_draw();
+        if outermost {
+            // Native frame dispatch enters through `draw`; keep the retained-
+            // tree rebuild prepass here so direct draw callers also benefit
+            // from the precise dirty-subtree index. Child draws belong to the
+            // same pass and must not reset paths relative to a new root.
+            self.rebuild_if_dirty(ctx);
+        }
+        let before = element_tree_generation();
         self.element.draw(ctx);
+        let after = element_tree_generation();
+        if after != before {
+            self.set_subtree_generation(after);
+        }
+    }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        self.element.is_paint_stable()
+    }
+
+    #[inline]
+    fn draw_paint_islands(
+        &self,
+        retained_ctx: &BuildContext,
+        live_ctx: &BuildContext,
+        draw_stable: &mut dyn FnMut(
+            &dyn Element,
+            &BuildContext,
+            Vec2d,
+            Option<ResolvedSize>,
+        ),
+        draw_dynamic: &mut dyn FnMut(
+            &dyn Element,
+            &BuildContext,
+            Vec2d,
+            Option<ResolvedSize>,
+        ),
+    ) -> bool {
+        self.element.draw_paint_islands(
+            retained_ctx,
+            live_ctx,
+            draw_stable,
+            draw_dynamic,
+        )
     }
 }
 
@@ -296,6 +903,10 @@ impl LayoutElement for AnyElement {
         self.as_ref().flex()
     }
 
+    fn is_layout_stable(&self) -> bool {
+        self.as_ref().is_layout_stable()
+    }
+
     fn get_size_from_child(&self) -> Option<Size> {
         self.as_ref().get_size_from_child()
     }
@@ -337,6 +948,14 @@ impl Rebuildable for AnyElement {
     fn mark_needs_rebuild(&self) {
         self.as_ref().mark_needs_rebuild()
     }
+
+    fn subtree_generation(&self) -> u64 {
+        self.as_ref().subtree_generation()
+    }
+
+    fn set_subtree_generation(&self, generation: u64) {
+        self.as_ref().set_subtree_generation(generation)
+    }
 }
 
 impl EventElement for AnyElement {
@@ -360,14 +979,70 @@ impl EventElement for AnyElement {
         self.as_ref().event_children(visitor)
     }
 
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref().structural_children(visitor)
+    }
+
     fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().hit_test_children(visitor)
     }
+
+    fn hit_test_children_reversed<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref().hit_test_children_reversed(visitor)
+    }
+
+    fn hit_test_children_at<'a>(
+        &'a self,
+        pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        self.as_ref().hit_test_children_at(pos, visitor)
+    }
+
+    fn hit_test_children_at_reversed<'a>(
+        &'a self,
+        pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        self.as_ref().hit_test_children_at_reversed(pos, visitor)
+    }
+
 }
 
 impl Drawable for AnyElement {
     fn draw(&self, ctx: &BuildContext) {
         self.as_ref().draw(ctx)
+    }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        self.as_ref().is_paint_stable()
+    }
+
+    #[inline]
+    fn draw_paint_islands(
+        &self,
+        retained_ctx: &BuildContext,
+        live_ctx: &BuildContext,
+        draw_stable: &mut dyn FnMut(
+            &dyn Element,
+            &BuildContext,
+            Vec2d,
+            Option<ResolvedSize>,
+        ),
+        draw_dynamic: &mut dyn FnMut(
+            &dyn Element,
+            &BuildContext,
+            Vec2d,
+            Option<ResolvedSize>,
+        ),
+    ) -> bool {
+        self.as_ref().draw_paint_islands(
+            retained_ctx,
+            live_ctx,
+            draw_stable,
+            draw_dynamic,
+        )
     }
 }
 
@@ -418,6 +1093,10 @@ impl LayoutElement for Box<dyn Element> {
         self.as_ref().flex()
     }
 
+    fn is_layout_stable(&self) -> bool {
+        self.as_ref().is_layout_stable()
+    }
+
     fn get_size_from_child(&self) -> Option<Size> {
         self.as_ref().get_size_from_child()
     }
@@ -459,6 +1138,14 @@ impl Rebuildable for Box<dyn Element> {
     fn mark_needs_rebuild(&self) {
         self.as_ref().mark_needs_rebuild()
     }
+
+    fn subtree_generation(&self) -> u64 {
+        self.as_ref().subtree_generation()
+    }
+
+    fn set_subtree_generation(&self, generation: u64) {
+        self.as_ref().set_subtree_generation(generation)
+    }
 }
 
 impl EventElement for Box<dyn Element> {
@@ -482,14 +1169,70 @@ impl EventElement for Box<dyn Element> {
         self.as_ref().event_children(visitor)
     }
 
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref().structural_children(visitor)
+    }
+
     fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().hit_test_children(visitor)
     }
+
+    fn hit_test_children_reversed<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref().hit_test_children_reversed(visitor)
+    }
+
+    fn hit_test_children_at<'a>(
+        &'a self,
+        pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        self.as_ref().hit_test_children_at(pos, visitor)
+    }
+
+    fn hit_test_children_at_reversed<'a>(
+        &'a self,
+        pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        self.as_ref().hit_test_children_at_reversed(pos, visitor)
+    }
+
 }
 
 impl Drawable for Box<dyn Element> {
     fn draw(&self, ctx: &BuildContext) {
         self.as_ref().draw(ctx)
+    }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        self.as_ref().is_paint_stable()
+    }
+
+    #[inline]
+    fn draw_paint_islands(
+        &self,
+        retained_ctx: &BuildContext,
+        live_ctx: &BuildContext,
+        draw_stable: &mut dyn FnMut(
+            &dyn Element,
+            &BuildContext,
+            Vec2d,
+            Option<ResolvedSize>,
+        ),
+        draw_dynamic: &mut dyn FnMut(
+            &dyn Element,
+            &BuildContext,
+            Vec2d,
+            Option<ResolvedSize>,
+        ),
+    ) -> bool {
+        self.as_ref().draw_paint_islands(
+            retained_ctx,
+            live_ctx,
+            draw_stable,
+            draw_dynamic,
+        )
     }
 }
 
@@ -503,7 +1246,65 @@ pub fn element_tree_generation() -> u64 {
     ELEMENT_TREE_GENERATION.load(Ordering::Acquire)
 }
 
+/// Returns the generation of the most recent layout invalidation.
+///
+/// Layout caches include this value in their keys. A layout invalidation can
+/// therefore retire cached measurements without recursively visiting every
+/// descendant of the retained tree.
+#[inline]
+pub fn layout_invalidation_generation() -> u64 {
+    LAYOUT_INVALIDATION_GENERATION.load(Ordering::Acquire)
+}
+
+/// Advances the layout invalidation generation.
+#[inline]
+pub(crate) fn advance_layout_invalidation_generation() {
+    LAYOUT_INVALIDATION_GENERATION
+        .fetch_update(Ordering::Release, Ordering::Relaxed, |generation| {
+            generation.checked_add(1)
+        })
+        .expect("exhausted all layout invalidation generations");
+}
+
+/// Returns the generation of the most recent rebuild invalidation.
+///
+/// Paint caches include this value so a state, style, text, or other rebuild
+/// that can change a subtree's visual output retires its retained commands
+/// before they are replayed.
+#[inline]
+pub fn rebuild_invalidation_generation() -> u64 {
+    REBUILD_INVALIDATION_GENERATION.load(Ordering::Acquire)
+}
+
+/// Advances the rebuild invalidation generation.
+#[inline]
+pub(crate) fn advance_rebuild_invalidation_generation() {
+    invalidate_dirty_paths();
+    advance_tracked_rebuild_invalidation_generation();
+}
+
+#[inline]
+fn advance_tracked_rebuild_invalidation_generation() {
+    REBUILD_INVALIDATION_GENERATION
+        .fetch_update(Ordering::Release, Ordering::Relaxed, |generation| {
+            generation.checked_add(1)
+        })
+        .expect("exhausted all rebuild invalidation generations");
+}
+
+/// Runs one public dirty-marking operation under a single invalidation bump.
+pub(crate) fn with_rebuild_invalidation<R>(operation: impl FnOnce() -> R) -> R {
+    let outermost = REBUILD_INVALIDATION_DEPTH.with(|depth| depth.get() == 0);
+    if outermost {
+        advance_tracked_rebuild_invalidation_generation();
+    }
+    REBUILD_INVALIDATION_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    let _guard = RebuildInvalidationGuard;
+    operation()
+}
+
 fn advance_element_tree_generation() {
+    invalidate_dirty_paths();
     ELEMENT_TREE_GENERATION
         .fetch_update(Ordering::Release, Ordering::Relaxed, |generation| {
             generation.checked_add(1)
@@ -513,16 +1314,21 @@ fn advance_element_tree_generation() {
 
 pub(crate) fn structural_children(element: &dyn Element) -> SmallVec<[&dyn Element; 8]> {
     let mut children: SmallVec<[&dyn Element; 8]> = SmallVec::new();
-    element.event_children(&mut |child| children.push(child));
-    element.visit_children(&mut |child| {
-        if !children
-            .iter()
-            .any(|existing| std::ptr::eq(*existing, child))
-        {
-            children.push(child);
-        }
-    });
+    element.structural_children(&mut |child| children.push(child));
     children
+}
+
+#[inline]
+fn structural_child_at<'a>(element: &'a dyn Element, target: usize) -> Option<&'a dyn Element> {
+    let mut index = 0;
+    let mut result = None;
+    element.structural_children(&mut |child| {
+        if index == target {
+            result = Some(child);
+        }
+        index = index.saturating_add(1);
+    });
+    result
 }
 
 /// Whether two elements describe the same widget in the same role.
@@ -564,6 +1370,7 @@ pub(crate) fn reconcile_generated_tree(old: &dyn Element, new: &dyn Element) {
 pub(crate) fn complete_generated_tree_reconciliation(old: &dyn Element, new: &dyn Element) {
     clear_removed_focus(old, new);
     advance_element_tree_generation();
+    new.set_subtree_generation(element_tree_generation());
 }
 
 fn clear_removed_focus(old: &dyn Element, new: &dyn Element) {
@@ -628,6 +1435,7 @@ pub struct EventDispatcher {
     indexed_root: Option<ElementId>,
     focus_scope: Option<ElementId>,
     focus: FocusManager<ElementId>,
+    focus_candidates: FocusCandidates<ElementId>,
 }
 
 impl Default for EventDispatcher {
@@ -647,6 +1455,7 @@ impl EventDispatcher {
             indexed_root: None,
             focus_scope: None,
             focus: FocusManager::new(),
+            focus_candidates: FocusCandidates::new(),
         }
     }
 
@@ -964,8 +1773,8 @@ impl EventDispatcher {
         };
 
         self.focus.set_scope(self.focus_scope);
-        let candidates = self.collect_candidates(root);
-        let target = self.focus.resolve(&candidates);
+        self.collect_candidates(root);
+        let target = self.focus.resolve(&self.focus_candidates);
 
         let result = self.transition_focus(root, target);
         self.focus.mark_synchronized(
@@ -983,14 +1792,13 @@ impl EventDispatcher {
     /// neither to [`FocusManager::resolve`] nor to traversal. A scope whose
     /// element can no longer be resolved has left the tree, and the whole tree is
     /// offered again.
-    fn collect_candidates(&self, root: &dyn Element) -> FocusCandidates<ElementId> {
+    fn collect_candidates(&mut self, root: &dyn Element) {
         let scope = self
             .focus_scope
             .and_then(|scope| self.resolve_owner(root, scope))
             .unwrap_or(root);
-        let mut candidates = FocusCandidates::new();
-        collect_focus_candidates(scope, &mut candidates);
-        candidates
+        self.focus_candidates.clear();
+        collect_focus_candidates(scope, &mut self.focus_candidates);
     }
 
     /// Returns whether a press is allowed to change who owns focus.
@@ -1006,7 +1814,7 @@ impl EventDispatcher {
     /// Without a scope every press decides focus, as it always has, and the
     /// check is one comparison against `None`.
     fn press_may_move_focus(
-        &self,
+        &mut self,
         root: &dyn Element,
         target: Option<&FocusCandidate<ElementId>>,
     ) -> bool {
@@ -1016,7 +1824,8 @@ impl EventDispatcher {
         let Some(target) = target else {
             return false;
         };
-        self.collect_candidates(root)
+        self.collect_candidates(root);
+        self.focus_candidates
             .iter()
             .any(|candidate| candidate.is_attached_to(target.id, &target.node))
     }
@@ -1051,8 +1860,8 @@ impl EventDispatcher {
     }
 
     fn traverse_focus(&mut self, root: &dyn Element, reverse: bool) -> Option<EventResult> {
-        let candidates = self.collect_candidates(root);
-        let target = self.focus.traverse(&candidates, reverse)?;
+        self.collect_candidates(root);
+        let target = self.focus.traverse(&self.focus_candidates, reverse)?;
         Some(self.transition_focus(root, Some(target)))
     }
 
@@ -1163,9 +1972,7 @@ fn collect_focus_candidates(
     if let (Some(id), Some(node)) = (element.element_id(), element.focus_node()) {
         candidates.push(FocusCandidate::new(id, node.clone(), element.autofocus()));
     }
-    for child in structural_children(element) {
-        collect_focus_candidates(child, candidates);
-    }
+    element.structural_children(&mut |child| collect_focus_candidates(child, candidates));
 }
 
 fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
@@ -1208,10 +2015,7 @@ fn index_element_paths(
 fn resolve_element_path<'a>(root: &'a dyn Element, path: &[usize]) -> Option<&'a dyn Element> {
     let mut current = root;
     for index in path {
-        current = {
-            let children = structural_children(current);
-            *children.get(*index)?
-        };
+        current = structural_child_at(current, *index)?;
     }
     Some(current)
 }
@@ -1221,8 +2025,7 @@ fn dispatch_routed_event(
     pos: Vec2d,
     event: &ElementEvent,
 ) -> RoutedEventResult {
-    let mut children = new_routed_event_scratch();
-    dispatch_routed_event_inner(root, pos, event, &mut children)
+    dispatch_routed_event_inner(root, pos, event)
 }
 
 /// Whether `pos` lies within `element`'s laid-out bounds.
@@ -1249,23 +2052,28 @@ fn focus_candidate_at(element: &dyn Element, pos: Vec2d) -> Option<FocusCandidat
     contains(element, pos).then(|| FocusCandidate::new(id, node.clone(), element.autofocus()))
 }
 
-fn dispatch_routed_event_inner<'a>(
-    root: &'a dyn Element,
+fn dispatch_routed_event_inner(
+    root: &dyn Element,
     pos: Vec2d,
     event: &ElementEvent,
-    children: &mut EventChildren<'a>,
 ) -> RoutedEventResult {
+    if !contains(root, pos) {
+        return RoutedEventResult {
+            result: EventResult::ignored(),
+            capture_owner: None,
+            focus_owner: None,
+        };
+    }
+
     let mut result = EventResult::ignored();
     let mut capture_owner = None;
     let mut focus_owner = None;
-    let start = children.len();
-    root.hit_test_children(&mut |child| children.push(child));
-
-    while children.len() > start {
-        let child = children
-            .pop()
-            .expect("routed event scratch contains an element beyond its entry length");
-        let child_outcome = dispatch_routed_event_inner(child, pos, event, children);
+    let mut stopped = false;
+    root.hit_test_children_at_reversed(pos, &mut |child| {
+        if stopped {
+            return;
+        }
+        let child_outcome = dispatch_routed_event_inner(child, pos, event);
         result = result.merge(child_outcome.result);
         if focus_owner.is_none() {
             focus_owner = child_outcome.focus_owner;
@@ -1278,7 +2086,6 @@ fn dispatch_routed_event_inner<'a>(
             });
         }
         if child_outcome.result.is_consumed() {
-            children.truncate(start);
             // The press stopped here, but it landed inside this element all the
             // same: a control that takes a press for itself still sits within
             // whatever region encloses it, and that region is what the focus
@@ -1286,30 +2093,29 @@ fn dispatch_routed_event_inner<'a>(
             // with no target at all — and a press with no target takes the
             // keyboard away, so clicking a field inside a focusable region
             // would blur it.
-            if focus_owner.is_none() {
-                focus_owner = focus_candidate_at(root, pos);
-            }
-            return RoutedEventResult {
-                result,
-                capture_owner,
-                focus_owner,
-            };
+            stopped = true;
         }
-    }
-    children.truncate(start);
+    });
 
-    let inside = contains(root, pos);
-    if inside {
-        let own_result = root.on_event(event);
+    if stopped {
         if focus_owner.is_none() {
             focus_owner = focus_candidate_at(root, pos);
         }
-        if capture_owner.is_none() && !matches!(own_result.capture_request(), CaptureRequest::None)
-        {
-            capture_owner = root.element_id();
-        }
-        result = result.merge(own_result);
+        return RoutedEventResult {
+            result,
+            capture_owner,
+            focus_owner,
+        };
     }
+
+    let own_result = root.on_event(event);
+    if focus_owner.is_none() {
+        focus_owner = focus_candidate_at(root, pos);
+    }
+    if capture_owner.is_none() && !matches!(own_result.capture_request(), CaptureRequest::None) {
+        capture_owner = root.element_id();
+    }
+    result = result.merge(own_result);
 
     RoutedEventResult {
         result,
@@ -1331,9 +2137,17 @@ fn dispatch_event_inner<'a>(
     event: &ElementEvent,
     children: &mut EventChildren<'a>,
 ) -> EventResult {
+    if !contains(root, pos) {
+        return EventResult::ignored();
+    }
+
     let mut result = EventResult::ignored();
     let start = children.len();
-    root.hit_test_children(&mut |child| children.push(child));
+    root.hit_test_children_at(pos, &mut |child| {
+        if contains(child, pos) {
+            children.push(child);
+        }
+    });
 
     while children.len() > start {
         let child = children
@@ -1348,23 +2162,7 @@ fn dispatch_event_inner<'a>(
     }
     children.truncate(start);
 
-    // Check if pos is inside this element's bounds
-    let bounds = root.pos_start_end();
-    if let Some((start, end)) = bounds {
-        let inside = pos.x >= start.x && pos.x <= end.x && pos.y >= start.y && pos.y <= end.y;
-        if inside {
-            return result.merge(root.on_event(event));
-        }
-    }
-
-    // If the element has no position info, still try to dispatch the event.
-    // This allows elements like Button (which don't track absolute position)
-    // to receive events when reached through the tree traversal.
-    if bounds.is_none() {
-        return result.merge(root.on_event(event));
-    }
-
-    result
+    result.merge(root.on_event(event))
 }
 
 /// Broadcast an event to every element in the tree, regardless of hit-testing.
@@ -1443,6 +2241,137 @@ mod tests {
     use super::*;
     use crate::focus::FocusTrap;
     use crate::{FocusNode, Key};
+
+    struct StructuralTraversalElement {
+        event_child: AnyElement,
+        visual_child: AnyElement,
+        direct_calls: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for StructuralTraversalElement {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.visual_child.as_ref());
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "StructuralTraversalElement"
+        }
+    }
+
+    impl EventElement for StructuralTraversalElement {
+        fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.event_child.as_ref());
+        }
+
+        fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            self.direct_calls.set(self.direct_calls.get() + 1);
+            visitor(self.event_child.as_ref());
+            visitor(self.visual_child.as_ref());
+        }
+    }
+
+    impl LayoutElement for StructuralTraversalElement {}
+
+    impl Drawable for StructuralTraversalElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for StructuralTraversalElement {}
+
+    struct DefaultStructuralTraversalElement {
+        event_child: AnyElement,
+        visual_child: AnyElement,
+    }
+
+    impl VisitorElement for DefaultStructuralTraversalElement {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.visual_child.as_ref());
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "DefaultStructuralTraversalElement"
+        }
+    }
+
+    impl EventElement for DefaultStructuralTraversalElement {
+        fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.event_child.as_ref());
+        }
+    }
+
+    impl LayoutElement for DefaultStructuralTraversalElement {}
+
+    impl Drawable for DefaultStructuralTraversalElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for DefaultStructuralTraversalElement {}
+
+    #[test]
+    fn default_structural_traversal_preserves_event_visual_union() {
+        let element = DefaultStructuralTraversalElement {
+            event_child: DowncastableElement.boxed(),
+            visual_child: DowncastableElement.boxed(),
+        };
+
+        let children = structural_children(&element);
+
+        assert_eq!(children.len(), 2);
+        assert!(std::ptr::eq(children[0], element.event_child.as_ref()));
+        assert!(std::ptr::eq(children[1], element.visual_child.as_ref()));
+    }
+
+    #[test]
+    fn structural_children_uses_element_specific_traversal() {
+        let element = StructuralTraversalElement {
+            event_child: DowncastableElement.boxed(),
+            visual_child: DowncastableElement.boxed(),
+            direct_calls: Rc::new(Cell::new(0)),
+        };
+
+        let children = structural_children(&element);
+
+        assert_eq!(element.direct_calls.get(), 1);
+        assert_eq!(children.len(), 2);
+        assert!(std::ptr::eq(children[0], element.event_child.as_ref()));
+        assert!(std::ptr::eq(children[1], element.visual_child.as_ref()));
+    }
+
+    #[test]
+    fn erased_element_forwards_structural_traversal() {
+        let direct_calls = Rc::new(Cell::new(0));
+        let element = StructuralTraversalElement {
+            event_child: DowncastableElement.boxed(),
+            visual_child: DowncastableElement.boxed(),
+            direct_calls: direct_calls.clone(),
+        };
+        let erased = element.boxed();
+
+        let _ = structural_children(erased.as_ref());
+
+        assert_eq!(direct_calls.get(), 1);
+    }
+
+    #[test]
+    fn focus_dispatch_uses_structural_traversal() {
+        let direct_calls = Rc::new(Cell::new(0));
+        let root = StructuralTraversalElement {
+            event_child: DowncastableElement.boxed(),
+            visual_child: DowncastableElement.boxed(),
+            direct_calls: direct_calls.clone(),
+        }
+        .boxed();
+        let event = ElementEvent::KeyInput {
+            key: NamedKey::Tab,
+            action: KeyAction::Pressed,
+            modifiers: Modifiers::default(),
+        };
+
+        let mut dispatcher = EventDispatcher::new();
+        let _ = dispatcher.dispatch(&root, Vec2d::default(), &event);
+
+        assert!(direct_calls.get() > 0);
+    }
 
     struct DowncastableElement;
 
@@ -1660,6 +2589,76 @@ mod tests {
         assert_eq!(new.id(), old.id());
     }
 
+    struct LayoutInvalidationLeaf {
+        invalidations: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for LayoutInvalidationLeaf {
+        fn debug_name(&self) -> &'static str {
+            "LayoutInvalidationLeaf"
+        }
+    }
+
+    impl EventElement for LayoutInvalidationLeaf {}
+
+    impl LayoutElement for LayoutInvalidationLeaf {
+        fn invalidate_layout(&self) {
+            self.invalidations.set(self.invalidations.get() + 1);
+        }
+    }
+
+    impl Drawable for LayoutInvalidationLeaf {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for LayoutInvalidationLeaf {}
+
+    struct LayoutInvalidationBranch {
+        child: AnyElement,
+    }
+
+    impl VisitorElement for LayoutInvalidationBranch {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.child.as_ref());
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "LayoutInvalidationBranch"
+        }
+    }
+
+    impl EventElement for LayoutInvalidationBranch {}
+
+    impl LayoutElement for LayoutInvalidationBranch {
+        fn invalidate_layout(&self) {
+            self.child.invalidate_layout();
+        }
+    }
+
+    impl Drawable for LayoutInvalidationBranch {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for LayoutInvalidationBranch {}
+
+    #[test]
+    fn erased_layout_invalidation_marks_once_without_walking_children() {
+        let invalidations = Rc::new(Cell::new(0));
+        let root = LayoutInvalidationBranch {
+            child: LayoutInvalidationLeaf {
+                invalidations: invalidations.clone(),
+            }
+            .boxed(),
+        }
+        .boxed();
+        let generation = layout_invalidation_generation();
+
+        root.invalidate_layout();
+
+        assert!(layout_invalidation_generation() > generation);
+        assert_eq!(invalidations.get(), 0);
+    }
+
     struct RoutedElement {
         children: Vec<AnyElement>,
         bounds: Option<(Vec2d, Vec2d)>,
@@ -1726,42 +2725,35 @@ mod tests {
     }
 
     #[test]
-    fn uncaptured_routing_constructs_one_scratch_buffer_per_dispatch() {
-        let events = Rc::new(Cell::new(0));
-        let leaf = routed_leaf(
+    fn routed_hit_testing_does_not_descend_through_an_outside_parent() {
+        let child_events = Rc::new(Cell::new(0));
+        let child = routed_leaf(
             (Vec2d { x: 0.0, y: 0.0 }, Vec2d { x: 10.0, y: 10.0 }),
-            events.clone(),
+            child_events.clone(),
             false,
             false,
         );
-        let branch = RoutedElement {
-            children: vec![leaf],
-            bounds: None,
-            events: events.clone(),
+        let parent = RoutedElement {
+            children: vec![child],
+            bounds: Some((
+                Vec2d { x: 20.0, y: 20.0 },
+                Vec2d { x: 30.0, y: 30.0 },
+            )),
+            events: Rc::new(Cell::new(0)),
             capture_on_down: false,
             release_on_move: false,
         }
         .boxed();
-        let root = RoutedElement {
-            children: vec![branch],
-            bounds: None,
-            events,
-            capture_on_down: false,
-            release_on_move: false,
-        }
-        .boxed();
-        ROUTED_EVENT_SCRATCH_CONSTRUCTIONS.with(|count| count.set(0));
+        let root = RoutedIdentityBranch(vec![parent]).boxed();
+        let pos = Vec2d { x: 5.0, y: 5.0 };
 
         let _ = EventDispatcher::new().dispatch(
             root.as_ref(),
-            Vec2d { x: 5.0, y: 5.0 },
-            &ElementEvent::PointerMove(PointerInfo::mouse(
-                Vec2d { x: 5.0, y: 5.0 },
-                PointerButton::Primary,
-            )),
+            pos,
+            &ElementEvent::PointerDown(PointerInfo::mouse(pos, PointerButton::Primary)),
         );
 
-        ROUTED_EVENT_SCRATCH_CONSTRUCTIONS.with(|count| assert_eq!(count.get(), 1));
+        assert_eq!(child_events.get(), 0);
     }
 
     /// An element that carries a drag: it takes the pointer on press and then
@@ -1974,17 +2966,12 @@ mod tests {
             source,
             &ElementEvent::PointerDown(PointerInfo::mouse(source, PointerButton::Primary)),
         );
-        ROUTED_EVENT_SCRATCH_CONSTRUCTIONS.with(|count| count.set(0));
-
         let _ = dispatcher.dispatch(
             root.as_ref(),
             over_receiver,
             &ElementEvent::PointerMove(PointerInfo::mouse(over_receiver, PointerButton::Primary)),
         );
 
-        ROUTED_EVENT_SCRATCH_CONSTRUCTIONS.with(|count| {
-            assert_eq!(count.get(), 0, "an idle pointer walked the tree anyway")
-        });
         assert_eq!(overs.get(), 0);
     }
 

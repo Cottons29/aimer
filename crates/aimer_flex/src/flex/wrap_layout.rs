@@ -185,12 +185,7 @@ impl RawFlex {
             };
             let offset_x = layout.offsets[index].0 + base_x;
             let offset_y = layout.offsets[index].1 + base_y;
-            if let Some((vx, vy, vw, vh)) = ctx.visible_rect
-                && (offset_x + child_size.width < vx
-                    || offset_x > vx + vw
-                    || offset_y + child_size.height < vy
-                    || offset_y > vy + vh)
-            {
+            if !ctx.is_rect_visible(offset_x, offset_y, child_size.width, child_size.height) {
                 continue;
             }
 
@@ -232,6 +227,9 @@ fn align_offset(alignment: BoxAlignment, extra: f32) -> f32 {
 
 #[cfg(test)]
 mod wrap_tests {
+    use std::hint::black_box;
+    use std::time::Instant;
+
     use aimer_attribute::size::ResolvedSize;
 
     use super::{FlexDirection, compute_wrap_layout};
@@ -366,5 +364,150 @@ mod wrap_tests {
             }
         );
         assert_eq!(layout.offsets, vec![(0.0, 0.0), (13.0, 0.0), (13.0, 55.0)]);
+    }
+
+    #[test]
+    #[ignore = "manual numeric-kernel profile"]
+    fn profile_wrap_layout() {
+        const MEASURED: usize = 128;
+        const WARMUP: usize = 32;
+        const ROUNDS: usize = 7;
+
+        let cases = [
+            (
+                "row-32",
+                (0..32)
+                    .map(|index| ResolvedSize {
+                        width: 48.0 + (index % 5) as f32 * 4.0,
+                        height: 20.0 + (index % 3) as f32,
+                    })
+                    .collect::<Vec<_>>(),
+                FlexDirection::Row,
+                320.0,
+                800.0,
+                4.0,
+                6.0,
+                JustifyContent::Start,
+            ),
+            (
+                "row-256",
+                (0..256)
+                    .map(|index| ResolvedSize {
+                        width: 48.0 + (index % 5) as f32 * 4.0,
+                        height: 20.0 + (index % 3) as f32,
+                    })
+                    .collect::<Vec<_>>(),
+                FlexDirection::Row,
+                640.0,
+                800.0,
+                4.0,
+                6.0,
+                JustifyContent::SpaceBetween,
+            ),
+            (
+                "row-2048",
+                (0..2_048)
+                    .map(|index| ResolvedSize {
+                        width: 48.0 + (index % 5) as f32 * 4.0,
+                        height: 20.0 + (index % 3) as f32,
+                    })
+                    .collect::<Vec<_>>(),
+                FlexDirection::Row,
+                640.0,
+                800.0,
+                4.0,
+                6.0,
+                JustifyContent::SpaceBetween,
+            ),
+            (
+                "column-32",
+                (0..32)
+                    .map(|index| ResolvedSize {
+                        width: 48.0 + (index % 5) as f32 * 4.0,
+                        height: 20.0 + (index % 3) as f32,
+                    })
+                    .collect::<Vec<_>>(),
+                FlexDirection::Column,
+                800.0,
+                320.0,
+                4.0,
+                6.0,
+                JustifyContent::Start,
+            ),
+            (
+                "column-256",
+                (0..256)
+                    .map(|index| ResolvedSize {
+                        width: 48.0 + (index % 5) as f32 * 4.0,
+                        height: 20.0 + (index % 3) as f32,
+                    })
+                    .collect::<Vec<_>>(),
+                FlexDirection::Column,
+                800.0,
+                640.0,
+                4.0,
+                6.0,
+                JustifyContent::SpaceAround,
+            ),
+            (
+                "column-2048",
+                (0..2_048)
+                    .map(|index| ResolvedSize {
+                        width: 48.0 + (index % 5) as f32 * 4.0,
+                        height: 20.0 + (index % 3) as f32,
+                    })
+                    .collect::<Vec<_>>(),
+                FlexDirection::Column,
+                800.0,
+                640.0,
+                4.0,
+                6.0,
+                JustifyContent::SpaceAround,
+            ),
+        ];
+
+        for (name, children, direction, max_width, max_height, gap_x, gap_y, justify) in cases {
+            let mut samples = Vec::with_capacity(ROUNDS);
+            let mut checksum = 0.0;
+            for _ in 0..ROUNDS {
+                for _ in 0..WARMUP {
+                    let layout = black_box(compute_wrap_layout(
+                        black_box(children.as_slice()),
+                        direction,
+                        max_width,
+                        max_height,
+                        gap_x,
+                        gap_y,
+                        justify,
+                    ));
+                    checksum = black_box(
+                        checksum + layout.size.width + layout.size.height + layout.offsets.len() as f32,
+                    );
+                }
+
+                let start = Instant::now();
+                for _ in 0..MEASURED {
+                    let layout = black_box(compute_wrap_layout(
+                        black_box(children.as_slice()),
+                        direction,
+                        max_width,
+                        max_height,
+                        gap_x,
+                        gap_y,
+                        justify,
+                    ));
+                    checksum = black_box(
+                        checksum + layout.size.width + layout.size.height + layout.offsets.len() as f32,
+                    );
+                }
+                samples.push(start.elapsed().as_secs_f64() * 1e6 / MEASURED as f64);
+            }
+
+            samples.sort_by(f64::total_cmp);
+            let p50 = samples[ROUNDS / 2];
+            let p95 = samples[(ROUNDS * 95).div_ceil(100) - 1];
+            println!("{name}: p50 {p50:.3} us, p95 {p95:.3} us");
+            assert!(checksum.is_finite());
+        }
     }
 }
