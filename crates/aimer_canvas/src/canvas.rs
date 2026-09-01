@@ -4,15 +4,19 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 pub use aimer_cupid::canvas::TextMetrics;
+pub use aimer_cupid::utilities::Mat3;
 pub use aimer_cupid::draw_cmd::{
     RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION, RETAINED_LAYER_MAX_TILES_PER_FRAME,
     RETAINED_LAYER_TILE_SIZE, RetainedDrawList, RetainedLayerContent,
 };
 pub use aimer_cupid::font::TextLanguage;
 pub use aimer_cupid::font::{FontFamily, FontStyle};
+pub use aimer_cupid::text_pipeline::text_layout::TextInteractionLayout;
 use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 pub use aimer_cupid::text_pipeline::TextOverflowMode;
 pub use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
+
+use crate::material::MaterialDrawRequest;
 mod native_impl;
 
 pub trait CanvasRendering: Clone {
@@ -253,6 +257,18 @@ pub trait CanvasRendering: Clone {
         let _ = (font_family, font_style, font_weight);
         self.measure_text(text, font_size)
     }
+    /// Builds the source-aware Aimer layout used by caret and selection
+    /// consumers.
+    #[allow(clippy::too_many_arguments)]
+    fn layout_text_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> TextInteractionLayout;
     fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics;
     fn measure_text_metrics_styled(
         &self,
@@ -391,6 +407,9 @@ pub trait CanvasRendering: Clone {
     fn set_texture_size(&self, image_id: u32, width: u32, height: u32);
     fn get_transform_translation(&self) -> (f32, f32) {
         (0.0, 0.0)
+    }
+    fn get_transform(&self) -> Mat3 {
+        Mat3::identity()
     }
 }
 
@@ -833,6 +852,14 @@ impl<'a> AimerCanvas<'a> {
         CanvasRendering::draw_svg(self.inner, scene, pos, size, overrides);
     }
 
+    /// Records a Cupid-owned Glass/Liquid material at the current canvas
+    /// ordering point. The request contains only bounded plain values; the
+    /// renderer resolves the active transform, clip, and alpha state later.
+    #[inline]
+    pub fn draw_material(&self, request: MaterialDrawRequest) {
+        request.record(self);
+    }
+
     #[allow(dead_code)]
     #[inline]
     pub fn get_image_size(&self, image_id: u32) -> Option<(u32, u32)> {
@@ -917,6 +944,28 @@ impl<'a> AimerCanvas<'a> {
             self.inner,
             text,
             font_size,
+            font_family,
+            font_style,
+            font_weight,
+        )
+    }
+
+    /// Builds source-aware Aimer geometry for a selectable text participant.
+    #[allow(clippy::too_many_arguments)]
+    pub fn layout_text_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> TextInteractionLayout {
+        CanvasRendering::layout_text_styled(
+            self.inner,
+            text,
+            font_size,
+            max_width,
             font_family,
             font_style,
             font_weight,
@@ -1062,6 +1111,12 @@ impl<'a> AimerCanvas<'a> {
     #[inline]
     pub fn get_transform_translation(&self) -> (f32, f32) {
         CanvasRendering::get_transform_translation(self.inner)
+    }
+
+    /// Returns the current local-to-physical canvas transform.
+    #[inline]
+    pub fn get_transform(&self) -> Mat3 {
+        CanvasRendering::get_transform(self.inner)
     }
 
     /// Draws a filled rectangle with border and outline in a single pass (no

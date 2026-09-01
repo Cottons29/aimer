@@ -9,6 +9,7 @@ use aimer_cupid::svg::{SvgNodeStyleOverride, SvgScene};
 use aimer_cupid::text_pipeline::{TextOverflowMode, TextShadowRequest};
 use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
 use aimer_cupid::utilities::Color as CupidColor;
+use aimer_cupid::utilities::Mat3;
 
 use crate::canvas::CanvasRendering;
 
@@ -162,11 +163,12 @@ impl CanvasRendering for CupidCanvas {
         if color.as_u32() >> 24 == 0 {
             return;
         }
+        let cupid_color = CupidColor::from(color);
         let shadow = TextShadowRequest {
             offset_x: offset.x,
             offset_y: offset.y,
             blur,
-            color: CupidColor::from(color).to_array(),
+            color: cupid_color.to_rgba8(),
         };
         CupidCanvas::draw_text_shadow_styled(
             self,
@@ -174,7 +176,7 @@ impl CanvasRendering for CupidCanvas {
             pos.y,
             text,
             font_size,
-            CupidColor::from(color),
+            cupid_color,
             font_family,
             font_style,
             font_weight,
@@ -390,6 +392,27 @@ impl CanvasRendering for CupidCanvas {
             self,
             text,
             font_size,
+            font_family,
+            font_style,
+            font_weight,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_text_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> crate::canvas::TextInteractionLayout {
+        CupidCanvas::layout_text_styled(
+            self,
+            text,
+            font_size,
+            max_width,
             font_family,
             font_style,
             font_weight,
@@ -678,5 +701,54 @@ impl CanvasRendering for CupidCanvas {
     fn get_transform_translation(&self) -> (f32, f32) {
         let (tx, ty) = CupidCanvas::get_transform_translation(self);
         (tx, ty)
+    }
+
+    #[inline]
+    fn get_transform(&self) -> Mat3 {
+        CupidCanvas::get_transform(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aimer_color::prelude::Color as FrameworkColor;
+    use aimer_cupid::draw_cmd::DrawCommand;
+    use aimer_cupid::utilities::Rgba8;
+
+    #[test]
+    fn framework_paint_reaches_cupid_draw_commands_as_rgba8() {
+        let canvas = CupidCanvas::new();
+        let fill = FrameworkColor::Rgba(0x11, 0x22, 0x33, 0x44);
+        let border = FrameworkColor::Rgba(0xaa, 0xbb, 0xcc, 0xdd);
+
+        CanvasRendering::fill_rect_with_border(
+            &canvas,
+            Vec2d { x: 1.0, y: 2.0 },
+            ResolvedSize {
+                width: 10.0,
+                height: 20.0,
+            },
+            fill,
+            [0.0; 4],
+            1.0,
+            border,
+        );
+
+        let draw_list = canvas.draw_list();
+        let Some(DrawCommand::FillRect {
+            color,
+            border_color,
+            ..
+        }) = draw_list.commands().first()
+        else {
+            panic!("expected one fill-rect command");
+        };
+
+        assert_eq!(color.to_rgba8(), Rgba8::new(0x11, 0x22, 0x33, 0x44));
+        assert_eq!(
+            border_color.to_rgba8(),
+            Rgba8::new(0xaa, 0xbb, 0xcc, 0xdd)
+        );
     }
 }

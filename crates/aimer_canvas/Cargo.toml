@@ -3,11 +3,14 @@ name = "aimer_canvas"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+apple-core-text = ["aimer_cupid/apple-core-text"]
+
 [dependencies]
 aimer_attribute.workspace = true
-aimer_utils.workspace = true
 aimer_color.workspace = true
-once_cell.workspace = true
+aimer_shape.workspace = true
 
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
