@@ -2,28 +2,47 @@ use aimer::macros::widget;
 use aimer::style::*;
 use aimer::*;
 
+use crate::accessibility_example::accessibility_example;
+use crate::animatable_example::animatable_example;
 use crate::animated::MyAnimatedList;
+use crate::animated_layout_example::animated_layout_example;
 use crate::animated_theme::AnimatedThemeExample;
+use crate::assets_media_example::assets_media_example;
 use crate::async_builder::async_builder_example;
 use crate::color_sync::ColorSync;
 use crate::custom_animated_theme::custom_animated_theme_example;
 use crate::custom_font::custom_font_example;
+use crate::custom_shape_example::custom_shape_example;
+use crate::data_view_example::data_view_example;
+use crate::dnd_completion_example::dnd_completion_example;
 use crate::drag_and_drop::DragBoard;
+use crate::feedback_example::feedback_example;
 use crate::file_drop_zone::FileDropShowcase;
 use crate::floating::FloatingShowcase;
 use crate::focus_node_example::FocusNodeExample;
+use crate::form_example::form_example;
+use crate::glass_liquid_example::glass_liquid_example;
 use crate::http_request_button::http_request_button_example;
+use crate::i18n_example::i18n_example;
 use crate::justify_content_example::justify_content_example;
 use crate::loading_animation::loading_animation_example;
 use crate::markdown_example::{custom_markdown_viewer, jaime_markdown_viewer};
 use crate::modal::modal_example;
+use crate::navigation_example::navigation_example;
 use crate::overflow_behavior_example::overflow_behavior_example;
 use crate::panic_recovery::panic_recovery_example;
+use crate::picker_example::picker_example;
+use crate::range_controls_example::RangeControlsExample;
 use crate::resizable_example::ResizableShowcase;
 use crate::routing::state_router_widget;
+use crate::routing_context_example::routing_context_example;
 use crate::selectable_text::selectable_text_example;
+use crate::selection_controls_example::selection_controls_example;
 use crate::stateful::CounterWidget;
 use crate::stateful_2::MyList;
+use crate::storage_example::storage_example;
+use crate::style_tokens_example::style_tokens_example;
+use crate::svg_example::svg_example as svg_completion_example;
 use crate::svg_test::svg_example;
 use crate::system_theme::SystemThemeExample;
 use crate::test_animation::TestFadingAnimation;
@@ -43,6 +62,25 @@ const SIDEBAR_WIDTH: f32 = 292.0;
 /// own module.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ExampleId {
+    Accessibility,
+    ChoiceControls,
+    RangeControls,
+    Forms,
+    Pickers,
+    Feedback,
+    Navigation,
+    RoutingContext,
+    Animatable,
+    DataView,
+    DndCompletion,
+    StyleTokens,
+    I18n,
+    SvgCompletion,
+    AssetsMedia,
+    GlassLiquid,
+    Storage,
+    CustomShape,
+    AnimatedLayout,
     TextProperties,
     Window,
     Resizable,
@@ -80,6 +118,25 @@ enum ExampleId {
 }
 
 const EXAMPLES: &[ExampleId] = &[
+    ExampleId::Accessibility,
+    ExampleId::ChoiceControls,
+    ExampleId::RangeControls,
+    ExampleId::Forms,
+    ExampleId::Pickers,
+    ExampleId::Feedback,
+    ExampleId::Navigation,
+    ExampleId::RoutingContext,
+    ExampleId::Animatable,
+    ExampleId::DataView,
+    ExampleId::DndCompletion,
+    ExampleId::StyleTokens,
+    ExampleId::I18n,
+    ExampleId::SvgCompletion,
+    ExampleId::AssetsMedia,
+    ExampleId::GlassLiquid,
+    ExampleId::Storage,
+    ExampleId::CustomShape,
+    ExampleId::AnimatedLayout,
     ExampleId::TextProperties,
     ExampleId::Window,
     ExampleId::Resizable,
@@ -107,6 +164,7 @@ const EXAMPLES: &[ExampleId] = &[
     ExampleId::PanicRecovery,
     ExampleId::Modal,
     ExampleId::ColorSync,
+    ExampleId::AnimatedList,
     ExampleId::Animation,
     ExampleId::Routing,
     ExampleId::Text,
@@ -119,6 +177,25 @@ impl ExampleId {
     #[inline]
     const fn label(self) -> &'static str {
         match self {
+            Self::Accessibility => "Accessibility semantics",
+            Self::ChoiceControls => "Choice controls",
+            Self::RangeControls => "Range controls",
+            Self::Forms => "Forms and validation",
+            Self::Pickers => "Pickers",
+            Self::Feedback => "Feedback and overlays",
+            Self::Navigation => "Navigation widgets",
+            Self::RoutingContext => "Route-child context",
+            Self::Animatable => "Derived Animatable values",
+            Self::DataView => "Data views",
+            Self::DndCompletion => "DnD completion",
+            Self::StyleTokens => "Design tokens",
+            Self::I18n => "Localization",
+            Self::SvgCompletion => "SVG completion",
+            Self::AssetsMedia => "Assets and media",
+            Self::GlassLiquid => "Glass/Liquid",
+            Self::Storage => "Durable storage",
+            Self::CustomShape => "Custom shapes",
+            Self::AnimatedLayout => "Animated layout",
             Self::TextProperties => "Text properties",
             Self::Window => "Window showcase",
             Self::Resizable => "Resizable",
@@ -159,6 +236,23 @@ impl ExampleId {
     #[inline]
     const fn icon(self) -> &'static str {
         match self {
+            Self::Accessibility => "♿",
+            Self::ChoiceControls => "☑",
+            Self::RangeControls => "↔",
+            Self::Forms => "⌨",
+            Self::Pickers => "▣",
+            Self::Feedback => "!",
+            Self::Navigation | Self::RoutingContext => "⌘",
+            Self::Animatable => "◈",
+            Self::DataView => "▤",
+            Self::DndCompletion => "✥",
+            Self::StyleTokens => "◐",
+            Self::I18n => "文",
+            Self::SvgCompletion | Self::CustomShape => "◇",
+            Self::AssetsMedia => "◎",
+            Self::GlassLiquid => "◌",
+            Self::Storage => "▣",
+            Self::AnimatedLayout => "↗",
             Self::TextProperties | Self::Text | Self::TextArea | Self::TextField => "T",
             Self::Window => "▣",
             Self::Resizable => "↗",
@@ -189,6 +283,25 @@ impl ExampleId {
     #[inline]
     const fn key(self) -> &'static str {
         match self {
+            Self::Accessibility => "accessibility",
+            Self::ChoiceControls => "choice-controls",
+            Self::RangeControls => "range-controls",
+            Self::Forms => "forms",
+            Self::Pickers => "pickers",
+            Self::Feedback => "feedback",
+            Self::Navigation => "navigation",
+            Self::RoutingContext => "routing-context",
+            Self::Animatable => "animatable",
+            Self::DataView => "data-view",
+            Self::DndCompletion => "dnd-completion",
+            Self::StyleTokens => "style-tokens",
+            Self::I18n => "i18n",
+            Self::SvgCompletion => "svg-completion",
+            Self::AssetsMedia => "assets-media",
+            Self::GlassLiquid => "glass-liquid",
+            Self::Storage => "storage",
+            Self::CustomShape => "custom-shape",
+            Self::AnimatedLayout => "animated-layout",
             Self::TextProperties => "text-properties",
             Self::Window => "window",
             Self::Resizable => "resizable",
@@ -230,6 +343,61 @@ impl ExampleId {
     #[inline]
     const fn description(self) -> &'static str {
         match self {
+            Self::Accessibility => {
+                "Inspect a platform-neutral semantic tree with actions and focus order."
+            }
+            Self::ChoiceControls => {
+                "Exercise controlled checkbox, switch, radio, select, and autocomplete models."
+            }
+            Self::RangeControls => {
+                "Compare a stepped slider with a distinct two-thumb range slider."
+            }
+            Self::Forms => {
+                "Validate controlled text fields with explicit submit and focus-on-error state."
+            }
+            Self::Pickers => "Explore bounded calendar, date-time, color, and cancellation models.",
+            Self::Feedback => {
+                "Drive deterministic tooltip, toast, progress, spinner, and overlay state."
+            }
+            Self::Navigation => {
+                "Navigate tabs and route-backed pages with keyboard-friendly state."
+            }
+            Self::RoutingContext => {
+                "Keep providers available across direct and Shell/Outlet route children."
+            }
+            Self::Animatable => {
+                "Interpolate derived struct, tuple, and explicit enum animation values."
+            }
+            Self::DataView => {
+                "Inspect stable-key collections, table sorting, tree expansion, and loading states."
+            }
+            Self::DndCompletion => {
+                "Exercise bounded auto-scroll, stable-key reorder, cancellation, and file-drop fallback."
+            }
+            Self::StyleTokens => {
+                "Compare semantic theme variants, component states, density, contrast, and motion."
+            }
+            Self::I18n => {
+                "Format translations, plurals, numbers, dates, times, and RTL navigation deterministically."
+            }
+            Self::SvgCompletion => {
+                "Inspect SVG fit policies, gradients, deferred features, diagnostics, and fallback behavior."
+            }
+            Self::AssetsMedia => {
+                "Track asset lifecycle and cache state beside safe optional-media fallbacks."
+            }
+            Self::GlassLiquid => {
+                "Compare Glass and Liquid surfaces with reduced-motion and GPU fallback policies."
+            }
+            Self::Storage => {
+                "Exercise namespaced preferences through the deterministic memory storage adapter."
+            }
+            Self::CustomShape => {
+                "Render bounded curves with fill, stroke, clipping, animation, and hit-test metadata."
+            }
+            Self::AnimatedLayout => {
+                "Transition Flex geometry with bounded duration and reduced-motion policy."
+            }
             Self::TextProperties => {
                 "Explore typography, wrapping, spacing, indentation, and rich text."
             }
@@ -256,7 +424,9 @@ impl ExampleId {
             Self::JustifyContent => "Compare the six main-axis distribution modes.",
             Self::Svg => "Animate a bundled SVG document into view.",
             Self::CustomFont => "Register and render an embedded font family.",
-            Self::PanicRecovery => "Show the framework's recovered error surface(watch the console).",
+            Self::PanicRecovery => {
+                "Show the framework's recovered error surface(watch the console)."
+            }
             Self::Modal => "Present a modal barrier and animated dialog on demand.",
 
             Self::ColorSync => "Display a row of synchronized color samples.",
@@ -347,25 +517,42 @@ fn sidebar(
     updater: StateUpdater<ExampleShowcaseState>,
     app_theme: ThemeData,
 ) -> AnyWidget {
-    let mut childrn = vec![
-        SizedBox::new()
-            .height(if cfg!(target_os = "macos") { 38 } else { 18 })
-            .boxed(),
-    ];
-
-    childrn.append(
-        &mut EXAMPLES
-            .iter()
-            .copied()
-            .map(|example| {
-                example_button(example, selected == example, updater.clone(), app_theme)
-            })
-            .collect::<Vec<AnyWidget>>(),
-    );
+    // let mut childrn = vec![
+    //     SizedBox::new()
+    //         .height(if cfg!(target_os = "macos") { 38 } else { 18 })
+    //         .boxed(),
+    // ];
+    //
+    // childrn.append(
+    //     &mut EXAMPLES
+    //         .iter()
+    //         .copied()
+    //         .map(|example| example_button(example, selected == example, updater.clone(), app_theme))
+    //         .collect::<Vec<AnyWidget>>(),
+    // );
 
     let list = Column::new()
         .gaps(LayoutSpacing::new().bottom(3))
-        .children(childrn);
+        .list(
+            EXAMPLES
+                .into_iter()
+                .enumerate(),
+        )
+        .builder(move |(index, example)| {
+            // LayoutSpacing::new().top(38)
+            Container::new()
+                .margin(case!(
+                    cfg!(target_os = "macos") && *index == 0,
+                    LayoutSpacing::new().top(38)
+                ))
+                .box_child(example_button(
+                    **example,
+                    selected == **example,
+                    updater.clone(),
+                    app_theme,
+                ))
+        });
+    // .children(childrn);
 
     Container::new()
         .width(Dimension::Px(SIDEBAR_WIDTH))
@@ -452,7 +639,11 @@ fn example_button_with_label(
         )
         .press_decoration(
             BoxDecoration::new()
-                .background_color(app_theme.primary_color.darken(0.08))
+                .background_color(
+                    app_theme
+                        .primary_color
+                        .darken(0.08),
+                )
                 .border_radius(10),
         )
         .box_child(
@@ -497,10 +688,7 @@ fn example_button_with_label(
         )
 }
 
-fn content(
-    selected: ExampleId,
-    app_theme: ThemeData,
-) -> AnyWidget {
+fn content(selected: ExampleId, app_theme: ThemeData) -> AnyWidget {
     Container::new()
         .height(Dimension::Percent(100.0))
         .padding(
@@ -530,9 +718,10 @@ fn content(
                 .child(
                     Container::new()
                         .width(Dimension::Percent(100.0))
+                        .padding(LayoutSpacing::all(Spacing::Px(24)))
                         .box_decoration(
                             BoxDecoration::new()
-                                .background_color(app_theme.surface_color)
+                                .background_color(theme::raised_surface(&app_theme))
                                 .border_radius(14),
                         )
                         .child(build_example(selected, app_theme)),
@@ -544,6 +733,25 @@ fn content(
 
 fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
     match example {
+        ExampleId::Accessibility => accessibility_example().boxed(),
+        ExampleId::ChoiceControls => selection_controls_example().boxed(),
+        ExampleId::RangeControls => RangeControlsExample::new().boxed(),
+        ExampleId::Forms => form_example().boxed(),
+        ExampleId::Pickers => picker_example().boxed(),
+        ExampleId::Feedback => feedback_example().boxed(),
+        ExampleId::Navigation => navigation_example().boxed(),
+        ExampleId::RoutingContext => routing_context_example().boxed(),
+        ExampleId::Animatable => animatable_example().boxed(),
+        ExampleId::DataView => data_view_example().boxed(),
+        ExampleId::DndCompletion => dnd_completion_example().boxed(),
+        ExampleId::StyleTokens => style_tokens_example().boxed(),
+        ExampleId::I18n => i18n_example().boxed(),
+        ExampleId::SvgCompletion => svg_completion_example().boxed(),
+        ExampleId::AssetsMedia => assets_media_example().boxed(),
+        ExampleId::GlassLiquid => glass_liquid_example().boxed(),
+        ExampleId::Storage => storage_example().boxed(),
+        ExampleId::CustomShape => custom_shape_example().boxed(),
+        ExampleId::AnimatedLayout => animated_layout_example().boxed(),
         ExampleId::TextProperties => text_properties_example().boxed(),
         ExampleId::Window => WindowShowcase::new().boxed(),
         ExampleId::Resizable => ResizableShowcase::new().boxed(),
@@ -617,7 +825,11 @@ fn positioned_example(app_theme: ThemeData) -> AnyWidget {
                             Container::new()
                                 .width(Dimension::Px(260.0))
                                 .height(Dimension::Px(150.0))
-                                .color(app_theme.primary_color.darken(0.18))
+                                .color(
+                                    app_theme
+                                        .primary_color
+                                        .darken(0.18),
+                                )
                                 .child(Text::new("Top / left")),
                         )
                         .boxed(),
@@ -661,7 +873,11 @@ fn border_outline_example(app_theme: ThemeData) -> AnyWidget {
                         BorderSlice::new()
                             .style(BorderStyle::Solid)
                             .stroke(Stroke::Px(8.0))
-                            .color(app_theme.primary_color.lighten(0.16)),
+                            .color(
+                                app_theme
+                                    .primary_color
+                                    .lighten(0.16),
+                            ),
                     )),
             )
             .child(

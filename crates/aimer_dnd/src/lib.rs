@@ -83,21 +83,31 @@
 //! DragSession::cancel(pointer);
 //! ```
 //!
-//! # Deliberate gaps
+//! # Completion seams
 //!
-//! * **One drag at a time.** The session is keyed by [`PointerKey`] so
-//!   simultaneous multi-touch drags remain possible, but a second
-//!   [`DragSession::begin`] while one is live is refused.
-//! * **No auto-scroll.** Dragging to the edge of a scrollable does not scroll
-//!   it.
-//! * **No file drop on the web.** winit's web backend never emits file drag
-//!   events, so an operating-system file drop is inert there.
+//! * **One drag at a time.** The session is keyed by [`PointerKey`], but the
+//!   policy is explicitly single-pointer: a second active drag is refused and
+//!   a second `Draggable` does not capture its pointer while the first is live.
+//! * **Bounded auto-scroll.** [`AutoScroller`] computes an edge-triggered,
+//!   clamped logical delta and sends it through [`ScrollTarget`]. The adapter
+//!   owns the actual scroll engine, so this crate does not replace scroll
+//!   physics.
+//! * **Stable-key reordering.** [`ReorderableList`] keeps preview, commit, and
+//!   cancellation in one pointer-bound transaction, and also exposes a
+//!   keyboard move path.
+//! * **Safe file fallback.** [`FileDropPolicy`] validates file-drop metadata
+//!   with file-count, size, type, path, directory, and symlink bounds before a
+//!   caller processes the complete batch. winit's web backend still emits no
+//!   native file-drag events; browser adapters can feed the validator directly.
 //!
 //! [`PointerKey`]: aimer_widget::PointerKey
 
 mod draggable;
 mod drop_zone;
+mod auto_scroll;
+mod file_drop;
 mod overlay;
+mod reorder;
 mod session;
 mod target;
 #[cfg(test)]
@@ -105,6 +115,18 @@ mod test_support;
 
 pub use crate::draggable::{Draggable, DragStartMode};
 pub use crate::drop_zone::DropZone;
+pub use crate::auto_scroll::{
+    AutoScrollEdges, AutoScrollPolicy, AutoScrollPolicyError, AutoScrollStep, AutoScroller,
+    ScrollTarget, ScrollViewport,
+};
+pub use crate::file_drop::{
+    FileDropEntry, FileDropOutcome, FileDropPolicy, FileDropRejectReason, FileDropRejection,
+    ValidatedFileDrop,
+};
 pub use crate::overlay::{DragAxis, DragOverlay};
+pub use crate::reorder::{
+    DropLocation, InsertionIndicator, KeyboardReorder, ReorderDrag, ReorderError, ReorderItem,
+    ReorderOutcome, ReorderableList, StableKey, StableKeyError,
+};
 pub use crate::session::{DragPayload, DragSession, FileDrop};
 pub use crate::target::{DragTarget, DragTargetState};

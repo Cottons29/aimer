@@ -1,5 +1,20 @@
 extern crate self as aimer;
 
+pub use aimer_accessibility as accessibility;
+pub use aimer_canvas as canvas;
+pub use aimer_cupid as cupid;
+pub use aimer_data_view as data_view;
+pub use aimer_feedback as feedback;
+pub use aimer_form as form;
+pub use aimer_i18n as i18n;
+pub use aimer_media as media;
+pub use aimer_navigation as navigation;
+pub use aimer_picker as picker;
+pub use aimer_range as range;
+pub use aimer_selection as selection;
+pub use aimer_shape as shape;
+pub use aimer_storage as storage;
+
 pub use aimer_anteros as anteros;
 pub use aimer_anteros::{
     CapabilityBindings, CapabilityCall, CapabilityCompletionToken, CapabilityDecoder,
@@ -30,6 +45,8 @@ pub use aimer_dnd::{
     DragAxis, DragOverlay, DragPayload, DragSession, DragStartMode, DragTarget, DragTargetState,
     Draggable, DropZone, FileDrop,
 };
+pub use aimer_dnd as dnd;
+pub use aimer_shape::*;
 pub use aimer_events as events;
 pub use aimer_events::element::ElementEvent;
 pub use aimer_flex::*;
@@ -81,12 +98,20 @@ pub use aimer_rubick::{self, ErasedFrom, Rubick};
 pub use aimer_scroll::*;
 pub use aimer_space::*;
 #[cfg(feature = "svg")]
+pub use aimer_svg as svg;
+#[cfg(feature = "svg")]
 pub use aimer_svg::{
-    RawSvg, Svg, SvgCallback, SvgColor, SvgDiagnostic, SvgDocument, SvgError, SvgFillRule, SvgHit,
-    SvgLimits, SvgLoadState, SvgLoader, SvgNodeId, SvgNodeMetadata, SvgPath, SvgSelector,
-    SvgSource, SvgStyle, SvgTransform,
+    RawSvg, Svg, SvgAspectAlign, SvgAspectMode, SvgCallback, SvgColor, SvgDiagnostic,
+    SvgDocument, SvgError, SvgFillRule, SvgFitError, SvgFitPolicy, SvgGradient, SvgGradientStop,
+    SvgGradientUnits, SvgHit, SvgLimits, SvgLoadState, SvgLoader, SvgNodeId, SvgNodeMetadata,
+    SvgNodePaint, SvgPaint, SvgPath, SvgPreserveAspectRatio, SvgSelector, SvgSource, SvgSpreadMethod,
+    SvgStyle, SvgTransform, SvgViewBox,
 };
 pub use aimer_text::{RichText, SelectionArea, ShareRef, SpanStyle, Text, TextButton, TextSpan};
+pub use aimer_text::{
+    TextAccessibilityCaret, TextAccessibilityCluster, TextAccessibilityLine,
+    TextAccessibilitySelectionRect, TextAccessibilitySnapshot,
+};
 pub use aimer_venus as venus;
 pub use aimer_venus::{TaskScope, Venus, yield_if_over_budget, yield_now};
 pub use aimer_widget::base::BuildContext;
@@ -104,6 +129,27 @@ pub mod widget {
 
 pub mod animation {
     pub use aimer_animation::*;
+}
+
+#[cfg(test)]
+mod public_api_tests {
+    fn assert_reachable<T>() {}
+
+    #[test]
+    fn completion_namespaces_are_reachable_from_the_umbrella_crate() {
+        assert_reachable::<crate::dnd::AutoScroller>();
+        assert_reachable::<crate::dnd::FileDropPolicy>();
+        assert_reachable::<crate::dnd::ReorderableList<u64>>();
+    }
+
+    #[cfg(feature = "svg")]
+    #[test]
+    fn svg_completion_namespace_exposes_fit_and_paint_models() {
+        assert_reachable::<crate::svg::SvgFitPolicy>();
+        assert_reachable::<crate::svg::SvgGradient>();
+        assert_reachable::<crate::svg::SvgNodePaint>();
+        assert_reachable::<crate::svg::SvgViewBox>();
+    }
 }
 
 // Macro re-export
@@ -132,6 +178,11 @@ pub use aimer_provider as provider;
 pub use aimer_router as router;
 pub use wasm_bindgen;
 
+
+pub use aimer_std::case;
+pub mod sync {
+    pub use aimer_std::read_only::*;
+}
 
 #[cfg(test)]
 mod tests {

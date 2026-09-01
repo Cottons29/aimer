@@ -7,6 +7,8 @@ mod text_button;
 pub mod text_span;
 mod text_source;
 
+mod text_accessibility;
+
 pub use rich_text::{LinkCallback, RawRichText, RichText};
 pub use selection_area::{SelectionArea, SelectionAreaElement};
 pub use selection::TextSelection;
@@ -16,3 +18,7 @@ pub use text_button::TextButton;
 pub use text_span::{SpanStyle, TextSpan};
 pub use text_source::TextSource;
 pub use aimer_std::read_only::ShareRef;
+pub use text_accessibility::{
+    TextAccessibilityCaret, TextAccessibilityCluster, TextAccessibilityLine,
+    TextAccessibilitySelectionRect, TextAccessibilitySnapshot,
+};

@@ -2,6 +2,9 @@ mod single_child;
 
 pub use single_child::aspecratio::{AspectRatio, RatioOption};
 pub use single_child::container::Container;
+pub use single_child::custom_shape::CustomShape;
+pub use single_child::glass::{Glass, GlassMaterial, MaterialMotionPolicy};
+pub use single_child::liquid::{Liquid, LiquidMaterial};
 pub use single_child::opacity::Opacity;
 pub use single_child::resizable::band::ResizeBand;
 pub use single_child::resizable::direction::Direction;
@@ -25,7 +28,7 @@ mod tests {
     use aimer_canvas::{Canvas, InnerCanvas};
     use aimer_flex::flex_child::RawExpanded;
     use aimer_flex::raw_flex::RawFlex;
-    use aimer_flex::{Column, FlexDirection, Row};
+    use aimer_flex::{Column, Expanded, FlexDirection, Row};
     use aimer_scroll::{ScrollAxis, Scrollable};
     use aimer_space::positioned::RawPositionedElement;
     use aimer_space::{Positioned, Stack};
@@ -37,6 +40,43 @@ mod tests {
     };
 
     use super::*;
+
+    struct PaintProbe {
+        draws: Rc<Cell<usize>>,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl aimer_widget::PortableWidget for PaintProbe {}
+
+    impl Widget for PaintProbe {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            Element::boxed(self)
+        }
+    }
+
+    impl VisitorElement for PaintProbe {
+        fn debug_name(&self) -> &'static str {
+            "PaintProbe"
+        }
+    }
+
+    impl EventElement for PaintProbe {}
+    impl LayoutElement for PaintProbe {}
+    impl Rebuildable for PaintProbe {}
+
+    impl Drawable for PaintProbe {
+        fn draw(&self, _ctx: &BuildContext) {
+            self.draws.set(self.draws.get() + 1);
+        }
+
+        fn paint(&self, _ctx: &BuildContext) {
+            self.paints.set(self.paints.get() + 1);
+        }
+
+        fn is_paint_stable(&self) -> bool {
+            true
+        }
+    }
 
     struct MeasuredPositionedChild {
         observed_parent_size: Rc<Cell<ResolvedSize>>,
@@ -294,6 +334,100 @@ mod tests {
         };
         context.visible_rect = visible_rect;
         context
+    }
+
+    #[test]
+    fn stable_wrappers_forward_paint_without_reentering_draw() {
+        let ctx = dummy_build_context(100.0, 100.0, None);
+
+        let check = |element: AnyElement, draws: Rc<Cell<usize>>, paints: Rc<Cell<usize>>| {
+            assert!(element.is_paint_stable());
+            element.paint(&ctx);
+            assert_eq!(draws.get(), 0);
+            assert_eq!(paints.get(), 1);
+        };
+
+        let draws = Rc::new(Cell::new(0));
+        let paints = Rc::new(Cell::new(0));
+        check(
+            Opacity::new()
+                .child(PaintProbe {
+                    draws: draws.clone(),
+                    paints: paints.clone(),
+                })
+                .to_element(&ctx),
+            draws,
+            paints,
+        );
+
+        let draws = Rc::new(Cell::new(0));
+        let paints = Rc::new(Cell::new(0));
+        check(
+            Scalable::new()
+                .scale(1.5)
+                .child(PaintProbe {
+                    draws: draws.clone(),
+                    paints: paints.clone(),
+                })
+                .to_element(&ctx),
+            draws,
+            paints,
+        );
+
+        let draws = Rc::new(Cell::new(0));
+        let paints = Rc::new(Cell::new(0));
+        check(
+            AspectRatio::new()
+                .aspect_ratio(2.0)
+                .child(PaintProbe {
+                    draws: draws.clone(),
+                    paints: paints.clone(),
+                })
+                .to_element(&ctx),
+            draws,
+            paints,
+        );
+
+        let draws = Rc::new(Cell::new(0));
+        let paints = Rc::new(Cell::new(0));
+        check(
+            CustomShape::new()
+                .child(PaintProbe {
+                    draws: draws.clone(),
+                    paints: paints.clone(),
+                })
+                .to_element(&ctx),
+            draws,
+            paints,
+        );
+
+        let draws = Rc::new(Cell::new(0));
+        let paints = Rc::new(Cell::new(0));
+        check(
+            Expanded::new()
+                .child(PaintProbe {
+                    draws: draws.clone(),
+                    paints: paints.clone(),
+                })
+                .to_element(&ctx),
+            draws,
+            paints,
+        );
+
+        let draws = Rc::new(Cell::new(0));
+        let paints = Rc::new(Cell::new(0));
+        let element = StatelessElement::wrapper(
+            Element::boxed(PaintProbe {
+                draws: draws.clone(),
+                paints: paints.clone(),
+            }),
+            None,
+            "PaintProbeWrapper",
+        );
+        assert!(element.is_paint_stable());
+        element.paint(&ctx);
+        assert_eq!(draws.get(), 0);
+        assert_eq!(paints.get(), 1);
     }
 
     fn placeholder_section(height: i32) -> AnyWidget {

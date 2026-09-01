@@ -8,7 +8,7 @@ This document is the implementation specification and current status for Aimer's
 
 - [x] Parse SVG with `usvg` into Aimer-owned retained scene data.
 - [x] Preserve source IDs, classes, element names, source groups, parent links, and paint order.
-- [x] Normalize paths, basic shapes, viewport dimensions, `viewBox`, transforms, opacity, solid fills, and solid strokes.
+- [x] Normalize paths, basic shapes, viewport dimensions, finite `viewBox`/`preserveAspectRatio` fit policy, transforms, opacity, solid fills, and solid strokes.
 - [x] Select nodes with `#id`, `.class`, and element-name selectors.
 - [x] Construct standalone paths from SVG path data or a selected SVG node.
 - [x] Tessellate non-zero/even-odd fills and cap/join/miter-aware strokes with `lyon`.
@@ -22,6 +22,8 @@ This document is the implementation specification and current status for Aimer's
 - [x] Load memory, file, and network sources through explicit loading states.
 - [x] Compile on native and `wasm32-unknown-unknown`.
 - [x] Report SVG CPU geometry, GPU geometry, and instance-buffer usage in `RendererMemoryStats`.
+- [x] Retain linear/radial gradient paints, spread modes, and dash parameters in the parser model with explicit deferred-feature diagnostics.
+- [x] Propagate selector styles from retained groups to their renderable descendants.
 
 ## Architecture
 
@@ -90,8 +92,8 @@ Native file/network loading uses the platform filesystem and `reqwest`. Browser 
 - Paths retain normalized absolute move, line, quadratic, cubic, and close commands.
 - Basic SVG shapes are normalized to paths by `usvg`.
 - Source groups remain selectable even when `usvg` flattens a visually redundant group.
-- Renderable paths carry the normalized absolute transform, cumulative group opacity, solid fill/stroke, fill rule, and paint order.
-- Widget destination bounds map the normalized viewport to the allocated widget size.
+- Renderable paths carry the normalized absolute transform, cumulative group opacity, solid fill/stroke, fill rule, and paint order. The document sidecar also retains complete linear/radial gradient paints and dash parameters without pretending that deferred paints are solid.
+- A finite root `viewBox` maps to widget destination bounds through the parsed `preserveAspectRatio` policy (`meet`, `slice`, or `none`). The same fit compensation is applied to hit testing, including letterboxed and cropped regions.
 - Canvas transform and rectangular/rounded widget clip are captured at command resolution.
 - Empty, non-positive-size, fully transparent, and offscreen geometry does not produce prepared GPU draws.
 - Fill/stroke paint order is retained per path. SVG commands are not moved across other primitive types.
@@ -104,6 +106,10 @@ Geometry cache keys contain:
 - normalized path command bits;
 - fill rule, or stroke width/cap/join/miter limit;
 - one of eight bounded physical-scale tolerance buckets.
+
+Dashed paths are flattened into independent visible subpaths by the bounded
+`tessellate_dashed_stroke` helper. They are not inserted into the existing solid
+GPU cache until the instance paint format carries dash data.
 
 Keys deliberately exclude color, opacity, destination bounds, canvas transforms, and selector metadata. Updating those values only changes per-frame SVG instance data.
 
@@ -131,7 +137,7 @@ Default `SvgLimits`:
 
 Inputs are rejected before normalization when empty, malformed UTF-8/XML, over a configured source/node limit, or containing explicit `NaN`/infinite numeric literals. Normalized transforms and viewport dimensions are checked again for finite values. Path-command and viewport limits are checked before retained/GPU use.
 
-External `href` values are rejected unless they are document-local fragment references. No SVG input path uses `unwrap()`. Unsupported visual features produce diagnostics or predictable omissions rather than panics.
+External `href` values are rejected unless they are document-local fragment references. No SVG input path uses `unwrap()`. Unsupported visual features produce diagnostics or predictable omissions rather than panics. Gradient and pattern references remain queryable from `SvgDocument`; they are never silently substituted with a solid color.
 
 ## Interaction and animation
 
@@ -147,9 +153,9 @@ Hit testing maps pointer coordinates from widget bounds into scene coordinates, 
 
 ## Known restrictions
 
-- Only solid fills and solid strokes render. Parsed dash arrays are retained, but dashed strokes are not submitted yet.
-- Source groups are retained for selectors and hierarchy. Visual style overrides currently target renderable path nodes; inherited group override propagation is deferred.
-- The widget maps the viewport directly to destination bounds. Additional `preserveAspectRatio`/fit policies beyond intrinsic aspect-ratio sizing are deferred.
+- The current GPU path submits only solid fills and solid strokes. Parsed gradient paints and dash arrays are retained, and their diagnostic entries identify the deferred renderer feature. `tessellate_dashed_stroke` provides a bounded CPU geometry seam for a future dash-aware GPU instance format.
+- Source groups are retained for selectors and hierarchy. Selector style overrides propagate through retained group ancestors; SVG-authored clip paths, masks, patterns, isolation, and blend modes remain deferred.
+- Root `viewBox` and `preserveAspectRatio` fit/alignment are parsed and applied by the widget and hit-test seam. Nested SVG fit behavior continues to follow `usvg`'s normalized transforms.
 - CPU curve hit testing uses bounded subdivision and can differ slightly from GPU tessellation at extreme zoom.
 - Tessellation errors skip the affected draw rather than failing the complete frame.
 - The loader exposes state but does not automatically construct loading/error fallback widgets.
@@ -158,7 +164,7 @@ Hit testing maps pointer coordinates from widget bounds into scene coordinates, 
 
 ### Phase 2: paint and clipping
 
-- [ ] Linear/radial gradients and spread modes.
+- [ ] Linear/radial gradients and spread modes in the GPU paint pipeline (the parser/model side is retained now).
 - [ ] Patterns.
 - [ ] SVG-authored clip paths and masks.
 - [ ] Group isolation and blend modes.
@@ -168,7 +174,7 @@ Hit testing maps pointer coordinates from widget bounds into scene coordinates, 
 - [ ] SVG text and cross-platform font resolution.
 - [ ] Embedded/raster images.
 - [ ] Controlled external resource resolvers.
-- [ ] Full `preserveAspectRatio` and fit/alignment controls.
+- [x] Root `preserveAspectRatio` and fit/alignment controls for widget layout and hit testing.
 
 ### Phase 4: effects and declarative behavior
 
@@ -182,6 +188,6 @@ Scripts, uncontrolled external resources, and animated image formats remain outs
 
 ## Validation
 
-The implementation has focused tests for parser errors and limits, selectors and source-group retention, normalized transforms/styles, path construction, fill/stroke tessellation, fill rules, cache reuse and eviction, scale buckets, mixed command order, renderer state capture, WGSL validation, intrinsic sizing, style isolation, transformed reverse-order hit testing, stroke hits, pointer lifecycle, and loading-state transitions.
+The implementation has focused tests for parser errors and limits, selectors and source-group retention, normalized transforms/styles, finite view-box fit policies, path construction, fill/stroke and dashed tessellation, gradient paint retention, group-style propagation, fill rules, cache reuse and eviction, scale buckets, mixed command order, renderer state capture, WGSL validation, intrinsic sizing, style isolation, transformed reverse-order hit testing, fit-aware hit testing, stroke hits, pointer lifecycle, and loading-state transitions.
 
 Required release checks are native and `wasm32-unknown-unknown` compilation, focused/downstream tests, `cargo fmt --all`, strict Clippy for affected crates, and `git diff --check`.

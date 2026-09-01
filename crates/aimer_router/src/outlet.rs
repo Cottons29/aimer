@@ -1,3 +1,6 @@
+use std::any::{Any, TypeId};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use aimer_widget::base::BuildContext;
@@ -6,6 +9,64 @@ use aimer_widget::{AnyElement, AnyWidget, Widget};
 /// Type-erased builder for the active child route rendered inside an
 /// [`Outlet`].
 pub type OutletChildBuilder = Rc<dyn Fn(&BuildContext) -> AnyWidget>;
+
+/// Ambient values captured at a route boundary and restored while retained
+/// route content is built or traversed.
+///
+/// `BuildContext` scopes inherited values dynamically. A route element can
+/// outlive the call stack that first built it, though, so a later rebuild may
+/// otherwise run without providers that were ancestors when the route was
+/// mounted. The values are shared `Rc`s, not cloned provider state; this is a
+/// context composition boundary rather than another provider store.
+#[derive(Clone)]
+pub(crate) struct RouteChildContext {
+    states: HashMap<TypeId, Rc<dyn Any>>,
+}
+
+impl RouteChildContext {
+    pub(crate) fn capture(ctx: &BuildContext) -> Self {
+        Self {
+            states: ctx.inherited_states.borrow().clone(),
+        }
+    }
+
+    pub(crate) fn with<R>(
+        &self,
+        ctx: &BuildContext,
+        callback: impl FnOnce(&BuildContext) -> R,
+    ) -> R {
+        let mut previous = Vec::new();
+        {
+            let mut states = ctx.inherited_states.borrow_mut();
+            for (type_id, state) in &self.states {
+                if !states.contains_key(type_id) {
+                    states.insert(*type_id, state.clone());
+                    previous.push(*type_id);
+                }
+            }
+        }
+
+        let _guard = RouteChildContextGuard {
+            states: ctx.inherited_states.clone(),
+            previous,
+        };
+        callback(ctx)
+    }
+}
+
+struct RouteChildContextGuard {
+    states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
+    previous: Vec<TypeId>,
+}
+
+impl Drop for RouteChildContextGuard {
+    fn drop(&mut self) {
+        let mut states = self.states.borrow_mut();
+        for type_id in self.previous.drain(..).rev() {
+            states.remove(&type_id);
+        }
+    }
+}
 
 /// State injected by a [`crate::shell::Shell`] into the [`BuildContext`] so a
 /// descendant [`Outlet`] knows which child to render. Cheaply cloneable (holds

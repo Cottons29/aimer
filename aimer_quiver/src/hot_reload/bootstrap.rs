@@ -1,5 +1,7 @@
+use crossbeam::queue::SegQueue;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::Mutex;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use aimer_anteros::{
@@ -22,12 +24,25 @@ const IOS_SERVICE_NAME_VARIABLE: &str = "AIMER_RELOAD_SERVICE_NAME";
 const SESSION_ID_HEX_BYTES: usize = 32;
 const SESSION_TOKEN_HEX_BYTES: usize = 64;
 
-static HOT_RELOAD_CONFIG: Mutex<BootstrapState> = Mutex::new(BootstrapState::Empty);
+const BOOTSTRAP_EMPTY: u8 = 0;
+const BOOTSTRAP_INITIALIZING: u8 = 1;
+const BOOTSTRAP_STAGED: u8 = 2;
+const BOOTSTRAP_CONSUMED: u8 = 3;
 
-enum BootstrapState {
-    Empty,
-    Staged(StagedHostConfig),
-    Consumed,
+struct HotReloadBootstrap {
+    // The queue owns the staged value; the atomic publishes which transition
+    // is currently visible to callers without borrowing shared mutable state.
+    state: AtomicU8,
+    staged: SegQueue<StagedHostConfig>,
+}
+
+static HOT_RELOAD_CONFIG: OnceLock<HotReloadBootstrap> = OnceLock::new();
+
+fn hot_reload_config() -> &'static HotReloadBootstrap {
+    HOT_RELOAD_CONFIG.get_or_init(|| HotReloadBootstrap {
+        state: AtomicU8::new(BOOTSTRAP_EMPTY),
+        staged: SegQueue::new(),
+    })
 }
 
 struct StagedHostConfig {
@@ -61,16 +76,35 @@ pub fn initialize_hot_reload_host() -> bool {
 }
 
 fn initialize_hot_reload_host_inner() -> Result<(), ()> {
-    let mut state = HOT_RELOAD_CONFIG.lock().map_err(|_| ())?;
-    if !matches!(*state, BootstrapState::Empty) {
+    let bootstrap = hot_reload_config();
+    if bootstrap
+        .state
+        .compare_exchange(
+            BOOTSTRAP_EMPTY,
+            BOOTSTRAP_INITIALIZING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_err()
+    {
         return Ok(());
     }
 
-    let Some(config) = read_launch_config()? else {
-        return Ok(());
-    };
-    *state = BootstrapState::Staged(config);
-    Ok(())
+    match read_launch_config() {
+        Ok(Some(config)) => {
+            bootstrap.staged.push(config);
+            bootstrap.state.store(BOOTSTRAP_STAGED, Ordering::Release);
+            Ok(())
+        }
+        Ok(None) => {
+            bootstrap.state.store(BOOTSTRAP_EMPTY, Ordering::Release);
+            Ok(())
+        }
+        Err(()) => {
+            bootstrap.state.store(BOOTSTRAP_EMPTY, Ordering::Release);
+            Err(())
+        }
+    }
 }
 
 /// Takes the staged launch configuration for the first `AimerApp` consumer.
@@ -82,10 +116,33 @@ fn initialize_hot_reload_host_inner() -> Result<(), ()> {
 /// launch with no staged reload host.
 pub fn take_hot_reload_config(
 ) -> Option<(SocketAddr, SessionCredentials, LiveReloadConfig)> {
-    let mut state = HOT_RELOAD_CONFIG.lock().ok()?;
-    let staged = match std::mem::replace(&mut *state, BootstrapState::Consumed) {
-        BootstrapState::Staged(staged) => staged,
-        BootstrapState::Empty | BootstrapState::Consumed => return None,
+    let bootstrap = hot_reload_config();
+    let state = bootstrap.state.load(Ordering::Acquire);
+    let staged = match state {
+        BOOTSTRAP_STAGED
+            if bootstrap
+                .state
+                .compare_exchange(
+                    BOOTSTRAP_STAGED,
+                    BOOTSTRAP_CONSUMED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok() => bootstrap.staged.pop()?,
+        BOOTSTRAP_EMPTY
+            if bootstrap
+                .state
+                .compare_exchange(
+                    BOOTSTRAP_EMPTY,
+                    BOOTSTRAP_CONSUMED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok() => return None,
+        BOOTSTRAP_CONSUMED | BOOTSTRAP_INITIALIZING | BOOTSTRAP_EMPTY | BOOTSTRAP_STAGED => {
+            return None;
+        }
+        _ => return None,
     };
     Some(staged.into_live_reload_config())
 }

@@ -113,15 +113,33 @@ pub mod render_ctx {
 
             let view = surface.texture.create_view(&Default::default());
 
-            self.renderer.render(
-                &self.gpu.device,
-                &self.gpu.queue,
-                &view,
-                frame.width,
-                frame.height,
-                self.gpu.is_srgb,
-                &frame.draw_list,
-            );
+            if self
+                .gpu
+                .config
+                .usage
+                .contains(wgpu::TextureUsages::COPY_SRC)
+            {
+                self.renderer.render_with_source_texture(
+                    &self.gpu.device,
+                    &self.gpu.queue,
+                    &view,
+                    &surface.texture,
+                    frame.width,
+                    frame.height,
+                    self.gpu.is_srgb,
+                    &frame.draw_list,
+                );
+            } else {
+                self.renderer.render(
+                    &self.gpu.device,
+                    &self.gpu.queue,
+                    &view,
+                    frame.width,
+                    frame.height,
+                    self.gpu.is_srgb,
+                    &frame.draw_list,
+                );
+            }
             encode.finish(FramePhase::Encode);
 
             // Deferred off-screen text is advisory and must not keep a settled

@@ -2,11 +2,18 @@ use std::sync::Arc;
 
 use aimer_color::prelude::Color;
 
+mod fit;
+mod paint;
 mod tessellation;
 
 pub use tessellation::{
-    SvgGeometryCache, SvgMesh, SvgMeshStyle, SvgTessellationError, SvgToleranceBucket,
+    tessellate_dashed_stroke, SvgGeometryCache, SvgMesh, SvgMeshStyle, SvgTessellationError,
+    SvgToleranceBucket,
 };
+pub use fit::{
+    SvgAspectAlign, SvgAspectMode, SvgFitError, SvgFitPolicy, SvgPreserveAspectRatio, SvgViewBox,
+};
+pub use paint::{SvgGradient, SvgGradientStop, SvgGradientUnits, SvgPaint, SvgSpreadMethod};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SvgViewport {
@@ -38,6 +45,18 @@ impl Default for SvgTransform {
 }
 
 impl SvgTransform {
+    /// Returns the composition `self` after `other`.
+    pub fn mul(self, other: Self) -> Self {
+        Self {
+            sx: self.sx * other.sx + self.kx * other.ky,
+            ky: self.ky * other.sx + self.sy * other.ky,
+            kx: self.sx * other.kx + self.kx * other.sy,
+            sy: self.ky * other.kx + self.sy * other.sy,
+            tx: self.sx * other.tx + self.kx * other.ty + self.tx,
+            ty: self.ky * other.tx + self.sy * other.ty + self.ty,
+        }
+    }
+
     pub fn is_finite(self) -> bool {
         [self.sx, self.ky, self.kx, self.sy, self.tx, self.ty]
             .into_iter()
@@ -132,6 +151,13 @@ impl SvgColor {
             b: b as f32 / 255.0,
             a: a as f32 / 255.0,
         }
+    }
+
+    /// Returns whether every channel is finite.
+    pub fn is_finite(self) -> bool {
+        [self.r, self.g, self.b, self.a]
+            .into_iter()
+            .all(f32::is_finite)
     }
 }
 
@@ -363,5 +389,102 @@ mod tests {
 
         assert_eq!(cache.len(), 2);
         assert!(cache.memory_bytes() <= cache.max_memory_bytes());
+    }
+
+    #[test]
+    fn preserve_aspect_ratio_fit_is_finite_and_centers_meet_content() {
+        let view_box = SvgViewBox::try_new(-10.0, -20.0, 100.0, 50.0).unwrap();
+        let fit = view_box
+            .fit_transform(
+                200.0,
+                200.0,
+                SvgFitPolicy::PreserveAspectRatio(SvgPreserveAspectRatio::default()),
+            )
+            .unwrap();
+
+        assert_eq!(fit.sx, 2.0);
+        assert_eq!(fit.sy, 2.0);
+        assert_eq!(fit.transform_point(-10.0, -20.0), (0.0, 50.0));
+        assert_eq!(fit.transform_point(90.0, 30.0), (200.0, 150.0));
+        assert!(fit.is_finite());
+    }
+
+    #[test]
+    fn fit_rejects_non_finite_and_non_positive_inputs() {
+        assert!(matches!(
+            SvgViewBox::try_new(0.0, 0.0, f32::NAN, 10.0),
+            Err(SvgFitError::NonFinite(_))
+        ));
+        let view_box = SvgViewBox::try_new(0.0, 0.0, 10.0, 10.0).unwrap();
+        assert!(matches!(
+            view_box.fit_transform(0.0, 10.0, SvgFitPolicy::Stretch),
+            Err(SvgFitError::NonPositive(_))
+        ));
+    }
+
+    #[test]
+    fn preserve_aspect_ratio_parser_keeps_none_and_slice_modes_explicit() {
+        assert_eq!(
+            "none".parse::<SvgPreserveAspectRatio>().unwrap(),
+            SvgPreserveAspectRatio {
+                align: SvgAspectAlign::None,
+                mode: SvgAspectMode::Meet,
+            }
+        );
+        assert_eq!(
+            "xMinYMax slice".parse::<SvgPreserveAspectRatio>().unwrap(),
+            SvgPreserveAspectRatio {
+                align: SvgAspectAlign::XMinYMax,
+                mode: SvgAspectMode::Slice,
+            }
+        );
+    }
+
+    #[test]
+    fn gradient_model_retains_spread_and_stop_alpha() {
+        let gradient = SvgGradient::Linear {
+            id: Arc::from("accent"),
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 0.0,
+            units: SvgGradientUnits::ObjectBoundingBox,
+            transform: SvgTransform::default(),
+            spread: SvgSpreadMethod::Reflect,
+            stops: Arc::from([SvgGradientStop {
+                offset: 0.5,
+                color: SvgColor {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.5,
+                },
+            }]),
+        };
+
+        assert!(gradient.is_finite());
+        assert_eq!(gradient.id(), "accent");
+        assert_eq!(gradient.stops().len(), 1);
+    }
+
+    #[test]
+    fn dashed_stroke_tessellation_does_not_fill_the_gap() {
+        let geometry = geometry([
+            SvgPathCommand::MoveTo { x: 0.0, y: 0.0 },
+            SvgPathCommand::LineTo { x: 20.0, y: 0.0 },
+        ]);
+        let stroke = SvgStroke {
+            color: SvgColor::rgba8(0, 0, 0, 255),
+            width: 2.0,
+            line_cap: SvgLineCap::Butt,
+            line_join: SvgLineJoin::Miter,
+            miter_limit: 4.0,
+            dash_array: Arc::from([5.0, 5.0]),
+            dash_offset: 0.0,
+        };
+
+        let dashed = tessellate_dashed_stroke(&geometry, &stroke, 1.0).unwrap();
+        assert!(!dashed.indices.is_empty());
+        assert!(dashed.vertices.len() > 4);
     }
 }

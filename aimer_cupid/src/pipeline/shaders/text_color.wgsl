@@ -1,4 +1,4 @@
-// Color text shader — for sbix/CBDT/COLR PNG-strike emoji glyphs.
+// Color text shader — for COLR layers and embedded color-strike glyphs.
 // Mirrors text.wgsl but samples the full RGBA color from the atlas and
 // modulates only by the per-instance alpha + clip alpha. The atlas stores
 // non-premultiplied RGBA8; output is premultiplied so the same blend state

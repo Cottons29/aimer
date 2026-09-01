@@ -304,10 +304,8 @@ impl WindowEventHandler {
                         result = result.merge(broadcast_event(root.as_ref(), &event));
                     }
                 }
-                if let Some(window) = &app.window
-                    && Self::should_redraw(result, true)
-                {
-                    window.request_redraw();
+                if Self::should_redraw(result, true) {
+                    app.request_animation_frame();
                 }
             }
         }
@@ -349,7 +347,7 @@ impl WindowEventHandler {
                 // an explicit redraw request — a drag, a crossed hover edge —
                 // buys the frame.
                 if Self::should_redraw(result, false) {
-                    window.request_redraw();
+                    app.request_animation_frame();
                 }
             }
         }
@@ -434,10 +432,8 @@ impl WindowEventHandler {
                     result = result.merge(broadcast_event(root.as_ref(), &event));
                 }
             }
-            if let Some(window) = &app.window
-                && Self::should_redraw(result, true)
-            {
-                window.request_redraw();
+            if Self::should_redraw(result, true) {
+                app.request_animation_frame();
             }
         }
     }
@@ -689,6 +685,7 @@ impl WindowEventHandler {
         };
         let (scroll_delta, kind) = Self::normalize_wheel_delta(delta, app.window_scale);
         if app.active_root().is_some() {
+            aimer_widget::record_scroll_event();
             let delta = PhysicalPosition::new(scroll_delta.x  as f64 * DELTA_MULTIPLY, scroll_delta.y as f64 * DELTA_MULTIPLY);
             match kind {
                 aimer_events::element::ScrollDeltaKind::Pixel => {
@@ -704,7 +701,9 @@ impl WindowEventHandler {
             // can race that later request and make one input burst produce an
             // extra native frame; the platform requester coalesces the wake
             // until the display loop delivers it.
-            aimer_events::window::request_animation_frame();
+            if let Some(window) = &app.window {
+                window.request_redraw();
+            }
         }
     }
 

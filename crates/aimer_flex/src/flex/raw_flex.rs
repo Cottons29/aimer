@@ -4,12 +4,16 @@ use std::rc::Rc;
 use crate::flex::children_source::{ChildrenSource, EagerChildren};
 use crate::flex::flex_layout::{FlexLayout, FlexLayoutCache, LayerOrder};
 use crate::flex::flex_list::FlexList;
+use crate::flex::layout_transition::{
+    FlexGeometrySnapshot, FlexItemGeometry, FlexSnapshotError,
+};
 use crate::flex::{BoxAlignment, FlexDirection, JustifyContent, OverflowBehavior};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_attribute::{BoxConstraint, CacheBounds, Dimension};
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
+use aimer_animation::layout::LayoutGeometry;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutCache, LayoutElement,
     Rebuildable, VisitorElement, Widget,
@@ -303,6 +307,110 @@ impl RawFlex {
         ctx.canvas.save();
         widget.draw(ctx);
         ctx.canvas.restore();
+    }
+
+    /// Captures the geometry this Flex engine resolved for its materialized
+    /// children.
+    ///
+    /// The adapter deliberately follows the normal painting window. A lazy
+    /// [`FlexList`] therefore contributes only its visible/overscanned rows,
+    /// while a wrapped layout follows the existing eager wrapping contract.
+    /// Every captured child must publish a stable reconciliation key; an
+    /// unkeyed child is reported instead of being guessed by index.
+    pub fn layout_transition_snapshot(
+        &self,
+        ctx: &BuildContext,
+    ) -> Result<FlexGeometrySnapshot, FlexSnapshotError> {
+        let (gap_x, gap_y) = self.resole_gaps(ctx);
+        let is_row = self.is_row();
+
+        if self.overflow_behavior == OverflowBehavior::Wrap {
+            let (sizes, layout) = self.wrapped_layout(ctx, gap_x, gap_y);
+            let extra_width = (ctx.box_constraint.max_width - layout.size.width).max(0.0);
+            let extra_height = (ctx.box_constraint.max_height - layout.size.height).max(0.0);
+            let base_x = if matches!(self.direction, FlexDirection::Column) {
+                align_offset(self.horizontal_alignment, extra_width)
+            } else {
+                0.0
+            };
+            let base_y = if matches!(self.direction, FlexDirection::Column) {
+                0.0
+            } else {
+                align_offset(self.vertical_alignment, extra_height)
+            };
+
+            let children = sizes
+                .into_iter()
+                .enumerate()
+                .map(|(index, size)| {
+                    let offset = layout.offset(index);
+                    let geometry = LayoutGeometry::try_new(
+                        offset.0 + base_x,
+                        offset.1 + base_y,
+                        size.width,
+                        size.height,
+                    )
+                    .map_err(|error| FlexSnapshotError::Keyed(error.into()))?;
+                    let child = self
+                        .children
+                        .get(index)
+                        .ok_or(FlexSnapshotError::MissingKey)?;
+                    Ok(child
+                        .reconciliation_key()
+                        .cloned()
+                        .map(|key| FlexItemGeometry::new(key, geometry)))
+                })
+                .collect::<Result<Vec<_>, FlexSnapshotError>>()?;
+            return FlexGeometrySnapshot::try_new_optional(
+                LayoutGeometry::try_new(
+                    0.0,
+                    0.0,
+                    layout.size.width,
+                    layout.size.height,
+                )
+                .map_err(|error| FlexSnapshotError::Keyed(error.into()))?,
+                children,
+            );
+        }
+
+        let (layout, distribution) = self
+            .prepare_paint_partition(ctx)
+            .expect("a non-wrapping Flex always has a paint partition");
+        let range = self
+            .layout
+            .painted()
+            .unwrap_or_else(|| self.painted_range(ctx, &layout, distribution));
+        let max_w = ctx.box_constraint.max_width;
+        let max_h = ctx.box_constraint.max_height;
+        let children = range
+            .map(|index| -> Result<Option<FlexItemGeometry>, FlexSnapshotError> {
+                let child = self
+                    .children
+                    .get(index)
+                    .ok_or(FlexSnapshotError::MissingKey)?;
+                let size = layout.size(index);
+                let main = distribution.0
+                    + layout.offset(index) as f32
+                    + distribution.1 * index as f32;
+                let (x, y) = if is_row {
+                    (main, align_offset(self.vertical_alignment, (max_h - size.height).max(0.0)))
+                } else {
+                    (align_offset(self.horizontal_alignment, (max_w - size.width).max(0.0)), main)
+                };
+                let geometry = LayoutGeometry::try_new(x, y, size.width, size.height)
+                    .map_err(|error| FlexSnapshotError::Keyed(error.into()))?;
+                Ok(child
+                    .reconciliation_key()
+                    .cloned()
+                    .map(|key| FlexItemGeometry::new(key, geometry)))
+            })
+            .collect::<Result<Vec<_>, FlexSnapshotError>>()?;
+
+        FlexGeometrySnapshot::try_new_optional(
+            LayoutGeometry::try_new(0.0, 0.0, layout.total().width, layout.total().height)
+                .map_err(|error| FlexSnapshotError::Keyed(error.into()))?,
+            children,
+        )
     }
 }
 
@@ -873,6 +981,7 @@ impl RawFlex {
 
 impl Drawable for RawFlex {
     fn draw(&self, ctx: &BuildContext) {
+        self.layout.invalidate_hit_test_index();
         let (gap_x, gap_y) = self.resole_gaps(ctx);
         let max_w = ctx.box_constraint.max_width;
         let max_h = ctx.box_constraint.max_height;
@@ -895,10 +1004,11 @@ impl Drawable for RawFlex {
                 let cp = ctx.cursor_pos;
                 if self.cache_bound.is_inside(cp.x, cp.y) {
                     let (l_start, l_end) = self.cache_bound.pos_start_end().unwrap();
-                    if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write()
-                    {
-                        *hovered = Some((self.debug_name, l_start, l_end));
-                    }
+                    aimer_widget::inspector_overlay::set_hovered_widget((
+                        self.debug_name,
+                        l_start,
+                        l_end,
+                    ));
                 }
             }
         }
@@ -970,7 +1080,7 @@ impl Drawable for RawFlex {
         // GPU anti-aliasing blends the gap with the parent background (white).
         let scale = ctx.scale.max(1.0);
 
-        order.visit(range, |index| {
+        order.visit(range.clone(), |index| {
             let Some(child) = self.children.get(index) else {
                 return;
             };
@@ -1022,6 +1132,8 @@ impl Drawable for RawFlex {
             draw_ctx.canvas.restore();
         });
 
+        self.rebuild_hit_test_index(range);
+
         // Pop the clip pushed by overflow_behavior.apply_overflow_behave()
         if self.overflow_behavior == OverflowBehavior::Hidden {
             ctx.canvas.clear_clip();
@@ -1031,7 +1143,12 @@ impl Drawable for RawFlex {
 
     #[inline]
     fn is_paint_stable(&self) -> bool {
-        self.overflow_behavior != OverflowBehavior::Wrap && self.children.is_paint_stable()
+        // `draw` also maintains the live layout/hit-test index, reconciles
+        // windowed children, and may request another frame. Those effects are
+        // part of the container's frame bookkeeping, not paint, so retaining
+        // the whole RawFlex would violate the Drawable paint contract even
+        // when every leaf reports stable paint.
+        false
     }
 
     #[doc(hidden)]
@@ -1105,6 +1222,9 @@ impl Drawable for RawFlex {
             draw_stable,
             draw_dynamic,
         );
+        if let Some(range) = self.layout.painted() {
+            self.rebuild_hit_test_index(range);
+        }
         true
     }
 }
@@ -1175,7 +1295,107 @@ impl EventElement for RawFlex {
             }
         }
     }
+
+    /// Visits painted children whose retained bounds contain `pos` in forward
+    /// paint order. Unknown bounds remain candidates so a child that has not
+    /// published geometry cannot be accidentally made non-interactive.
+    #[inline]
+    fn hit_test_children_at<'a>(
+        &'a self,
+        pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        self.visit_painted_children_at(pos, false, visitor);
+    }
+
+    /// Visits painted children whose retained bounds contain `pos` in routed
+    /// topmost-first order.
+    #[inline]
+    fn hit_test_children_at_reversed<'a>(
+        &'a self,
+        pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        self.visit_painted_children_at(pos, true, visitor);
+    }
 }
+
+impl RawFlex {
+    /// Rebuilds the sparse main-axis index from the bounds children retained
+    /// while painting. Bounds are read once per painted child here, instead of
+    /// once per pointer event in the routed walk.
+    #[inline]
+    fn rebuild_hit_test_index(&self, range: Range<usize>) {
+        let children = self.children.as_ref();
+        self.layout
+            .rebuild_hit_test_index(range, self.is_row(), |index| {
+                children.get(index).and_then(|child| child.pos_start_end())
+            });
+    }
+
+    #[inline]
+    fn visit_painted_children_at<'a>(
+        &'a self,
+        pos: Vec2d,
+        reversed: bool,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        let Some(range) = self.layout.painted() else {
+            if reversed {
+                return self.children.visit_reversed(visitor);
+            }
+            return self.event_children(visitor);
+        };
+
+        let range = range.start..range.end.min(self.children.len());
+        if let Some(candidates) = self.layout.hit_test_candidates(&range, pos) {
+            if reversed {
+                for &index in candidates.iter().rev() {
+                    if let Some(child) = self.children.get(index)
+                        && hit_test_contains(child, pos)
+                    {
+                        visitor(child);
+                    }
+                }
+            } else {
+                for &index in candidates {
+                    if let Some(child) = self.children.get(index)
+                        && hit_test_contains(child, pos)
+                    {
+                        visitor(child);
+                    }
+                }
+            }
+            return;
+        }
+
+        if reversed {
+            for index in range.rev() {
+                if let Some(child) = self.children.get(index)
+                    && hit_test_contains(child, pos)
+                {
+                    visitor(child);
+                }
+            }
+        } else {
+            for index in range {
+                if let Some(child) = self.children.get(index)
+                    && hit_test_contains(child, pos)
+                {
+                    visitor(child);
+                }
+            }
+        }
+    }
+}
+
+#[inline]
+fn hit_test_contains(element: &dyn Element, pos: Vec2d) -> bool {
+    element.pos_start_end().is_none_or(|(start, end)| {
+        pos.x >= start.x && pos.x <= end.x && pos.y >= start.y && pos.y <= end.y
+    })
+}
+
 impl Rebuildable for RawFlex {
     fn option_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)

@@ -15,6 +15,7 @@ struct VertexOutput {
     @location(2) clip_rect: vec4<f32>,
     @location(3) clip_border_radius: vec4<f32>,
     @location(4) alpha: f32,
+    @location(5) source_premultiplied: f32,
 };
 
 struct ImageInstance {
@@ -25,6 +26,7 @@ struct ImageInstance {
     @location(4) clip_rect: vec4<f32>,
     @location(5) clip_border_radius: vec4<f32>,
     @location(6) alpha: f32,
+    @location(7) source_premultiplied: f32,
 };
 
 @vertex
@@ -53,6 +55,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: ImageInstance) -> VertexOutput 
     out.clip_rect = inst.clip_rect;
     out.clip_border_radius = inst.clip_border_radius;
     out.alpha = inst.alpha;
+    out.source_premultiplied = inst.source_premultiplied;
     return out;
 }
 
@@ -120,9 +123,35 @@ fn clip_alpha(pixel_pos: vec2<f32>, clip_rect: vec4<f32>, clip_radii: vec4<f32>)
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = textureSample(t_diffuse, s_diffuse, in.uv);
     
-    // On Android (surface_is_srgb >= 1.5), skip sRGB conversion entirely.
     var result: vec4<f32>;
-    if viewport.surface_is_srgb >= 1.5 {
+    if in.source_premultiplied > 0.5 {
+        // Retained layers are render targets. Their RGB channels already
+        // carry alpha, unlike decoded image uploads. On an unorm target the
+        // stored channels are sRGB-encoded premultiplied values, so recover
+        // straight sRGB before applying the ordinary image conversion. An
+        // sRGB view decodes the layer to linear premultiplied values while it
+        // is sampled; those values are already in the target blend space.
+        let a = color_offset(color.a);
+        if viewport.surface_is_srgb >= 1.5 {
+            result = vec4<f32>(color.rgb, a);
+        } else if viewport.surface_is_srgb < 0.5 {
+            if a > 0.00001 {
+                let straight = color.rgb / a;
+                result = vec4<f32>(
+                    linear_to_srgb(srgb_to_linear(straight.r)) * a,
+                    linear_to_srgb(srgb_to_linear(straight.g)) * a,
+                    linear_to_srgb(srgb_to_linear(straight.b)) * a,
+                    a,
+                );
+            } else {
+                result = vec4<f32>(0.0);
+            }
+        } else {
+            result = vec4<f32>(color.rgb, a);
+        }
+    } else if viewport.surface_is_srgb >= 1.5 {
+        // Ordinary decoded images are straight-alpha and already use the
+        // platform's target encoding on Android.
         let a = color_offset(color.a);
         result = vec4<f32>(color.rgb * a, a);
     } else {

@@ -135,6 +135,24 @@ impl ThemeData {
         self
     }
 
+    /// Derives the semantic component tokens for this core-color theme.
+    ///
+    /// The returned value is independent and may be supplied to a separate
+    /// [`crate::AnimatedTheme`] when a widget family needs semantic styling.
+    /// Keeping this bridge additive preserves the existing six-color portable
+    /// `ThemeData` codec while allowing token themes to evolve independently.
+    #[inline]
+    pub fn tokens(&self) -> crate::ThemeTokens {
+        crate::ThemeTokens::from_core_colors(
+            self.primary_color,
+            self.on_primary_color,
+            self.background_color,
+            self.on_background_color,
+            self.surface_color,
+            self.on_surface_color,
+        )
+    }
+
     /// Returns the built-in bounded codec used to carry `ThemeData` through a
     /// portable provider node.
     ///
@@ -372,6 +390,19 @@ mod tests {
         fn assert_theme<T: Theme>() {}
 
         assert_theme::<ThemeData>();
+    }
+
+    #[test]
+    fn theme_data_bridges_core_colors_to_semantic_tokens() {
+        let value = ThemeData::light()
+            .primary_color(Color::Rgba(10, 20, 30, 255))
+            .on_surface_color(Color::Rgba(220, 220, 220, 255));
+        let tokens = value.tokens();
+
+        assert_eq!(tokens.colors.primary, value.primary_color);
+        assert_eq!(tokens.colors.on_surface, value.on_surface_color);
+        assert_eq!(tokens.control.focus_ring.ring_color, value.primary_color);
+        assert!(tokens.is_finite());
     }
 
     #[test]

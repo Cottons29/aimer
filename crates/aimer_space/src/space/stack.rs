@@ -425,6 +425,13 @@ impl VisitorElement for RawStackElement {
 }
 
 impl EventElement for RawStackElement {
+    /// Layered children may overlap, so a cached single hit chain could miss
+    /// a newly entered layer while another layer remains under the pointer.
+    #[inline]
+    fn has_overlapping_hit_targets(&self) -> bool {
+        true
+    }
+
     /// The structural order is the retained child order; layer sorting is only
     /// a paint and hit-test concern.
     #[inline]

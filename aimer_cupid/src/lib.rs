@@ -3,18 +3,21 @@ pub mod draw_cmd;
 pub mod font;
 pub mod frame;
 pub mod gpu_context;
+mod persistent_target;
 pub mod utilities;
 
 pub mod canvas;
+pub mod damage_region;
 mod lru_map;
 mod pipeline;
 pub mod pipeline_cache;
 pub mod renderer;
+pub mod shape;
 pub mod svg;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_fonts;
 
-pub use pipeline::{AntiAlias, image_pipeline, rect_pipeline, svg_pipeline, text_pipeline};
+pub use pipeline::{AntiAlias, image_pipeline, material, rect_pipeline, svg_pipeline, text_pipeline};
 
 pub use crate::text_pipeline::{glyph_atlas, glyph_rasterizer, text_layout};
 
@@ -51,6 +54,7 @@ mod deferred_frame_uploads {
     use std::sync::Arc;
 
     use crate::draw_cmd::{DrawList, RetainedLayerContent};
+    use crate::pipeline::material::{MaterialKind, MaterialRequest, MATERIAL_PIPELINE_NAME};
     use crate::renderer::Renderer;
     use crate::utilities::{Color, Rect};
     use aimer_utils::SyncFuture;
@@ -80,6 +84,18 @@ mod deferred_frame_uploads {
         renderer: &mut Renderer,
         draw: &DrawList,
     ) -> Vec<u8> {
+        render_and_read_with_capture(device, queue, renderer, draw, false)
+    }
+
+    /// Renders a draw list with either a caller-provided copy source or the
+    /// renderer-owned material frame target and returns the RGBA8 pixels.
+    fn render_and_read_with_capture(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: &mut Renderer,
+        draw: &DrawList,
+        capture_backdrop: bool,
+    ) -> Vec<u8> {
         let target = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("upload regression target"),
             size: wgpu::Extent3d {
@@ -96,7 +112,20 @@ mod deferred_frame_uploads {
         });
         let view = target.create_view(&Default::default());
 
-        renderer.render(device, queue, &view, SIZE, SIZE, false, draw);
+        if capture_backdrop {
+            renderer.render_with_source_texture(
+                device,
+                queue,
+                &view,
+                &target,
+                SIZE,
+                SIZE,
+                false,
+                draw,
+            );
+        } else {
+            renderer.render(device, queue, &view, SIZE, SIZE, false, draw);
+        }
 
         // SIZE * 4 = 256 bytes per row, which happens to satisfy wgpu's row
         // alignment requirement for texture-to-buffer copies.
@@ -143,6 +172,60 @@ mod deferred_frame_uploads {
             .to_vec();
         readback.unmap();
         pixels
+    }
+
+    fn material_frame(background: Color) -> DrawList {
+        let mut draw = DrawList::new();
+        draw.fill_rect(
+            Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            background,
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        let mut material = MaterialRequest::new(MaterialKind::Glass, [16.0, 16.0, 32.0, 32.0]);
+        material.tint = [0.0, 0.0, 0.0, 1.0];
+        material.opacity = 0.68;
+        material.blur_radius = 0.0;
+        material.border_color = [0.0, 0.0, 0.0, 0.0];
+        material.corner_radii = [0.0; 4];
+        material.shadow_color = [0.0, 0.0, 0.0, 0.0];
+        draw.draw_custom(
+            MATERIAL_PIPELINE_NAME,
+            material.encode_for_test(),
+        );
+        draw
+    }
+
+    fn striped_material_frame(blur_radius: f32) -> DrawList {
+        let mut draw = DrawList::new();
+        draw.fill_rect(
+            Rect::new(0.0, 0.0, 32.0, SIZE as f32),
+            Color::black(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        draw.fill_rect(
+            Rect::new(32.0, 0.0, 32.0, SIZE as f32),
+            Color::white(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        let mut material = MaterialRequest::new(MaterialKind::Glass, [16.0, 16.0, 32.0, 32.0]);
+        // Keep tint out of this fixture so it measures backdrop diffusion alone.
+        material.tint = [0.0, 0.0, 0.0, 0.0];
+        material.opacity = 0.0;
+        material.blur_radius = blur_radius;
+        material.border_color = [0.0, 0.0, 0.0, 0.0];
+        material.corner_radii = [0.0; 4];
+        material.shadow_color = [0.0, 0.0, 0.0, 0.0];
+        draw.draw_custom(
+            MATERIAL_PIPELINE_NAME,
+            material.encode_for_test(),
+        );
+        draw
     }
 
     fn pixel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
@@ -246,6 +329,156 @@ mod deferred_frame_uploads {
     }
 
     #[test]
+    fn material_reads_the_already_rendered_backdrop() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut renderer = Renderer::new(&device, FORMAT);
+
+        let red = render_and_read_with_capture(
+            &device,
+            &queue,
+            &mut renderer,
+            &material_frame(Color::red()),
+            true,
+        );
+        let blue = render_and_read_with_capture(
+            &device,
+            &queue,
+            &mut renderer,
+            &material_frame(Color::blue()),
+            true,
+        );
+        let red_sample = pixel(&red, 32, 32);
+        let blue_sample = pixel(&blue, 32, 32);
+        let difference = red_sample[..3]
+            .iter()
+            .zip(&blue_sample[..3])
+            .map(|(left, right)| left.abs_diff(*right))
+            .map(u16::from)
+            .sum::<u16>();
+        let red_with_internal_target = render_and_read_with_capture(
+            &device,
+            &queue,
+            &mut renderer,
+            &material_frame(Color::red()),
+            false,
+        );
+        let internal_sample = pixel(&red_with_internal_target, 32, 32);
+        let path_difference = red_sample[..3]
+            .iter()
+            .zip(&internal_sample[..3])
+            .map(|(left, right)| left.abs_diff(*right))
+            .map(u16::from)
+            .sum::<u16>();
+        assert!(
+            difference > 24,
+            "material backdrop should respond to the preceding draw: red={red_sample:?}, blue={blue_sample:?}"
+        );
+        assert!(
+            path_difference <= 3,
+            "the internal shader target should preserve the explicit capture result: explicit={red_sample:?}, internal={internal_sample:?}"
+        );
+    }
+
+    #[test]
+    fn multisampled_material_reads_the_already_rendered_backdrop() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut renderer = Renderer::with_antialiasing(
+            &device,
+            FORMAT,
+            crate::AntiAlias::Msaa4x,
+        );
+
+        let red = render_and_read_with_capture(
+            &device,
+            &queue,
+            &mut renderer,
+            &material_frame(Color::red()),
+            true,
+        );
+        let blue = render_and_read_with_capture(
+            &device,
+            &queue,
+            &mut renderer,
+            &material_frame(Color::blue()),
+            true,
+        );
+        let red_sample = pixel(&red, 32, 32);
+        let blue_sample = pixel(&blue, 32, 32);
+        let difference = red_sample[..3]
+            .iter()
+            .zip(&blue_sample[..3])
+            .map(|(left, right)| left.abs_diff(*right))
+            .map(u16::from)
+            .sum::<u16>();
+        let red_with_internal_target = render_and_read_with_capture(
+            &device,
+            &queue,
+            &mut renderer,
+            &material_frame(Color::red()),
+            false,
+        );
+        let internal_sample = pixel(&red_with_internal_target, 32, 32);
+        let path_difference = red_sample[..3]
+            .iter()
+            .zip(&internal_sample[..3])
+            .map(|(left, right)| left.abs_diff(*right))
+            .map(u16::from)
+            .sum::<u16>();
+
+        assert!(
+            difference > 24,
+            "multisampled material backdrop should respond to the preceding draw: red={red_sample:?}, blue={blue_sample:?}"
+        );
+        assert!(
+            path_difference <= 3,
+            "the multisampled internal shader target should preserve the explicit capture result: explicit={red_sample:?}, internal={internal_sample:?}"
+        );
+    }
+
+    #[test]
+    fn material_frosted_kernel_softens_a_backdrop_boundary() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut renderer = Renderer::new(&device, FORMAT);
+
+        let sharp = render_and_read_with_capture(
+            &device,
+            &queue,
+            &mut renderer,
+            &striped_material_frame(0.0),
+            true,
+        );
+        let blurred = render_and_read_with_capture(
+            &device,
+            &queue,
+            &mut renderer,
+            &striped_material_frame(96.0),
+            true,
+        );
+
+        let sharp_edge = pixel(&sharp, 32, 32);
+        let blurred_edge = pixel(&blurred, 32, 32);
+        let difference = sharp_edge[..3]
+            .iter()
+            .zip(&blurred_edge[..3])
+            .map(|(left, right)| left.abs_diff(*right))
+            .map(u16::from)
+            .sum::<u16>();
+        assert!(
+            difference > 12,
+            "changing the frosted radius should change a backdrop edge: sharp={sharp_edge:?}, blurred={blurred_edge:?}"
+        );
+    }
+
+    #[test]
     fn retained_layer_is_rasterized_and_then_composited_at_a_new_offset() {
         let Some((device, queue)) = gpu() else {
             eprintln!("skipping: no GPU adapter available");
@@ -325,6 +558,7 @@ mod resized_text_preparation {
     use crate::font::{FontFamily, FontStyle};
     use crate::text_layout::TextHorizontalAlign;
     use crate::text_pipeline::{TextDrawRequest, TextOverflowMode, TextPipelineV2};
+    use crate::utilities::Rgba8;
     use aimer_utils::SyncFuture;
 
     const HEIGHT: u32 = 300;
@@ -365,7 +599,7 @@ mod resized_text_preparation {
             y: index as f32 * LINE_HEIGHT - scroll_offset,
             text: Arc::from(format!("line {index} with text that wraps to its column").as_str()),
             font_size: 16.0,
-            color: crate::utilities::Rgba8::new(0, 0, 0, 255),
+            color: Rgba8::new(0, 0, 0, 255),
             bounds_width: surface_width as f32 - 16.0,
             bounds_height: LINE_HEIGHT,
             overflow: TextOverflowMode::Wrap,
@@ -532,6 +766,7 @@ mod scrolled_text_culling {
     use crate::font::{FontFamily, FontStyle};
     use crate::text_layout::TextHorizontalAlign;
     use crate::text_pipeline::{TextDrawRequest, TextOverflowMode, TextPipelineV2};
+    use crate::utilities::Rgba8;
     use aimer_utils::SyncFuture;
 
     const WIDTH: u32 = 400;
@@ -572,7 +807,7 @@ mod scrolled_text_culling {
             y: index as f32 * LINE_HEIGHT - scroll_offset,
             text: Arc::from(format!("line {index} with some scrolling text").as_str()),
             font_size: FONT_SIZE,
-            color: crate::utilities::Rgba8::new(0, 0, 0, 255),
+            color: Rgba8::new(0, 0, 0, 255),
             bounds_width: WIDTH as f32 - 16.0,
             bounds_height: LINE_HEIGHT,
             overflow: TextOverflowMode::Clip,

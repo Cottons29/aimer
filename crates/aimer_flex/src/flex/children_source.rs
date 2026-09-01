@@ -148,14 +148,6 @@ pub(crate) trait ChildrenSource {
         false
     }
 
-    /// Whether this source can expose a complete, side-effect-free paint
-    /// subtree. Windowed sources stay conservative because their live window
-    /// changes with scrolling and their rows may be created or retired.
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        false
-    }
-
     /// Materializes every child and stops windowing for good.
     ///
     /// A pass that derives its result from the whole list — measuring an
@@ -232,11 +224,6 @@ impl ChildrenSource for EagerChildren {
     #[inline]
     fn live_start(&self) -> Option<usize> {
         (!self.0.is_empty()).then_some(0)
-    }
-
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        self.0.iter().all(|child| child.is_paint_stable())
     }
 }
 

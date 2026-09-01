@@ -13,9 +13,8 @@
 //! comparison and never see a payload it did not ask for.
 //!
 //! Exactly one drag is live at a time. The slot is keyed by [`PointerKey`] so a
-//! second pointer cannot silently steal a drag in progress, and so that
-//! simultaneous multi-touch drags stay possible later without changing what
-//! callers wrote.
+//! second pointer cannot silently steal a drag in progress; callers that need
+//! multi-touch semantics must compose a separate higher-level coordinator.
 
 use std::any::{Any, TypeId};
 use std::cell::RefCell;

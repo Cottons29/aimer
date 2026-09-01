@@ -605,7 +605,8 @@ impl<F, Fut, B, T, E> VisitorElement for AsyncFrameElement<F, Fut, B, T, E> {
     }
 }
 
-impl<F, Fut, B, T, E> EventElement for AsyncFrameElement<F, Fut, B, T, E> {}
+impl<F, Fut, B, T, E> EventElement for AsyncFrameElement<F, Fut, B, T, E> {
+}
 
 impl<F, Fut, B, T, E> Rebuildable for AsyncFrameElement<F, Fut, B, T, E>
 where

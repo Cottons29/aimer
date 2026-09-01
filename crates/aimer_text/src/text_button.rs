@@ -1,5 +1,4 @@
 use std::cell::{Cell, RefCell};
-use std::sync::Mutex;
 use std::time::Duration;
 
 use aimer_attribute::CacheBounds;
@@ -272,7 +271,7 @@ impl RawTextButton {
             line_height: Default::default(),
             text_indent: 0.0,
             cache: LayoutCache::new(),
-            _typeface: Mutex::new(None),
+            _typeface: Cell::new(None),
         }
     }
 

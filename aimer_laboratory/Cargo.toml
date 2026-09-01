@@ -26,8 +26,8 @@ aimer_rubick.workspace = true
 aimer = { path = ".." }
 aimer_canvas.workspace = true
 aimer_widget.workspace = true
-aimer_legacy = { package = "aimer", git = "https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-1" }
-aimer_canvas_legacy = { package = "aimer_canvas", git = "https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-1" }
+#aimer_legacy = { package = "aimer", git = "https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-1" }
+#aimer_canvas_legacy = { package = "aimer_canvas", git = "https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-1" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

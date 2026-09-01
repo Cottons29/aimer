@@ -10,7 +10,7 @@
 pub mod server {
     use std::net::IpAddr;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use aimer_widget::Element;
     use futures_util::{SinkExt, StreamExt};
@@ -18,7 +18,7 @@ pub mod server {
     use tokio::sync::broadcast;
     use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 
-    use crate::{InspectorMessage, InspectorState};
+    use crate::{InspectorMessage, InspectorState, InspectorStateStore};
 
     /// Shared inspector state accessible from the CLI server.
     #[derive(Clone)]
@@ -28,7 +28,7 @@ pub mod server {
         pub port: u16,
         pub address: IpAddr,
         /// Shared state for CLI consumers to read the latest tree / status.
-        pub state: Arc<Mutex<InspectorState>>,
+        pub state: InspectorStateStore,
     }
 
     impl InspectorHandle {
@@ -44,10 +44,7 @@ pub mod server {
         /// Toggle the inspector on/off and broadcast the new status.
         pub fn set_enabled(&self, enabled: bool) {
             self.enabled.store(enabled, Ordering::Relaxed);
-            {
-                let mut s = self.state.lock().unwrap();
-                s.enabled = enabled;
-            }
+            self.state.update(|state| state.enabled = enabled);
             let msg = InspectorMessage::Status { enabled };
             if let Ok(json) = serde_json::to_string(&msg) {
                 let _ = self.tx.send(json);
@@ -58,10 +55,7 @@ pub mod server {
         pub fn send_toggle(&self) {
             let new_val = !self.enabled.load(Ordering::Relaxed);
             self.enabled.store(new_val, Ordering::Relaxed);
-            {
-                let mut s = self.state.lock().unwrap();
-                s.enabled = new_val;
-            }
+            self.state.update(|state| state.enabled = new_val);
             let msg = InspectorMessage::Status { enabled: new_val };
             if let Ok(json) = serde_json::to_string(&msg) {
                 let _ = self.tx.send(json);
@@ -73,10 +67,7 @@ pub mod server {
             if !self.is_enabled() {
                 return;
             }
-            {
-                let mut s = self.state.lock().unwrap();
-                s.tree = root.clone();
-            }
+            self.state.update(|state| state.tree = root.clone());
             let msg = InspectorMessage::Tree { root };
             if let Ok(json) = serde_json::to_string(&msg) {
                 let _ = self.tx.send(json);
@@ -85,10 +76,7 @@ pub mod server {
 
         /// Broadcast the currently hovered widget ID.
         pub fn broadcast_hovered(&self, id: Option<u64>) {
-            {
-                let mut s = self.state.lock().unwrap();
-                s.hovered_widget_id = id;
-            }
+            self.state.update(|state| state.hovered_widget_id = id);
             let msg = InspectorMessage::Hovered { id };
             if let Ok(json) = serde_json::to_string(&msg) {
                 let _ = self.tx.send(json);
@@ -120,11 +108,10 @@ pub mod server {
             let (tx, _rx) = broadcast::channel::<String>(64);
             let enabled = Arc::new(AtomicBool::new(false));
 
-            let state = Arc::new(Mutex::new(InspectorState::default()));
+            let (state, state_publisher) = InspectorStateStore::channel();
 
             let tx_server = tx.clone();
             let enabled_server = enabled.clone();
-            let state_server = state.clone();
             let mut inspector_port_draft = inspector_port;
             let mut retry_count = 0;
 
@@ -160,6 +147,7 @@ pub mod server {
             // inspector_port_draft);
 
             runtime.spawn(async move {
+                let mut current_state = InspectorState::default();
                 loop {
                     let (stream, _) = match listener.accept().await {
                         Ok(res) => res,
@@ -171,10 +159,8 @@ pub mod server {
                         Err(_) => continue,
                     };
 
-                    {
-                        let mut s = state_server.lock().unwrap();
-                        s.connected = true;
-                    }
+                    current_state.connected = true;
+                    state_publisher.publish(current_state.clone());
 
                     let (mut write, mut read) = ws_stream.split();
                     let mut rx = tx_server.subscribe();
@@ -205,17 +191,17 @@ pub mod server {
                                         if let Ok(msg) = serde_json::from_str::<InspectorMessage>(&text) {
                                             match msg {
                                                 InspectorMessage::Tree { root } => {
-                                                    let mut s = state_server.lock().unwrap();
-                                                    s.tree = root;
+                                                    current_state.tree = root;
+                                                    state_publisher.publish(current_state.clone());
                                                 }
                                                 InspectorMessage::Status { enabled } => {
                                                     enabled_server.store(enabled, Ordering::Relaxed);
-                                                    let mut s = state_server.lock().unwrap();
-                                                    s.enabled = enabled;
+                                                    current_state.enabled = enabled;
+                                                    state_publisher.publish(current_state.clone());
                                                 }
                                                 InspectorMessage::Hovered { id } => {
-                                                    let mut s = state_server.lock().unwrap();
-                                                    s.hovered_widget_id = id;
+                                                    current_state.hovered_widget_id = id;
+                                                    state_publisher.publish(current_state.clone());
                                                 }
                                             }
                                         } else {
@@ -225,9 +211,8 @@ pub mod server {
                                             if cmd.get("type").and_then(|v| v.as_str()) == Some("toggle") {
                                                 let new_val = !enabled_server.load(Ordering::Relaxed);
                                                 enabled_server.store(new_val, Ordering::Relaxed);
-                                                let mut s = state_server.lock().unwrap();
-                                                s.enabled = new_val;
-                                                drop(s);
+                                                current_state.enabled = new_val;
+                                                state_publisher.publish(current_state.clone());
                                                 let status_msg = InspectorMessage::Status { enabled: new_val };
                                                 if let Ok(json) = serde_json::to_string(&status_msg) {
                                                     let _ = tx_server.send(json);
@@ -242,10 +227,8 @@ pub mod server {
                         }
                     }
 
-                    {
-                        let mut s = state_server.lock().unwrap();
-                        s.connected = false;
-                    }
+                    current_state.connected = false;
+                    state_publisher.publish(current_state.clone());
                     // println!("[inspector] disconnected from app");
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 }

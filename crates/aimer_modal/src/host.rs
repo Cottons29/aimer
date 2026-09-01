@@ -11,7 +11,7 @@ use aimer_widget::base::BuildContext;
 use aimer_widget::focus::FocusTrap;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventDispatcher, EventElement, EventResult, LayoutElement,
-    PointerKey, RequiredChild, VisitorElement, Widget, broadcast_event,
+    PointerKey, RequiredChild, VisitorElement, Widget, broadcast_event, dispatch_focused_event,
 };
 
 use crate::ModalAnimation;
@@ -359,6 +359,17 @@ impl EventElement for RawModalOverlay {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         ENTRIES.with(|entries| {
             let entries = entries.borrow();
+            if matches!(event, ElementEvent::Scroll { .. }) {
+                // Scroll events carry no pointer position. Route them to the
+                // topmost modal directly so an anchored wheel can consume a
+                // trackpad or mouse-wheel frame instead of the page beneath
+                // it. Pointer events still use normal hit testing/capture.
+                return entries
+                    .last()
+                    .map_or_else(EventResult::ignored, |entry| {
+                        dispatch_focused_event(entry.element.as_ref(), event)
+                    });
+            }
             if matches!(
                 event,
                 ElementEvent::KeyInput {

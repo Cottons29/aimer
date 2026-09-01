@@ -1,0 +1,9 @@
+[package]
+name = "aimer_media"
+version = "0.1.0"
+edition = "2024"
+description = "Platform-neutral media capability, lifecycle, and capture contracts for Aimer"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"

@@ -5,7 +5,7 @@ use aimer_events::pointer::PointerSource;
 use smallvec::SmallVec;
 
 use crate::Element;
-use crate::components::element::VisitorElement;
+use crate::components::element::{EventDispatchContext, VisitorElement};
 use crate::focus::FocusNode;
 
 /// Identifies one pointer independently of pointers from other input sources.
@@ -266,6 +266,22 @@ pub trait EventElement: VisitorElement {
         EventResult::ignored()
     }
 
+    /// Called by routed pointer dispatch with the owning dispatcher's shared
+    /// capture and path state.
+    ///
+    /// Most elements only handle their own event and use the default. A
+    /// routing boundary that owns a child outside its ordinary event-child
+    /// view can override this method and call
+    /// [`EventDispatchContext::dispatch_child`] without allocating a nested
+    /// dispatcher and path index.
+    fn on_event_with_context(
+        &self,
+        event: &ElementEvent,
+        _context: &mut EventDispatchContext<'_, '_>,
+    ) -> EventResult {
+        self.on_event(event)
+    }
+
     /// Visit children for event dispatch. By default delegates to
     /// `visit_children`. Override this when `visit_children` is not
     /// implemented (e.g. because the element handles its own child
@@ -314,8 +330,8 @@ pub trait EventElement: VisitorElement {
         self.event_children(visitor);
     }
 
-    /// Visit hit-test children in the order routed pointer dispatch examines
-    /// them.
+    /// Visit hit-test children in reverse order for callers that need a
+    /// topmost-first stream.
     ///
     /// The default collects the ordinary hit-test view and reverses it, which
     /// preserves the existing topmost-first behavior for custom elements. Large
@@ -344,11 +360,13 @@ pub trait EventElement: VisitorElement {
         self.hit_test_children(visitor);
     }
 
-    /// Visit position-aware hit-test children in routed topmost-first order.
+    /// Visit position-aware hit-test children in routed topmost-first order for
+    /// callers that request a reverse stream directly.
     ///
-    /// The default preserves custom [`EventElement::hit_test_children_reversed`]
-    /// implementations. Large containers can override this to query retained
-    /// bounds directly.
+    /// The routed dispatcher uses [`EventElement::hit_test_children_at`] with
+    /// one shared reverse scratch stack, so it does not call this default
+    /// buffer. Direct callers still get the historical behavior, and large
+    /// containers can override this method to query retained bounds directly.
     #[inline]
     fn hit_test_children_at_reversed<'a>(
         &'a self,
@@ -356,6 +374,21 @@ pub trait EventElement: VisitorElement {
         visitor: &mut dyn FnMut(&'a dyn Element),
     ) {
         self.hit_test_children_reversed(visitor);
+    }
+
+    /// Returns whether this element can expose overlapping pointer-hit
+    /// children whose hover side effects must all be observed on every move.
+    ///
+    /// The routed dispatcher may cache a single hit chain for an uncaptured,
+    /// non-consuming pointer move. A container that can paint several
+    /// overlapping hit targets — a stack of layers is the usual example —
+    /// must return `true` so a newly entered layer is not missed while the
+    /// cached chain remains inside another layer. The default is appropriate
+    /// for ordinary non-overlapping containers and leaves existing event
+    /// behavior unchanged.
+    #[inline]
+    fn has_overlapping_hit_targets(&self) -> bool {
+        false
     }
 
 }

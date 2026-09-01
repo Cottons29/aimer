@@ -43,6 +43,21 @@ aimer_modal.workspace = true
 aimer_dnd.workspace = true
 aimer_native.workspace = true
 aimer_ctxmenu.workspace = true
+aimer_accessibility.workspace = true
+aimer_selection.workspace = true
+aimer_range.workspace = true
+aimer_form.workspace = true
+aimer_picker.workspace = true
+aimer_feedback.workspace = true
+aimer_navigation.workspace = true
+aimer_data_view.workspace = true
+aimer_i18n.workspace = true
+aimer_media.workspace = true
+aimer_storage.workspace = true
+aimer_shape.workspace = true
+aimer_canvas.workspace = true
+aimer_cupid.workspace = true
+aimer_std.workspace = true
 
 
 [dev-dependencies]
@@ -52,11 +67,18 @@ reqwest.workspace = true
 # `tests/venus_poll_context_headless.rs` asks the async runtime whether it is
 # findable while Venus polls, and awaits a timer it owns.
 tokio = { workspace = true, features = ["rt", "time"] }
+wgpu.workspace = true
+winit.workspace = true
 
 [features]
 markdown = []
 provider = []
 svg = []
+apple-core-text = [
+    "aimer_cupid/apple-core-text",
+    "aimer_canvas/apple-core-text",
+    "aimer_text/apple-core-text",
+]
 # Benchmark control: compare the release flex path with its scalar kernel.
 force-scalar = ["aimer_flex/force-scalar"]
 # Present frames from a dedicated raster thread. Off by default — see the
@@ -141,6 +163,18 @@ members = [
     "crates/aimer_reload_protocol",
     "crates/aimer_reload_server",
     "crates/aimer_wasm_guest",
+    "crates/aimer_accessibility",
+    "crates/aimer_selection",
+    "crates/aimer_range",
+    "crates/aimer_form",
+    "crates/aimer_picker",
+    "crates/aimer_feedback",
+    "crates/aimer_navigation",
+    "crates/aimer_data_view",
+    "crates/aimer_i18n",
+    "crates/aimer_media",
+    "crates/aimer_storage",
+    "crates/aimer_shape",
     "aimer_anteros/device_tests/ios",
     "aimer_anteros/device_tests/ios_transport"
 ]
@@ -177,6 +211,18 @@ aimer_svg = { path = "crates/aimer_svg" }
 aimer_markdown = { path = "crates/aimer_markdown" }
 aimer_modal = { path = "crates/aimer_modal" }
 aimer_dnd = { path = "crates/aimer_dnd" }
+aimer_accessibility = { path = "crates/aimer_accessibility" }
+aimer_selection = { path = "crates/aimer_selection" }
+aimer_range = { path = "crates/aimer_range" }
+aimer_form = { path = "crates/aimer_form" }
+aimer_picker = { path = "crates/aimer_picker" }
+aimer_feedback = { path = "crates/aimer_feedback" }
+aimer_navigation = { path = "crates/aimer_navigation" }
+aimer_data_view = { path = "crates/aimer_data_view" }
+aimer_i18n = { path = "crates/aimer_i18n" }
+aimer_media = { path = "crates/aimer_media" }
+aimer_storage = { path = "crates/aimer_storage" }
+aimer_shape = { path = "crates/aimer_shape" }
 aimer_native = { path = "crates/aimer_native" }
 aimer_haptics = { path = "crates/aimer_haptics" }
 aimer_ctxmenu = { path = "crates/aimer_ctxmenu" }
@@ -207,7 +253,7 @@ reqwest = { version = "0.13.4", default-features = false, features = ["native-tl
 openssl = { version = "0.10.81", features = ["vendored"] }
 uuid = { version = "1.23.5", features = ["js", "v4"] }
 dirs = "6.0.0"
-webbrowser = "1.2.1"
+webbrowser = "1.2.4"
 lyon = "1.0.19"
 usvg = { version = "0.47.0", default-features = false }
 naga = { version = "30.0.0", features = ["wgsl-in"] }

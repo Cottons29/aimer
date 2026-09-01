@@ -194,9 +194,6 @@ impl ScrollBarRuntime {
         }
 
         self.alpha.set(alpha);
-        if self.transition_start.get().is_some() {
-            aimer_events::window::request_animation_frame();
-        }
         alpha
     }
 
@@ -340,6 +337,9 @@ fn draw_scrollbar(
         ctrl.is_scrolling.get(),
         aimer_utils::AnimInstant::now(),
     );
+    if runtime.transition_start.get().is_some() {
+        ctrl.request_animation_frame();
+    }
     if alpha <= 0.0 {
         return;
     }

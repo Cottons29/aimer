@@ -17,6 +17,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(aimer_portable_guest)"] }
 # framework. A monotonic clock is the only thing it cannot implement itself:
 # `std::time::Instant` panics in the browser.
 [dependencies]
+crossbeam.workspace = true
+futures-util.workspace = true
 web-time.workspace = true
 
 # The integration spec times a microtask drain, and a test binary cannot reach

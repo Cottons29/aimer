@@ -1,0 +1,9 @@
+[package]
+name = "aimer_data_view"
+version = "0.1.0"
+edition = "2024"
+description = "Platform-neutral collection, table, and tree data-view models for Aimer"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"

@@ -257,97 +257,129 @@ impl<E: Element> RawContainer<E> {
 
         (m_left, m_top, m_right, m_bottom)
     }
-}
 
-impl<T: Element> Drawable for RawContainer<T> {
-    fn draw(&self, ctx: &BuildContext) {
-        ctx.canvas.save();
-
-        let constraint = ctx.box_constraint;
-
-        let parent_width = constraint.max_width;
-        let parent_height = constraint.max_height;
+    #[inline]
+    fn box_dimensions(&self, ctx: &BuildContext) -> (f32, f32, f32, f32, f32, f32) {
+        let parent_width = ctx.box_constraint.max_width;
+        let parent_height = ctx.box_constraint.max_height;
         let scale = ctx.scale;
-
         let (m_left, m_top, m_right, m_bottom) = self.margin(ctx);
 
         let box_width = match self.width {
             Dimension::Px(w) => w * scale,
             Dimension::Percent(p) => parent_width * (p / 100.0) - (m_left + m_right),
             Dimension::Auto => parent_width - m_left - m_right,
-        };
-
+        }
+        .max(0.0);
         let box_height = match self.height {
             Dimension::Px(h) => h * scale,
             Dimension::Percent(p) => parent_height * (p / 100.0) - (m_top + m_bottom),
             Dimension::Auto => parent_height - m_top - m_bottom,
-        };
-
-        let box_width = box_width.max(0.0);
-        let box_height = box_height.max(0.0);
-
-        // Use computed_size to get correct dimensions (handles unbounded/scrollable
-        // case)
-        let computed = self.computed_size(ctx);
-        let (m_left_v, m_top_v, m_right_v, m_bottom_v) = self.margin(ctx);
-        let draw_width = (computed.width - m_left_v - m_right_v).max(0.0);
-        let draw_height = (computed.height - m_top_v - m_bottom_v).max(0.0);
-
-        // Record the on-screen (logical) bounds every frame — not just when the
-        // debug inspector is on. `dispatch_event` uses `pos_start_end` to decide
-        // whether an event lands on this element; without live bounds an opaque
-        // container could never occlude an event at a specific position (see
-        // `on_event`). Bounds start after the margin translate and span the
-        // actually-drawn size (`draw_width`/`draw_height`).
-        {
-            let (start_x, start_y) = ctx.canvas.get_transform_translation();
-            let l_start = Vec2d {
-                x: (start_x + m_left) / scale,
-                y: (start_y + m_top) / scale,
-            };
-            let l_end = Vec2d {
-                x: (start_x + m_left + draw_width) / scale,
-                y: (start_y + m_top + draw_height) / scale,
-            };
-            self.bounds.set(Some((l_start, l_end)));
         }
+        .max(0.0);
 
-        #[cfg(debug_assertions)]
-        {
-            if aimer_widget::inspector_overlay::is_enabled() {
-                let (start_x, start_y) = ctx.canvas.get_transform_translation();
-                let end_x = start_x + m_left + box_width;
-                let end_y = start_y + m_top + box_height;
+        (
+            box_width,
+            box_height,
+            m_left,
+            m_top,
+            m_right,
+            m_bottom,
+        )
+    }
 
-                let scale = ctx.scale;
-                let l_start = Vec2d {
-                    x: (start_x + m_left) / scale,
-                    y: (start_y + m_top) / scale,
-                };
-                let l_end = Vec2d {
-                    x: end_x / scale,
-                    y: end_y / scale,
-                };
-                self.bounds.set(Some((l_start, l_end)));
-
-                let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x
-                    && cp.x <= l_end.x
-                    && cp.y >= l_start.y
-                    && cp.y <= l_end.y
-                    && let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write()
-                {
-                    *hovered = Some((self.debug_name, l_start, l_end));
-                }
+    #[inline]
+    fn border_widths(
+        &self,
+        box_width: f32,
+        box_height: f32,
+        scale: f32,
+    ) -> (f32, f32, f32, f32) {
+        let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
+            match dim {
+                Dimension::Px(w) => w * scale,
+                Dimension::Percent(p) => parent_val * (p / 100.0),
+                Dimension::Auto => 0.0,
             }
-        }
+        };
+        let border = self.box_decoration.border;
+        (
+            get_stroke(border.left.stroke, box_width).max(0.0),
+            get_stroke(border.top.stroke, box_height).max(0.0),
+            get_stroke(border.right.stroke, box_width).max(0.0),
+            get_stroke(border.bottom.stroke, box_height).max(0.0),
+        )
+    }
 
+    #[inline]
+    fn sync_child_geometry(
+        &self,
+        ctx: &BuildContext,
+        box_width: f32,
+        box_height: f32,
+        m_left: f32,
+        m_top: f32,
+    ) {
+        let scale = ctx.scale;
+        ctx.canvas.save();
+        ctx.canvas.translate(Vec2d {
+            x: m_left,
+            y: m_top,
+        });
+
+        let p_left = self.padding.left.value(box_width, scale);
+        let p_top = self.padding.top.value(box_height, scale);
+        let p_right = self.padding.right.value(box_width, scale);
+        let p_bottom = self.padding.bottom.value(box_height, scale);
+        let (b_left, b_top, b_right, b_bottom) =
+            self.border_widths(box_width, box_height, scale);
+
+        ctx.canvas.translate(Vec2d {
+            x: p_left + b_left,
+            y: p_top + b_top,
+        });
+
+        let content_w = (box_width - p_left - b_left - p_right - b_right).max(0.0);
+        let content_h = (box_height - p_top - b_top - p_bottom - b_bottom).max(0.0);
+        let mut child_ctx = ctx.clone();
+        child_ctx.box_constraint.max_width = content_w;
+        child_ctx.box_constraint.max_height = content_h;
+        child_ctx.parent_size = ResolvedSize {
+            width: content_w,
+            height: content_h,
+        };
+        let inset_x = m_left + p_left + b_left;
+        let inset_y = m_top + p_top + b_top;
+        child_ctx.visible_rect = ctx
+            .visible_rect
+            .map(|(vx, vy, vw, vh)| (vx - inset_x, vy - inset_y, vw, vh));
+        self.child.sync_paint_geometry(&child_ctx);
+        ctx.canvas.restore();
+    }
+}
+
+impl<T: Element> Drawable for RawContainer<T> {
+    fn draw(&self, ctx: &BuildContext) {
+        // `paint` is intentionally lifecycle-free. Direct callers of the
+        // normal draw path still need the same rebuild boundary that an erased
+        // frame root provides before the container switches to paint-only
+        // traversal.
+        self.child.rebuild_if_dirty(ctx);
         if let Some(color) = self.color
             && self.box_decoration.background_color.get().is_none()
         {
-            // debug!("updated color to {color:?}");
-            self.box_decoration.update_color(color)
+            self.box_decoration.update_color(color);
         }
+        self.sync_paint_geometry(ctx);
+        self.paint(ctx);
+    }
+
+    fn paint(&self, ctx: &BuildContext) {
+        ctx.canvas.save();
+
+        let scale = ctx.scale;
+        let (box_width, box_height, m_left, m_top, m_right, m_bottom) =
+            self.box_dimensions(ctx);
 
         // Draw background filling the *entire* allocated space (including
         // margins) so that adjacent children in a Column/Row have no visible
@@ -381,23 +413,13 @@ impl<T: Element> Drawable for RawContainer<T> {
         let _p_right = self.padding.right.value(box_width, scale);
         let _p_bottom = self.padding.bottom.value(box_height, scale);
 
-        let border = self.box_decoration.border;
         let radii = self
             .box_decoration
             .border_radius
             .resolve(box_width, box_height, scale);
 
-        let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
-            match dim {
-                Dimension::Px(w) => w * scale,
-                Dimension::Percent(p) => parent_val * (p / 100.0),
-                Dimension::Auto => 0.0,
-            }
-        };
-        let b_left = get_stroke(border.left.stroke, box_width).max(0.0);
-        let b_right = get_stroke(border.right.stroke, box_width).max(0.0);
-        let b_top = get_stroke(border.top.stroke, box_height).max(0.0);
-        let b_bottom = get_stroke(border.bottom.stroke, box_height).max(0.0);
+        let (b_left, b_top, b_right, b_bottom) =
+            self.border_widths(box_width, box_height, scale);
 
         // Draw decoration (background, border, outline)
 
@@ -463,10 +485,70 @@ impl<T: Element> Drawable for RawContainer<T> {
             clip_w,
             clip_h,
         ) {
-            self.child.draw(&child_ctx);
+            self.child.paint(&child_ctx);
         }
         ctx.canvas.clear_clip();
         ctx.canvas.restore();
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let scale = ctx.scale;
+        let (box_width, box_height, m_left, m_top, m_right, m_bottom) =
+            self.box_dimensions(ctx);
+        let computed = self.computed_size(ctx);
+        let draw_width = (computed.width - m_right - m_left).max(0.0);
+        let draw_height = (computed.height - m_bottom - m_top).max(0.0);
+        let (start_x, start_y) = ctx.canvas.get_transform_translation();
+        let l_start = Vec2d {
+            x: (start_x + m_left) / scale,
+            y: (start_y + m_top) / scale,
+        };
+        let l_end = Vec2d {
+            x: (start_x + m_left + draw_width) / scale,
+            y: (start_y + m_top + draw_height) / scale,
+        };
+        self.bounds.set(Some((l_start, l_end)));
+
+        #[cfg(debug_assertions)]
+        if aimer_widget::inspector_overlay::is_enabled() {
+            let end_x = start_x + m_left + box_width;
+            let end_y = start_y + m_top + box_height;
+            let inspector_end = Vec2d {
+                x: end_x / scale,
+                y: end_y / scale,
+            };
+            self.bounds.set(Some((l_start, inspector_end)));
+
+            let cp = ctx.cursor_pos;
+            if cp.x >= l_start.x
+                && cp.x <= inspector_end.x
+                && cp.y >= l_start.y
+                && cp.y <= inspector_end.y
+            {
+                aimer_widget::inspector_overlay::set_hovered_widget((
+                    self.debug_name,
+                    l_start,
+                    inspector_end,
+                ));
+            }
+        }
+
+        self.sync_child_geometry(
+            ctx,
+            box_width,
+            box_height,
+            m_left,
+            m_top,
+        );
+    }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        // The ordinary container draw path still owns live bounds and may be
+        // used for dynamic children. Keep this wrapper conservative until an
+        // adopter proves that its complete subtree can use `paint` directly.
+        false
     }
 }
 
@@ -919,6 +1001,38 @@ mod tests {
             1,
             "an unknown-bounds child remains drawable when its clipping parent is visible"
         );
+    }
+
+    #[tokio::test]
+    async fn paint_only_does_not_update_container_hit_test_bounds() {
+        let draws = Rc::new(Cell::new(0));
+        let mut container = RawContainer::new(DrawProbe {
+            draws: draws.clone(),
+        });
+        container.width = Dimension::Px(40.0);
+        container.height = Dimension::Px(30.0);
+        let ctx = context();
+
+        container.paint(&ctx);
+
+        assert_eq!(draws.get(), 1);
+        assert_eq!(container.bounds.get(), None);
+
+        container.sync_paint_geometry(&ctx);
+
+        assert_eq!(
+            container.bounds.get(),
+            Some((Vec2d::ZERO, Vec2d { x: 40.0, y: 30.0 }))
+        );
+    }
+
+    #[test]
+    fn raw_container_keeps_the_conservative_paint_contract() {
+        let container = RawContainer::new(DrawProbe {
+            draws: Rc::new(Cell::new(0)),
+        });
+
+        assert!(!container.is_paint_stable());
     }
 
     #[test]

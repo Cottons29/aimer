@@ -5,8 +5,12 @@ mod source;
 mod style;
 mod widget;
 
-pub use aimer_cupid::svg::{SvgColor, SvgFillRule, SvgNodeId, SvgTransform};
-pub use document::{SvgDiagnostic, SvgDocument, SvgLimits, SvgPath};
+pub use aimer_cupid::svg::{
+    SvgAspectAlign, SvgAspectMode, SvgColor, SvgFillRule, SvgFitError, SvgFitPolicy, SvgGradient,
+    SvgGradientStop, SvgGradientUnits, SvgNodeId, SvgPaint, SvgPreserveAspectRatio,
+    SvgSpreadMethod, SvgTransform, SvgViewBox,
+};
+pub use document::{SvgDiagnostic, SvgDocument, SvgLimits, SvgNodePaint, SvgPath};
 pub use error::SvgError;
 pub use selector::SvgSelector;
 pub use source::{SvgLoadState, SvgLoader, SvgSource};
@@ -19,7 +23,10 @@ mod tests {
     use std::rc::Rc;
 
     use aimer_attribute::Bounds;
-    use aimer_cupid::svg::{SvgElementKind, SvgPathCommand};
+    use aimer_cupid::svg::{
+        SvgAspectAlign, SvgAspectMode, SvgColor, SvgElementKind, SvgGradient, SvgPaint,
+        SvgNodeStyleOverride, SvgPathCommand, SvgPreserveAspectRatio, SvgSpreadMethod,
+    };
     use aimer_widget::Widget;
     use aimer_widget::portable::PortableNativeWidget;
 
@@ -367,5 +374,127 @@ mod tests {
             SvgDocument::from_svg(non_finite),
             Err(SvgError::NonFinite)
         ));
+    }
+
+    #[test]
+    fn parses_viewbox_and_preserve_aspect_ratio_as_a_finite_fit_contract() {
+        let document = SvgDocument::from_svg(
+            br#"<svg width="200" height="100" viewBox="-10 -20 100 50" preserveAspectRatio="xMinYMax slice" xmlns="http://www.w3.org/2000/svg"><path d="M-10 -20h100v50z"/></svg>"#,
+        )
+        .unwrap();
+
+        assert_eq!(document.view_box().x, -10.0);
+        assert_eq!(document.view_box().height, 50.0);
+        assert_eq!(
+            document.preserve_aspect_ratio(),
+            SvgPreserveAspectRatio {
+                align: SvgAspectAlign::XMinYMax,
+                mode: SvgAspectMode::Slice,
+            }
+        );
+        let fit = document.fit_transform(300.0, 200.0).unwrap();
+        assert!(fit.is_finite());
+        assert_eq!(fit.transform_point(-10.0, -20.0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn rejects_invalid_viewbox_and_preserve_aspect_ratio_before_rendering() {
+        assert!(matches!(
+            SvgDocument::from_svg(
+                br#"<svg viewBox="0 0 0 10"><path d="M0 0h1v1z"/></svg>"#
+            ),
+            Err(SvgError::InvalidViewBox(_))
+        ));
+        assert!(matches!(
+            SvgDocument::from_svg(
+                br#"<svg preserveAspectRatio="xNopeYNope"><path d="M0 0h1v1z"/></svg>"#
+            ),
+            Err(SvgError::InvalidPreserveAspectRatio(_))
+        ));
+    }
+
+    #[test]
+    fn retains_gradient_paints_and_reports_only_the_deferred_renderer_feature() {
+        let document = SvgDocument::from_svg(
+            br##"<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg">
+                <defs><linearGradient id="g" spreadMethod="reflect"><stop offset="0" stop-color="#ff0000" stop-opacity="0.5"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs>
+                <path id="painted" d="M0 0h10v10z" fill="url(#g)" stroke="#000" stroke-dasharray="2 1"/>
+            </svg>"##,
+        )
+        .unwrap();
+        let node_id = document.select("#painted").unwrap()[0];
+        let paint = document.paint_for(node_id).unwrap();
+        assert!(matches!(paint.fill, Some(SvgPaint::Linear(_))));
+        assert_eq!(document.gradients().len(), 1);
+        assert!(matches!(
+            document.gradients()[0],
+            SvgGradient::Linear { spread: SvgSpreadMethod::Reflect, .. }
+        ));
+        assert!(document.diagnostics().iter().any(|diagnostic| {
+            diagnostic.feature == "gradient-fill"
+                && diagnostic.message.contains("renderer support is deferred")
+        }));
+        assert!(document
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.feature == "dashed-stroke"));
+    }
+
+    #[test]
+    fn group_style_overrides_propagate_to_renderable_descendants() {
+        let document = SvgDocument::from_svg(
+            br##"<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg"><g id="group"><path id="child" d="M0 0h5v5z" fill="#000"/></g></svg>"##,
+        )
+        .unwrap();
+        let group_style = SvgStyle::new()
+            .fill(SvgColor::rgba8(255, 0, 0, 255))
+            .opacity(0.5);
+        let overrides = widget::overrides_for_rules(
+            document.scene(),
+            &[("#group".parse().unwrap(), group_style)],
+        );
+        let child = document.select("#child").unwrap()[0];
+        let child_override = overrides
+            .iter()
+            .find(|override_| override_.node_id == child)
+            .unwrap();
+        assert_eq!(child_override.fill, Some(Some(SvgColor::rgba8(255, 0, 0, 255))));
+        assert_eq!(child_override.opacity, Some(0.5));
+    }
+
+    #[test]
+    fn fit_policy_is_shared_by_hit_testing_when_destination_ratio_changes() {
+        let document = SvgDocument::from_svg(
+            br#"<svg width="200" height="100" viewBox="0 0 100 50" xmlns="http://www.w3.org/2000/svg"><path id="surface" d="M0 0h100v50z"/></svg>"#,
+        )
+        .unwrap();
+        let node = document.select("#surface").unwrap()[0];
+        let source_node = document.scene().node(node).unwrap();
+        let compensation = document.fit_compensation(100.0, 100.0).unwrap();
+        let overrides = [SvgNodeStyleOverride {
+            node_id: node,
+            fill: None,
+            stroke: None,
+            opacity: None,
+            transform: Some(compensation.mul(source_node.transform)),
+        }];
+        let bounds = Bounds::new(0.0, 0.0, 100.0, 100.0);
+
+        assert!(widget::hit_test_scene(
+            document.scene(),
+            bounds,
+            50.0,
+            50.0,
+            &overrides,
+        )
+        .is_some());
+        assert!(widget::hit_test_scene(
+            document.scene(),
+            bounds,
+            50.0,
+            10.0,
+            &overrides,
+        )
+        .is_none());
     }
 }

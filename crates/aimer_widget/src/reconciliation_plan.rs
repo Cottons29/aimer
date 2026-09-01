@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 
@@ -212,17 +212,32 @@ fn collect_matches<'a>(
     let old_children = structural_children(old);
     let new_children = structural_children(new);
     let mut claimed = SmallVec::<[bool; 8]>::from_elem(false, old_children.len());
+    let mut keyed_candidates: HashMap<
+        (&'a crate::key::Key, std::any::TypeId, &'static str),
+        KeyedCandidates,
+    > = HashMap::new();
+
+    // Keep old keyed children in source order for each complete identity. The
+    // cursor preserves the existing duplicate-key behavior while making the
+    // common keyed lookup O(1) instead of scanning every old sibling.
+    for (old_index, old_child) in old_children.iter().copied().enumerate() {
+        if let Some(old_key) = old_child.reconciliation_key() {
+            keyed_candidates
+                .entry((
+                    old_key,
+                    old_child.element_type_id(),
+                    old_child.debug_name(),
+                ))
+                .or_default()
+                .push(old_index);
+        }
+    }
 
     for (new_index, new_child) in new_children.iter().copied().enumerate() {
         let selected = if let Some(new_key) = new_child.reconciliation_key() {
-            old_children
-                .iter()
-                .enumerate()
-                .position(|(old_index, old_child)| {
-                    !claimed[old_index]
-                        && old_child.reconciliation_key() == Some(new_key)
-                        && identities_are_compatible(*old_child, new_child)
-                })
+            keyed_candidates
+                .get_mut(&(new_key, new_child.element_type_id(), new_child.debug_name()))
+                .and_then(|candidates: &mut KeyedCandidates| candidates.take(&claimed))
                 .map(|old_index| (old_index, ReconciliationMatchKind::Keyed))
         } else {
             old_children.get(new_index).and_then(|old_child| {
@@ -243,6 +258,30 @@ fn collect_matches<'a>(
                 visited_pairs,
             );
         }
+    }
+}
+
+#[derive(Default)]
+struct KeyedCandidates {
+    indices: SmallVec<[usize; 1]>,
+    next: usize,
+}
+
+impl KeyedCandidates {
+    #[inline]
+    fn push(&mut self, old_index: usize) {
+        self.indices.push(old_index);
+    }
+
+    #[inline]
+    fn take(&mut self, claimed: &[bool]) -> Option<usize> {
+        while let Some(&old_index) = self.indices.get(self.next) {
+            self.next += 1;
+            if !claimed[old_index] {
+                return Some(old_index);
+            }
+        }
+        None
     }
 }
 

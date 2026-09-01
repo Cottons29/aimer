@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
 
 use aimer_attribute::CacheBounds;
@@ -8,8 +8,8 @@ use aimer_events::window::request_animation_frame;
 use aimer_macro::PortableWidget;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventDispatcher, EventElement, EventResult,
-    LayoutElement, PointerKey, Rebuildable, RequiredChild, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventDispatchContext, EventElement, EventResult,
+    LayoutElement, PointerKey, Rebuildable, RequiredChild, VisitorElement, Widget, dispatch_event,
 };
 
 use crate::callback::{CallbackExecutor, VoidCallback};
@@ -157,7 +157,6 @@ impl<W: Widget + 'static> Widget for MouseRegion<W> {
             cached_bounds: self.cached_bounds.clone(),
             window: ctx.window.clone(),
             child,
-            event_dispatcher: RefCell::new(EventDispatcher::new()),
         }
         .boxed()
     }
@@ -172,7 +171,9 @@ impl<W: Widget + 'static> Widget for MouseRegion<W> {
 /// `MouseRegion` at all.
 ///
 /// Event dispatch is handled manually: `event_children` returns empty so that
-/// `on_event` is called first, then events are forwarded to the child.
+/// the region's handler runs first, then the child is forwarded through the
+/// parent [`aimer_widget::EventDispatchContext`]. This keeps capture and path
+/// state shared with the enclosing dispatcher.
 pub struct RawMouseRegion<E: Element> {
     pub(crate) on_hover_enter: VoidCallback,
     pub(crate) on_hover_exit: VoidCallback,
@@ -181,7 +182,6 @@ pub struct RawMouseRegion<E: Element> {
     pub(crate) cached_bounds: CacheBounds,
     pub(crate) child: E,
     pub(crate) window: WindowHandle,
-    pub(crate) event_dispatcher: RefCell<EventDispatcher>,
 }
 
 impl<E: Element> RawMouseRegion<E> {
@@ -235,51 +235,12 @@ impl<E: Element> RawMouseRegion<E> {
     }
 }
 
-impl<E: Element + 'static> Rebuildable for RawMouseRegion<E> {
-    #[inline]
-    fn option_any(&self) -> Option<&dyn std::any::Any> {
-        Some(self)
-    }
-
-    /// Claims the pointer the element being replaced was routing.
-    ///
-    /// This region dispatches to its child itself, so the capture a pressed
-    /// child took lives in the dispatcher *beside* the children rather than in
-    /// them — which is exactly the state reconciliation's positional walk cannot
-    /// reach. A press that rebuilds the subtree while the pointer is still down
-    /// — a [`crate::button::Button`] darkening under the finger — would leave the
-    /// replacement owning nothing, so a release outside the bounds would be
-    /// rejected as a miss and the child would never hear the pointer lift.
-    ///
-    /// The dispatcher is *moved* out of `old`, which reconciliation drops
-    /// immediately afterwards. It names the old subtree's identities, and those
-    /// identities are transferred onto the new elements in the pass that follows
-    /// this one, so the carried capture resolves once reconciliation completes.
-    fn adopt_runtime_state_from(&self, old: &dyn Element) {
-        let Some(old) = old
-            .option_any()
-            .and_then(|value| value.downcast_ref::<Self>())
-        else {
-            return;
-        };
-
-        *self.event_dispatcher.borrow_mut() =
-            std::mem::take(&mut *old.event_dispatcher.borrow_mut());
-    }
-}
-
-impl<E: Element> VisitorElement for RawMouseRegion<E> {
-    fn visit_children<'b>(&'b self, visitor: &mut dyn FnMut(&'b dyn Element)) {
-        visitor(&self.child);
-    }
-
-    fn debug_name(&self) -> &'static str {
-        "MouseRegion"
-    }
-}
-
-impl<E: Element> EventElement for RawMouseRegion<E> {
-    fn on_event(&self, event: &ElementEvent) -> EventResult {
+impl<E: Element> RawMouseRegion<E> {
+    fn handle_event<'dispatcher, 'tree>(
+        &self,
+        event: &ElementEvent,
+        mut context: Option<&mut EventDispatchContext<'dispatcher, 'tree>>,
+    ) -> EventResult {
         let pointer = match event {
             ElementEvent::PointerDown(info)
             | ElementEvent::PointerUp(info)
@@ -287,8 +248,11 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
             ElementEvent::PointerExited(source, id) => Some(PointerKey::new(*source, *id)),
             _ => None,
         };
-        let was_captured =
-            pointer.is_some_and(|pointer| self.event_dispatcher.borrow().is_captured(pointer));
+        let was_captured = pointer.is_some_and(|pointer| {
+            context
+                .as_ref()
+                .is_some_and(|context| context.is_captured(pointer))
+        });
 
         if matches!(event, ElementEvent::PointerExited(PointerSource::Mouse, _)) {
             if self.cursor.is_some() {
@@ -305,8 +269,6 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
             _ => return EventResult::ignored(),
         };
 
-        // println!("Event received: {:?}", event);
-
         let is_inside = self.cached_bounds.is_inside(pos.x, pos.y);
 
         let is_mouse = matches!(
@@ -322,12 +284,16 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
         if !is_inside && !was_captured && !matches!(event, ElementEvent::Cancel) {
             return EventResult::ignored();
         }
-        let result = self
-            .event_dispatcher
-            .borrow_mut()
-            .dispatch(&self.child, pos, event);
-        let is_captured =
-            pointer.is_some_and(|pointer| self.event_dispatcher.borrow().is_captured(pointer));
+        let result = if let Some(context) = context.as_mut() {
+            context.dispatch_child(&self.child, pos, event)
+        } else {
+            dispatch_event(&self.child, pos, event)
+        };
+        let is_captured = pointer.is_some_and(|pointer| {
+            context
+                .as_ref()
+                .is_some_and(|context| context.is_captured(pointer))
+        });
         let result = match event {
             // A child claiming a hover move is not a child changing pixels:
             // upgrading every consumed move to a redraw repainted the window
@@ -350,6 +316,37 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
             (Some(pointer), true, false) => result.with_pointer_release(pointer),
             _ => result,
         }
+    }
+}
+
+impl<E: Element + 'static> Rebuildable for RawMouseRegion<E> {
+    #[inline]
+    fn option_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+}
+
+impl<E: Element> VisitorElement for RawMouseRegion<E> {
+    fn visit_children<'b>(&'b self, visitor: &mut dyn FnMut(&'b dyn Element)) {
+        visitor(&self.child);
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "MouseRegion"
+    }
+}
+
+impl<E: Element> EventElement for RawMouseRegion<E> {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
+        self.handle_event(event, None)
+    }
+
+    fn on_event_with_context(
+        &self,
+        event: &ElementEvent,
+        context: &mut EventDispatchContext<'_, '_>,
+    ) -> EventResult {
+        self.handle_event(event, Some(context))
     }
     fn event_children<'b>(&'b self, _visitor: &mut dyn FnMut(&'b dyn Element)) {}
 }
@@ -388,11 +385,10 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
 #[cfg(test)]
 mod tests {
     use std::any::Any;
-    use std::cell::RefCell;
 
     use aimer_events::pointer::{PointerButton, PointerInfo};
     use aimer_widget::base::WindowHandle;
-    use aimer_widget::{CaptureRequest, EventResult, PointerKey, Rebuildable};
+    use aimer_widget::{EventDispatcher, EventResult, PointerKey, Rebuildable};
     use winit::dpi::PhysicalSize;
 
     use super::*;
@@ -501,7 +497,6 @@ mod tests {
             cached_bounds: CacheBounds::new(),
             child: TestElement,
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
-            event_dispatcher: RefCell::new(EventDispatcher::new()),
         };
 
         let _ = region.on_event(&ElementEvent::PointerExited(PointerSource::Mouse, 0));
@@ -521,7 +516,6 @@ mod tests {
             cached_bounds: bounds,
             child: ResultElement,
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
-            event_dispatcher: RefCell::new(EventDispatcher::new()),
         };
 
         let result = region.on_event(&ElementEvent::PointerDown(PointerInfo::new(
@@ -552,7 +546,6 @@ mod tests {
             cached_bounds: bounds,
             child: ResultElement,
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
-            event_dispatcher: RefCell::new(EventDispatcher::new()),
         };
 
         let result = region.on_event(&ElementEvent::PointerMove(PointerInfo::new(
@@ -583,7 +576,6 @@ mod tests {
             cached_bounds: bounds,
             child: TestElement,
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
-            event_dispatcher: RefCell::new(EventDispatcher::new()),
         };
 
         let result = region.on_event(&ElementEvent::PointerMove(PointerInfo::new(
@@ -618,7 +610,6 @@ mod tests {
             cached_bounds: bounds,
             child: TestElement,
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
-            event_dispatcher: RefCell::new(EventDispatcher::new()),
         };
         let move_inside = |x: f32, y: f32| {
             ElementEvent::PointerMove(PointerInfo::new(
@@ -654,27 +645,109 @@ mod tests {
             }
             .boxed(),
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
-            event_dispatcher: RefCell::new(EventDispatcher::new()),
-        };
+        }
+        .boxed();
         let pointer = PointerKey::new(PointerSource::Touch, 2);
+        let mut dispatcher = EventDispatcher::new();
 
-        let down = region.on_event(&ElementEvent::PointerDown(PointerInfo::touch(
+        let _ = dispatcher.dispatch(
+            region.as_ref(),
             Vec2d { x: 10.0, y: 10.0 },
-            pointer.id,
-        )));
-        assert_eq!(down.capture_request(), CaptureRequest::Capture(pointer));
+            &ElementEvent::PointerDown(PointerInfo::touch(
+                Vec2d { x: 10.0, y: 10.0 },
+                pointer.id,
+            )),
+        );
+        assert!(dispatcher.is_captured(pointer));
 
-        let _ = region.on_event(&ElementEvent::PointerMove(PointerInfo::touch(
+        let _ = dispatcher.dispatch(
+            region.as_ref(),
             Vec2d { x: 200.0, y: 200.0 },
-            pointer.id,
-        )));
-        let up = region.on_event(&ElementEvent::PointerUp(PointerInfo::touch(
+            &ElementEvent::PointerMove(PointerInfo::touch(
+                Vec2d { x: 200.0, y: 200.0 },
+                pointer.id,
+            )),
+        );
+        let _ = dispatcher.dispatch(
+            region.as_ref(),
             Vec2d { x: 200.0, y: 200.0 },
-            pointer.id,
-        )));
+            &ElementEvent::PointerUp(PointerInfo::touch(
+                Vec2d { x: 200.0, y: 200.0 },
+                pointer.id,
+            )),
+        );
 
         assert_eq!(events.get(), 3);
-        assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
+        assert!(!dispatcher.is_captured(pointer));
+    }
+
+    #[test]
+    fn nested_regions_share_one_capture_state_across_the_boundary_chain() {
+        let events = Rc::new(Cell::new(0));
+        let inner = capturing_region(events.clone()).boxed();
+        let bounds = CacheBounds::new();
+        bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let root = RawMouseRegion {
+            on_hover_enter: VoidCallback::default(),
+            on_hover_exit: VoidCallback::default(),
+            cursor: None,
+            current_state: Rc::new(Cell::new(PointerState::Outside)),
+            cached_bounds: bounds,
+            child: inner,
+            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+        }
+        .boxed();
+        let pointer = PointerKey::new(PointerSource::Touch, 3);
+        let mut dispatcher = EventDispatcher::new();
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            Vec2d { x: 10.0, y: 10.0 },
+            &ElementEvent::PointerDown(PointerInfo::touch(
+                Vec2d { x: 10.0, y: 10.0 },
+                pointer.id,
+            )),
+        );
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            Vec2d { x: 200.0, y: 200.0 },
+            &ElementEvent::PointerMove(PointerInfo::touch(
+                Vec2d { x: 200.0, y: 200.0 },
+                pointer.id,
+            )),
+        );
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            Vec2d { x: 200.0, y: 200.0 },
+            &ElementEvent::PointerUp(PointerInfo::touch(
+                Vec2d { x: 200.0, y: 200.0 },
+                pointer.id,
+            )),
+        );
+
+        assert_eq!(events.get(), 3);
+        assert!(!dispatcher.is_captured(pointer));
+    }
+
+    #[test]
+    fn cancelling_a_nested_region_delivers_once_and_clears_shared_capture_state() {
+        let events = Rc::new(Cell::new(0));
+        let root = capturing_region(events.clone()).boxed();
+        let pointer = PointerKey::new(PointerSource::Touch, 4);
+        let mut dispatcher = EventDispatcher::new();
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            Vec2d { x: 10.0, y: 10.0 },
+            &ElementEvent::PointerDown(PointerInfo::touch(
+                Vec2d { x: 10.0, y: 10.0 },
+                pointer.id,
+            )),
+        );
+        let _ = dispatcher.dispatch(root.as_ref(), Vec2d::default(), &ElementEvent::Cancel);
+
+        assert_eq!(events.get(), 2);
+        assert!(!dispatcher.is_captured(pointer));
     }
 
     /// A region laid out over the top-left 100x100 corner, wrapping a child that
@@ -691,41 +764,47 @@ mod tests {
             cached_bounds,
             child: CapturingElement { events }.boxed(),
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
-            event_dispatcher: RefCell::new(EventDispatcher::new()),
         }
     }
 
     // A rebuild triggered by the press itself — a `Button` darkening under the
-    // finger — replaces this region. The capture the child took lives in the
-    // dispatcher beside the children rather than in them, so the positional walk
-    // cannot reach it: without the hand-over, the replacement rejects the release
-    // as being outside its bounds, the child never hears the pointer lift, and
-    // the press stays visually stuck.
+    // finger — replaces this region. The shared dispatcher keeps both the
+    // boundary capture and the nested child owner, so the replacement still
+    // receives the release outside its bounds.
     #[test]
     fn a_rebuild_during_a_press_keeps_the_capture_so_a_release_outside_still_lands() {
         let events = Rc::new(Cell::new(0));
-        let pressed = capturing_region(events.clone());
+        let pressed_region = capturing_region(events.clone());
+        let pressed_child_id = pressed_region.child.id();
+        let pressed = pressed_region.boxed();
         let pointer = PointerKey::new(PointerSource::Touch, 2);
+        let mut dispatcher = EventDispatcher::new();
 
-        let down = pressed.on_event(&ElementEvent::PointerDown(PointerInfo::touch(
+        let _ = dispatcher.dispatch(
+            pressed.as_ref(),
             Vec2d { x: 10.0, y: 10.0 },
-            pointer.id,
-        )));
-        assert_eq!(down.capture_request(), CaptureRequest::Capture(pointer));
+            &ElementEvent::PointerDown(PointerInfo::touch(
+                Vec2d { x: 10.0, y: 10.0 },
+                pointer.id,
+            )),
+        );
+        assert!(dispatcher.is_captured(pointer));
 
-        let rebuilt = capturing_region(events.clone());
-        // Standing in for the identity transfer reconciliation performs around
-        // the hand-over, which is what makes the carried capture resolve against
-        // the new subtree.
-        rebuilt.child.set_element_id(pressed.child.id());
-        rebuilt.adopt_runtime_state_from(&pressed as &dyn Element);
+        let rebuilt_region = capturing_region(events.clone());
+        rebuilt_region.child.set_element_id(pressed_child_id);
+        let rebuilt = rebuilt_region.boxed();
+        rebuilt.set_element_id(pressed.id());
 
-        let up = rebuilt.on_event(&ElementEvent::PointerUp(PointerInfo::touch(
+        let _ = dispatcher.dispatch(
+            rebuilt.as_ref(),
             Vec2d { x: 200.0, y: 200.0 },
-            pointer.id,
-        )));
+            &ElementEvent::PointerUp(PointerInfo::touch(
+                Vec2d { x: 200.0, y: 200.0 },
+                pointer.id,
+            )),
+        );
 
         assert_eq!(events.get(), 2, "the child must hear the release it is owed");
-        assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
+        assert!(!dispatcher.is_captured(pointer));
     }
 }

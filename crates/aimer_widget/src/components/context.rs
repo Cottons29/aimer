@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 #[cfg(feature = "portable-guest")]
 use std::ops::Deref;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
@@ -95,7 +95,55 @@ pub struct HeadlessWindowState {
     redraw_request_count: AtomicU64,
     coalesced_redraw_count: AtomicU64,
     display_tick_count: AtomicU64,
-    cursor: Mutex<winit::window::CursorIcon>,
+    cursor: AtomicUsize,
+}
+
+#[inline]
+const fn cursor_id(cursor: winit::window::CursorIcon) -> usize {
+    cursor as usize
+}
+
+#[inline]
+fn cursor_from_id(id: usize) -> winit::window::CursorIcon {
+    match id {
+        0 => winit::window::CursorIcon::Default,
+        1 => winit::window::CursorIcon::ContextMenu,
+        2 => winit::window::CursorIcon::Help,
+        3 => winit::window::CursorIcon::Pointer,
+        4 => winit::window::CursorIcon::Progress,
+        5 => winit::window::CursorIcon::Wait,
+        6 => winit::window::CursorIcon::Cell,
+        7 => winit::window::CursorIcon::Crosshair,
+        8 => winit::window::CursorIcon::Text,
+        9 => winit::window::CursorIcon::VerticalText,
+        10 => winit::window::CursorIcon::Alias,
+        11 => winit::window::CursorIcon::Copy,
+        12 => winit::window::CursorIcon::Move,
+        13 => winit::window::CursorIcon::NoDrop,
+        14 => winit::window::CursorIcon::NotAllowed,
+        15 => winit::window::CursorIcon::Grab,
+        16 => winit::window::CursorIcon::Grabbing,
+        17 => winit::window::CursorIcon::EResize,
+        18 => winit::window::CursorIcon::NResize,
+        19 => winit::window::CursorIcon::NeResize,
+        20 => winit::window::CursorIcon::NwResize,
+        21 => winit::window::CursorIcon::SResize,
+        22 => winit::window::CursorIcon::SeResize,
+        23 => winit::window::CursorIcon::SwResize,
+        24 => winit::window::CursorIcon::WResize,
+        25 => winit::window::CursorIcon::EwResize,
+        26 => winit::window::CursorIcon::NsResize,
+        27 => winit::window::CursorIcon::NeswResize,
+        28 => winit::window::CursorIcon::NwseResize,
+        29 => winit::window::CursorIcon::ColResize,
+        30 => winit::window::CursorIcon::RowResize,
+        31 => winit::window::CursorIcon::AllScroll,
+        32 => winit::window::CursorIcon::ZoomIn,
+        33 => winit::window::CursorIcon::ZoomOut,
+        34 => winit::window::CursorIcon::DndAsk,
+        35 => winit::window::CursorIcon::AllResize,
+        _ => winit::window::CursorIcon::Default,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -120,7 +168,7 @@ impl WindowHandle {
             redraw_request_count: AtomicU64::new(0),
             coalesced_redraw_count: AtomicU64::new(0),
             display_tick_count: AtomicU64::new(0),
-            cursor: Mutex::new(winit::window::CursorIcon::Default),
+            cursor: AtomicUsize::new(cursor_id(winit::window::CursorIcon::Default)),
         }))
     }
 
@@ -135,7 +183,7 @@ impl WindowHandle {
             redraw_request_count: AtomicU64::new(0),
             coalesced_redraw_count: AtomicU64::new(0),
             display_tick_count: AtomicU64::new(0),
-            cursor: Mutex::new(winit::window::CursorIcon::Default),
+            cursor: AtomicUsize::new(cursor_id(winit::window::CursorIcon::Default)),
         }))
     }
 
@@ -170,6 +218,7 @@ impl WindowHandle {
     }
 
     pub fn request_redraw(&self) {
+        crate::frame_work_stats::record_redraw_request();
         match self {
             #[cfg(not(aimer_portable_guest))]
             Self::Native(window) => window.request_redraw(),
@@ -194,10 +243,7 @@ impl WindowHandle {
             #[cfg(aimer_portable_guest)]
             Self::Native(_) => {},
             Self::Headless(state) => {
-                *state
-                    .cursor
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = cursor;
+                state.cursor.store(cursor_id(cursor), Ordering::Relaxed);
             }
             #[cfg(feature = "portable-guest")]
             Self::Portable(_) => {}
@@ -208,12 +254,7 @@ impl WindowHandle {
     pub fn headless_cursor(&self) -> Option<winit::window::CursorIcon> {
         match self {
             Self::Native(_) => None,
-            Self::Headless(state) => Some(
-                *state
-                    .cursor
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
-            ),
+            Self::Headless(state) => Some(cursor_from_id(state.cursor.load(Ordering::Relaxed))),
             #[cfg(feature = "portable-guest")]
             Self::Portable(_) => None,
         }
@@ -422,6 +463,23 @@ impl<'a> BuildContext<'a> {
             #[cfg(all(not(target_arch = "wasm32"), feature = "portable-guest"))]
             async_handle: BuildAsyncHandle::native(async_handle),
             inherited_states: Rc::new(RefCell::new(HashMap::new())),
+        }
+    }
+
+    /// Replaces the canvas used by this build context.
+    ///
+    /// Native and portable builds store the canvas behind different internal
+    /// wrappers. This method keeps callers that fork a recording context
+    /// independent of that implementation detail.
+    #[inline]
+    pub fn replace_canvas(&mut self, canvas: Canvas<'a>) {
+        #[cfg(feature = "portable-guest")]
+        {
+            self.canvas = BuildCanvas::native(canvas);
+        }
+        #[cfg(not(feature = "portable-guest"))]
+        {
+            self.canvas = canvas;
         }
     }
 

@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use aimer_attribute::ResolvedSize;
+use aimer_attribute::Bounds;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerButton, PointerSource};
 use aimer_style::{LineHeight, TextAlign, TextStyle};
@@ -12,6 +13,7 @@ use aimer_widget::{
 };
 
 use crate::paragraph::{Paragraph, geometry};
+use crate::selection::TextHitRegion;
 use crate::selection::SelectionPoint;
 use crate::selection::cursor::HoverCursor;
 use crate::selection::selectable::{Selectable, SelectionBinding, TextGeometry};
@@ -84,6 +86,18 @@ impl RawSelectableText {
     pub(crate) fn slot(&self) -> Rc<SelectionSlot> {
         Rc::clone(&self.binding.borrow().slot)
     }
+
+    /// Returns accessibility geometry from the last painted frame.
+    ///
+    /// The snapshot is built from the same source-aware Aimer layout used by
+    /// selection and painting. It is `None` before the element has painted or
+    /// when the frame supplied an invalid affine transform.
+    pub fn accessibility_snapshot(&self) -> Option<crate::TextAccessibilitySnapshot> {
+        let binding = self.binding.borrow();
+        binding
+            .geometry
+            .accessibility_snapshot(binding.slot.selected_range())
+    }
 }
 
 impl VisitorElement for RawSelectableText {
@@ -131,15 +145,21 @@ impl Drawable for RawSelectableText {
         let geometry_state = self.geometry();
         slot.stamp();
         let layout = self.paragraph.prepare(ctx);
+        let shared_layout = layout.aimer_interaction.clone();
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
-        geometry_state.bounds.save(
+        let transform = ctx.canvas.get_transform();
+        geometry_state.save_painted_bounds(
             ctx.scale,
-            abs_x,
-            abs_y,
+            transform,
             layout.size.width,
             layout.size.height,
         );
         geometry_state.regions.borrow_mut().clear();
+        geometry_state.set_interaction_layout(
+            shared_layout.clone(),
+            transform,
+            ctx.scale,
+        );
 
         // Where this frame paints tells a resting finger from a page moving
         // under one, so the hold is polled once the origin is known — and still
@@ -163,25 +183,68 @@ impl Drawable for RawSelectableText {
         }
 
         self.paragraph.draw_backgrounds(ctx, &layout);
-        geometry::hit_regions(
-            &layout,
-            abs_x,
-            abs_y,
-            ctx.scale,
-            ctx.visible_rect,
-            &mut geometry_state.regions.borrow_mut(),
-        );
-        let selection = slot.selected_range().unwrap_or(0..0);
-        for run in geometry::selection_runs(&layout, selection, ctx.visible_rect) {
-            ctx.canvas.fill_color_rect(
-                (run.x, run.y).into(),
-                ResolvedSize {
-                    width: run.width,
-                    height: run.height,
-                },
-                self.selection_color,
-                [0.0; 4],
+        if let Some(shared) = shared_layout.as_ref() {
+            let mut regions = geometry_state.regions.borrow_mut();
+            for cluster in &shared.clusters {
+                let left = cluster.start_x.min(cluster.end_x);
+                let right = cluster.start_x.max(cluster.end_x);
+                let is_hard_break = shared
+                    .text
+                    .get(cluster.text_range.clone())
+                    .is_some_and(|text| text == "\n" || text == "\r\n");
+                regions.push(TextHitRegion::new(
+                    if is_hard_break {
+                        cluster.text_range.start..cluster.text_range.start
+                    } else {
+                        cluster.text_range.clone()
+                    },
+                    Bounds::new(
+                        (abs_x + left) / ctx.scale,
+                        (abs_y + cluster.y) / ctx.scale,
+                        if is_hard_break {
+                            (shared.metrics.width - left).max(ctx.scale) / ctx.scale
+                        } else {
+                            (right - left) / ctx.scale
+                        },
+                        cluster.height / ctx.scale,
+                    ),
+                ));
+            }
+        } else {
+            geometry::hit_regions(
+                &layout,
+                abs_x,
+                abs_y,
+                ctx.scale,
+                ctx.visible_rect,
+                &mut geometry_state.regions.borrow_mut(),
             );
+        }
+        let selection = slot.selected_range().unwrap_or(0..0);
+        if let Some(shared) = shared_layout.as_ref() {
+            for rect in shared.selection_rects(selection.clone()) {
+                ctx.canvas.fill_color_rect(
+                    (rect.x, rect.y).into(),
+                    ResolvedSize {
+                        width: rect.width,
+                        height: rect.height,
+                    },
+                    self.selection_color,
+                    [0.0; 4],
+                );
+            }
+        } else {
+            for run in geometry::selection_runs(&layout, selection.clone(), ctx.visible_rect) {
+                ctx.canvas.fill_color_rect(
+                    (run.x, run.y).into(),
+                    ResolvedSize {
+                        width: run.width,
+                        height: run.height,
+                    },
+                    self.selection_color,
+                    [0.0; 4],
+                );
+            }
         }
 
         self.paragraph
@@ -233,8 +296,7 @@ impl EventElement for RawSelectableText {
                 // never touched this text — the tree broadcasts the presses
                 // nobody took — is told apart by the painted bounds first, and
                 // dismisses the selection instead of starting a new one.
-                let painted = geometry.painted_bounds();
-                let inside = painted.is_some_and(|bounds| bounds.is_inside(pos.x, pos.y));
+                let inside = geometry.contains_point(pos.x, pos.y);
                 let offset = inside.then(|| geometry.offset_at(pos.x, pos.y)).flatten();
                 let Some(offset) = offset else {
                     self.touch_hold.clear();

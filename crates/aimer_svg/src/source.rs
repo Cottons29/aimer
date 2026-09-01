@@ -1,5 +1,8 @@
+use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use crossbeam::channel::{Receiver, Sender, unbounded};
 
 use crate::SvgDocument;
 
@@ -29,44 +32,72 @@ impl std::fmt::Debug for SvgLoadState {
     }
 }
 
-#[derive(Clone)]
 pub struct SvgLoader {
     source: SvgSource,
-    state: Arc<Mutex<SvgLoadState>>,
+    state: RefCell<SvgLoadState>,
+    updates: Receiver<SvgLoadState>,
+    updates_tx: Sender<SvgLoadState>,
+}
+
+impl Clone for SvgLoader {
+    fn clone(&self) -> Self {
+        let (updates_tx, updates) = unbounded();
+        Self {
+            source: self.source.clone(),
+            state: RefCell::new(self.state()),
+            updates,
+            updates_tx,
+        }
+    }
 }
 
 impl SvgLoader {
     pub fn new(source: SvgSource) -> Self {
+        let (updates_tx, updates) = unbounded();
         Self {
             source,
-            state: Arc::new(Mutex::new(SvgLoadState::Loading)),
+            state: RefCell::new(SvgLoadState::Loading),
+            updates,
+            updates_tx,
         }
     }
 
     pub fn state(&self) -> SvgLoadState {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+        let mut latest = None;
+        while let Ok(state) = self.updates.try_recv() {
+            latest = Some(state);
+        }
+        if let Some(state) = latest {
+            *self.state.borrow_mut() = state;
+        }
+        self.state.borrow().clone()
     }
 
     pub async fn load(&self) -> SvgLoadState {
-        *self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = SvgLoadState::Loading;
-        let state = match load_bytes(&self.source).await {
-            Ok(bytes) => match SvgDocument::from_svg(bytes) {
-                Ok(document) => SvgLoadState::Ready(document),
-                Err(error) => SvgLoadState::Error(Arc::from(error.to_string())),
-            },
-            Err(error) => SvgLoadState::Error(Arc::from(error)),
-        };
-        *self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = state.clone();
+        let _ = self.updates_tx.send(SvgLoadState::Loading);
+        let state = load_source(&self.source).await;
+        let _ = self.updates_tx.send(state.clone());
+        let _ = self.state();
         state
+    }
+
+    /// Returns the source and a one-way state mailbox for a background loader.
+    ///
+    /// The returned sender is intended to be moved into the loading task. The
+    /// loader itself stays on the render thread and applies messages from its
+    /// receiver when [`Self::state`] is queried.
+    pub(crate) fn background_parts(&self) -> (SvgSource, Sender<SvgLoadState>) {
+        (self.source.clone(), self.updates_tx.clone())
+    }
+}
+
+pub(crate) async fn load_source(source: &SvgSource) -> SvgLoadState {
+    match load_bytes(source).await {
+        Ok(bytes) => match SvgDocument::from_svg(bytes) {
+            Ok(document) => SvgLoadState::Ready(document),
+            Err(error) => SvgLoadState::Error(Arc::from(error.to_string())),
+        },
+        Err(error) => SvgLoadState::Error(Arc::from(error)),
     }
 }
 

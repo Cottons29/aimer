@@ -8,7 +8,12 @@ impl EventElement for RawTextField {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         let active_before = self.mouse_held.get();
         let consumed = (|| {
-            if !self.enable && !matches!(event, ElementEvent::FocusLost) {
+            if !self.enable
+                && !matches!(
+                    event,
+                    ElementEvent::FocusLost | ElementEvent::PointerExited(_, _)
+                )
+            {
                 return false;
             }
 
@@ -246,7 +251,7 @@ impl EventElement for RawTextField {
                             }
                             NamedKey::Other(k) if k == "c" => {
                                 // Copy
-                                if self.input_type != InputType::Obscure
+                                if !self.input_type.is_obscured()
                                     && let Some((start, end)) = self.cursor.selection_range()
                                 {
                                     let selected = self.controller.get_range(start, end);
@@ -256,7 +261,7 @@ impl EventElement for RawTextField {
                             }
                             NamedKey::Other(k) if k == "x" && !self.read_only => {
                                 // Cut
-                                if self.input_type != InputType::Obscure
+                                if !self.input_type.is_obscured()
                                     && let Some((start, end)) = self.cursor.selection_range()
                                 {
                                     let selected = self.controller.get_range(start, end);
@@ -443,6 +448,14 @@ impl EventElement for RawTextField {
                         held
                     }
                 }
+                ElementEvent::PointerExited(_, _) => {
+                    if self.hovered.replace(false) {
+                        aimer_utils::cursor::reset_cursor();
+                        true
+                    } else {
+                        false
+                    }
+                }
                 ElementEvent::ImePreedit { text, cursor } => {
                     if !self.is_focused() {
                         return false;
@@ -492,6 +505,59 @@ impl EventElement for RawTextField {
 }
 
 #[cfg(test)]
+mod hover_tests {
+    use aimer_attribute::position::Vec2d;
+    use aimer_events::element::ElementEvent;
+    use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
+    use aimer_widget::{Element, EventElement, FocusNode, Rebuildable};
+
+    use super::test_support::{field_config, focused_field};
+    use super::RawTextField;
+    use crate::input_field::caret::CaretBlink;
+    use crate::TextEditingController;
+
+    #[test]
+    fn pointer_exit_clears_a_field_hover() {
+        let controller = TextEditingController::new();
+        let field = focused_field(controller);
+        field.cached_bounds.save(1.0, 0.0, 0.0, 200.0, 32.0);
+
+        let inside = Vec2d { x: 10.0, y: 10.0 };
+        let _ = field.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
+            inside,
+            PointerButton::Primary,
+        )));
+        assert!(field.is_hovered());
+
+        let _ = field.on_event(&ElementEvent::PointerExited(PointerSource::Mouse, 0));
+
+        assert!(!field.is_hovered());
+    }
+
+    #[test]
+    fn rebuilding_a_field_does_not_copy_hover_state() {
+        let controller = TextEditingController::new();
+        let old = focused_field(controller.clone());
+        old.cached_bounds.save(1.0, 0.0, 0.0, 200.0, 32.0);
+        let inside = Vec2d { x: 10.0, y: 10.0 };
+        let _ = old.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
+            inside,
+            PointerButton::Primary,
+        )));
+        assert!(old.is_hovered());
+
+        let rebuilt = RawTextField::new(
+            field_config(controller),
+            CaretBlink::new(),
+            FocusNode::new(),
+        );
+        rebuilt.adopt_runtime_state_from(&old as &dyn Element);
+
+        assert!(!rebuilt.is_hovered());
+    }
+}
+
+#[cfg(test)]
 mod key_event_tests {
     use aimer_events::element::NamedKey;
     use aimer_widget::EventElement;
@@ -518,9 +584,9 @@ mod focus_tests {
 
     use aimer_attribute::position::Vec2d;
     use aimer_events::element::ElementEvent;
-    use aimer_widget::{Element, EventDispatcher, FocusNode, RawFocusable};
+    use aimer_widget::{Element, EventDispatcher, EventElement, FocusNode, RawFocusable, Rebuildable};
 
-    use super::test_support::{commit, field_config};
+    use super::test_support::{commit, field_config, focused_field};
     use super::{RawTextField, TextFieldCallback};
     use crate::input_field::caret::CaretBlink;
     use crate::TextEditingController as TextFieldController;
@@ -562,6 +628,33 @@ mod focus_tests {
         assert_eq!(focuses.get(), 1);
         assert_eq!(blurs.get(), 1);
         assert!(!node.has_focus());
+    }
+
+    // Regression: an `on_changed` callback commonly calls `set_state`, which
+    // reconciles this element against a freshly built replacement on every
+    // keystroke, not just once. `RawTextField::new` always starts unfocused,
+    // trusting the enclosing focus region to redeliver `FocusGained` and
+    // teach the replacement otherwise — but the framework only fires that
+    // event on an actual ownership *change*, and the field's own `FocusNode`
+    // never stopped being the owner across a same-field rebuild. Without
+    // `adopt_runtime_state_from` carrying `focused` over that swap, the very
+    // first character typed would be the last one ever accepted.
+    #[test]
+    fn a_rebuild_triggered_by_typing_does_not_stop_further_typing() {
+        let controller = TextFieldController::new();
+        let focused = focused_field(controller.clone());
+
+        let rebuilt = RawTextField::new(
+            field_config(controller.clone()),
+            CaretBlink::new(),
+            FocusNode::new(),
+        );
+        // No `FocusGained` is redelivered to `rebuilt` here — exactly like a
+        // real reconciliation, where the node's ownership never changed.
+        rebuilt.adopt_runtime_state_from(&focused as &dyn Element);
+
+        assert!(rebuilt.on_event(&commit("a")).is_consumed());
+        assert_eq!(controller.text(), "a");
     }
 
     #[test]

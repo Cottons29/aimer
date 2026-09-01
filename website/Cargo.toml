@@ -4,16 +4,21 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-# Native website screens use the full Markdown/SVG stack. Keep those features
-# out of generated guest proof crates so a portable build contains only the
-# explicitly portable application surface.
-default = ["native"]
+default = ["native", "desktop-bin"]
 native = ["aimer/markdown", "aimer/svg", "aimer/provider"]
+
+desktop-bin = []
 
 
 [lib]
 path = "src/main.rs"
 crate-type = ["cdylib", "staticlib", "rlib"]
+
+[[bin]]
+name = "website"
+path = "src/main.rs"
+required-features = ["desktop-bin"]
+
 [dependencies]
 aimer = { path = ".." }
 webbrowser = "1.2.1"

@@ -205,9 +205,12 @@ impl<E: Element> Drawable for RawSizedBox<E> {
                     && cp.x <= l_end.x
                     && cp.y >= l_start.y
                     && cp.y <= l_end.y
-                    && let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write()
                 {
-                    *hovered = Some((self.debug_name, l_start, l_end));
+                    aimer_widget::inspector_overlay::set_hovered_widget((
+                        self.debug_name,
+                        l_start,
+                        l_end,
+                    ));
                 }
             }
         }

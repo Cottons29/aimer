@@ -1,5 +1,6 @@
+use crossbeam::queue::ArrayQueue;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::OnceLock;
 
 /// Browser event dispatched on `window` after the first successful frame
 /// presentation.
@@ -7,8 +8,11 @@ pub const FIRST_FRAME_RENDERED_EVENT: &str = "aimer:first-frame-rendered";
 
 type FirstFrameCallback = Box<dyn FnOnce() + Send + 'static>;
 
-static FIRST_FRAME_CALLBACK: LazyLock<Mutex<Option<FirstFrameCallback>>> =
-    LazyLock::new(|| Mutex::new(None));
+static FIRST_FRAME_CALLBACK: OnceLock<ArrayQueue<FirstFrameCallback>> = OnceLock::new();
+
+fn first_frame_callback_queue() -> &'static ArrayQueue<FirstFrameCallback> {
+    FIRST_FRAME_CALLBACK.get_or_init(|| ArrayQueue::new(1))
+}
 
 /// Registers a system callback that runs after the first frame is successfully
 /// presented. Use it to dismiss a native loading or splash screen, and register
@@ -23,20 +27,22 @@ static FIRST_FRAME_CALLBACK: LazyLock<Mutex<Option<FirstFrameCallback>>> =
 /// is enabled — hence the `Send` bound. Do not touch platform UI objects from it
 /// directly; hop to the main thread first.
 pub fn set_first_frame_rendered_callback(callback: impl FnOnce() + Send + 'static) {
-    *FIRST_FRAME_CALLBACK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(callback));
+    let queue = first_frame_callback_queue();
+    let mut callback = Box::new(callback) as FirstFrameCallback;
+    loop {
+        while queue.pop().is_some() {}
+        match queue.push(callback) {
+            Ok(()) => break,
+            Err(rejected) => callback = rejected,
+        }
+    }
 }
 
 pub(crate) fn dispatch_first_frame_rendered() {
     #[cfg(target_arch = "wasm32")]
     dispatch_browser_event();
 
-    let callback = FIRST_FRAME_CALLBACK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .take();
-    if let Some(callback) = callback {
+    if let Some(callback) = first_frame_callback_queue().pop() {
         callback();
     }
 }

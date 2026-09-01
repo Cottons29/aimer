@@ -1,5 +1,8 @@
 pub mod aspecratio;
 pub mod container;
+pub mod custom_shape;
+pub mod glass;
+pub mod liquid;
 pub mod opacity;
 pub mod resizable;
 pub(crate) mod scalable;

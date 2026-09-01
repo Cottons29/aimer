@@ -1,0 +1,9 @@
+[package]
+name = "aimer_storage"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+
+[dependencies]
+crossbeam.workspace = true
+futures-util.workspace = true

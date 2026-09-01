@@ -249,8 +249,12 @@ impl<'w> GpuContext<'w> {
         let present_mode = wgpu::PresentMode::Fifo;
 
         let backing_size = render_dimensions(size, max_dim);
+        let mut usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
+        if caps.usages.contains(wgpu::TextureUsages::COPY_SRC) {
+            usage |= wgpu::TextureUsages::COPY_SRC;
+        }
         let config = SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage,
             format: selected_format,
             width: backing_size.width.max(1),
             height: backing_size.height.max(1),

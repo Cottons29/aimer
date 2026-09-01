@@ -1,4 +1,14 @@
 impl LayoutElement for RawTextField {
+    /// Returns the bounds cached while the field is laid out or painted.
+    ///
+    /// Text fields use the same cache for pointer hit testing. Exposing it
+    /// through the layout contract is important for enclosing focusable
+    /// elements: without these bounds a focus wrapper is treated as covering
+    /// the whole window, so the last field in a form wins every pointer press.
+    fn pos_start_end(&self) -> Option<(aimer_attribute::Vec2d, aimer_attribute::Vec2d)> {
+        self.cached_bounds.pos_start_end()
+    }
+
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let (w, h) = self.compute_dimensions(ctx);
         let scale = ctx.scale;
@@ -41,6 +51,17 @@ impl Drawable for RawTextField {
 
         self.cached_bounds
             .save(scale, abs_x, abs_y, box_width, box_height);
+
+        // Hover is derived from the current pointer location rather than
+        // carried across a rebuilt field. The event dispatcher clears the
+        // previous hit chain when the pointer moves, while this paint-time
+        // check also covers a rebuild that happens without another move.
+        self.hovered.set(
+            self.enable
+                && self
+                    .cached_bounds
+                    .is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y),
+        );
 
         // A field focused at construction time — `auto_focus`, or a rebuild that
         // preserved focus — never passed through `set_focused`, so make sure

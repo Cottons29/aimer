@@ -102,6 +102,18 @@ impl Drawable for RawOpacity {
     }
 
     #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        ctx.canvas.set_alpha(self.opacity);
+        self.child.paint(ctx);
+        ctx.canvas.restore_alpha();
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.child.sync_paint_geometry(ctx);
+    }
+
+    #[inline]
     fn is_paint_stable(&self) -> bool {
         self.child.is_paint_stable()
     }

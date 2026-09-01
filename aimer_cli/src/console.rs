@@ -285,7 +285,7 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
             last_progress = Some(state.status.clone());
         }
 
-        let inspector_state = inspector_handle.state.lock().unwrap().clone();
+        let inspector_state = inspector_handle.state.snapshot();
         let inspector_address = inspector_handle.get_address();
         terminal.draw(|f| {
             ui::render(

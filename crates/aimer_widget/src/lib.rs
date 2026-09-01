@@ -13,6 +13,11 @@ pub mod pointer_claim;
 pub mod portable;
 pub mod reconcile;
 mod reconciliation_plan;
+mod frame_work_stats;
+#[cfg(not(feature = "portable-guest"))]
+mod paint_isolated;
+mod paint_stats;
+mod rebuild_stats;
 pub mod safe_area;
 mod widget;
 pub mod window_metrics;
@@ -84,13 +89,36 @@ pub type AnyWidget = aimer_rubick::Rubick<dyn DynWidget, 8>;
 
 // #[cfg(debug_assertions)]
 pub mod inspector_overlay {
-    use std::sync::RwLock;
+    use std::cell::Cell;
     use std::sync::atomic::{AtomicBool, Ordering};
+
     pub static INSPECTOR_ENABLED: AtomicBool = AtomicBool::new(false);
-    /// (name, start, end)
-    pub static HOVERED_WIDGET: RwLock<
-        Option<(&'static str, crate::base::Vec2d, crate::base::Vec2d)>,
-    > = RwLock::new(None);
+
+    /// The widget currently under the inspector cursor.
+    pub type HoveredWidget = (&'static str, crate::base::Vec2d, crate::base::Vec2d);
+
+    // Hover collection and overlay painting happen on the window's UI/render
+    // thread. Keeping this state thread-local avoids a process-wide lock and
+    // keeps the hot per-element write allocation-free.
+    thread_local! {
+        static HOVERED_WIDGET: Cell<Option<HoveredWidget>> = const { Cell::new(None) };
+    }
+
+    /// Publishes the widget currently under the inspector cursor.
+    pub fn set_hovered_widget(widget: HoveredWidget) {
+        HOVERED_WIDGET.with(|hovered| hovered.set(Some(widget)));
+    }
+
+    /// Clears the widget currently under the inspector cursor for this UI thread.
+    pub fn clear_hovered_widget() {
+        HOVERED_WIDGET.with(|hovered| hovered.set(None));
+    }
+
+    /// Returns the widget currently under the inspector cursor for this UI thread.
+    pub fn hovered_widget() -> Option<HoveredWidget> {
+        HOVERED_WIDGET.with(Cell::get)
+    }
+
     pub fn is_enabled() -> bool {
         INSPECTOR_ENABLED.load(Ordering::Relaxed)
     }
@@ -105,13 +133,36 @@ pub use crate::components::diagnostics::{
 };
 pub use crate::components::drawable::Drawable;
 pub use crate::components::element::{
-    Element, ElementId, ElementPath, EventDispatcher, element_tree_generation,
-    layout_invalidation_generation, rebuild_invalidation_generation,
+    Element, ElementId, ElementPath, EventDispatchContext, EventDispatcher, begin_event_frame,
+    element_tree_generation, layout_invalidation_generation, rebuild_invalidation_generation,
+};
+pub use crate::rebuild_stats::RebuildStats;
+pub use crate::frame_work_stats::FrameWorkStats;
+pub use crate::frame_work_stats::{
+    record_hit_test_visit, record_layout_call, record_paint_call, record_redraw_request,
+    record_root_draw_call, record_scroll_event, record_scroll_offset_update, record_scroll_step,
+    record_smoothing_step, record_state_update, reset_frame_work_stats, take_frame_work_stats,
+};
+pub use crate::paint_stats::PaintStats;
+pub use crate::paint_stats::{
+    record_paint_isolation_candidate, record_paint_isolation_fallback,
+    record_paint_isolation_invalidation, record_paint_isolation_record,
+    record_paint_isolation_replay, record_paint_isolation_tile_record,
+    record_paint_isolation_tile_replay, reset_paint_stats, take_paint_stats,
+};
+#[cfg(not(feature = "portable-guest"))]
+#[doc(hidden)]
+pub use crate::paint_isolated::{
+    PaintBounds, PaintCache, PaintClip, PaintContract, PaintIsolated, PaintIsolatedOutcome,
+    PaintTransform,
 };
 #[cfg(any(debug_assertions, feature = "frame-stats"))]
 pub use crate::components::element::{
-    reset_draw_traversal_count, take_draw_traversal_count,
+    reset_draw_traversal_count, reset_routed_event_visit_count, take_draw_traversal_count,
+    take_routed_event_visit_count,
 };
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
+pub use crate::rebuild_stats::{reset as reset_rebuild_stats, take as take_rebuild_stats};
 pub use crate::components::event_element::{
     CaptureRequest, EventElement, EventResult, FollowUp, PointerKey,
 };

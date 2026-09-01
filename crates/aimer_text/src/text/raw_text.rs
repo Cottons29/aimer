@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::cell::Cell;
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
@@ -24,7 +24,7 @@ pub struct RawTextWidget {
     pub line_height: LineHeight,
     pub text_indent: f32,
     pub cache: LayoutCache,
-    pub _typeface: Mutex<Option<()>>,
+    pub _typeface: Cell<Option<()>>,
 }
 
 impl RawTextWidget {
@@ -116,9 +116,8 @@ impl Drawable for RawTextWidget {
                     && cp.x <= l_end.x
                     && cp.y >= l_start.y
                     && cp.y <= l_end.y
-                    && let Ok(mut hovered) = inspector_overlay::HOVERED_WIDGET.write()
                 {
-                    *hovered = Some((self.debug_name(), l_start, l_end));
+                    inspector_overlay::set_hovered_widget((self.debug_name(), l_start, l_end));
                 }
             }
         }

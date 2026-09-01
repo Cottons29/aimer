@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+default = []
+apple-core-text = [
+    "aimer_cupid/apple-core-text",
+    "aimer_canvas/apple-core-text",
+]
 portable-guest = [
     "dep:aimer_anteros",
     "aimer_style/portable-guest",
@@ -12,6 +17,9 @@ portable-guest = [
 
 [dependencies]
 aimer_anteros = { workspace = true, optional = true }
+aimer_accessibility.workspace = true
+aimer_canvas.workspace = true
+aimer_cupid.workspace = true
 aimer_macro.workspace = true
 aimer_attribute.workspace = true
 aimer_color.workspace = true
@@ -25,10 +33,9 @@ aimer_utils.workspace = true
 aimer_std.workspace = true
 unicode-linebreak.workspace = true
 unicode-segmentation.workspace = true
+unicode-bidi.workspace = true
 
 [dev-dependencies]
-aimer_canvas.workspace = true
-aimer_cupid.workspace = true
 winit.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

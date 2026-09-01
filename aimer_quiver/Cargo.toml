@@ -49,6 +49,7 @@ wasm-hot-reload = [
 
 [dependencies]
 
+crossbeam.workspace = true
 aimer_animation.workspace = true
 aimer_widget.workspace = true
 aimer_provider.workspace = true

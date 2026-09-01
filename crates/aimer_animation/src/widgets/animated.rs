@@ -3,6 +3,7 @@ use std::cell::Cell;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
+use aimer_events::window::request_animation_frame;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
@@ -157,7 +158,7 @@ impl Drawable for AnimatedElement {
 
         // Request another frame if still animating
         if self.animating.get() {
-            self.window.request_redraw();
+            request_animation_frame()
         }
     }
 }

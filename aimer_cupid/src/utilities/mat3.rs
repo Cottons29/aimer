@@ -53,6 +53,28 @@ impl Mat3 {
         )
     }
 
+    /// Inverts this affine transform at one point.
+    ///
+    /// Returns `None` when the linear portion is singular or non-finite. Text
+    /// interaction uses this to map pointer coordinates back into the local
+    /// paragraph space without assuming that the canvas only translated.
+    pub fn inverse_transform_point(&self, x: f32, y: f32) -> Option<(f32, f32)> {
+        let a = self.cols[0][0];
+        let b = self.cols[1][0];
+        let c = self.cols[0][1];
+        let d = self.cols[1][1];
+        let determinant = a * d - b * c;
+        if !determinant.is_finite() || determinant.abs() <= f32::EPSILON {
+            return None;
+        }
+
+        let translated_x = x - self.cols[2][0];
+        let translated_y = y - self.cols[2][1];
+        let inverse_x = (d * translated_x - b * translated_y) / determinant;
+        let inverse_y = (-c * translated_x + a * translated_y) / determinant;
+        (inverse_x.is_finite() && inverse_y.is_finite()).then_some((inverse_x, inverse_y))
+    }
+
     /// Align the transform origin to physical pixel boundaries without
     /// changing its scale or rotation.
     pub fn pixel_aligned(mut self) -> Self {
@@ -91,5 +113,27 @@ mod tests {
         let transform = Mat3::translate(12.0, -7.0);
 
         assert_eq!(transform.pixel_aligned().cols, transform.cols);
+    }
+
+    #[test]
+    fn inverse_transform_point_round_trips_scaled_rotated_translation() {
+        let transform = Mat3::translate(20.0, 30.0)
+            .mul(&Mat3::rotate(0.37))
+            .mul(&Mat3::scale(2.0, 3.0));
+        let local = (4.0, -5.0);
+        let world = transform.transform_point(local.0, local.1);
+
+        let recovered = transform
+            .inverse_transform_point(world.0, world.1)
+            .expect("the affine transform is invertible");
+        assert!((recovered.0 - local.0).abs() < 0.00001);
+        assert!((recovered.1 - local.1).abs() < 0.00001);
+    }
+
+    #[test]
+    fn inverse_transform_point_rejects_singular_transforms() {
+        assert!(Mat3::scale(0.0, 2.0)
+            .inverse_transform_point(1.0, 1.0)
+            .is_none());
     }
 }

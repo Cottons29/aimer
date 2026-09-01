@@ -125,6 +125,72 @@ pub struct FrameContentStats {
     pub text_cache_hits: u64,
     /// Number of text metrics cache misses.
     pub text_cache_misses: u64,
+    /// Number of retained element boundaries entered by rebuilding.
+    pub rebuild_visits: u64,
+    /// Number of retained boundaries pruned by the dirty-path index.
+    pub rebuild_pruned: u64,
+    /// Number of stateful elements checked by the rebuild walk.
+    pub stateful_rebuild_checks: u64,
+    /// Number of stateless elements checked by the rebuild walk.
+    pub stateless_rebuild_checks: u64,
+    /// Number of stateful `build` callbacks invoked during the frame.
+    pub stateful_builds: u64,
+    /// Number of stateless `build` callbacks invoked during the frame.
+    pub stateless_builds: u64,
+    /// Number of retained-element layout calls observed during the frame.
+    pub layout_calls: u64,
+    /// Number of routed event visits used for hit testing and input dispatch.
+    pub hit_test_visits: u64,
+    /// Number of retained-element paint calls observed during the frame.
+    pub paint_calls: u64,
+    /// Number of root draw calls that entered the retained tree.
+    pub root_draw_calls: u64,
+    /// Number of scroll input events accepted by the application root.
+    pub scroll_events: u64,
+    /// Number of delivered scroll steps from input or smoothing.
+    pub scroll_steps: u64,
+    /// Number of active smoothing ticks.
+    pub smoothing_steps: u64,
+    /// Number of state updates requested through the framework state API.
+    pub state_updates: u64,
+    /// Number of scroll-offset changes committed to retained scroll state.
+    pub scroll_offset_updates: u64,
+    /// Number of window redraw requests observed by the framework.
+    pub redraw_requests: u64,
+    /// Number of children considered for framework-owned paint isolation.
+    pub paint_isolation_candidates: u64,
+    /// Number of retained paint command streams recorded.
+    pub paint_isolation_records: u64,
+    /// Number of retained paint command streams replayed from cache.
+    pub paint_isolation_replays: u64,
+    /// Number of retained paint caches invalidated before drawing.
+    pub paint_isolation_invalidations: u64,
+    /// Number of isolation attempts that used direct child drawing.
+    pub paint_isolation_fallbacks: u64,
+    /// Number of bounded retained tiles recorded.
+    pub paint_isolation_tile_records: u64,
+    /// Number of bounded retained tiles replayed from cache.
+    pub paint_isolation_tile_replays: u64,
+    /// Number of frames using the current full-target repaint path.
+    pub damage_full_frames: u64,
+    /// Number of frames rendered from a partial damage set.
+    pub damage_partial_frames: u64,
+    /// Number of partial damage regions submitted to the renderer.
+    pub damage_regions: u64,
+    /// Number of regions coalesced before a partial repaint.
+    pub damage_merged_regions: u64,
+    /// Number of partial frames promoted to a full repaint.
+    pub damage_full_frame_promotions: u64,
+    /// Number of frames that reused an initialized persistent target.
+    pub damage_target_reuses: u64,
+    /// Number of partial target clears.
+    pub damage_partial_clears: u64,
+    /// Number of full-target clears.
+    pub damage_full_clears: u64,
+    /// Full-target pixels covered by the current full-frame path.
+    pub damage_full_pixels: u64,
+    /// Pixels covered by partial damage regions.
+    pub damage_partial_pixels: u64,
 }
 
 impl FrameContentStats {
@@ -367,6 +433,39 @@ struct FrameContentAccumulator {
     image_uploads: AtomicU64,
     text_cache_hits: AtomicU64,
     text_cache_misses: AtomicU64,
+    rebuild_visits: AtomicU64,
+    rebuild_pruned: AtomicU64,
+    stateful_rebuild_checks: AtomicU64,
+    stateless_rebuild_checks: AtomicU64,
+    stateful_builds: AtomicU64,
+    stateless_builds: AtomicU64,
+    layout_calls: AtomicU64,
+    hit_test_visits: AtomicU64,
+    paint_calls: AtomicU64,
+    root_draw_calls: AtomicU64,
+    scroll_events: AtomicU64,
+    scroll_steps: AtomicU64,
+    smoothing_steps: AtomicU64,
+    state_updates: AtomicU64,
+    scroll_offset_updates: AtomicU64,
+    redraw_requests: AtomicU64,
+    paint_isolation_candidates: AtomicU64,
+    paint_isolation_records: AtomicU64,
+    paint_isolation_replays: AtomicU64,
+    paint_isolation_invalidations: AtomicU64,
+    paint_isolation_fallbacks: AtomicU64,
+    paint_isolation_tile_records: AtomicU64,
+    paint_isolation_tile_replays: AtomicU64,
+    damage_full_frames: AtomicU64,
+    damage_partial_frames: AtomicU64,
+    damage_regions: AtomicU64,
+    damage_merged_regions: AtomicU64,
+    damage_full_frame_promotions: AtomicU64,
+    damage_target_reuses: AtomicU64,
+    damage_partial_clears: AtomicU64,
+    damage_full_clears: AtomicU64,
+    damage_full_pixels: AtomicU64,
+    damage_partial_pixels: AtomicU64,
 }
 
 impl FrameContentAccumulator {
@@ -377,6 +476,9 @@ impl FrameContentAccumulator {
         draw_list: aimer_cupid::draw_cmd::DrawListStats,
         text_cache_hits: u64,
         text_cache_misses: u64,
+        rebuild: aimer_widget::RebuildStats,
+        paint: aimer_widget::PaintStats,
+        work: aimer_widget::FrameWorkStats,
     ) {
         self.frames.fetch_add(1, Ordering::Relaxed);
         self.drawn_nodes.fetch_add(drawn_nodes, Ordering::Relaxed);
@@ -394,6 +496,63 @@ impl FrameContentAccumulator {
             .fetch_add(text_cache_hits, Ordering::Relaxed);
         self.text_cache_misses
             .fetch_add(text_cache_misses, Ordering::Relaxed);
+        self.rebuild_visits
+            .fetch_add(rebuild.visits, Ordering::Relaxed);
+        self.rebuild_pruned
+            .fetch_add(rebuild.pruned, Ordering::Relaxed);
+        self.stateful_rebuild_checks
+            .fetch_add(rebuild.stateful_checks, Ordering::Relaxed);
+        self.stateless_rebuild_checks
+            .fetch_add(rebuild.stateless_checks, Ordering::Relaxed);
+        self.stateful_builds
+            .fetch_add(rebuild.stateful_builds, Ordering::Relaxed);
+        self.stateless_builds
+            .fetch_add(rebuild.stateless_builds, Ordering::Relaxed);
+        self.layout_calls
+            .fetch_add(work.layout_calls, Ordering::Relaxed);
+        self.hit_test_visits
+            .fetch_add(work.hit_test_visits, Ordering::Relaxed);
+        self.paint_calls
+            .fetch_add(work.paint_calls, Ordering::Relaxed);
+        self.root_draw_calls
+            .fetch_add(work.root_draw_calls, Ordering::Relaxed);
+        self.scroll_events
+            .fetch_add(work.scroll_events, Ordering::Relaxed);
+        self.scroll_steps
+            .fetch_add(work.scroll_steps, Ordering::Relaxed);
+        self.smoothing_steps
+            .fetch_add(work.smoothing_steps, Ordering::Relaxed);
+        self.state_updates
+            .fetch_add(work.state_updates, Ordering::Relaxed);
+        self.scroll_offset_updates
+            .fetch_add(work.scroll_offset_updates, Ordering::Relaxed);
+        self.redraw_requests
+            .fetch_add(work.redraw_requests, Ordering::Relaxed);
+        self.paint_isolation_candidates
+            .fetch_add(paint.candidates, Ordering::Relaxed);
+        self.paint_isolation_records
+            .fetch_add(paint.records, Ordering::Relaxed);
+        self.paint_isolation_replays
+            .fetch_add(paint.replays, Ordering::Relaxed);
+        self.paint_isolation_invalidations
+            .fetch_add(paint.invalidations, Ordering::Relaxed);
+        self.paint_isolation_fallbacks
+            .fetch_add(paint.fallbacks, Ordering::Relaxed);
+        self.paint_isolation_tile_records
+            .fetch_add(paint.tile_records, Ordering::Relaxed);
+        self.paint_isolation_tile_replays
+            .fetch_add(paint.tile_replays, Ordering::Relaxed);
+    }
+
+    #[inline]
+    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    fn record_full_frame_damage(&self, width: u32, height: u32) {
+        self.damage_full_frames.fetch_add(1, Ordering::Relaxed);
+        self.damage_full_clears.fetch_add(1, Ordering::Relaxed);
+        self.damage_full_pixels.fetch_add(
+            u64::from(width).saturating_mul(u64::from(height)),
+            Ordering::Relaxed,
+        );
     }
 
     fn snapshot(&self) -> FrameContentStats {
@@ -407,6 +566,41 @@ impl FrameContentAccumulator {
             image_uploads: self.image_uploads.load(Ordering::Relaxed),
             text_cache_hits: self.text_cache_hits.load(Ordering::Relaxed),
             text_cache_misses: self.text_cache_misses.load(Ordering::Relaxed),
+            rebuild_visits: self.rebuild_visits.load(Ordering::Relaxed),
+            rebuild_pruned: self.rebuild_pruned.load(Ordering::Relaxed),
+            stateful_rebuild_checks: self.stateful_rebuild_checks.load(Ordering::Relaxed),
+            stateless_rebuild_checks: self.stateless_rebuild_checks.load(Ordering::Relaxed),
+            stateful_builds: self.stateful_builds.load(Ordering::Relaxed),
+            stateless_builds: self.stateless_builds.load(Ordering::Relaxed),
+            layout_calls: self.layout_calls.load(Ordering::Relaxed),
+            hit_test_visits: self.hit_test_visits.load(Ordering::Relaxed),
+            paint_calls: self.paint_calls.load(Ordering::Relaxed),
+            root_draw_calls: self.root_draw_calls.load(Ordering::Relaxed),
+            scroll_events: self.scroll_events.load(Ordering::Relaxed),
+            scroll_steps: self.scroll_steps.load(Ordering::Relaxed),
+            smoothing_steps: self.smoothing_steps.load(Ordering::Relaxed),
+            state_updates: self.state_updates.load(Ordering::Relaxed),
+            scroll_offset_updates: self.scroll_offset_updates.load(Ordering::Relaxed),
+            redraw_requests: self.redraw_requests.load(Ordering::Relaxed),
+            paint_isolation_candidates: self.paint_isolation_candidates.load(Ordering::Relaxed),
+            paint_isolation_records: self.paint_isolation_records.load(Ordering::Relaxed),
+            paint_isolation_replays: self.paint_isolation_replays.load(Ordering::Relaxed),
+            paint_isolation_invalidations: self.paint_isolation_invalidations.load(Ordering::Relaxed),
+            paint_isolation_fallbacks: self.paint_isolation_fallbacks.load(Ordering::Relaxed),
+            paint_isolation_tile_records: self.paint_isolation_tile_records.load(Ordering::Relaxed),
+            paint_isolation_tile_replays: self.paint_isolation_tile_replays.load(Ordering::Relaxed),
+            damage_full_frames: self.damage_full_frames.load(Ordering::Relaxed),
+            damage_partial_frames: self.damage_partial_frames.load(Ordering::Relaxed),
+            damage_regions: self.damage_regions.load(Ordering::Relaxed),
+            damage_merged_regions: self.damage_merged_regions.load(Ordering::Relaxed),
+            damage_full_frame_promotions: self
+                .damage_full_frame_promotions
+                .load(Ordering::Relaxed),
+            damage_target_reuses: self.damage_target_reuses.load(Ordering::Relaxed),
+            damage_partial_clears: self.damage_partial_clears.load(Ordering::Relaxed),
+            damage_full_clears: self.damage_full_clears.load(Ordering::Relaxed),
+            damage_full_pixels: self.damage_full_pixels.load(Ordering::Relaxed),
+            damage_partial_pixels: self.damage_partial_pixels.load(Ordering::Relaxed),
         }
     }
 
@@ -420,6 +614,39 @@ impl FrameContentAccumulator {
         self.image_uploads.store(0, Ordering::Relaxed);
         self.text_cache_hits.store(0, Ordering::Relaxed);
         self.text_cache_misses.store(0, Ordering::Relaxed);
+        self.rebuild_visits.store(0, Ordering::Relaxed);
+        self.rebuild_pruned.store(0, Ordering::Relaxed);
+        self.stateful_rebuild_checks.store(0, Ordering::Relaxed);
+        self.stateless_rebuild_checks.store(0, Ordering::Relaxed);
+        self.stateful_builds.store(0, Ordering::Relaxed);
+        self.stateless_builds.store(0, Ordering::Relaxed);
+        self.layout_calls.store(0, Ordering::Relaxed);
+        self.hit_test_visits.store(0, Ordering::Relaxed);
+        self.paint_calls.store(0, Ordering::Relaxed);
+        self.root_draw_calls.store(0, Ordering::Relaxed);
+        self.scroll_events.store(0, Ordering::Relaxed);
+        self.scroll_steps.store(0, Ordering::Relaxed);
+        self.smoothing_steps.store(0, Ordering::Relaxed);
+        self.state_updates.store(0, Ordering::Relaxed);
+        self.scroll_offset_updates.store(0, Ordering::Relaxed);
+        self.redraw_requests.store(0, Ordering::Relaxed);
+        self.paint_isolation_candidates.store(0, Ordering::Relaxed);
+        self.paint_isolation_records.store(0, Ordering::Relaxed);
+        self.paint_isolation_replays.store(0, Ordering::Relaxed);
+        self.paint_isolation_invalidations.store(0, Ordering::Relaxed);
+        self.paint_isolation_fallbacks.store(0, Ordering::Relaxed);
+        self.paint_isolation_tile_records.store(0, Ordering::Relaxed);
+        self.paint_isolation_tile_replays.store(0, Ordering::Relaxed);
+        self.damage_full_frames.store(0, Ordering::Relaxed);
+        self.damage_partial_frames.store(0, Ordering::Relaxed);
+        self.damage_regions.store(0, Ordering::Relaxed);
+        self.damage_merged_regions.store(0, Ordering::Relaxed);
+        self.damage_full_frame_promotions.store(0, Ordering::Relaxed);
+        self.damage_target_reuses.store(0, Ordering::Relaxed);
+        self.damage_partial_clears.store(0, Ordering::Relaxed);
+        self.damage_full_clears.store(0, Ordering::Relaxed);
+        self.damage_full_pixels.store(0, Ordering::Relaxed);
+        self.damage_partial_pixels.store(0, Ordering::Relaxed);
     }
 }
 
@@ -448,6 +675,39 @@ static FRAME_CONTENT_STATS: FrameContentAccumulator = FrameContentAccumulator {
     image_uploads: AtomicU64::new(0),
     text_cache_hits: AtomicU64::new(0),
     text_cache_misses: AtomicU64::new(0),
+    rebuild_visits: AtomicU64::new(0),
+    rebuild_pruned: AtomicU64::new(0),
+    stateful_rebuild_checks: AtomicU64::new(0),
+    stateless_rebuild_checks: AtomicU64::new(0),
+    stateful_builds: AtomicU64::new(0),
+    stateless_builds: AtomicU64::new(0),
+    layout_calls: AtomicU64::new(0),
+    hit_test_visits: AtomicU64::new(0),
+    paint_calls: AtomicU64::new(0),
+    root_draw_calls: AtomicU64::new(0),
+    scroll_events: AtomicU64::new(0),
+    scroll_steps: AtomicU64::new(0),
+    smoothing_steps: AtomicU64::new(0),
+    state_updates: AtomicU64::new(0),
+    scroll_offset_updates: AtomicU64::new(0),
+    redraw_requests: AtomicU64::new(0),
+    paint_isolation_candidates: AtomicU64::new(0),
+    paint_isolation_records: AtomicU64::new(0),
+    paint_isolation_replays: AtomicU64::new(0),
+    paint_isolation_invalidations: AtomicU64::new(0),
+    paint_isolation_fallbacks: AtomicU64::new(0),
+    paint_isolation_tile_records: AtomicU64::new(0),
+    paint_isolation_tile_replays: AtomicU64::new(0),
+    damage_full_frames: AtomicU64::new(0),
+    damage_partial_frames: AtomicU64::new(0),
+    damage_regions: AtomicU64::new(0),
+    damage_merged_regions: AtomicU64::new(0),
+    damage_full_frame_promotions: AtomicU64::new(0),
+    damage_target_reuses: AtomicU64::new(0),
+    damage_partial_clears: AtomicU64::new(0),
+    damage_full_clears: AtomicU64::new(0),
+    damage_full_pixels: AtomicU64::new(0),
+    damage_partial_pixels: AtomicU64::new(0),
 };
 
 static FRAME_REQUEST_STATS: FrameRequestAccumulator = FrameRequestAccumulator {
@@ -533,13 +793,27 @@ pub fn record_frame_content(
     draw_list: aimer_cupid::draw_cmd::DrawListStats,
     text_cache_hits: u64,
     text_cache_misses: u64,
+    rebuild: aimer_widget::RebuildStats,
+    paint: aimer_widget::PaintStats,
+    work: aimer_widget::FrameWorkStats,
 ) {
     FRAME_CONTENT_STATS.record(
         drawn_nodes,
         draw_list,
         text_cache_hits,
         text_cache_misses,
+        rebuild,
+        paint,
+        work,
     );
+}
+
+/// Records one frame using the current full-target repaint path.
+#[doc(hidden)]
+#[inline]
+#[cfg(any(feature = "frame-stats", debug_assertions))]
+pub(crate) fn record_full_frame_damage(width: u32, height: u32) {
+    FRAME_CONTENT_STATS.record_full_frame_damage(width, height);
 }
 
 /// Takes a periodic debug report and resets the two frame accumulators.
@@ -744,6 +1018,35 @@ mod tests {
             },
             4,
             1,
+            aimer_widget::RebuildStats {
+                visits: 4,
+                pruned: 1,
+                stateful_checks: 3,
+                stateless_checks: 2,
+                stateful_builds: 1,
+                stateless_builds: 0,
+            },
+            aimer_widget::PaintStats {
+                candidates: 2,
+                records: 1,
+                replays: 0,
+                invalidations: 1,
+                fallbacks: 0,
+                tile_records: 0,
+                tile_replays: 0,
+            },
+            aimer_widget::FrameWorkStats {
+                layout_calls: 3,
+                hit_test_visits: 4,
+                paint_calls: 5,
+                root_draw_calls: 1,
+                scroll_events: 2,
+                scroll_steps: 3,
+                smoothing_steps: 1,
+                state_updates: 2,
+                scroll_offset_updates: 3,
+                redraw_requests: 4,
+            },
         );
         accumulator.record(
             6,
@@ -756,7 +1059,37 @@ mod tests {
             },
             2,
             3,
+            aimer_widget::RebuildStats {
+                visits: 2,
+                pruned: 0,
+                stateful_checks: 1,
+                stateless_checks: 1,
+                stateful_builds: 0,
+                stateless_builds: 1,
+            },
+            aimer_widget::PaintStats {
+                candidates: 1,
+                records: 0,
+                replays: 1,
+                invalidations: 0,
+                fallbacks: 1,
+                tile_records: 0,
+                tile_replays: 1,
+            },
+            aimer_widget::FrameWorkStats {
+                layout_calls: 1,
+                hit_test_visits: 2,
+                paint_calls: 3,
+                root_draw_calls: 1,
+                scroll_events: 1,
+                scroll_steps: 2,
+                smoothing_steps: 1,
+                state_updates: 1,
+                scroll_offset_updates: 2,
+                redraw_requests: 3,
+            },
         );
+        accumulator.record_full_frame_damage(10, 20);
 
         let stats = accumulator.snapshot();
         assert_eq!(stats.frames, 2);
@@ -768,6 +1101,39 @@ mod tests {
         assert_eq!(stats.image_uploads, 4);
         assert_eq!(stats.text_cache_hits, 6);
         assert_eq!(stats.text_cache_misses, 4);
+        assert_eq!(stats.rebuild_visits, 6);
+        assert_eq!(stats.rebuild_pruned, 1);
+        assert_eq!(stats.stateful_rebuild_checks, 4);
+        assert_eq!(stats.stateless_rebuild_checks, 3);
+        assert_eq!(stats.stateful_builds, 1);
+        assert_eq!(stats.stateless_builds, 1);
+        assert_eq!(stats.layout_calls, 4);
+        assert_eq!(stats.hit_test_visits, 6);
+        assert_eq!(stats.paint_calls, 8);
+        assert_eq!(stats.root_draw_calls, 2);
+        assert_eq!(stats.scroll_events, 3);
+        assert_eq!(stats.scroll_steps, 5);
+        assert_eq!(stats.smoothing_steps, 2);
+        assert_eq!(stats.state_updates, 3);
+        assert_eq!(stats.scroll_offset_updates, 5);
+        assert_eq!(stats.redraw_requests, 7);
+        assert_eq!(stats.paint_isolation_candidates, 3);
+        assert_eq!(stats.paint_isolation_records, 1);
+        assert_eq!(stats.paint_isolation_replays, 1);
+        assert_eq!(stats.paint_isolation_invalidations, 1);
+        assert_eq!(stats.paint_isolation_fallbacks, 1);
+        assert_eq!(stats.paint_isolation_tile_records, 0);
+        assert_eq!(stats.paint_isolation_tile_replays, 1);
+        assert_eq!(stats.damage_full_frames, 1);
+        assert_eq!(stats.damage_partial_frames, 0);
+        assert_eq!(stats.damage_regions, 0);
+        assert_eq!(stats.damage_merged_regions, 0);
+        assert_eq!(stats.damage_full_frame_promotions, 0);
+        assert_eq!(stats.damage_target_reuses, 0);
+        assert_eq!(stats.damage_partial_clears, 0);
+        assert_eq!(stats.damage_full_clears, 1);
+        assert_eq!(stats.damage_full_pixels, 200);
+        assert_eq!(stats.damage_partial_pixels, 0);
         assert_eq!(stats.average_drawn_nodes(), 8.0);
         assert_eq!(stats.average_draw_commands(), 15.0);
         assert_eq!(stats.average_retained_layers(), 1.5);

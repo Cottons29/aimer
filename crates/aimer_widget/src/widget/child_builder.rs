@@ -506,6 +506,20 @@ impl Drawable for RetainedChildElement {
     }
 
     #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        if let Some(child) = self.child() {
+            child.paint(ctx);
+        }
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        if let Some(child) = self.child() {
+            child.sync_paint_geometry(ctx);
+        }
+    }
+
+    #[inline]
     fn is_paint_stable(&self) -> bool {
         self.child()
             .map(Drawable::is_paint_stable)

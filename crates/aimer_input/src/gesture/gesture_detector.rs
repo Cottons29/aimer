@@ -480,6 +480,15 @@ impl<E: Element + 'static> Rebuildable for RawGestureDetector<E> {
             return;
         };
 
+        // The state-carry walk can revisit a detector after an ancestor has
+        // already moved its press into this replacement. Do not replace a live
+        // recognizer with the now-drained default state from that second visit.
+        if *old.state.borrow() == GestureState::default()
+            && *self.state.borrow() != GestureState::default()
+        {
+            return;
+        }
+
         *self.state.borrow_mut() = std::mem::take(&mut *old.state.borrow_mut());
     }
 }

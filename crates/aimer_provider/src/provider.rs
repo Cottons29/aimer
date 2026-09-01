@@ -843,7 +843,8 @@ impl<T: 'static> LayoutElement for ProviderElement<T> {
     }
 }
 
-impl<T: 'static> EventElement for ProviderElement<T> {}
+impl<T: 'static> EventElement for ProviderElement<T> {
+}
 
 impl<T: 'static> Rebuildable for ProviderElement<T> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
@@ -1098,7 +1099,8 @@ impl<T: 'static, A: 'static> LayoutElement for StoreElement<T, A> {
         self.child.pos_start_end()
     }
 }
-impl<T: 'static, A: 'static> EventElement for StoreElement<T, A> {}
+impl<T: 'static, A: 'static> EventElement for StoreElement<T, A> {
+}
 impl<T: 'static, A: 'static> Rebuildable for StoreElement<T, A> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.rebuild_if_dirty(ctx));
@@ -1126,8 +1128,8 @@ mod tests {
     use aimer_utils::PanicSite;
     use aimer_widget::base::{BuildConsumer, BuildContext, WindowHandle};
     use aimer_widget::{
-        Drawable, EventElement, LayoutElement, Rebuildable, State, StateUpdater, StatefulElement,
-        StatefulWidget, VisitorElement, Widget,
+        Drawable, Element, EventElement, LayoutElement, Rebuildable, State, StateUpdater,
+        StatefulElement, StatefulWidget, StatelessElement, VisitorElement, Widget,
     };
 
     use super::*;
@@ -1331,6 +1333,42 @@ mod tests {
 
     impl aimer_widget::PortableWidget for WatchingWidget {}
 
+    struct KeyedProviderConsumer;
+
+    struct KeyedProviderConsumerState;
+
+    impl StatefulWidget for KeyedProviderConsumer {
+        type State = KeyedProviderConsumerState;
+
+        fn create_state(self) -> Self::State {
+            KeyedProviderConsumerState
+        }
+    }
+
+    impl State<KeyedProviderConsumer> for KeyedProviderConsumerState {
+        fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+
+        fn build(&self, context: &BuildContext) -> impl Widget {
+            let _ = ProviderContext::read::<Counter>(context);
+            LeafWidget
+        }
+    }
+
+    impl Widget for KeyedProviderConsumer {
+        fn to_element(self, context: &BuildContext) -> AnyElement {
+            StatefulElement::new_with_name(
+                self,
+                context,
+                "KeyedProviderConsumer",
+                Some(aimer_widget::Key::Static("keyed-provider-consumer")),
+            )
+            .0
+            .boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for KeyedProviderConsumer {}
+
     impl StatefulWidget for MultiSelectorWidget {
         type State = MultiSelectorState;
 
@@ -1394,6 +1432,16 @@ mod tests {
             #[cfg(not(target_arch = "wasm32"))]
             dummy_async_handle(),
         )
+    }
+
+    fn contains_error_element(element: &dyn Element) -> bool {
+        if element.debug_name() == "ErrorWidget" {
+            return true;
+        }
+
+        let mut found = false;
+        element.visit_children(&mut |child| found |= contains_error_element(child));
+        found
     }
 
     #[cfg(feature = "portable-guest")]
@@ -1818,6 +1866,33 @@ mod tests {
             [3, 4],
             "every build of the child sees the value that is in scope"
         );
+    }
+
+    #[test]
+    fn keyed_state_carry_reenters_provider_scope() {
+        let handle = ProviderHandle::new(Counter::default());
+        let initial_context = context();
+        let build_handle = handle.clone();
+        let root = StatelessElement::from_builder(
+            &initial_context,
+            move |context| {
+                Provider::new()
+                    .handle(build_handle.clone())
+                    .child(KeyedProviderConsumer)
+                    .to_element(context)
+            },
+            None,
+            "ProviderParent",
+        );
+
+        Rebuildable::mark_needs_rebuild(&root);
+        let fresh_context = context();
+
+        // The keyed descendant is rebuilt while state is carried from the old
+        // tree. ProviderElement must re-enter its scope for that build.
+        root.rebuild_if_dirty(&fresh_context);
+
+        assert!(!contains_error_element(&root));
     }
 
     #[test]

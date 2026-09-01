@@ -11,7 +11,7 @@ use crate::renderer::SvgRenderItem;
 use crate::svg::{
     SvgColor, SvgGeometryCache, SvgMesh, SvgMeshStyle, SvgNode, SvgNodeStyleOverride, SvgPaintOrder,
 };
-use crate::utilities::Mat3;
+use crate::utilities::{Mat3, Rgba8};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -36,7 +36,7 @@ impl SvgVertex {
 struct SvgInstance {
     transform_x: [f32; 4],
     transform_y: [f32; 4],
-    color: [f32; 4],
+    color: Rgba8,
     clip_rect: [f32; 4],
     clip_border_radius: [f32; 4],
     viewport: [f32; 4],
@@ -46,7 +46,7 @@ impl SvgInstance {
     const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
         1 => Float32x4,
         2 => Float32x4,
-        3 => Float32x4,
+        3 => Unorm8x4,
         4 => Float32x4,
         5 => Float32x4,
         6 => Float32x4,
@@ -372,7 +372,7 @@ impl SvgPipeline {
                 transform.cols[2][1],
                 0.0,
             ],
-            color: [color.r, color.g, color.b, color.a * opacity],
+            color: Rgba8::from_unorm([color.r, color.g, color.b, color.a * opacity]),
             clip_rect: item.clip_rect,
             clip_border_radius: item.clip_border_radius,
             viewport: [
@@ -625,6 +625,19 @@ mod tests {
         assert_eq!(
             SvgPipeline::multisample_state(crate::AntiAlias::Msaa4x).count,
             4
+        );
+    }
+
+    #[test]
+    fn svg_instance_uses_unorm_bytes_for_paint_color() {
+        assert_eq!(std::mem::size_of::<super::SvgInstance>(), 84);
+        assert_eq!(
+            super::SvgInstance::ATTRIBUTES[2].format,
+            wgpu::VertexFormat::Unorm8x4
+        );
+        assert_eq!(
+            super::SvgInstance::ATTRIBUTES[2].offset,
+            std::mem::offset_of!(super::SvgInstance, color) as u64
         );
     }
 }

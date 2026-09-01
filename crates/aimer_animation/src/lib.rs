@@ -1,4 +1,8 @@
+extern crate self as aimer_animation;
+
 pub mod control;
+#[path = "layout/transition.rs"]
+pub mod layout;
 mod local_cell;
 pub mod primitives;
 pub mod widgets;

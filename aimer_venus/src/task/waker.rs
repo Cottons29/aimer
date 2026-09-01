@@ -1,8 +1,10 @@
 use std::cell::{Cell, UnsafeCell};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, OnceLock};
 use std::task::{Wake, Waker};
 use std::thread::{self, ThreadId};
+
+use crossbeam::queue::SegQueue;
 
 use crate::task::TaskId;
 
@@ -15,12 +17,12 @@ use crate::task::TaskId;
 /// `EventLoopProxy::send_event`.
 pub type Notifier = Box<dyn Fn() + Send + Sync>;
 
-/// The wakes raised by the UI thread itself, kept out of the mutex.
+/// The wakes raised by the UI thread itself, kept out of the cross-thread queue.
 ///
 /// Most wakes never cross a thread: `yield_now`, budget slicing and `set_state`
 /// chains all wake from inside a poll, on the UI thread, thousands of times a
-/// frame under load. Routing them through the cross-thread lock would put an
-/// atomic read-modify-write on the hottest path the runtime has, paying for a
+/// frame under load. Routing them through the cross-thread queue would put an
+/// atomic operation on the hottest path the runtime has, paying for a
 /// synchronization that same-thread code does not need.
 ///
 /// # Safety invariant
@@ -50,8 +52,8 @@ unsafe impl Sync for UiWakes {}
 /// - **Same-thread wakes** — the overwhelming majority — go into `local`, a
 ///   plain unsynchronized buffer, because the producer and the consumer are
 ///   provably the same thread.
-/// - **Cross-thread wakes** — a worker finishing an offload — take the mutex
-///   and nudge the parked event loop through the notifier.
+/// - **Cross-thread wakes** — a worker finishing an offload — enter the
+///   lock-free queue and nudge the parked event loop through the notifier.
 ///
 /// The queue is read by the scheduler at the start of every phase, and the two
 /// flags mean the overwhelmingly common "nothing was woken" answer costs one
@@ -60,10 +62,10 @@ pub(crate) struct WakeQueue {
     /// Wakes raised on the UI thread itself; unsynchronized by design.
     local: UiWakes,
     /// Wakes raised on any other thread.
-    shared: Mutex<Vec<TaskId>>,
-    /// Whether `shared` holds anything, so draining an empty queue never locks.
+    shared: SegQueue<TaskId>,
+    /// Whether `shared` holds anything, so draining an empty queue never scans.
     has_shared: AtomicBool,
-    notifier: Mutex<Option<Notifier>>,
+    notifier: OnceLock<Notifier>,
     owner: ThreadId,
 }
 
@@ -79,18 +81,16 @@ impl WakeQueue {
                 pending: UnsafeCell::new(Vec::new()),
                 has_pending: Cell::new(false),
             },
-            shared: Mutex::new(Vec::new()),
+            shared: SegQueue::new(),
             has_shared: AtomicBool::new(false),
-            notifier: Mutex::new(None),
+            notifier: OnceLock::new(),
             owner: thread::current().id(),
         })
     }
 
     /// Installs the callback used to wake a parked event loop.
     pub(crate) fn set_notifier(&self, notifier: Notifier) {
-        if let Ok(mut slot) = self.notifier.lock() {
-            *slot = Some(notifier);
-        }
+        let _ = self.notifier.set(notifier);
     }
 
     /// Publishes a wake for `id`, nudging the event loop if the wake came from
@@ -98,7 +98,7 @@ impl WakeQueue {
     ///
     /// A wake from the UI thread takes the lock-free fast path: the loop is
     /// demonstrably awake and the queue's consumer is this very thread, so
-    /// neither the mutex nor the notifier has anything to add.
+    /// neither the queue nor the notifier has anything to add.
     pub(crate) fn wake(&self, id: TaskId) {
         if thread::current().id() == self.owner {
             // SAFETY: this branch runs only on the owner thread, the sole
@@ -108,14 +108,10 @@ impl WakeQueue {
             return;
         }
 
-        if let Ok(mut shared) = self.shared.lock() {
-            shared.push(id);
-        }
+        self.shared.push(id);
         self.has_shared.store(true, Ordering::Release);
 
-        if let Ok(notifier) = self.notifier.lock()
-            && let Some(notifier) = notifier.as_ref()
-        {
+        if let Some(notifier) = self.notifier.get() {
             notifier();
         }
     }
@@ -136,11 +132,10 @@ impl WakeQueue {
             self.local.has_pending.set(false);
         }
 
-        if self.has_shared.load(Ordering::Acquire) {
-            if let Ok(mut shared) = self.shared.lock() {
-                out.append(&mut shared);
+        while self.has_shared.swap(false, Ordering::AcqRel) {
+            while let Some(id) = self.shared.pop() {
+                out.push(id);
             }
-            self.has_shared.store(false, Ordering::Release);
         }
     }
 

@@ -47,7 +47,7 @@ fn presentation_preedit<'a>(
     preedit: &'a str,
     cursor: Option<(usize, usize)>,
 ) -> (Cow<'a, str>, Option<(usize, usize)>) {
-    if input_type != InputType::Obscure {
+    if !input_type.is_obscured() {
         return (Cow::Borrowed(preedit), cursor);
     }
 

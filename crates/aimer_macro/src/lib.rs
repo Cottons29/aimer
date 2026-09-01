@@ -11,6 +11,7 @@ use syn::{Item, ItemFn, parse_macro_input};
 
 use crate::auto_trait_impl::auto_impl;
 use crate::codegen::router::RouterCodegen;
+use crate::codegen::animatable::{animation_path, generate_animatable_impl};
 use crate::codegen::theme::{generate_theme_impl, style_path};
 use crate::codegen::{RawWidgetCodegen, StatefulWidgetCodegen, StatelessWidgetCodegen};
 use crate::unique_key::UniqueKeyInput;
@@ -435,6 +436,31 @@ pub fn drawable_element_derive(input: TokenStream) -> TokenStream {
 pub fn theme_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
     let output = style_path().and_then(|style_path| generate_theme_impl(input, style_path));
+    output.unwrap_or_else(syn::Error::into_compile_error).into()
+}
+
+/// Derives recursive interpolation for structs and explicitly-policy enums.
+///
+/// Named and tuple structs interpolate every field; unit structs return the
+/// unit value. Every struct field must implement
+/// `aimer_animation::Animatable`, and generated bounds preserve the type's
+/// generics and existing `where` clause.
+///
+/// Enums require `#[animatable(discrete)]` or
+/// `#[animatable(fieldwise)]`. Discrete enums clone the source when `t < 0.5`
+/// and the target otherwise, so `NaN` selects the target. Fieldwise enums
+/// interpolate fields when the variants match and use the discrete rule when
+/// they differ. Enum payloads therefore need `Clone`; fieldwise payloads also
+/// need `Animatable`.
+///
+/// The generated implementation delegates `t` unchanged to recursive fields,
+/// including endpoint, extrapolation, and non-finite behavior. Custom mappings
+/// between unrelated enum variants require a manual implementation.
+#[proc_macro_derive(Animatable, attributes(animatable))]
+pub fn animatable_derive(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as syn::DeriveInput);
+    let output = animation_path()
+        .and_then(|animation_path| generate_animatable_impl(input, animation_path));
     output.unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
@@ -1584,7 +1610,23 @@ use aimer_widget::portable::{
     PortablePropertyConversion, PortablePropertyReflection, PortableWidgetSchema,
 };
 use aimer_widget::{AnyElement, AnyWidget, RequiredChild, Widget};
-use std::sync::Mutex;
+use std::cell::RefCell;
+
+thread_local! {
+    static BUILD_LOG: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+}
+
+fn log_build(step: &'static str) {
+    BUILD_LOG.with(|log| log.borrow_mut().push(step));
+}
+
+fn clear_build_log() {
+    BUILD_LOG.with(|log| log.borrow_mut().clear());
+}
+
+fn build_log() -> Vec<&'static str> {
+    BUILD_LOG.with(|log| log.borrow().clone())
+}
 
 struct PointList;
 
@@ -1634,8 +1676,6 @@ struct Stack<W> {
     children: Vec<W>,
 }
 
-static BUILD_LOG: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
-
 #[derive(PortableWidget)]
 struct BuilderProbe<W = RequiredChild> {
     count: u8,
@@ -1646,26 +1686,26 @@ struct BuilderProbe<W = RequiredChild> {
 
 impl BuilderProbe {
     fn new() -> Self {
-        BUILD_LOG.lock().unwrap().push("new");
+        log_build("new");
         Self { count: 0, label: None, child: RequiredChild }
     }
 }
 
 impl<W> BuilderProbe<W> {
     fn count(mut self, count: u8) -> Self {
-        BUILD_LOG.lock().unwrap().push("count");
+        log_build("count");
         self.count = count;
         self
     }
 
     fn label(mut self, label: String) -> Self {
-        BUILD_LOG.lock().unwrap().push("label");
+        log_build("label");
         self.label = Some(label);
         self
     }
 
     fn child<N: Widget>(self, child: N) -> BuilderProbe<N> {
-        BUILD_LOG.lock().unwrap().push("child");
+        log_build("child");
         BuilderProbe { count: self.count, label: self.label, child }
     }
 }
@@ -1727,7 +1767,7 @@ fn manual_probe(
     _node: aimer_anteros::WidgetNodeView<'_>,
     _children: Vec<AnyWidget>,
 ) -> Result<AnyWidget, PortableMaterializeError> {
-    BUILD_LOG.lock().unwrap().push("manual");
+    log_build("manual");
     Ok(Leaf.boxed())
 }
 
@@ -1782,7 +1822,7 @@ fn generated_metadata_is_canonical_and_reflected() {
 
 #[test]
 fn generated_materializer_builds_properties_before_the_last_child_and_allows_override() {
-    BUILD_LOG.lock().unwrap().clear();
+    clear_build_log();
     let schema = <BuilderProbe<RequiredChild> as PortableWidgetSchema>::SCHEMA;
     let properties = [
         WidgetProperty::new(schema.properties()[0].id(), PropertyValue::I64(7)),
@@ -1807,9 +1847,9 @@ fn generated_materializer_builds_properties_before_the_last_child_and_allows_ove
         vec![Leaf.boxed()],
     )
     .unwrap();
-    assert_eq!(*BUILD_LOG.lock().unwrap(), ["new", "count", "label", "child"]);
+    assert_eq!(build_log(), ["new", "count", "label", "child"]);
 
-    BUILD_LOG.lock().unwrap().clear();
+    clear_build_log();
     let child_result = <BuilderProbe<RequiredChild> as PortableNativeWidget>::materialize_widget(
         &document,
         document.node(0).unwrap(),
@@ -1823,7 +1863,7 @@ fn generated_materializer_builds_properties_before_the_last_child_and_allows_ove
         child_error,
         PortableMaterializeError::InvalidChildCount { expected: 1, actual: 0 },
     );
-    assert!(BUILD_LOG.lock().unwrap().is_empty());
+    assert!(build_log().is_empty());
 
     let extra_child_result =
         <BuilderProbe<RequiredChild> as PortableNativeWidget>::materialize_widget(
@@ -1839,9 +1879,9 @@ fn generated_materializer_builds_properties_before_the_last_child_and_allows_ove
         extra_child_error,
         PortableMaterializeError::InvalidChildCount { expected: 1, actual: 2 },
     );
-    assert!(BUILD_LOG.lock().unwrap().is_empty());
+    assert!(build_log().is_empty());
 
-    BUILD_LOG.lock().unwrap().clear();
+    clear_build_log();
     let default_properties = [WidgetProperty::new(
         schema.properties()[0].id(),
         PropertyValue::I64(8),
@@ -1862,9 +1902,9 @@ fn generated_materializer_builds_properties_before_the_last_child_and_allows_ove
         vec![Leaf.boxed()],
     )
     .unwrap();
-    assert_eq!(*BUILD_LOG.lock().unwrap(), ["new", "count", "child"]);
+    assert_eq!(build_log(), ["new", "count", "child"]);
 
-    BUILD_LOG.lock().unwrap().clear();
+    clear_build_log();
     let invalid_properties = [
         WidgetProperty::new(schema.properties()[0].id(), PropertyValue::I64(256)),
         WidgetProperty::new(schema.properties()[1].id(), PropertyValue::StringRef(0)),
@@ -1887,9 +1927,9 @@ fn generated_materializer_builds_properties_before_the_last_child_and_allows_ove
         ),
         Err(PortableMaterializeError::InvalidPropertyValue { .. })
     ));
-    assert!(BUILD_LOG.lock().unwrap().is_empty());
+    assert!(build_log().is_empty());
 
-    BUILD_LOG.lock().unwrap().clear();
+    clear_build_log();
     let manual_schema = <ManualProbe as PortableWidgetSchema>::SCHEMA;
     let manual_nodes = [WidgetNode::new(manual_schema.widget().id(), Version::new(1, 0))];
     let manual_image = WidgetDocument::new(0, 0, 0, &manual_nodes, &[], &[])
@@ -1902,7 +1942,7 @@ fn generated_materializer_builds_properties_before_the_last_child_and_allows_ove
         Vec::new(),
     )
     .unwrap();
-    assert_eq!(*BUILD_LOG.lock().unwrap(), ["manual"]);
+    assert_eq!(build_log(), ["manual"]);
 }
 "#;
 

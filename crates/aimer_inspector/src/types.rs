@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(target_arch = "wasm32"))]
+use crossbeam::channel::{Receiver, Sender, TrySendError, bounded};
+#[cfg(not(target_arch = "wasm32"))]
+use std::cell::RefCell;
+#[cfg(not(target_arch = "wasm32"))]
+use std::rc::Rc;
+
 /// Mirror of the engine's WidgetNode for deserialisation.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WidgetNode {
@@ -34,8 +41,91 @@ pub struct InspectorState {
     pub hovered_widget_id: Option<u64>,
 }
 
-// /// Handle to the inspector background thread and shared state.
-// pub struct InspectorClient {
-//     pub state: Arc<Mutex<InspectorState>>,
-//     cmd_tx: std::sync::mpsc::Sender<String>,
-// }
+/// A native inspector snapshot cache fed by the WebSocket owner thread.
+///
+/// The cache has no shared mutable state between the WebSocket task and the
+/// CLI. The task publishes immutable snapshots through a one-slot mailbox and
+/// the CLI drains the newest snapshot when it renders a frame.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone)]
+pub struct InspectorStateStore {
+    state: Rc<RefCell<InspectorState>>,
+    updates: Receiver<InspectorState>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone)]
+pub(crate) struct InspectorStatePublisher {
+    sender: Sender<InspectorState>,
+    discard: Receiver<InspectorState>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl InspectorStateStore {
+    pub(crate) fn channel() -> (Self, InspectorStatePublisher) {
+        let (sender, updates) = bounded(1);
+        (
+            Self {
+                state: Rc::new(RefCell::new(InspectorState::default())),
+                updates: updates.clone(),
+            },
+            InspectorStatePublisher {
+                sender,
+                discard: updates,
+            },
+        )
+    }
+
+    /// Returns the newest inspector snapshot without blocking.
+    pub fn snapshot(&self) -> InspectorState {
+        let mut state = self.state.borrow_mut();
+        while let Ok(next) = self.updates.try_recv() {
+            *state = next;
+        }
+        state.clone()
+    }
+
+    pub(crate) fn update(&self, update: impl FnOnce(&mut InspectorState)) {
+        let mut state = self.state.borrow_mut();
+        while let Ok(next) = self.updates.try_recv() {
+            *state = next;
+        }
+        update(&mut state);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl InspectorStatePublisher {
+    pub(crate) fn publish(&self, state: InspectorState) {
+        match self.sender.try_send(state) {
+            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+            Err(TrySendError::Full(state)) => {
+                let _ = self.discard.try_recv();
+                let _ = self.sender.try_send(state);
+            }
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::{InspectorState, InspectorStateStore};
+
+    #[test]
+    fn state_store_keeps_the_newest_snapshot_without_blocking() {
+        let (store, publisher) = InspectorStateStore::channel();
+
+        publisher.publish(InspectorState {
+            connected: true,
+            ..InspectorState::default()
+        });
+        let latest = InspectorState {
+            enabled: true,
+            ..InspectorState::default()
+        };
+        publisher.publish(latest.clone());
+
+        assert_eq!(store.snapshot().enabled, latest.enabled);
+        assert_eq!(store.snapshot().connected, latest.connected);
+    }
+}

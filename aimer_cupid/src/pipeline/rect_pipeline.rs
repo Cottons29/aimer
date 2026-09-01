@@ -2,22 +2,23 @@ use bytemuck::{Pod, Zeroable};
 
 use super::frame_upload::FrameUpload;
 use super::image_pipeline::InstanceBufferPolicy;
+use crate::utilities::Rgba8;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct RectInstance {
     pub position: [f32; 2],
     pub size: [f32; 2],
-    pub color: [f32; 4],
+    pub color: Rgba8,
     /// Per-corner border radius: [top-left, top-right, bottom-right,
     /// bottom-left]
     pub border_radius: [f32; 4],
     /// Per-side border width: [top, right, bottom, left]
     pub border_width: [f32; 4],
-    pub border_color: [f32; 4],
+    pub border_color: Rgba8,
     /// Per-side outline width: [top, right, bottom, left]
     pub outline_width: [f32; 4],
-    pub outline_color: [f32; 4],
+    pub outline_color: Rgba8,
     /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
     pub clip_rect: [f32; 4],
     /// Border radius for the clip rect: [top-left, top-right, bottom-right,
@@ -25,8 +26,8 @@ pub struct RectInstance {
     pub clip_border_radius: [f32; 4],
     /// Shadow parameters: [offset_x, offset_y, blur, spread]
     pub shadow_params: [f32; 4],
-    /// Shadow color (RGBA, 0..1)
-    pub shadow_color: [f32; 4],
+    /// Shadow color in straight-alpha RGBA bytes.
+    pub shadow_color: Rgba8,
     /// Shadow flags: [inset (0.0 or 1.0), 0, 0, 0]
     pub shadow_flags: [f32; 4],
 }
@@ -35,16 +36,16 @@ impl RectInstance {
     const ATTRIBS: [wgpu::VertexAttribute; 13] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
-        2 => Float32x4,
+        2 => Unorm8x4,
         3 => Float32x4,
         4 => Float32x4,
-        5 => Float32x4,
+        5 => Unorm8x4,
         6 => Float32x4,
-        7 => Float32x4,
+        7 => Unorm8x4,
         8 => Float32x4,
         9 => Float32x4,
         10 => Float32x4,
-        11 => Float32x4,
+        11 => Unorm8x4,
         12 => Float32x4,
     ];
 
@@ -289,5 +290,35 @@ impl RectPipeline {
     pub fn end_frame(&mut self, queue: &wgpu::Queue) {
         self.upload
             .upload(queue, &self.instance_buffer, &self.instances);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RectInstance;
+
+    #[test]
+    fn rect_instance_uses_unorm_bytes_for_each_paint_color() {
+        assert_eq!(std::mem::size_of::<RectInstance>(), 144);
+        assert_eq!(RectInstance::ATTRIBS[2].format, wgpu::VertexFormat::Unorm8x4);
+        assert_eq!(RectInstance::ATTRIBS[5].format, wgpu::VertexFormat::Unorm8x4);
+        assert_eq!(RectInstance::ATTRIBS[7].format, wgpu::VertexFormat::Unorm8x4);
+        assert_eq!(RectInstance::ATTRIBS[11].format, wgpu::VertexFormat::Unorm8x4);
+        assert_eq!(
+            RectInstance::ATTRIBS[2].offset,
+            std::mem::offset_of!(RectInstance, color) as u64
+        );
+        assert_eq!(
+            RectInstance::ATTRIBS[5].offset,
+            std::mem::offset_of!(RectInstance, border_color) as u64
+        );
+        assert_eq!(
+            RectInstance::ATTRIBS[7].offset,
+            std::mem::offset_of!(RectInstance, outline_color) as u64
+        );
+        assert_eq!(
+            RectInstance::ATTRIBS[11].offset,
+            std::mem::offset_of!(RectInstance, shadow_color) as u64
+        );
     }
 }

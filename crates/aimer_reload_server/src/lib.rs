@@ -2,8 +2,8 @@
 
 use std::io;
 use std::collections::VecDeque;
+use std::cell::RefCell;
 use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use aimer_reload_protocol::{
@@ -138,14 +138,14 @@ pub struct ReloadCommandListener<S> {
     credentials: SessionCredentials,
     limits: ProtocolLimits,
     sink: S,
-    results: Mutex<ResultLedger>,
+    results: RefCell<ResultLedger>,
     security: Option<SecurityState>,
 }
 
 struct SecurityState {
     policy: ListenerSecurity,
     created_at: Instant,
-    failures: Mutex<AuthenticationFailures>,
+    failures: RefCell<AuthenticationFailures>,
 }
 
 struct AuthenticationFailures {
@@ -215,14 +215,14 @@ where
             credentials,
             limits,
             sink,
-            results: Mutex::new(ResultLedger {
+            results: RefCell::new(ResultLedger {
                 capacity: limits.terminal_result_limit(),
                 entries: VecDeque::with_capacity(limits.terminal_result_limit()),
             }),
             security: Some(SecurityState {
                 policy: security,
                 created_at: Instant::now(),
-                failures: Mutex::new(AuthenticationFailures {
+                failures: RefCell::new(AuthenticationFailures {
                     window_started_at: None,
                     count: 0,
                 }),
@@ -281,10 +281,7 @@ where
         if now.duration_since(security.created_at) >= security.policy.session_lifetime {
             return Err(ListenerError::SessionExpired);
         }
-        let mut failures = security
-            .failures
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let mut failures = security.failures.borrow_mut();
         if let Some(started_at) = failures.window_started_at
             && now.duration_since(started_at) >= security.policy.failure_window
         {
@@ -302,10 +299,7 @@ where
             return;
         };
         let now = Instant::now();
-        let mut failures = security
-            .failures
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let mut failures = security.failures.borrow_mut();
         match failures.window_started_at {
             Some(started_at)
                 if now.duration_since(started_at) < security.policy.failure_window => {}
@@ -321,34 +315,34 @@ where
         let Some(security) = &self.security else {
             return;
         };
-        let mut failures = security
-            .failures
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let mut failures = security.failures.borrow_mut();
         failures.window_started_at = None;
         failures.count = 0;
     }
 
     fn execute_once(&self, command: ReloadCommand) -> ReloadResult {
-        let mut ledger = self.results.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some(entry) = ledger
+        let existing = self
+            .results
+            .borrow()
             .entries
             .iter()
             .find(|entry| entry.request_id == command.request_id())
-        {
-            if entry.module_digest == command.module_digest() {
-                return entry.result.clone();
+            .map(|entry| (entry.module_digest, entry.result.clone()));
+        if let Some((module_digest, result)) = existing {
+            if module_digest == command.module_digest() {
+                return result;
             }
             return ReloadResult::Rejected {
                 stage: ReloadStage::Preflight,
                 error_code: REQUEST_ID_CONFLICT,
-                active_generation: active_generation(&entry.result),
+                active_generation: active_generation(&result),
                 diagnostic: "request ID was already used for another module digest".to_owned(),
             };
         }
         let request_id = command.request_id();
         let module_digest = command.module_digest();
         let result = self.sink.execute(command);
+        let mut ledger = self.results.borrow_mut();
         if ledger.entries.len() == ledger.capacity {
             ledger.entries.pop_front();
         }
@@ -362,8 +356,7 @@ where
 
     fn lookup_result(&self, request_id: u64) -> Option<ReloadResult> {
         self.results
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .borrow()
             .entries
             .iter()
             .find(|entry| entry.request_id == request_id)
@@ -387,7 +380,8 @@ fn active_generation(result: &ReloadResult) -> u64 {
 mod tests {
     use std::io::{Read, Write};
     use std::net::TcpStream;
-    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, mpsc};
     use std::thread;
     use std::time::Duration;
 
@@ -399,8 +393,7 @@ mod tests {
     fn authenticated_complete_command_returns_the_safe_point_terminal_result() {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
         let limits = ProtocolLimits::new(1024, Duration::from_secs(1)).max_chunk_bytes(3);
-        let received = Arc::new(Mutex::new(None));
-        let sink_received = Arc::clone(&received);
+        let (received_tx, received_rx) = mpsc::channel();
         let expected = ReloadResult::Committed {
             active_generation: 12,
             reset_state_entries: 1,
@@ -413,7 +406,7 @@ mod tests {
             limits,
             ListenerSecurity::new(Duration::from_secs(60), 4, Duration::from_secs(1)),
             move |command: ReloadCommand| {
-                *sink_received.lock().unwrap() = Some(command);
+                received_tx.send(command).unwrap();
                 sink_result.clone()
             },
         )
@@ -442,7 +435,7 @@ mod tests {
 
         assert_eq!(result, expected);
         assert_eq!(server_result, expected);
-        let command = received.lock().unwrap().take().unwrap();
+        let command = received_rx.recv().unwrap();
         assert_eq!(command.request_id(), 73);
         assert_eq!(command.metadata(), metadata);
         assert_eq!(command.module(), b"\0asm\x01\0\0\0");
@@ -454,7 +447,7 @@ mod tests {
         let limits = ProtocolLimits::new(1024, Duration::from_secs(1))
             .max_chunk_bytes(3)
             .max_terminal_results(2);
-        let executions = Arc::new(Mutex::new(0_u32));
+        let executions = Arc::new(AtomicU32::new(0));
         let sink_executions = Arc::clone(&executions);
         let expected = ReloadResult::Committed {
             active_generation: 12,
@@ -468,7 +461,7 @@ mod tests {
             limits,
             ListenerSecurity::new(Duration::from_secs(60), 4, Duration::from_secs(1)),
             move |_command: ReloadCommand| {
-                *sink_executions.lock().unwrap() += 1;
+                sink_executions.fetch_add(1, Ordering::Relaxed);
                 sink_result.clone()
             },
         )
@@ -504,7 +497,7 @@ mod tests {
         );
         server.join().unwrap();
 
-        assert_eq!(*executions.lock().unwrap(), 1);
+        assert_eq!(executions.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -517,7 +510,7 @@ mod tests {
             1,
             Duration::from_secs(60),
         );
-        let executions = Arc::new(Mutex::new(0_u32));
+        let executions = Arc::new(AtomicU32::new(0));
         let sink_executions = Arc::clone(&executions);
         let listener = ReloadCommandListener::bind_secure(
             "127.0.0.1:0",
@@ -525,7 +518,7 @@ mod tests {
             limits,
             security,
             move |_command: ReloadCommand| {
-                *sink_executions.lock().unwrap() += 1;
+                sink_executions.fetch_add(1, Ordering::Relaxed);
                 ReloadResult::Committed {
                     active_generation: 2,
                     reset_state_entries: 0,
@@ -567,7 +560,7 @@ mod tests {
             Err(ListenerError::Protocol(ProtocolError::Authentication))
         ));
         assert!(matches!(second, Err(ListenerError::RateLimited)));
-        assert_eq!(*executions.lock().unwrap(), 0);
+        assert_eq!(executions.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -619,14 +612,13 @@ mod tests {
     fn authenticated_client_transfers_a_wasm_module_and_receives_acknowledgement() {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
         let limits = ProtocolLimits::new(1024, Duration::from_secs(1));
-        let received = Arc::new(Mutex::new(Vec::new()));
-        let sink_received = Arc::clone(&received);
+        let (received_tx, received_rx) = mpsc::channel();
         let listener = ReloadListener::bind(
             "127.0.0.1:0",
             credentials.clone(),
             limits,
             move |module| {
-                *sink_received.lock().unwrap() = module;
+                received_tx.send(module).unwrap();
                 Ok(())
             },
         )
@@ -643,7 +635,7 @@ mod tests {
         assert_eq!(acknowledgement, server_acknowledgement);
         assert_eq!(acknowledgement.request_id, 41);
         assert_eq!(acknowledgement.module_len, module.len());
-        assert_eq!(*received.lock().unwrap(), module);
+        assert_eq!(received_rx.recv().unwrap(), module);
     }
 
     #[test]
@@ -651,14 +643,13 @@ mod tests {
         let server_credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
         let client_credentials = SessionCredentials::from_parts([0x11; 16], [0x5A; 32]);
         let limits = ProtocolLimits::new(1024, Duration::from_secs(1));
-        let received = Arc::new(Mutex::new(Vec::new()));
-        let sink_received = Arc::clone(&received);
+        let (received_tx, received_rx) = mpsc::channel();
         let listener = ReloadListener::bind(
             "127.0.0.1:0",
             server_credentials,
             limits,
             move |module| {
-                *sink_received.lock().unwrap() = module;
+                received_tx.send(module).unwrap();
                 Ok(())
             },
         )
@@ -685,21 +676,20 @@ mod tests {
             client_error,
             ProtocolError::Authentication | ProtocolError::Io(_)
         ));
-        assert!(received.lock().unwrap().is_empty());
+        assert!(received_rx.try_recv().is_err());
     }
 
     #[test]
     fn interrupted_connection_never_reaches_the_module_sink() {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
         let limits = ProtocolLimits::new(1024, Duration::from_secs(1));
-        let received = Arc::new(Mutex::new(Vec::new()));
-        let sink_received = Arc::clone(&received);
+        let (received_tx, received_rx) = mpsc::channel();
         let listener = ReloadListener::bind(
             "127.0.0.1:0",
             credentials,
             limits,
             move |module| {
-                *sink_received.lock().unwrap() = module;
+                received_tx.send(module).unwrap();
                 Ok(())
             },
         )
@@ -714,7 +704,7 @@ mod tests {
             error,
             ListenerError::Protocol(ProtocolError::Io(_))
         ));
-        assert!(received.lock().unwrap().is_empty());
+        assert!(received_rx.try_recv().is_err());
     }
 
     #[test]
@@ -722,14 +712,13 @@ mod tests {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
         let server_limits = ProtocolLimits::new(4, Duration::from_secs(1));
         let client_limits = ProtocolLimits::new(1024, Duration::from_secs(1));
-        let received = Arc::new(Mutex::new(Vec::new()));
-        let sink_received = Arc::clone(&received);
+        let (received_tx, received_rx) = mpsc::channel();
         let listener = ReloadListener::bind(
             "127.0.0.1:0",
             credentials.clone(),
             server_limits,
             move |module| {
-                *sink_received.lock().unwrap() = module;
+                received_tx.send(module).unwrap();
                 Ok(())
             },
         )
@@ -754,7 +743,7 @@ mod tests {
                 maximum: 4
             })
         ));
-        assert!(received.lock().unwrap().is_empty());
+        assert!(received_rx.try_recv().is_err());
     }
 
     #[test]
@@ -762,14 +751,13 @@ mod tests {
         let credentials = SessionCredentials::from_parts([0x11; 16], [0xA5; 32]);
         let wrong_credentials = SessionCredentials::from_parts([0x11; 16], [0x5A; 32]);
         let limits = ProtocolLimits::new(1024, Duration::from_secs(1));
-        let received = Arc::new(Mutex::new(Vec::new()));
-        let sink_received = Arc::clone(&received);
+        let (received_tx, received_rx) = mpsc::channel();
         let listener = ReloadListener::bind(
             "127.0.0.1:0",
             credentials.clone(),
             limits,
             move |module| {
-                *sink_received.lock().unwrap() = module;
+                received_tx.send(module).unwrap();
                 Ok(())
             },
         )
@@ -802,7 +790,7 @@ mod tests {
 
         assert!(first.is_err());
         assert_eq!(second.unwrap(), acknowledgement);
-        assert_eq!(*received.lock().unwrap(), b"\0asm\x01\0\0\0");
+        assert_eq!(received_rx.recv().unwrap(), b"\0asm\x01\0\0\0");
     }
 
     #[test]

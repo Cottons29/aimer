@@ -24,7 +24,7 @@ fn main() {
 Cupid is Aimer's high-performance, cross-platform 2D rendering engine. It provides the foundation for drawing the widget
 tree on native platforms.
 
-- **WGPU-powered** Uses `wgpu` to provide a consistent rendering API across Metal, Vulkan, and DirectX.
+- **WGPU family** Uses `wgpu` to provide a consistent rendering API across Metal, Vulkan, and DirectX.
 - **Batched Rendering** Automatically batches draw calls (rectangles, text, images) to minimize GPU overhead.
 - **Hardware Acceleration** Fully utilizes the GPU for effects like rounded corners, borders, and complex clipping.
 - **Canvas-like API** Simple and intuitive `CupidCanvas` API for lower-level drawing operations.

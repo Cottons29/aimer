@@ -6,6 +6,12 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
 path = "src/main.rs"
+
+[[bin]]
+name = "jaime"
+path = "src/main.rs"
+required-features = ["desktop-bin"]
+
 [dependencies]
 
 aimer = { path = "..", features = ["markdown", "svg", "provider"] }
@@ -15,9 +21,14 @@ reqwest.workspace = true
 
 [dev-dependencies]
 aimer_cli = { path = "../aimer_cli" }
+aimer_attribute.workspace = true
 tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [features]
+default = ["desktop-bin"]
+desktop-bin = []
+
 # Enables the portable lowering hooks used by the application-level guest proof.
 portable-guest = ["aimer/portable-guest", "aimer_widget/portable-guest"]
 

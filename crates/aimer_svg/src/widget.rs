@@ -4,7 +4,7 @@ use std::sync::Arc;
 use aimer_attribute::{Bounds, CacheBounds, Dimension, ResolvedSize};
 use aimer_cupid::svg::{
     SvgFillRule, SvgGeometry, SvgNode, SvgNodeId, SvgNodeStyleOverride, SvgPathCommand, SvgScene,
-    SvgViewport,
+    SvgTransform, SvgViewport,
 };
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerInfo, PointerSource};
@@ -21,6 +21,7 @@ use aimer_widget::{
 };
 
 use crate::{SvgDocument, SvgError, SvgLoadState, SvgLoader, SvgSelector, SvgSource, SvgStyle};
+use crate::source::load_source;
 
 pub type SvgCallback = Callback<SvgHit, ()>;
 
@@ -523,18 +524,20 @@ impl SvgAsset {
 impl Widget for SvgAsset {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let loader = SvgLoader::new(SvgSource::Asset(self.key.clone()));
-        let background_loader = loader.clone();
+        let (source, updates) = loader.background_parts();
         let window = ctx.window.clone();
 
         #[cfg(not(target_arch = "wasm32"))]
         ctx.async_handle.spawn(async move {
-            background_loader.load().await;
+            let _ = updates.send(SvgLoadState::Loading);
+            let _ = updates.send(load_source(&source).await);
             window.request_redraw();
         });
 
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move {
-            background_loader.load().await;
+            let _ = updates.send(SvgLoadState::Loading);
+            let _ = updates.send(load_source(&source).await);
             window.request_redraw();
         });
 
@@ -599,8 +602,9 @@ impl RawSvgAsset {
                     pressed_styles: self.pressed_styles.clone(),
                     callbacks: self.callbacks.clone(),
                 };
-                // Rendering and element-tree access are single-threaded. The loader
-                // only updates its independent synchronized state in the background.
+                // Rendering and element-tree access are single-threaded. The
+                // background task only publishes an owned immutable state through
+                // the loader mailbox; this thread installs the resulting element.
                 unsafe {
                     *self.svg_element.get() = Some(svg.to_element(ctx));
                 }
@@ -760,17 +764,45 @@ impl RawSvg {
         rules
     }
 
-    fn overrides(&self) -> Vec<SvgNodeStyleOverride> {
-        overrides_for_rules(self.document.scene(), &self.active_rules())
+    fn overrides_for_size(&self, width: f32, height: f32) -> Vec<SvgNodeStyleOverride> {
+        let mut overrides = overrides_for_rules(self.document.scene(), &self.active_rules());
+        let Ok(compensation) = self.document.fit_compensation(width, height) else {
+            return overrides;
+        };
+        for node in self
+            .document
+            .scene()
+            .nodes
+            .iter()
+            .filter(|node| node.geometry.is_some())
+        {
+            if let Some(override_) = overrides
+                .iter_mut()
+                .find(|override_| override_.node_id == node.node_id)
+            {
+                let transform = override_.transform.unwrap_or(node.transform);
+                override_.transform = Some(compensation.mul(transform));
+            } else {
+                overrides.push(SvgNodeStyleOverride {
+                    node_id: node.node_id,
+                    fill: None,
+                    stroke: None,
+                    opacity: None,
+                    transform: Some(compensation.mul(node.transform)),
+                });
+            }
+        }
+        overrides
     }
 
     fn hit_at(&self, x: f32, y: f32) -> Option<SvgHit> {
+        let bounds = self.bounds.get_bounds()?;
         hit_test_scene(
             self.document.scene(),
-            self.bounds.get_bounds()?,
+            bounds,
             x,
             y,
-            &self.overrides(),
+            &self.overrides_for_size(bounds.width, bounds.height),
         )
     }
 
@@ -824,7 +856,7 @@ impl Drawable for RawSvg {
         let size = self.resolved_size(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
-        let overrides = self.overrides();
+        let overrides = self.overrides_for_size(size.width, size.height);
         ctx.canvas.draw_svg(
             self.document.scene().clone(),
             (0.0, 0.0).into(),
@@ -961,21 +993,62 @@ pub(crate) fn overrides_for_rules(
                 opacity: None,
                 transform: None,
             };
+            let mut ancestors = Vec::new();
+            let mut current = Some(node.node_id);
+            while let Some(node_id) = current {
+                ancestors.push(node_id);
+                current = scene.node(node_id).and_then(|node| node.parent);
+            }
+            ancestors.reverse();
             let mut matched = false;
-            for (_, style) in rules.iter().filter(|(selector, _)| selector.matches(node)) {
-                matched = true;
-                if style.fill.is_some() {
-                    result.fill = style.fill;
+            let mut group_opacity = 1.0;
+            let mut group_transform = SvgTransform::default();
+            for ancestor_id in ancestors {
+                let Some(ancestor) = scene.node(ancestor_id) else {
+                    continue;
+                };
+                let is_group_ancestor = ancestor.node_id != node.node_id
+                    && ancestor.element == aimer_cupid::svg::SvgElementKind::Group;
+                for (_, style) in rules.iter().filter(|(selector, _)| selector.matches(ancestor))
+                {
+                    matched = true;
+                    if is_group_ancestor {
+                        if style.fill.is_some() {
+                            result.fill = style.fill;
+                        }
+                        if style.stroke.is_some() {
+                            result.stroke = style.stroke;
+                        }
+                        if let Some(opacity) = style.opacity {
+                            group_opacity *= opacity;
+                        }
+                        if let Some(transform) = style.transform {
+                            group_transform = group_transform.mul(transform);
+                        }
+                    } else {
+                        if style.fill.is_some() {
+                            result.fill = style.fill;
+                        }
+                        if style.stroke.is_some() {
+                            result.stroke = style.stroke;
+                        }
+                        if style.opacity.is_some() {
+                            result.opacity = style.opacity;
+                        }
+                        if style.transform.is_some() {
+                            result.transform = style.transform;
+                        }
+                    }
                 }
-                if style.stroke.is_some() {
-                    result.stroke = style.stroke;
-                }
-                if style.opacity.is_some() {
-                    result.opacity = style.opacity;
-                }
-                if style.transform.is_some() {
-                    result.transform = style.transform;
-                }
+            }
+            if group_opacity != 1.0 {
+                result.opacity = Some(result.opacity.unwrap_or(node.opacity) * group_opacity);
+            }
+            if group_transform != SvgTransform::default() {
+                result.transform = Some(
+                    group_transform
+                        .mul(result.transform.unwrap_or(node.transform)),
+                );
             }
             matched.then_some(result)
         })

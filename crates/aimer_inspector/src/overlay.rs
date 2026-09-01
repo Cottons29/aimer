@@ -7,10 +7,7 @@ use aimer_widget::Element;
 pub struct InspectorOverlay;
 impl InspectorOverlay {
     pub fn draw(_element: &dyn Element, canvas: &Canvas<'_>, _cursor: Vec2d, scale: f32) {
-        let Ok(hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.read() else {
-            return;
-        };
-        let Some((name, start, end)) = *hovered else {
+        let Some((name, start, end)) = aimer_widget::inspector_overlay::hovered_widget() else {
             return;
         };
         canvas.save();

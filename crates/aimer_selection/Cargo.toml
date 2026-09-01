@@ -1,0 +1,25 @@
+[package]
+name = "aimer_selection"
+version = "0.1.0"
+edition = "2024"
+description = "Controlled choice and selection controls for Aimer"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+aimer_attribute.workspace = true
+aimer_container.workspace = true
+aimer_events.workspace = true
+aimer_flex.workspace = true
+aimer_input.workspace = true
+aimer_macro.workspace = true
+aimer_provider.workspace = true
+aimer_style.workspace = true
+aimer_text.workspace = true
+aimer_widget.workspace = true
+
+[dev-dependencies]
+aimer_canvas.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

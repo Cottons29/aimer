@@ -2,9 +2,11 @@ use std::cell::Cell;
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+
+use crossbeam::channel::{Receiver, RecvTimeoutError, Sender, unbounded};
 
 use aimer_reload_protocol::{
     ModuleMetadata, ProtocolLimits, ReloadResult, SessionCredentials, receive_reload_connection,
@@ -144,54 +146,39 @@ impl Write for RawStream<'_> {
 /// operating-system sockets, which would otherwise exhaust ephemeral ports long
 /// before a campaign finishes.
 fn duplex() -> (DuplexStream, DuplexStream) {
-    let left = Arc::new(Pipe::default());
-    let right = Arc::new(Pipe::default());
+    let (left_sender, left_receiver) = unbounded();
+    let (right_sender, right_receiver) = unbounded();
     (
         DuplexStream {
-            inbound: Arc::clone(&left),
-            outbound: Arc::clone(&right),
+            inbound: left_receiver,
+            outbound: right_sender,
+            pending: VecDeque::new(),
         },
         DuplexStream {
-            inbound: right,
-            outbound: left,
+            inbound: right_receiver,
+            outbound: left_sender,
+            pending: VecDeque::new(),
         },
     )
 }
 
-#[derive(Default)]
-struct Pipe {
-    state: Mutex<PipeState>,
-    ready: Condvar,
-}
-
-#[derive(Default)]
-struct PipeState {
-    bytes: VecDeque<u8>,
-    closed: bool,
-}
-
 struct DuplexStream {
-    inbound: Arc<Pipe>,
-    outbound: Arc<Pipe>,
+    inbound: Receiver<Vec<u8>>,
+    outbound: Sender<Vec<u8>>,
+    pending: VecDeque<u8>,
 }
 
 impl Read for DuplexStream {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
-        let mut state = self.inbound.state.lock().unwrap();
-        while state.bytes.is_empty() && !state.closed {
-            let (waited, timeout) = self
-                .inbound
-                .ready
-                .wait_timeout(state, READ_STALL_TIMEOUT)
-                .unwrap();
-            state = waited;
-            if timeout.timed_out() && state.bytes.is_empty() {
-                return Ok(0);
+        while self.pending.is_empty() {
+            match self.inbound.recv_timeout(READ_STALL_TIMEOUT) {
+                Ok(bytes) => self.pending.extend(bytes),
+                Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => return Ok(0),
             }
         }
-        let count = state.bytes.len().min(output.len());
+        let count = self.pending.len().min(output.len());
         for slot in output.iter_mut().take(count) {
-            *slot = state.bytes.pop_front().unwrap();
+            *slot = self.pending.pop_front().unwrap();
         }
         Ok(count)
     }
@@ -199,26 +186,14 @@ impl Read for DuplexStream {
 
 impl Write for DuplexStream {
     fn write(&mut self, input: &[u8]) -> io::Result<usize> {
-        let mut state = self.outbound.state.lock().unwrap();
-        if state.closed {
-            return Err(io::Error::from(io::ErrorKind::BrokenPipe));
-        }
-        state.bytes.extend(input);
-        self.outbound.ready.notify_all();
+        self.outbound
+            .send(input.to_vec())
+            .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
         Ok(input.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
-    }
-}
-
-impl Drop for DuplexStream {
-    fn drop(&mut self) {
-        for pipe in [&self.inbound, &self.outbound] {
-            pipe.state.lock().unwrap().closed = true;
-            pipe.ready.notify_all();
-        }
     }
 }
 

@@ -6,7 +6,12 @@
     <title>Aimer's Website</title>
     <link rel="icon" type="image/x-icon" href="./assets/favicon.ico">
     <link data-trunk rel="copy-dir" href="assets"/>
-    <link data-trunk rel="rust" href="../../Cargo.toml" data-bin="website" data-wasm-opt="z"
+    <!-- The web bundle is the crate's `cdylib`: `#[aimer::main]` expands to a
+         `#[wasm_bindgen(start)]` entry point on wasm32. `desktop-bin` is left
+         off so cargo skips the equally-named executable target, which Trunk
+         cannot tell apart from the library artifact. -->
+    <link data-trunk rel="rust" href="../../Cargo.toml" data-target-name="website"
+          data-cargo-no-default-features data-cargo-features="native" data-wasm-opt="z"
           data-wasm-opt-params="--all-features" />
 </head>
 

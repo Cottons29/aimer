@@ -11,6 +11,7 @@ use aimer_widget::{
   #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
 use wasm_bindgen::prelude::*;
 
+use crate::outlet::RouteChildContext;
 use crate::{Route, Router};
 
 /// Maximum number of redirect hops resolved before the navigator bails out.
@@ -269,12 +270,14 @@ impl<R: Route + Router> State<Navigator<R>> for NavigatorState<R> {
 
 struct NavigatorElement<R> {
     controller: NavigatorController<R>,
+    route_context: RouteChildContext,
     child: AnyElement,
 }
 
 impl<R: 'static> NavigatorElement<R> {
     fn scoped<T>(&self, ctx: &BuildContext, callback: impl FnOnce(&BuildContext) -> T) -> T {
-        ctx.with_state(self.controller.clone(), callback)
+        self.route_context
+            .with(ctx, |ctx| ctx.with_state(self.controller.clone(), callback))
     }
 }
 
@@ -336,7 +339,8 @@ impl<R: 'static> LayoutElement for NavigatorElement<R> {
     }
 }
 
-impl<R: 'static> EventElement for NavigatorElement<R> {}
+impl<R: 'static> EventElement for NavigatorElement<R> {
+}
 
 impl<R: 'static> Rebuildable for NavigatorElement<R> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
@@ -518,9 +522,11 @@ impl<R: Route + Router> StatefulWidget for Navigator<R> {
 
 impl<R: Route + Router> Widget for Navigator<R> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let (child, updater) = StatefulElement::new(self, ctx);
+        let route_context = RouteChildContext::capture(ctx);
+        let (child, updater) = route_context.with(ctx, |ctx| StatefulElement::new(self, ctx));
         NavigatorElement {
             controller: navigator_controller(updater),
+            route_context,
             child: child.boxed(),
         }
         .boxed()
@@ -644,7 +650,7 @@ fn portable_navigator_controller<R: Route>(
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
 
     use aimer_widget::base::{ResolvedSize, WindowHandle};
     use aimer_widget::{Drawable, EventElement, LayoutElement, Rebuildable, VisitorElement};
@@ -658,6 +664,9 @@ mod tests {
         static CURRENT_ROUTE_OBSERVED: Cell<Option<TestRoute>> = const { Cell::new(None) };
         static HISTORY_LENGTH_OBSERVED: Cell<usize> = const { Cell::new(0) };
         static NAVIGATOR_OPERATION_STEP: Cell<u8> = const { Cell::new(0) };
+        static ROUTE_CONTEXT_MISSES: Cell<usize> = const { Cell::new(0) };
+        static ROUTE_CONTEXT_NAVIGATOR: RefCell<Option<NavigatorController<TestRoute>>> =
+            const { RefCell::new(None) };
         #[cfg(feature = "portable-guest")]
         static PORTABLE_ROUTE_BUILDS: RefCell<Vec<TestRoute>> = const { RefCell::new(Vec::new()) };
     }
@@ -708,6 +717,29 @@ mod tests {
             let _ = NavigatorController::<TestRoute>::of(ctx);
             NAVIGATOR_OBSERVED.set(true);
         }
+    }
+
+    #[derive(Clone, Copy)]
+    struct AncestorRouteProvider;
+
+    struct RouteContextProbe;
+
+    impl Widget for RouteContextProbe {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            if ctx.get_state::<AncestorRouteProvider>().is_none() {
+                ROUTE_CONTEXT_MISSES.set(ROUTE_CONTEXT_MISSES.get() + 1);
+            }
+            ROUTE_CONTEXT_NAVIGATOR.with(|controller| {
+                *controller.borrow_mut() = Some(NavigatorController::<TestRoute>::of(ctx));
+            });
+            NavigatorLookupElement.boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for RouteContextProbe {}
+
+    fn lookup_route_context(_: TestRoute) -> AnyWidget {
+        RouteContextProbe.boxed()
     }
 
     struct NavigatorControllerOperationsWidget;
@@ -945,6 +977,39 @@ mod tests {
         element.draw(&context());
 
         assert!(NAVIGATOR_OBSERVED.get());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn direct_route_replacement_retains_ancestor_provider_context() {
+        ROUTE_CONTEXT_MISSES.set(0);
+        ROUTE_CONTEXT_NAVIGATOR.with(|controller| *controller.borrow_mut() = None);
+
+        let initial_context = context();
+        let element = initial_context.with_state(AncestorRouteProvider, |ctx| {
+            Navigator::new(TestRoute::Home, lookup_route_context).to_element(ctx)
+        });
+
+        assert_eq!(ROUTE_CONTEXT_MISSES.get(), 0);
+        let controller = ROUTE_CONTEXT_NAVIGATOR
+            .with(|controller| controller.borrow().clone())
+            .expect("the route child should be able to read its Navigator");
+        controller.push(TestRoute::Settings);
+
+        let rebuild_context = context();
+        element.rebuild_if_dirty(&rebuild_context);
+
+        assert_eq!(
+            ROUTE_CONTEXT_MISSES.get(),
+            0,
+            "a direct route child lost an ancestor provider during replacement"
+        );
+        assert!(
+            rebuild_context
+                .get_state::<AncestorRouteProvider>()
+                .is_none(),
+            "the captured provider must not leak outside the route boundary"
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

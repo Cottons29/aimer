@@ -257,12 +257,8 @@ impl RawTextField {
                 crate::editable_text::byte_to_utf16(value.text(), range.end()).unwrap_or(0),
             )
         });
-        let secure = self.input_type == InputType::Obscure;
-        let input_kind = match self.input_type {
-            InputType::Text => 0,
-            InputType::Number => 1,
-            InputType::Obscure => 2,
-        };
+        let secure = self.input_type.is_obscured();
+        let input_kind = self.input_type.native_input_kind();
         #[cfg(target_os = "ios")]
         ios_keyboard::sync_text_state(
             session_id,
@@ -370,7 +366,7 @@ fn wasm_place_ime_input(caret: ImeCaretArea) {
 /// to the winit canvas (`#aimer_app`) so that the framework's normal keyboard
 /// pipeline (`WindowEvent::KeyboardInput`) still fires.
 #[cfg(target_arch = "wasm32")]
-fn wasm_request_keyboard(show: bool) {
+fn wasm_request_keyboard(show: bool, input_type: InputType) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::prelude::*;
     let Some(window) = web_sys::window() else {
@@ -579,6 +575,10 @@ fn wasm_request_keyboard(show: bool) {
             el
         }
     };
+
+    // Keep the browser hint in sync even when the hidden editor already exists
+    // from a previous focused field. The form layer still owns validation.
+    input.set_type(input_type.html_type());
 
     if show {
         input.set_value("");

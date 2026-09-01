@@ -3,10 +3,12 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, parse_quote};
 
+use super::animatable::{EndpointPolicy, generate_struct_animatable_impl};
+
 pub(crate) fn style_path() -> syn::Result<TokenStream> {
     if let Ok(found) = crate_name("aimer") {
         return Ok(match found {
-            FoundCrate::Itself => quote!(crate::style),
+            FoundCrate::Itself => quote!(::aimer::style),
             FoundCrate::Name(name) => {
                 let name = Ident::new(&name, Span::call_site());
                 quote!(::#name::style)
@@ -15,7 +17,7 @@ pub(crate) fn style_path() -> syn::Result<TokenStream> {
     }
 
     match crate_name("aimer_style") {
-        Ok(FoundCrate::Itself) => Ok(quote!(crate)),
+        Ok(FoundCrate::Itself) => Ok(quote!(::aimer_style)),
         Ok(FoundCrate::Name(name)) => {
             let name = Ident::new(&name, Span::call_site());
             Ok(quote!(::#name))
@@ -55,11 +57,16 @@ pub(crate) fn generate_theme_impl(
         }
     };
 
+    let animation_impl = generate_struct_animatable_impl(
+        &input,
+        quote!(#style_path::__private),
+        EndpointPolicy::Clone,
+    )?;
     let name = &input.ident;
-    let mut animation_generics = input.generics.clone();
+    let mut theme_generics = input.generics.clone();
     for field in fields {
         let ty = &field.ty;
-        animation_generics
+        theme_generics
             .make_where_clause()
             .predicates
             .push(parse_quote!(
@@ -67,7 +74,6 @@ pub(crate) fn generate_theme_impl(
             ));
     }
 
-    let mut theme_generics = animation_generics.clone();
     let (_, input_ty_generics, _) = input.generics.split_for_impl();
     theme_generics
         .make_where_clause()
@@ -76,33 +82,11 @@ pub(crate) fn generate_theme_impl(
             #name #input_ty_generics: ::core::clone::Clone + ::core::cmp::PartialEq + 'static
         ));
 
-    let (animation_impl_generics, animation_ty_generics, animation_where_clause) =
-        animation_generics.split_for_impl();
     let (theme_impl_generics, theme_ty_generics, theme_where_clause) =
         theme_generics.split_for_impl();
-    let interpolated_fields = fields.iter().map(|field| {
-        let ident = field.ident.as_ref().expect("named fields have identifiers");
-        quote! {
-            #ident: #style_path::__private::Animatable::lerp(&self.#ident, &other.#ident, t)
-        }
-    });
 
     Ok(quote! {
-        impl #animation_impl_generics #style_path::__private::Animatable
-            for #name #animation_ty_generics #animation_where_clause
-        {
-            fn lerp(&self, other: &Self, t: f32) -> Self {
-                if t <= 0.0 {
-                    return self.clone();
-                }
-                if t >= 1.0 {
-                    return other.clone();
-                }
-                Self {
-                    #(#interpolated_fields,)*
-                }
-            }
-        }
+        #animation_impl
 
         impl #theme_impl_generics #style_path::Theme
             for #name #theme_ty_generics #theme_where_clause
@@ -135,6 +119,8 @@ mod tests {
         assert!(output.contains("impl :: aimer :: style :: Theme for AppTheme"));
         assert!(output.contains("if t <= 0.0"));
         assert!(output.contains("if t >= 1.0"));
+        assert!(!output.contains("is_finite"));
+        assert!(!output.contains("is_nan"));
     }
 
     #[test]

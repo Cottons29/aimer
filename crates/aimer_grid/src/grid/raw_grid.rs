@@ -705,6 +705,38 @@ impl EventElement for RawGrid {
             visitor(item.child.as_ref());
         }
     }
+
+    /// Offers only grid children whose retained bounds contain `pos`.
+    ///
+    /// A child that has not published bounds remains a candidate; unknown
+    /// geometry must not make a custom grid child unreachable.
+    #[inline]
+    fn hit_test_children_at<'a>(
+        &'a self,
+        pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        for item in &self.children {
+            if hit_test_contains(item.child.as_ref(), pos) {
+                visitor(item.child.as_ref());
+            }
+        }
+    }
+
+    /// Offers bounded grid children in the topmost-first order used by routed
+    /// pointer dispatch.
+    #[inline]
+    fn hit_test_children_at_reversed<'a>(
+        &'a self,
+        pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        for item in self.children.iter().rev() {
+            if hit_test_contains(item.child.as_ref(), pos) {
+                visitor(item.child.as_ref());
+            }
+        }
+    }
 }
 
 impl Rebuildable for RawGrid {}
@@ -753,6 +785,13 @@ fn rect_intersects_visible_rect(
         && position.y <= visible_y + visible_height
 }
 
+#[inline]
+fn hit_test_contains(element: &dyn Element, pos: Vec2d) -> bool {
+    element.pos_start_end().is_none_or(|(start, end)| {
+        pos.x >= start.x && pos.x <= end.x && pos.y >= start.y && pos.y <= end.y
+    })
+}
+
 fn tracks_size(tracks: &[f32], gap: f32) -> f32 {
     tracks.iter().sum::<f32>() + gap * tracks.len().saturating_sub(1) as f32
 }
@@ -794,13 +833,13 @@ mod tests {
     use std::rc::Rc;
     use std::sync::OnceLock;
 
-    use aimer_attribute::{BoxConstraint, ResolvedSize};
+    use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
     use aimer_canvas::{Canvas, InnerCanvas};
     use aimer_container::ZeroSizedBox;
     use aimer_cupid::draw_cmd::DrawCommand;
     use aimer_widget::base::{BuildContext, WindowHandle};
     use aimer_widget::{
-        Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
+        AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
     };
 
     use super::{
@@ -818,6 +857,33 @@ mod tests {
         computed_count: Rc<RefCell<usize>>,
         draw_count: Rc<RefCell<usize>>,
         size: ResolvedSize,
+    }
+
+    struct HitTestChild {
+        bounds: (Vec2d, Vec2d),
+    }
+
+    impl HitTestChild {
+        fn boxed(bounds: (Vec2d, Vec2d)) -> AnyElement {
+            Self { bounds }.boxed()
+        }
+    }
+
+    impl Drawable for HitTestChild {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl EventElement for HitTestChild {}
+    impl LayoutElement for HitTestChild {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some(self.bounds)
+        }
+    }
+    impl Rebuildable for HitTestChild {}
+    impl VisitorElement for HitTestChild {
+        fn debug_name(&self) -> &'static str {
+            "HitTestChild"
+        }
     }
 
     impl Drawable for WorkRecorder {
@@ -1132,6 +1198,58 @@ mod tests {
 
         assert_eq!(*visible_draws.borrow(), 1);
         assert_eq!(*hidden_draws.borrow(), 0);
+    }
+
+    #[test]
+    fn position_aware_hit_testing_prunes_offscreen_grid_children() {
+        let grid = RawGrid {
+            columns: vec![GridTrack::Px(100.0)],
+            rows: vec![GridTrack::Px(20.0), GridTrack::Px(20.0), GridTrack::Px(20.0)],
+            column_gap: 0.0,
+            row_gap: 0.0,
+            horizontal_alignment: GridAlignment::Stretch,
+            vertical_alignment: GridAlignment::Stretch,
+            overflow: GridOverflow::Clip,
+            children: vec![
+                RawGridItem {
+                    child: HitTestChild::boxed((
+                        Vec2d { x: 0.0, y: 0.0 },
+                        Vec2d { x: 100.0, y: 20.0 },
+                    )),
+                    placement: GridPlacement::default().at(0, 0),
+                    horizontal_alignment: None,
+                    vertical_alignment: None,
+                },
+                RawGridItem {
+                    child: HitTestChild::boxed((
+                        Vec2d { x: 0.0, y: 20.0 },
+                        Vec2d { x: 100.0, y: 40.0 },
+                    )),
+                    placement: GridPlacement::default().at(1, 0),
+                    horizontal_alignment: None,
+                    vertical_alignment: None,
+                },
+                RawGridItem {
+                    child: HitTestChild::boxed((
+                        Vec2d { x: 0.0, y: 40.0 },
+                        Vec2d { x: 100.0, y: 60.0 },
+                    )),
+                    placement: GridPlacement::default().at(2, 0),
+                    horizontal_alignment: None,
+                    vertical_alignment: None,
+                },
+            ],
+            layout_cache: RefCell::new(Vec::new()),
+        };
+
+        let pos = Vec2d { x: 50.0, y: 30.0 };
+        let mut forward = 0;
+        grid.hit_test_children_at(pos, &mut |_| forward += 1);
+        assert_eq!(forward, 1);
+
+        let mut reversed = 0;
+        grid.hit_test_children_at_reversed(pos, &mut |_| reversed += 1);
+        assert_eq!(reversed, 1);
     }
 
     #[test]

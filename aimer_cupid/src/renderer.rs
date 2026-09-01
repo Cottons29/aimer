@@ -10,11 +10,18 @@ use crate::draw_cmd::{
 };
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::pipeline_cache;
+use crate::pipeline::frame_composite::FrameCompositePipeline;
+use crate::pipeline::material::{
+    MaterialClip, MaterialPipeline, MaterialRequest, MATERIAL_PIPELINE_NAME,
+};
 use crate::rect_pipeline::{RectInstance, RectPipeline};
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::svg_pipeline::SvgPipeline;
 use crate::text_pipeline::{
     RichTextSpan, TextDecorationDraw, TextDrawRequest, TextPipelineV2, TextShadowRequest,
+};
+use crate::persistent_target::{
+    PersistentTarget, PersistentTargetKey, TargetEnsureResult, TargetValidity,
 };
 use crate::utilities::{Color, Mat3, Rect};
 use crate::utilities::Rgba8;
@@ -69,9 +76,52 @@ impl Default for AlphaState {
     }
 }
 
-fn apply_alpha(mut color: [f32; 4], alpha: f32) -> [f32; 4] {
-    color[3] *= alpha;
-    color
+#[inline]
+fn packed_color(color: Color, alpha: f32) -> Rgba8 {
+    Rgba8::from(color).with_opacity(alpha)
+}
+
+fn resolve_material_request(
+    mut request: MaterialRequest,
+    transform: &Mat3,
+    scales: (f32, f32),
+    clip: Option<&ClipState>,
+    alpha: f32,
+) -> MaterialRequest {
+    let [x, y, width, height] = request.bounds;
+    let (x1, y1) = transform.transform_point(x, y);
+    let (x2, y2) = transform.transform_point(x + width, y + height);
+    let scale = (scales.0 + scales.1) * 0.5;
+
+    request.bounds = [
+        x1.min(x2),
+        y1.min(y2),
+        (x2 - x1).abs(),
+        (y2 - y1).abs(),
+    ];
+    for radius in &mut request.corner_radii {
+        *radius *= scale;
+    }
+    request.border_width *= scale;
+    request.shadow_blur *= scale;
+    request.elevation *= scale;
+    request.opacity = (request.opacity * alpha).clamp(0.0, 1.0);
+    request.transform = [
+        transform.cols[0][0],
+        transform.cols[0][1],
+        transform.cols[0][2],
+        transform.cols[1][0],
+        transform.cols[1][1],
+        transform.cols[1][2],
+        transform.cols[2][0],
+        transform.cols[2][1],
+        transform.cols[2][2],
+    ];
+    request.clip = clip.map(|clip| MaterialClip {
+        rect: [clip.rect.x, clip.rect.y, clip.rect.width, clip.rect.height],
+        corner_radii: clip.border_radius,
+    });
+    request.normalized()
 }
 
 #[inline]
@@ -167,16 +217,16 @@ fn build_fill_rect_instances(
         RectInstance {
             position: [ep1x.min(ep2x), ep1y.min(ep2y)],
             size: [(ep2x - ep1x).abs(), (ep2y - ep1y).abs()],
-            color: [0.0, 0.0, 0.0, 0.0],
+            color: Rgba8::TRANSPARENT,
             border_radius: scaled_br,
             border_width: [0.0; 4],
-            border_color: [0.0, 0.0, 0.0, 0.0],
+            border_color: Rgba8::TRANSPARENT,
             outline_width: scaled_ow,
-            outline_color: apply_alpha(outline_color.to_array(), alpha),
+            outline_color: packed_color(outline_color, alpha),
             clip_rect,
             clip_border_radius: clip_radii,
             shadow_params: [0.0; 4],
-            shadow_color: [0.0; 4],
+            shadow_color: Rgba8::TRANSPARENT,
             shadow_flags: [0.0; 4],
         }
     });
@@ -184,16 +234,16 @@ fn build_fill_rect_instances(
     let main_instance = RectInstance {
         position: [p1x.min(p2x), p1y.min(p2y)],
         size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
-        color: apply_alpha(color.to_array(), alpha),
+        color: packed_color(color, alpha),
         border_radius: scaled_br,
         border_width: scaled_bw,
-        border_color: apply_alpha(border_color.to_array(), alpha),
+        border_color: packed_color(border_color, alpha),
         outline_width: [0.0; 4],
-        outline_color: [0.0, 0.0, 0.0, 0.0],
+        outline_color: Rgba8::TRANSPARENT,
         clip_rect,
         clip_border_radius: clip_radii,
         shadow_params: [0.0; 4],
-        shadow_color: [0.0; 4],
+        shadow_color: Rgba8::TRANSPARENT,
         shadow_flags: [0.0; 4],
     };
 
@@ -227,6 +277,7 @@ enum ResolvedKind {
     Svg(usize),
     Custom {
         pipeline_index: usize,
+        command_index: Option<usize>,
     },
 }
 
@@ -281,6 +332,75 @@ struct MultisampleTarget {
     width: u32,
     height: u32,
     sample_count: u32,
+}
+
+struct MaterialFrameTarget {
+    target: PersistentTarget,
+    composite_bind_group: wgpu::BindGroup,
+}
+
+impl MaterialFrameTarget {
+    fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        key: PersistentTargetKey,
+        composite_pipeline: &FrameCompositePipeline,
+    ) -> Self {
+        let mut target = PersistentTarget::default();
+        let result = target.ensure(device, format, key);
+        debug_assert!(matches!(
+            result,
+            TargetEnsureResult::Created | TargetEnsureResult::Recreated
+        ));
+        let view = target
+            .view()
+            .expect("a non-empty material target must have a view");
+        let composite_bind_group = composite_pipeline.create_bind_group(device, view);
+        Self {
+            target,
+            composite_bind_group,
+        }
+    }
+
+    fn ensure(
+        &mut self,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        key: PersistentTargetKey,
+        composite_pipeline: &FrameCompositePipeline,
+    ) -> TargetEnsureResult {
+        let result = self.target.ensure(device, format, key);
+        if matches!(
+            result,
+            TargetEnsureResult::Created | TargetEnsureResult::Recreated
+        ) {
+            let view = self
+                .target
+                .view()
+                .expect("a non-empty material target must have a view");
+            self.composite_bind_group = composite_pipeline.create_bind_group(device, view);
+        }
+        result
+    }
+
+    #[inline]
+    fn texture(&self) -> &wgpu::Texture {
+        self.target
+            .texture()
+            .expect("a material target must have a texture")
+    }
+
+    #[inline]
+    fn view(&self) -> &wgpu::TextureView {
+        self.target
+            .view()
+            .expect("a material target must have a view")
+    }
+
+    #[inline]
+    fn mark_valid(&mut self) {
+        self.target.mark_valid();
+    }
 }
 
 const RETAINED_LAYER_CACHE_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
@@ -380,6 +500,8 @@ pub struct Renderer {
     deferred_outlines: Vec<RectInstance>,
     textures_to_remove: Vec<u32>,
     multisample_target: Option<MultisampleTarget>,
+    material_frame_target: Option<MaterialFrameTarget>,
+    frame_composite_pipeline: FrameCompositePipeline,
     antialiasing: crate::AntiAlias,
     retained_layers: HashMap<u64, RetainedLayer>,
     active_retained_layers: HashSet<u64>,
@@ -403,13 +525,17 @@ impl Renderer {
 
         let cache = pipeline_cache::create_pipeline_cache(device);
 
+        let material_pipeline =
+            MaterialPipeline::new(device, format, cache.as_ref(), antialiasing);
+        let frame_composite_pipeline = FrameCompositePipeline::new(device, format, cache.as_ref());
+
         let renderer = Self {
             rect_pipeline: RectPipeline::new(device, format, cache.as_ref(), antialiasing),
             text_pipeline: TextPipelineV2::new(device, format, cache.as_ref(), antialiasing),
             image_pipeline: ImagePipeline::new(device, format, cache.as_ref(), antialiasing),
             svg_pipeline: SvgPipeline::new(device, format, cache.as_ref(), antialiasing),
             pipeline_cache: cache,
-            custom_pipelines: Vec::new(),
+            custom_pipelines: vec![CustomPipelineSlot::new(material_pipeline)],
             surface_format: format,
             transform_stack: Vec::new(),
             clip_stack: Vec::new(),
@@ -420,6 +546,8 @@ impl Renderer {
             deferred_outlines: Vec::new(),
             textures_to_remove: Vec::new(),
             multisample_target: None,
+            material_frame_target: None,
+            frame_composite_pipeline,
             antialiasing,
             retained_layers: HashMap::new(),
             active_retained_layers: HashSet::new(),
@@ -539,8 +667,7 @@ impl Renderer {
         }
     }
 
-    /// Process a DrawList into pipeline-specific batches and render in a single
-    /// pass.
+    /// Process a DrawList into pipeline-specific batches and render it.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -555,8 +682,110 @@ impl Renderer {
         self.frame_index = self.frame_index.saturating_add(1);
         self.active_retained_layers.clear();
         self.prepare_retained_layers(device, queue, is_srgb, draw_list);
-        self.render_impl(device, queue, view, width, height, is_srgb, draw_list);
+        self.render_frame(
+            device, queue, view, None, width, height, is_srgb, draw_list,
+        );
         self.reclaim_retained_layers();
+    }
+
+    /// Renders a frame while making its single-sample target available to
+    /// custom pipelines that implement backdrop capture.
+    ///
+    /// `source_texture` must be the texture represented by `view` and must
+    /// have been created with `COPY_SRC`. Callers that cannot provide one can
+    /// use [`Self::render`], which creates and reuses an internal shader-backed
+    /// scene target whenever the draw list contains ordered material commands.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_with_source_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        source_texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        draw_list: &DrawList,
+    ) {
+        self.frame_index = self.frame_index.saturating_add(1);
+        self.active_retained_layers.clear();
+        self.prepare_retained_layers(device, queue, is_srgb, draw_list);
+        self.render_frame(
+            device,
+            queue,
+            view,
+            Some(source_texture),
+            width,
+            height,
+            is_srgb,
+            draw_list,
+        );
+        self.reclaim_retained_layers();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_frame(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        source_texture: Option<&wgpu::Texture>,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        draw_list: &DrawList,
+    ) {
+        if source_texture.is_some() || !draw_list_uses_material(draw_list) {
+            self.render_impl(
+                device,
+                queue,
+                view,
+                source_texture,
+                None,
+                width,
+                height,
+                is_srgb,
+                draw_list,
+            );
+            return;
+        }
+
+        let target_key = PersistentTargetKey::new(
+            width,
+            height,
+            1.0,
+            0,
+            0,
+            0,
+            TargetValidity::Valid,
+        );
+        let mut target = self.material_frame_target.take().unwrap_or_else(|| {
+            MaterialFrameTarget::new(
+                device,
+                self.surface_format,
+                target_key,
+                &self.frame_composite_pipeline,
+            )
+        });
+        let _ = target.ensure(
+            device,
+            self.surface_format,
+            target_key,
+            &self.frame_composite_pipeline,
+        );
+        self.render_impl(
+            device,
+            queue,
+            target.view(),
+            Some(target.texture()),
+            Some((view, &target.composite_bind_group)),
+            width,
+            height,
+            is_srgb,
+            draw_list,
+        );
+        target.mark_valid();
+        self.material_frame_target = Some(target);
     }
 
     fn prepare_retained_layers(
@@ -668,6 +897,8 @@ impl Renderer {
             device,
             queue,
             &view,
+            None,
+            None,
             layer_width,
             layer_height,
             is_srgb,
@@ -709,6 +940,8 @@ impl Renderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
+        source_texture: Option<&wgpu::Texture>,
+        composite_target: Option<(&wgpu::TextureView, &wgpu::BindGroup)>,
         width: u32,
         height: u32,
         is_srgb: bool,
@@ -737,6 +970,10 @@ impl Renderer {
         // decides whether a run of Han is drawn in a Chinese or a Japanese
         // face. Reset each frame; set by `SetTextLanguage`.
         let mut current_language = None;
+
+        for slot in &mut self.custom_pipelines {
+            slot.pipeline.begin_frame();
+        }
 
         for cmd in draw_list.commands() {
             match cmd {
@@ -840,16 +1077,16 @@ impl Renderer {
                         kind: ResolvedKind::Rect(RectInstance {
                             position: [p1x.min(p2x), p1y.min(p2y)],
                             size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
-                            color: [0.0, 0.0, 0.0, 0.0],
+                            color: Rgba8::TRANSPARENT,
                             border_radius: [0.0; 4],
                             border_width: [0.0; 4],
-                            border_color: [0.0; 4],
+                            border_color: Rgba8::TRANSPARENT,
                             outline_width: [0.0; 4],
-                            outline_color: [0.0; 4],
+                            outline_color: Rgba8::TRANSPARENT,
                             clip_rect: clip_to_array(self.clip_stack.last()),
                             clip_border_radius: clip_border_radius(self.clip_stack.last()),
                             shadow_params: [0.0; 4],
-                            shadow_color: [0.0; 4],
+                            shadow_color: Rgba8::TRANSPARENT,
                             shadow_flags: [0.0; 4],
                         }),
                     });
@@ -951,12 +1188,14 @@ impl Renderer {
                             .map(|span| RichTextSpan {
                                 text: span.text.clone(),
                                 font_size: span.font_size,
-                                color: span.color.map(|color| {
-                                    Rgba8::from_unorm(apply_alpha(
-                                        color.to_array(),
-                                        alpha_state.current(),
-                                    ))
-                                }),
+                                color: span
+                                    .color
+                                    .map(|color| {
+                                        Rgba8::from_unorm(apply_alpha(
+                                            color.to_array(),
+                                            alpha_state.current(),
+                                        ))
+                                    }),
                                 font_weight: span.font_weight,
                                 italic: span.italic,
                             })
@@ -1049,6 +1288,7 @@ impl Renderer {
                                 clip_rect: clip_to_array(self.clip_stack.last()),
                                 clip_border_radius: clip_border_radius(self.clip_stack.last()),
                                 alpha: alpha_state.current(),
+                                source_premultiplied: 0.0,
                             },
                         },
                     });
@@ -1072,6 +1312,7 @@ impl Renderer {
                                     clip_border_radius:
                                         clip_border_radius(self.clip_stack.last()),
                                     alpha: alpha_state.current(),
+                                    source_premultiplied: 1.0,
                                 },
                             },
                         });
@@ -1147,19 +1388,16 @@ impl Renderer {
                         kind: ResolvedKind::Rect(RectInstance {
                             position: [p1x.min(p2x), p1y.min(p2y)],
                             size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
-                            color: [0.0, 0.0, 0.0, 0.0],
+                            color: Rgba8::TRANSPARENT,
                             border_radius: scaled_br,
                             border_width: [0.0; 4],
-                            border_color: [0.0; 4],
+                            border_color: Rgba8::TRANSPARENT,
                             outline_width: [0.0; 4],
-                            outline_color: [0.0; 4],
+                            outline_color: Rgba8::TRANSPARENT,
                             clip_rect: clip_to_array(self.clip_stack.last()),
                             clip_border_radius: clip_border_radius(self.clip_stack.last()),
                             shadow_params: scaled_params,
-                            shadow_color: apply_alpha(
-                                shadow_color.to_array(),
-                                alpha_state.current(),
-                            ),
+                            shadow_color: packed_color(*shadow_color, alpha_state.current()),
                             shadow_flags: [
                                 if *inset { 1.0 } else { 0.0 },
                                 side_params[0],
@@ -1171,16 +1409,43 @@ impl Renderer {
                 }
                 DrawCommand::Custom {
                     pipeline_name,
-                    data: _,
+                    data,
                 } => {
                     if let Some(idx) = self
                         .custom_pipelines
                         .iter()
                         .position(|s| s.pipeline.name() == pipeline_name.as_str())
                     {
+                        let command_index = if pipeline_name == MATERIAL_PIPELINE_NAME {
+                            let request = data
+                                .downcast_ref::<Vec<u8>>()
+                                .and_then(|bytes| MaterialRequest::decode(bytes).ok())
+                                .map(|request| {
+                                    resolve_material_request(
+                                        request,
+                                        &current_transform,
+                                        current_scales,
+                                        self.clip_stack.last(),
+                                        alpha_state.current(),
+                                    )
+                                });
+                            match request {
+                                Some(request) => self.custom_pipelines[idx]
+                                    .pipeline
+                                    .prepare_command(&request),
+                                None => self.custom_pipelines[idx]
+                                    .pipeline
+                                    .prepare_command(data.as_ref()),
+                            }
+                        } else {
+                            self.custom_pipelines[idx]
+                                .pipeline
+                                .prepare_command(data.as_ref())
+                        };
                         self.resolved.push(ResolvedCmd {
                             kind: ResolvedKind::Custom {
                                 pipeline_index: idx,
+                                command_index,
                             },
                         });
                     }
@@ -1208,6 +1473,7 @@ impl Renderer {
                 is_srgb,
                 format: self.surface_format,
                 sample_count: self.antialiasing.sample_count(),
+                source_texture,
             };
             for slot in &mut self.custom_pipelines {
                 if slot.pipeline.has_work() {
@@ -1237,6 +1503,20 @@ impl Renderer {
         });
 
         let sample_count = self.antialiasing.sample_count();
+        let capture_enabled = source_texture.is_some();
+        let backdrop_capture_needed = capture_enabled
+            && self.resolved.iter().any(|command| {
+                let ResolvedKind::Custom {
+                    pipeline_index,
+                    command_index,
+                } = &command.kind
+                else {
+                    return false;
+                };
+                self.custom_pipelines
+                    .get(*pipeline_index)
+                    .is_some_and(|slot| slot.pipeline.needs_backdrop(*command_index))
+            });
         let (render_view, resolve_target, store) = if self.antialiasing.uses_multisampling() {
             let target = self.multisample_target.get_or_insert_with(|| {
                 MultisampleTarget::new(device, self.surface_format, width, height, sample_count)
@@ -1250,29 +1530,25 @@ impl Renderer {
                     sample_count,
                 );
             }
-            (&target.view, Some(view), wgpu::StoreOp::Discard)
+            let store = if backdrop_capture_needed {
+                wgpu::StoreOp::Store
+            } else {
+                wgpu::StoreOp::Discard
+            };
+            (&target.view, Some(view), store)
         } else {
             self.multisample_target = None;
             (view, None, wgpu::StoreOp::Store)
         };
 
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("cupid render pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: render_view,
-                    resolve_target,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            let mut pass = begin_render_pass(
+                &mut encoder,
+                render_view,
+                resolve_target,
+                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                store,
+            );
 
             // Render commands in draw order to preserve correct z-ordering
             // across rects, images, text and text decorations. Consecutive
@@ -1443,7 +1719,10 @@ impl Renderer {
                         }
                         self.svg_pipeline.draw_item(&mut pass, *index);
                     }
-                    ResolvedKind::Custom { pipeline_index } => {
+                    ResolvedKind::Custom {
+                        pipeline_index,
+                        command_index,
+                    } => {
                         // Flush pending built-in batches to maintain z-order
                         self.rect_pipeline.flush(&mut pass);
                         if let Some(tid) = current_texture_id.take()
@@ -1458,9 +1737,40 @@ impl Renderer {
                             );
                             image_batch.clear();
                         }
+
+                        let should_capture = capture_enabled
+                            && self
+                                .custom_pipelines
+                                .get(*pipeline_index)
+                                .is_some_and(|slot| {
+                                    slot.pipeline.needs_backdrop(*command_index)
+                                });
+                        if should_capture {
+                            drop(pass);
+                            if let (Some(source_texture), Some(slot)) = (
+                                source_texture,
+                                self.custom_pipelines.get(*pipeline_index),
+                            ) {
+                                slot.pipeline.capture_backdrop_command(
+                                    *command_index,
+                                    &mut encoder,
+                                    source_texture,
+                                    width,
+                                    height,
+                                );
+                            }
+                            pass = begin_render_pass(
+                                &mut encoder,
+                                render_view,
+                                resolve_target,
+                                wgpu::LoadOp::Load,
+                                store,
+                            );
+                        }
+
                         // Render the custom pipeline
                         if let Some(slot) = self.custom_pipelines.get(*pipeline_index) {
-                            slot.pipeline.render(&mut pass);
+                            slot.pipeline.render_command(*command_index, &mut pass);
                         }
                     }
                 }
@@ -1485,6 +1795,18 @@ impl Renderer {
         self.rect_pipeline.end_frame(queue);
         self.image_pipeline.end_frame(queue);
 
+        if let Some((destination, bind_group)) = composite_target {
+            let mut pass = begin_render_pass(
+                &mut encoder,
+                destination,
+                None,
+                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                wgpu::StoreOp::Store,
+            );
+            self.frame_composite_pipeline
+                .render(&mut pass, bind_group);
+        }
+
         // Image bind groups stay alive through the submitted pass. Select old
         // cache entries now, then release them only after submission and mark
         // their canvas metadata stale so source-backed widgets can reload.
@@ -1508,6 +1830,38 @@ impl Renderer {
             draw_list.mark_texture_evicted(texture_id);
         }
     }
+}
+
+fn draw_list_uses_material(draw_list: &DrawList) -> bool {
+    draw_list.commands().iter().any(|command| {
+        matches!(
+            command,
+            DrawCommand::Custom { pipeline_name, .. }
+                if pipeline_name == MATERIAL_PIPELINE_NAME
+        )
+    })
+}
+
+fn begin_render_pass<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    render_view: &'a wgpu::TextureView,
+    resolve_target: Option<&'a wgpu::TextureView>,
+    load: wgpu::LoadOp<wgpu::Color>,
+    store: wgpu::StoreOp,
+) -> wgpu::RenderPass<'a> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("cupid render pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: render_view,
+            resolve_target,
+            ops: wgpu::Operations { load, store },
+            depth_slice: None,
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
 }
 
 impl Drop for Renderer {
@@ -1547,14 +1901,6 @@ mod tests {
         assert_eq!(state.current(), 0.25);
         state.restore();
         assert_eq!(state.current(), 0.8);
-    }
-
-    #[test]
-    fn apply_alpha_multiplies_existing_color_opacity() {
-        assert_eq!(
-            apply_alpha([0.1, 0.2, 0.3, 0.8], 0.25),
-            [0.1, 0.2, 0.3, 0.2]
-        );
     }
 
     #[test]
@@ -1662,18 +2008,18 @@ mod tests {
         assert_eq!(main_instance.position, [10.0, 20.0]);
         assert_eq!(main_instance.size, [100.0, 50.0]);
         assert_eq!(main_instance.outline_width, [0.0; 4]);
-        assert_eq!(main_instance.outline_color, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(main_instance.outline_color, Rgba8::TRANSPARENT);
 
         // The outline instance covers the box expanded by its outline width on
         // every side, and paints nothing but the ring.
         let outline_instance = outline_instance.expect("outline width is non-zero");
         assert_eq!(outline_instance.position, [5.0, 18.0]);
         assert_eq!(outline_instance.size, [108.0, 56.0]);
-        assert_eq!(outline_instance.color, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(outline_instance.color, Rgba8::TRANSPARENT);
         assert_eq!(outline_instance.border_width, [0.0; 4]);
-        assert_eq!(outline_instance.border_color, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(outline_instance.border_color, Rgba8::TRANSPARENT);
         assert_eq!(outline_instance.outline_width, outline_width);
-        assert_eq!(outline_instance.outline_color, Color::red().to_array());
+        assert_eq!(outline_instance.outline_color, Color::red().to_rgba8());
     }
 
     #[test]
@@ -1798,7 +2144,7 @@ mod tests {
                             + main.position[1]
                             + main.size[0]
                             + main.size[1]
-                            + main.color[3]
+                            + main.color.as_array()[3] as f32
                             + outline
                                 .map(|instance| instance.position[0] + instance.size[1])
                                 .unwrap_or(0.0),
@@ -1828,7 +2174,7 @@ mod tests {
                             + main.position[1]
                             + main.size[0]
                             + main.size[1]
-                            + main.color[3]
+                            + main.color.as_array()[3] as f32
                             + outline
                                 .map(|instance| instance.position[0] + instance.size[1])
                                 .unwrap_or(0.0),

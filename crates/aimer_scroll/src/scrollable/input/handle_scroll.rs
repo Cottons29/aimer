@@ -302,7 +302,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 }
                 _ => self.ctrl.active_touch_id.set(None),
             }
-            aimer_events::window::request_animation_frame();
+            self.ctrl.request_animation_frame();
             let result = child_result.merge(EventResult::from(owned_pointer).with_redraw());
             return match event {
                 ElementEvent::PointerUp(pointer) => {
@@ -344,7 +344,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 ) {
                     self.ctrl.begin_scroll();
                     self.ctrl.record_input_event();
-                    aimer_events::window::request_animation_frame();
+                    self.ctrl.request_animation_frame();
                 }
                 true
             }
@@ -410,7 +410,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         self.ctrl.last_pointer_pos.set(Some(*p));
                         self.ctrl.begin_scroll();
                         self.ctrl.record_input_event();
-                        aimer_events::window::request_animation_frame();
+                        self.ctrl.request_animation_frame();
                         return child_result.merge(EventResult::consumed().with_redraw());
                     }
                     if self.ctrl.hit_test_h_track(*p, vp_w, vp_h, h_tw)
@@ -428,7 +428,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         self.ctrl.last_pointer_pos.set(Some(*p));
                         self.ctrl.begin_scroll();
                         self.ctrl.record_input_event();
-                        aimer_events::window::request_animation_frame();
+                        self.ctrl.request_animation_frame();
                         return child_result.merge(EventResult::consumed().with_redraw());
                     }
                 }
@@ -571,11 +571,11 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                         if !self.ctrl.bouncy() {
                             offset = self.ctrl.clamp_offset(offset);
                         }
-                        self.ctrl.scroll_offset.set(offset);
+                        self.ctrl.set_scroll_offset(offset);
                         self.ctrl.record_input_event();
                     }
                     self.ctrl.last_pointer_pos.set(Some(*p));
-                    aimer_events::window::request_animation_frame();
+                    self.ctrl.request_animation_frame();
                     return child_result.merge(EventResult::consumed().with_redraw());
                 }
 
@@ -585,7 +585,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 // the one frame the highlight needs, and every other move
                 // schedules nothing.
                 if self.ctrl.sync_thumb_hover(*p) {
-                    aimer_events::window::request_animation_frame();
+                    self.ctrl.request_animation_frame();
                 }
                 false
             }
@@ -657,7 +657,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     if !self.ctrl.bouncy() {
                         offset = self.ctrl.clamp_offset(offset);
                     }
-                    self.ctrl.scroll_offset.set(offset);
+                    self.ctrl.set_scroll_offset(offset);
                     self.ctrl.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
                     self.ctrl.clear_velocity_history();
                     self.ctrl.cancel_fling();
@@ -666,7 +666,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     // reports it settled (and fires `end`) on the next frame.
                     self.ctrl.begin_scroll();
                     self.ctrl.record_input_event();
-                    aimer_events::window::request_animation_frame();
+                    self.ctrl.request_animation_frame();
                     true
                 } else {
                     false

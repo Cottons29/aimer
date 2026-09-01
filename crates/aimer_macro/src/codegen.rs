@@ -1,3 +1,4 @@
+pub(crate) mod animatable;
 mod raw_widget;
 pub mod router;
 mod stateful_widget;

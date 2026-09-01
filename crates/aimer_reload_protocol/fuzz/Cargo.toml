@@ -10,6 +10,7 @@ cargo-fuzz = true
 
 [dependencies]
 aimer_reload_protocol = { path = ".." }
+crossbeam = "0.8.4"
 libfuzzer-sys = "0.4"
 
 [[bin]]

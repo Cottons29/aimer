@@ -34,6 +34,29 @@ impl ScrollState {
     pub fn offset(&self) -> Vec2d {
         self.scroll_offset.get()
     }
+
+    /// Stores a new internal offset and records only actual position changes.
+    ///
+    /// Tests and state adoption may write the cell directly because they are
+    /// establishing a fixture or transferring existing state. Runtime scroll
+    /// paths use this boundary so Phase 0 can distinguish an offset update
+    /// from a frame that merely redraws an unchanged scrollable.
+    #[inline]
+    pub(crate) fn set_scroll_offset(&self, offset: Vec2d) {
+        let changed = self.scroll_offset.get() != offset;
+        self.scroll_offset.set(offset);
+        if changed {
+            aimer_widget::record_scroll_offset_update();
+        }
+    }
+
+    /// Request the display-synchronized frame that consumes the latest scroll
+    /// state. Keeping this on the live state makes scroll input and momentum
+    /// use the same platform-safe scheduling path.
+    #[inline]
+    pub(crate) fn request_animation_frame(&self) {
+        aimer_events::window::request_animation_frame();
+    }
 }
 
 pub struct ScrollState {
@@ -691,29 +714,28 @@ impl ScrollController {
     /// the controller is not yet attached, the position is remembered and
     /// applied on attachment.
     pub fn jump_to(&self, position: Vec2d) {
-        let applied = self.with_state(|s| {
-            let scale = s.last_scale.get().max(f32::EPSILON);
-            let internal = Vec2d {
-                x: -position.x * scale,
-                y: -position.y * scale,
-            };
-            s.cancel_fling();
-            s.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
-            s.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
-            s.release_overscroll_recovery();
-            s.reset_overscroll_peak();
-            // An instant jump is a self-contained scroll session: fire the
-            // start/end edges around the position change so listeners still see
-            // a matched pair even though no frames elapse.
-            s.begin_scroll();
-            s.scroll_offset.set(s.clamp_offset(internal));
-            s.end_scroll();
-        });
-        if applied.is_some() {
-            aimer_events::window::request_animation_frame();
-        } else {
+        let Some(state) = self.inner.state.borrow().clone() else {
             self.inner.pending.set(Some(position));
-        }
+            return;
+        };
+
+        let scale = state.last_scale.get().max(f32::EPSILON);
+        let internal = Vec2d {
+            x: -position.x * scale,
+            y: -position.y * scale,
+        };
+        state.cancel_fling();
+        state.pointer_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+        state.spring_velocity.set(Vec2d { x: 0.0, y: 0.0 });
+        state.release_overscroll_recovery();
+        state.reset_overscroll_peak();
+        // An instant jump is a self-contained scroll session: fire the
+        // start/end edges around the position change so listeners still see
+        // a matched pair even though no frames elapse.
+        state.begin_scroll();
+        state.set_scroll_offset(state.clamp_offset(internal));
+        state.end_scroll();
+        state.request_animation_frame();
     }
 
     /// Animate to `position` (logical pixels, positive toward the content end)
@@ -721,23 +743,22 @@ impl ScrollController {
     /// controller is not yet attached, the target is remembered as the initial
     /// position (no animation) and applied on attachment.
     pub fn animate_to(&self, position: Vec2d, duration: Duration, curve: Curve) {
-        let applied = self.with_state(|s| {
-            let scale = s.last_scale.get().max(f32::EPSILON);
-            let target = Vec2d {
-                x: -position.x * scale,
-                y: -position.y * scale,
-            };
-            // Announce the session now; the draw loop fires `end` once the
-            // animation settles. A zero-duration animation degenerates to an
-            // instant jump, which the draw loop then reports as settled.
-            s.begin_scroll();
-            s.start_animation(target, duration.as_secs_f32(), curve);
-        });
-        if applied.is_some() {
-            aimer_events::window::request_animation_frame();
-        } else {
+        let Some(state) = self.inner.state.borrow().clone() else {
             self.inner.pending.set(Some(position));
-        }
+            return;
+        };
+
+        let scale = state.last_scale.get().max(f32::EPSILON);
+        let target = Vec2d {
+            x: -position.x * scale,
+            y: -position.y * scale,
+        };
+        // Announce the session now; the draw loop fires `end` once the
+        // animation settles. A zero-duration animation degenerates to an
+        // instant jump, which the draw loop then reports as settled.
+        state.begin_scroll();
+        state.start_animation(target, duration.as_secs_f32(), curve);
+        state.request_animation_frame();
     }
 
     /// Register a callback fired once each time a scroll session **begins** —
@@ -942,7 +963,7 @@ impl ScrollState {
             self.overscroll_peak_at.set(Some(now));
             return false;
         }
-        self.scroll_offset.set(next);
+        self.set_scroll_offset(next);
         self.record_overscroll_peak_at(next, now);
         self.stop_device_scroll_momentum();
         true
@@ -1240,7 +1261,7 @@ impl ScrollState {
         };
 
         if duration_s <= 0.0 || (start.x == target.x && start.y == target.y) {
-            self.scroll_offset.set(target);
+            self.set_scroll_offset(target);
             self.cancel_fling();
             return;
         }
@@ -1682,10 +1703,28 @@ impl ScrollState {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use super::*;
 
     fn ctrl_with_offset(offset: Vec2d) -> ScrollState {
         ScrollState::for_test_at(offset)
+    }
+
+    #[test]
+    fn scroll_state_uses_the_frame_requester() {
+        let requests = Rc::new(Cell::new(0));
+        let counted = requests.clone();
+        let previous = aimer_events::window::set_thread_redraw_requester(move || {
+            counted.set(counted.get() + 1);
+        });
+
+        ctrl_with_offset(Vec2d::ZERO).request_animation_frame();
+
+        aimer_events::window::restore_thread_redraw_requester(previous);
+
+        assert_eq!(requests.get(), 1);
     }
 
     // Regression for "moving the cursor pins a core": with per-move redraws

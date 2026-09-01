@@ -1,0 +1,20 @@
+[package]
+name = "aimer_range"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+description = "Platform-neutral slider and range-slider controls for Aimer"
+license = "MIT"
+
+[dependencies]
+aimer_attribute.workspace = true
+aimer_events.workspace = true
+aimer_input.workspace = true
+aimer_widget.workspace = true
+
+[dev-dependencies]
+aimer_canvas.workspace = true
+aimer_container.workspace = true
+aimer_style.workspace = true
+aimer_cupid.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

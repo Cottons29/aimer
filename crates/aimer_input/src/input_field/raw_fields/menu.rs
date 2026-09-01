@@ -10,7 +10,7 @@ use aimer_attribute::bounds::Bounds;
 use aimer_attribute::position::Vec2d;
 use aimer_ctxmenu::{ContextMenu, ContextMenuShape};
 
-use super::{InputType, MenuOrigin, RawTextField, clipboard_read, clipboard_write};
+use super::{MenuOrigin, RawTextField, clipboard_read, clipboard_write};
 use crate::input_field::context_menu::{FieldAction, FieldMenuState, actions_for, items};
 
 impl RawTextField {
@@ -126,7 +126,7 @@ impl RawTextField {
     /// the user reached for it to do.
     pub(super) fn run_menu_action(&self, action: FieldAction) {
         match action {
-            FieldAction::Cut if !self.read_only && self.input_type != InputType::Obscure => {
+            FieldAction::Cut if !self.read_only && !self.input_type.is_obscured() => {
                 if let Some((start, end)) = self.cursor.selection_range() {
                     let removed = self.controller.get_range(start, end);
                     clipboard_write(&removed);
@@ -134,7 +134,7 @@ impl RawTextField {
                 }
                 self.close_menu();
             }
-            FieldAction::Copy if self.input_type != InputType::Obscure => {
+            FieldAction::Copy if !self.input_type.is_obscured() => {
                 if let Some((start, end)) = self.cursor.selection_range() {
                     clipboard_write(&self.controller.get_range(start, end));
                 }

@@ -14,7 +14,9 @@ use aimer_events::window::request_animation_frame;
 use aimer_utils::error;
 
 use crate::base::*;
-use crate::components::element::{DirtySource, identities_are_compatible};
+use crate::components::element::{
+    DirtySource, identities_are_compatible, structural_children,
+};
 use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
 use crate::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
@@ -417,6 +419,7 @@ impl<S: 'static> StateUpdater<S> {
     /// and only a single rebuild happens during the next `draw`.
     #[track_caller]
     pub fn set_state(&self, f: impl FnOnce(&mut S) + 'static) {
+        crate::frame_work_stats::record_state_update();
         let inner = match self.inner.as_ref() {
             Some(inner) => inner,
             None => {
@@ -980,6 +983,8 @@ impl StatefulElement {
     /// This avoids destroying and recreating the entire subtree when only a
     /// deeply-nested element's state has changed.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        crate::rebuild_stats::record_stateful_check();
         let invalidation_generation =
             crate::components::element::rebuild_invalidation_generation();
         let dirty = self.dirty.borrow().get();
@@ -1036,6 +1041,8 @@ impl StatefulElement {
         // look up state the provider has not re-inserted yet this frame and
         // panic ("No Navigator found in context").
         let new_child = {
+            #[cfg(any(debug_assertions, feature = "frame-stats"))]
+            crate::rebuild_stats::record_stateful_build();
             let rf = unsafe { &*self.rebuild_fn.0.get() };
             rf(ctx)
         };
@@ -1113,34 +1120,47 @@ pub(crate) fn carry_stateful(old: &dyn Element, new: &dyn Element, ctx: &BuildCo
     new_ele.adopt_state_from(old_ele, ctx);
 }
 
-fn find_keyed_stateful<'a>(
-    element: &'a dyn Element,
-    key: &crate::key::Key,
-    debug_name: &'static str,
-) -> Option<&'a StatefulElement> {
-    let current = if element.is_stateful_element() {
-        element
-            .option_any()
-            .and_then(|value| value.downcast_ref::<StatefulElement>())
-            .filter(|stateful| {
-                stateful.key.as_ref() == Some(key) && stateful.debug_name.get() == debug_name
-            })
-    } else {
-        None
-    };
+struct KeyedStateIndex<'a> {
+    states: HashMap<(&'a crate::key::Key, &'static str), &'a StatefulElement>,
+}
 
-    element_children(element)
-        .into_iter()
-        .filter_map(|child| find_keyed_stateful(child, key, debug_name))
-        .fold(current, |freshest, candidate| match freshest {
-            Some(existing)
-                if existing.state_revision.borrow().get()
-                    >= candidate.state_revision.borrow().get() =>
+impl<'a> KeyedStateIndex<'a> {
+    fn from_subtree(root: &'a dyn Element) -> Self {
+        let mut states = HashMap::new();
+        let mut pending = vec![root];
+
+        while let Some(current) = pending.pop() {
+            if let Some(stateful) = current
+                .option_any()
+                .and_then(|value| value.downcast_ref::<StatefulElement>())
+                && let Some(key) = stateful.key.as_ref()
             {
-                Some(existing)
+                let identity = (key, stateful.debug_name.get());
+                let should_replace = states
+                    .get(&identity)
+                    .is_none_or(|existing: &&StatefulElement| {
+                        existing.state_revision.borrow().get()
+                            < stateful.state_revision.borrow().get()
+                    });
+                if should_replace {
+                    states.insert(identity, stateful);
+                }
             }
-            _ => Some(candidate),
-        })
+
+            pending.extend(element_children(current).into_iter().rev());
+        }
+
+        Self { states }
+    }
+
+    #[inline]
+    fn get(
+        &self,
+        key: &crate::key::Key,
+        debug_name: &'static str,
+    ) -> Option<&'a StatefulElement> {
+        self.states.get(&(key, debug_name)).copied()
+    }
 }
 
 /// Reports whether two element references name the same element.
@@ -1157,28 +1177,16 @@ fn same_element(left: &dyn Element, right: &dyn Element) -> bool {
 }
 
 fn element_children(element: &dyn Element) -> smallvec::SmallVec<[&dyn Element; 8]> {
-    let mut children: smallvec::SmallVec<[&dyn Element; 8]> = smallvec::SmallVec::new();
-    element.event_children(&mut |child| children.push(child));
-    element.visit_children(&mut |child| {
-        if !children
-            .iter()
-            .any(|existing| std::ptr::eq(*existing, child))
-        {
-            children.push(child);
-        }
-    });
-    children
+    structural_children(element)
 }
 
 /// Recurse into the matched children of an old and new element tree, letting
 /// each nested `StatefulElement` carry its runtime state from the old subtree
 /// into the new one.
 ///
-/// Children are enumerated through `event_children` first (the same accessor
-/// used for event dispatch). If that yields nothing, falls back to
-/// `visit_children` (used by the visitor/layout system) so that elements like
-/// scrollable containers — which hide children from event dispatch but expose
-/// them for layout — still get their nested stateful state carried across.
+/// Children are enumerated through the canonical structural-child accessor so
+/// elements such as scrollable containers can expose their layout children
+/// even when those children are hidden from event dispatch.
 pub(crate) fn carry_child_state(old: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
     if same_element(old, new) {
         return;
@@ -1189,14 +1197,16 @@ pub(crate) fn carry_child_state(old: &dyn Element, new: &dyn Element, ctx: &Buil
 
 fn carry_keyed_child_state(old_root: &dyn Element, new: &dyn Element, ctx: &BuildContext) {
     new.with_rebuild_context(ctx, &mut |ctx| {
-        carry_keyed_child_state_in_context(old_root, new, ctx)
+        let mut keyed_states = None;
+        carry_keyed_child_state_in_context(old_root, new, ctx, &mut keyed_states)
     });
 }
 
-fn carry_keyed_child_state_in_context(
-    old_root: &dyn Element,
+fn carry_keyed_child_state_in_context<'a>(
+    old_root: &'a dyn Element,
     new: &dyn Element,
     ctx: &BuildContext,
+    keyed_states: &mut Option<KeyedStateIndex<'a>>,
 ) {
     if new.is_stateful_element()
         && let Some(new_stateful) = new
@@ -1204,8 +1214,10 @@ fn carry_keyed_child_state_in_context(
             .and_then(|value| value.downcast_ref::<StatefulElement>())
         && let Some(key) = new_stateful.key.as_ref()
     {
-        if let Some(old_stateful) =
-            find_keyed_stateful(old_root, key, new_stateful.debug_name.get())
+        let old_stateful = keyed_states
+            .get_or_insert_with(|| KeyedStateIndex::from_subtree(old_root))
+            .get(key, new_stateful.debug_name.get());
+        if let Some(old_stateful) = old_stateful
             && old_stateful.state_revision.borrow().get()
                 >= new_stateful.state_revision.borrow().get()
         {
@@ -1216,7 +1228,12 @@ fn carry_keyed_child_state_in_context(
     }
 
     for child in element_children(new) {
-        carry_keyed_child_state(old_root, child, ctx);
+        // A descendant may publish inherited state (for example, a provider).
+        // Keep entering each element's rebuild scope while sharing the keyed
+        // index, otherwise a keyed state rebuild can see the bare frame context.
+        child.with_rebuild_context(ctx, &mut |ctx| {
+            carry_keyed_child_state_in_context(old_root, child, ctx, keyed_states);
+        });
     }
 }
 
@@ -1249,8 +1266,11 @@ fn carry_state_below_keyed(old: &StatefulElement, new: &StatefulElement, ctx: &B
         return;
     }
 
+    let mut keyed_states = None;
     for child in element_children(new) {
-        carry_keyed_child_state(old, child, ctx);
+        child.with_rebuild_context(ctx, &mut |ctx| {
+            carry_keyed_child_state_in_context(old, child, ctx, &mut keyed_states);
+        });
     }
 
     carry_matching_child_state(old, new, ctx);
@@ -1658,9 +1678,12 @@ impl Drawable for StatefulElement {
                     && cp.x <= l_end.x
                     && cp.y >= l_start.y
                     && cp.y <= l_end.y
-                    && let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write()
                 {
-                    *hovered = Some((self.debug_name.get(), l_start, l_end));
+                    crate::inspector_overlay::set_hovered_widget((
+                        self.debug_name.get(),
+                        l_start,
+                        l_end,
+                    ));
                 }
             }
         }

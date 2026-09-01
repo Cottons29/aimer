@@ -1,5 +1,7 @@
 pub(crate) mod frame_upload;
+pub(crate) mod frame_composite;
 pub mod image_pipeline;
+pub mod material;
 pub mod rect_pipeline;
 pub mod svg_pipeline;
 pub mod text_pipeline;

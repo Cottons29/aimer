@@ -22,6 +22,14 @@ pub(crate) struct WrapLayout {
     pub(crate) size: ResolvedSize,
 }
 
+impl WrapLayout {
+    /// Returns the top-left offset of a child in this wrapped layout.
+    #[inline]
+    pub(crate) fn offset(&self, index: usize) -> (f32, f32) {
+        self.offsets[index]
+    }
+}
+
 /// Lays children out onto as many lines as `max_width` / `max_height` allow.
 fn compute_wrap_layout(
     children: &[ResolvedSize],

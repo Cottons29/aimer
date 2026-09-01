@@ -1,0 +1,18 @@
+[package]
+name = "aimer_navigation"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+
+[dependencies]
+aimer_attribute.workspace = true
+aimer_container.workspace = true
+aimer_events.workspace = true
+aimer_flex.workspace = true
+aimer_focus.workspace = true
+aimer_input.workspace = true
+aimer_provider.workspace = true
+aimer_router.workspace = true
+aimer_style.workspace = true
+aimer_text.workspace = true
+aimer_widget.workspace = true

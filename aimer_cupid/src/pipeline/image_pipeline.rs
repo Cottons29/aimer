@@ -177,10 +177,14 @@ pub struct ImageInstance {
     /// bottom-left].
     pub clip_border_radius: [f32; 4],
     pub alpha: f32,
+    /// Whether the sampled source already contains premultiplied color.
+    /// Ordinary decoded images are straight-alpha; renderer-owned retained
+    /// layers are premultiplied render targets.
+    pub source_premultiplied: f32,
 }
 
 impl ImageInstance {
-    const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+    const ATTRIBS: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x2,
@@ -188,6 +192,7 @@ impl ImageInstance {
         4 => Float32x4,
         5 => Float32x4,
         6 => Float32,
+        7 => Float32,
     ];
 
     fn layout() -> wgpu::VertexBufferLayout<'static> {
@@ -854,6 +859,7 @@ mod tests {
             clip_rect: [-1.0; 4],
             clip_border_radius: [0.0; 4],
             alpha: 0.35,
+            source_premultiplied: 0.0,
         };
 
         assert_eq!(instance.alpha, 0.35);

@@ -3,6 +3,7 @@ pub(crate) mod children_source;
 pub mod flex_child;
 pub(crate) mod flex_layout;
 pub mod flex_list;
+pub mod layout_transition;
 #[cfg(test)]
 mod lazy_tests {
     //! Tests for the viewport-proportional behaviour of [`RawFlex`].
@@ -16,7 +17,10 @@ mod lazy_tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable};
+    use aimer_widget::base::{BuildContext, ResolvedSize, Vec2d};
+    use aimer_widget::{
+        AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
+    };
 
     use crate::flex::raw_flex::RawFlex;
     use crate::flex::test_support::{
@@ -28,11 +32,94 @@ mod lazy_tests {
     const CHILD_HEIGHT: f32 = 80.0;
     const VIEWPORT: f32 = 600.0;
 
+    struct HitTestChild {
+        bounds: (Vec2d, Vec2d),
+    }
+
+    impl HitTestChild {
+        fn boxed(bounds: (Vec2d, Vec2d)) -> AnyElement {
+            Self { bounds }.boxed()
+        }
+    }
+
+    impl VisitorElement for HitTestChild {
+        fn debug_name(&self) -> &'static str {
+            "HitTestChild"
+        }
+    }
+
+    impl EventElement for HitTestChild {}
+    impl Rebuildable for HitTestChild {}
+    impl Drawable for HitTestChild {
+        fn draw(&self, _ctx: &BuildContext) {}
+
+        fn is_paint_stable(&self) -> bool {
+            true
+        }
+    }
+    impl LayoutElement for HitTestChild {
+        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+            ResolvedSize {
+                width: 100.0,
+                height: 20.0,
+            }
+        }
+
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some(self.bounds)
+        }
+    }
+
+    struct CountingHitTestChild {
+        bounds: (Vec2d, Vec2d),
+        pos_start_end_calls: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for CountingHitTestChild {
+        fn debug_name(&self) -> &'static str {
+            "CountingHitTestChild"
+        }
+    }
+
+    impl EventElement for CountingHitTestChild {}
+    impl Rebuildable for CountingHitTestChild {}
+    impl Drawable for CountingHitTestChild {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl LayoutElement for CountingHitTestChild {
+        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+            ResolvedSize {
+                width: 100.0,
+                height: 10.0,
+            }
+        }
+
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            self.pos_start_end_calls
+                .set(self.pos_start_end_calls.get() + 1);
+            Some(self.bounds)
+        }
+    }
+
     fn tall_column(measured: &Rc<Cell<usize>>, drawn: &Rc<Cell<usize>>) -> RawFlex {
         let children = (0..CHILD_COUNT)
             .map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, measured, drawn))
             .collect();
         RawFlex::new(FlexDirection::Column, children, "Column")
+    }
+
+    #[test]
+    fn raw_flex_does_not_advertise_paint_stability_for_live_layout_bookkeeping() {
+        let column = RawFlex::new(
+            FlexDirection::Column,
+            vec![HitTestChild::boxed((
+                Vec2d::ZERO,
+                Vec2d { x: 100.0, y: 20.0 },
+            ))],
+            "Column",
+        );
+
+        assert!(!column.is_paint_stable());
     }
 
     /// A `Column` under a viewport must paint only the children intersecting it,
@@ -109,6 +196,85 @@ mod lazy_tests {
         column.hit_test_children(&mut |_| hit_tested += 1);
 
         assert_eq!(hit_tested, drawn.get());
+    }
+
+    #[test]
+    fn position_aware_hit_testing_prunes_offscreen_flex_children() {
+        let column = RawFlex::new(
+            FlexDirection::Column,
+            vec![
+                HitTestChild::boxed((
+                    Vec2d { x: 0.0, y: 0.0 },
+                    Vec2d { x: 100.0, y: 20.0 },
+                )),
+                HitTestChild::boxed((
+                    Vec2d { x: 0.0, y: 20.0 },
+                    Vec2d { x: 100.0, y: 40.0 },
+                )),
+                HitTestChild::boxed((
+                    Vec2d { x: 0.0, y: 40.0 },
+                    Vec2d { x: 100.0, y: 60.0 },
+                )),
+            ],
+            "Column",
+        );
+        let ctx = dummy_build_context(100.0, 100.0, Some((0.0, 0.0, 100.0, 100.0)));
+        column.draw(&ctx);
+
+        let pos = Vec2d { x: 50.0, y: 30.0 };
+        let mut forward = 0;
+        column.hit_test_children_at(pos, &mut |_| forward += 1);
+        assert_eq!(forward, 1);
+
+        let mut reversed = 0;
+        column.hit_test_children_at_reversed(pos, &mut |_| reversed += 1);
+        assert_eq!(reversed, 1);
+    }
+
+    #[test]
+    fn wide_flex_hit_testing_rejects_non_intersecting_children_before_bounds_lookup() {
+        const CHILD_COUNT: usize = 128;
+        let pos_start_end_calls = Rc::new(Cell::new(0));
+        let mut column = RawFlex::new(
+            FlexDirection::Column,
+            (0..CHILD_COUNT)
+                .map(|index| {
+                    CountingHitTestChild {
+                        bounds: (
+                            Vec2d {
+                                x: 0.0,
+                                y: index as f32 * 10.0,
+                            },
+                            Vec2d {
+                                x: 100.0,
+                                y: index as f32 * 10.0 + 10.0,
+                            },
+                        ),
+                        pos_start_end_calls: Rc::clone(&pos_start_end_calls),
+                    }
+                    .boxed()
+                })
+                .collect(),
+            "Column",
+        );
+        let ctx = dummy_build_context(100.0, CHILD_COUNT as f32 * 10.0, None);
+        column.overflow_behavior = OverflowBehavior::Visible;
+        column.draw(&ctx);
+        pos_start_end_calls.set(0);
+
+        let mut hits = 0;
+        column.hit_test_children_at_reversed(
+            Vec2d { x: 50.0, y: 1005.0 },
+            &mut |_| hits += 1,
+        );
+
+        assert_eq!(hits, 1);
+        assert!(
+            pos_start_end_calls.get() < CHILD_COUNT,
+            "wide flex queried {} of {} child bounds",
+            pos_start_end_calls.get(),
+            CHILD_COUNT
+        );
     }
 
     /// A hidden root flex has a finite painting box even when no ancestor
@@ -345,6 +511,7 @@ use aimer_widget::portable::{
 use aimer_widget::portable::{PortableBuildContext, PortableBuildError, PortableEncodeProperty};
 pub use flex_child::Expanded;
 pub use flex_list::{FlexList, ListFlex};
+pub use layout_transition::{FlexGeometrySnapshot, FlexItemGeometry, FlexSnapshotError};
 
 #[cfg(test)]
 mod portable_materializer_tests {

@@ -29,6 +29,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use aimer_attribute::BoxConstraint;
+use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_widget::base::BuildContext;
 use aimer_widget::ElementId;
@@ -822,6 +823,58 @@ struct CachedLayerOrder {
     order: LayerOrder,
 }
 
+const HIT_TEST_CHILD_THRESHOLD: usize = 64;
+const HIT_TEST_BIN_COUNT: usize = 64;
+
+/// A coarse main-axis interval index for a wide flex child range.
+///
+/// The exact child bounds are still checked by the routed walk. This index only
+/// rejects children whose retained bounds cannot intersect the pointer on the
+/// flex main axis, so overflow and cross-axis alignment retain their existing
+/// semantics. Unknown bounds are kept in every bin, just as the fallback walk
+/// treats them as candidates.
+struct CachedHitTestIndex {
+    generation: u64,
+    layout_generation: u64,
+    range: (usize, usize),
+    is_row: bool,
+    min_main: f32,
+    max_main: f32,
+    bin_height: f32,
+    offsets: Rc<[usize]>,
+    children: Rc<[usize]>,
+    outside: Rc<[usize]>,
+}
+
+impl CachedHitTestIndex {
+    #[inline]
+    fn candidates(&self, range: &Range<usize>, pos: Vec2d) -> Option<&[usize]> {
+        if self.generation != aimer_widget::element_tree_generation()
+            || self.layout_generation != aimer_widget::layout_invalidation_generation()
+            || self.range != (range.start, range.end)
+            || !pos.x.is_finite()
+            || !pos.y.is_finite()
+        {
+            return None;
+        }
+
+        let main = if self.is_row { pos.x } else { pos.y };
+        let candidates = if main < self.min_main || main > self.max_main {
+            self.outside.as_ref()
+        } else {
+            let bin = ((main - self.min_main) / self.bin_height)
+                .floor()
+                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32)
+                as usize;
+            let start = self.offsets[bin];
+            let end = self.offsets[bin + 1];
+            &self.children[start..end]
+        };
+
+        Some(candidates)
+    }
+}
+
 /// Holds one flex container's [`FlexLayout`] between frames.
 ///
 /// The table is keyed by the constraint and scale it was measured under, so a
@@ -846,6 +899,7 @@ pub(crate) struct FlexLayoutCache {
     table: UnsafeCell<Option<CachedTable>>,
     painted: Cell<Option<(usize, usize)>>,
     paint_order: UnsafeCell<Option<CachedLayerOrder>>,
+    hit_test_index: UnsafeCell<Option<CachedHitTestIndex>>,
 }
 
 impl FlexLayoutCache {
@@ -856,6 +910,7 @@ impl FlexLayoutCache {
             table: UnsafeCell::new(None),
             painted: Cell::new(None),
             paint_order: UnsafeCell::new(None),
+            hit_test_index: UnsafeCell::new(None),
         }
     }
 
@@ -998,6 +1053,7 @@ impl FlexLayoutCache {
         // first draw instead of carrying an order for the old elements.
         unsafe {
             *self.paint_order.get() = None;
+            *self.hit_test_index.get() = None;
         }
     }
 
@@ -1007,6 +1063,7 @@ impl FlexLayoutCache {
         unsafe {
             *self.table.get() = None;
             *self.paint_order.get() = None;
+            *self.hit_test_index.get() = None;
         }
         self.painted.set(None);
     }
@@ -1015,12 +1072,158 @@ impl FlexLayoutCache {
     #[inline]
     pub(crate) fn set_painted(&self, range: &Range<usize>) {
         self.painted.set(Some((range.start, range.end)));
+        unsafe {
+            *self.hit_test_index.get() = None;
+        }
     }
 
     /// Returns the index range painted by the most recent frame.
     #[inline]
     pub(crate) fn painted(&self) -> Option<Range<usize>> {
         self.painted.get().map(|(start, end)| start..end)
+    }
+
+    /// Retires retained child intervals before a new frame updates bounds.
+    #[inline]
+    pub(crate) fn invalidate_hit_test_index(&self) {
+        unsafe {
+            *self.hit_test_index.get() = None;
+        }
+    }
+
+    /// Builds a coarse main-axis index from the retained bounds of a wide
+    /// painted range. The index is rebuilt after painting, so event dispatch
+    /// does not call every child's virtual `pos_start_end` method.
+    pub(crate) fn rebuild_hit_test_index(
+        &self,
+        range: Range<usize>,
+        is_row: bool,
+        mut bounds_of: impl FnMut(usize) -> Option<(Vec2d, Vec2d)>,
+    ) {
+        let child_count = range.len();
+        if child_count <= HIT_TEST_CHILD_THRESHOLD {
+            unsafe {
+                *self.hit_test_index.get() = None;
+            }
+            return;
+        }
+
+        let mut intervals = Vec::with_capacity(child_count);
+        let mut min_main = f32::INFINITY;
+        let mut max_main = f32::NEG_INFINITY;
+        let mut known_count = 0usize;
+
+        for index in range.clone() {
+            let interval = bounds_of(index)
+                .filter(|(start, end)| {
+                    let start_main = if is_row { start.x } else { start.y };
+                    let end_main = if is_row { end.x } else { end.y };
+                    start_main.is_finite() && end_main.is_finite() && start_main <= end_main
+                })
+                .map(|(start, end)| {
+                    (
+                        if is_row { start.x } else { start.y },
+                        if is_row { end.x } else { end.y },
+                    )
+                });
+            if let Some((start, end)) = interval {
+                min_main = min_main.min(start);
+                max_main = max_main.max(end);
+                known_count += 1;
+            }
+            intervals.push(interval);
+        }
+
+        let span = max_main - min_main;
+        let indexable = known_count > 0 && span.is_finite();
+        let bin_height = if indexable && span > 0.0 {
+            span / HIT_TEST_BIN_COUNT as f32
+        } else {
+            1.0
+        };
+        let bin_range = |start: f32, end: f32| {
+            let first_bin = ((start - min_main) / bin_height)
+                .floor()
+                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32)
+                as usize;
+            let last_bin = ((end - min_main) / bin_height)
+                .floor()
+                .clamp(0.0, (HIT_TEST_BIN_COUNT - 1) as f32)
+                as usize;
+            (first_bin, last_bin)
+        };
+
+        let mut estimated_entries = 0usize;
+        if indexable {
+            for interval in &intervals {
+                let entries = interval.map_or(HIT_TEST_BIN_COUNT, |(start, end)| {
+                    let (first_bin, last_bin) = bin_range(start, end);
+                    last_bin - first_bin + 1
+                });
+                estimated_entries = estimated_entries.saturating_add(entries);
+            }
+        }
+
+        // If most intervals span most bins, consulting the index would only
+        // add indirection. Keep the exact linear fallback for that shape.
+        if !indexable || estimated_entries > child_count.saturating_mul(4) {
+            unsafe {
+                *self.hit_test_index.get() = None;
+            }
+            return;
+        }
+
+        let mut bins: Vec<Vec<usize>> = (0..HIT_TEST_BIN_COUNT)
+            .map(|_| Vec::new())
+            .collect();
+        let mut outside = Vec::new();
+        for (offset, interval) in intervals.into_iter().enumerate() {
+            let index = range.start + offset;
+            if let Some((start, end)) = interval {
+                let (first_bin, last_bin) = bin_range(start, end);
+                for bin in first_bin..=last_bin {
+                    bins[bin].push(index);
+                }
+            } else {
+                outside.push(index);
+                for bin in &mut bins {
+                    bin.push(index);
+                }
+            }
+        }
+
+        let mut offsets = Vec::with_capacity(HIT_TEST_BIN_COUNT + 1);
+        let mut indexed_children = Vec::with_capacity(estimated_entries);
+        offsets.push(0);
+        for bin in bins {
+            indexed_children.extend(bin);
+            offsets.push(indexed_children.len());
+        }
+
+        let slot = unsafe { &mut *self.hit_test_index.get() };
+        *slot = Some(CachedHitTestIndex {
+            generation: aimer_widget::element_tree_generation(),
+            layout_generation: aimer_widget::layout_invalidation_generation(),
+            range: (range.start, range.end),
+            is_row,
+            min_main,
+            max_main,
+            bin_height,
+            offsets: Rc::from(offsets.into_boxed_slice()),
+            children: Rc::from(indexed_children.into_boxed_slice()),
+            outside: Rc::from(outside.into_boxed_slice()),
+        });
+    }
+
+    /// Returns indexed candidates in ascending child order, or `None` when the
+    /// range has no usable sparse index and the exact fallback should run.
+    #[inline]
+    pub(crate) fn hit_test_candidates(
+        &self,
+        range: &Range<usize>,
+        pos: Vec2d,
+    ) -> Option<&[usize]> {
+        unsafe { (&*self.hit_test_index.get()).as_ref()?.candidates(range, pos) }
     }
 }
 

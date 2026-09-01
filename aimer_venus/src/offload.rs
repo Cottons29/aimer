@@ -1,55 +1,38 @@
 //! The one place work leaves the UI thread.
 
-use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::task::{Context, Poll, Waker};
-use std::thread::{self, JoinHandle};
+use std::sync::{Arc, OnceLock};
+use std::task::{Context, Poll};
+use std::thread::{self, JoinHandle, Thread};
+
+use crossbeam::channel::{Receiver, Sender, bounded, unbounded};
+use futures_util::task::AtomicWaker;
 
 /// One unit of work queued for a worker thread.
 type Job = Box<dyn FnOnce() + Send>;
 
- enum Slot<T> {
-    /// Nobody has finished yet; the waker of whoever is awaiting, if it has been
-    /// polled at all.
-    Waiting(Option<Waker>),
-    Finished(T),
-    Delivered,
-}
-
 /// The rendezvous between a worker thread and the awaiting UI-thread task.
 struct Rendezvous<T> {
-    slot: Mutex<Slot<T>>,
+    result: Receiver<T>,
+    completion: Sender<T>,
+    waker: AtomicWaker,
 }
 
 impl<T> Rendezvous<T> {
     fn new() -> Arc<Self> {
+        let (completion, result) = bounded(1);
         Arc::new(Self {
-            slot: Mutex::new(Slot::Waiting(None)),
+            result,
+            completion,
+            waker: AtomicWaker::new(),
         })
     }
 
     /// Publishes `value` and wakes the awaiting task.
-    ///
-    /// The waker is taken *before* the lock is released, and called after, so a
-    /// wake never runs while the worker holds the mutex the UI thread is about
-    /// to want.
     fn complete(&self, value: T) {
-        let waker = {
-            let Ok(mut slot) = self.slot.lock() else {
-                return;
-            };
-            match std::mem::replace(&mut *slot, Slot::Finished(value)) {
-                Slot::Waiting(waker) => waker,
-                // Only a worker completes a rendezvous, and each job runs once.
-                _ => None,
-            }
-        };
-
-        if let Some(waker) = waker {
-            waker.wake();
-        }
+        let _ = self.completion.send(value);
+        self.waker.wake();
     }
 }
 
@@ -71,85 +54,64 @@ impl<T> Future for Offloaded<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let Ok(mut slot) = self.rendezvous.slot.lock() else {
-            // The worker panicked while holding the lock. The value can never
-            // arrive, so the only honest answer is to keep the task parked
-            // rather than to invent one.
-            return Poll::Pending;
-        };
-
-        match &mut *slot {
-            Slot::Waiting(waker) => {
-                if waker.as_ref().is_none_or(|held| !held.will_wake(cx.waker())) {
-                    *waker = Some(cx.waker().clone());
-                }
-                Poll::Pending
-            }
-            Slot::Finished(_) => match std::mem::replace(&mut *slot, Slot::Delivered) {
-                Slot::Finished(value) => Poll::Ready(value),
-                _ => unreachable!("the slot was just observed to be finished"),
-            },
-            Slot::Delivered => {
-                debug_assert!(false, "an `Offloaded` future was polled after completion");
-                Poll::Pending
-            }
+        if let Ok(value) = self.rendezvous.result.try_recv() {
+            return Poll::Ready(value);
         }
+
+        self.rendezvous.waker.register(cx.waker());
+        if let Ok(value) = self.rendezvous.result.try_recv() {
+            return Poll::Ready(value);
+        }
+        Poll::Pending
     }
 }
 
 /// One worker's slice of the pool's shared state.
 struct WorkerSlot {
-    /// This worker's own job queue: the pool pushes here, the owner pops from
-    /// the front, and a worker whose own queue is empty steals from a sibling's
-    /// front. Per-worker queues are what keep dispatch parallel — two workers
-    /// taking jobs touch two different locks, not one shared one.
-    jobs: Mutex<VecDeque<Job>>,
+    /// This worker's own job queue. The owner and thieves consume it through
+    /// Crossbeam's lock-free receiver operations.
+    jobs: Receiver<Job>,
+    sender: Sender<Job>,
     /// Raised by the worker when a full scan of every queue found nothing,
     /// lowered when it picks work up again.
     ///
     /// The handshake that makes the flag reliable: the worker raises it
     /// *before* its final scan, and the submitter reads it *after* pushing a
-    /// job — both through `SeqCst` and the queue locks — so any job is either
+    /// job — both through `SeqCst` and the queue's atomics — so any job is either
     /// seen by that final scan or its submitter sees the raised flag and rings
     /// the alarm.
     idle: AtomicBool,
     /// The wake token: `true` means the worker owes the queues another scan.
-    /// Guarded by its own mutex so a ring landing between the final scan and
-    /// the wait is never lost.
-    token: Mutex<bool>,
-    alarm: Condvar,
+    token: AtomicBool,
+    /// The worker's parking handle, installed once at worker start.
+    thread: OnceLock<Thread>,
 }
 
 impl WorkerSlot {
     fn new() -> Self {
+        let (sender, jobs) = unbounded();
         Self {
-            jobs: Mutex::new(VecDeque::new()),
+            jobs,
+            sender,
             idle: AtomicBool::new(false),
-            token: Mutex::new(false),
-            alarm: Condvar::new(),
+            token: AtomicBool::new(false),
+            thread: OnceLock::new(),
         }
     }
 
-    /// Hands the worker a wake token and rings its alarm.
+    /// Hands the worker a wake token and unparks it.
     fn ring(&self) {
-        if let Ok(mut token) = self.token.lock() {
-            *token = true;
+        self.token.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.thread.get() {
+            thread.unpark();
         }
-        self.alarm.notify_one();
     }
 
     /// Blocks until a wake token arrives, then consumes it.
     fn wait_for_ring(&self) {
-        let Ok(mut token) = self.token.lock() else {
-            return;
-        };
-        while !*token {
-            match self.alarm.wait(token) {
-                Ok(woken) => token = woken,
-                Err(_) => return,
-            }
+        while !self.token.swap(false, Ordering::SeqCst) {
+            thread::park();
         }
-        *token = false;
     }
 }
 
@@ -251,9 +213,7 @@ impl OffloadPool {
         // worker is busy, round-robin spreads the burst across their queues.
         let target = Self::idle_worker(slots)
             .unwrap_or_else(|| self.cursor.fetch_add(1, Ordering::Relaxed) % slots.len());
-        if let Ok(mut jobs) = slots[target].jobs.lock() {
-            jobs.push_back(job);
-        }
+        let _ = slots[target].sender.send(job);
 
         // Re-read the flags *after* the push — see [`WorkerSlot::idle`]. Any
         // idle worker will do when the target itself is not: it steals.
@@ -307,6 +267,7 @@ impl Drop for OffloadPool {
 
 fn worker(shared: &PoolShared, me: usize) {
     let slot = &shared.slots[me];
+    let _ = slot.thread.set(thread::current());
     loop {
         if let Some(job) = claim(shared, me) {
             job();
@@ -340,9 +301,7 @@ fn worker(shared: &PoolShared, me: usize) {
 /// letting work sit behind a busy peer.
 fn claim(shared: &PoolShared, me: usize) -> Option<Job> {
     let slots = &shared.slots;
-    if let Ok(mut jobs) = slots[me].jobs.lock()
-        && let Some(job) = jobs.pop_front()
-    {
+    if let Ok(job) = slots[me].jobs.try_recv() {
         return Some(job);
     }
 
@@ -350,9 +309,7 @@ fn claim(shared: &PoolShared, me: usize) -> Option<Job> {
     // thief's first stop.
     for offset in 1..slots.len() {
         let victim = (me + offset) % slots.len();
-        if let Ok(mut jobs) = slots[victim].jobs.lock()
-            && let Some(job) = jobs.pop_front()
-        {
+        if let Ok(job) = slots[victim].jobs.try_recv() {
             return Some(job);
         }
     }

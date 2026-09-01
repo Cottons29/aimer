@@ -1,0 +1,9 @@
+[package]
+name = "aimer_i18n"
+version = "0.1.0"
+edition = "2024"
+description = "Deterministic, platform-neutral localization contracts for Aimer"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"

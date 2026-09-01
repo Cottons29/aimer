@@ -1,11 +1,41 @@
 use aimer_widget::base::Color;
 
-/// Trait for types that can be linearly interpolated.
+pub use aimer_macro::Animatable;
+
+/// A value that can be interpolated from `self` toward another value.
 ///
-/// Implement this on any type you want to animate between two values.
-/// The framework provides implementations for common numeric types and tuples.
+/// The framework provides implementations for common numeric types, colors,
+/// and tuples. User-defined structs can derive this trait to interpolate every
+/// field recursively:
+///
+/// ```
+/// use aimer_animation::Animatable;
+///
+/// #[derive(Debug, PartialEq, Animatable)]
+/// struct Offset {
+///     x: f32,
+///     y: f32,
+/// }
+///
+/// let begin = Offset { x: 0.0, y: 4.0 };
+/// let end = Offset { x: 8.0, y: 12.0 };
+/// assert_eq!(begin.lerp(&end, 0.25), Offset { x: 2.0, y: 6.0 });
+/// ```
+///
+/// Enums must select either `#[animatable(discrete)]`, which switches values
+/// at `t = 0.5`, or `#[animatable(fieldwise)]`, which recursively interpolates
+/// matching variants and uses that same switch for different variants.
+/// Discrete switching selects the source only when `t < 0.5`; at the midpoint,
+/// above it, or for `NaN`, it selects the target. Implement the trait manually
+/// when variants need a custom mapping.
+///
+/// Implementations receive `t` unchanged. Each field's implementation decides
+/// how endpoints, extrapolation, and non-finite factors behave.
 pub trait Animatable {
-    /// Linearly interpolate from `self` to `other` by factor `t` (0.0–1.0).
+    /// Interpolates from `self` to `other` by factor `t`.
+    ///
+    /// `t` is conventionally in `0.0..=1.0`, but the trait does not clamp or
+    /// reject extrapolated or non-finite values.
     fn lerp(&self, other: &Self, t: f32) -> Self;
 }
 
@@ -89,6 +119,212 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+
+    #[derive(Debug, PartialEq, Animatable)]
+    struct Insets {
+        horizontal: f32,
+        vertical: f32,
+    }
+
+    #[derive(Debug, PartialEq, Animatable)]
+    struct Point(f32, f32);
+
+    #[derive(Debug, PartialEq, Animatable)]
+    struct Marker;
+
+    #[derive(Debug, PartialEq)]
+    struct NonClone(f32);
+
+    impl Animatable for NonClone {
+        fn lerp(&self, other: &Self, t: f32) -> Self {
+            Self(self.0.lerp(&other.0, t))
+        }
+    }
+
+    #[derive(Debug, PartialEq, Animatable)]
+    struct GenericValue<T>
+    where
+        T: PartialEq,
+    {
+        value: T,
+    }
+
+    #[derive(Debug, PartialEq, Animatable)]
+    struct Composite {
+        insets: Insets,
+        offset: (f32, f32),
+        color: Color,
+    }
+
+    #[derive(Debug, PartialEq, Animatable)]
+    #[animatable(discrete)]
+    enum LabelState {
+        Hidden,
+        Visible(String),
+    }
+
+    #[derive(Debug, PartialEq, Animatable)]
+    #[animatable(fieldwise)]
+    enum Shape {
+        Circle { radius: f32 },
+        Point(f32, f32),
+        Hidden,
+    }
+
+    #[test]
+    fn derived_named_struct_interpolates_every_field() {
+        let begin = Insets {
+            horizontal: 2.0,
+            vertical: 10.0,
+        };
+        let end = Insets {
+            horizontal: 6.0,
+            vertical: 18.0,
+        };
+
+        assert_eq!(
+            begin.lerp(&end, 0.25),
+            Insets {
+                horizontal: 3.0,
+                vertical: 12.0,
+            }
+        );
+    }
+
+    #[test]
+    fn derived_tuple_struct_interpolates_fields_by_position() {
+        let begin = Point(4.0, 8.0);
+        let end = Point(12.0, 28.0);
+
+        assert_eq!(begin.lerp(&end, 0.5), Point(8.0, 18.0));
+    }
+
+    #[test]
+    fn derived_unit_struct_returns_the_unit_value() {
+        assert_eq!(Marker.lerp(&Marker, f32::NAN), Marker);
+    }
+
+    #[test]
+    fn derived_nested_and_generic_structs_preserve_recursive_bounds() {
+        let begin = GenericValue {
+            value: NonClone(2.0),
+        };
+        let end = GenericValue {
+            value: NonClone(10.0),
+        };
+        assert_eq!(
+            begin.lerp(&end, 0.25),
+            GenericValue {
+                value: NonClone(4.0),
+            }
+        );
+
+        let begin = Composite {
+            insets: Insets {
+                horizontal: 0.0,
+                vertical: 10.0,
+            },
+            offset: (2.0, 4.0),
+            color: Color::Rgba(0, 20, 40, 60),
+        };
+        let end = Composite {
+            insets: Insets {
+                horizontal: 8.0,
+                vertical: 18.0,
+            },
+            offset: (6.0, 12.0),
+            color: Color::Rgba(100, 120, 140, 160),
+        };
+        assert_eq!(
+            begin.lerp(&end, 0.5),
+            Composite {
+                insets: Insets {
+                    horizontal: 4.0,
+                    vertical: 14.0,
+                },
+                offset: (4.0, 8.0),
+                color: Color::Rgba(50, 70, 90, 110),
+            }
+        );
+    }
+
+    #[test]
+    fn derived_struct_delegates_endpoint_extrapolation_and_non_finite_factors() {
+        let begin = Insets {
+            horizontal: 2.0,
+            vertical: 10.0,
+        };
+        let end = Insets {
+            horizontal: 6.0,
+            vertical: 18.0,
+        };
+
+        assert_eq!(begin.lerp(&end, 0.0), begin);
+        assert_eq!(begin.lerp(&end, 1.0), end);
+        assert_eq!(
+            begin.lerp(&end, -1.0),
+            Insets {
+                horizontal: -2.0,
+                vertical: 2.0,
+            }
+        );
+        assert_eq!(
+            begin.lerp(&end, 2.0),
+            Insets {
+                horizontal: 10.0,
+                vertical: 26.0,
+            }
+        );
+        let nan = begin.lerp(&end, f32::NAN);
+        assert!(nan.horizontal.is_nan());
+        assert!(nan.vertical.is_nan());
+    }
+
+    #[test]
+    fn derived_discrete_enum_switches_at_the_midpoint_without_animatable_fields() {
+        let begin = LabelState::Hidden;
+        let end = LabelState::Visible(String::from("ready"));
+
+        assert_eq!(begin.lerp(&end, 0.499), LabelState::Hidden);
+        assert_eq!(
+            begin.lerp(&end, 0.5),
+            LabelState::Visible(String::from("ready"))
+        );
+        assert_eq!(begin.lerp(&end, f32::NEG_INFINITY), LabelState::Hidden);
+        assert_eq!(
+            begin.lerp(&end, f32::INFINITY),
+            LabelState::Visible(String::from("ready"))
+        );
+        assert_eq!(
+            begin.lerp(&end, f32::NAN),
+            LabelState::Visible(String::from("ready"))
+        );
+    }
+
+    #[test]
+    fn derived_fieldwise_enum_interpolates_matching_variants_and_switches_others() {
+        let small = Shape::Circle { radius: 2.0 };
+        let large = Shape::Circle { radius: 10.0 };
+        assert_eq!(small.lerp(&large, 0.25), Shape::Circle { radius: 4.0 });
+
+        let point = Shape::Point(8.0, 12.0);
+        assert_eq!(small.lerp(&point, 0.499), Shape::Circle { radius: 2.0 });
+        assert_eq!(small.lerp(&point, 0.5), Shape::Point(8.0, 12.0));
+
+        let other_point = Shape::Point(12.0, 20.0);
+        assert_eq!(point.lerp(&other_point, 0.5), Shape::Point(10.0, 16.0));
+
+        assert_eq!(
+            small.lerp(&large, -1.0),
+            Shape::Circle { radius: -6.0 }
+        );
+        let nan = small.lerp(&large, f32::NAN);
+        assert!(matches!(nan, Shape::Circle { radius } if radius.is_nan()));
+        assert_eq!(small.lerp(&point, f32::NAN), Shape::Point(8.0, 12.0));
+
+        let hidden = Shape::Hidden;
+        assert_eq!(hidden.lerp(&Shape::Hidden, f32::NAN), Shape::Hidden);
+    }
 
     #[test]
     fn test_f32_lerp() {

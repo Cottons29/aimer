@@ -5,6 +5,41 @@ use aimer_attribute::size::ResolvedSize;
 
 use crate::components::element::{element_tree_generation, layout_invalidation_generation};
 
+/// TEMPORARY diagnostic counters for the layout-cache hit rate.
+pub mod probe {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub static HITS: Cell<u64> = const { Cell::new(0) };
+        pub static MISSES: Cell<u64> = const { Cell::new(0) };
+        pub static SETS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    #[inline]
+    pub fn hit() {
+        HITS.with(|counter| counter.set(counter.get() + 1));
+    }
+
+    #[inline]
+    pub fn miss() {
+        MISSES.with(|counter| counter.set(counter.get() + 1));
+    }
+
+    /// One completed (uncached) measurement being stored.
+    #[inline]
+    pub fn set() {
+        SETS.with(|counter| counter.set(counter.get() + 1));
+    }
+
+    /// Returns `(hits, misses, sets)` and resets all counters.
+    pub fn take() -> (u64, u64, u64) {
+        let hits = HITS.with(|counter| counter.replace(0));
+        let misses = MISSES.with(|counter| counter.replace(0));
+        let sets = SETS.with(|counter| counter.replace(0));
+        (hits, misses, sets)
+    }
+}
+
 /// One memoized measurement together with everything that decides whether it
 /// still describes the element.
 #[derive(Clone, Copy)]
@@ -95,6 +130,7 @@ impl LayoutCache {
 
     /// Stores computed_size result.
     pub fn set_computed(&self, constraint: BoxConstraint, scale_bits: u32, size: ResolvedSize) {
+        probe::set();
         let guard = unsafe { &mut *self.computed.get() };
         *guard = Some(Self::measurement(constraint, scale_bits, size));
     }
@@ -108,6 +144,7 @@ impl LayoutCache {
 
     /// Stores content_size result.
     pub fn set_content(&self, constraint: BoxConstraint, scale_bits: u32, size: ResolvedSize) {
+        probe::set();
         let guard = unsafe { &mut *self.content.get() };
         *guard = Some(Self::measurement(constraint, scale_bits, size));
     }
@@ -141,15 +178,24 @@ impl LayoutCache {
         constraint: BoxConstraint,
         scale_bits: u32,
     ) -> Option<ResolvedSize> {
-        let measurement = slot.as_ref()?;
-        measurement
+        let Some(measurement) = slot.as_ref() else {
+            probe::miss();
+            return None;
+        };
+        let result = measurement
             .describes(
                 constraint,
                 scale_bits,
                 element_tree_generation(),
                 layout_invalidation_generation(),
             )
-            .then_some(measurement.size)
+            .then_some(measurement.size);
+        if result.is_some() {
+            probe::hit();
+        } else {
+            probe::miss();
+        }
+        result
     }
 }
 

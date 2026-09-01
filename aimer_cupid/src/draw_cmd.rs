@@ -11,6 +11,8 @@ use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::{TextOverflowMode, TextShadowRequest};
 use crate::text_pipeline::text_layout::TextHorizontalAlign;
 use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
+#[cfg(test)]
+use crate::utilities::Rgba8;
 
 // Texture IDs are content identities across frames; keep one random seed so
 // identical images do not receive a new ID on every call.
@@ -1539,7 +1541,7 @@ mod memory_tests {
                 offset_x: 2.0,
                 offset_y: 1.0,
                 blur: 3.0,
-                color: crate::utilities::Rgba8::new(0, 0, 0, 128),
+                color: Rgba8::new(0, 0, 0, 128),
             },
         );
         list.draw_text_styled(

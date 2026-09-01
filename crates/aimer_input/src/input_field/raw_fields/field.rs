@@ -4,6 +4,95 @@ pub enum InputType {
     Text,
     Number,
     Obscure,
+    Password,
+    Email,
+    Tel,
+    Url,
+    Search,
+    Date,
+    Time,
+    DateTimeLocal,
+    Month,
+    Week,
+    Hidden,
+    Reset,
+    Submit,
+    Image,
+    File,
+}
+
+impl InputType {
+    /// Returns whether the field should hide committed and composing text.
+    #[inline]
+    pub const fn is_obscured(self) -> bool {
+        matches!(self, Self::Obscure | Self::Password)
+    }
+
+    /// Returns the conventional browser input type for this hint.
+    ///
+    /// The native mobile bridges currently accept a smaller numeric kind and
+    /// deliberately fall back to their text configuration for the other
+    /// values. This method is a hint only; it does not validate field content.
+    #[inline]
+    pub const fn html_type(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Obscure | Self::Password => "password",
+            Self::Number => "number",
+            Self::Email => "email",
+            Self::Tel => "tel",
+            Self::Url => "url",
+            Self::Search => "search",
+            Self::Date => "date",
+            Self::Time => "time",
+            Self::DateTimeLocal => "datetime-local",
+            Self::Month => "month",
+            Self::Week => "week",
+            Self::Hidden => "hidden",
+            Self::Reset => "reset",
+            Self::Submit => "submit",
+            Self::Image => "image",
+            Self::File => "file",
+        }
+    }
+
+    /// Returns the bounded kind understood by the existing mobile bridges.
+    ///
+    /// `Number` retains the numeric keyboard hint and both obscured variants
+    /// retain secure entry. All other kinds use the bridge's text fallback;
+    /// their actual validation remains the form layer's responsibility.
+    #[inline]
+    pub const fn native_input_kind(self) -> i32 {
+        match self {
+            Self::Number => 1,
+            Self::Obscure | Self::Password => 2,
+            _ => 0,
+        }
+    }
+}
+
+#[cfg(test)]
+mod input_type_tests {
+    use super::InputType;
+
+    #[test]
+    fn backlog_types_are_distinct_hints_with_explicit_browser_names() {
+        assert_eq!(InputType::Email.html_type(), "email");
+        assert_eq!(InputType::DateTimeLocal.html_type(), "datetime-local");
+        assert_eq!(InputType::File.html_type(), "file");
+        assert_eq!(InputType::Obscure.html_type(), "password");
+        assert_eq!(InputType::Number.native_input_kind(), 1);
+        assert_eq!(InputType::Password.native_input_kind(), 2);
+        assert_eq!(InputType::Obscure.native_input_kind(), 2);
+    }
+
+    #[test]
+    fn unsupported_native_hints_fall_back_to_text_without_implying_validation() {
+        assert_eq!(InputType::Email.native_input_kind(), 0);
+        assert_eq!(InputType::Date.native_input_kind(), 0);
+        assert_eq!(InputType::File.native_input_kind(), 0);
+        assert!(!InputType::Email.is_obscured());
+    }
 }
 
 #[allow(dead_code)]
@@ -194,7 +283,6 @@ enum MenuOrigin {
 }
 
 #[allow(dead_code)]
-#[derive(Rebuildable)]
 pub(crate) struct RawTextField {
     pub input_type: InputType,
     pub controller: TextEditingController,
@@ -282,6 +370,67 @@ pub(crate) struct RawTextField {
     /// `gesture::recognize::tap` keeps its thresholds testable.
     #[cfg(test)]
     test_clock: Cell<Option<AnimInstant>>,
+}
+
+impl Rebuildable for RawTextField {
+    #[inline]
+    fn option_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    /// Carries interaction state a freshly built field has no way to relearn.
+    ///
+    /// Reconciliation replaces this element with a brand-new one on every
+    /// ancestor rebuild — and typing itself is one, through `on_changed`'s
+    /// `set_state`. [`RawTextField::new`] always starts unfocused, with the
+    /// caret at the controller's current selection and no IME session, on the
+    /// documented assumption that the enclosing focus region will deliver a
+    /// fresh [`ElementEvent::FocusGained`] to teach it otherwise. That
+    /// assumption only holds for a field that is *becoming* focused. When the
+    /// field's `FocusNode` is already the frame's owner, ownership never
+    /// changes, so the framework never re-fires the event — and without this,
+    /// the field would silently stop accepting input after its very first
+    /// rebuild: `focused` resets to `false`, and every key, character and IME
+    /// handler gates on it before doing anything.
+    ///
+    /// [`ElementEvent::FocusGained`]: aimer_events::element::ElementEvent::FocusGained
+    fn adopt_runtime_state_from(&self, old: &dyn Element) {
+        let Some(old) = old
+            .option_any()
+            .and_then(|value| value.downcast_ref::<Self>())
+        else {
+            return;
+        };
+
+        self.focused.set(old.focused.get());
+        self.observed_revision.set(old.observed_revision.get());
+        self.native_session.set(old.native_session.get());
+        self.native_base_revision.set(old.native_base_revision.get());
+        self.native_mirror_revision.set(old.native_mirror_revision.get());
+        self.cursor.set_offset(old.cursor.offset());
+        self.cursor.set_selection_anchor(old.cursor.selection_anchor());
+        self.mouse_held.set(old.mouse_held.get());
+        self.last_click_time.set(old.last_click_time.get());
+        self.click_count.set(old.click_count.get());
+        self.pending_click.set(old.pending_click.get());
+        self.scroll_x.set(old.scroll_x.get());
+        self.scroll_y.set(old.scroll_y.get());
+        self.scroll_y_extent.set(old.scroll_y_extent.get());
+        self.reveal_caret.set(old.reveal_caret.get());
+        self.ime_enabled.set(old.ime_enabled.get());
+        self.preedit_cursor.set(old.preedit_cursor.get());
+        self.ime_cursor_area.set(old.ime_cursor_area.get());
+
+        // `String` is not `Copy`, so this one field is moved rather than
+        // copied. Guard against the double-visit some stateful ancestors
+        // perform (once eagerly materializing their adopted child, once more
+        // walking the candidate tree): a first visit may have already moved a
+        // live composition into `self`, and a second visit's now-drained
+        // `old` must not erase it.
+        let live = self.preedit_text.take();
+        let incoming = old.preedit_text.take();
+        self.preedit_text.set(if live.is_empty() { incoming } else { live });
+    }
 }
 
 /// Caret rectangle reported to the platform input method, in logical window
@@ -448,7 +597,7 @@ impl RawTextField {
             w.set_ime_allowed(true);
         }
         #[cfg(target_arch = "wasm32")]
-        wasm_request_keyboard(true);
+        wasm_request_keyboard(true, self.input_type);
     }
 
     /// Turns platform text input off and forgets the reported caret area.
@@ -466,7 +615,7 @@ impl RawTextField {
             w.set_ime_allowed(false);
         }
         #[cfg(target_arch = "wasm32")]
-        wasm_request_keyboard(false);
+        wasm_request_keyboard(false, self.input_type);
     }
 
     /// Reports `caret` to the platform so the candidate window follows the
@@ -740,7 +889,7 @@ impl RawTextField {
             line_height: Default::default(),
             text_indent: 0.0,
             cache: LayoutCache::new(),
-            _typeface: std::sync::Mutex::new(None),
+            _typeface: Cell::new(None),
         }
     }
 
@@ -848,9 +997,10 @@ impl RawTextField {
         } else {
             value.text().to_owned()
         };
-        match self.input_type {
-            InputType::Obscure => "\u{2022}".repeat(grapheme_count(&committed)),
-            _ => committed,
+        if self.input_type.is_obscured() {
+            "\u{2022}".repeat(grapheme_count(&committed))
+        } else {
+            committed
         }
     }
 
@@ -865,7 +1015,7 @@ impl RawTextField {
                 revision: self.controller.revision(),
                 font_size_bits: font_size.to_bits(),
                 width_bits: content_width.to_bits(),
-                obscure: self.input_type == InputType::Obscure,
+                obscure: self.input_type.is_obscured(),
             },
             || {
                 let display: Arc<str> = Arc::from(self.display_text());

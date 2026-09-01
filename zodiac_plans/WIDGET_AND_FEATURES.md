@@ -62,7 +62,7 @@ instead of introducing parallel versions of existing primitives.
 | Focus | Focus nodes, focus manager, `Focusable`, and `FocusScope` | Semantic roles, platform accessibility tree, announcements, preference handling, and accessibility validation |
 | Assets | Raster images, network images, fonts, SVG, and Markdown behind features | Asset registry/lifecycle, bounded cache policy, icon system, media/platform adapters, and the deferred SVG feature set |
 | Vector drawing | SVG path commands and Cupid tessellation exist behind SVG | Public `aimer_shape` geometry, `CustomShape`, fill/stroke, clipping, and shape hit testing |
-| Surface materials | Solid colors, borders, shadows, clipping, and opacity | GPU-native `Glass` and `Liquid` containers with backdrop sampling, blur, distortion, and material highlights |
+| Surface materials | Solid colors, borders, shadows, clipping, and opacity | GPU-native `Glass`, `Liquid`, and bounded backdrop-effect containers with backdrop sampling, blur, distortion, inversion, and material highlights |
 | Storage | No public durable application storage; only process-local resource caches and internal runtime storage | Async durable key/value storage, migrations, quotas, and native/web adapters |
 | Styling | `ThemeData`, animated themes, and six core color roles | Component tokens for typography, spacing, shape, elevation, density, states, and contrast |
 | Localization | Unicode bidi support in text layout | Locale, plural, number/date/time formatting, translation lookup, and RTL policy |
@@ -86,6 +86,90 @@ instead of introducing parallel versions of existing primitives.
   format. Deferred gradients, masks, fit policies, filters, text, and related
   behavior belong to the SVG package below.
 
+## W0 audit record
+
+**Audit date:** 2026-08-27<br>
+**Audit branch:** `zodiac-widget-and-features` at `9cf2d707`<br>
+**Audit rule:** a README or older guide entry is not evidence of a supported
+public type; source exports, tests, and the current crate boundary are the
+source of truth.
+
+The clean worktree intentionally starts at the branch commit. Uncommitted
+changes in the original `main` worktree remain there and are not part of this
+inventory.
+
+### Status and ownership findings
+
+| Area/package | Status | Evidence and W0 decision |
+| --- | --- | --- |
+| Core widgets, containers, layout, scrolling, text, and selection | Implemented | `aimer_widget`, `aimer_container`, `aimer_flex`, `aimer_scroll`, and `aimer_text` expose the existing retained widget seams. `FlexList` remains the collection baseline. |
+| Basic input and gestures | Partial | `aimer_input` provides `Button`, `GestureDetector`, `MouseRegion`, `TextField`, `TextArea`, IME/selection, and swipe recognition. `InputType` currently has only `Text`, `Number`, and `Obscure`; `Number` remains an input hint, not validation. |
+| Swipe | Implemented | `SwipeDirection`, `on_swipe`, and deterministic recognizer/handler tests already exist under `aimer_input`. The older README checkbox is stale; no second swipe path is planned. |
+| Choice controls (except the unresolved README claim) | Missing | No public `Checkbox`, `Switch`, `Radio`, `RadioGroup`, or autocomplete control was found. W2 owns a new `aimer_selection` module/crate. |
+| `DropdownMenu` / `Select` | Audit | README marks this complete, but the public source inventory has no supported type or tests. W0 freezes `Select` as the canonical single-choice widget; `Dropdown`/`DropdownMenu` describe presentation and do not create a duplicate control. |
+| Range controls | Missing | No public `Slider` or `RangeSlider` was found. W3 owns `aimer_range`; `RangeSlider` remains optional until its distinct value model is tested. |
+| Forms, pickers, feedback, navigation UI, collections, and accessibility | Missing | No supported public family was found for these areas. W4–W8 own the proposed modules; existing modal/focus/router primitives are consumed rather than replaced. |
+| Overlay primitives | Implemented | `aimer_modal` exposes `Modal`, `Floating`, `Anchor`, placement, focus-trap, and host/layer primitives. W6 extends this host for feedback; no global popup singleton is allowed. |
+| Drag and drop | Partial | `aimer_dnd` exposes typed draggable/target/drop-zone/file-drop primitives and Jaime examples. Auto-scroll, reorderable collections, browser file drops, and the alternate-input policy remain W9 work. |
+| Routing and route composition | Partial | Named/query routes, redirects, `Shell`, `Outlet`, and stateful branch stacks exist and pass the current router tests. Direct route-child provider ownership remains unresolved and is exclusively W7A work. |
+| Styling and animation values | Partial | `ThemeData`, `AnimatedTheme`, controllers, curves, `Tween`, and `Animatable` exist. Component tokens, layout transitions, and derived `Animatable` values are not present; W10, W16A, and W16B own those extensions. |
+| Assets and SVG | Partial | Raster/network images, fonts, and an SVG model/renderer exist behind the current asset/SVG seams. Asset lifecycle/cache/icon/media adapters and deferred SVG features remain W12/W13 work. |
+| Glass/Liquid materials, durable storage, and shape geometry | Missing | No public `Glass`, `Liquid`, durable application storage, `aimer_shape`, or `CustomShape` implementation was found. W14–W16 own these seams. |
+| Jaime showcase/integration | Partial | The clean branch has feature-local example modules and a commented launcher in `jaime/src/main.rs`, but no central showcase/index. W17 owns shared registration and manifest/export edits. |
+
+### Frozen W0 contracts
+
+- Choice-control names are `Checkbox`, `Switch`, `Radio`, `RadioGroup`,
+  `Select`, and `Autocomplete`. `Switch`, `Select`, and `Autocomplete` are
+  the canonical names; `Toggle`, `Dropdown`, `DropdownMenu`, and `Combobox`
+  are not separate implementations or parallel state models.
+- Controls use controlled values plus `on_changed`-style callbacks. Retained
+  focus, pressed/hovered/disabled/loading state, and rebuild identity belong to
+  the widget/state mechanism or an explicit controller; no process-global
+  control state is introduced. Validation is owned by W4, not by an input hint.
+- `FlexList` is the only lazy/windowed list baseline. W8 may add `ListView`
+  only as a façade with a demonstrably deeper stable-key/empty/loading/error
+  contract. No public `ScrollTarget` exists yet; W8/W9 must freeze that
+  adapter before implementing collection auto-scroll or reorder behavior.
+- W1 owns the platform-neutral semantic tree and bounded announcement port;
+  platform adapters consume it. Focus plumbing remains in `aimer_focus`.
+  W6 consumes the existing `aimer_modal` host for anchored and queued
+  presentation.
+- W7A freezes provider ownership at the application/router composition seam:
+  app-wide providers must be ancestors of `Navigator` and therefore available
+  to both direct route children and shell frames. `Shell` owns only its local
+  `OutletSlot`; an unscoped `Outlet` keeps its source-located diagnostic. No
+  route child or stateless shell frame gains a `StatefulWidget` requirement.
+  The application-owned host must also wrap `ModalHost` when overlay content
+  reads an app-wide provider; feedback and picker packages must not introduce a
+  second global provider or overlay host.
+- W11 owns `aimer_i18n` with pure locale/translation/formatting interfaces;
+  existing bidi shaping is reused. W15 owns byte-oriented `aimer_storage`
+  without UI or asset dependencies. W16 owns pure finite shape geometry, and
+  `CustomShape<T>` remains a retained visual child container.
+- W16B uses `#[derive(Animatable)]`; enum policy is explicit with
+  `#[animatable(discrete)]` or `#[animatable(fieldwise)]`. The derive shares
+  field-generation logic with `Theme` and does not change the existing
+  `Animatable::lerp` endpoint/non-finite policy.
+
+### Feature and platform decisions
+
+- New pure model crates default to no native dependency. Native, web, media,
+  and durable-storage adapters are opt-in and expose typed unsupported/error
+  results. `portable-guest` follows the existing propagation pattern only
+  where a package can provide a bounded portable representation.
+- The existing root `svg` feature remains the opt-in SVG export boundary.
+  W14's GPU-native materials use an opt-in `liquid-glass` feature while the
+  fallback is Cupid-owned tint/border/shadow rendering; no native visual-effect
+  API or browser `backdrop-filter` is introduced.
+- Shared manifests, umbrella exports, the central Jaime showcase, README/book
+  edits, and this plan's release checkboxes belong to W17. Feature agents may
+  request exact mechanical edits but do not modify those shared seams.
+
+**W0 result:** the package names, ownership paths, test/example targets, and
+platform boundaries below are frozen. W1–W16B may now proceed in disjoint
+worktrees; W17 remains serialized integration work.
+
 ## Proposed crate taxonomy
 
 The following are proposed crate names for missing widget families. They are
@@ -102,12 +186,12 @@ the closest existing crate.
 | `aimer_form` | `Form`, `FormField`, validation, submit/reset, dirty/touched state, error presentation contracts | Composes `aimer_input`, focus, accessibility, and localization adapters |
 | `aimer_selection` | `Checkbox`, `Switch`/`Toggle`, `Radio`/`RadioGroup`, `Select`, `Dropdown`, `Autocomplete`/`Combobox` | Choice/value model; consumes input, overlay, style, and semantics seams |
 | `aimer_range` | `Slider` and `RangeSlider` | Finite numeric value model; consumes input, style, and semantics seams |
-| `aimer_picker` | `Calendar`, `DatePicker`, `DateTimePicker`, and `ColorPicker` | Date/color model and picker state; consumes overlay and locale adapters |
+| `aimer_picker` | `Calendar`, `DatePicker`, `DateTimePicker`, `TimePicker`, and `ColorPicker` | Date/time/color model and picker state; consumes overlay and locale adapters |
 | `aimer_feedback` | `Tooltip`, `Snackbar`, `Toast`, `ProgressIndicator`, `Spinner`, and status banners | Feedback lifecycle and presentation requests; consumes `aimer_modal` rather than replacing it |
 | `aimer_navigation` | `TabBar`, `TabView`, navigation drawer/rail/bottom navigation, breadcrumbs, and stepper | Navigation UI over `aimer_router`; route state remains owned by the router |
-| `aimer_data_view` | Grouped/sticky lists, `DataTable`, `TreeView`, and collection state adapters | Stable-key collection model over existing flex/grid/scroll primitives |
+| `aimer_data_view` | Grouped/sticky lists, `DataTable`, `TreeView`, and collection state adapters | Conditional: justified for tables/trees/grouping, but must build on `FlexList` and a separately frozen `ScrollTarget` adapter |
 | `aimer_i18n` | Locale identity, translation lookup, plural rules, number/date/time formatting, and direction policy | Pure formatting/localization seam; existing bidi shaping remains the text baseline |
-| `aimer_media` | Optional `Audio`, `Video`, `WebView`, camera capture, and native file/media picker adapters | Capability-gated platform adapters; never a core mandatory dependency |
+| `aimer_media` | Optional `Audio`, `Video`, `WebView`, camera capture, and native file/media picker adapters | Conditional capability/adapters only; unrelated platform APIs must not become one mandatory broad crate or a default/root dependency |
 | `aimer_storage` | Durable application key/value data, preferences, migrations, and optional cache backends | Async platform-neutral storage interface with native, web, and memory adapters; must not depend on widgets |
 | `aimer_shape` | `ShapePath`, path builder, finite geometric primitives, fill/stroke values, and geometry validation | Pure geometry module; no platform, GPU, or widget dependencies; consumed by shape/container/rendering adapters |
 
@@ -126,7 +210,7 @@ the closest existing crate.
 | `aimer_assets` | Asset identity/resolution, images, fonts, SVG loading, icons, and cache lifecycle | `aimer_icon` until icon behavior has an independently deep interface |
 | `aimer_container` | `CustomShape<T>` child retention, layout, clipping, and hit-test integration over `aimer_shape` | A separate custom-paint container or shape-specific layout engine |
 | `aimer_canvas` | Typed shape draw-command bridge without exposing renderer internals | Public `wgpu`, `lyon`, or arbitrary-pipeline types in widget interfaces |
-| `aimer_container` + `aimer_canvas` + `aimer_cupid` | `Glass` and `Liquid` container interfaces, draw-command bridge, and GPU material implementation | A separate `aimer_glass` crate or native/system visual-effect API |
+| `aimer_container` + `aimer_canvas` + `aimer_cupid` | `Glass`, `Liquid`, and `BackdropFilter` container interfaces, draw-command bridge, and GPU material implementation | A separate `aimer_glass` crate or native/system visual-effect API |
 | `aimer_svg` / `aimer_cupid` | SVG parsing, diagnostics, tessellation, and rendering | Another SVG widget or renderer |
 | `aimer_router` | Route matching, navigation state, shells, outlets, history, and route-child context ownership | A second routing core inside `aimer_navigation` |
 
@@ -210,12 +294,16 @@ not demonstrated there.
   central showcase registration. Do not put the central `ExampleId` dispatch
   inside a feature module.
 
-### Current Jaime example format
+### Target Jaime example format
 
-Jaime currently uses one module per feature and one shared two-pane showcase.
-The feature module owns the example implementation; the showcase owns the
-left-side list, selection state, metadata, and right-side dispatch. New work
-should follow this shape.
+The clean W0 branch still declares feature modules directly from
+`jaime/src/main.rs`, manually selects one `start_*` launcher, and keeps the
+other examples behind commented calls. It does not yet have the showcase or
+theme modules described below. W17 will migrate that launcher-per-module
+baseline to one shared two-pane showcase: each feature module owns the example
+implementation, while the showcase owns the left-side list, selection state,
+metadata, and right-side dispatch. New work should follow this target shape
+without pretending that an unregistered module is runnable.
 
 #### 1. Feature-owned example module
 
@@ -363,7 +451,7 @@ it must preserve one owner and one example entry for each package.
 | W11 / `aimer_i18n` | `jaime/src/i18n_example.rs` | Translation fallback, plural/number/date formatting, and RTL direction |
 | W12 / `aimer_svg` | `jaime/src/svg_example.rs` | Supported/deferred SVG features, fit policy, diagnostics, and fallback rendering |
 | W13 / `aimer_assets` plus `aimer_media` | `jaime/src/assets_media_example.rs` | Manifest resolution, preload/cache states, loading/progress/error/retry, icons, fonts/SVG, and optional media/platform unsupported states |
-| W14 / `Glass` and `Liquid` containers | `jaime/src/glass_liquid_example.rs` | Glass and Liquid surfaces over varied content, material controls, animation, accessibility fallback, and GPU fallback |
+| W14 / `Glass`, `Liquid`, and `BackdropFilter` containers | `jaime/src/glass_liquid_example.rs` | Glass, Liquid, and backdrop-inversion surfaces over varied content, material controls, normal child text rendering, accessibility fallback, and GPU fallback |
 | W15 / `aimer_storage` | `jaime/src/storage_example.rs` | Preferences, namespaced bytes, migration, quota/error fallback, and an in-memory test adapter |
 | W16 / `aimer_shape` plus `CustomShape` | `jaime/src/custom_shape_example.rs` | Finite paths, lines/curves, fill/stroke, clipping, animation, shape hit testing, and invalid-geometry fallback |
 | W16A / `aimer_animation` plus `aimer_flex` | `jaime/src/animated_layout_example.rs` | Flex/Row/Column geometry transitions, `Expanded`, wrapping, keyed `FlexList` insertion/removal/reordering, responsive changes, interruption, and reduced motion |
@@ -545,7 +633,33 @@ consumer is being developed.
 
 ## Work packages
 
-### W0 — Inventory, naming, and contract gate
+### Implementation status
+
+| Wxxx | Status | Note |
+| --- | --- | --- |
+| W0 | done | Inventory, naming, ownership, platform boundaries, and contracts are frozen. |
+| W1 | done | Semantic tree with merge/exclude/leaf projection, action dispatch, host-fed focus-order projection, bounded announcements, preferences, touch-target/contrast validation, and Jaime coverage are implemented and tested. |
+| W2 | done | Controlled checkbox/switch/radio-group/select/autocomplete models, their interactive `Widget`/`StatefulWidget` implementations (density-driven hit targets, pointer/keyboard activation, focus), and Jaime coverage are implemented and tested. |
+| W3 | done | Stateful Slider and RangeSlider widgets, composable visuals, Jaime coverage, validation, semantics, input handling, and endpoint-safe layout are implemented and tested. |
+| W4 | done | The full input-type backlog, hint/validation separation, `Form`/`FormField` with sync/async (staleness-safe) validation, and a live Jaime form with real submit/reset, dirty/touched display, and focus-on-first-error are implemented and tested. |
+| W5 | done | Calendar/date-time/time/color models, retained widget adapters, segmented DateTime and standalone TimePicker overlays with scrollable 12/24-hour wheels, caller-owned overlay/focus seams, Slider-backed color channels, platform-neutral semantic snapshots, semantic-token-aware fallback paint, external host-dismissal acknowledgement, and live Jaime coverage are implemented and verified. |
+| W6 | done | Tooltip and toast host lifecycles, deterministic queue/timeout and announcements, retained progress/spinner widgets, reusable status slots, collision-safe placement, focus restoration, and Jaime coverage are implemented and tested. |
+| W7 | - | First standalone tab/navigation models and route synchronization are implemented; widget integration remains. |
+| W7A | done | Route-child provider retention and explicit Shell/Outlet scope are implemented and tested. |
+| W8 | - | First bounded collection, table, tree, and stable-identity slice plus Jaime coverage are integrated; empty/loading/error and full list behavior remain. |
+| W9 | - | First DnD completion seams and Jaime fallback page are integrated; bounded reorder, alternate input, and platform file-drop coverage remain. |
+| W10 | - | First semantic token, state, density, contrast, and motion slice plus Jaime coverage are integrated; full widget consumption remains. |
+| W11 | - | First locale, translation, plural/number/date formatting, and RTL slice plus Jaime coverage are integrated; platform adapters and broader coverage remain. |
+| W12 | - | First SVG fit/paint, deferred-feature diagnostics, and fallback slice plus Jaime coverage are integrated; renderer completeness remains. |
+| W13 | - | First asset lifecycle, cache, icon, and typed media-fallback slice plus Jaime coverage are integrated; pending/error/retry and platform coverage remain. |
+| W14 | - | Glass/Liquid builders, reduced-motion policy, bounded Cupid GPU material submission, ordered backdrop capture/compositing on copy-capable single-sample targets, reference-inspired rendering, and Jaime coverage are integrated; full render/golden coverage remains. |
+| W15 | - | First bounded memory/native-file storage slice, quota/error contracts, migrations, and Jaime coverage are integrated; the web IndexedDB adapter and broader adapter coverage remain. |
+| W16 | - | First finite shape geometry, typed draw bridge, Cupid integration, and CustomShape slice plus Jaime coverage are integrated; renderer/platform validation remains. |
+| W16A | - | First Flex/Row animated-layout slice plus Jaime coverage is integrated; retained collection geometry, interruption, responsiveness, and reduced motion remain. |
+| W16B | done | Derived Animatable structs/enums, shared Theme generation, diagnostics, and Jaime coverage are implemented and tested. |
+| W17 | - | Manifests, umbrella namespaces, Jaime registration, example render fixes, and macOS bundle verification are integrated; native release checks remain gated by incomplete package slices, while portable-specific checks are intentionally out of scope. |
+
+### ~~W0 — Inventory, naming, and contract gate~~
 
 **Owner:** Coordinator / architecture agent<br>
 **Dependencies:** None<br>
@@ -576,7 +690,7 @@ consumer is being developed.
   test target, and a Jaime example path.
 - The Integration Agent has a list of expected exports and manifest changes.
 
-### W1 — Semantics and platform accessibility
+### ~~W1 — Semantics and platform accessibility~~
 
 **Owner:** Accessibility agent<br>
 **Dependencies:** W0 contracts only<br>
@@ -621,7 +735,7 @@ consumer is being developed.
 Controls can publish semantics without depending on a platform crate, and the
 model is useful to a native adapter, browser adapter, and test adapter.
 
-### W2 — Choice and selection controls
+### ~~W2 — Choice and selection controls~~
 
 **Owner:** Input-controls agent<br>
 **Dependencies:** W0; W1's semantics contract, but not W1's implementation<br>
@@ -664,7 +778,7 @@ model is useful to a native adapter, browser adapter, and test adapter.
 - rebuild/state-retention and hit-test tests;
 - keyboard behavior for Space, Enter, arrows, and Tab where applicable.
 
-### W3 — Range controls
+### ~~W3 — Range controls~~
 
 **Owner:** Range-controls agent<br>
 **Dependencies:** W0; W1 and W10 contracts are optional adapters<br>
@@ -693,7 +807,7 @@ model is useful to a native adapter, browser adapter, and test adapter.
 - controlled rebuild/state retention;
 - layout, hit testing, and paint-state tests.
 
-### W4 — Text inputs, forms, and validation
+### ~~W4 — Text inputs, forms, and validation~~
 
 **Owner:** Text-input/forms agent<br>
 **Dependencies:** W0; W1 and W11 through adapters only<br>
@@ -727,7 +841,7 @@ model is useful to a native adapter, browser adapter, and test adapter.
 - focus-on-error and form-level submit behavior;
 - rebuild/state retention and platform adapter fallbacks.
 
-### W5 — Calendar, date/time, and color pickers
+### ~~W5 — Calendar, date/time, and color pickers~~
 
 **Owner:** Picker-controls agent<br>
 **Dependencies:** W0 overlay and collection contracts; W1/W10/W11 are optional adapters<br>
@@ -741,13 +855,15 @@ model is useful to a native adapter, browser adapter, and test adapter.
 
 - `ColorPicker` with keyboard-accessible hue/value/alpha controls where alpha
   is supported.
-- `Calendar`, `DatePicker`, and `DateTimePicker`, with a date model separate
-  from locale formatting.
+- `Calendar`, `DatePicker`, `DateTimePicker`, and standalone `TimePicker`, with
+  date/time models separate from locale formatting.
 
 **Required behavior**
 
 - Keyboard navigation, month/year traversal, selection confirmation/
   cancellation, disabled dates/swatches, and stable calendar-cell keys.
+- Scrollable hour/minute/second wheels, one AM/PM selector in 12-hour mode, and
+  explicit `.use_24_hours(true | false)` configuration.
 - Placement through the overlay presenter; no picker may create an unrelated
   global overlay singleton.
 - Focus restoration and dismissal on outside click/Escape.
@@ -763,9 +879,11 @@ model is useful to a native adapter, browser adapter, and test adapter.
 - stable calendar-cell identity through month changes;
 - disabled dates/swatches and invalid-value handling;
 - date boundaries, invalid values, range selection, and timezone policy;
+- DateTime segment switching, standalone time-picker confirmation, 12/24-hour
+  wheel scrolling, and single-label AM/PM behavior;
 - color boundary values and keyboard increments.
 
-### W6 — Feedback and overlay widgets
+### ~~W6 — Feedback and overlay widgets~~
 
 **Owner:** Overlay/feedback agent<br>
 **Dependencies:** W0 overlay contract; existing `Modal`, `Floating`, `Anchor`, and focus-trap primitives<br>
@@ -843,7 +961,7 @@ model is useful to a native adapter, browser adapter, and test adapter.
 - narrow-layout overflow and disabled navigation;
 - semantic tree and focus order.
 
-### W7A — Route-child context and `Shell`/`Outlet` composition fix
+### ~~W7A — Route-child context and `Shell`/`Outlet` composition fix~~
 
 **Owner:** Router/runtime-context agent<br>
 **Dependencies:** W0 route-child context contract; current `aimer_router`
@@ -1206,6 +1324,9 @@ Add two public single-child containers:
 - `Liquid<T>` — a dynamic Glass material with bounded refraction/distortion,
   edge lighting, specular highlights, and optional time/interaction-driven
   motion.
+- `BackdropFilter<T>` — a bounded backdrop effect that can invert the pixels
+  already painted behind the surface while leaving its child content, including
+  text, in its configured colors.
 
 These are Aimer-native Liquid Glass-inspired materials. They must not call or
 depend on native visual-effect APIs such as `NSVisualEffectView`,
@@ -1308,6 +1429,71 @@ interface unnecessarily.
   exercises adjustable material states.
 - The feature's performance cost, texture limits, unsupported targets, and
   reduced-motion behavior are documented.
+
+#### Planned extension — backdrop inversion and child-content color effects
+
+The material seam should also support a focused backdrop filter without
+turning `Glass` into a general-purpose color filter. The first effect is
+backdrop inversion; child-content color transforms remain a separate future
+module.
+
+**Product contract**
+
+- `BackdropFilter<T>` is a visual single-child wrapper. Its effect is applied
+  to the pixels painted earlier in the same ordered scene, not to the child it
+  contains.
+- A small `BackdropEffect` interface starts with
+  `Invert { amount: f32 }`, where `0.0` is unchanged and `1.0` is full
+  inversion. Values are finite and clamped to `0.0..=1.0`.
+- A normal stack paints `background -> inverted backdrop -> child`. Text,
+  images, and controls inside the wrapper therefore keep their configured
+  colors and are painted crisply above the effect.
+- Only content behind the wrapper's bounds and clip is affected. Siblings
+  painted later, including higher `Stack` layers, remain unchanged. Correct
+  use requires the wrapper to be placed above the content it should filter.
+- Inverting the child itself is explicitly a different behavior. A future
+  `ColorFilter`/`Invert` wrapper may render a child offscreen and transform all
+  of its pixels, but `BackdropFilter` must not silently invert its child.
+
+**Owned implementation**
+
+- Extend the existing plain material/backdrop request across `aimer_canvas`
+  or add a similarly narrow typed backdrop-filter request; do not expose
+  `wgpu`, readback handles, or platform visual-effect objects to
+  `aimer_container`.
+- Reuse Cupid's ordered custom-pipeline capture seam and local backdrop-region
+  snapshots. The shader applies `mix(backdrop, 1.0 - backdrop, amount)` in
+  the documented color space, then applies the widget's clip/mask.
+- Preserve alpha and rounded clipping, and keep the child draw after the
+  filter command. Backdrop-dependent elements are not paint-stable and must
+  be invalidated when earlier content, scrolling, size, or scale changes.
+- If backdrop capture is unavailable or exceeds the bounded budget, use an
+  explicit no-effect/solid fallback while keeping the child visible; never
+  claim that unknown pixels were inverted.
+
+**Tests first**
+
+- builder/type-state, layout, event, focus, and semantic passthrough tests;
+- draw-order tests proving lower layers are inverted, later siblings are not,
+  and child text retains its configured color;
+- clip, rounded-corner, opacity, amount-clamping, resize, scale, and transparent
+  background tests;
+- Cupid shader/golden tests for partial/full inversion in sRGB and non-sRGB
+  targets, plus capture-unavailable and budget fallback behavior;
+- invalidation and retained-paint tests proving a changing backdrop is never
+  served from a stale retained surface;
+- Jaime coverage in `glass_liquid_example.rs` showing an inverted backdrop
+  with normal child text and an explicit unsupported/fallback state.
+
+**Definition of done**
+
+- `BackdropFilter` is publicly exported through the normal Aimer surface by
+  the integration owner.
+- Its interface clearly distinguishes backdrop inversion from child-content
+  filtering, and its implementation stays behind the existing
+  `aimer_container`/`aimer_canvas`/`aimer_cupid` seams.
+- Ordering, clipping, color-space, fallback, invalidation, and performance
+  limits are documented and covered by focused tests.
 
 ### W15 — Durable local storage
 
@@ -1568,7 +1754,7 @@ must not introduce `AnimatedRow` or `AnimatedColumn` clones.
 - The Jaime example demonstrates Flex resizing, wrapping, keyed list changes,
   responsive layout changes, interruption, and reduced-motion behavior.
 
-### W16B — Derived `Animatable` values
+### ~~W16B — Derived `Animatable` values~~
 
 **Owner:** Animation-values/macro agent<br>
 **Dependencies:** W0; the existing `aimer_animation::Animatable` interface,

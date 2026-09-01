@@ -1,25 +1,25 @@
-use std::sync::{Arc, Mutex};
 use std::thread;
 
+use crossbeam::channel::{Sender, unbounded};
 use tungstenite::Message;
 
-use crate::{InspectorMessage, InspectorState, WidgetNode};
+use crate::{InspectorMessage, InspectorState, InspectorStateStore, WidgetNode};
 
 /// Handle to the inspector background thread and shared state.
 pub struct InspectorClient {
-    pub state: Arc<Mutex<InspectorState>>,
-    cmd_tx: std::sync::mpsc::Sender<String>,
+    pub state: InspectorStateStore,
+    cmd_tx: Sender<String>,
 }
 
 impl InspectorClient {
     /// Spawn the background WebSocket client thread and return the handle.
     pub fn connect(port: u16) -> Self {
-        let state = Arc::new(Mutex::new(InspectorState::default()));
-        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<String>();
+        let (state, state_publisher) = InspectorStateStore::channel();
+        let (cmd_tx, cmd_rx) = unbounded::<String>();
 
-        let state_bg = Arc::clone(&state);
         thread::spawn(move || {
             let addr = format!("127.0.0.1:{}", port);
+            let mut current_state = InspectorState::default();
 
             loop {
                 let tcp = match std::net::TcpStream::connect(&addr) {
@@ -39,10 +39,8 @@ impl InspectorClient {
                     }
                 };
 
-                {
-                    let mut s = state_bg.lock().unwrap();
-                    s.connected = true;
-                }
+                current_state.connected = true;
+                state_publisher.publish(current_state.clone());
 
                 let _ = ws.get_mut().set_nonblocking(true);
 
@@ -55,18 +53,18 @@ impl InspectorClient {
                     match ws.read() {
                         Ok(Message::Text(text)) => {
                             if let Ok(msg) = serde_json::from_str::<InspectorMessage>(&text) {
-                                let mut s = state_bg.lock().unwrap();
                                 match msg {
                                     InspectorMessage::Tree { root } => {
-                                        s.tree = root;
+                                        current_state.tree = root;
                                     }
                                     InspectorMessage::Status { enabled } => {
-                                        s.enabled = enabled;
+                                        current_state.enabled = enabled;
                                     }
                                     InspectorMessage::Hovered { id } => {
-                                        s.hovered_widget_id = id;
+                                        current_state.hovered_widget_id = id;
                                     }
                                 }
+                                state_publisher.publish(current_state.clone());
                             }
                         }
                         Ok(Message::Close(_)) => break,
@@ -80,10 +78,8 @@ impl InspectorClient {
                     }
                 }
 
-                {
-                    let mut s = state_bg.lock().unwrap();
-                    s.connected = false;
-                }
+                current_state.connected = false;
+                state_publisher.publish(current_state.clone());
             }
         });
 

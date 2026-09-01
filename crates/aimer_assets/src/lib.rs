@@ -1,5 +1,19 @@
 pub mod img_widget;
 
+mod asset_manager;
+mod icon;
+
+pub use asset_manager::{
+    AnimationPolicy, AssetCacheConfig, AssetCacheKey, AssetData, AssetError, AssetErrorKind, AssetId,
+    AssetIdError, AssetLoadOperation, AssetLoadPoll, AssetManifest, AssetMetadata,
+    AssetOperation, AssetPolicy, AssetProgress, AssetRef, AssetRequest, AssetResolver,
+    AssetSource, AssetManager, CacheStats, DecodeProfile, LoadHandle, LoadState,
+};
+pub use icon::{
+    Icon, IconContext, IconDirection, IconError, IconSource, IconTheme, IconTint,
+    ResolvedIcon,
+};
+
 pub mod font {
     pub use aimer_cupid::font::*;
 }
@@ -107,3 +121,6 @@ mod public_api_tests {
         let _ = assert_element_fallbacks::<super::ImageSource>;
     }
 }
+
+#[cfg(test)]
+mod w13_tests;

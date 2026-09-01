@@ -317,7 +317,15 @@ impl RawDraggable {
 
     /// Ends the drag without a drop: a cancelled gesture, or a window that lost
     /// focus mid-flight.
-    fn abandon(&self) {
+    fn abandon(&self, pointer: Option<PointerKey>) {
+        let owns_pointer = self
+            .press
+            .borrow()
+            .as_ref()
+            .is_some_and(|press| pointer.is_none_or(|pointer| press.pointer == pointer));
+        if !owns_pointer {
+            return;
+        }
         if let Some(press) = self.press.borrow_mut().take()
             && self.dragging.replace(false)
         {
@@ -348,6 +356,13 @@ impl EventElement for RawDraggable {
         match event {
             ElementEvent::PointerDown(info) => {
                 if !self.bounds.is_inside(info.x(), info.y()) {
+                    return EventResult::ignored();
+                }
+                // The public session intentionally supports one active drag at
+                // a time. Do not capture a second pointer only to strand it
+                // until release, and do not overwrite a pending press on this
+                // element.
+                if DragSession::is_active() || self.press.borrow().is_some() {
                     return EventResult::ignored();
                 }
                 let pointer = PointerKey::new(info.source, info.id);
@@ -393,7 +408,10 @@ impl EventElement for RawDraggable {
                     .take_if(|press| press.pointer == pointer)
                     .is_some();
                 if !taken || !self.dragging.replace(false) {
-                    return EventResult::ignored();
+                    // The dispatcher releases on PointerUp as a safety net,
+                    // while this explicit request also makes direct element
+                    // adapters and lost-state tests observe the cleanup.
+                    return EventResult::ignored().with_pointer_release(pointer);
                 }
 
                 // The drop itself is delivered by the follow-up pass that this
@@ -406,8 +424,14 @@ impl EventElement for RawDraggable {
                     .with_follow_up(FollowUp::DragDrop)
             }
 
-            ElementEvent::Cancel | ElementEvent::PointerExited(_, _) => {
-                self.abandon();
+            ElementEvent::PointerExited(source, id) => {
+                let pointer = PointerKey::new(*source, *id);
+                self.abandon(Some(pointer));
+                EventResult::ignored().with_pointer_release(pointer)
+            }
+
+            ElementEvent::Cancel => {
+                self.abandon(None);
                 EventResult::ignored()
             }
 
@@ -498,6 +522,7 @@ impl Rebuildable for RawDraggable {
 mod tests {
     use aimer_container::{Container, ZeroSizedBox};
     use aimer_events::pointer::{PointerButton, PointerInfo};
+    use aimer_widget::CaptureRequest;
 
     use super::*;
     use crate::test_support::headless_context;
@@ -648,6 +673,49 @@ mod tests {
             "releasing still asks for the drop to be routed"
         );
 
+        fresh();
+    }
+
+    #[test]
+    fn a_second_pointer_is_not_captured_while_another_drag_is_active() {
+        fresh();
+        let ctx = headless_context(400.0, 400.0);
+        let card = card_element(&ctx);
+        let other_pointer = PointerKey::new(PointerSource::Touch, 4);
+
+        assert!(DragSession::begin(
+            other_pointer,
+            DragPayload::new(CardId(8)),
+            Vec2d::default()
+        ));
+        let result = card.on_event(&down(10.0, 10.0));
+
+        assert_eq!(result.capture_request(), CaptureRequest::None);
+        assert_eq!(DragSession::pointer(), Some(other_pointer));
+        fresh();
+    }
+
+    #[test]
+    fn a_lost_pointer_releases_capture_and_cancels_the_drag() {
+        fresh();
+        let ctx = headless_context(400.0, 400.0);
+        let card = card_element(&ctx);
+        let pointer = PointerKey::new(PointerSource::Mouse, 0);
+
+        let _ = card.on_event(&down(10.0, 10.0));
+        let _ = card.on_event(&moved(15.0, 10.0));
+        assert!(DragSession::is_active());
+
+        let result = card.on_event(&ElementEvent::PointerExited(
+            pointer.source,
+            pointer.id,
+        ));
+
+        assert_eq!(
+            result.capture_request(),
+            CaptureRequest::Release(pointer)
+        );
+        assert!(!DragSession::is_active());
         fresh();
     }
 

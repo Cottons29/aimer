@@ -30,7 +30,7 @@ use aimer_attribute::size::ResolvedSize;
 use aimer_inspector::InspectorOverlay;
 use aimer_venus::Venus;
 use aimer_widget::base::{BuildContext, WindowHandle};
-use aimer_widget::{AnyElement, EventDispatcher, EventResult, Widget};
+use aimer_widget::{AnyElement, EventDispatcher, EventResult, Widget, begin_event_frame};
 use std::any::Any;
 #[cfg(debug_assertions)]
 use std::cell::Cell;
@@ -448,25 +448,66 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let budget = self.venus.idle_budget();
         self.venus.run_idle(&budget);
         self.venus.end_frame();
+        // The next platform-input interval is a new event frame. This shared
+        // epoch also reaches dispatchers nested inside scrollables and regions.
+        aimer_widget::begin_event_frame();
 
-//        #[cfg(debug_assertions)]
-//        if let Some((breakdown, content)) = crate::frame_stats::take_debug_report() {
-//            aimer_utils::debug!(
-//                "[frame-stats] frames={} build={:.2}ms encode={:.2}ms present={:.2}ms nodes/frame={:.1} commands/frame={:.1} retained-layers/frame={:.1} text/frame={:.1} image-draws/frame={:.1} image-uploads/frame={:.1} text-cache-hit/frame={:.1} text-cache-miss/frame={:.1}",
-//                content.frames,
-//                breakdown.build.average().as_secs_f64() * 1_000.0,
-//                breakdown.encode.average().as_secs_f64() * 1_000.0,
-//                breakdown.present.average().as_secs_f64() * 1_000.0,
-//                content.average_drawn_nodes(),
-//                content.average_draw_commands(),
-//                content.average_retained_layers(),
-//                content.average_text_commands(),
-//                content.average_image_draws(),
-//                content.average_image_uploads(),
-//                content.text_cache_hits as f64 / content.frames as f64,
-//                content.average_text_cache_misses(),
-//            );
-//        }
+        #[cfg(debug_assertions)]
+        if let Some((breakdown, content)) = crate::frame_stats::take_debug_report() {
+            let request_stats = crate::frame_stats::frame_request_stats();
+            crate::frame_stats::reset_frame_request_stats();
+            aimer_utils::debug!(
+                "[frame-stats] frames={} build={:.2}ms encode={:.2}ms present={:.2}ms nodes/frame={:.1} commands/frame={:.1} retained-layers/frame={:.1} text/frame={:.1} image-draws/frame={:.1} image-uploads/frame={:.1} text-cache-hit/frame={:.1} text-cache-miss/frame={:.1} rebuild-visits/frame={:.1} rebuild-pruned/frame={:.1} stateful-checks/frame={:.1} stateless-checks/frame={:.1} stateful-builds/frame={:.1} stateless-builds/frame={:.1} layout/frame={:.1} hit-test/frame={:.1} paint/frame={:.1} root-draw/frame={:.1} scroll-events/frame={:.1} scroll-steps/frame={:.1} smoothing-steps/frame={:.1} state-updates/frame={:.1} scroll-offset-updates/frame={:.1} redraw-requests/frame={:.1} frame-ready-accepted={} frame-ready-coalesced={} display-ticks={} paint-candidates/frame={:.1} paint-records/frame={:.1} paint-replays/frame={:.1} paint-invalidations/frame={:.1} paint-fallbacks/frame={:.1} paint-tile-records/frame={:.1} paint-tile-replays/frame={:.1} damage-full/frame={:.1} damage-partial/frame={:.1} damage-regions/frame={:.1} damage-merged/frame={:.1} damage-promotions/frame={:.1} damage-target-reuses/frame={:.1} damage-partial-clears/frame={:.1} damage-full-clears/frame={:.1} damage-full-pixels/frame={:.0} damage-partial-pixels/frame={:.0}",
+                content.frames,
+                breakdown.build.average().as_secs_f64() * 1_000.0,
+                breakdown.encode.average().as_secs_f64() * 1_000.0,
+                breakdown.present.average().as_secs_f64() * 1_000.0,
+                content.average_drawn_nodes(),
+                content.average_draw_commands(),
+                content.average_retained_layers(),
+                content.average_text_commands(),
+                content.average_image_draws(),
+                content.average_image_uploads(),
+                content.text_cache_hits as f64 / content.frames as f64,
+                content.average_text_cache_misses(),
+                content.rebuild_visits as f64 / content.frames as f64,
+                content.rebuild_pruned as f64 / content.frames as f64,
+                content.stateful_rebuild_checks as f64 / content.frames as f64,
+                content.stateless_rebuild_checks as f64 / content.frames as f64,
+                content.stateful_builds as f64 / content.frames as f64,
+                content.stateless_builds as f64 / content.frames as f64,
+                content.layout_calls as f64 / content.frames as f64,
+                content.hit_test_visits as f64 / content.frames as f64,
+                content.paint_calls as f64 / content.frames as f64,
+                content.root_draw_calls as f64 / content.frames as f64,
+                content.scroll_events as f64 / content.frames as f64,
+                content.scroll_steps as f64 / content.frames as f64,
+                content.smoothing_steps as f64 / content.frames as f64,
+                content.state_updates as f64 / content.frames as f64,
+                content.scroll_offset_updates as f64 / content.frames as f64,
+                content.redraw_requests as f64 / content.frames as f64,
+                request_stats.accepted,
+                request_stats.coalesced,
+                request_stats.display_ticks,
+                content.paint_isolation_candidates as f64 / content.frames as f64,
+                content.paint_isolation_records as f64 / content.frames as f64,
+                content.paint_isolation_replays as f64 / content.frames as f64,
+                content.paint_isolation_invalidations as f64 / content.frames as f64,
+                content.paint_isolation_fallbacks as f64 / content.frames as f64,
+                content.paint_isolation_tile_records as f64 / content.frames as f64,
+                content.paint_isolation_tile_replays as f64 / content.frames as f64,
+                content.damage_full_frames as f64 / content.frames as f64,
+                content.damage_partial_frames as f64 / content.frames as f64,
+                content.damage_regions as f64 / content.frames as f64,
+                content.damage_merged_regions as f64 / content.frames as f64,
+                content.damage_full_frame_promotions as f64 / content.frames as f64,
+                content.damage_target_reuses as f64 / content.frames as f64,
+                content.damage_partial_clears as f64 / content.frames as f64,
+                content.damage_full_clears as f64 / content.frames as f64,
+                content.damage_full_pixels as f64 / content.frames as f64,
+                content.damage_partial_pixels as f64 / content.frames as f64,
+            );
+        }
 
         if self.venus.has_ready_work() {
             self.request_animation_frame();
@@ -539,10 +580,14 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     /// and `Ended` or `Cancelled` when it finishes — instead of an endless
     /// stream of `Moved`.
     pub(crate) fn dispatch_smoothed_scroll(&mut self) -> EventResult {
+        if self.scroll_smoother.is_active() {
+            aimer_widget::record_smoothing_step();
+        }
         let frame = self.scroll_smoother.tick();
         let mut result = EventResult::ignored();
 
         if let Some(step) = frame.trackpad {
+            aimer_widget::record_scroll_step();
             result = result.merge(self.dispatch_element_event(
                 self.cursor_pos,
                 &aimer_events::element::ElementEvent::Scroll {
@@ -557,6 +602,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             ));
         }
         if let Some(step) = frame.wheel {
+            aimer_widget::record_scroll_step();
             result = result.merge(self.dispatch_element_event(
                 self.cursor_pos,
                 &aimer_events::element::ElementEvent::Scroll {
@@ -655,6 +701,12 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
 
         #[cfg(any(debug_assertions, feature = "frame-stats"))]
         aimer_widget::reset_draw_traversal_count();
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        aimer_widget::reset_rebuild_stats();
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        aimer_widget::reset_paint_stats();
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        crate::frame_stats::record_full_frame_damage(width, height);
 
         {
             if let Some(root) = root {
@@ -665,11 +717,10 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                 }
 
                 #[cfg(debug_assertions)]
-                if let Ok(mut hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.write() {
-                    *hovered = None;
-                }
+                aimer_widget::inspector_overlay::clear_hovered_widget();
 
                 build_ctx.canvas.save();
+                aimer_widget::record_root_draw_call();
                 root.draw(&build_ctx);
                 build_ctx.canvas.restore();
 
@@ -707,11 +758,17 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             let draw_list = inner_canvas.draw_list();
             let draw_list_stats = draw_list.stats();
             let (text_cache_hits, text_cache_misses) = inner_canvas.text_cache_stats();
+            let rebuild_stats = aimer_widget::take_rebuild_stats();
+            let paint_stats = aimer_widget::take_paint_stats();
+            let work_stats = aimer_widget::take_frame_work_stats();
             crate::frame_stats::record_frame_content(
                 aimer_widget::take_draw_traversal_count(),
                 draw_list_stats,
                 text_cache_hits,
                 text_cache_misses,
+                rebuild_stats,
+                paint_stats,
+                work_stats,
             );
         }
     }
@@ -979,18 +1036,12 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 }
             });
 
-            let hovered_id =
-                if let Ok(hovered) = aimer_widget::inspector_overlay::HOVERED_WIDGET.read() {
-                    if let Some((name, start, end)) = hovered.as_ref() {
-                        snapshot
-                            .as_ref()
-                            .and_then(|s| find_hovered_node(s, name, *start, *end))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
+            let hovered_id = aimer_widget::inspector_overlay::hovered_widget()
+                .and_then(|(name, start, end)| {
+                    snapshot
+                        .as_ref()
+                        .and_then(|s| find_hovered_node(s, name, start, end))
+                });
 
             inspector.broadcast_tree(snapshot);
             inspector.broadcast_hovered(hovered_id);
@@ -1037,6 +1088,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             if let Some(window) = &self.window {
                 window.request_redraw();
             }
+            begin_event_frame();
             return;
         }
 

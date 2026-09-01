@@ -46,6 +46,10 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         let viewport_w = raw_viewport_w.min(max_dim);
         let viewport_h = raw_viewport_h.min(max_dim);
         let content_size = self.content_size(ctx);
+        #[cfg(not(feature = "portable-guest"))]
+        let paint_transform = aimer_widget::PaintTransform::from_canvas(&ctx.canvas);
+        #[cfg(not(feature = "portable-guest"))]
+        let paint_clip = aimer_widget::PaintClip::rect(0.0, 0.0, viewport_w.round(), viewport_h.round());
         // Cache content size for the rest of this frame (scrollbar drawing reads
         // it) to avoid recomputing the child layout multiple times per draw.
         self.ctrl.cached_content_size.set(content_size);
@@ -104,7 +108,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             finish_overscroll_recovery(&self.ctrl, offset);
 
             if needs_redraw {
-                aimer_events::window::request_animation_frame();
+                self.ctrl.request_animation_frame();
             } else {
                 // Not dragging and momentum/fling/spring-back have fully settled:
                 // this is where a scroll session ends. `end_scroll` is edge-
@@ -114,7 +118,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             }
         }
 
-        self.ctrl.scroll_offset.set(offset);
+        self.ctrl.set_scroll_offset(offset);
 
         // Level-triggered per-frame notification: fires `on_scroll` only when the
         // logical offset actually moved since the last frame (epsilon-guarded), so
@@ -197,7 +201,13 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // still updates its physics and bounds without walking its content.
         if ctx.is_rect_visible(0.0, 0.0, viewport_w, viewport_h) {
             #[cfg(not(feature = "portable-guest"))]
-            self.draw_child_with_retained_paint(ctx, &child_ctx, content_size);
+            self.draw_child_with_retained_paint(
+                ctx,
+                &child_ctx,
+                content_size,
+                paint_clip,
+                paint_transform,
+            );
             #[cfg(feature = "portable-guest")]
             self.child.draw(&child_ctx);
         }

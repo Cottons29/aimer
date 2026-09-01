@@ -7,7 +7,7 @@ use aimer_widget::{
 };
 
 use crate::Route;
-use crate::outlet::{OutletChildBuilder, OutletSlot};
+use crate::outlet::{OutletChildBuilder, OutletSlot, RouteChildContext};
 
 /// A persistent layout frame (nav bar, drawer, header, ...) that stays mounted
 /// while only its inner [`crate::outlet::Outlet`] swaps between child routes.
@@ -72,9 +72,17 @@ impl aimer_widget::PortableWidget for Shell {
 
 impl Widget for Shell {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let route_context = RouteChildContext::capture(ctx);
         let slot = OutletSlot::new(self.child_builder.clone());
-        let child = ctx.with_state(slot.clone(), |ctx| self.frame.to_element(ctx));
-        ShellElement { slot, child }.boxed()
+        let child = route_context.with(ctx, |ctx| {
+            ctx.with_state(slot.clone(), |ctx| self.frame.to_element(ctx))
+        });
+        ShellElement {
+            route_context,
+            slot,
+            child,
+        }
+        .boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -83,13 +91,15 @@ impl Widget for Shell {
 }
 
 struct ShellElement {
+    route_context: RouteChildContext,
     slot: OutletSlot,
     child: AnyElement,
 }
 
 impl ShellElement {
     fn scoped<R>(&self, ctx: &BuildContext, callback: impl FnOnce(&BuildContext) -> R) -> R {
-        ctx.with_state(self.slot.clone(), callback)
+        self.route_context
+            .with(ctx, |ctx| ctx.with_state(self.slot.clone(), callback))
     }
 }
 
@@ -151,7 +161,8 @@ impl LayoutElement for ShellElement {
     }
 }
 
-impl EventElement for ShellElement {}
+impl EventElement for ShellElement {
+}
 
 impl Rebuildable for ShellElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
@@ -394,6 +405,29 @@ mod tests {
         child_built: Rc<Cell<bool>>,
     }
 
+    #[derive(Clone, Copy)]
+    struct AncestorShellProvider;
+
+    thread_local! {
+        static SHELL_ROUTE_CONTEXT_MISSES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    struct ShellRouteContextProbe;
+
+    impl Widget for ShellRouteContextProbe {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            if ctx.get_state::<AncestorShellProvider>().is_none() {
+                SHELL_ROUTE_CONTEXT_MISSES.set(SHELL_ROUTE_CONTEXT_MISSES.get() + 1);
+            }
+            DeferredOutletElement {
+                child_built: Rc::new(Cell::new(false)),
+            }
+            .boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for ShellRouteContextProbe {}
+
     impl Widget for DeferredOutletWidget {
         fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             DeferredOutletElement {
@@ -474,6 +508,35 @@ mod tests {
         element.rebuild_if_dirty(&context());
 
         assert!(child_built.get());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn shell_route_child_retains_ancestor_provider_context() {
+        SHELL_ROUTE_CONTEXT_MISSES.set(0);
+        let initial_context = context();
+        let shell = Shell::new(
+            DeferredOutletWidget {
+                child_built: Rc::new(Cell::new(false)),
+            },
+            |_| ShellRouteContextProbe.boxed(),
+        );
+        let element = initial_context.with_state(AncestorShellProvider, |ctx| shell.to_element(ctx));
+
+        let rebuild_context = context();
+        element.rebuild_if_dirty(&rebuild_context);
+
+        assert_eq!(
+            SHELL_ROUTE_CONTEXT_MISSES.get(),
+            0,
+            "a shell route child lost an ancestor provider during delayed Outlet construction"
+        );
+        assert!(
+            rebuild_context
+                .get_state::<AncestorShellProvider>()
+                .is_none(),
+            "the captured provider must not leak outside the shell boundary"
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

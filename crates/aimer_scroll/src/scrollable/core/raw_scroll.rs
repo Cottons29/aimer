@@ -23,10 +23,6 @@ use aimer_widget::{
     ElementId, rebuild_invalidation_generation,
 };
 #[cfg(not(feature = "portable-guest"))]
-use aimer_widget::components::element::{
-    paint_element_was_invalidated, paint_invalidations_are_known, paint_subtree_was_invalidated,
-};
-#[cfg(not(feature = "portable-guest"))]
 use std::sync::Arc;
 #[cfg(not(feature = "portable-guest"))]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -72,19 +68,14 @@ pub(crate) struct ScrollLayoutCache {
 #[cfg(not(feature = "portable-guest"))]
 #[derive(Clone, Copy, PartialEq)]
 struct ScrollPaintKey {
+    contract: aimer_widget::PaintContract,
     layout: ScrollLayoutKey,
-    child_generation: u64,
-    rebuild_generation: u64,
-    texture_epoch: u64,
-    content_width_bits: u32,
-    content_height_bits: u32,
 }
 
 #[cfg(not(feature = "portable-guest"))]
 struct RetainedPaint {
-    key: ScrollPaintKey,
+    cache: aimer_widget::PaintCache<ScrollPaintKey>,
     content: Arc<aimer_canvas::RetainedLayerContent>,
-    element_ids: Vec<ElementId>,
     dynamic_islands: bool,
 }
 
@@ -109,7 +100,7 @@ struct RetainedPaintTile {
     layer_id: u64,
     rect: RetainedTileRect,
     content: Arc<aimer_canvas::RetainedLayerContent>,
-    element_ids: Vec<ElementId>,
+    cache: aimer_widget::PaintCache<ScrollPaintKey>,
 }
 
 #[cfg(not(feature = "portable-guest"))]
@@ -180,6 +171,7 @@ impl DynamicIslandPaintState {
             self.failed = true;
             return None;
         }
+        aimer_widget::record_paint_isolation_record();
         self.static_content = Some(content.clone());
         Some((content, self.element_ids.clone()))
     }
@@ -215,62 +207,32 @@ fn can_use_retained_layer(size: ResolvedSize) -> bool {
 }
 
 #[cfg(not(feature = "portable-guest"))]
-#[inline]
-fn retained_tile_contract_matches(left: ScrollPaintKey, right: ScrollPaintKey) -> bool {
-    left.layout.constraint == right.layout.constraint
-        && left.layout.parent_size == right.layout.parent_size
-        && left.layout.scale_bits == right.layout.scale_bits
-        && left.layout.axis == right.layout.axis
-        && left.layout.viewport_w == right.layout.viewport_w
-        && left.layout.viewport_h == right.layout.viewport_h
-        && left.layout.vertical_bar_width == right.layout.vertical_bar_width
-        && left.layout.horizontal_bar_height == right.layout.horizontal_bar_height
-        && left.layout.layout_generation == right.layout.layout_generation
-        && left.texture_epoch == right.texture_epoch
-        && left.content_width_bits == right.content_width_bits
-        && left.content_height_bits == right.content_height_bits
-}
+impl ScrollPaintKey {
+    #[inline]
+    fn base_contract_matches(self, other: Self) -> bool {
+        self.contract.placement_matches(&other.contract)
+            && self.layout.constraint == other.layout.constraint
+            && self.layout.parent_size == other.layout.parent_size
+            && self.layout.scale_bits == other.layout.scale_bits
+            && self.layout.axis == other.layout.axis
+            && self.layout.viewport_w == other.layout.viewport_w
+            && self.layout.viewport_h == other.layout.viewport_h
+            && self.layout.vertical_bar_width == other.layout.vertical_bar_width
+            && self.layout.horizontal_bar_height == other.layout.horizontal_bar_height
+            && self.layout.layout_generation == other.layout.layout_generation
+    }
 
-#[cfg(not(feature = "portable-guest"))]
-#[inline]
-fn retained_paint_contract_matches(left: ScrollPaintKey, right: ScrollPaintKey) -> bool {
-    left.layout.constraint == right.layout.constraint
-        && left.layout.parent_size == right.layout.parent_size
-        && left.layout.scale_bits == right.layout.scale_bits
-        && left.layout.axis == right.layout.axis
-        && left.layout.viewport_w == right.layout.viewport_w
-        && left.layout.viewport_h == right.layout.viewport_h
-        && left.layout.vertical_bar_width == right.layout.vertical_bar_width
-        && left.layout.horizontal_bar_height == right.layout.horizontal_bar_height
-        && left.layout.layout_generation == right.layout.layout_generation
-        && left.texture_epoch == right.texture_epoch
-        && left.content_width_bits == right.content_width_bits
-        && left.content_height_bits == right.content_height_bits
-}
+    #[inline]
+    fn dynamic_contract_matches(self, other: Self) -> bool {
+        self.base_contract_matches(other)
+            && self.contract.tree_generation == other.contract.tree_generation
+    }
 
-#[cfg(not(feature = "portable-guest"))]
-#[inline]
-fn retained_paint_can_reuse(
-    cached: &RetainedPaint,
-    key: ScrollPaintKey,
-    dynamic_islands: bool,
-) -> bool {
-    if cached.dynamic_islands != dynamic_islands {
-        return false;
+    #[inline]
+    fn tile_contract_matches(self, other: Self) -> bool {
+        self.dynamic_contract_matches(other)
+            && self.contract.content_generation == other.contract.content_generation
     }
-    if cached.key == key {
-        return true;
-    }
-    if !retained_paint_contract_matches(cached.key, key)
-        || cached.key.layout.tree_generation != key.layout.tree_generation
-        || !paint_invalidations_are_known()
-    {
-        return false;
-    }
-    cached
-        .element_ids
-        .iter()
-        .all(|element| !paint_element_was_invalidated(*element))
 }
 
 #[cfg(not(feature = "portable-guest"))]
@@ -341,9 +303,10 @@ fn retained_tile_rect(
 #[cfg(not(feature = "portable-guest"))]
 pub(crate) struct ScrollPaintCache {
     layer_id: u64,
+    isolated: aimer_widget::PaintIsolated<ScrollPaintKey>,
     snapshot: RefCell<Option<RetainedPaint>>,
     tiles: RefCell<HashMap<RetainedTileCoordinate, RetainedPaintTile>>,
-    tile_key: Cell<Option<ScrollPaintKey>>,
+    tile_cache: RefCell<aimer_widget::PaintCache<ScrollPaintKey>>,
     tile_draws: RefCell<Vec<RetainedTileDraw>>,
 }
 
@@ -355,9 +318,10 @@ impl Default for ScrollPaintCache {
     fn default() -> Self {
         Self {
             layer_id: NEXT_SCROLL_LAYER_ID.fetch_add(1, Ordering::Relaxed),
+            isolated: aimer_widget::PaintIsolated::new(),
             snapshot: RefCell::new(None),
             tiles: RefCell::new(HashMap::new()),
-            tile_key: Cell::new(None),
+            tile_cache: RefCell::new(aimer_widget::PaintCache::new()),
             tile_draws: RefCell::new(Vec::new()),
         }
     }
@@ -366,16 +330,23 @@ impl Default for ScrollPaintCache {
 #[cfg(not(feature = "portable-guest"))]
 impl ScrollPaintCache {
     fn clear(&self) {
+        self.isolated.clear();
         self.snapshot.borrow_mut().take();
         self.tiles.borrow_mut().clear();
-        self.tile_key.set(None);
+        self.tile_cache.borrow_mut().clear();
         self.tile_draws.borrow_mut().clear();
     }
 
     fn clear_tiles(&self) {
         self.tiles.borrow_mut().clear();
-        self.tile_key.set(None);
+        self.tile_cache.borrow_mut().clear();
         self.tile_draws.borrow_mut().clear();
+    }
+
+    fn invalidate_snapshot(&self) {
+        if let Some(mut snapshot) = self.snapshot.borrow_mut().take() {
+            snapshot.cache.invalidate();
+        }
     }
 }
 
@@ -455,14 +426,31 @@ impl<E: Element> RawScrollableContainer<E> {
 
     #[cfg(not(feature = "portable-guest"))]
     #[inline]
-    fn paint_key(&self, ctx: &BuildContext, content_size: ResolvedSize) -> ScrollPaintKey {
+    fn paint_key(
+        &self,
+        ctx: &BuildContext,
+        content_size: ResolvedSize,
+        clip: aimer_widget::PaintClip,
+        transform: aimer_widget::PaintTransform,
+    ) -> ScrollPaintKey {
+        let layout = self.layout_key(ctx);
         ScrollPaintKey {
-            layout: self.layout_key(ctx),
-            child_generation: self.child.subtree_generation(),
-            rebuild_generation: rebuild_invalidation_generation(),
-            texture_epoch: ctx.canvas.texture_cache_epoch(),
-            content_width_bits: content_size.width.to_bits(),
-            content_height_bits: content_size.height.to_bits(),
+            contract: aimer_widget::PaintContract::from_context(
+                ctx,
+                self.child.subtree_generation(),
+                rebuild_invalidation_generation(),
+                layout.tree_generation,
+                layout.layout_generation,
+                aimer_widget::PaintBounds::new(
+                    ctx.parent_pos.x,
+                    ctx.parent_pos.y,
+                    content_size.width,
+                    content_size.height,
+                ),
+                clip,
+                transform,
+            ),
+            layout,
         }
     }
 
@@ -477,92 +465,48 @@ impl<E: Element> RawScrollableContainer<E> {
         ctx: &BuildContext,
         child_ctx: &BuildContext,
         content_size: ResolvedSize,
+        clip: aimer_widget::PaintClip,
+        transform: aimer_widget::PaintTransform,
     ) {
+        aimer_widget::record_paint_isolation_candidate();
+        // Rebuild is a lifecycle phase, not paint. Retained recording bypasses
+        // `draw`, so the owner must still service dirty descendants before it
+        // evaluates stability or replays a cached layer. The erased rebuild
+        // path prunes clean subtrees after the first visit.
+        self.child.rebuild_if_dirty(child_ctx);
         let stable = self.child.is_paint_stable();
         #[cfg(debug_assertions)]
         let stable = stable && !aimer_widget::inspector_overlay::is_enabled();
         if !stable {
-            if self.draw_child_with_dynamic_islands(ctx, child_ctx, content_size) {
+            if self.draw_child_with_dynamic_islands(ctx, child_ctx, content_size, clip, transform) {
                 return;
             }
             self.paint_cache.clear();
+            aimer_widget::record_paint_isolation_fallback();
             self.child.draw(child_ctx);
             return;
         }
 
-        let key = self.paint_key(ctx, content_size);
+        let key = self.paint_key(ctx, content_size, clip, transform);
         if can_use_retained_layer(content_size) {
             self.paint_cache.clear_tiles();
-            if self
-                .paint_cache
-                .snapshot
-                .borrow()
-                .as_ref()
-                .is_some_and(|cached| retained_paint_can_reuse(cached, key, false))
-            {
-                let cached = self.paint_cache.snapshot.borrow();
-                if let Some(cached) = cached.as_ref() {
-                    ctx.canvas.draw_retained_layer(
-                        self.paint_cache.layer_id,
-                        content_size.width,
-                        content_size.height,
-                        cached.content.clone(),
-                    );
-                    return;
-                }
-            }
-
-            // Drop stale commands before recording a replacement. This makes a
-            // style/text/scale/texture invalidation release the old command
-            // payload immediately instead of retaining two generations.
-            self.paint_cache.snapshot.borrow_mut().take();
-
-            let recording_canvas = ctx.canvas.fork_for_recording();
-            let mut recording_ctx = child_ctx.clone();
-            recording_ctx.canvas = Canvas::new(&recording_canvas);
-            // A retained stream must contain all content. The outer viewport clip
-            // still prevents it from reaching the framebuffer when replayed.
-            recording_ctx.visible_rect = None;
-            aimer_widget::components::element::begin_paint_tracking();
-            self.child.draw(&recording_ctx);
-            let element_ids = aimer_widget::components::element::take_paint_tracking();
-
-            let recorded = recording_canvas.take_draw_list();
-            let Some(commands) = recorded.retained_snapshot() else {
-                // Rich text, uploads, and custom pipeline payloads intentionally
-                // decline retention because replaying them would allocate or
-                // duplicate non-cloneable state. The ordinary draw remains the
-                // correct fallback for those trees.
-                self.paint_cache.clear();
-                self.child.draw(child_ctx);
-                return;
-            };
-
-            let content = Arc::new(aimer_canvas::RetainedLayerContent::from_snapshot(commands));
-            if !content.is_compositor_safe() {
-                self.paint_cache.clear();
-                self.child.draw(child_ctx);
-                return;
-            }
-            self.paint_cache.snapshot.borrow_mut().replace(RetainedPaint {
-                key,
-                content: content.clone(),
-                element_ids,
-                dynamic_islands: false,
-            });
-            ctx.canvas.draw_retained_layer(
-                self.paint_cache.layer_id,
-                content_size.width,
-                content_size.height,
-                content,
-            );
+            self.paint_cache
+                .isolated
+                .draw(
+                    ctx,
+                    child_ctx,
+                    &self.child,
+                    key,
+                    content_size,
+                );
             return;
         }
 
         // A full layer would exceed the memory cap. Keep only the tiles around
         // the cache window, with a small overlap so elements crossing a tile
         // edge are recorded into the tile that owns their visible pixels.
-        self.paint_cache.snapshot.borrow_mut().take();
+        self.paint_cache.isolated.clear();
+        self.paint_cache.invalidate_snapshot();
         if self.draw_child_with_retained_tiles(ctx, child_ctx, content_size, key) {
             let draws = self.paint_cache.tile_draws.borrow();
             for draw in draws.iter() {
@@ -577,6 +521,7 @@ impl<E: Element> RawScrollableContainer<E> {
             }
         } else {
             self.paint_cache.clear();
+            aimer_widget::record_paint_isolation_fallback();
             self.child.draw(child_ctx);
         }
     }
@@ -592,19 +537,39 @@ impl<E: Element> RawScrollableContainer<E> {
         ctx: &BuildContext,
         child_ctx: &BuildContext,
         content_size: ResolvedSize,
+        clip: aimer_widget::PaintClip,
+        transform: aimer_widget::PaintTransform,
     ) -> bool {
         if !can_use_retained_layer(content_size) {
             return false;
         }
 
-        let key = self.paint_key(ctx, content_size);
-        let cached_content = self
-            .paint_cache
-            .snapshot
-            .borrow()
-            .as_ref()
-            .filter(|cached| retained_paint_can_reuse(cached, key, true))
-            .map(|cached| (cached.content.clone(), cached.element_ids.clone()));
+        let key = self.paint_key(ctx, content_size, clip, transform);
+        let (cache_was_present, cached_content) = {
+            let cached = self.paint_cache.snapshot.borrow();
+            (
+                cached.is_some(),
+                cached
+                    .as_ref()
+                    .filter(|cached| {
+                        cached.dynamic_islands
+                            && cached.cache.key().is_some_and(|cached_key| {
+                                cached
+                                    .cache
+                                    .can_reuse(key, cached_key.dynamic_contract_matches(key))
+                            })
+                    })
+                    .map(|cached| {
+                        (
+                            cached.content.clone(),
+                            cached.cache.tracked_elements().to_vec(),
+                        )
+                    }),
+            )
+        };
+        if cache_was_present && cached_content.is_none() {
+            self.paint_cache.invalidate_snapshot();
+        }
         let state = Rc::new(RefCell::new(DynamicIslandPaintState::cached(
             cached_content,
         )));
@@ -618,6 +583,16 @@ impl<E: Element> RawScrollableContainer<E> {
                   island_ctx: &BuildContext,
                   offset: Vec2d,
                   clip: Option<ResolvedSize>| {
+                // Stable islands still need live interaction geometry in the
+                // current composition space. Keep that bookkeeping on the
+                // live canvas, including the island's flex offset, while the
+                // retained command stream uses the paint-only hook below.
+                let geometry_ctx = island_ctx.clone();
+                geometry_ctx.canvas.save();
+                geometry_ctx.canvas.translate(offset);
+                element.sync_paint_geometry(&geometry_ctx);
+                geometry_ctx.canvas.restore();
+
                 let mut state = state.borrow_mut();
                 if state.static_content.is_some() {
                     return;
@@ -628,13 +603,13 @@ impl<E: Element> RawScrollableContainer<E> {
                     return;
                 };
                 let mut paint_ctx = island_ctx.clone();
-                paint_ctx.canvas = Canvas::new(recording);
+                paint_ctx.replace_canvas(Canvas::new(recording));
                 recording.save();
                 if let Some(clip) = clip {
                     recording.set_clip(0.0, 0.0, clip.width, clip.height);
                 }
                 recording.translate(offset.x, offset.y);
-                element.draw(&paint_ctx);
+                element.paint(&paint_ctx);
                 if clip.is_some() {
                     recording.clear_clip();
                 }
@@ -650,15 +625,17 @@ impl<E: Element> RawScrollableContainer<E> {
                   clip: Option<ResolvedSize>| {
                 let mut state = state.borrow_mut();
                 if !state.emitted {
+                    let reused_cached = state.static_content.is_some();
                     if state.static_content.is_none() {
                         let Some((content, element_ids)) = state.finish_recording() else {
                             state.failed = true;
                             return;
                         };
+                        let mut cache = aimer_widget::PaintCache::new();
+                        cache.record(key, element_ids);
                         self.paint_cache.snapshot.borrow_mut().replace(RetainedPaint {
-                            key,
+                            cache,
                             content: content.clone(),
-                            element_ids,
                             dynamic_islands: true,
                         });
                     }
@@ -673,6 +650,9 @@ impl<E: Element> RawScrollableContainer<E> {
                         content,
                     );
                     state.emitted = true;
+                    if reused_cached {
+                        aimer_widget::record_paint_isolation_replay();
+                    }
                 }
                 let failed = state.failed;
                 drop(state);
@@ -712,10 +692,11 @@ impl<E: Element> RawScrollableContainer<E> {
             let Some((content, element_ids)) = state.finish_recording() else {
                 return false;
             };
+            let mut cache = aimer_widget::PaintCache::new();
+            cache.record(key, element_ids);
             self.paint_cache.snapshot.borrow_mut().replace(RetainedPaint {
-                key,
+                cache,
                 content: content.clone(),
-                element_ids,
                 dynamic_islands: true,
             });
             ctx.canvas.draw_retained_layer(
@@ -741,31 +722,48 @@ impl<E: Element> RawScrollableContainer<E> {
             return false;
         };
 
-        if let Some(cached_key) = self.paint_cache.tile_key.get() {
-            if !retained_tile_contract_matches(cached_key, key) {
-                self.paint_cache.tiles.borrow_mut().clear();
-            } else if cached_key != key {
-                let subtree_generation_changed = cached_key.layout.tree_generation
-                    != key.layout.tree_generation
-                    || cached_key.child_generation != key.child_generation;
-                if subtree_generation_changed || !paint_invalidations_are_known() {
+        // Tile replay skips the child's paint path, so keep its interaction
+        // geometry current on every composition frame just like the full
+        // PaintIsolated path does.
+        self.child.sync_paint_geometry(child_ctx);
+
+        let cached_tile_key = { self.paint_cache.tile_cache.borrow().key() };
+        if let Some(cached_tile_key) = cached_tile_key {
+            if cached_tile_key != key {
+                let can_reuse = self.paint_cache.tile_cache.borrow().can_reuse(
+                    key,
+                    cached_tile_key.tile_contract_matches(key),
+                );
+                if !can_reuse {
+                    self.paint_cache.tile_cache.borrow_mut().invalidate();
                     self.paint_cache.tiles.borrow_mut().clear();
-                } else if paint_subtree_was_invalidated(self.child.id()) {
-                    self.paint_cache.tiles.borrow_mut().retain(|_, tile| {
-                        !tile
-                            .element_ids
-                            .iter()
-                            .any(|element| paint_element_was_invalidated(*element))
-                    });
                 }
             }
         }
-        self.paint_cache.tile_key.set(Some(key));
-        self.paint_cache.tiles.borrow_mut().retain(|coordinate, _tile| {
-            coordinate.x >= range.x_start
+        self.paint_cache
+            .tile_cache
+            .borrow_mut()
+            .record(key, Vec::new());
+        self.paint_cache.tiles.borrow_mut().retain(|coordinate, tile| {
+            if !(coordinate.x >= range.x_start
                 && coordinate.x < range.x_end
                 && coordinate.y >= range.y_start
-                && coordinate.y < range.y_end
+                && coordinate.y < range.y_end)
+            {
+                return false;
+            }
+            let Some(cached_key) = tile.cache.key() else {
+                return false;
+            };
+            if tile
+                .cache
+                .can_reuse(key, cached_key.tile_contract_matches(key))
+            {
+                true
+            } else {
+                tile.cache.invalidate();
+                false
+            }
         });
 
         let mut draws = self.paint_cache.tile_draws.borrow_mut();
@@ -784,6 +782,8 @@ impl<E: Element> RawScrollableContainer<E> {
                         content: tile.content.clone(),
                     });
                 let draw = if let Some(cached) = cached {
+                    aimer_widget::record_paint_isolation_replay();
+                    aimer_widget::record_paint_isolation_tile_replay();
                     cached
                 } else {
                     let Some(rect) = retained_tile_rect(coordinate, content_size) else {
@@ -798,7 +798,11 @@ impl<E: Element> RawScrollableContainer<E> {
                         layer_id: NEXT_SCROLL_LAYER_ID.fetch_add(1, Ordering::Relaxed),
                         rect,
                         content: content.clone(),
-                        element_ids,
+                        cache: {
+                            let mut cache = aimer_widget::PaintCache::new();
+                            cache.record(key, element_ids);
+                            cache
+                        },
                     };
                     let draw = RetainedTileDraw {
                         layer_id: tile.layer_id,
@@ -825,7 +829,7 @@ impl<E: Element> RawScrollableContainer<E> {
         let recording_canvas = ctx.canvas.fork_for_recording();
         recording_canvas.translate(-rect.x, -rect.y);
         let mut recording_ctx = child_ctx.clone();
-        recording_ctx.canvas = Canvas::new(&recording_canvas);
+        recording_ctx.replace_canvas(Canvas::new(&recording_canvas));
         recording_ctx.visible_rect = Some((
             (rect.x - RETAINED_LAYER_TILE_OVERLAP_PX).max(0.0),
             (rect.y - RETAINED_LAYER_TILE_OVERLAP_PX).max(0.0),
@@ -835,15 +839,18 @@ impl<E: Element> RawScrollableContainer<E> {
                 .min(content_size.height - rect.y + RETAINED_LAYER_TILE_OVERLAP_PX),
         ));
         aimer_widget::components::element::begin_paint_tracking();
-        self.child.draw(&recording_ctx);
+        self.child.paint(&recording_ctx);
         let element_ids = aimer_widget::components::element::take_paint_tracking();
 
         let recorded = recording_canvas.take_draw_list();
         let commands = recorded.retained_snapshot()?;
         let content = Arc::new(aimer_canvas::RetainedLayerContent::from_snapshot(commands));
-        content
-            .is_compositor_safe()
-            .then_some((content, element_ids))
+        if !content.is_compositor_safe() {
+            return None;
+        }
+        aimer_widget::record_paint_isolation_record();
+        aimer_widget::record_paint_isolation_tile_record();
+        Some((content, element_ids))
     }
 
     /// Resolves the scroll-axis extent against the active constraints.
@@ -1306,7 +1313,7 @@ impl<E: Element> RawScrollableContainer<E> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
 
     use aimer_events::element::ElementEvent;
     use aimer_events::pointer::{PointerInfo, PointerSource};
@@ -1437,6 +1444,162 @@ mod tests {
 
     impl Rebuildable for DrawingChild {}
 
+    struct PaintCompositionProbe {
+        draws: Rc<Cell<usize>>,
+        paints: Rc<Cell<usize>>,
+        geometry_syncs: Rc<Cell<usize>>,
+        translations: Rc<RefCell<Vec<(f32, f32)>>>,
+        size: ResolvedSize,
+    }
+
+    impl VisitorElement for PaintCompositionProbe {
+        fn debug_name(&self) -> &'static str {
+            "PaintCompositionProbe"
+        }
+    }
+
+    impl EventElement for PaintCompositionProbe {}
+
+    impl LayoutElement for PaintCompositionProbe {
+        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+            self.size
+        }
+    }
+
+    impl Drawable for PaintCompositionProbe {
+        fn draw(&self, _ctx: &BuildContext) {
+            self.draws.set(self.draws.get() + 1);
+        }
+
+        fn paint(&self, ctx: &BuildContext) {
+            self.paints.set(self.paints.get() + 1);
+            ctx.canvas.fill_rect(Vec2d::ZERO, self.size);
+        }
+
+        fn sync_paint_geometry(&self, ctx: &BuildContext) {
+            self.geometry_syncs.set(self.geometry_syncs.get() + 1);
+            self.translations
+                .borrow_mut()
+                .push(ctx.canvas.get_transform_translation());
+        }
+
+        fn is_paint_stable(&self) -> bool {
+            true
+        }
+    }
+
+    impl Rebuildable for PaintCompositionProbe {}
+
+    struct TilePaintProbe {
+        paints: Rc<RefCell<Vec<(Option<(f32, f32, f32, f32)>, (f32, f32))>>>,
+        size: ResolvedSize,
+    }
+
+    impl VisitorElement for TilePaintProbe {
+        fn debug_name(&self) -> &'static str {
+            "TilePaintProbe"
+        }
+    }
+
+    impl EventElement for TilePaintProbe {}
+
+    impl LayoutElement for TilePaintProbe {
+        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+            self.size
+        }
+    }
+
+    impl Drawable for TilePaintProbe {
+        fn draw(&self, _ctx: &BuildContext) {}
+
+        fn paint(&self, ctx: &BuildContext) {
+            self.paints.borrow_mut().push((
+                ctx.visible_rect,
+                ctx.canvas.get_transform_translation(),
+            ));
+            ctx.canvas.fill_rect(Vec2d::ZERO, self.size);
+        }
+
+        fn is_paint_stable(&self) -> bool {
+            true
+        }
+    }
+
+    impl Rebuildable for TilePaintProbe {}
+
+    struct OrderedChild {
+        label: &'static str,
+        events: Rc<RefCell<Vec<(&'static str, (f32, f32))>>>,
+        stable: bool,
+        size: ResolvedSize,
+    }
+
+    impl VisitorElement for OrderedChild {
+        fn debug_name(&self) -> &'static str {
+            "OrderedChild"
+        }
+    }
+
+    impl EventElement for OrderedChild {}
+
+    impl LayoutElement for OrderedChild {
+        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+            self.size
+        }
+    }
+
+    impl Drawable for OrderedChild {
+        fn draw(&self, ctx: &BuildContext) {
+            self.events
+                .borrow_mut()
+                .push((self.label, ctx.canvas.get_transform_translation()));
+            ctx.canvas.fill_rect(Vec2d::ZERO, self.size);
+        }
+
+        fn paint(&self, ctx: &BuildContext) {
+            ctx.canvas.fill_rect(Vec2d::ZERO, self.size);
+        }
+
+        fn is_paint_stable(&self) -> bool {
+            self.stable
+        }
+    }
+
+    impl Rebuildable for OrderedChild {}
+
+    struct ImageDrawingChild {
+        draws: Rc<Cell<usize>>,
+        image_id: u32,
+        size: ResolvedSize,
+    }
+
+    impl VisitorElement for ImageDrawingChild {
+        fn debug_name(&self) -> &'static str {
+            "ImageDrawingChild"
+        }
+    }
+
+    impl EventElement for ImageDrawingChild {}
+
+    impl LayoutElement for ImageDrawingChild {
+        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+            self.size
+        }
+    }
+
+    impl Drawable for ImageDrawingChild {
+        fn draw(&self, ctx: &BuildContext) {
+            self.draws.set(self.draws.get() + 1);
+            ctx.canvas.draw_image(self.image_id, Vec2d::default(), self.size);
+        }
+
+        fn is_paint_stable(&self) -> bool {
+            true
+        }
+    }
+
+    impl Rebuildable for ImageDrawingChild {}
+
     struct DrawingColumn {
         children: Vec<AnyElement>,
         size: ResolvedSize,
@@ -1549,6 +1712,119 @@ mod tests {
 
     impl Rebuildable for DrawingColumn {}
 
+    struct OrderedColumn {
+        children: Vec<AnyElement>,
+        size: ResolvedSize,
+        row_step: f32,
+    }
+
+    impl VisitorElement for OrderedColumn {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            for child in &self.children {
+                visitor(child.as_ref());
+            }
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "OrderedColumn"
+        }
+    }
+
+    impl EventElement for OrderedColumn {}
+
+    impl LayoutElement for OrderedColumn {
+        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+            self.size
+        }
+    }
+
+    impl Drawable for OrderedColumn {
+        fn draw(&self, ctx: &BuildContext) {
+            for (index, child) in self.children.iter().enumerate() {
+                let y = index as f32 * self.row_step;
+                if !ctx.is_rect_visible(0.0, y, self.size.width, 100.0) {
+                    continue;
+                }
+
+                let mut child_ctx = ctx.clone();
+                child_ctx.parent_size = ResolvedSize {
+                    width: self.size.width,
+                    height: 100.0,
+                };
+                child_ctx.box_constraint = BoxConstraint {
+                    min_width: 0.0,
+                    min_height: 0.0,
+                    max_width: self.size.width,
+                    max_height: 100.0,
+                };
+                child_ctx.visible_rect = ctx
+                    .visible_rect
+                    .map(|(x, visible_y, width, height)| (x, visible_y - y, width, height));
+                child_ctx.canvas.save();
+                child_ctx.canvas.translate(Vec2d { x: 0.0, y });
+                child.draw(&child_ctx);
+                child_ctx.canvas.restore();
+            }
+        }
+
+        fn draw_paint_islands(
+            &self,
+            retained_ctx: &BuildContext,
+            live_ctx: &BuildContext,
+            draw_stable: &mut dyn FnMut(
+                &dyn Element,
+                &BuildContext,
+                Vec2d,
+                Option<ResolvedSize>,
+            ),
+            draw_dynamic: &mut dyn FnMut(
+                &dyn Element,
+                &BuildContext,
+                Vec2d,
+                Option<ResolvedSize>,
+            ),
+        ) -> bool {
+            let mut saw_stable = false;
+            let mut saw_dynamic = false;
+            for (index, child) in self.children.iter().enumerate() {
+                let y = index as f32 * self.row_step;
+                if child.is_paint_stable() {
+                    saw_stable = true;
+                    let mut child_ctx = retained_ctx.clone();
+                    child_ctx.parent_size = ResolvedSize {
+                        width: self.size.width,
+                        height: 100.0,
+                    };
+                    child_ctx.visible_rect = None;
+                    draw_stable(child.as_ref(), &child_ctx, Vec2d { x: 0.0, y }, None);
+                } else {
+                    saw_dynamic = true;
+                    if !live_ctx.is_rect_visible(0.0, y, self.size.width, 100.0) {
+                        continue;
+                    }
+                    let mut child_ctx = live_ctx.clone();
+                    child_ctx.parent_size = ResolvedSize {
+                        width: self.size.width,
+                        height: 100.0,
+                    };
+                    child_ctx.visible_rect = live_ctx
+                        .visible_rect
+                        .map(|(x, visible_y, width, height)| {
+                            (x, visible_y - y, width, height)
+                        });
+                    draw_dynamic(child.as_ref(), &child_ctx, Vec2d { x: 0.0, y }, None);
+                }
+            }
+            saw_stable && saw_dynamic
+        }
+
+        fn is_paint_stable(&self) -> bool {
+            self.children.iter().all(|child| child.is_paint_stable())
+        }
+    }
+
+    impl Rebuildable for OrderedColumn {}
+
     fn drawing_scrollable(draws: Rc<Cell<usize>>) -> RawScrollableContainer<AnyElement> {
         drawing_scrollable_with_stability(draws, true)
     }
@@ -1633,6 +1909,7 @@ mod tests {
 
     #[tokio::test]
     async fn stable_scrollable_reuses_paint_until_scale_invalidates_it() {
+        aimer_widget::reset_paint_stats();
         let draws = Rc::new(Cell::new(0));
         let scrollable = drawing_scrollable(draws.clone());
         let mut ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
@@ -1667,10 +1944,163 @@ mod tests {
             2,
             "a scale change must record fresh paint commands"
         );
+        assert_eq!(
+            aimer_widget::take_paint_stats(),
+            aimer_widget::PaintStats {
+                candidates: 3,
+                records: 2,
+                replays: 1,
+                invalidations: 1,
+                fallbacks: 0,
+                tile_records: 0,
+                tile_replays: 0,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn offset_only_scroll_replays_paint_but_updates_live_composition_geometry() {
+        let draws = Rc::new(Cell::new(0));
+        let paints = Rc::new(Cell::new(0));
+        let geometry_syncs = Rc::new(Cell::new(0));
+        let translations = Rc::new(RefCell::new(Vec::new()));
+        let scrollable = {
+            let mut state = ScrollState::for_test_at(Vec2d::default());
+            state.axis = crate::ScrollAxis::Vertical;
+            RawScrollableContainer {
+                child: PaintCompositionProbe {
+                    draws: draws.clone(),
+                    paints: paints.clone(),
+                    geometry_syncs: geometry_syncs.clone(),
+                    translations: translations.clone(),
+                    size: ResolvedSize {
+                        width: 100.0,
+                        height: 400.0,
+                    },
+                }
+                .boxed(),
+                ctrl: Rc::new(state),
+                vertical_scroll_bar: None,
+                horizontal_scroll_bar: None,
+                viewport_w: 100.0,
+                viewport_h: 100.0,
+                vertical_bar_width: 0.0,
+                horizontal_bar_height: 0.0,
+                bounds: CacheBounds::new(),
+                event_dispatcher: RefCell::new(EventDispatcher::new()),
+                layout_cache: Default::default(),
+                #[cfg(not(feature = "portable-guest"))]
+                paint_cache: Default::default(),
+            }
+        };
+        let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
+
+        scrollable.draw(&ctx);
+        assert_eq!(paints.get(), 1, "the first frame records local child paint");
+        assert_eq!(draws.get(), 0, "stable content must not use the normal draw path");
+        assert_eq!(geometry_syncs.get(), 1);
+
+        ctx.canvas.begin_frame();
+        scrollable.ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -20.0 });
+        scrollable.draw(&ctx);
+
+        assert_eq!(paints.get(), 1, "offset-only scrolling must not repaint the child");
+        assert_eq!(draws.get(), 0, "offset-only scrolling must not fall back to direct draw");
+        assert_eq!(geometry_syncs.get(), 2, "live geometry still follows composition");
+        assert_eq!(*translations.borrow(), vec![(0.0, 0.0), (0.0, -20.0)]);
+        assert_eq!(
+            ctx.canvas.get_inner_canvas().draw_list().stats().retained_layers,
+            1,
+            "the translated frame must submit the retained layer"
+        );
+    }
+
+    #[tokio::test]
+    async fn replacing_a_retained_image_invalidates_the_paint_layer() {
+        aimer_widget::reset_paint_stats();
+        let draws = Rc::new(Cell::new(0));
+        let mut state = ScrollState::for_test_at(Vec2d::default());
+        state.axis = crate::ScrollAxis::Vertical;
+        let scrollable = RawScrollableContainer {
+            child: ImageDrawingChild {
+                draws: draws.clone(),
+                image_id: 7,
+                size: ResolvedSize {
+                    width: 100.0,
+                    height: 400.0,
+                },
+            }
+            .boxed(),
+            ctrl: Rc::new(state),
+            vertical_scroll_bar: None,
+            horizontal_scroll_bar: None,
+            viewport_w: 100.0,
+            viewport_h: 100.0,
+            vertical_bar_width: 0.0,
+            horizontal_bar_height: 0.0,
+            bounds: CacheBounds::new(),
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+            layout_cache: Default::default(),
+            #[cfg(not(feature = "portable-guest"))]
+            paint_cache: Default::default(),
+        };
+        let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
+
+        ctx.canvas.load_image_with_id(7, &[255, 0, 0, 255], 1, 1);
+        scrollable.draw(&ctx);
+        assert_eq!(draws.get(), 1);
+
+        ctx.canvas.begin_frame();
+        ctx.canvas.load_image_with_id(7, &[0, 255, 0, 255], 1, 1);
+        scrollable.draw(&ctx);
+
+        assert_eq!(draws.get(), 2);
+        assert_eq!(
+            aimer_widget::take_paint_stats(),
+            aimer_widget::PaintStats {
+                candidates: 2,
+                records: 2,
+                replays: 0,
+                invalidations: 1,
+                fallbacks: 0,
+                tile_records: 0,
+                tile_replays: 0,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn dirty_stable_content_re_records_the_full_retained_paint() {
+        aimer_widget::reset_paint_stats();
+        let draws = Rc::new(Cell::new(0));
+        let scrollable = drawing_scrollable(draws.clone());
+        let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
+
+        scrollable.draw(&ctx);
+        assert_eq!(draws.get(), 1);
+
+        scrollable.child.mark_needs_rebuild();
+        ctx.canvas.begin_frame();
+        scrollable.draw(&ctx);
+
+        assert_eq!(draws.get(), 2);
+        assert_eq!(
+            aimer_widget::take_paint_stats(),
+            aimer_widget::PaintStats {
+                candidates: 2,
+                records: 2,
+                replays: 0,
+                invalidations: 1,
+                fallbacks: 0,
+                tile_records: 0,
+                tile_replays: 0,
+            }
+        );
     }
 
     #[tokio::test]
     async fn dynamic_scrollable_content_stays_on_the_direct_path() {
+        aimer_widget::reset_paint_stats();
         let draws = Rc::new(Cell::new(0));
         let scrollable = drawing_scrollable_with_stability(draws.clone(), false);
         let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
@@ -1691,10 +2121,207 @@ mod tests {
             2,
             "dynamic content must be redrawn after an offset change"
         );
+        let stats = aimer_widget::take_paint_stats();
+        assert_eq!(stats.candidates, 2);
+        assert_eq!(stats.fallbacks, 2);
+        assert_eq!(stats.records, 0);
+        assert_eq!(stats.replays, 0);
+    }
+
+    #[tokio::test]
+    async fn dynamic_content_before_stable_content_preserves_order_with_direct_fallback() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut state = ScrollState::for_test_at(Vec2d::default());
+        state.axis = crate::ScrollAxis::Vertical;
+        let scrollable = RawScrollableContainer {
+            child: OrderedColumn {
+                children: vec![
+                    OrderedChild {
+                        label: "dynamic",
+                        events: events.clone(),
+                        stable: false,
+                        size: ResolvedSize {
+                            width: 100.0,
+                            height: 100.0,
+                        },
+                    }
+                    .boxed(),
+                    OrderedChild {
+                        label: "stable",
+                        events: events.clone(),
+                        stable: true,
+                        size: ResolvedSize {
+                            width: 100.0,
+                            height: 100.0,
+                        },
+                    }
+                    .boxed(),
+                ],
+                size: ResolvedSize {
+                    width: 100.0,
+                    height: 200.0,
+                },
+                row_step: 100.0,
+            }
+            .boxed(),
+            ctrl: Rc::new(state),
+            vertical_scroll_bar: None,
+            horizontal_scroll_bar: None,
+            viewport_w: 100.0,
+            viewport_h: 100.0,
+            vertical_bar_width: 0.0,
+            horizontal_bar_height: 0.0,
+            bounds: CacheBounds::new(),
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+            layout_cache: Default::default(),
+            #[cfg(not(feature = "portable-guest"))]
+            paint_cache: Default::default(),
+        };
+        let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
+
+        scrollable.draw(&ctx);
+
+        assert_eq!(
+            events
+                .borrow()
+                .iter()
+                .map(|(label, _)| *label)
+                .collect::<Vec<_>>(),
+            vec!["dynamic", "stable"]
+        );
+        assert_eq!(
+            ctx.canvas.get_inner_canvas().draw_list().stats().retained_layers,
+            0,
+            "an interleaved dynamic/stable order must use direct fallback"
+        );
+
+        ctx.canvas.begin_frame();
+        events.borrow_mut().clear();
+        scrollable.ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -20.0 });
+        scrollable.draw(&ctx);
+
+        assert_eq!(
+            events
+                .borrow()
+                .iter()
+                .map(|(label, _)| *label)
+                .collect::<Vec<_>>(),
+            vec!["dynamic", "stable"]
+        );
+        assert_eq!(
+            ctx.canvas.get_inner_canvas().draw_list().stats().retained_layers,
+            0,
+            "fallback order must remain direct after an offset change"
+        );
+    }
+
+    #[tokio::test]
+    async fn dynamic_scrollable_culls_rows_and_preserves_composed_translation() {
+        let events = Rc::new(RefCell::new(Vec::<(&'static str, (f32, f32))>::new()));
+        let mut state = ScrollState::for_test_at(Vec2d::default());
+        state.axis = crate::ScrollAxis::Vertical;
+        let scrollable = RawScrollableContainer {
+            child: OrderedColumn {
+                children: vec![
+                    OrderedChild {
+                        label: "first",
+                        events: events.clone(),
+                        stable: false,
+                        size: ResolvedSize {
+                            width: 100.0,
+                            height: 100.0,
+                        },
+                    }
+                    .boxed(),
+                    OrderedChild {
+                        label: "second",
+                        events: events.clone(),
+                        stable: false,
+                        size: ResolvedSize {
+                            width: 100.0,
+                            height: 100.0,
+                        },
+                    }
+                    .boxed(),
+                ],
+                size: ResolvedSize {
+                    width: 100.0,
+                    height: 2_000.0,
+                },
+                row_step: 1_000.0,
+            }
+            .boxed(),
+            ctrl: Rc::new(state),
+            vertical_scroll_bar: None,
+            horizontal_scroll_bar: None,
+            viewport_w: 100.0,
+            viewport_h: 100.0,
+            vertical_bar_width: 0.0,
+            horizontal_bar_height: 0.0,
+            bounds: CacheBounds::new(),
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+            layout_cache: Default::default(),
+            #[cfg(not(feature = "portable-guest"))]
+            paint_cache: Default::default(),
+        };
+        let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
+
+        scrollable.draw(&ctx);
+        assert_eq!(*events.borrow(), vec![("first", (0.0, 0.0))]);
+
+        ctx.canvas.begin_frame();
+        events.borrow_mut().clear();
+        scrollable.ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -1_000.0 });
+        scrollable.draw(&ctx);
+
+        assert_eq!(*events.borrow(), vec![("second", (0.0, 0.0))]);
+    }
+
+    #[tokio::test]
+    async fn oversized_retained_tiles_record_their_overlap_window() {
+        let paints = Rc::new(RefCell::new(Vec::new()));
+        let mut state = ScrollState::for_test_at(Vec2d::default());
+        state.axis = crate::ScrollAxis::Vertical;
+        let scrollable = RawScrollableContainer {
+            child: TilePaintProbe {
+                paints: paints.clone(),
+                size: ResolvedSize {
+                    width: 100.0,
+                    height: 200_000.0,
+                },
+            }
+            .boxed(),
+            ctrl: Rc::new(state),
+            vertical_scroll_bar: None,
+            horizontal_scroll_bar: None,
+            viewport_w: 100.0,
+            viewport_h: 100.0,
+            vertical_bar_width: 0.0,
+            horizontal_bar_height: 0.0,
+            bounds: CacheBounds::new(),
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+            layout_cache: Default::default(),
+            #[cfg(not(feature = "portable-guest"))]
+            paint_cache: Default::default(),
+        };
+        let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
+        scrollable.ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -1_024.0 });
+
+        scrollable.draw(&ctx);
+
+        let paints = paints.borrow();
+        assert_eq!(paints.len(), 2, "the visible window should span two tiles");
+        let (visible_rect, translation) = paints[1];
+        assert_eq!(translation, (0.0, -1_024.0));
+        let (_, visible_y, _, visible_height) =
+            visible_rect.expect("the tile paint should receive its expanded window");
+        assert_eq!(visible_y, 1_022.0);
+        assert_eq!(visible_height, 1_028.0);
     }
 
     #[tokio::test]
     async fn dynamic_islands_retain_a_static_prefix_and_redraw_only_the_dynamic_suffix() {
+        aimer_widget::reset_paint_stats();
         let static_draws = Rc::new(Cell::new(0));
         let dynamic_draws = Rc::new(Cell::new(0));
         let mut state = ScrollState::for_test_at(Vec2d::default());
@@ -1762,10 +2389,23 @@ mod tests {
             1,
             "offset-only frames should keep one retained static layer"
         );
+        assert_eq!(
+            aimer_widget::take_paint_stats(),
+            aimer_widget::PaintStats {
+                candidates: 2,
+                records: 1,
+                replays: 1,
+                invalidations: 0,
+                fallbacks: 0,
+                tile_records: 0,
+                tile_replays: 0,
+            }
+        );
     }
 
     #[tokio::test]
     async fn oversized_stable_scrollable_reuses_its_visible_retained_tile() {
+        aimer_widget::reset_paint_stats();
         let draws = Rc::new(Cell::new(0));
         let scrollable = drawing_scrollable_with_size(
             draws.clone(),
@@ -1798,6 +2438,13 @@ mod tests {
             1,
             "the cached tile should remain one compositor command"
         );
+        let stats = aimer_widget::take_paint_stats();
+        assert_eq!(stats.candidates, 2);
+        assert_eq!(stats.records, 1);
+        assert_eq!(stats.replays, 1);
+        assert_eq!(stats.tile_records, 1);
+        assert_eq!(stats.tile_replays, 1);
+        assert_eq!(stats.fallbacks, 0);
     }
 
     #[tokio::test]

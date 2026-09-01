@@ -20,4 +20,8 @@ pub enum SvgError {
     PathSelection(usize),
     #[error("SVG contains a non-finite value")]
     NonFinite,
+    #[error("invalid SVG viewBox: {0}")]
+    InvalidViewBox(String),
+    #[error("invalid SVG preserveAspectRatio: {0}")]
+    InvalidPreserveAspectRatio(String),
 }

@@ -47,6 +47,10 @@ thread_local! {
     static DIRTY_SUBTREE_COUNTS: RefCell<HashMap<ElementId, usize>> =
         RefCell::new(HashMap::new());
 
+    /// Event dispatchers use this UI-thread epoch to coalesce generation checks
+    /// across all nested dispatchers until the next completed frame.
+    static EVENT_FRAME_EPOCH: Cell<Option<u64>> = const { Cell::new(None) };
+
     /// The path index is usable only after one complete walk of the retained
     /// tree without a structural replacement or an untracked invalidation.
     static DIRTY_PATHS_READY: Cell<bool> = const { Cell::new(false) };
@@ -70,6 +74,25 @@ thread_local! {
     static PAINT_TRACKING_STACK: RefCell<Vec<HashSet<ElementId>>> = RefCell::new(Vec::new());
     #[cfg(any(debug_assertions, feature = "frame-stats"))]
     static DRAW_TRAVERSAL_COUNT: Cell<u64> = const { Cell::new(0) };
+    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    static ROUTED_EVENT_VISIT_COUNT: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Starts a new event-dispatch frame on the current UI thread.
+///
+/// [`EventDispatcher`] instances use the shared epoch to check their root's
+/// subtree generation once and defer a path-index rebuild until the first
+/// dispatch that needs it. The application frame loop should call this after a
+/// frame finishes so platform and nested widget events share the next epoch.
+pub fn begin_event_frame() {
+    EVENT_FRAME_EPOCH.with(|epoch| {
+        let next = epoch.get().unwrap_or(0).wrapping_add(1);
+        epoch.set(Some(next));
+    });
+}
+
+fn current_event_frame() -> Option<u64> {
+    EVENT_FRAME_EPOCH.with(Cell::get)
 }
 
 fn sync_paint_invalidation_epoch() {
@@ -189,6 +212,30 @@ pub fn reset_draw_traversal_count() {
 #[cfg(any(debug_assertions, feature = "frame-stats"))]
 pub fn take_draw_traversal_count() -> u64 {
     DRAW_TRAVERSAL_COUNT.with(Cell::get)
+}
+
+/// Resets the routed-event visit counter for the next measured input sample.
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[doc(hidden)]
+pub fn reset_routed_event_visit_count() {
+    ROUTED_EVENT_VISIT_COUNT.with(|count| count.set(0));
+}
+
+/// Takes the number of elements reached by routed pointer dispatch since the
+/// last reset. Cached hit-chain replay contributes one visit per delivered
+/// element, so this counter measures the work visible to the event path rather
+/// than only calls into the uncached recursive walker.
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[doc(hidden)]
+pub fn take_routed_event_visit_count() -> u64 {
+    ROUTED_EVENT_VISIT_COUNT.with(Cell::get)
+}
+
+#[inline]
+fn record_routed_event_visit() {
+    crate::frame_work_stats::record_hit_test_visit();
+    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    ROUTED_EVENT_VISIT_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 }
 
 #[cfg(any(debug_assertions, feature = "frame-stats"))]
@@ -561,6 +608,7 @@ impl<E: Element + 'static> LayoutElement for ElementNode<E> {
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
+        crate::frame_work_stats::record_layout_call();
         self.element.layout(ctx)
     }
 
@@ -604,6 +652,8 @@ impl<E: Element + 'static> LayoutElement for ElementNode<E> {
 
 impl<E: Element + 'static> Rebuildable for ElementNode<E> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        crate::rebuild_stats::record_visit();
         let mut traversal = begin_rebuild_traversal(self.id.get());
         let _path = RebuildPathGuard::push(self.id.get());
         let own_dirty = element_has_dirty_work(&self.element);
@@ -617,6 +667,8 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
             && !dirty_path_contains(self.id.get())
         {
             traversal.complete = true;
+            #[cfg(any(debug_assertions, feature = "frame-stats"))]
+            crate::rebuild_stats::record_pruned();
             return;
         }
 
@@ -761,6 +813,14 @@ impl<E: Element + 'static> EventElement for ElementNode<E> {
         self.element.on_event(event)
     }
 
+    fn on_event_with_context(
+        &self,
+        event: &ElementEvent,
+        context: &mut EventDispatchContext<'_, '_>,
+    ) -> EventResult {
+        self.element.on_event_with_context(event, context)
+    }
+
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.element.event_children(visitor);
     }
@@ -793,10 +853,16 @@ impl<E: Element + 'static> EventElement for ElementNode<E> {
         self.element.hit_test_children_at_reversed(pos, visitor);
     }
 
+    #[inline]
+    fn has_overlapping_hit_targets(&self) -> bool {
+        self.element.has_overlapping_hit_targets()
+    }
+
 }
 
 impl<E: Element + 'static> Drawable for ElementNode<E> {
     fn draw(&self, ctx: &BuildContext) {
+        crate::frame_work_stats::record_paint_call();
         #[cfg(any(debug_assertions, feature = "frame-stats"))]
         record_draw_traversal();
         record_paint_element(self.id.get());
@@ -814,6 +880,20 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
         if after != before {
             self.set_subtree_generation(after);
         }
+    }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        crate::frame_work_stats::record_paint_call();
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        record_draw_traversal();
+        record_paint_element(self.id.get());
+        self.element.paint(ctx);
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.element.sync_paint_geometry(ctx);
     }
 
     #[inline]
@@ -975,6 +1055,14 @@ impl EventElement for AnyElement {
         self.as_ref().on_event(event)
     }
 
+    fn on_event_with_context(
+        &self,
+        event: &ElementEvent,
+        context: &mut EventDispatchContext<'_, '_>,
+    ) -> EventResult {
+        self.as_ref().on_event_with_context(event, context)
+    }
+
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().event_children(visitor)
     }
@@ -1007,11 +1095,26 @@ impl EventElement for AnyElement {
         self.as_ref().hit_test_children_at_reversed(pos, visitor)
     }
 
+    #[inline]
+    fn has_overlapping_hit_targets(&self) -> bool {
+        self.as_ref().has_overlapping_hit_targets()
+    }
+
 }
 
 impl Drawable for AnyElement {
     fn draw(&self, ctx: &BuildContext) {
         self.as_ref().draw(ctx)
+    }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        self.as_ref().paint(ctx)
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.as_ref().sync_paint_geometry(ctx)
     }
 
     #[inline]
@@ -1165,6 +1268,14 @@ impl EventElement for Box<dyn Element> {
         self.as_ref().on_event(event)
     }
 
+    fn on_event_with_context(
+        &self,
+        event: &ElementEvent,
+        context: &mut EventDispatchContext<'_, '_>,
+    ) -> EventResult {
+        self.as_ref().on_event_with_context(event, context)
+    }
+
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().event_children(visitor)
     }
@@ -1197,11 +1308,26 @@ impl EventElement for Box<dyn Element> {
         self.as_ref().hit_test_children_at_reversed(pos, visitor)
     }
 
+    #[inline]
+    fn has_overlapping_hit_targets(&self) -> bool {
+        self.as_ref().has_overlapping_hit_targets()
+    }
+
 }
 
 impl Drawable for Box<dyn Element> {
     fn draw(&self, ctx: &BuildContext) {
         self.as_ref().draw(ctx)
+    }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        self.as_ref().paint(ctx)
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.as_ref().sync_paint_geometry(ctx)
     }
 
     #[inline]
@@ -1416,23 +1542,259 @@ fn contains_focus_attachment(
         .any(|child| contains_focus_attachment(child, focused_id, focused_node))
 }
 
-/// A root-relative sequence of structural child indexes.
+/// A compact link from an indexed element to its structural parent.
 ///
-/// Paths contain no references or addresses, so they remain safe when inline
-/// [`AnyElement`] owners move. They are rebuilt after structural generation
-/// changes.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ElementPath(Box<[usize]>);
+/// The public name is retained for source compatibility, but the dispatcher no
+/// longer stores a separately allocated root-relative slice for every element.
+/// Links live in one reusable arena and are followed only when a captured owner
+/// has to be resolved.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElementPath {
+    parent: Option<usize>,
+    child_index: u32,
+}
+
+/// Provides a routed element with the dispatcher's shared pointer-capture
+/// state while it forwards an event into a private child view.
+///
+/// The context is valid only for the duration of
+/// [`EventElement::on_event_with_context`]. It is intentionally opaque: a
+/// forwarding element may query capture state for its boundary and dispatch
+/// its child, but it cannot retain the context after the current event.
+pub struct EventDispatchContext<'dispatcher, 'tree> {
+    dispatcher: &'dispatcher mut EventDispatcher,
+    path_root: &'tree dyn Element,
+    boundary: Option<ElementId>,
+}
+
+impl<'dispatcher, 'tree> EventDispatchContext<'dispatcher, 'tree> {
+    #[inline]
+    fn new(
+        dispatcher: &'dispatcher mut EventDispatcher,
+        path_root: &'tree dyn Element,
+        boundary: Option<ElementId>,
+    ) -> Self {
+        Self {
+            dispatcher,
+            path_root,
+            boundary,
+        }
+    }
+
+    /// Returns whether a pointer is captured by this forwarding boundary.
+    #[inline]
+    pub fn is_captured(&self, pointer: PointerKey) -> bool {
+        self.boundary.is_some_and(|boundary| {
+            self.dispatcher
+                .nested_captures
+                .contains_key(&(boundary, pointer))
+        })
+    }
+
+    /// Dispatches an event into the forwarding element's child view using the
+    /// same path index and capture state as the owning dispatcher.
+    #[inline]
+    pub fn dispatch_child(
+        &mut self,
+        child: &dyn Element,
+        pos: Vec2d,
+        event: &ElementEvent,
+    ) -> EventResult {
+        self.dispatcher
+            .dispatch_nested(self.path_root, self.boundary, child, pos, event)
+    }
+}
+
+/// One retained element in the last uncaptured pointer hit chain.
+///
+/// The pointer is valid only while the dispatch root has the same subtree
+/// generation and address as the cache entry. `EventDispatcher` is UI-thread
+/// state, and the cache is retired before either condition can be reused.
+#[derive(Clone, Copy)]
+struct CachedHitElement {
+    id: ElementId,
+    element: *const (dyn Element + 'static),
+}
+
+struct CachedHitChain {
+    pointer: PointerKey,
+    root: ElementId,
+    generation: u64,
+    last_position: Vec2d,
+    elements: SmallVec<[CachedHitElement; 16]>,
+}
+
+/// Retains an element pointer for a same-generation dispatch side path.
+///
+/// The caller must discard the pointer before the dispatch root changes its
+/// identity or subtree generation. That is the same lifetime invariant used by
+/// [`CachedHitElement`].
+#[inline]
+fn retained_element_pointer(element: &dyn Element) -> *const (dyn Element + 'static) {
+    // SAFETY: callers keep this pointer only while the retained element tree
+    // remains at the same root and subtree generation.
+    unsafe { std::mem::transmute::<&dyn Element, *const (dyn Element + 'static)>(element) }
+}
+
+struct HoverHitChain {
+    pointer: PointerKey,
+    root: ElementId,
+    generation: u64,
+    elements: SmallVec<[ElementId; 16]>,
+}
+
+struct HitChainRecorder {
+    elements: SmallVec<[CachedHitElement; 16]>,
+    hover_elements: SmallVec<[ElementId; 16]>,
+    empty_hit_test_nodes: SmallVec<[CachedHitElement; 8]>,
+    cacheable: bool,
+    forwarding_boundary: bool,
+}
+
+impl HitChainRecorder {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            elements: SmallVec::new(),
+            hover_elements: SmallVec::new(),
+            empty_hit_test_nodes: SmallVec::new(),
+            cacheable: true,
+            forwarding_boundary: false,
+        }
+    }
+
+    #[inline]
+    fn record_element(&mut self, element: &dyn Element) {
+        if let Some(id) = element.element_id() {
+            self.hover_elements.push(id);
+        }
+        if !self.cacheable || self.forwarding_boundary {
+            return;
+        }
+        let Some(id) = element.element_id() else {
+            self.cacheable = false;
+            self.elements.clear();
+            return;
+        };
+        if element.has_overlapping_hit_targets() {
+            self.cacheable = false;
+            self.elements.clear();
+            return;
+        }
+        self.elements.push(CachedHitElement {
+            id,
+            // The pointer is retained only behind the generation/root checks
+            // in `dispatch_cached_hit_chain`.
+            element: retained_element_pointer(element),
+        });
+    }
+
+    #[inline]
+    fn record_hit_test_children(&mut self, count: usize) {
+        if self.forwarding_boundary || count <= 1 {
+            return;
+        }
+        self.cacheable = false;
+        self.elements.clear();
+    }
+
+    #[inline]
+    fn record_empty_hit_test_node(&mut self) {
+        if !self.cacheable
+            || self.forwarding_boundary
+            || self.elements.is_empty()
+        {
+            return;
+        }
+        if let Some(element) = self.elements.last().copied() {
+            self.empty_hit_test_nodes.push(element);
+        }
+    }
+
+    #[inline]
+    fn record_miss(&mut self) {
+        if self.forwarding_boundary {
+            return;
+        }
+        self.cacheable = false;
+        self.elements.clear();
+    }
+
+    #[inline]
+    fn mark_forwarding_boundary(&mut self) {
+        if self.cacheable && !self.elements.is_empty() {
+            self.forwarding_boundary = true;
+        }
+    }
+
+    #[inline]
+    fn finish_hover(
+        &self,
+        pointer: PointerKey,
+        root: &dyn Element,
+        generation: u64,
+    ) -> Option<HoverHitChain> {
+        Some(HoverHitChain {
+            pointer,
+            root: root.element_id()?,
+            generation,
+            elements: self.hover_elements.clone(),
+        })
+    }
+
+    #[inline]
+    fn finish(
+        self,
+        pointer: PointerKey,
+        root: &dyn Element,
+        generation: u64,
+        position: Vec2d,
+    ) -> Option<CachedHitChain> {
+        let root_id = root.element_id()?;
+        let first = self.elements.first()?;
+        let empty_node_has_children = !self.forwarding_boundary
+            && self.empty_hit_test_nodes.iter().any(|entry| {
+                // SAFETY: the same root-generation invariant that protects
+                // replay still holds while the just-completed route is being
+                // recorded. These entries point into that retained tree.
+                let element = unsafe { &*entry.element };
+                let mut has_child = false;
+                element.structural_children(&mut |_| has_child = true);
+                has_child
+        });
+        (self.cacheable
+            && !empty_node_has_children
+            && first.id == root_id)
+            .then_some(CachedHitChain {
+                pointer,
+                root: root_id,
+                generation,
+                last_position: position,
+                elements: self.elements,
+            })
+    }
+}
 
 /// Routes pointer events and persists capture ownership across event calls.
 ///
 /// Capture lookup is an average `O(1)` hash-map operation. The saved path is
 /// then resolved from the current root, avoiding a full-tree capture scan.
+/// Uncaptured, non-consuming pointer moves additionally replay the last
+/// single hit chain after validating its element bounds and subtree
+/// generation; overlapping containers and forwarding boundaries retain their
+/// conservative full-walk behavior where necessary.
 pub struct EventDispatcher {
     captures: HashMap<PointerKey, ElementId>,
-    paths: HashMap<ElementId, ElementPath>,
-    indexed_generation: u64,
+    nested_captures: HashMap<(ElementId, PointerKey), ElementId>,
+    path_indices: HashMap<ElementId, usize>,
+    path_links: Vec<ElementPath>,
+    indexed_subtree_generation: u64,
     indexed_root: Option<ElementId>,
+    paths_dirty: bool,
+    generation_checked_frame: Option<u64>,
+    hit_chain_cache: Option<CachedHitChain>,
+    hit_chain_recorder: Option<HitChainRecorder>,
+    hover_chains: HashMap<PointerKey, HoverHitChain>,
     focus_scope: Option<ElementId>,
     focus: FocusManager<ElementId>,
     focus_candidates: FocusCandidates<ElementId>,
@@ -1450,13 +1812,217 @@ impl EventDispatcher {
     pub fn new() -> Self {
         Self {
             captures: HashMap::new(),
-            paths: HashMap::new(),
-            indexed_generation: u64::MAX,
+            nested_captures: HashMap::new(),
+            path_indices: HashMap::new(),
+            path_links: Vec::new(),
+            indexed_subtree_generation: u64::MAX,
             indexed_root: None,
+            paths_dirty: true,
+            generation_checked_frame: None,
+            hit_chain_cache: None,
+            hit_chain_recorder: None,
+            hover_chains: HashMap::new(),
             focus_scope: None,
             focus: FocusManager::new(),
             focus_candidates: FocusCandidates::new(),
         }
+    }
+
+    #[inline]
+    fn invalidate_hit_chain(&mut self) {
+        self.hit_chain_cache = None;
+        self.hit_chain_recorder = None;
+    }
+
+    #[inline]
+    fn begin_hit_chain_recording(&mut self) {
+        self.hit_chain_recorder = Some(HitChainRecorder::new());
+    }
+
+    #[inline]
+    fn record_hit_chain_element(&mut self, element: &dyn Element) {
+        if let Some(recorder) = self.hit_chain_recorder.as_mut() {
+            recorder.record_element(element);
+        }
+    }
+
+    #[inline]
+    fn record_hit_chain_children(&mut self, count: usize) {
+        if let Some(recorder) = self.hit_chain_recorder.as_mut() {
+            recorder.record_hit_test_children(count);
+        }
+    }
+
+    #[inline]
+    fn record_empty_hit_chain_node(&mut self) {
+        if let Some(recorder) = self.hit_chain_recorder.as_mut() {
+            recorder.record_empty_hit_test_node();
+        }
+    }
+
+    #[inline]
+    fn record_hit_chain_miss(&mut self) {
+        if let Some(recorder) = self.hit_chain_recorder.as_mut() {
+            recorder.record_miss();
+        }
+    }
+
+    #[inline]
+    fn mark_hit_chain_forwarding_boundary(&mut self) {
+        if let Some(recorder) = self.hit_chain_recorder.as_mut() {
+            recorder.mark_forwarding_boundary();
+        }
+    }
+
+    fn finish_hit_chain_recording(
+        &mut self,
+        root: &dyn Element,
+        pos: Vec2d,
+        pointer: PointerKey,
+        outcome: &RoutedEventResult,
+    ) -> Option<HoverHitChain> {
+        let generation = root.subtree_generation();
+        let root_id = root.element_id();
+        let recorder = self.hit_chain_recorder.take()?;
+        let hover_chain = recorder.finish_hover(pointer, root, generation);
+        self.hit_chain_cache = if outcome.result.is_consumed()
+            || !matches!(outcome.result.capture_request(), CaptureRequest::None)
+            || !matches!(outcome.result.follow_up(), FollowUp::None)
+            || root_id != self.indexed_root
+            || generation != self.indexed_subtree_generation
+        {
+            None
+        } else {
+            recorder.finish(pointer, root, generation, pos)
+        };
+        hover_chain
+    }
+
+    fn dispatch_uncaptured_pointer_move(
+        &mut self,
+        root: &dyn Element,
+        pos: Vec2d,
+        event: &ElementEvent,
+        pointer: PointerKey,
+    ) -> RoutedEventResult {
+        let previous_hover = self.hover_chains.remove(&pointer);
+        if let Some((outcome, current_hover)) =
+            self.dispatch_cached_hit_chain(root, pos, event, pointer)
+        {
+            return self.finish_hover_transition(
+                root,
+                pointer,
+                previous_hover,
+                current_hover,
+                outcome,
+            );
+        }
+
+        self.begin_hit_chain_recording();
+        let outcome = dispatch_routed_event(self, root, pos, event);
+        let Some(current_hover) = self
+            .finish_hit_chain_recording(root, pos, pointer, &outcome)
+        else {
+            return outcome;
+        };
+        self.finish_hover_transition(
+            root,
+            pointer,
+            previous_hover,
+            current_hover,
+            outcome,
+        )
+    }
+
+    fn finish_hover_transition(
+        &mut self,
+        root: &dyn Element,
+        pointer: PointerKey,
+        previous: Option<HoverHitChain>,
+        current: HoverHitChain,
+        mut outcome: RoutedEventResult,
+    ) -> RoutedEventResult {
+        let previous = previous.filter(|previous| {
+            previous.pointer == pointer
+                && previous.generation == current.generation
+                && previous.root == current.root
+        });
+        let exit = ElementEvent::PointerExited(pointer.source, pointer.id);
+        if let Some(previous) = previous {
+            for previous_element in previous.elements.iter().rev() {
+                if current
+                    .elements
+                    .iter()
+                    .any(|current_element| current_element == previous_element)
+                {
+                    continue;
+                }
+
+                let Some(element) = self.resolve_owner(root, *previous_element) else {
+                    continue;
+                };
+                outcome.result = outcome.result.merge(element.on_event(&exit));
+            }
+        }
+        self.hover_chains.insert(pointer, current);
+        outcome
+    }
+
+    fn dispatch_cached_hit_chain(
+        &mut self,
+        root: &dyn Element,
+        pos: Vec2d,
+        event: &ElementEvent,
+        pointer: PointerKey,
+    ) -> Option<(RoutedEventResult, HoverHitChain)> {
+        let mut cached = self.hit_chain_cache.take()?;
+        let Some(first) = cached.elements.first() else {
+            return None;
+        };
+        let generation = root.subtree_generation();
+        let valid = cached.pointer == pointer
+            && cached.root == root.element_id()?
+            && cached.generation == generation
+            && cached.generation == self.indexed_subtree_generation
+            && self.indexed_root == Some(cached.root)
+            && std::ptr::addr_eq(root as *const dyn Element, first.element);
+        if !valid {
+            return None;
+        }
+
+        for entry in &cached.elements {
+            // SAFETY: the cache is used only when the root identity and its
+            // subtree generation are unchanged. Reconciliation retires the
+            // cache before an element can be replaced or moved, and the UI
+            // tree is not concurrently mutated during dispatch.
+            let element = unsafe { &*entry.element };
+            if element.element_id() != Some(entry.id)
+                || !contains(element, cached.last_position)
+                || !contains(element, pos)
+            {
+                return None;
+            }
+        }
+
+        let outcome = dispatch_cached_hit_chain_inner(self, root, &cached.elements, 0, pos, event);
+        let hover_chain = HoverHitChain {
+            pointer,
+            root: cached.root,
+            generation,
+            elements: cached
+                .elements
+                .iter()
+                .map(|element| element.id)
+                .collect(),
+        };
+        if !outcome.result.is_consumed()
+            && matches!(outcome.result.capture_request(), CaptureRequest::None)
+            && matches!(outcome.result.follow_up(), FollowUp::None)
+        {
+            cached.last_position = pos;
+            self.hit_chain_cache = Some(cached);
+        }
+        Some((outcome, hover_chain))
     }
 
     /// Places the focus of this dispatcher inside `trap`.
@@ -1523,12 +2089,153 @@ impl EventDispatcher {
             ElementEvent::PointerUp(pointer) => {
                 pointer_claim::release_pointer(PointerKey::new(pointer.source, pointer.id));
             }
+            ElementEvent::PointerExited(source, id) => {
+                self.hover_chains
+                    .remove(&PointerKey::new(*source, *id));
+            }
             ElementEvent::Cancel => {
                 pointer_claim::release_all_pointers();
             }
             _ => {}
         }
         result.merge(self.settle_focus_requests(root))
+    }
+
+    /// Dispatches a forwarding element's private child view with this
+    /// dispatcher's path index and capture state.
+    ///
+    /// A forwarding boundary remains the externally captured owner, while the
+    /// nested owner is retained in [`Self::nested_captures`]. This preserves
+    /// hover wrappers' ability to observe an out-of-bounds release without
+    /// giving every wrapper its own dispatcher and path map.
+    fn dispatch_nested(
+        &mut self,
+        path_root: &dyn Element,
+        boundary: Option<ElementId>,
+        root: &dyn Element,
+        pos: Vec2d,
+        event: &ElementEvent,
+    ) -> EventResult {
+        let pointer = event_pointer_key(event);
+        self.mark_hit_chain_forwarding_boundary();
+        let captured_owner = boundary.and_then(|boundary| {
+            pointer.and_then(|pointer| {
+                self.nested_captures
+                    .get(&(boundary, pointer))
+                    .copied()
+            })
+        });
+        let was_captured = captured_owner.is_some();
+
+        let outcome = if matches!(event, ElementEvent::Cancel) {
+            if let Some(boundary) = boundary {
+                self.cancel_nested_captures(path_root, boundary, event)
+            } else {
+                let mut children = EventChildren::new();
+                dispatch_routed_event_inner(
+                    self,
+                    path_root,
+                    root,
+                    pos,
+                    event,
+                    &mut children,
+                )
+            }
+        } else if let Some(owner) = captured_owner {
+            match self.dispatch_nested_captured(path_root, owner, event) {
+                Some(outcome) => outcome,
+                None => {
+                    if let (Some(boundary), Some(pointer)) = (boundary, pointer) {
+                        self.nested_captures.remove(&(boundary, pointer));
+                    }
+                    RoutedEventResult {
+                        result: EventResult::ignored(),
+                        capture_owner: None,
+                        focus_owner: None,
+                    }
+                }
+            }
+        } else {
+            let mut children = EventChildren::new();
+            dispatch_routed_event_inner(self, path_root, root, pos, event, &mut children)
+        };
+
+        if let Some(boundary) = boundary {
+            match outcome.result.capture_request() {
+                CaptureRequest::Capture(pointer) => {
+                    if let Some(owner) = outcome.capture_owner {
+                        self.nested_captures.insert((boundary, pointer), owner);
+                    }
+                }
+                CaptureRequest::Release(pointer) => {
+                    self.nested_captures.remove(&(boundary, pointer));
+                }
+                CaptureRequest::None => {}
+            }
+            if was_captured && matches!(event, ElementEvent::PointerUp(_)) {
+                if let Some(pointer) = pointer {
+                    self.nested_captures.remove(&(boundary, pointer));
+                }
+            }
+            if matches!(event, ElementEvent::Cancel) {
+                self.nested_captures
+                    .retain(|(captured_boundary, _), _| *captured_boundary != boundary);
+            }
+        }
+
+        outcome.result.without_capture_request()
+    }
+
+    fn dispatch_nested_captured(
+        &mut self,
+        path_root: &dyn Element,
+        owner: ElementId,
+        event: &ElementEvent,
+    ) -> Option<RoutedEventResult> {
+        let target = resolve_element_path(path_root, owner, &self.path_indices, &self.path_links)?;
+        if target.element_id() != Some(owner) {
+            return None;
+        }
+
+        let result = {
+            let mut context = EventDispatchContext::new(self, path_root, Some(owner));
+            target.on_event_with_context(event, &mut context)
+        };
+        let capture_owner = (!matches!(result.capture_request(), CaptureRequest::None))
+            .then_some(owner);
+        Some(RoutedEventResult {
+            result,
+            capture_owner,
+            focus_owner: None,
+        })
+    }
+
+    fn cancel_nested_captures(
+        &mut self,
+        path_root: &dyn Element,
+        boundary: ElementId,
+        event: &ElementEvent,
+    ) -> RoutedEventResult {
+        let owners: HashSet<ElementId> = self
+            .nested_captures
+            .iter()
+            .filter_map(|((captured_boundary, _), owner)| {
+                (*captured_boundary == boundary).then_some(*owner)
+            })
+            .collect();
+        let mut result = EventResult::ignored();
+        for owner in owners {
+            if let Some(outcome) = self.dispatch_nested_captured(path_root, owner, event) {
+                result = result.merge(outcome.result);
+            }
+        }
+        self.nested_captures
+            .retain(|(captured_boundary, _), _| *captured_boundary != boundary);
+        RoutedEventResult {
+            result,
+            capture_owner: None,
+            focus_owner: None,
+        }
     }
 
     /// Grants the focus a handler asked for while this event was delivered.
@@ -1562,6 +2269,12 @@ impl EventDispatcher {
         );
         let was_captured = routes_to_capture
             && pointer.is_some_and(|pointer| self.captures.contains_key(&pointer));
+        let uncaptured_pointer_move = matches!(event, ElementEvent::PointerMove(_))
+            && !was_captured
+            && pointer.is_some();
+        if !uncaptured_pointer_move {
+            self.invalidate_hit_chain();
+        }
 
         self.synchronize_paths(root);
         let focus_result = self.synchronize_focus(root);
@@ -1596,7 +2309,7 @@ impl EventDispatcher {
             // overlay host dispatching into its own root — so the event is
             // routed to reach it, which is the only way typed text arrives at
             // the field inside a modal.
-            let outcome = dispatch_routed_event(root, pos, event);
+            let outcome = dispatch_routed_event(self, root, pos, event);
             return focus_result
                 .merge(focused_result)
                 .merge(outcome.result.without_capture_request().without_follow_up());
@@ -1608,7 +2321,7 @@ impl EventDispatcher {
                 return focus_result.merge(focused_result);
             }
 
-            let outcome = dispatch_routed_event(root, pos, event);
+            let outcome = dispatch_routed_event(self, root, pos, event);
             return focus_result
                 .merge(focused_result)
                 .merge(outcome.result.without_capture_request().without_follow_up());
@@ -1622,7 +2335,11 @@ impl EventDispatcher {
             return focus_result.merge(self.run_follow_up(root, pos, pointer, result));
         }
 
-        let outcome = dispatch_routed_event(root, pos, event);
+        let outcome = if let Some(pointer) = pointer.filter(|_| uncaptured_pointer_move) {
+            self.dispatch_uncaptured_pointer_move(root, pos, event, pointer)
+        } else {
+            dispatch_routed_event(self, root, pos, event)
+        };
         self.apply_capture_request(outcome.result.capture_request(), outcome.capture_owner);
         let pointer_focus_result = if matches!(event, ElementEvent::PointerDown(_))
             && self.press_may_move_focus(root, outcome.focus_owner.as_ref())
@@ -1677,7 +2394,7 @@ impl EventDispatcher {
             },
         };
 
-        let outcome = dispatch_routed_event(root, pos, &follow_up_event);
+        let outcome = dispatch_routed_event(self, root, pos, &follow_up_event);
         if matches!(follow_up, FollowUp::DragDrop) {
             self.captures.remove(&pointer);
         }
@@ -1713,6 +2430,7 @@ impl EventDispatcher {
     #[inline]
     pub fn clear_captures(&mut self) {
         self.captures.clear();
+        self.nested_captures.clear();
     }
 
     /// Delivers cancellation to the owner of `pointer` and releases it.
@@ -1724,37 +2442,75 @@ impl EventDispatcher {
         let Some(owner) = self.captures.remove(&pointer) else {
             return EventResult::ignored();
         };
-        let Some(path) = self.paths.get(&owner) else {
-            return EventResult::ignored();
-        };
-        let Some(target) = resolve_element_path(root, &path.0) else {
+        let Some(target) =
+            resolve_element_path(root, owner, &self.path_indices, &self.path_links)
+        else {
             return EventResult::ignored();
         };
         if target.element_id() != Some(owner) {
             return EventResult::ignored();
         }
+        let mut context = EventDispatchContext::new(self, root, Some(owner));
         target
-            .on_event(&ElementEvent::Cancel)
+            .on_event_with_context(&ElementEvent::Cancel, &mut context)
             .without_capture_request()
     }
 
     fn synchronize_paths(&mut self, root: &dyn Element) {
-        let generation = element_tree_generation();
         let root_id = root.element_id();
-        if self.indexed_generation == generation && self.indexed_root == root_id {
+        let generation = match current_event_frame() {
+            Some(frame) => {
+                if self.generation_checked_frame != Some(frame) {
+                    self.generation_checked_frame = Some(frame);
+                    let generation = root.subtree_generation();
+                    self.paths_dirty = self.indexed_subtree_generation != generation
+                        || self.indexed_root != root_id;
+                    Some(generation)
+                } else if self.indexed_root != root_id {
+                    self.paths_dirty = true;
+                    Some(root.subtree_generation())
+                } else {
+                    None
+                }
+            }
+            None => {
+                let generation = root.subtree_generation();
+                self.paths_dirty = self.indexed_subtree_generation != generation
+                    || self.indexed_root != root_id;
+                Some(generation)
+            }
+        };
+
+        if !self.paths_dirty {
             return;
         }
 
-        self.paths.clear();
+        let generation = generation.unwrap_or_else(|| root.subtree_generation());
+
+        self.invalidate_hit_chain();
+        self.hover_chains.clear();
+        self.path_indices.clear();
+        self.path_links.clear();
         self.focus_scope = None;
-        let mut path = Vec::new();
-        index_element_paths(root, &mut path, &mut self.paths, &mut self.focus_scope);
+        index_element_links(
+            root,
+            None,
+            0,
+            &mut self.path_links,
+            &mut self.path_indices,
+            &mut self.focus_scope,
+        );
         self.captures
-            .retain(|_, owner| self.paths.contains_key(owner));
-        let paths = &self.paths;
-        self.focus.retain_history(|owner| paths.contains_key(owner));
-        self.indexed_generation = generation;
+            .retain(|_, owner| self.path_indices.contains_key(owner));
+        let path_indices = &self.path_indices;
+        self.nested_captures.retain(|(boundary, _), owner| {
+            path_indices.contains_key(boundary) && path_indices.contains_key(owner)
+        });
+        self.focus
+            .retain_history(|owner| path_indices.contains_key(owner));
+        self.indexed_subtree_generation = generation;
         self.indexed_root = root_id;
+        self.paths_dirty = false;
     }
 
     /// Resolves the focus owner for this frame, notifying both sides of a
@@ -1767,7 +2523,7 @@ impl EventDispatcher {
     fn synchronize_focus(&mut self, root: &dyn Element) -> EventResult {
         let Some(request_generation) = self
             .focus
-            .begin_synchronization(self.indexed_generation, self.indexed_root)
+            .begin_synchronization(self.indexed_subtree_generation, self.indexed_root)
         else {
             return EventResult::ignored();
         };
@@ -1778,7 +2534,7 @@ impl EventDispatcher {
 
         let result = self.transition_focus(root, target);
         self.focus.mark_synchronized(
-            self.indexed_generation,
+            self.indexed_subtree_generation,
             self.indexed_root,
             request_generation,
         );
@@ -1890,9 +2646,7 @@ impl EventDispatcher {
         root: &'a dyn Element,
         owner: ElementId,
     ) -> Option<&'a dyn Element> {
-        let path = self.paths.get(&owner)?;
-        let target = resolve_element_path(root, &path.0)?;
-        (target.element_id() == Some(owner)).then_some(target)
+        resolve_element_path(root, owner, &self.path_indices, &self.path_links)
     }
 
     fn dispatch_captured(
@@ -1904,11 +2658,9 @@ impl EventDispatcher {
         let Some(owner) = self.captures.get(&pointer).copied() else {
             return EventResult::ignored();
         };
-        let Some(path) = self.paths.get(&owner) else {
-            self.captures.remove(&pointer);
-            return EventResult::ignored();
-        };
-        let Some(target) = resolve_element_path(root, &path.0) else {
+        let Some(target) =
+            resolve_element_path(root, owner, &self.path_indices, &self.path_links)
+        else {
             self.captures.remove(&pointer);
             return EventResult::ignored();
         };
@@ -1917,7 +2669,10 @@ impl EventDispatcher {
             return EventResult::ignored();
         }
 
-        let result = target.on_event(event);
+        let result = {
+            let mut context = EventDispatchContext::new(self, root, Some(owner));
+            target.on_event_with_context(event, &mut context)
+        };
         self.apply_capture_request(result.capture_request(), Some(owner));
         if matches!(event, ElementEvent::PointerUp(_)) {
             self.captures.remove(&pointer);
@@ -1929,14 +2684,14 @@ impl EventDispatcher {
         let owners: HashSet<ElementId> = self.captures.values().copied().collect();
         let mut result = EventResult::ignored();
         for owner in owners {
-            let Some(path) = self.paths.get(&owner) else {
-                continue;
-            };
-            let Some(target) = resolve_element_path(root, &path.0) else {
+            let Some(target) =
+                resolve_element_path(root, owner, &self.path_indices, &self.path_links)
+            else {
                 continue;
             };
             if target.element_id() == Some(owner) {
-                result = result.merge(target.on_event(event));
+                let mut context = EventDispatchContext::new(self, root, Some(owner));
+                result = result.merge(target.on_event_with_context(event, &mut context));
             }
         }
         self.captures.clear();
@@ -1985,7 +2740,7 @@ fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
     }
 }
 
-/// Indexes every identified element by its root-relative path, reporting the
+/// Indexes every element in a reusable parent-link arena, reporting the
 /// innermost focus scope on the way.
 ///
 /// The scope is discovered here rather than by a walk of its own because this
@@ -1993,39 +2748,147 @@ fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
 /// trapping element seen overwrites the previous one, so the last of them in
 /// depth-first order wins — which is the innermost scope of the deepest
 /// trapping branch, and for siblings the one presented last.
-fn index_element_paths(
+fn index_element_links(
     element: &dyn Element,
-    path: &mut Vec<usize>,
-    paths: &mut HashMap<ElementId, ElementPath>,
+    parent: Option<usize>,
+    child_index: u32,
+    links: &mut Vec<ElementPath>,
+    path_indices: &mut HashMap<ElementId, usize>,
     scope: &mut Option<ElementId>,
 ) {
+    let link_index = links.len();
+    links.push(ElementPath {
+        parent,
+        child_index,
+    });
+
     if let Some(id) = element.element_id() {
-        paths.insert(id, ElementPath(path.clone().into_boxed_slice()));
+        path_indices.insert(id, link_index);
         if element.traps_focus() {
             *scope = Some(id);
         }
     }
-    for (index, child) in structural_children(element).iter().copied().enumerate() {
-        path.push(index);
-        index_element_paths(child, path, paths, scope);
-        path.pop();
-    }
+
+    let mut child_index = 0u32;
+    element.structural_children(&mut |child| {
+        let index = child_index;
+        child_index = child_index
+            .checked_add(1)
+            .expect("exhausted structural child indexes");
+        index_element_links(child, Some(link_index), index, links, path_indices, scope);
+    });
 }
 
-fn resolve_element_path<'a>(root: &'a dyn Element, path: &[usize]) -> Option<&'a dyn Element> {
+fn resolve_element_path<'a>(
+    root: &'a dyn Element,
+    owner: ElementId,
+    path_indices: &HashMap<ElementId, usize>,
+    links: &[ElementPath],
+) -> Option<&'a dyn Element> {
+    let mut child_indexes: SmallVec<[u32; 16]> = SmallVec::new();
+    let mut link_index = *path_indices.get(&owner)?;
+    let mut remaining = links.len();
+
+    loop {
+        remaining = remaining.checked_sub(1)?;
+        let link = *links.get(link_index)?;
+        let Some(parent) = link.parent else {
+            break;
+        };
+        child_indexes.push(link.child_index);
+        link_index = parent;
+    }
+
     let mut current = root;
-    for index in path {
-        current = structural_child_at(current, *index)?;
+    for index in child_indexes.iter().rev() {
+        current = structural_child_at(current, *index as usize)?;
     }
-    Some(current)
+    (current.element_id() == Some(owner)).then_some(current)
 }
 
-fn dispatch_routed_event(
-    root: &dyn Element,
+fn dispatch_routed_event<'tree>(
+    dispatcher: &mut EventDispatcher,
+    root: &'tree dyn Element,
     pos: Vec2d,
     event: &ElementEvent,
 ) -> RoutedEventResult {
-    dispatch_routed_event_inner(root, pos, event)
+    let mut children = EventChildren::new();
+    dispatch_routed_event_inner(dispatcher, root, root, pos, event, &mut children)
+}
+
+fn dispatch_cached_hit_chain_inner(
+    dispatcher: &mut EventDispatcher,
+    path_root: &dyn Element,
+    elements: &[CachedHitElement],
+    index: usize,
+    pos: Vec2d,
+    event: &ElementEvent,
+) -> RoutedEventResult {
+    let entry = elements[index];
+    // SAFETY: `dispatch_cached_hit_chain` validated the root address, element
+    // identities, and subtree generation before entering this replay. The
+    // retained UI tree cannot be concurrently mutated during dispatch.
+    let root = unsafe { &*entry.element };
+    record_routed_event_visit();
+
+    let mut result = EventResult::ignored();
+    let mut capture_owner = None;
+    let mut focus_owner = None;
+    let mut stopped = false;
+
+    if index + 1 < elements.len() {
+        let child_outcome = dispatch_cached_hit_chain_inner(
+            dispatcher,
+            path_root,
+            elements,
+            index + 1,
+            pos,
+            event,
+        );
+        result = result.merge(child_outcome.result);
+        if focus_owner.is_none() {
+            focus_owner = child_outcome.focus_owner;
+        }
+        if capture_owner.is_none() {
+            capture_owner = child_outcome.capture_owner.or_else(|| {
+                (!matches!(child_outcome.result.capture_request(), CaptureRequest::None))
+                    .then(|| root.element_id())
+                    .flatten()
+            });
+        }
+        if child_outcome.result.is_consumed() {
+            stopped = true;
+        }
+    }
+
+    if stopped {
+        if focus_owner.is_none() {
+            focus_owner = focus_candidate_at(root, pos);
+        }
+        return RoutedEventResult {
+            result,
+            capture_owner,
+            focus_owner,
+        };
+    }
+
+    let own_result = {
+        let mut context = EventDispatchContext::new(dispatcher, path_root, root.element_id());
+        root.on_event_with_context(event, &mut context)
+    };
+    if focus_owner.is_none() {
+        focus_owner = focus_candidate_at(root, pos);
+    }
+    if capture_owner.is_none() && !matches!(own_result.capture_request(), CaptureRequest::None) {
+        capture_owner = root.element_id();
+    }
+    result = result.merge(own_result);
+
+    RoutedEventResult {
+        result,
+        capture_owner,
+        focus_owner,
+    }
 }
 
 /// Whether `pos` lies within `element`'s laid-out bounds.
@@ -2052,28 +2915,56 @@ fn focus_candidate_at(element: &dyn Element, pos: Vec2d) -> Option<FocusCandidat
     contains(element, pos).then(|| FocusCandidate::new(id, node.clone(), element.autofocus()))
 }
 
-fn dispatch_routed_event_inner(
-    root: &dyn Element,
+fn dispatch_routed_event_inner<'tree, 'path>(
+    dispatcher: &mut EventDispatcher,
+    path_root: &'path dyn Element,
+    root: &'tree dyn Element,
     pos: Vec2d,
     event: &ElementEvent,
+    children: &mut EventChildren<'tree>,
 ) -> RoutedEventResult {
     if !contains(root, pos) {
+        dispatcher.record_hit_chain_miss();
         return RoutedEventResult {
             result: EventResult::ignored(),
             capture_owner: None,
             focus_owner: None,
         };
     }
+    record_routed_event_visit();
+    dispatcher.record_hit_chain_element(root);
 
     let mut result = EventResult::ignored();
     let mut capture_owner = None;
     let mut focus_owner = None;
     let mut stopped = false;
-    root.hit_test_children_at_reversed(pos, &mut |child| {
+    let start = children.len();
+    let mut hit_test_children = 0;
+    root.hit_test_children_at(pos, &mut |child| {
+        hit_test_children += 1;
+        children.push(child);
+    });
+    dispatcher.record_hit_chain_children(hit_test_children);
+    if hit_test_children == 0 {
+        dispatcher.record_empty_hit_chain_node();
+    }
+
+    while children.len() > start {
         if stopped {
-            return;
+            children.truncate(start);
+            break;
         }
-        let child_outcome = dispatch_routed_event_inner(child, pos, event);
+        let child = children
+            .pop()
+            .expect("routed event scratch contains an element beyond its entry length");
+        let child_outcome = dispatch_routed_event_inner(
+            dispatcher,
+            path_root,
+            child,
+            pos,
+            event,
+            children,
+        );
         result = result.merge(child_outcome.result);
         if focus_owner.is_none() {
             focus_owner = child_outcome.focus_owner;
@@ -2095,7 +2986,8 @@ fn dispatch_routed_event_inner(
             // would blur it.
             stopped = true;
         }
-    });
+    }
+    children.truncate(start);
 
     if stopped {
         if focus_owner.is_none() {
@@ -2108,7 +3000,10 @@ fn dispatch_routed_event_inner(
         };
     }
 
-    let own_result = root.on_event(event);
+    let own_result = {
+        let mut context = EventDispatchContext::new(dispatcher, path_root, root.element_id());
+        root.on_event_with_context(event, &mut context)
+    };
     if focus_owner.is_none() {
         focus_owner = focus_candidate_at(root, pos);
     }
@@ -2508,6 +3403,35 @@ mod tests {
     }
     impl Rebuildable for IdentityBranch {}
 
+    struct StableRoot {
+        children: Vec<AnyElement>,
+        visits: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for StableRoot {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            self.visits.set(self.visits.get() + 1);
+            for child in &self.children {
+                visitor(child.as_ref());
+            }
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "StableRoot"
+        }
+    }
+
+    impl EventElement for StableRoot {}
+    impl LayoutElement for StableRoot {
+        fn is_layout_stable(&self) -> bool {
+            true
+        }
+    }
+    impl Drawable for StableRoot {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for StableRoot {}
+
     fn child_ids(element: &dyn Element) -> Vec<ElementId> {
         let mut ids = Vec::new();
         element.visit_children(&mut |child| ids.push(child.id()));
@@ -2587,6 +3511,50 @@ mod tests {
 
         assert!(element_tree_generation() > generation);
         assert_eq!(new.id(), old.id());
+    }
+
+    #[test]
+    fn dispatcher_reindexes_at_most_once_per_event_frame() {
+        let visits = Rc::new(Cell::new(0));
+        let root = StableRoot {
+            children: Vec::new(),
+            visits: visits.clone(),
+        }
+        .boxed();
+        let root_generation = root.subtree_generation();
+        let mut dispatcher = EventDispatcher::new();
+
+        begin_event_frame();
+        dispatcher.synchronize_paths(root.as_ref());
+        assert_eq!(dispatcher.indexed_subtree_generation, root_generation);
+        let first_index_visits = visits.get();
+        assert!(first_index_visits > 0);
+
+        advance_element_tree_generation();
+        assert_ne!(element_tree_generation(), root_generation);
+        assert_eq!(root.subtree_generation(), root_generation);
+
+        dispatcher.synchronize_paths(root.as_ref());
+        assert_eq!(visits.get(), first_index_visits);
+
+        let changed_generation = root_generation + 1;
+        root.set_subtree_generation(changed_generation);
+        dispatcher.synchronize_paths(root.as_ref());
+        assert_eq!(
+            visits.get(),
+            first_index_visits,
+            "a generation change after the first dispatch waits for the next frame"
+        );
+
+        begin_event_frame();
+        dispatcher.synchronize_paths(root.as_ref());
+
+        assert_eq!(dispatcher.indexed_subtree_generation, changed_generation);
+        let second_index_visits = visits.get();
+        assert!(second_index_visits > first_index_visits);
+
+        dispatcher.synchronize_paths(root.as_ref());
+        assert_eq!(visits.get(), second_index_visits);
     }
 
     struct LayoutInvalidationLeaf {
@@ -2708,6 +3676,479 @@ mod tests {
 
     impl Rebuildable for RoutedElement {}
 
+    struct HitChainCacheLeaf {
+        bounds: (Vec2d, Vec2d),
+        events: Rc<Cell<usize>>,
+        consume_moves: bool,
+    }
+
+    impl VisitorElement for HitChainCacheLeaf {
+        fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
+
+        fn debug_name(&self) -> &'static str {
+            "HitChainCacheLeaf"
+        }
+    }
+
+    impl EventElement for HitChainCacheLeaf {
+        fn on_event(&self, event: &ElementEvent) -> EventResult {
+            if matches!(event, ElementEvent::PointerMove(_)) {
+                self.events.set(self.events.get() + 1);
+            }
+            if self.consume_moves && matches!(event, ElementEvent::PointerMove(_)) {
+                EventResult::consumed()
+            } else {
+                EventResult::ignored()
+            }
+        }
+    }
+
+    impl LayoutElement for HitChainCacheLeaf {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some(self.bounds)
+        }
+    }
+
+    impl Drawable for HitChainCacheLeaf {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for HitChainCacheLeaf {}
+
+    struct HitChainCacheRoot {
+        child: AnyElement,
+        hit_tests: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for HitChainCacheRoot {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.child.as_ref());
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "HitChainCacheRoot"
+        }
+    }
+
+    impl EventElement for HitChainCacheRoot {
+        fn hit_test_children_at<'a>(
+            &'a self,
+            pos: Vec2d,
+            visitor: &mut dyn FnMut(&'a dyn Element),
+        ) {
+            self.hit_tests.set(self.hit_tests.get() + 1);
+            if contains(self.child.as_ref(), pos) {
+                visitor(self.child.as_ref());
+            }
+        }
+    }
+
+    impl LayoutElement for HitChainCacheRoot {
+        fn is_layout_stable(&self) -> bool {
+            true
+        }
+    }
+
+    impl Drawable for HitChainCacheRoot {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for HitChainCacheRoot {}
+
+    struct HitChainCacheForwarder {
+        child: AnyElement,
+        bounds: (Vec2d, Vec2d),
+        events: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for HitChainCacheForwarder {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.child.as_ref());
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "HitChainCacheForwarder"
+        }
+    }
+
+    impl EventElement for HitChainCacheForwarder {
+        fn event_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
+
+        fn on_event_with_context(
+            &self,
+            event: &ElementEvent,
+            context: &mut EventDispatchContext<'_, '_>,
+        ) -> EventResult {
+            if matches!(event, ElementEvent::PointerMove(_)) {
+                self.events.set(self.events.get() + 1);
+            }
+            let pos = match event {
+                ElementEvent::PointerMove(info) => info.pos,
+                _ => Vec2d::default(),
+            };
+            context.dispatch_child(self.child.as_ref(), pos, event)
+        }
+    }
+
+    impl LayoutElement for HitChainCacheForwarder {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some(self.bounds)
+        }
+    }
+
+    impl Drawable for HitChainCacheForwarder {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for HitChainCacheForwarder {}
+
+    struct HoverProbe {
+        bounds: (Vec2d, Vec2d),
+        hovered: Rc<Cell<bool>>,
+    }
+
+    impl VisitorElement for HoverProbe {
+        fn debug_name(&self) -> &'static str {
+            "HoverProbe"
+        }
+    }
+
+    impl EventElement for HoverProbe {
+        fn on_event(&self, event: &ElementEvent) -> EventResult {
+            match event {
+                ElementEvent::PointerMove(_) => {
+                    self.hovered.set(true);
+                    EventResult::ignored()
+                }
+                ElementEvent::PointerExited(_, _) => {
+                    self.hovered.set(false);
+                    EventResult::ignored()
+                }
+                _ => EventResult::ignored(),
+            }
+        }
+    }
+
+    impl LayoutElement for HoverProbe {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some(self.bounds)
+        }
+    }
+
+    impl Drawable for HoverProbe {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for HoverProbe {}
+
+    struct HoverProbeRoot {
+        bounds: (Vec2d, Vec2d),
+        children: Vec<AnyElement>,
+    }
+
+    impl VisitorElement for HoverProbeRoot {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            for child in &self.children {
+                visitor(child.as_ref());
+            }
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "HoverProbeRoot"
+        }
+    }
+
+    impl EventElement for HoverProbeRoot {
+        fn hit_test_children_at<'a>(
+            &'a self,
+            pos: Vec2d,
+            visitor: &mut dyn FnMut(&'a dyn Element),
+        ) {
+            for child in &self.children {
+                if contains(child.as_ref(), pos) {
+                    visitor(child.as_ref());
+                }
+            }
+        }
+    }
+
+    impl LayoutElement for HoverProbeRoot {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some(self.bounds)
+        }
+    }
+
+    impl Drawable for HoverProbeRoot {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for HoverProbeRoot {}
+
+    #[test]
+    fn moving_between_siblings_exits_the_previous_hover_target() {
+        let first_hovered = Rc::new(Cell::new(false));
+        let second_hovered = Rc::new(Cell::new(false));
+        let root = HoverProbeRoot {
+            bounds: (Vec2d::default(), Vec2d { x: 100.0, y: 100.0 }),
+            children: vec![
+                HoverProbe {
+                    bounds: (Vec2d::default(), Vec2d { x: 40.0, y: 40.0 }),
+                    hovered: first_hovered.clone(),
+                }
+                .boxed(),
+                HoverProbe {
+                    bounds: (
+                        Vec2d { x: 60.0, y: 0.0 },
+                        Vec2d { x: 100.0, y: 40.0 },
+                    ),
+                    hovered: second_hovered.clone(),
+                }
+                .boxed(),
+            ],
+        }
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+
+        let first = Vec2d { x: 20.0, y: 20.0 };
+        let second = Vec2d { x: 80.0, y: 20.0 };
+        let outside = Vec2d { x: 20.0, y: 80.0 };
+        let move_pointer = |dispatcher: &mut EventDispatcher, pos| {
+            let _ = dispatcher.dispatch(
+                root.as_ref(),
+                pos,
+                &ElementEvent::PointerMove(PointerInfo::mouse(
+                    pos,
+                    PointerButton::Primary,
+                )),
+            );
+        };
+
+        move_pointer(&mut dispatcher, first);
+        assert!(first_hovered.get());
+        assert!(!second_hovered.get());
+
+        move_pointer(&mut dispatcher, second);
+        assert!(!first_hovered.get());
+        assert!(second_hovered.get());
+
+        move_pointer(&mut dispatcher, outside);
+        assert!(!second_hovered.get());
+    }
+
+    #[test]
+    fn uncaptured_pointer_moves_reuse_the_last_hit_chain() {
+        let hit_tests = Rc::new(Cell::new(0));
+        let leaf_events = Rc::new(Cell::new(0));
+        let root = HitChainCacheRoot {
+            child: HitChainCacheLeaf {
+                bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
+                events: leaf_events.clone(),
+                consume_moves: false,
+            }
+            .boxed(),
+            hit_tests: hit_tests.clone(),
+        }
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        let pos = Vec2d { x: 5.0, y: 5.0 };
+
+        reset_routed_event_visit_count();
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            pos,
+            &ElementEvent::PointerMove(PointerInfo::mouse(pos, PointerButton::Primary)),
+        );
+        let first_visits = take_routed_event_visit_count();
+        let first_hit_tests = hit_tests.get();
+
+        reset_routed_event_visit_count();
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            Vec2d { x: 6.0, y: 6.0 },
+            &ElementEvent::PointerMove(PointerInfo::mouse(
+                Vec2d { x: 6.0, y: 6.0 },
+                PointerButton::Primary,
+            )),
+        );
+        let second_visits = take_routed_event_visit_count();
+
+        assert_eq!(hit_tests.get(), first_hit_tests);
+        assert_eq!(first_visits, 2);
+        assert_eq!(second_visits, first_visits);
+        assert_eq!(leaf_events.get(), 2);
+    }
+
+    #[test]
+    fn cached_hit_chain_falls_back_when_the_pointer_leaves_the_chain() {
+        let hit_tests = Rc::new(Cell::new(0));
+        let leaf_events = Rc::new(Cell::new(0));
+        let root = HitChainCacheRoot {
+            child: HitChainCacheLeaf {
+                bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
+                events: leaf_events.clone(),
+                consume_moves: false,
+            }
+            .boxed(),
+            hit_tests: hit_tests.clone(),
+        }
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        let inside = Vec2d { x: 5.0, y: 5.0 };
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            inside,
+            &ElementEvent::PointerMove(PointerInfo::mouse(inside, PointerButton::Primary)),
+        );
+        let first_hit_tests = hit_tests.get();
+
+        let outside = Vec2d { x: 50.0, y: 50.0 };
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            outside,
+            &ElementEvent::PointerMove(PointerInfo::mouse(
+                outside,
+                PointerButton::Primary,
+            )),
+        );
+        let outside_hit_tests = hit_tests.get();
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            inside,
+            &ElementEvent::PointerMove(PointerInfo::mouse(inside, PointerButton::Primary)),
+        );
+
+        assert!(outside_hit_tests > first_hit_tests);
+        assert!(hit_tests.get() > outside_hit_tests);
+        assert_eq!(leaf_events.get(), 2);
+    }
+
+    #[test]
+    fn cached_hit_chain_is_invalidated_by_a_subtree_generation_change() {
+        let hit_tests = Rc::new(Cell::new(0));
+        let leaf_events = Rc::new(Cell::new(0));
+        let root = HitChainCacheRoot {
+            child: HitChainCacheLeaf {
+                bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
+                events: leaf_events.clone(),
+                consume_moves: false,
+            }
+            .boxed(),
+            hit_tests: hit_tests.clone(),
+        }
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        let pos = Vec2d { x: 5.0, y: 5.0 };
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            pos,
+            &ElementEvent::PointerMove(PointerInfo::mouse(pos, PointerButton::Primary)),
+        );
+        let first_hit_tests = hit_tests.get();
+
+        let generation = root.subtree_generation();
+        root.set_subtree_generation(generation.wrapping_add(1));
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            pos,
+            &ElementEvent::PointerMove(PointerInfo::mouse(pos, PointerButton::Primary)),
+        );
+
+        assert!(hit_tests.get() > first_hit_tests);
+        assert_eq!(leaf_events.get(), 2);
+    }
+
+    #[test]
+    fn consuming_pointer_moves_are_not_cached() {
+        let hit_tests = Rc::new(Cell::new(0));
+        let leaf_events = Rc::new(Cell::new(0));
+        let root = HitChainCacheRoot {
+            child: HitChainCacheLeaf {
+                bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
+                events: leaf_events.clone(),
+                consume_moves: true,
+            }
+            .boxed(),
+            hit_tests: hit_tests.clone(),
+        }
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        let first_pos = Vec2d { x: 5.0, y: 5.0 };
+        let second_pos = Vec2d { x: 6.0, y: 6.0 };
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            first_pos,
+            &ElementEvent::PointerMove(PointerInfo::mouse(
+                first_pos,
+                PointerButton::Primary,
+            )),
+        );
+        let first_hit_tests = hit_tests.get();
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            second_pos,
+            &ElementEvent::PointerMove(PointerInfo::mouse(
+                second_pos,
+                PointerButton::Primary,
+            )),
+        );
+
+        assert!(hit_tests.get() > first_hit_tests);
+        assert_eq!(leaf_events.get(), 2);
+    }
+
+    #[test]
+    fn cached_hit_chain_replays_a_forwarding_boundary_once() {
+        let hit_tests = Rc::new(Cell::new(0));
+        let forwarder_events = Rc::new(Cell::new(0));
+        let leaf_events = Rc::new(Cell::new(0));
+        let root = HitChainCacheRoot {
+            child: HitChainCacheForwarder {
+                child: HitChainCacheLeaf {
+                    bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
+                    events: leaf_events.clone(),
+                    consume_moves: false,
+                }
+                .boxed(),
+                bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
+                events: forwarder_events.clone(),
+            }
+            .boxed(),
+            hit_tests: hit_tests.clone(),
+        }
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        let first_pos = Vec2d { x: 5.0, y: 5.0 };
+        let second_pos = Vec2d { x: 6.0, y: 6.0 };
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            first_pos,
+            &ElementEvent::PointerMove(PointerInfo::mouse(
+                first_pos,
+                PointerButton::Primary,
+            )),
+        );
+        let first_hit_tests = hit_tests.get();
+
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            second_pos,
+            &ElementEvent::PointerMove(PointerInfo::mouse(
+                second_pos,
+                PointerButton::Primary,
+            )),
+        );
+
+        assert_eq!(hit_tests.get(), first_hit_tests);
+        assert_eq!(forwarder_events.get(), 2);
+        assert_eq!(leaf_events.get(), 2);
+    }
+
     fn routed_leaf(
         bounds: (Vec2d, Vec2d),
         events: Rc<Cell<usize>>,
@@ -2722,6 +4163,69 @@ mod tests {
             release_on_move,
         }
         .boxed()
+    }
+
+    struct ForwardOnlyHitTestElement {
+        child: AnyElement,
+    }
+
+    impl VisitorElement for ForwardOnlyHitTestElement {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.child.as_ref());
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "ForwardOnlyHitTestElement"
+        }
+    }
+
+    impl EventElement for ForwardOnlyHitTestElement {
+        fn hit_test_children_at<'a>(
+            &'a self,
+            _pos: Vec2d,
+            visitor: &mut dyn FnMut(&'a dyn Element),
+        ) {
+            visitor(self.child.as_ref());
+        }
+
+        fn hit_test_children_reversed<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
+            panic!("routed dispatch should use the shared forward hit-test scratch");
+        }
+    }
+
+    impl LayoutElement for ForwardOnlyHitTestElement {}
+
+    impl Drawable for ForwardOnlyHitTestElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for ForwardOnlyHitTestElement {}
+
+    #[test]
+    fn routed_dispatch_uses_position_aware_forward_scratch() {
+        let events = Rc::new(Cell::new(0));
+        let root = ForwardOnlyHitTestElement {
+            child: routed_leaf(
+                (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
+                events.clone(),
+                false,
+                false,
+            ),
+        }
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+
+        let result = dispatcher.dispatch(
+            root.as_ref(),
+            Vec2d { x: 5.0, y: 5.0 },
+            &ElementEvent::PointerDown(PointerInfo::mouse(
+                Vec2d { x: 5.0, y: 5.0 },
+                PointerButton::Primary,
+            )),
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(events.get(), 1);
     }
 
     #[test]
@@ -3465,8 +4969,8 @@ mod tests {
             .captured_owner(pointer)
             .expect("pointer must be captured after down");
         dispatcher
-            .paths
-            .insert(owner, ElementPath(vec![usize::MAX].into_boxed_slice()));
+            .path_indices
+            .insert(owner, usize::MAX);
         events.set(0);
 
         let move_event = ElementEvent::PointerMove(PointerInfo::new(

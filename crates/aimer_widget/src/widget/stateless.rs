@@ -219,6 +219,8 @@ impl StatelessElement {
     /// If dirty, rebuild the child and preserve live state from the old
     /// subtree.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        crate::rebuild_stats::record_stateless_check();
         let invalidation_generation =
             crate::components::element::rebuild_invalidation_generation();
         if !self.dirty.get()
@@ -243,6 +245,8 @@ impl StatelessElement {
             return;
         }
 
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        crate::rebuild_stats::record_stateless_build();
         let new_child = rebuild_fn(ctx);
 
         {
@@ -293,9 +297,12 @@ impl Drawable for StatelessElement {
                     && cp.x <= l_end.x
                     && cp.y >= l_start.y
                     && cp.y <= l_end.y
-                    && let Ok(mut hovered) = crate::inspector_overlay::HOVERED_WIDGET.write()
                 {
-                    *hovered = Some((self.debug_name, l_start, l_end));
+                    crate::inspector_overlay::set_hovered_widget((
+                        self.debug_name,
+                        l_start,
+                        l_end,
+                    ));
                 }
             }
         }
@@ -303,6 +310,21 @@ impl Drawable for StatelessElement {
         // Safety: single-threaded rendering pipeline.
         let child = unsafe { &*self.child.0.get() };
         child.draw(ctx);
+    }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        // Rebuilds are serviced by the owning frame/lifecycle pass. This
+        // method is deliberately paint-only so a pure retained wrapper does
+        // not re-enter rebuild or the child's normal draw path.
+        let child = unsafe { &*self.child.0.get() };
+        child.paint(ctx);
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let child = unsafe { &*self.child.0.get() };
+        child.sync_paint_geometry(ctx);
     }
 
     #[inline]

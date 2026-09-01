@@ -1,4 +1,4 @@
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayoutSpacing {
     pub top: Spacing,
     pub bottom: Spacing,
@@ -71,7 +71,7 @@ impl LayoutSpacing {
     }
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Spacing {
     Px(u32),
     Percent(u32),

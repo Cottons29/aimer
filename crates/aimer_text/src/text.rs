@@ -1,7 +1,7 @@
 pub mod raw_text;
 pub mod selectable_text;
 
-use std::sync::Mutex;
+use std::cell::Cell;
 
 use aimer_macro::PortableWidget;
 use aimer_style::{LineHeight, TextAlign, TextOverflow, TextShadow, TextStyle, TextTransform};
@@ -284,7 +284,7 @@ impl Widget for Text {
             line_height: self.line_height,
             text_indent: self.text_indent,
             cache: LayoutCache::new(),
-            _typeface: Mutex::new(None),
+            _typeface: Cell::new(None),
         }
         .boxed()
     }

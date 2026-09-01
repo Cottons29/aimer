@@ -3,7 +3,10 @@ use aimer_anteros::{
     ModelLimits, StateBundleView, WidgetDocumentView, MAX_GUEST_DIAGNOSTIC_BYTES,
     capture_guest_panic,
 };
-use std::sync::{Mutex, OnceLock};
+use std::ops::{Deref, DerefMut};
+use std::sync::OnceLock;
+
+use crossbeam::queue::SegQueue;
 
 use crate::memory::AllocationLedger;
 use crate::{GuestError, GuestProgram};
@@ -511,10 +514,45 @@ fn write_cached_output(
 }
 
 /// Lazily initialized implementation behind [`crate::export_guest!`].
+///
+/// The guest instance is checked out from a lock-free queue for each export
+/// call. A concurrent or reentrant call returns `InternalError` immediately
+/// instead of waiting for the single guest instance to become available.
 #[doc(hidden)]
 pub struct ExportedGuest<P> {
-    inner: OnceLock<Result<Mutex<RawGuest<P>>, GuestError>>,
+    inner: OnceLock<Result<SegQueue<RawGuest<P>>, GuestError>>,
     limits: GuestLimits,
+}
+
+struct GuestSlot<'a, P> {
+    queue: &'a SegQueue<RawGuest<P>>,
+    guest: Option<RawGuest<P>>,
+}
+
+impl<P> Deref for GuestSlot<'_, P> {
+    type Target = RawGuest<P>;
+
+    fn deref(&self) -> &Self::Target {
+        self.guest
+            .as_ref()
+            .expect("a checked-out guest slot always contains a guest")
+    }
+}
+
+impl<P> DerefMut for GuestSlot<'_, P> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.guest
+            .as_mut()
+            .expect("a checked-out guest slot always contains a guest")
+    }
+}
+
+impl<P> Drop for GuestSlot<'_, P> {
+    fn drop(&mut self) {
+        if let Some(guest) = self.guest.take() {
+            self.queue.push(guest);
+        }
+    }
 }
 
 impl<P: GuestProgram + Default> ExportedGuest<P> {
@@ -535,28 +573,38 @@ impl<P: GuestProgram + Default> ExportedGuest<P> {
     ) -> i64 {
         let guest = self
             .inner
-            .get_or_init(|| RawGuest::new(P::default(), self.limits).map(Mutex::new));
+            .get_or_init(|| {
+                RawGuest::new(P::default(), self.limits).map(|guest| {
+                    let queue = SegQueue::new();
+                    queue.push(guest);
+                    queue
+                })
+            });
         match guest {
-            Ok(guest) => match guest.lock() {
-                Ok(mut guest) => {
-                    guest.pending_diagnostic = None;
-                    match capture_guest_panic(|| operation(&mut guest)) {
-                        Err(panic) => {
-                            let error = GuestError::from_panic(operation_kind, panic);
-                            guest.pending_diagnostic =
-                                error.encode_diagnostic(self.limits.diagnostic_limit());
-                            pack(error.status(), error.value())
-                        }
-                        Ok(Ok(value)) => pack(AbiStatus::Ok, value),
-                        Ok(Err(error)) => {
-                            guest.pending_diagnostic =
-                                error.encode_diagnostic(self.limits.diagnostic_limit());
-                            pack(error.status(), error.value())
-                        }
+            Ok(queue) => {
+                let Some(raw_guest) = queue.pop() else {
+                    return pack(AbiStatus::InternalError, 0);
+                };
+                let mut guest = GuestSlot {
+                    queue,
+                    guest: Some(raw_guest),
+                };
+                guest.pending_diagnostic = None;
+                match capture_guest_panic(|| operation(&mut guest)) {
+                    Err(panic) => {
+                        let error = GuestError::from_panic(operation_kind, panic);
+                        guest.pending_diagnostic =
+                            error.encode_diagnostic(self.limits.diagnostic_limit());
+                        pack(error.status(), error.value())
+                    }
+                    Ok(Ok(value)) => pack(AbiStatus::Ok, value),
+                    Ok(Err(error)) => {
+                        guest.pending_diagnostic =
+                            error.encode_diagnostic(self.limits.diagnostic_limit());
+                        pack(error.status(), error.value())
                     }
                 }
-                Err(_) => pack(AbiStatus::InternalError, 0),
-            },
+            }
             Err(error) => pack(error.status(), 0),
         }
     }
@@ -567,12 +615,24 @@ impl<P: GuestProgram + Default> ExportedGuest<P> {
     ) -> i64 {
         let guest = self
             .inner
-            .get_or_init(|| RawGuest::new(P::default(), self.limits).map(Mutex::new));
+            .get_or_init(|| {
+                RawGuest::new(P::default(), self.limits).map(|guest| {
+                    let queue = SegQueue::new();
+                    queue.push(guest);
+                    queue
+                })
+            });
         match guest {
-            Ok(guest) => match guest.lock() {
-                Ok(mut guest) => pack_result(operation(&mut guest)),
-                Err(_) => pack(AbiStatus::InternalError, 0),
-            },
+            Ok(queue) => {
+                let Some(raw_guest) = queue.pop() else {
+                    return pack(AbiStatus::InternalError, 0);
+                };
+                let mut guest = GuestSlot {
+                    queue,
+                    guest: Some(raw_guest),
+                };
+                pack_result(operation(&mut guest))
+            }
             Err(error) => pack(error.status(), 0),
         }
     }
@@ -583,12 +643,24 @@ impl<P: GuestProgram + Default> ExportedGuest<P> {
     ) -> i64 {
         let guest = self
             .inner
-            .get_or_init(|| RawGuest::new(P::default(), self.limits).map(Mutex::new));
+            .get_or_init(|| {
+                RawGuest::new(P::default(), self.limits).map(|guest| {
+                    let queue = SegQueue::new();
+                    queue.push(guest);
+                    queue
+                })
+            });
         match guest {
-            Ok(guest) => match guest.lock() {
-                Ok(mut guest) => pack_result(operation(&mut guest)),
-                Err(_) => pack(AbiStatus::InternalError, 0),
-            },
+            Ok(queue) => {
+                let Some(raw_guest) = queue.pop() else {
+                    return pack(AbiStatus::InternalError, 0);
+                };
+                let mut guest = GuestSlot {
+                    queue,
+                    guest: Some(raw_guest),
+                };
+                pack_result(operation(&mut guest))
+            }
             Err(error) => pack(error.status(), 0),
         }
     }
@@ -788,18 +860,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.status(), AbiStatus::ApplicationError);
-        let diagnostic = guest
-            .inner
-            .get()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
+        let queue = guest.inner.get().unwrap().as_ref().unwrap();
+        let raw_guest = queue.pop().expect("the guest should be available");
+        let diagnostic = raw_guest
             .pending_diagnostic
-            .clone()
-            .map(|bytes| GuestDiagnostic::decode(&bytes, MAX_GUEST_DIAGNOSTIC_BYTES).unwrap())
+            .as_deref()
+            .map(|bytes| GuestDiagnostic::decode(bytes, MAX_GUEST_DIAGNOSTIC_BYTES).unwrap())
             .expect("the panic diagnostic should be pending");
+        queue.push(raw_guest);
 
         assert_eq!(diagnostic.operation(), GuestOperation::Build);
         assert_eq!(diagnostic.category(), GuestDiagnosticCategory::Panic);
