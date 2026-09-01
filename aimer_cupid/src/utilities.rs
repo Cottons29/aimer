@@ -1,8 +1,10 @@
 pub mod color;
 pub mod mat3;
+pub mod rgba8;
 
 pub use color::*;
 pub use mat3::*;
+pub use rgba8::Rgba8;
 
 /// Common types used throughout the cupid render engine.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

@@ -17,6 +17,7 @@ use crate::text_pipeline::{
     RichTextSpan, TextDecorationDraw, TextDrawRequest, TextPipelineV2, TextShadowRequest,
 };
 use crate::utilities::{Color, Mat3, Rect};
+use crate::utilities::Rgba8;
 
 struct ClipState {
     rect: Rect,
@@ -93,7 +94,7 @@ fn transform_text_shadow(
     TextShadowRequest {
         offset_x,
         offset_y,
-        color: apply_alpha(shadow.color, alpha),
+        color: shadow.color.with_opacity(alpha),
         ..shadow
     }
 }
@@ -878,11 +879,16 @@ impl Renderer {
                         y: ty,
                         text: text.clone(),
                         font_size: *font_size,
-                        color: apply_alpha(color.to_array(), alpha_state.current()),
+                        color: Rgba8::from_unorm(apply_alpha(
+                            color.to_array(),
+                            alpha_state.current(),
+                        )),
                         bounds_width: bounds_width.unwrap_or(width as f32 - tx),
                         bounds_height: bounds_height.unwrap_or(height as f32 - ty),
                         overflow: *overflow,
                         horizontal_align: *horizontal_align,
+                        writing_mode:
+                            crate::text_pipeline::text_layout::TextWritingMode::HorizontalTb,
                         line_height: None,
                         shadow,
                         draw_glyphs: *draw_glyphs,
@@ -919,12 +925,17 @@ impl Renderer {
                             .collect::<String>()
                             .into(),
                         font_size: *font_size,
-                        color: apply_alpha(color.to_array(), alpha_state.current()),
+                        color: Rgba8::from_unorm(apply_alpha(
+                            color.to_array(),
+                            alpha_state.current(),
+                        )),
                         bounds_width: bounds_width.unwrap_or(width as f32 - tx),
                         bounds_height: bounds_height.unwrap_or(height as f32 - ty),
                         overflow: *overflow,
                         horizontal_align:
                             crate::text_pipeline::text_layout::TextHorizontalAlign::Left,
+                        writing_mode:
+                            crate::text_pipeline::text_layout::TextWritingMode::HorizontalTb,
                         line_height: None,
                         shadow: None,
                         draw_glyphs: true,
@@ -941,7 +952,10 @@ impl Renderer {
                                 text: span.text.clone(),
                                 font_size: span.font_size,
                                 color: span.color.map(|color| {
-                                    apply_alpha(color.to_array(), alpha_state.current())
+                                    Rgba8::from_unorm(apply_alpha(
+                                        color.to_array(),
+                                        alpha_state.current(),
+                                    ))
                                 }),
                                 font_weight: span.font_weight,
                                 italic: span.italic,
@@ -975,7 +989,10 @@ impl Renderer {
                         thickness: (*thickness * sy).max(1.0),
                         period: (*period * sx).max(1.0),
                         style: *style,
-                        color: apply_alpha(color.to_array(), alpha_state.current()),
+                        color: Rgba8::from_unorm(apply_alpha(
+                            color.to_array(),
+                            alpha_state.current(),
+                        )),
                         clip_rect: clip_to_array(self.clip_stack.last()),
                         clip_border_radius: clip_border_radius(self.clip_stack.last()),
                     });
@@ -1547,7 +1564,7 @@ mod tests {
                 offset_x: 2.0,
                 offset_y: -1.0,
                 blur: 3.0,
-                color: [0.1, 0.2, 0.3, 0.8],
+                color: Rgba8::from_unorm([0.1, 0.2, 0.3, 0.8]),
             },
             &Mat3::scale(2.0, 3.0),
             0.25,
@@ -1556,7 +1573,10 @@ mod tests {
         assert_eq!(shadow.offset_x, 4.0);
         assert_eq!(shadow.offset_y, -3.0);
         assert_eq!(shadow.blur, 3.0);
-        assert_eq!(shadow.color, [0.1, 0.2, 0.3, 0.2]);
+        assert_eq!(
+            shadow.color,
+            Rgba8::from_unorm([0.1, 0.2, 0.3, 0.8 * 0.25])
+        );
     }
 
     #[test]

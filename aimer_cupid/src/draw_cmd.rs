@@ -1539,7 +1539,7 @@ mod memory_tests {
                 offset_x: 2.0,
                 offset_y: 1.0,
                 blur: 3.0,
-                color: [0.0, 0.0, 0.0, 0.5],
+                color: crate::utilities::Rgba8::new(0, 0, 0, 128),
             },
         );
         list.draw_text_styled(
