@@ -21,7 +21,7 @@
 use hashbrown::HashMap;
 
 use super::cache_key::LayoutCacheKey;
-use super::text_layout::PositionedGlyph;
+use super::text_layout::{PositionedGlyph, PositionedTextLayout};
 
 /// How many frames an entry may go unread before an over-capacity frame is
 /// allowed to evict it.
@@ -33,7 +33,7 @@ const LINGER_FRAMES: u64 = 1;
 
 /// One cached layout: the glyphs, and the last frame that read them.
 struct CachedLayout {
-    glyphs: Vec<PositionedGlyph>,
+    layout: PositionedTextLayout,
     last_used: u64,
 }
 
@@ -91,7 +91,7 @@ impl LayoutCache {
         let generation = self.generation;
         self.entries.get_mut(key).map(|entry| {
             entry.last_used = generation;
-            entry.glyphs.as_slice()
+            entry.layout.glyphs.as_slice()
         })
     }
 
@@ -101,7 +101,9 @@ impl LayoutCache {
     /// [`get`](Self::get) or [`touch`](Self::touch) — the stamp is in place,
     /// so the second read can skip the write.
     pub(super) fn peek(&self, key: &LayoutCacheKey) -> Option<&[PositionedGlyph]> {
-        self.entries.get(key).map(|entry| entry.glyphs.as_slice())
+        self.entries
+            .get(key)
+            .map(|entry| entry.layout.glyphs.as_slice())
     }
 
     /// Whether `key` is resident, stamping it as used by the current frame
@@ -142,29 +144,53 @@ impl LayoutCache {
             .or_else(|| fallback.and_then(|key| self.peek(key)))
     }
 
+    /// Returns the source-aware interaction view for a resident layout.
+    ///
+    /// The renderer's glyph slice and this geometry are stored in one cache
+    /// entry, so a consumer cannot accidentally query geometry from a
+    /// different width or shaping result.
+    pub(super) fn interaction_with_fallback(
+        &self,
+        primary: &LayoutCacheKey,
+        fallback: Option<&LayoutCacheKey>,
+    ) -> Option<&super::text_layout::TextInteractionLayout> {
+        self.entries
+            .get(primary)
+            .or_else(|| fallback.and_then(|key| self.entries.get(key)))
+            .and_then(|entry| entry.layout.interaction.as_ref())
+    }
+
     /// How many layouts are currently resident.
     pub(super) fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Inserts a layout, stamped as used by the current frame.
-    pub(super) fn insert(&mut self, key: LayoutCacheKey, glyphs: Vec<PositionedGlyph>) {
+    pub(super) fn insert(
+        &mut self,
+        key: LayoutCacheKey,
+        layout: impl Into<PositionedTextLayout>,
+    ) {
         let generation = self.generation;
         self.entries
-            .insert(key, CachedLayout { glyphs, last_used: generation });
+            .insert(key, CachedLayout { layout: layout.into(), last_used: generation });
     }
 
     /// Inserts every layout of `layouts`, each stamped as used by the current
     /// frame.
-    pub(super) fn extend(
+    pub(super) fn extend<L>(
         &mut self,
-        layouts: impl IntoIterator<Item = (LayoutCacheKey, Vec<PositionedGlyph>)>,
-    ) {
+        layouts: impl IntoIterator<Item = (LayoutCacheKey, L)>,
+    ) where
+        L: Into<PositionedTextLayout>,
+    {
         let generation = self.generation;
         self.entries.extend(
             layouts
                 .into_iter()
-                .map(|(key, glyphs)| (key, CachedLayout { glyphs, last_used: generation })),
+                .map(|(key, layout)| {
+                    (key, CachedLayout { layout: layout.into(), last_used: generation })
+                }),
         );
     }
 }
@@ -267,5 +293,26 @@ mod tests {
         cache.begin_frame();
         assert!(cache.peek(&key("fresh", 100.0)).is_some());
         assert!(cache.peek(&key("stale", 100.0)).is_none());
+    }
+
+    #[test]
+    fn cached_aimer_layout_keeps_render_and_interaction_views_together() {
+        use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
+        use crate::text_pipeline::text_layout::{layout_shaped_text_result, shape_text};
+
+        let mut rasterizer = GlyphRasterizer::new();
+        let shaped = shape_text(&mut rasterizer, "office", 16.0);
+        let layout = layout_shaped_text_result(&shaped, 0.0, 16.0, 0.0);
+        let mut cache = LayoutCache::new(8);
+        let cache_key = key("office", 0.0);
+        cache.begin_frame();
+        cache.insert(cache_key.clone(), layout);
+
+        assert!(!cache.peek(&cache_key).unwrap().is_empty());
+        let interaction = cache
+            .interaction_with_fallback(&cache_key, None)
+            .expect("Aimer layout entries retain interaction geometry");
+        assert!(interaction.caret_geometry(1).is_some());
+        assert!(interaction.caret_geometry(2).is_none());
     }
 }

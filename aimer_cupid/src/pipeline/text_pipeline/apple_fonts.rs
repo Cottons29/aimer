@@ -20,7 +20,7 @@
 //! by `CGFontCopyTableTags`/`CGFontCopyTableForTag` — so Cupid can still
 //! rasterize it without the platform's off-screen layer.
 //!
-//! Core Text's preferred answer is not always usable by a third-party
+//! Core Text's preferred answer is not always usable by the owned
 //! rasterizer: on recent macOS builds the system UI cascade resolves CJK to
 //! `PingFangUI.ttc`, a private file whose faces expose neither `glyf` outlines
 //! nor bitmap strikes, so rendering it produces blank glyphs. This is why
@@ -31,6 +31,10 @@
 //! Every Core Text object is returned as a [`CFRetained`] handle, so ownership
 //! follows the Core Foundation *Create Rule* automatically and no manual
 //! `CFRelease` is needed.
+//!
+//! This module is compiled only with the `apple-core-text` feature. The
+//! platform bridge supplies discovery and table extraction; glyph lookup,
+//! shaping, and rasterization remain owned by Cupid's Aimer font engine.
 //!
 //! [`CFRetained`]: objc2_core_foundation::CFRetained
 
@@ -45,6 +49,7 @@ use objc2_core_text::{
     kCTFontTraitsAttribute, kCTFontURLAttribute, kCTFontWeightTrait,
 };
 
+use crate::font::TextLanguage;
 use crate::text_pipeline::font_resolver::REGULAR_WEIGHT;
 
 /// Point size used for the transient `CTFont` instances created here.
@@ -349,7 +354,11 @@ pub(crate) enum SystemFaceSource {
 /// Sources are deduplicated and capped at [`MAX_CANDIDATE_FACES`]; callers
 /// must still validate coverage, because Core Text hands back the queried font
 /// itself when nothing matches.
-pub(crate) fn language_fallback_sources(required: &[char], weight: u16) -> Vec<SystemFaceSource> {
+pub(crate) fn language_fallback_sources(
+    required: &[char],
+    language: Option<TextLanguage>,
+    weight: u16,
+) -> Vec<SystemFaceSource> {
     let mut sources: Vec<SystemFaceSource> = Vec::new();
     let full: String = required.iter().collect();
     if full.is_empty() {
@@ -361,7 +370,7 @@ pub(crate) fn language_fallback_sources(required: &[char], weight: u16) -> Vec<S
         samples.extend(required.iter().map(|codepoint| codepoint.to_string()));
     }
 
-    for language in ui_cascade_languages() {
+    for language in ui_cascade_languages(language) {
         let language = CFString::from_str(&language);
         // SAFETY: the constant designates the system UI font and the language
         // is a valid BCP-47 tag string.
@@ -402,8 +411,11 @@ pub(crate) fn language_fallback_sources(required: &[char], weight: u16) -> Vec<S
 }
 
 /// The languages whose UI cascades [`language_fallback_sources`] consults.
-fn ui_cascade_languages() -> Vec<String> {
+fn ui_cascade_languages(language: Option<TextLanguage>) -> Vec<String> {
     let mut languages: Vec<String> = Vec::new();
+    if let Some(language) = language {
+        languages.push(cjk_language_tag(language).to_string());
+    }
     if let Some(preferred) = CFLocale::preferred_languages() {
         // SAFETY: `CFLocaleCopyPreferredLanguages` is documented to return an
         // array of `CFString` language identifiers.
@@ -421,6 +433,16 @@ fn ui_cascade_languages() -> Vec<String> {
         }
     }
     languages
+}
+
+/// Returns the most specific UI-cascade tag available for a supported CJK
+/// language hint.
+fn cjk_language_tag(language: TextLanguage) -> &'static str {
+    match language {
+        TextLanguage::Chinese => "zh-Hans",
+        TextLanguage::Japanese => "ja",
+        TextLanguage::Korean => "ko",
+    }
 }
 
 /// Appends `font` to `sources` unless an equivalent entry is already present.
@@ -643,8 +665,8 @@ mod tests {
     #[test]
     fn a_bold_cascade_proposes_a_face_the_regular_one_does_not() {
         let required = ['你', '好'];
-        let regular = language_fallback_sources(&required, REGULAR_WEIGHT);
-        let bold = language_fallback_sources(&required, 700);
+        let regular = language_fallback_sources(&required, None, REGULAR_WEIGHT);
+        let bold = language_fallback_sources(&required, None, 700);
         assert!(!bold.is_empty(), "a bold cascade must still name faces");
 
         let names = |sources: &[SystemFaceSource]| -> Vec<String> {
@@ -718,23 +740,18 @@ mod tests {
     /// Reports whether any face of `data` has readable glyph data for all of
     /// `required` — the acceptance rule the fallback resolver applies.
     fn any_face_decodes_all(data: &[u8], required: &[char]) -> bool {
-        use skrifa::MetadataProvider;
-        use skrifa::instance::{LocationRef, Size};
-
-        let face_count = match skrifa::raw::FileRef::new(data) {
-            Ok(skrifa::raw::FileRef::Collection(collection)) => collection.len(),
-            Ok(skrifa::raw::FileRef::Font(_)) => 1,
-            Err(_) => 0,
-        };
-        (0..face_count).any(|index| {
-            skrifa::FontRef::from_index(data, index).is_ok_and(|face| {
-                let metrics = face.glyph_metrics(Size::unscaled(), LocationRef::default());
-                required.iter().all(|codepoint| {
-                    face.charmap()
-                        .map(*codepoint)
-                        .and_then(|glyph_id| metrics.bounds(glyph_id))
-                        .is_some()
-                })
+        (0..64).any(|index| {
+            let Ok(face) = crate::text_pipeline::aimer_font::SfntFace::from_bytes(data, index)
+            else {
+                return false;
+            };
+            required.iter().all(|codepoint| {
+                let Ok(Some(glyph_id)) = face.glyph_index(*codepoint as u32) else {
+                    return false;
+                };
+                glyph_id != 0
+                    && (face.outline(glyph_id).ok().flatten().is_some()
+                        || face.cff_outline(glyph_id).ok().flatten().is_some())
             })
         })
     }
@@ -745,7 +762,7 @@ mod tests {
     #[test]
     fn language_fallback_sources_offer_a_decodable_simplified_han_face() {
         let required = ['吗', '顶', '这'];
-        let sources = language_fallback_sources(&required, REGULAR_WEIGHT);
+        let sources = language_fallback_sources(&required, None, REGULAR_WEIGHT);
         assert!(!sources.is_empty(), "no cascade proposed any face");
         assert!(
             sources.iter().any(|source| match source {
@@ -759,7 +776,31 @@ mod tests {
 
     #[test]
     fn language_fallback_sources_reject_an_empty_requirement() {
-        assert!(language_fallback_sources(&[], REGULAR_WEIGHT).is_empty());
+        assert!(language_fallback_sources(&[], None, REGULAR_WEIGHT).is_empty());
+    }
+
+    #[test]
+    fn an_explicit_cjk_language_heads_its_ui_cascade() {
+        use crate::font::TextLanguage;
+
+        assert_eq!(
+            ui_cascade_languages(Some(TextLanguage::Chinese))
+                .first()
+                .map(String::as_str),
+            Some("zh-Hans")
+        );
+        assert_eq!(
+            ui_cascade_languages(Some(TextLanguage::Japanese))
+                .first()
+                .map(String::as_str),
+            Some("ja")
+        );
+        assert_eq!(
+            ui_cascade_languages(Some(TextLanguage::Korean))
+                .first()
+                .map(String::as_str),
+            Some("ko")
+        );
     }
 
     // The extraction path for faces without a readable file behind them:
@@ -767,22 +808,19 @@ mod tests {
     // crate parses and decodes glyphs from.
     #[test]
     fn font_table_data_reassembles_a_decodable_font() {
-        use skrifa::MetadataProvider;
-        use skrifa::instance::{LocationRef, Size};
-
         let name = CFString::from_str("Helvetica");
         // SAFETY: a null matrix requests the identity transform.
         let font = unsafe { CTFont::with_name(&name, LOOKUP_FONT_SIZE, std::ptr::null()) };
         let data = font_table_data(&font).expect("system fonts expose their tables");
-        let face = skrifa::FontRef::new(&data).expect("the reassembled sfnt must parse");
+        let face = crate::text_pipeline::aimer_font::SfntFace::from_bytes(&data, 0)
+            .expect("the reassembled sfnt must parse");
         let glyph_id = face
-            .charmap()
-            .map('A')
+            .glyph_index('A' as u32)
+            .expect("helvetica cmap must parse")
             .expect("helvetica maps basic latin");
         assert!(
-            face.glyph_metrics(Size::unscaled(), LocationRef::default())
-                .bounds(glyph_id)
-                .is_some(),
+            face.outline(glyph_id).ok().flatten().is_some()
+                || face.cff_outline(glyph_id).ok().flatten().is_some(),
             "the reassembled glyph data must decode"
         );
     }

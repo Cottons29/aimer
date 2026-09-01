@@ -22,6 +22,7 @@ use aimer_cupid::AntiAlias;
 use aimer_cupid::font::{FontFamily, FontStyle};
 use aimer_cupid::text_pipeline::{TextDrawRequest, TextOverflowMode, TextPipelineV2};
 use aimer_cupid::text_layout::TextHorizontalAlign;
+use aimer_cupid::utilities::Rgba8;
 use aimer_utils::SyncFuture;
 
 const SURFACE_WIDTH: u32 = 1200;
@@ -70,11 +71,12 @@ fn document(line_count: usize, scroll_offset: f32) -> Vec<TextDrawRequest> {
                 format!("{index:>4} {}", SAMPLE_LINES[index % SAMPLE_LINES.len()]).as_str(),
             ),
             font_size: FONT_SIZE,
-            color: [0.1, 0.1, 0.1, 1.0],
+            color: Rgba8::from_unorm([0.1, 0.1, 0.1, 1.0]),
             bounds_width: SURFACE_WIDTH as f32 - 32.0,
             bounds_height: LINE_HEIGHT,
             overflow: TextOverflowMode::Clip,
             horizontal_align: TextHorizontalAlign::Left,
+            writing_mode: aimer_cupid::text_layout::TextWritingMode::HorizontalTb,
             line_height: None,
             shadow: None,
             draw_glyphs: true,

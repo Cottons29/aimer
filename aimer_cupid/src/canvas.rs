@@ -10,7 +10,7 @@ use crate::text_pipeline::TextOverflowMode;
 use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
 use crate::text_pipeline::text_layout::line_break_opportunities;
 use crate::text_pipeline::TextShadowRequest;
-use crate::utilities::{Color, Rect, TextureId, Vec2d};
+use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TextMetrics {
@@ -579,6 +579,41 @@ impl CupidCanvas {
         )
     }
 
+    /// Shapes and lays out a source-aware Aimer paragraph for interaction.
+    ///
+    /// This CPU-side view is intended for caret, hit-test, and selection
+    /// consumers that record text through [`CupidCanvas`]. The renderer keeps
+    /// the same result in [`TextPipelineV2`](crate::text_pipeline::TextPipelineV2)
+    /// when it prepares the draw list.
+    #[allow(clippy::too_many_arguments)]
+    pub fn layout_text_styled(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> crate::text_layout::TextInteractionLayout {
+        let language = self.text_language();
+        let mut rasterizer = self.rasterizer.borrow_mut();
+        let shaped = crate::text_layout::shape_text_styled(
+            &mut rasterizer,
+            text,
+            font_size,
+            font_family,
+            FontWeight::Value(u32::from(font_weight)),
+            font_style,
+            language,
+        );
+        crate::text_layout::layout_shaped_text_with_interaction(
+            &shaped,
+            0.0,
+            shaped.ascent,
+            max_width,
+        )
+    }
+
     pub fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics {
         self.measure_text_metrics_styled(
             text,
@@ -930,6 +965,12 @@ impl CupidCanvas {
         let transform = self.draw_list.borrow();
         let t = transform.current_transform();
         (t.cols[2][0], t.cols[2][1])
+    }
+
+    /// Returns the current local-to-physical canvas transform.
+    #[inline]
+    pub fn get_transform(&self) -> Mat3 {
+        *self.draw_list.borrow().current_transform()
     }
 
     pub fn set_alpha(&self, alpha: f32) {

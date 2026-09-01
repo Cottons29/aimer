@@ -1,0 +1,30 @@
+[package]
+name = "aimer_cupid-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+autobins = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+aimer_cupid = { path = ".." }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "sfnt_directory"
+path = "fuzz_targets/sfnt_directory.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "font_outlines"
+path = "fuzz_targets/font_outlines.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

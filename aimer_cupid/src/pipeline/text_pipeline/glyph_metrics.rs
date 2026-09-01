@@ -64,6 +64,17 @@ pub(super) fn cached(key: GlyphKey) -> Option<GlyphMetrics> {
     METRICS.read().ok()?.get(&key).copied()
 }
 
+/// Copies the metrics for `keys` in input order while taking one shared-cache
+/// read lock for the complete batch. Missing entries remain `None`.
+pub(super) fn cached_many(keys: &[GlyphKey], output: &mut Vec<Option<GlyphMetrics>>) {
+    output.clear();
+    let Ok(metrics) = METRICS.read() else {
+        output.resize(keys.len(), None);
+        return;
+    };
+    output.extend(keys.iter().map(|key| metrics.get(key).copied()));
+}
+
 /// Publishes the metrics of a freshly rasterized glyph for every worker and
 /// every later frame to reuse.
 pub(super) fn store(key: GlyphKey, glyph: &RasterizedGlyph) {
@@ -114,6 +125,7 @@ mod tests {
             subpixel_x: 0,
             subpixel_y: 0,
             weight: 400,
+            variation_id: 0,
         };
 
         assert_eq!(cached(key), None);
@@ -131,6 +143,7 @@ mod tests {
             subpixel_x: 0,
             subpixel_y: 0,
             weight: 400,
+            variation_id: 0,
         };
         let other = GlyphKey {
             size_tenths: 240,
@@ -153,6 +166,7 @@ mod tests {
             subpixel_x: 0,
             subpixel_y: 0,
             weight: 400,
+            variation_id: 0,
         };
         let other = GlyphKey {
             font_id: 0xdead_0004,

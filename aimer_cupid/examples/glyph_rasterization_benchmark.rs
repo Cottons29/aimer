@@ -47,23 +47,34 @@ fn main() {
     for _ in 0..iterations {
         let mut rasterizer = GlyphRasterizer::new();
         let start = Instant::now();
+        let mut checksum = 0usize;
         for size in SIZES {
-            black_box(rasterizer.preload_text(black_box(&text), *size, None));
+            rasterizer.preload_text_into(black_box(&text), *size, None, |key, glyph| {
+                checksum = checksum
+                    .wrapping_add(usize::from(key.glyph_id))
+                    .wrapping_add(glyph.bitmap.len())
+                    .wrapping_add(glyph.width as usize)
+                    .wrapping_add(glyph.height as usize);
+            });
         }
+        black_box(checksum);
         runs += start.elapsed();
     }
 
+    let mut key_total = Duration::ZERO;
     let mut total = Duration::ZERO;
     for _ in 0..iterations {
         // A rasterizer per iteration is a cold glyph cache, which is the
         // situation being measured. Its construction is outside the timing.
         let mut rasterizer = GlyphRasterizer::new();
         let mut keys = Vec::with_capacity(glyphs_per_pass);
+        let key_start = Instant::now();
         for size in SIZES {
             for codepoint in &charset {
                 keys.push((rasterizer.glyph_key_for_codepoint(*codepoint, *size), *size));
             }
         }
+        key_total += key_start.elapsed();
 
         let start = Instant::now();
         for (key, size) in &keys {
@@ -75,15 +86,21 @@ fn main() {
     let glyphs = u32::try_from(glyphs_per_pass).expect("glyph count must fit in u32");
     let one_at_a_time = average(total, iterations);
     let in_runs = average(runs, iterations);
+    let key_preparation = average(key_total, iterations);
 
+    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
     println!(
-        "cold glyph rasterization: {glyphs_per_pass} distinct glyphs, {iterations} iterations"
+        "{profile} cold glyph rasterization: {glyphs_per_pass} distinct glyphs, {iterations} iterations"
     );
     println!(
         "one glyph at a time: {one_at_a_time:?} ({:?} per glyph)",
         one_at_a_time / glyphs
     );
     println!("in runs:             {in_runs:?} ({:?} per glyph)", in_runs / glyphs);
+    println!(
+        "key preparation:     {key_preparation:?} ({:?} per glyph)",
+        key_preparation / glyphs
+    );
     println!(
         "saved:               {:.0}%",
         100.0 * (1.0 - in_runs.as_secs_f64() / one_at_a_time.as_secs_f64())

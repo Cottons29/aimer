@@ -6,6 +6,14 @@
 //! normal style is the deterministic fallback when the requested style is not
 //! registered. Cupid retains the selected family where it has glyphs and uses
 //! its existing Unicode fallback chain only for missing glyphs.
+//!
+//! On Apple without `apple-core-text`, the portable path intentionally relies
+//! on bundled faces and bytes supplied through [`FontRegistration`] rather than
+//! system fallback. Apple system files can contain private `hvgl` outline or
+//! `emjc` color data that the owned reader does not interpret; registering such
+//! a file does not make it portable. Applications targeting that profile should
+//! bundle a licensed, readable replacement for every required script, weight,
+//! style, and color format.
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -137,11 +145,29 @@ impl Default for FontFamily {
     }
 }
 
+/// Returns the built-in monospace face used by Cupid's deterministic generic
+/// monospace family.
+///
+/// Applications that need additional scripts should bundle and register their
+/// own licensed font bytes with [`FontRegistry::register`].
 #[doc(hidden)]
 pub const fn bundled_monospace_bytes() -> &'static [u8] {
     include_bytes!("../fonts/JetBrainsMono-Regular.ttf")
 }
 
+/// Immutable application-owned font bytes and the face metadata used to match
+/// them during shaping.
+///
+/// Provide TTF/OTF/TTC bytes from an application asset or from a checked-in
+/// bundled font. The bytes must expose
+/// the tables required by the active Aimer reader; Apple-private-only faces
+/// such as `hvgl`/`emjc` remain unsupported when `apple-core-text` is disabled.
+/// Register one variant for each weight and style the UI needs so fallback does
+/// not synthesize a mismatched stroke from an unrelated system face.
+///
+/// Registration copies the bytes into immutable shared storage. It is intended
+/// to happen before application startup; duplicate family/weight/style
+/// variants are rejected.
 #[derive(Clone, Copy)]
 pub struct FontRegistration<'a> {
     pub family: &'a str,
@@ -156,6 +182,11 @@ pub enum FontError {
     InvalidFont,
     ReservedFamily,
     DuplicateVariant {
+        family: FontFamily,
+        weight: u16,
+        style: FontStyle,
+    },
+    VariantNotFound {
         family: FontFamily,
         weight: u16,
         style: FontStyle,
@@ -178,6 +209,9 @@ impl Display for FontError {
                     formatter,
                     "font variant {weight}/{style:?} is already registered"
                 )
+            }
+            Self::VariantNotFound { weight, style, .. } => {
+                write!(formatter, "font variant {weight}/{style:?} is not registered")
             }
             Self::HandleCollision => formatter.write_str("font family or face handle collision"),
         }
@@ -202,6 +236,7 @@ struct RegistryState {
     family_names: HashMap<FontFamily, String>,
     faces: HashMap<FontFamily, Vec<RegisteredFontFace>>,
     face_owners: HashMap<u32, (FontFamily, u16, FontStyle)>,
+    revision: u64,
 }
 
 fn registry() -> &'static RwLock<RegistryState> {
@@ -251,6 +286,10 @@ fn style_distance(requested: FontStyle, candidate: FontStyle) -> u8 {
     }
 }
 
+fn font_bytes_are_valid(bytes: &[u8]) -> bool {
+    crate::pipeline::text_pipeline::aimer_font::validate_font(bytes).is_ok()
+}
+
 pub struct FontRegistry;
 
 impl FontRegistry {
@@ -260,9 +299,7 @@ impl FontRegistry {
     /// the same normalized family, numeric weight, and style twice is rejected.
     pub fn register(registration: FontRegistration<'_>) -> Result<FontFamily, FontError> {
         let family_name = normalize_family(registration.family)?;
-        if registration.bytes.is_empty()
-            || skrifa::FontRef::from_index(registration.bytes, 0).is_err()
-        {
+        if !font_bytes_are_valid(registration.bytes) {
             return Err(FontError::InvalidFont);
         }
 
@@ -311,7 +348,101 @@ impl FontRegistry {
                 weight,
                 style: registration.style,
             });
+        state.revision = state.revision.wrapping_add(1);
         Ok(family)
+    }
+
+    /// Replaces the bytes of one already-registered family variant.
+    ///
+    /// The family, numeric weight, style, and face id remain unchanged. A
+    /// rasterizer notices the registry revision and invalidates all data
+    /// derived from that id before it reads the replacement. This makes a
+    /// replacement safe for glyph keys that crossed a worker boundary while
+    /// preserving their stable identity.
+    pub fn replace(registration: FontRegistration<'_>) -> Result<FontFamily, FontError> {
+        let family_name = normalize_family(registration.family)?;
+        if !font_bytes_are_valid(registration.bytes) {
+            return Err(FontError::InvalidFont);
+        }
+
+        let family = family_handle(&family_name);
+        let weight = registration.weight.numeric();
+        let id = face_id(family, weight, registration.style);
+        let mut state = registry()
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        if let Some(existing_name) = state.family_names.get(&family)
+            && existing_name != &family_name
+        {
+            return Err(FontError::HandleCollision);
+        }
+        if let Some(owner) = state.face_owners.get(&id)
+            && *owner != (family, weight, registration.style)
+        {
+            return Err(FontError::HandleCollision);
+        }
+
+        let replaced = state
+            .faces
+            .get_mut(&family)
+            .and_then(|faces| {
+                faces
+                    .iter_mut()
+                    .find(|face| face.weight == weight && face.style == registration.style)
+            })
+            .map(|face| {
+                debug_assert_eq!(face.face_id, id);
+                face.bytes = Arc::from(registration.bytes);
+            });
+        if replaced.is_none() {
+            return Err(FontError::VariantNotFound {
+                family,
+                weight,
+                style: registration.style,
+            });
+        }
+        state.revision = state.revision.wrapping_add(1);
+        Ok(family)
+    }
+
+    /// Removes one registered family variant.
+    ///
+    /// The deterministic face id is no longer resolvable after removal. The
+    /// registry revision still advances when the variant existed, allowing
+    /// every live rasterizer to discard cached metrics, shaping data, and
+    /// bitmaps for the removed id. Removing the last variant also removes the
+    /// family name; registering it again later recreates the same family and
+    /// face handles.
+    pub fn remove(family: FontFamily, weight: FontWeight, style: FontStyle) -> bool {
+        let weight = weight.numeric();
+        let id = face_id(family, weight, style);
+        let mut state = registry()
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let remove_family = {
+            let Some(faces) = state.faces.get_mut(&family) else {
+                return false;
+            };
+            let Some(index) = faces
+                .iter()
+                .position(|face| face.weight == weight && face.style == style)
+            else {
+                return false;
+            };
+
+            faces.remove(index);
+            faces.is_empty()
+        };
+        state.face_owners.remove(&id);
+        if remove_family {
+            state.faces.remove(&family);
+            if let Some(name) = state.family_names.remove(&family) {
+                state.names.remove(&name);
+            }
+        }
+        state.revision = state.revision.wrapping_add(1);
+        true
     }
 
     pub fn family(name: &str) -> Option<FontFamily> {
@@ -354,16 +485,25 @@ impl FontRegistry {
 
     #[doc(hidden)]
     pub fn faces() -> Vec<RegisteredFontFace> {
-        let mut faces: Vec<_> = registry()
+        Self::faces_with_revision().0
+    }
+
+    /// Returns the current registration revision.
+    pub(crate) fn revision() -> u64 {
+        registry()
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .faces
-            .values()
-            .flatten()
-            .cloned()
-            .collect();
+            .revision
+    }
+
+    /// Returns a deterministic face snapshot together with its revision.
+    pub(crate) fn faces_with_revision() -> (Vec<RegisteredFontFace>, u64) {
+        let state = registry()
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut faces: Vec<_> = state.faces.values().flatten().cloned().collect();
         faces.sort_by_key(|face| face.face_id);
-        faces
+        (faces, state.revision)
     }
 }
 
@@ -372,25 +512,48 @@ mod tests {
     use super::*;
 
     const TEST_FONT: &[u8] = include_bytes!("../fonts/JetBrainsMono-Regular.ttf");
+    const REPLACEMENT_FONT: &[u8] = include_bytes!("../fonts/GoogleSans-Regular.ttf");
+
+    #[test]
+    fn checked_in_portable_replacement_fonts_have_owned_outline_data() {
+        let assets: [(&str, &[u8]); 3] = [
+            ("GoogleSans-Regular", include_bytes!("../fonts/GoogleSans-Regular.ttf")),
+            ("JetBrainsMono-Regular", include_bytes!("../fonts/JetBrainsMono-Regular.ttf")),
+            (
+                "NotoSansJP-VariableFont_wght",
+                include_bytes!("../fonts/NotoSansJP-VariableFont_wght.ttf"),
+            ),
+        ];
+
+        for (name, bytes) in assets {
+            assert!(font_bytes_are_valid(bytes), "bundled {name} face is not valid");
+            let face = crate::pipeline::text_pipeline::aimer_font::SfntFace::from_bytes(bytes, 0)
+                .unwrap_or_else(|error| panic!("bundled {name} face is not readable: {error:?}"));
+            assert!(
+                face.has_standard_outline(),
+                "bundled {name} face has no Aimer-readable outline"
+            );
+        }
+    }
 
     #[test]
     fn nearest_variant_prefers_style_then_weight_deterministically() {
         let family = FontRegistry::register(FontRegistration {
-            family: "aimer-font-nearest-test",
+            family: "owned-font-nearest-test",
             bytes: TEST_FONT,
             weight: FontWeight::Normal,
             style: FontStyle::Normal,
         })
         .unwrap();
         FontRegistry::register(FontRegistration {
-            family: "aimer-font-nearest-test",
+            family: "owned-font-nearest-test",
             bytes: TEST_FONT,
             weight: FontWeight::Bold,
             style: FontStyle::Normal,
         })
         .unwrap();
         FontRegistry::register(FontRegistration {
-            family: "aimer-font-nearest-test",
+            family: "owned-font-nearest-test",
             bytes: TEST_FONT,
             weight: FontWeight::Normal,
             style: FontStyle::Italic,
@@ -417,5 +580,114 @@ mod tests {
             (normal_style_fallback.weight, normal_style_fallback.style),
             (700, FontStyle::Normal)
         );
+    }
+
+    #[test]
+    fn replacing_a_variant_preserves_its_face_id() {
+        let family = FontRegistry::register(FontRegistration {
+            family: "owned-font-replace-test",
+            bytes: TEST_FONT,
+            weight: FontWeight::Normal,
+            style: FontStyle::Normal,
+        })
+        .expect("the original face should register");
+        let original = FontRegistry::resolve(family, FontWeight::Normal, FontStyle::Normal)
+            .expect("the original face should resolve");
+
+        assert_eq!(
+            FontRegistry::replace(FontRegistration {
+                family: "owned-font-replace-test",
+                bytes: REPLACEMENT_FONT,
+                weight: FontWeight::Normal,
+                style: FontStyle::Normal,
+            }),
+            Ok(family)
+        );
+
+        let replacement = FontRegistry::resolve(family, FontWeight::Normal, FontStyle::Normal)
+            .expect("the replacement face should resolve");
+        assert_eq!(replacement.face_id, original.face_id);
+        assert_ne!(replacement.bytes.as_ref(), original.bytes.as_ref());
+
+        assert!(FontRegistry::remove(family, FontWeight::Normal, FontStyle::Normal));
+    }
+
+    #[test]
+    fn removing_the_last_variant_removes_the_family() {
+        let family = FontRegistry::register(FontRegistration {
+            family: "owned-font-remove-test",
+            bytes: TEST_FONT,
+            weight: FontWeight::Normal,
+            style: FontStyle::Normal,
+        })
+        .expect("the face should register");
+
+        assert!(FontRegistry::remove(
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal
+        ));
+        assert!(FontRegistry::resolve(family, FontWeight::Normal, FontStyle::Normal).is_none());
+        assert!(FontRegistry::family("owned-font-remove-test").is_none());
+        assert!(!FontRegistry::remove(
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal
+        ));
+    }
+
+    #[test]
+    fn replacing_an_unknown_variant_is_rejected_without_mutating_the_family() {
+        let family = FontRegistry::register(FontRegistration {
+            family: "owned-font-missing-replacement-test",
+            bytes: TEST_FONT,
+            weight: FontWeight::Normal,
+            style: FontStyle::Normal,
+        })
+        .expect("the face should register");
+
+        let error = FontRegistry::replace(FontRegistration {
+            family: "owned-font-missing-replacement-test",
+            bytes: REPLACEMENT_FONT,
+            weight: FontWeight::Bold,
+            style: FontStyle::Normal,
+        })
+        .expect_err("a replacement must name an existing variant");
+        assert_eq!(
+            error,
+            FontError::VariantNotFound {
+                family,
+                weight: FontWeight::Bold.numeric(),
+                style: FontStyle::Normal,
+            }
+        );
+        assert_eq!(
+            FontRegistry::resolve(family, FontWeight::Normal, FontStyle::Normal)
+                .expect("the original variant should remain")
+                .bytes,
+            Arc::from(TEST_FONT)
+        );
+
+        assert!(FontRegistry::remove(
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal
+        ));
+    }
+
+    #[test]
+    fn aimer_font_registration_requires_scaling_metrics() {
+        let mut directory_only = vec![0_u8; 12];
+        directory_only[0..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+
+        let error = FontRegistry::register(FontRegistration {
+            family: "owned-font-missing-metrics-test",
+            bytes: &directory_only,
+            weight: FontWeight::Normal,
+            style: FontStyle::Normal,
+        })
+        .expect_err("a face without head/hhea/maxp metrics must be rejected");
+
+        assert_eq!(error, FontError::InvalidFont);
     }
 }

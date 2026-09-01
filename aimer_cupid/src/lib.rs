@@ -18,6 +18,18 @@ pub use pipeline::{AntiAlias, image_pipeline, rect_pipeline, svg_pipeline, text_
 
 pub use crate::text_pipeline::{glyph_atlas, glyph_rasterizer, text_layout};
 
+/// Hidden cargo-fuzz entry point for the checked font reader.
+#[doc(hidden)]
+pub fn fuzz_aimer_font_directory(data: &[u8]) {
+    crate::pipeline::text_pipeline::aimer_font::fuzz_directory(data);
+}
+
+/// Hidden cargo-fuzz entry point for glyph and outline decoding.
+#[doc(hidden)]
+pub fn fuzz_aimer_font_outlines(data: &[u8]) {
+    crate::pipeline::text_pipeline::aimer_font::fuzz_outlines(data);
+}
+
 #[cfg(test)]
 mod deferred_frame_uploads {
     //! Pixel-level regression guard for Cupid's per-frame instance uploads.

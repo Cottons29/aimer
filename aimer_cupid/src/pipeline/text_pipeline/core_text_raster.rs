@@ -40,6 +40,9 @@
 //! rasterizer.
 //! Everything downstream — the atlas, the bitmap cache, the metrics store —
 //! is unaware that the pixels came from the platform.
+//!
+//! This module is compiled only with the `apple-core-text` compatibility
+//! feature. It is deliberately outside the portable Aimer rasterizer.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -55,10 +58,7 @@ use objc2_core_text::{
     kCTFontNameAttribute, kCTFontVariationAxisDefaultValueKey, kCTFontVariationAxisIdentifierKey,
     kCTFontVariationAxisMaximumValueKey, kCTFontVariationAxisMinimumValueKey,
 };
-use skrifa::MetadataProvider;
-use skrifa::string::StringId;
-
-use crate::text_pipeline::font_resolver::{font_ref, mapped_font_file};
+use crate::text_pipeline::font_resolver::mapped_font_file;
 use crate::text_pipeline::glyph_rasterizer::RasterizedGlyph;
 
 /// Point size used when only a yes/no answer about a glyph is needed.
@@ -564,10 +564,11 @@ fn descriptor_name(descriptor: &CTFontDescriptor) -> Option<String> {
 /// Returns the PostScript name recorded in the font file itself.
 fn postscript_name(path: &Path, collection_index: u32) -> Option<String> {
     let data = mapped_font_file(path)?;
-    let face = font_ref(data.as_ref(), collection_index)?;
-    face.localized_strings(StringId::POSTSCRIPT_NAME)
-        .english_or_first()
-        .map(|name| name.chars().collect())
+    crate::text_pipeline::aimer_font::SfntFace::from_bytes(data.as_ref(), collection_index)
+        .ok()?
+        .name(6)
+        .ok()
+        .flatten()
 }
 
 #[cfg(test)]
@@ -584,13 +585,13 @@ mod tests {
             .into_iter()
             .find_map(|path| {
                 let data = mapped_font_file(&path)?;
-                let count = match skrifa::raw::FileRef::new(data.as_ref()).ok()? {
-                    skrifa::raw::FileRef::Collection(collection) => collection.len(),
-                    skrifa::raw::FileRef::Font(_) => 1,
-                };
-                (0..count).find_map(|index| {
-                    let face = font_ref(data.as_ref(), index)?;
-                    let glyph_id = face.charmap().map('吗')?.to_u32() as u16;
+                (0..64).find_map(|index| {
+                    let face = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
+                        data.as_ref(),
+                        index,
+                    )
+                    .ok()?;
+                    let glyph_id = face.glyph_index('吗' as u32).ok().flatten()?;
                     (glyph_id != 0).then_some((path.clone(), index, glyph_id))
                 })
             })
@@ -783,8 +784,12 @@ mod tests {
             .next()
             .expect("emoji resolve to a font file");
         let data = mapped_font_file(&path).expect("the emoji file is readable");
-        let face = font_ref(data.as_ref(), 0).expect("the emoji file holds a face");
-        let glyph_id = face.charmap().map('😀').expect("the face maps the emoji").to_u32() as u16;
+        let face = crate::text_pipeline::aimer_font::SfntFace::from_bytes(data.as_ref(), 0)
+            .expect("the emoji file holds a face");
+        let glyph_id = face
+            .glyph_index('😀' as u32)
+            .expect("the emoji cmap should parse")
+            .expect("the face maps the emoji");
 
         let glyph = rasterize_glyph(&path, 0, glyph_id, 32.0, NORMAL_TEXT_WEIGHT, true, 32.0)
             .expect("the platform must draw color emoji");

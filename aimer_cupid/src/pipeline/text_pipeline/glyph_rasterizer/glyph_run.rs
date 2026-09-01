@@ -18,7 +18,7 @@ use super::GlyphKey;
 /// The invariant every consumer relies on: `keys` is non-empty, and every key
 /// in it names the same `font_id` and is drawn at `font_size`. That is what
 /// makes one resolved face and one scaler enough for the whole run.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct GlyphRun {
     pub(crate) font_size: f32,
     pub(crate) keys: Vec<GlyphKey>,
@@ -39,6 +39,12 @@ impl GlyphRun {
 /// worker pool to spread a freshly scrolled paragraph or code block across its
 /// threads. Raising this trades parallelism for a saving that is already spent.
 pub(crate) const MAX_GLYPHS_PER_RUN: usize = 32;
+/// Maximum sequential batch size used by the synchronous preload path.
+///
+/// Unlike worker preparation, this path does not need to preserve parallel
+/// work stealing. A larger batch amortizes face lookup and cache insertion
+/// overhead while the worker-facing limit above keeps parallel jobs balanced.
+pub(crate) const SEQUENTIAL_MAX_GLYPHS_PER_RUN: usize = 128;
 
 /// Groups `glyphs` into the runs a worker rasterizes.
 ///

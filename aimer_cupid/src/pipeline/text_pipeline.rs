@@ -1,20 +1,34 @@
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(all(
+    any(target_os = "ios", target_os = "macos"),
+    feature = "apple-core-text"
+))]
 pub(crate) mod apple_fonts;
 mod cache_key;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(all(
+    any(target_os = "ios", target_os = "macos"),
+    feature = "apple-core-text"
+))]
 pub(crate) mod core_text_raster;
+pub(crate) mod aimer_font;
 mod deferred_preparation;
 mod font_resolver;
 pub mod glyph_atlas;
 mod glyph_metrics;
-mod glyph_outline;
 pub mod glyph_rasterizer;
 mod layout_cache;
 mod preparation_batch;
 pub(crate) mod system_fallback;
+mod unicode_script;
 pub mod text_layout;
+pub use self::text_layout::{TextHorizontalAlign, TextWritingMode};
+#[cfg(test)]
+mod phase0_baseline;
+#[cfg(test)]
+mod phase6_verification;
 
+use std::ops::Range;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use hashbrown::{HashMap, HashSet};
 
@@ -25,7 +39,8 @@ use crate::font::{FontFamily, FontStyle, FontWeight, TextLanguage};
 use crate::pipeline::frame_upload::FrameUpload;
 use crate::pipeline::image_pipeline::InstanceBufferPolicy;
 use crate::text_pipeline::cache_key::{
-    LayoutCacheKey, LayoutInput, ShapingCacheKey, ShapingInput, span_layout_keys,
+    LayoutCacheKey, LayoutInput, OwnedLayoutInput, ShapingCacheKey, ShapingInput,
+    SpanLayoutKeys, span_layout_keys_with_writing_mode,
 };
 use crate::text_pipeline::deferred_preparation::{
     PREPARATION_BUDGET, PREPARATION_CHUNK, PreparationBudget, prepare_ahead_of_view,
@@ -34,14 +49,17 @@ use crate::text_pipeline::deferred_preparation::{
 use crate::text_pipeline::font_resolver::warm_fallbacks_in_background;
 use crate::text_pipeline::glyph_atlas::{BatchCapacityPlan, ColorGlyphAtlas, GlyphAtlas};
 use crate::text_pipeline::glyph_rasterizer::{
-    BOLD_WEIGHT_THRESHOLD, GlyphKey, GlyphPreparationContext, GlyphRasterizer, glyph_runs,
+    GlyphKey, GlyphPreparationContext, GlyphRasterizer, glyph_runs,
 };
 use crate::text_pipeline::layout_cache::LayoutCache;
-use crate::text_pipeline::preparation_batch::{BatchExecutor, PreparationBatch};
+use crate::text_pipeline::preparation_batch::{BatchExecutor, IndexedJob, PreparationBatch};
 use crate::text_pipeline::text_layout::{
-    ShapedText, TextHorizontalAlign, layout_shaped_text, line_alignment_offsets,
-    positioned_line_widths, prepare_shaped_text, shape_text_styled,
+    ShapedText, layout_shaped_text_result,
+    layout_shaped_text_result_with_bounds, line_alignment_offsets, positioned_line_widths,
+    prepare_shaped_text_with_writing_mode, shape_text_styled,
 };
+use crate::utilities::Rgba8;
+use crate::text_pipeline::text_layout::TextInteractionLayout;
 
 /// Per-instance data for one glyph quad.
 #[repr(C)]
@@ -50,7 +68,7 @@ struct GlyphInstance {
     position: [f32; 2],
     size: [f32; 2],
     uv_rect: [f32; 4],
-    color: [f32; 4],
+    color: Rgba8,
     /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
     clip_rect: [f32; 4],
     /// Border radius for the clip rect: [top-left, top-right, bottom-right,
@@ -211,9 +229,8 @@ fn shadow_intersects_clip(
 }
 
 #[inline]
-fn shadow_is_visible(color: [f32; 4]) -> bool {
-    color.get(3).copied().unwrap_or(0.0).is_finite()
-        && color.get(3).copied().unwrap_or(0.0) > 0.0
+fn shadow_is_visible(color: Rgba8) -> bool {
+    color.as_array()[3] > 0
 }
 
 #[inline]
@@ -233,7 +250,7 @@ impl GlyphInstance {
         0 => Float32x2,
         1 => Float32x2,
         2 => Float32x4,
-        3 => Float32x4,
+        3 => Unorm8x4,
         4 => Float32x4,
         5 => Float32x4,
         6 => Float32,
@@ -259,7 +276,7 @@ struct DecorationInstance {
     position: [f32; 2],
     /// Band size: [width, band_height].
     size: [f32; 2],
-    color: [f32; 4],
+    color: Rgba8,
     clip_rect: [f32; 4],
     clip_border_radius: [f32; 4],
     /// [style_id, thickness_px, period_px, band_height_px].
@@ -270,7 +287,7 @@ impl DecorationInstance {
     const ATTRIBS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
-        2 => Float32x4,
+        2 => Unorm8x4,
         3 => Float32x4,
         4 => Float32x4,
         5 => Float32x4,
@@ -303,7 +320,7 @@ pub struct TextDecorationDraw {
     pub period: f32,
     /// Style id, matching `aimer_style::TextDecorationStyle::id`.
     pub style: u32,
-    pub color: [f32; 4],
+    pub color: Rgba8,
     pub clip_rect: [f32; 4],
     pub clip_border_radius: [f32; 4],
 }
@@ -338,9 +355,10 @@ pub struct TextShadowRequest {
     /// Blur radius in physical pixels.
     pub blur: f32,
     /// RGBA paint color.
-    pub color: [f32; 4],
+    pub color: Rgba8,
 }
 
+#[derive(Clone)]
 pub struct TextDrawRequest {
     pub x: f32,
     pub y: f32,
@@ -348,11 +366,13 @@ pub struct TextDrawRequest {
     // list) is a cheap refcount bump rather than a fresh string allocation.
     pub text: Arc<str>,
     pub font_size: f32,
-    pub color: [f32; 4],
+    pub color: Rgba8,
     pub bounds_width: f32,
     pub bounds_height: f32,
     pub overflow: TextOverflowMode,
     pub horizontal_align: TextHorizontalAlign,
+    /// Writing mode for shaping and column/line placement.
+    pub writing_mode: TextWritingMode,
     pub line_height: Option<f32>,
     /// Optional glyph shadow painted before the foreground run.
     pub shadow: Option<TextShadowRequest>,
@@ -381,7 +401,7 @@ pub struct TextDrawRequest {
 pub struct RichTextSpan {
     pub text: Arc<str>,
     pub font_size: Option<f32>,
-    pub color: Option<[f32; 4]>,
+    pub color: Option<Rgba8>,
     pub font_weight: Option<u16>,
     pub italic: Option<bool>,
 }
@@ -397,7 +417,7 @@ impl RichTextSpan {
         }
     }
 
-    pub fn with_style(mut self, font_size: Option<f32>, color: Option<[f32; 4]>) -> Self {
+    pub fn with_style(mut self, font_size: Option<f32>, color: Option<Rgba8>) -> Self {
         self.font_size = font_size;
         self.color = color;
         self
@@ -425,6 +445,220 @@ struct TextRequestRange {
     color_end: u32,
 }
 
+/// Exact inputs that produced the retained instance lists.
+///
+/// A fingerprint alone would make a hash collision observable as stale text,
+/// so the warm-frame gate keeps the small request snapshot and compares every
+/// render-affecting field before skipping preparation. The snapshot owns only
+/// `Arc` text handles and is replaced when a frame actually changes.
+struct PreparedFrameCache {
+    width: u32,
+    height: u32,
+    is_srgb: bool,
+    atlas_generation: u64,
+    color_atlas_generation: u64,
+    requests: Vec<TextDrawRequest>,
+    decorations: Vec<TextDecorationDraw>,
+}
+
+impl PreparedFrameCache {
+    fn new(
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        atlas_generation: u64,
+        color_atlas_generation: u64,
+        requests: &[TextDrawRequest],
+        decorations: &[TextDecorationDraw],
+    ) -> Self {
+        Self {
+            width,
+            height,
+            is_srgb,
+            atlas_generation,
+            color_atlas_generation,
+            requests: requests.to_vec(),
+            decorations: decorations.to_vec(),
+        }
+    }
+
+    fn matches(
+        &self,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        atlas_generation: u64,
+        color_atlas_generation: u64,
+        requests: &[TextDrawRequest],
+        decorations: &[TextDecorationDraw],
+    ) -> bool {
+        self.width == width
+            && self.height == height
+            && self.is_srgb == is_srgb
+            && self.atlas_generation == atlas_generation
+            && self.color_atlas_generation == color_atlas_generation
+            && self.requests.len() == requests.len()
+            && self
+                .requests
+                .iter()
+                .zip(requests)
+                .all(|(cached, current)| same_text_request(cached, current))
+            && self.decorations.len() == decorations.len()
+            && self
+                .decorations
+                .iter()
+                .zip(decorations)
+                .all(|(cached, current)| same_decoration(cached, current))
+    }
+}
+
+#[inline]
+fn same_f32(left: f32, right: f32) -> bool {
+    left.to_bits() == right.to_bits()
+}
+
+#[inline]
+fn same_f32_array<const N: usize>(left: &[f32; N], right: &[f32; N]) -> bool {
+    left.iter()
+        .zip(right)
+        .all(|(&left, &right)| same_f32(left, right))
+}
+
+#[inline]
+fn same_option_f32(left: Option<f32>, right: Option<f32>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => same_f32(left, right),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+#[inline]
+fn same_text(left: &Arc<str>, right: &Arc<str>) -> bool {
+    Arc::ptr_eq(left, right) || left.as_ref() == right.as_ref()
+}
+
+#[inline]
+fn same_shadow(left: Option<TextShadowRequest>, right: Option<TextShadowRequest>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            same_f32(left.offset_x, right.offset_x)
+                && same_f32(left.offset_y, right.offset_y)
+                && same_f32(left.blur, right.blur)
+                && left.color == right.color
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+#[inline]
+fn same_span(left: &RichTextSpan, right: &RichTextSpan) -> bool {
+    same_text(&left.text, &right.text)
+        && same_option_f32(left.font_size, right.font_size)
+        && left.color == right.color
+        && left.font_weight == right.font_weight
+        && left.italic == right.italic
+}
+
+#[inline]
+fn same_text_request(left: &TextDrawRequest, right: &TextDrawRequest) -> bool {
+    same_f32(left.x, right.x)
+        && same_f32(left.y, right.y)
+        && same_text(&left.text, &right.text)
+        && same_f32(left.font_size, right.font_size)
+        && left.color == right.color
+        && same_f32(left.bounds_width, right.bounds_width)
+        && same_f32(left.bounds_height, right.bounds_height)
+        && left.overflow == right.overflow
+        && left.horizontal_align == right.horizontal_align
+        && left.writing_mode == right.writing_mode
+        && same_option_f32(left.line_height, right.line_height)
+        && same_shadow(left.shadow, right.shadow)
+        && left.draw_glyphs == right.draw_glyphs
+        && left.font_family == right.font_family
+        && left.font_style == right.font_style
+        && left.font_weight == right.font_weight
+        && left.language == right.language
+        && left.italic == right.italic
+        && same_f32_array(&left.clip_rect, &right.clip_rect)
+        && same_f32_array(&left.clip_border_radius, &right.clip_border_radius)
+        && left.spans.len() == right.spans.len()
+        && left
+            .spans
+            .iter()
+            .zip(&right.spans)
+            .all(|(left, right)| same_span(left, right))
+}
+
+#[inline]
+fn same_decoration(left: &TextDecorationDraw, right: &TextDecorationDraw) -> bool {
+    same_f32(left.x, right.x)
+        && same_f32(left.y, right.y)
+        && same_f32(left.width, right.width)
+        && same_f32(left.band_height, right.band_height)
+        && same_f32(left.thickness, right.thickness)
+        && same_f32(left.period, right.period)
+        && left.style == right.style
+        && left.color == right.color
+        && same_f32_array(&left.clip_rect, &right.clip_rect)
+        && same_f32_array(&left.clip_border_radius, &right.clip_border_radius)
+}
+
+/// CPU wall-clock breakdown for one [`TextPipelineV2::prepare`] call.
+///
+/// This is a diagnostic snapshot for profiling repeated-cold preparation. It
+/// is collected only by [`TextPipelineV2::prepare_profiled`]; the normal
+/// [`TextPipelineV2::prepare`] path does not start timers or allocate a
+/// profile. Stage values are inclusive of the work named by the field, and
+/// can overlap with `instance_build` when atlas population happens while
+/// instances are being assembled.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TextPreparationProfile {
+    /// Total CPU time spent in the profiled prepare call.
+    pub total: Duration,
+    /// Whether the call reused the complete retained frame without rebuilding
+    /// layout, atlas plans, instances, or uploads.
+    pub cache_hit: bool,
+    /// Request culling and off-screen layout-miss analysis.
+    pub request_analysis: Duration,
+    /// All `SpanLayoutKeys` construction done by the call.
+    pub key_construction: Duration,
+    /// Owner-side fallback resolution, selected-face snapshot, and Aimer
+    /// prewarming.
+    pub fallback_resolution: Duration,
+    /// Immutable worker snapshot construction and face-state transfer.
+    pub font_snapshot: Duration,
+    /// Worker-side shaping and shaping-result merge.
+    pub shaping: Duration,
+    /// Combined fallback-resolution and shaping time.
+    pub fallback_and_shaping: Duration,
+    /// Layout-job construction, execution, and result merge.
+    pub layout: Duration,
+    /// Glyph-job construction, execution, result merge, and commit.
+    pub glyph_preparation: Duration,
+    /// Atlas capacity planning and plan application.
+    pub atlas_planning: Duration,
+    /// Rasterizer-to-atlas insertion work during instance assembly.
+    pub atlas_population: Duration,
+    /// Instance/decorations assembly, including atlas probes and population.
+    pub instance_build: Duration,
+    /// Atlas texture writes and any atlas upload staging.
+    pub atlas_upload: Duration,
+    /// Instance-buffer sizing and GPU buffer writes.
+    pub instance_upload: Duration,
+    /// Number of shaping jobs submitted by this call.
+    pub shaping_jobs: usize,
+    /// Number of layout jobs submitted by this call.
+    pub layout_jobs: usize,
+    /// Number of glyph runs submitted by this call.
+    pub glyph_jobs: usize,
+    /// Number of alpha-atlas descriptors planned by this call.
+    pub alpha_glyphs: usize,
+    /// Number of color-atlas descriptors planned by this call.
+    pub color_glyphs: usize,
+}
+
 pub struct TextPipelineV2 {
     rasterizer: GlyphRasterizer,
     executor: BatchExecutor,
@@ -435,7 +669,7 @@ pub struct TextPipelineV2 {
     postponed_preparation: bool,
     /// Alpha-coverage atlas (R8Unorm) for monochrome glyphs.
     atlas: GlyphAtlas,
-    /// RGBA8 atlas for sbix color emoji bitmaps (Apple Color Emoji et al.).
+    /// RGBA8 atlas for COLR layers and embedded color glyph bitmaps.
     color_atlas: ColorGlyphAtlas,
     pipeline: wgpu::RenderPipeline,
     /// Pipeline that samples the RGBA color atlas instead of the alpha atlas.
@@ -491,13 +725,33 @@ pub struct TextPipelineV2 {
     /// Width-independent shaping cache.  Resize may invalidate final positions
     /// for wrapping/ellipsis text, but shaped glyph ids and advances only
     /// depend on text content and font size.
-    shaping_cache: HashMap<ShapingCacheKey, ShapedText>,
+    shaping_cache: HashMap<ShapingCacheKey, Arc<ShapedText>>,
     /// Per-request glyph ranges recorded during `prepare` so the renderer can
     /// draw a single text request at its own z-position (interleaved with
     /// rects/images) instead of drawing all text in one final pass — the
     /// latter made text ignore z-order (e.g. a `Stack`'s upper layer could not
     /// cover text belonging to a lower layer).
     request_ranges: Vec<TextRequestRange>,
+    /// Reusable span-key storage for frames whose inputs changed without
+    /// changing the pipeline's request count.
+    visible_span_ranges: Vec<Range<usize>>,
+    visible_span_keys: Vec<SpanLayoutKeys>,
+    /// Reusable glyph-descriptor storage and the last descriptor set that was
+    /// submitted to each atlas planner. A changed position/color does not
+    /// alter atlas capacity, so planning can be skipped in that case.
+    alpha_glyph_descriptors: Vec<(GlyphKey, u32, u32)>,
+    color_glyph_descriptors: Vec<(GlyphKey, u32, u32)>,
+    planned_alpha_descriptors: Vec<(GlyphKey, u32, u32)>,
+    planned_color_descriptors: Vec<(GlyphKey, u32, u32)>,
+    seen_glyphs: HashSet<GlyphKey>,
+    planned_alpha_atlas_generation: u64,
+    planned_color_atlas_generation: u64,
+    /// Generation of the logical request/decorations state. It advances only
+    /// when an exact warm-frame comparison fails; the retained snapshot is
+    /// published after a complete successful prepare.
+    frame_generation: u64,
+    prepared_frame_generation: u64,
+    prepared_frame: Option<PreparedFrameCache>,
 }
 
 impl TextPipelineV2 {
@@ -748,6 +1002,18 @@ impl TextPipelineV2 {
             layout_cache: LayoutCache::new(Self::LAYOUT_CACHE_CAPACITY),
             shaping_cache: HashMap::new(),
             request_ranges: Vec::new(),
+            visible_span_ranges: Vec::new(),
+            visible_span_keys: Vec::new(),
+            alpha_glyph_descriptors: Vec::new(),
+            color_glyph_descriptors: Vec::new(),
+            planned_alpha_descriptors: Vec::new(),
+            planned_color_descriptors: Vec::new(),
+            seen_glyphs: HashSet::new(),
+            planned_alpha_atlas_generation: 0,
+            planned_color_atlas_generation: 0,
+            frame_generation: 0,
+            prepared_frame_generation: 0,
+            prepared_frame: None,
         }
     }
 
@@ -785,8 +1051,14 @@ impl TextPipelineV2 {
         text: &str,
         font_size: f32,
     ) {
-        for (key, glyph) in self.rasterizer.preload_text(text, font_size, None) {
-            self.insert_rasterized_glyph(
+        let mut uploaded_keys = Vec::with_capacity(text.chars().count());
+        let rasterizer = &mut self.rasterizer;
+        let atlas = &mut self.atlas;
+        let color_atlas = &mut self.color_atlas;
+        rasterizer.preload_text_into(text, font_size, None, |key, glyph| {
+            Self::insert_rasterized_glyph_into(
+                atlas,
+                color_atlas,
                 device,
                 queue,
                 key,
@@ -795,7 +1067,10 @@ impl TextPipelineV2 {
                 glyph.height,
                 &glyph.bitmap,
             );
-            self.rasterizer.release_bitmap(key);
+            uploaded_keys.push(key);
+        });
+        for key in uploaded_keys {
+            rasterizer.release_bitmap(key);
         }
 
         self.flush_atlas(device, queue);
@@ -805,14 +1080,15 @@ impl TextPipelineV2 {
     /// the space, digits, lowercase and uppercase ASCII letters, and the
     /// printable ASCII punctuation. Rasterizing this set fills the glyph atlas
     /// (the heavier of the two per-glyph costs) so even brand-new, never-seen
-    /// strings only pay HarfRust shaping and never glyph rasterization.
+    /// strings only pay Aimer shaping and never glyph rasterization.
     const COMMON_GLYPH_SET: &'static str = " 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
-    /// Insert a single rasterized glyph bitmap into the matching atlas,
-    /// skipping empty (zero-area) glyphs and glyphs already present.
+    /// Inserts a glyph into the matching atlas while allowing the rasterizer
+    /// and atlas fields to be borrowed independently during streamed preload.
     #[allow(clippy::too_many_arguments)]
-    fn insert_rasterized_glyph(
-        &mut self,
+    fn insert_rasterized_glyph_into(
+        atlas: &mut GlyphAtlas,
+        color_atlas: &mut ColorGlyphAtlas,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         key: GlyphKey,
@@ -825,13 +1101,11 @@ impl TextPipelineV2 {
             return;
         }
         if is_color {
-            if self.color_atlas.get(&key).is_none() {
-                self.color_atlas
-                    .get_or_insert(device, queue, key, width, height, bitmap);
+            if color_atlas.get(&key).is_none() {
+                color_atlas.get_or_insert(device, queue, key, width, height, bitmap);
             }
-        } else if self.atlas.get(&key).is_none() {
-            self.atlas
-                .get_or_insert(device, queue, key, width, height, bitmap);
+        } else if atlas.get(&key).is_none() {
+            atlas.get_or_insert(device, queue, key, width, height, bitmap);
         }
     }
 
@@ -839,8 +1113,8 @@ impl TextPipelineV2 {
     /// if either atlas texture was reallocated (generation changed). Shared by
     /// the warm-up paths and `preload_text`.
     fn flush_atlas(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.atlas.upload(queue);
-        self.color_atlas.upload(queue);
+        self.atlas.upload(device, queue);
+        self.color_atlas.upload(device, queue);
 
         let atlas_gen = self.atlas.generation();
         if atlas_gen != self.atlas_generation {
@@ -880,20 +1154,31 @@ impl TextPipelineV2 {
         font_sizes: &[f32],
     ) {
         for &font_size in font_sizes {
-            for (key, glyph) in self
-                .rasterizer
-                .preload_text(Self::COMMON_GLYPH_SET, font_size, None)
-            {
-                self.insert_rasterized_glyph(
-                    device,
-                    queue,
-                    key,
-                    glyph.is_color,
-                    glyph.width,
-                    glyph.height,
-                    &glyph.bitmap,
-                );
-                self.rasterizer.release_bitmap(key);
+            let mut uploaded_keys = Vec::with_capacity(Self::COMMON_GLYPH_SET.len());
+            let rasterizer = &mut self.rasterizer;
+            let atlas = &mut self.atlas;
+            let color_atlas = &mut self.color_atlas;
+            rasterizer.preload_text_into(
+                Self::COMMON_GLYPH_SET,
+                font_size,
+                None,
+                |key, glyph| {
+                    Self::insert_rasterized_glyph_into(
+                        atlas,
+                        color_atlas,
+                        device,
+                        queue,
+                        key,
+                        glyph.is_color,
+                        glyph.width,
+                        glyph.height,
+                        &glyph.bitmap,
+                    );
+                    uploaded_keys.push(key);
+                },
+            );
+            for key in uploaded_keys {
+                rasterizer.release_bitmap(key);
             }
         }
 
@@ -903,7 +1188,7 @@ impl TextPipelineV2 {
     /// Level 1 warm-up — pre-shape and lay out a known static string at the
     /// given font size, populating the shaping cache, the layout cache, and the
     /// glyph atlas. After this, the string renders on the ~1 ms cache-hit path
-    /// from the very first frame instead of paying the cold HarfRust
+    /// from the very first frame instead of paying the cold Aimer
     /// shaping + rasterization cost (the 27–86 ms spikes) on first paint.
     ///
     /// `layout_width` must match the wrapping width the string will be drawn
@@ -959,7 +1244,7 @@ impl TextPipelineV2 {
                 None,
             );
             let shaped_text = shaping_cache.entry(shaped_key).or_insert_with(|| {
-                shape_text_styled(
+                Arc::new(shape_text_styled(
                     rasterizer,
                     text,
                     font_size,
@@ -967,9 +1252,9 @@ impl TextPipelineV2 {
                     FontWeight::Normal,
                     FontStyle::Normal,
                     None,
-                )
+                ))
             });
-            let positioned = layout_shaped_text(shaped_text, 0.0, 0.0, layout_width);
+            let positioned = layout_shaped_text_result(shaped_text, 0.0, 0.0, layout_width);
             self.layout_cache.insert(cache_key.clone(), positioned);
         }
         let glyphs: Vec<(GlyphKey, f32)> = self
@@ -1037,11 +1322,25 @@ impl TextPipelineV2 {
                 .font_weight
                 .or(req.font_weight)
                 .unwrap_or(FontWeight::Normal.numeric());
-            let layout_width = match req.overflow {
-                TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
-                TextOverflowMode::Clip => 0.0,
+            let layout_width = if req.writing_mode.is_vertical() {
+                // Vertical-rl uses the width to anchor the rightmost column
+                // even when overflow is clip-only and no wrapping is done.
+                req.bounds_width
+            } else {
+                match req.overflow {
+                    TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
+                    TextOverflowMode::Clip => 0.0,
+                }
             };
-            let keys = span_layout_keys(
+            let layout_height = if req.writing_mode.is_vertical() {
+                match req.overflow {
+                    TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_height,
+                    TextOverflowMode::Clip => 0.0,
+                }
+            } else {
+                0.0
+            };
+            let keys = span_layout_keys_with_writing_mode(
                 &self.shaping_cache,
                 &span.text,
                 font_size,
@@ -1050,6 +1349,8 @@ impl TextPipelineV2 {
                 font_weight,
                 req.language,
                 layout_width,
+                layout_height,
+                req.writing_mode,
             );
             self.layout_cache
                 .peek_with_fallback(&keys.primary, keys.fallback.as_ref())
@@ -1063,11 +1364,16 @@ impl TextPipelineV2 {
     /// Returns `false` when a stage could not complete — a poisoned worker, a
     /// batch that lost a result — in which case nothing was committed for
     /// these requests and the caller must not assume their layouts exist.
-    fn prepare_content(&mut self, requests: &[&TextDrawRequest]) -> bool {
+    fn prepare_content(
+        &mut self,
+        requests: &[&TextDrawRequest],
+        mut profile: Option<&mut TextPreparationProfile>,
+    ) -> bool {
         let clear_shaping_cache = self.shaping_cache.len() > Self::SHAPING_CACHE_CAPACITY;
 
         let mut shaping_batch = PreparationBatch::new();
         let mut layout_batch = PreparationBatch::new();
+        let key_started = profile.is_some().then(Instant::now);
         for req in requests {
             let synthesized: [RichTextSpan; 1];
             let spans: &[RichTextSpan] = if req.spans.is_empty() {
@@ -1083,11 +1389,23 @@ impl TextPipelineV2 {
                     .font_weight
                     .or(req.font_weight)
                     .unwrap_or(FontWeight::Normal.numeric());
-                let layout_width = match req.overflow {
-                    TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
-                    TextOverflowMode::Clip => 0.0,
+                let layout_width = if req.writing_mode.is_vertical() {
+                    req.bounds_width
+                } else {
+                    match req.overflow {
+                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
+                        TextOverflowMode::Clip => 0.0,
+                    }
                 };
-                let keys = span_layout_keys(
+                let layout_height = if req.writing_mode.is_vertical() {
+                    match req.overflow {
+                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_height,
+                        TextOverflowMode::Clip => 0.0,
+                    }
+                } else {
+                    0.0
+                };
+                let keys = span_layout_keys_with_writing_mode(
                     &self.shaping_cache,
                     &span.text,
                     font_size,
@@ -1096,6 +1414,8 @@ impl TextPipelineV2 {
                     font_weight,
                     req.language,
                     layout_width,
+                    layout_height,
+                    req.writing_mode,
                 );
                 if self
                     .layout_cache
@@ -1115,6 +1435,7 @@ impl TextPipelineV2 {
                             font_style: req.font_style,
                             font_weight,
                             language: req.language,
+                            writing_mode: req.writing_mode,
                         },
                     );
                 }
@@ -1123,18 +1444,66 @@ impl TextPipelineV2 {
                     LayoutInput {
                         shaping_key: keys.shaping_key,
                         layout_width: keys.layout_width,
+                        layout_height: keys.layout_height,
                     },
                 );
             }
         }
 
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), key_started) {
+            profile.key_construction += started.elapsed();
+        }
+
+        let fallback_started = profile.is_some().then(Instant::now);
+        if !shaping_batch.jobs().is_empty() {
+            for req in requests {
+                let synthesized: [RichTextSpan; 1];
+                let spans: &[RichTextSpan] = if req.spans.is_empty() {
+                    synthesized = [RichTextSpan::new(req.text.clone())];
+                    &synthesized
+                } else {
+                    &req.spans
+                };
+                for span in spans {
+                    let font_size = span.font_size.unwrap_or(req.font_size);
+                    let font_weight = span
+                        .font_weight
+                        .or(req.font_weight)
+                        .unwrap_or(FontWeight::Normal.numeric());
+                    self.rasterizer.warm_fallbacks_for_text(
+                        &span.text,
+                        font_size,
+                        req.font_family,
+                        FontWeight::Value(u32::from(font_weight)),
+                        req.font_style,
+                        req.language,
+                    );
+                }
+            }
+        }
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), fallback_started) {
+            let fallback_elapsed = started.elapsed();
+            profile.fallback_resolution += fallback_elapsed;
+            profile.fallback_and_shaping += fallback_elapsed;
+        }
+
+        let snapshot_started = profile.is_some().then(Instant::now);
         let font_snapshot = self.rasterizer.font_snapshot();
-        let shaping_results = self.executor.execute_with_context(
-            shaping_batch.jobs(),
-            || GlyphPreparationContext::new(font_snapshot.clone()),
-            |context, job| {
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), snapshot_started) {
+            let snapshot_elapsed = started.elapsed();
+            profile.font_snapshot += snapshot_elapsed;
+            profile.fallback_and_shaping += snapshot_elapsed;
+        }
+
+        let shaping_started = profile.is_some().then(Instant::now);
+        let shaping_jobs = shaping_batch.into_shared_jobs();
+        let shaping_snapshot = font_snapshot.clone();
+        let shaping_results = self.executor.execute_persistent_with_context(
+            shaping_jobs.clone(),
+            move || GlyphPreparationContext::new(shaping_snapshot.clone()),
+            move |context, job| {
                 let input = &job.input;
-                Some(prepare_shaped_text(
+                Some(prepare_shaped_text_with_writing_mode(
                     context,
                     &input.text,
                     input.font_size,
@@ -1142,43 +1511,93 @@ impl TextPipelineV2 {
                     FontWeight::Value(u32::from(input.font_weight)),
                     input.font_style,
                     input.language,
+                    input.writing_mode,
                 ))
             },
         );
         let Ok(shaping_results) = shaping_results else {
             return false;
         };
-        let Ok(prepared_shaping) = shaping_batch.merge(shaping_results) else {
+        let Ok(prepared_shaping) = PreparationBatch::<ShapingCacheKey, ShapingInput>::merge_jobs(
+            &shaping_jobs,
+            shaping_results,
+        ) else {
             return false;
         };
-        let prepared_shaping = prepared_shaping.into_iter().collect::<HashMap<_, _>>();
+        let prepared_shaping = prepared_shaping
+            .into_iter()
+            .map(|(key, shaped)| (key, Arc::new(shaped)))
+            .collect::<HashMap<_, _>>();
+
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), shaping_started) {
+            let shaping_elapsed = started.elapsed();
+            profile.shaping += shaping_elapsed;
+            profile.fallback_and_shaping += shaping_elapsed;
+            profile.shaping_jobs += shaping_jobs.len();
+        }
 
         // Positioning is pure arithmetic over the shaped clusters — the pixel
-        // box of every glyph was baked in at shaping time — so the layout jobs
-        // need no rasterizer, no fonts and no per-worker context.
-        let layout_results = self.executor.execute_with_context(
-            layout_batch.jobs(),
-            || (),
-            |(), job| {
-                let input = &job.input;
-                let shaped = prepared_shaping.get(&input.shaping_key).or_else(|| {
+        // box of every glyph was baked in at shaping time — so layout jobs need
+        // no rasterizer or font context. Transfer an owned, Arc-backed shaped
+        // result to the persistent workers so the callback does not borrow the
+        // pipeline and cached shaping results are never copied.
+        let layout_started = profile.is_some().then(Instant::now);
+        let mut owned_layout_jobs = Vec::with_capacity(layout_batch.jobs().len());
+        for job in layout_batch.jobs() {
+            let shaped = prepared_shaping
+                .get(&job.input.shaping_key)
+                .or_else(|| {
                     (!clear_shaping_cache)
-                        .then(|| self.shaping_cache.get(&input.shaping_key))
+                        .then(|| self.shaping_cache.get(&job.input.shaping_key))
                         .flatten()
-                })?;
-                Some(layout_shaped_text(shaped, 0.0, 0.0, input.layout_width))
+                })
+                .cloned();
+            let Some(shaped) = shaped else {
+                return false;
+            };
+            owned_layout_jobs.push(IndexedJob::new(
+                job.order,
+                job.key.clone(),
+                OwnedLayoutInput {
+                    shaped,
+                    layout_width: job.input.layout_width,
+                    layout_height: job.input.layout_height,
+                },
+            ));
+        }
+        let owned_layout_jobs = Arc::<[_]>::from(owned_layout_jobs);
+        let layout_results = self.executor.execute_persistent_with_context(
+            owned_layout_jobs.clone(),
+            || (),
+            move |(), job| {
+                Some(layout_shaped_text_result_with_bounds(
+                    &job.input.shaped,
+                    0.0,
+                    0.0,
+                    job.input.layout_width,
+                    job.input.layout_height,
+                ))
             },
         );
         let Ok(layout_results) = layout_results else {
             return false;
         };
-        let Ok(prepared_layouts) = layout_batch.merge(layout_results) else {
+        let Ok(prepared_layouts) = PreparationBatch::<LayoutCacheKey, OwnedLayoutInput>::merge_jobs(
+            &owned_layout_jobs,
+            layout_results,
+        ) else {
             return false;
         };
         let prepared_layouts = prepared_layouts.into_iter().collect::<HashMap<_, _>>();
 
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), layout_started) {
+            profile.layout += started.elapsed();
+            profile.layout_jobs += owned_layout_jobs.len();
+        }
+
         let mut fresh_glyphs = Vec::new();
         let mut queued_glyphs = HashSet::new();
+        let glyph_key_started = profile.is_some().then(Instant::now);
         for req in requests {
             let synthesized: [RichTextSpan; 1];
             let spans: &[RichTextSpan] = if req.spans.is_empty() {
@@ -1194,11 +1613,23 @@ impl TextPipelineV2 {
                     .font_weight
                     .or(req.font_weight)
                     .unwrap_or(FontWeight::Normal.numeric());
-                let layout_width = match req.overflow {
-                    TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
-                    TextOverflowMode::Clip => 0.0,
+                let layout_width = if req.writing_mode.is_vertical() {
+                    req.bounds_width
+                } else {
+                    match req.overflow {
+                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
+                        TextOverflowMode::Clip => 0.0,
+                    }
                 };
-                let keys = span_layout_keys(
+                let layout_height = if req.writing_mode.is_vertical() {
+                    match req.overflow {
+                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_height,
+                        TextOverflowMode::Clip => 0.0,
+                    }
+                } else {
+                    0.0
+                };
+                let keys = span_layout_keys_with_writing_mode(
                     &self.shaping_cache,
                     &span.text,
                     font_size,
@@ -1207,10 +1638,12 @@ impl TextPipelineV2 {
                     font_weight,
                     req.language,
                     layout_width,
+                    layout_height,
+                    req.writing_mode,
                 );
                 let Some(positioned) = prepared_layouts
                     .get(&keys.primary)
-                    .map(Vec::as_slice)
+                    .map(|layout| layout.glyphs.as_slice())
                     .or_else(|| {
                         self.layout_cache
                             .peek_with_fallback(&keys.primary, keys.fallback.as_ref())
@@ -1232,25 +1665,31 @@ impl TextPipelineV2 {
             }
         }
 
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), glyph_key_started) {
+            profile.key_construction += started.elapsed();
+        }
+
         // Glyphs are prepared in runs sharing a face and a size, so the work
         // that belongs to the face — mapping the file, parsing its tables,
         // building the scaler and reading the metrics — is done once per run
         // instead of once per glyph. The runs are bounded, so a page of one
         // face at one size still spreads across the workers.
+        let glyph_started = profile.is_some().then(Instant::now);
         let mut glyph_batch = PreparationBatch::new();
         for (order, run) in glyph_runs(fresh_glyphs).into_iter().enumerate() {
             glyph_batch.push(order, run);
         }
 
-        let glyph_results = self.executor.execute_with_context(
-            glyph_batch.jobs(),
-            || GlyphPreparationContext::new(font_snapshot.clone()),
-            |context, job| Some(context.prepare_glyph_run(&job.input)),
+        let glyph_jobs = glyph_batch.into_shared_jobs();
+        let glyph_results = self.executor.execute_persistent_with_context(
+            glyph_jobs.clone(),
+            move || GlyphPreparationContext::new(font_snapshot.clone()),
+            move |context, job| Some(context.prepare_glyph_run(&job.input)),
         );
         let Ok(glyph_results) = glyph_results else {
             return false;
         };
-        let Ok(prepared_glyphs) = glyph_batch.merge(glyph_results) else {
+        let Ok(prepared_glyphs) = PreparationBatch::merge_jobs(&glyph_jobs, glyph_results) else {
             return false;
         };
 
@@ -1263,6 +1702,11 @@ impl TextPipelineV2 {
             for (key, glyph) in glyphs {
                 self.rasterizer.commit_prepared_glyph(key, glyph);
             }
+        }
+
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), glyph_started) {
+            profile.glyph_preparation += started.elapsed();
+            profile.glyph_jobs += glyph_jobs.len();
         }
 
         true
@@ -1279,7 +1723,89 @@ impl TextPipelineV2 {
         requests: &[TextDrawRequest],
         decorations: &[TextDecorationDraw],
     ) {
+        self.prepare_inner(
+            device,
+            queue,
+            width,
+            height,
+            is_srgb,
+            requests,
+            decorations,
+            None,
+        );
+    }
+
+    /// Runs [`prepare`](Self::prepare) and returns a CPU-stage timing snapshot.
+    ///
+    /// This method is intended for diagnostics and benchmark binaries. It
+    /// adds timer reads to the call, so render loops should use [`prepare`]
+    /// instead. The returned breakdown covers fallback/shaping, request-key
+    /// construction, glyph preparation, atlas work, and instance uploads.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_profiled(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        requests: &[TextDrawRequest],
+        decorations: &[TextDecorationDraw],
+    ) -> TextPreparationProfile {
+        let mut profile = TextPreparationProfile::default();
+        self.prepare_inner(
+            device,
+            queue,
+            width,
+            height,
+            is_srgb,
+            requests,
+            decorations,
+            Some(&mut profile),
+        );
+        profile
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_inner(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        requests: &[TextDrawRequest],
+        decorations: &[TextDecorationDraw],
+        mut profile: Option<&mut TextPreparationProfile>,
+    ) {
         let started = AnimInstant::now();
+        let profile_started = profile.is_some().then(Instant::now);
+
+        let atlas_generation = self.atlas.generation();
+        let color_atlas_generation = self.color_atlas.generation();
+        let frame_cache_hit = !self.postponed_preparation
+            && self.prepared_frame_generation == self.frame_generation
+            && self.prepared_frame.as_ref().is_some_and(|cached| {
+                cached.matches(
+                    width,
+                    height,
+                    is_srgb,
+                    atlas_generation,
+                    color_atlas_generation,
+                    requests,
+                    decorations,
+                )
+            });
+        if frame_cache_hit {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.cache_hit = true;
+                if let Some(started) = profile_started {
+                    profile.total = started.elapsed();
+                }
+            }
+            return;
+        }
+        self.frame_generation = self.frame_generation.wrapping_add(1);
 
         // A scroll viewport hands its child more than it can show, so that a
         // line is prepared a few frames before it scrolls in instead of on the
@@ -1300,6 +1826,7 @@ impl TextPipelineV2 {
         // also when a cache that outgrew its capacity sheds the entries no
         // recent frame read — a resize's flood of transient widths, a closed
         // screen's lines — without touching the current screen's layouts.
+        let request_analysis_started = profile.is_some().then(Instant::now);
         self.layout_cache.begin_frame();
 
         // A frame whose surface size changed is one step of a live resize:
@@ -1356,7 +1883,11 @@ impl TextPipelineV2 {
             }
         }
 
-        if !self.prepare_content(&on_screen) {
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), request_analysis_started) {
+            profile.request_analysis += started.elapsed();
+        }
+
+        if !self.prepare_content(&on_screen, profile.as_deref_mut()) {
             return;
         }
 
@@ -1378,7 +1909,7 @@ impl TextPipelineV2 {
                     |chunk| {
                         chunk_requests.clear();
                         chunk_requests.extend(chunk.iter().map(|(_, req)| *req));
-                        self.prepare_content(&chunk_requests)
+                        self.prepare_content(&chunk_requests, profile.as_deref_mut())
                     },
                 );
 
@@ -1386,9 +1917,10 @@ impl TextPipelineV2 {
             }
         }
 
-        let mut alpha_glyphs = Vec::new();
-        let mut color_glyphs = Vec::new();
-        let mut seen_glyphs = HashSet::new();
+        let post_content_key_started = profile.is_some().then(Instant::now);
+        self.visible_span_ranges.clear();
+        self.visible_span_ranges.resize(requests.len(), 0..0);
+        self.visible_span_keys.clear();
         for (index, req) in requests.iter().enumerate() {
             // An off-screen request contributes no pixel this frame, so it
             // reserves no atlas room either; its glyphs claim theirs on the
@@ -1397,6 +1929,7 @@ impl TextPipelineV2 {
                 continue;
             }
 
+            let start = self.visible_span_keys.len();
             let synthesized: [RichTextSpan; 1];
             let spans: &[RichTextSpan] = if req.spans.is_empty() {
                 synthesized = [RichTextSpan::new(req.text.clone())];
@@ -1411,11 +1944,23 @@ impl TextPipelineV2 {
                     .font_weight
                     .or(req.font_weight)
                     .unwrap_or(FontWeight::Normal.numeric());
-                let layout_width = match req.overflow {
-                    TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
-                    TextOverflowMode::Clip => 0.0,
+                let layout_width = if req.writing_mode.is_vertical() {
+                    req.bounds_width
+                } else {
+                    match req.overflow {
+                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
+                        TextOverflowMode::Clip => 0.0,
+                    }
                 };
-                let keys = span_layout_keys(
+                let layout_height = if req.writing_mode.is_vertical() {
+                    match req.overflow {
+                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_height,
+                        TextOverflowMode::Clip => 0.0,
+                    }
+                } else {
+                    0.0
+                };
+                self.visible_span_keys.push(span_layout_keys_with_writing_mode(
                     &self.shaping_cache,
                     &span.text,
                     font_size,
@@ -1424,7 +1969,26 @@ impl TextPipelineV2 {
                     font_weight,
                     req.language,
                     layout_width,
-                );
+                    layout_height,
+                    req.writing_mode,
+                ));
+            }
+            self.visible_span_ranges[index] = start..self.visible_span_keys.len();
+        }
+
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), post_content_key_started) {
+            profile.key_construction += started.elapsed();
+        }
+
+        self.alpha_glyph_descriptors.clear();
+        self.color_glyph_descriptors.clear();
+        self.seen_glyphs.clear();
+        for (index, range) in self.visible_span_ranges.iter().enumerate() {
+            if !visible[index] {
+                continue;
+            }
+
+            for keys in &self.visible_span_keys[range.clone()] {
                 // The stamping read: this is the loop that walks exactly the
                 // layouts the frame draws, so it is where the working set is
                 // marked as alive.
@@ -1437,7 +2001,7 @@ impl TextPipelineV2 {
 
                 for glyph in positioned {
                     let key = glyph.glyph_key;
-                    if !seen_glyphs.insert(key) {
+                    if !self.seen_glyphs.insert(key) {
                         continue;
                     }
                     let Some((is_color, glyph_width, glyph_height)) =
@@ -1447,21 +2011,46 @@ impl TextPipelineV2 {
                     };
                     let descriptor = (key, glyph_width, glyph_height);
                     if is_color {
-                        color_glyphs.push(descriptor);
+                        self.color_glyph_descriptors.push(descriptor);
                     } else {
-                        alpha_glyphs.push(descriptor);
+                        self.alpha_glyph_descriptors.push(descriptor);
                     }
                 }
             }
         }
 
-        let alpha_plan = self.atlas.plan_batch(&alpha_glyphs);
-        let color_plan = self.color_atlas.plan_batch(&color_glyphs);
-        if alpha_plan == BatchCapacityPlan::Reject || color_plan == BatchCapacityPlan::Reject {
-            return;
+        let atlas_planning_started = profile.is_some().then(Instant::now);
+        let alpha_needs_plan = self.planned_alpha_atlas_generation != self.atlas.generation()
+            || self.planned_alpha_descriptors != self.alpha_glyph_descriptors;
+        let color_needs_plan = self.planned_color_atlas_generation
+            != self.color_atlas.generation()
+            || self.planned_color_descriptors != self.color_glyph_descriptors;
+        if alpha_needs_plan {
+            let alpha_plan = self.atlas.plan_batch(&self.alpha_glyph_descriptors);
+            if alpha_plan == BatchCapacityPlan::Reject {
+                return;
+            }
+            self.atlas.apply_batch_plan(alpha_plan);
+            self.planned_alpha_descriptors
+                .clone_from(&self.alpha_glyph_descriptors);
+            self.planned_alpha_atlas_generation = self.atlas.generation();
         }
-        self.atlas.apply_batch_plan(alpha_plan);
-        self.color_atlas.apply_batch_plan(color_plan);
+        if color_needs_plan {
+            let color_plan = self.color_atlas.plan_batch(&self.color_glyph_descriptors);
+            if color_plan == BatchCapacityPlan::Reject {
+                return;
+            }
+            self.color_atlas.apply_batch_plan(color_plan);
+            self.planned_color_descriptors
+                .clone_from(&self.color_glyph_descriptors);
+            self.planned_color_atlas_generation = self.color_atlas.generation();
+        }
+
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), atlas_planning_started) {
+            profile.atlas_planning += started.elapsed();
+            profile.alpha_glyphs += self.alpha_glyph_descriptors.len();
+            profile.color_glyphs += self.color_glyph_descriptors.len();
+        }
 
         self.instances.clear();
         self.color_instances.clear();
@@ -1474,6 +2063,7 @@ impl TextPipelineV2 {
         self.request_ranges.clear();
         self.request_ranges.reserve(requests.len());
 
+        let instance_build_started = profile.is_some().then(Instant::now);
         for (index, req) in requests.iter().enumerate() {
             // Record the glyph ranges this request will own. Both instance lists
             // are appended to in request order, so the slice for this request is
@@ -1504,23 +2094,17 @@ impl TextPipelineV2 {
             } else {
                 &req.spans
             };
+            let span_keys = &self.visible_span_keys[self.visible_span_ranges[index].clone()];
 
             let mut cursor_x = req.x;
             let mut cursor_y = req.y;
 
-            for span in spans {
-                let font_size = span.font_size.unwrap_or(req.font_size);
+            for (span, keys) in spans.iter().zip(span_keys) {
                 let color = span.color.unwrap_or(req.color);
                 let font_weight = span
                     .font_weight
                     .or(req.font_weight)
                     .unwrap_or(FontWeight::Normal.numeric());
-                // A weight of 600+ (semi-bold and up) is rendered bold. Which
-                // glyphs of the span still have to be *drawn* bold by hand is
-                // decided per glyph below: a line mixing scripts reaches its
-                // stroke by two routes at once, and the glyphs already drawn
-                // at the requested weight must not be emboldened again.
-                let is_bold = font_weight >= BOLD_WEIGHT_THRESHOLD;
                 // ponytail: synthetic (faux) italic via a horizontal shear in
                 // the glyph shaders (0.25 ≈ 14°). Ceiling: not a real italic
                 // face (no cursive glyph forms, advances unchanged). Upgrade
@@ -1530,20 +2114,6 @@ impl TextPipelineV2 {
                 } else {
                     0.0
                 };
-                let layout_width = match req.overflow {
-                    TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
-                    TextOverflowMode::Clip => 0.0,
-                };
-                let keys = span_layout_keys(
-                    &self.shaping_cache,
-                    &span.text,
-                    font_size,
-                    req.font_family,
-                    req.font_style,
-                    font_weight,
-                    req.language,
-                    layout_width,
-                );
                 // Layout is always computed at origin (0, 0) so the cached
                 // positions are purely relative and can be shifted cheaply.
                 // A peek, not a get: the planning loop above already stamped
@@ -1556,17 +2126,21 @@ impl TextPipelineV2 {
                 // start at the origin, so the per-line offset table (two
                 // vectors rebuilt per span per frame) is only computed when
                 // an alignment actually shifts something.
-                let line_offsets = match req.horizontal_align {
+                let line_offsets = if req.writing_mode.is_vertical() {
+                    None
+                } else {
+                    match req.horizontal_align {
                     TextHorizontalAlign::Left => None,
                     _ => Some(line_alignment_offsets(
                         &positioned_line_widths(positioned),
                         req.bounds_width,
                         req.horizontal_align,
                     )),
+                    }
                 };
                 // The blend-space correction depends only on the span's
                 // color; one `powf` serves every glyph of the span.
-                let span_coverage_exponent = coverage_exponent(color);
+                let span_coverage_exponent = coverage_exponent(color.to_unorm_array());
                 for pg in positioned {
                     let key = pg.glyph_key;
                     // One atlas probe answers both "where is the bitmap" and
@@ -1579,6 +2153,7 @@ impl TextPipelineV2 {
                     } else if let Some(region) = self.color_atlas.get(&key) {
                         (region, true)
                     } else {
+                        let atlas_population_started = profile.is_some().then(Instant::now);
                         let rg = self.rasterizer.rasterize_bitmap_key(key, pg.font_size);
                         let (is_color, glyph_width, glyph_height) =
                             (rg.is_color, rg.width, rg.height);
@@ -1602,6 +2177,11 @@ impl TextPipelineV2 {
                             )
                         };
                         self.rasterizer.release_bitmap(key);
+                        if let (Some(profile), Some(started)) =
+                            (profile.as_deref_mut(), atlas_population_started)
+                        {
+                            profile.atlas_population += started.elapsed();
+                        }
                         (region, is_color)
                     };
 
@@ -1655,7 +2235,8 @@ impl TextPipelineV2 {
                             .then_some(shadow.blur.max(0.0))
                             .unwrap_or(0.0);
                         let sample_count = if blur == 0.0 { 1 } else { 8 };
-                        let shadow_coverage_exponent = coverage_exponent(shadow.color);
+                        let shadow_coverage_exponent =
+                            coverage_exponent(shadow.color.to_unorm_array());
                         for sample in 0..sample_count {
                             let (blur_x, blur_y) = if sample_count == 1 {
                                 (0.0, 0.0)
@@ -1682,20 +2263,31 @@ impl TextPipelineV2 {
                             self.color_instances.push(instance);
                         } else {
                             self.instances.push(instance);
-                            if is_bold
-                                && self
-                                    .rasterizer
-                                    .glyph_needs_synthetic_bold(key, font_weight)
-                            {
-                                let mut bold = instance;
-                                bold.position[0] += (pg.font_size * 0.03).max(0.5);
-                                self.instances.push(bold);
+                            if let Some(plan) = self.rasterizer.synthetic_weight_plan_for_codepoint(
+                                key,
+                                font_weight,
+                                pg.font_size,
+                                pg.codepoint,
+                            ) {
+                                for &offset in plan.extra_offsets() {
+                                    let mut synthetic = instance;
+                                    synthetic.position[0] += offset;
+                                    self.instances.push(synthetic);
+                                }
                             }
                         }
                     }
                 }
 
-                if let Some(last) = positioned.last() {
+                if req.writing_mode.is_vertical() {
+                    if let Some(last_y) = positioned
+                        .iter()
+                        .map(|glyph| glyph.y + glyph.height as f32)
+                        .max_by(f32::total_cmp)
+                    {
+                        cursor_y += last_y.max(0.0);
+                    }
+                } else if let Some(last) = positioned.last() {
                     cursor_x += last.x + last.width as f32;
                     cursor_y += last.y;
                 }
@@ -1707,6 +2299,10 @@ impl TextPipelineV2 {
                 color_start,
                 color_end: self.color_instances.len() as u32,
             });
+        }
+
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), instance_build_started) {
+            profile.instance_build += started.elapsed();
         }
 
         // Now that every glyph has been inserted, the atlases have reached
@@ -1723,8 +2319,12 @@ impl TextPipelineV2 {
         }
 
         // Upload both atlases if new glyphs were added.
-        self.atlas.upload(queue);
-        self.color_atlas.upload(queue);
+        let atlas_upload_started = profile.is_some().then(Instant::now);
+        self.atlas.upload(device, queue);
+        self.color_atlas.upload(device, queue);
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), atlas_upload_started) {
+            profile.atlas_upload += started.elapsed();
+        }
 
         // Rebuild bind groups only when their atlas texture was recreated (grow).
         let atlas_gen = self.atlas.generation();
@@ -1762,6 +2362,7 @@ impl TextPipelineV2 {
             );
         }
 
+        let instance_upload_started = profile.is_some().then(Instant::now);
         let previous_capacity = self.instance_policy.capacity();
         self.instance_policy.record_usage(self.instances.len());
         if self.instance_policy.capacity() != previous_capacity {
@@ -1813,6 +2414,29 @@ impl TextPipelineV2 {
             &self.decoration_instance_buffer,
             &self.decoration_instances,
         );
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), instance_upload_started) {
+            profile.instance_upload += started.elapsed();
+        }
+        if self.postponed_preparation {
+            // A partial ahead-of-view prepare is deliberately not cacheable:
+            // the next identical frame must be allowed to continue the
+            // deferred work rather than reusing only the visible prefix.
+            self.prepared_frame = None;
+        } else {
+            self.prepared_frame = Some(PreparedFrameCache::new(
+                width,
+                height,
+                is_srgb,
+                self.atlas.generation(),
+                self.color_atlas.generation(),
+                requests,
+                decorations,
+            ));
+            self.prepared_frame_generation = self.frame_generation;
+        }
+        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), profile_started) {
+            profile.total = started.elapsed();
+        }
     }
 
     /// How many glyph quads the last [`prepare`] committed for drawing, as
@@ -1834,6 +2458,74 @@ impl TextPipelineV2 {
     /// a fresh set per width.
     pub fn layout_cache_entries(&self) -> usize {
         self.layout_cache.len()
+    }
+
+    /// Returns the source-aware layout retained for a prepared text span.
+    ///
+    /// The layout is available after [`prepare`](Self::prepare) has committed
+    /// the span. It is borrowed from the same cache entry the renderer reads,
+    /// so caret, hit-test, and selection consumers observe the renderer's
+    /// shaped advances and wrapping decisions. A missing result means the span
+    /// has not been prepared yet or was evicted.
+    #[allow(clippy::too_many_arguments)]
+    pub fn interaction_layout(
+        &self,
+        text: &str,
+        font_size: f32,
+        bounds_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+        language: Option<TextLanguage>,
+    ) -> Option<&TextInteractionLayout> {
+        self.interaction_layout_with_writing_mode(
+            text,
+            font_size,
+            bounds_width,
+            0.0,
+            font_family,
+            font_style,
+            font_weight,
+            language,
+            TextWritingMode::HorizontalTb,
+        )
+    }
+
+    /// Returns source-aware geometry for a prepared horizontal or vertical
+    /// span. Vertical callers must pass the same `bounds_height` used by the
+    /// corresponding [`TextDrawRequest`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn interaction_layout_with_writing_mode(
+        &self,
+        text: &str,
+        font_size: f32,
+        bounds_width: f32,
+        bounds_height: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+        language: Option<TextLanguage>,
+        writing_mode: TextWritingMode,
+    ) -> Option<&TextInteractionLayout> {
+        let text: Arc<str> = Arc::from(text);
+        let keys = span_layout_keys_with_writing_mode(
+            &self.shaping_cache,
+            &text,
+            font_size,
+            font_family,
+            font_style,
+            font_weight,
+            language,
+            bounds_width,
+            if writing_mode.is_vertical() {
+                bounds_height
+            } else {
+                0.0
+            },
+            writing_mode,
+        );
+        self.layout_cache
+            .interaction_with_fallback(&keys.primary, keys.fallback.as_ref())
     }
 
     pub fn instance_buffer_bytes(&self) -> u64 {
@@ -1904,11 +2596,73 @@ impl TextPipelineV2 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{
-        TextDecorationDraw, TextShadowRequest, coverage_exponent, glyph_intersects_clip,
-        glyph_quad_size, normalize_pixel_uv_rect, shadow_intersects_clip, shadow_is_visible,
-        shadow_padding, snap_to_pixel_grid,
+        DecorationInstance, GlyphInstance, PreparedFrameCache, Rgba8, TextDecorationDraw,
+        TextDrawRequest, TextHorizontalAlign, TextOverflowMode, TextShadowRequest, TextWritingMode,
+        coverage_exponent, glyph_intersects_clip, glyph_quad_size, normalize_pixel_uv_rect,
+        shadow_intersects_clip, shadow_is_visible, shadow_padding, snap_to_pixel_grid,
     };
+
+    fn cache_request(text: &str, x: f32) -> TextDrawRequest {
+        TextDrawRequest {
+            x,
+            y: 2.0,
+            text: Arc::from(text),
+            font_size: 16.0,
+            color: Rgba8::new(0, 0, 0, 255),
+            bounds_width: 240.0,
+            bounds_height: 24.0,
+            overflow: TextOverflowMode::Clip,
+            horizontal_align: TextHorizontalAlign::Left,
+            writing_mode: TextWritingMode::HorizontalTb,
+            line_height: None,
+            shadow: None,
+            draw_glyphs: true,
+            font_family: crate::font::FontFamily::SANS_SERIF,
+            font_style: crate::font::FontStyle::Normal,
+            font_weight: None,
+            language: None,
+            italic: false,
+            clip_rect: [0.0, 0.0, 240.0, 24.0],
+            clip_border_radius: [0.0; 4],
+            spans: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn prepared_frame_cache_requires_exact_render_inputs() {
+        let requests = vec![cache_request("same", 0.0)];
+        let cache = PreparedFrameCache::new(400, 300, false, 7, 9, &requests, &[]);
+
+        assert!(cache.matches(400, 300, false, 7, 9, &requests, &[]));
+        assert!(!cache.matches(
+            400,
+            300,
+            false,
+            7,
+            9,
+            &[cache_request("same", 1.0)],
+            &[]
+        ));
+        assert!(!cache.matches(401, 300, false, 7, 9, &requests, &[]));
+        assert!(!cache.matches(400, 300, false, 8, 9, &requests, &[]));
+    }
+
+    #[test]
+    fn prepared_frame_cache_detects_nested_span_changes() {
+        let mut request = cache_request("outer", 0.0);
+        request.spans.push(super::RichTextSpan::new("inner"));
+        let requests = vec![request];
+        let cache = PreparedFrameCache::new(400, 300, false, 0, 0, &requests, &[]);
+
+        let mut changed = cache_request("outer", 0.0);
+        changed
+            .spans
+            .push(super::RichTextSpan::new("changed"));
+        assert!(!cache.matches(400, 300, false, 0, 0, &[changed], &[]));
+    }
 
     /// How many atlas texels one pixel of `quad_size` spans.
     ///
@@ -1968,7 +2722,7 @@ mod tests {
             offset_x: -24.0,
             offset_y: 0.0,
             blur: 2.0,
-            color: [0.0, 0.0, 0.0, 0.5],
+            color: Rgba8::new(0, 0, 0, 128),
         };
 
         assert!(shadow_intersects_clip(
@@ -1981,10 +2735,9 @@ mod tests {
     }
 
     #[test]
-    fn transparent_or_non_finite_shadow_alpha_paints_nothing() {
-        assert!(!shadow_is_visible([0.0, 0.0, 0.0, 0.0]));
-        assert!(!shadow_is_visible([0.0, 0.0, 0.0, f32::NAN]));
-        assert!(shadow_is_visible([0.0, 0.0, 0.0, 0.5]));
+    fn transparent_shadow_alpha_paints_nothing() {
+        assert!(!shadow_is_visible(Rgba8::TRANSPARENT));
+        assert!(shadow_is_visible(Rgba8::new(0, 0, 0, 128)));
     }
 
     #[test]
@@ -2177,16 +2930,35 @@ mod tests {
             thickness: 2.0,
             period: 8.0,
             style: 4, // Wavy
-            color: [1.0, 0.0, 0.0, 1.0],
+            color: Rgba8::new(255, 0, 0, 255),
             clip_rect: [0.0, 0.0, -1.0, 0.0],
             clip_border_radius: [0.0; 4],
         };
         let inst = draw.to_instance();
         assert_eq!(inst.position, [10.0, 20.0]);
         assert_eq!(inst.size, [120.0, 6.0]);
-        assert_eq!(inst.color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(inst.color, Rgba8::new(255, 0, 0, 255));
         // params: style, thickness, period, band_height (band_height duplicated
         // so the fragment shader has it without relying on the interpolated size).
         assert_eq!(inst.params, [4.0, 2.0, 8.0, 6.0]);
+    }
+
+    #[test]
+    fn text_instances_use_unorm_bytes_for_paint_colors() {
+        assert_eq!(std::mem::size_of::<GlyphInstance>(), 84);
+        assert_eq!(GlyphInstance::ATTRIBS[3].format, wgpu::VertexFormat::Unorm8x4);
+        assert_eq!(
+            GlyphInstance::ATTRIBS[3].offset,
+            std::mem::offset_of!(GlyphInstance, color) as u64
+        );
+        assert_eq!(std::mem::size_of::<DecorationInstance>(), 68);
+        assert_eq!(
+            DecorationInstance::ATTRIBS[2].format,
+            wgpu::VertexFormat::Unorm8x4
+        );
+        assert_eq!(
+            DecorationInstance::ATTRIBS[2].offset,
+            std::mem::offset_of!(DecorationInstance, color) as u64
+        );
     }
 }

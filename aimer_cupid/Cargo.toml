@@ -4,6 +4,16 @@ version = "0.1.0"
 edition = "2024"
 description = "A rendering engine that optimized for the ui framework"
 
+[features]
+default = ["apple-core-text"]
+# The production profile owns standard-font parsing, shaping, fallback-aware
+# resolution, and rasterization. The optional Apple-private backend is kept
+# separate below so the portable path remains available on every platform.
+apple-core-text = [
+    "dep:objc2-core-foundation",
+    "dep:objc2-core-text",
+    "dep:objc2-core-graphics",
+]
 [[bin]]
 path = "src/bin.rs"
 name = "cupid"
@@ -25,27 +35,25 @@ winit = { version = "0.30.12", default-features = false, features = [
     "x11",
 ] }
 bytemuck.workspace = true
-skrifa.workspace = true
-harfrust.workspace = true
 unicode-bidi.workspace = true
 unicode-linebreak.workspace = true
 unicode-segmentation.workspace = true
-image = { workspace = true, features = ["default"] }
+# Cupid decodes PNG/JPEG/TIFF font strikes and the example image. Keep the
+# image crate's broad default-format and rayon features out of this crate.
+image = { workspace = true, default-features = false, features = [
+    "jpeg",
+    "png",
+    "tiff",
+] }
+usvg.workspace = true
 lyon.workspace = true
 thiserror.workspace = true
 hashbrown.workspace = true
 dirs.workspace = true
 memmap2 = "0.9.11"
-swash = "0.2.10"
-naga.workspace = true
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-rayon = "1.12.0"
-
-[target.'cfg(not(any(target_os = "ios", target_os = "macos")))'.dependencies]
-fontique.workspace = true
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
-objc2-core-foundation = { workspace = true, features = [
+objc2-core-foundation = { workspace = true, optional = true, features = [
     "std",
     "CFArray",
     "CFCharacterSet",
@@ -56,7 +64,7 @@ objc2-core-foundation = { workspace = true, features = [
     "CFString",
     "CFURL",
 ] }
-objc2-core-text = { workspace = true, features = [
+objc2-core-text = { workspace = true, optional = true, features = [
     "std",
     "CTFont",
     "CTFontDescriptor",
@@ -68,7 +76,7 @@ objc2-core-text = { workspace = true, features = [
     # Core Graphics types.
     "objc2-core-graphics",
 ] }
-objc2-core-graphics = { workspace = true, features = [
+objc2-core-graphics = { workspace = true, optional = true, features = [
     "std",
     "CGBitmapContext",
     "CGColorSpace",
@@ -84,7 +92,5 @@ js-sys.workspace = true
 web-sys = { workspace = true, features = ["Window", "Response"] }
 
 [dev-dependencies]
+# WGSL validation is used only by shader unit tests, never by the renderer.
 naga.workspace = true
-
-
-

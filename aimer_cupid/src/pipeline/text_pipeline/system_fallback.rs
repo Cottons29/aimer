@@ -24,9 +24,14 @@
 //! `(path, collection index)` pair and keeps one id for the lifetime of the
 //! process, so every worker resolving the same codepoint observes the same id.
 //! Ids start at [`SYSTEM_FALLBACK_ID_BASE`], which keeps them clear of the
-//! statically built chain and of fonts registered at runtime.
+//! per-script platform-independent lanes and of fonts registered at runtime.
 //!
 //! [`GlyphRasterizer`]: crate::text_pipeline::glyph_rasterizer::GlyphRasterizer
+//!
+//! On Apple, the discovery and private-glyph compatibility path is available
+//! only with the `apple-core-text` feature. Without it, this module leaves
+//! unsupported system faces unresolved so the portable profile cannot invoke
+//! Core Text implicitly.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -38,9 +43,10 @@ use crate::text_pipeline::font_resolver::{FontRecord, REGULAR_WEIGHT};
 
 /// First font id handed out to a dynamically resolved system face.
 ///
-/// The statically built chain numbers its faces from `1` upwards and runtime
-/// registrations continue from there, so a high base keeps the two ranges from
-/// ever meeting. It stays below the reserved monospace id (`0x7fff_fffe`).
+/// Platform-independent fallback lanes occupy a reserved range below this
+/// boundary, while runtime registrations use low ids and the reserved
+/// monospace id stays at `0x7fff_fffe`. Keeping the dynamic store above both
+/// ranges makes ids independent of which fallback lane was loaded first.
 pub(crate) const SYSTEM_FALLBACK_ID_BASE: FontId = 0x4000_0000;
 
 /// How far a face's design weight may sit from the requested one and still be
@@ -51,6 +57,10 @@ pub(crate) const SYSTEM_FALLBACK_ID_BASE: FontId = 0x4000_0000;
 /// the `wght` scale is wide enough for that neighbour and still narrow enough
 /// that `Regular` never answers for a bold run.
 pub(crate) const WEIGHT_MATCH_TOLERANCE: u16 = 100;
+
+/// Bound the process-wide lazy coverage index for each discovered face.
+const COVERAGE_INDEX_GLYPH_CAPACITY: usize = 16 * 1024;
+const COVERAGE_INDEX_SCRIPT_CAPACITY: usize = 512;
 
 /// How far `record`'s design sits from the weight a run asked for.
 ///
@@ -101,7 +111,11 @@ struct FallbackStore {
     /// different faces depending on the script around it — see
     /// [`ScriptRequirement`] — and by the requested weight, because a bold run
     /// and a regular one want different faces of the same family.
-    ids_by_codepoint: HashMap<(char, u64, u16), Option<FontId>>,
+    ids_by_codepoint: HashMap<(char, ScriptRequirement, u16), Option<FontId>>,
+    /// Non-zero glyph IDs for the same immutable system-fallback answers.
+    /// Keeping the mapping here avoids reopening the selected face's cmap
+    /// when a fresh `GlyphRasterizer` warms the same text.
+    glyphs_by_codepoint: HashMap<(char, ScriptRequirement, u16), Option<u16>>,
 }
 
 impl FallbackStore {
@@ -151,6 +165,21 @@ impl FallbackStore {
 static STORE: LazyLock<RwLock<FallbackStore>> =
     LazyLock::new(|| RwLock::new(FallbackStore::default()));
 
+/// Lazy decodability answers for immutable, process-wide fallback faces.
+///
+/// The fallback store keeps a face for the lifetime of the process, so these
+/// answers never become stale. The cache is separate from [`FallbackStore`]'s
+/// identity lock: cmap parsing stays outside that lock and two concurrent
+/// misses may perform the same cold parse without blocking face interning.
+#[derive(Default)]
+struct FallbackCoverageIndex {
+    glyphs: HashMap<char, bool>,
+    scripts: HashMap<ScriptRequirement, bool>,
+}
+
+static FALLBACK_COVERAGE_INDEX: LazyLock<RwLock<HashMap<FontId, FallbackCoverageIndex>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
 /// Returns a face able to draw `codepoint`, asking the platform when needed.
 ///
 /// The lookup is cached both ways: a resolved face is reused for every other
@@ -171,7 +200,7 @@ pub(crate) fn fallback_for_codepoint(
     requirement: ScriptRequirement,
     weight: u16,
 ) -> Option<FontRecord> {
-    let cache_key = (codepoint, requirement.fingerprint(), weight);
+    let cache_key = (codepoint, requirement, weight);
     if let Ok(store) = STORE.read()
         && let Some(cached) = store.ids_by_codepoint.get(&cache_key)
     {
@@ -191,10 +220,10 @@ pub(crate) fn fallback_for_codepoint(
     // run asked for: the regular cut adopted for an earlier line would
     // otherwise shadow the bold one a fresh resolution finds, and the emphasis
     // would be lost to whichever run happened to be drawn first.
-    let probes = requirement.as_slice();
     let known: Vec<FontRecord> = STORE.read().ok()?.records.clone();
     let decodes_script = |record: &&FontRecord| {
-        record_decodes_codepoint(record, codepoint) && record_decodes_all(record, probes)
+        cached_record_decodes_codepoint(record, codepoint)
+            && cached_record_decodes_all(record, requirement)
     };
     let reusable = known
         .iter()
@@ -209,7 +238,7 @@ pub(crate) fn fallback_for_codepoint(
     // Resolution touches the file system, so it happens outside the lock. A
     // concurrent resolver may win the race; interning is idempotent, so the
     // duplicate work is wasted but never observable.
-    let resolved = resolve_face_for_codepoint(codepoint, probes, weight);
+    let resolved = resolve_face_for_codepoint(codepoint, requirement, weight);
 
     let font_id = {
         let mut store = STORE.write().ok()?;
@@ -226,6 +255,34 @@ pub(crate) fn fallback_for_codepoint(
     settle(cache_key, font_id)
 }
 
+/// Returns the cached system face together with the glyph it uses for the
+/// requested codepoint. System fallback records are immutable for the process,
+/// so the glyph mapping can be shared across short-lived rasterizers too.
+pub(crate) fn fallback_glyph_for_codepoint(
+    codepoint: char,
+    requirement: ScriptRequirement,
+    weight: u16,
+) -> Option<(FontRecord, u16)> {
+    let cache_key = (codepoint, requirement, weight);
+    if let Ok(store) = STORE.read()
+        && let Some(glyph_id) = store.glyphs_by_codepoint.get(&cache_key)
+    {
+        let font_id = store.ids_by_codepoint.get(&cache_key).copied().flatten()?;
+        let glyph_id = (*glyph_id)?;
+        let record = store.record_by_id(font_id)?.clone();
+        return Some((record, glyph_id));
+    }
+
+    let record = fallback_for_codepoint(codepoint, requirement, weight)?;
+    let glyph_id = record
+        .glyph_index(codepoint)
+        .filter(|glyph_id| *glyph_id != 0);
+    if let Ok(mut store) = STORE.write() {
+        store.glyphs_by_codepoint.insert(cache_key, glyph_id);
+    }
+    glyph_id.map(|glyph_id| (record, glyph_id))
+}
+
 /// Records `font_id` as the answer to `cache_key`, keeping any answer already
 /// there, and hands back the face every caller of that key will see.
 ///
@@ -237,7 +294,10 @@ pub(crate) fn fallback_for_codepoint(
 /// character in different faces, which is exactly the split a run must never
 /// show. The first answer therefore stands and the loser adopts it; the
 /// duplicated work is wasted but never observable.
-fn settle(cache_key: (char, u64, u16), font_id: Option<FontId>) -> Option<FontRecord> {
+fn settle(
+    cache_key: (char, ScriptRequirement, u16),
+    font_id: Option<FontId>,
+) -> Option<FontRecord> {
     let mut store = STORE.write().ok()?;
     let settled = *store.ids_by_codepoint.entry(cache_key).or_insert(font_id);
     store.record_by_id(settled?).cloned()
@@ -308,10 +368,11 @@ pub(crate) fn script_probes(codepoint: char) -> &'static [char] {
 /// only samples a Japanese face never carries.
 ///
 /// The set is a fixed inline array, so passing one costs no allocation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct ScriptRequirement {
     chars: [char; Self::CAPACITY],
     len: usize,
+    language: Option<TextLanguage>,
 }
 
 impl ScriptRequirement {
@@ -326,6 +387,7 @@ impl ScriptRequirement {
     pub(crate) const EMPTY: Self = Self {
         chars: ['\0'; Self::CAPACITY],
         len: 0,
+        language: None,
     };
 
     /// The static samples for `codepoint`'s script, for callers with no run.
@@ -366,10 +428,15 @@ impl ScriptRequirement {
             return Self::EMPTY;
         };
 
+        let language = written_language(run).or(language);
+
         // The samples are pushed ahead of the run's own characters so a run
         // longer than the inline array keeps the part that decides the script.
-        let mut requirement = Self::EMPTY;
-        if written_language(run).or(language) == Some(TextLanguage::Chinese) {
+        let mut requirement = Self {
+            language,
+            ..Self::EMPTY
+        };
+        if language == Some(TextLanguage::Chinese) {
             requirement.extend(script_probes(first).iter().copied());
         }
         requirement.extend(ideographs());
@@ -386,14 +453,30 @@ impl ScriptRequirement {
         &self.chars[..self.len]
     }
 
-    /// A stable key for caching the answers given for this requirement.
+    /// The language hint that should lead a platform CJK cascade, when the
+    /// run supplied one and its characters did not overrule it.
+    pub(crate) fn language(&self) -> Option<TextLanguage> {
+        self.language
+    }
+
+    /// A compact stable hash for diagnostics and cache-related tests.
     ///
-    /// Two requirements listing the same characters in the same order share a
-    /// fingerprint; a different order merely misses the cache.
+    /// Production caches use the complete requirement value as their key, so a
+    /// hash collision can only affect this diagnostic value, never fallback
+    /// selection.
+    #[cfg(test)]
     pub(crate) fn fingerprint(&self) -> u64 {
         // FNV-1a: the set is at most a dozen characters, so a hasher would cost
         // more than the hash.
         let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        let language = match self.language {
+            None => 0,
+            Some(TextLanguage::Chinese) => 1,
+            Some(TextLanguage::Japanese) => 2,
+            Some(TextLanguage::Korean) => 3,
+        };
+        hash ^= language;
+        hash = hash.wrapping_mul(0x100_0000_01b3);
         for codepoint in self.as_slice() {
             hash ^= u64::from(*codepoint as u32);
             hash = hash.wrapping_mul(0x100_0000_01b3);
@@ -454,12 +537,52 @@ fn record_draws_all(record: &FontRecord, required: &[char]) -> bool {
         .all(|codepoint| record_draws_codepoint(record, *codepoint))
 }
 
+/// Reports whether this crate can decode `codepoint`, using the process-wide
+/// face coverage index when the answer has already been established.
+fn cached_record_decodes_codepoint(record: &FontRecord, codepoint: char) -> bool {
+    if let Ok(index) = FALLBACK_COVERAGE_INDEX.read()
+        && let Some(face) = index.get(&record.id)
+        && let Some(decoded) = face.glyphs.get(&codepoint)
+    {
+        return *decoded;
+    }
+
+    let decoded = record_decodes_codepoint(record, codepoint);
+    if let Ok(mut index) = FALLBACK_COVERAGE_INDEX.write() {
+        let face = index.entry(record.id).or_default();
+        if face.glyphs.len() >= COVERAGE_INDEX_GLYPH_CAPACITY {
+            face.glyphs.clear();
+        }
+        face.glyphs.insert(codepoint, decoded);
+    }
+    decoded
+}
+
 /// Reports whether this crate can decode every character of `required` from
-/// `record` without the platform's rasterizer.
-fn record_decodes_all(record: &FontRecord, required: &[char]) -> bool {
-    required
+/// `record`, caching the complete script decision as well as its cmap probes.
+fn cached_record_decodes_all(record: &FontRecord, required: ScriptRequirement) -> bool {
+    if required.is_empty() {
+        return true;
+    }
+    if let Ok(index) = FALLBACK_COVERAGE_INDEX.read()
+        && let Some(face) = index.get(&record.id)
+        && let Some(decoded) = face.scripts.get(&required)
+    {
+        return *decoded;
+    }
+
+    let decoded = required
+        .as_slice()
         .iter()
-        .all(|codepoint| record_decodes_codepoint(record, *codepoint))
+        .all(|codepoint| cached_record_decodes_codepoint(record, *codepoint));
+    if let Ok(mut index) = FALLBACK_COVERAGE_INDEX.write() {
+        let face = index.entry(record.id).or_default();
+        if face.scripts.len() >= COVERAGE_INDEX_SCRIPT_CAPACITY {
+            face.scripts.clear();
+        }
+        face.scripts.insert(required, decoded);
+    }
+    decoded
 }
 
 /// Reports whether `record` can draw `codepoint`, not merely map it.
@@ -486,28 +609,34 @@ fn record_draws_codepoint(record: &FontRecord, codepoint: char) -> bool {
 /// renders with different antialiasing and its private faces do not match the
 /// stroke weight of the faces drawn by Cupid in the same line.
 fn record_decodes_codepoint(record: &FontRecord, codepoint: char) -> bool {
-    use skrifa::MetadataProvider;
-    use skrifa::instance::{LocationRef, Size};
-
-    use crate::text_pipeline::font_resolver::font_ref;
-
     let Some(data) = record.data() else {
         return false;
     };
-    let Some(face) = font_ref(data.as_ref(), record.collection_index) else {
+    let Ok(face) = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
+        data.as_ref(),
+        record.collection_index,
+    ) else {
         return false;
     };
-    let Some(glyph_id) = face.charmap().map(codepoint) else {
+    let Ok(Some(glyph_id)) = face.glyph_index(codepoint as u32) else {
         return false;
     };
-    if glyph_id.to_u32() == 0 {
+    if glyph_id == 0 {
         return false;
     }
-    record.is_color
+    if record.is_color {
+        return true;
+    }
+    face
+        .outline(glyph_id)
+        .ok()
+        .flatten()
+        .is_some_and(|outline| !outline.contours.is_empty())
         || face
-            .glyph_metrics(Size::unscaled(), LocationRef::default())
-            .bounds(glyph_id)
-            .is_some()
+            .cff_outline(glyph_id)
+            .ok()
+            .flatten()
+            .is_some_and(|outline| !outline.commands.is_empty())
 }
 
 /// Reports whether the platform can draw a glyph this crate cannot decode.
@@ -516,7 +645,10 @@ fn record_decodes_codepoint(record: &FontRecord, codepoint: char) -> bool {
 /// outlines, `emjc` strikes — so "no readable outline" does not mean "no
 /// glyph": the platform rasterizer draws these, and rejecting the face would
 /// leave the codepoint with no face at all.
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(all(
+    any(target_os = "ios", target_os = "macos"),
+    feature = "apple-core-text"
+))]
 fn platform_draws_glyph(record: &FontRecord, glyph_id: u16) -> bool {
     record.path().is_some_and(|path| {
         crate::text_pipeline::core_text_raster::draws_glyph(path, record.collection_index, glyph_id)
@@ -524,7 +656,10 @@ fn platform_draws_glyph(record: &FontRecord, glyph_id: u16) -> bool {
 }
 
 /// Platforms whose fonts this crate decodes itself.
-#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+#[cfg(not(all(
+    any(target_os = "ios", target_os = "macos"),
+    feature = "apple-core-text"
+)))]
 fn platform_draws_glyph(_record: &FontRecord, _glyph_id: u16) -> bool {
     false
 }
@@ -536,7 +671,7 @@ fn platform_draws_glyph(_record: &FontRecord, _glyph_id: u16) -> bool {
 /// is not optional: `CTFontCreateForString` never fails outright — it returns
 /// the font it was queried with when nothing matches — and its preferred
 /// answer for CJK on recent macOS builds is a private file carrying no glyph
-/// data a third-party rasterizer can read.
+/// data the owned outline decoder can read.
 ///
 /// Candidates are examined in two passes: a face whose glyphs this crate
 /// decodes itself wins outright, and only when no such face covers the request
@@ -544,10 +679,13 @@ fn platform_draws_glyph(_record: &FontRecord, _glyph_id: u16) -> bool {
 /// platform layer renders with different antialiasing and its private CJK
 /// faces do not match the stroke weight of the faces Cupid draws in the same
 /// line, so it is a last resort, never a preference.
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(all(
+    any(target_os = "ios", target_os = "macos"),
+    feature = "apple-core-text"
+))]
 fn resolve_face_for_codepoint(
     codepoint: char,
-    probes: &[char],
+    requirement: ScriptRequirement,
     weight: u16,
 ) -> Option<ResolvedFace> {
     use crate::text_pipeline::apple_fonts::{
@@ -556,8 +694,9 @@ fn resolve_face_for_codepoint(
     };
 
     let required: Vec<char> = std::iter::once(codepoint)
-        .chain(probes.iter().copied())
+        .chain(requirement.as_slice().iter().copied())
         .collect();
+    let probes = requirement.as_slice();
 
     // The language-aware cascades answer first: for every UI language the
     // platform names the concrete face it pairs with the system font — stroke
@@ -572,7 +711,7 @@ fn resolve_face_for_codepoint(
             candidates.push(FaceSource::File(path));
         }
     };
-    for source in language_fallback_sources(&required, weight) {
+    for source in language_fallback_sources(&required, requirement.language(), weight) {
         match source {
             SystemFaceSource::File(path) => push_path(&mut candidates, path),
             SystemFaceSource::Data {
@@ -601,22 +740,36 @@ fn resolve_face_for_codepoint(
     // back to a blank box; within each rung, self-decodable faces win over
     // platform-only ones.
     if !probes.is_empty() {
-        for accept_platform in [false, true] {
-            if let Some(face) = candidates
-                .iter()
-                .find_map(|source| face_drawing(source, &required, weight, accept_platform))
-            {
-                return Some(face);
+        for strict_weight in [true, false] {
+            for accept_platform in [false, true] {
+                if let Some(face) = candidates.iter().find_map(|source| {
+                    face_drawing(
+                        source,
+                        &required,
+                        weight,
+                        accept_platform,
+                        strict_weight,
+                    )
+                }) {
+                    return Some(face);
+                }
             }
         }
     }
 
-    for accept_platform in [false, true] {
-        if let Some(face) = candidates
-            .iter()
-            .find_map(|source| face_drawing(source, &[codepoint], weight, accept_platform))
-        {
-            return Some(face);
+    for strict_weight in [true, false] {
+        for accept_platform in [false, true] {
+            if let Some(face) = candidates.iter().find_map(|source| {
+                face_drawing(
+                    source,
+                    &[codepoint],
+                    weight,
+                    accept_platform,
+                    strict_weight,
+                )
+            }) {
+                return Some(face);
+            }
         }
     }
     None
@@ -631,12 +784,16 @@ fn resolve_face_for_codepoint(
 /// with `accept_platform` may a file-backed glyph that solely the platform
 /// rasterizer draws qualify; reassembled bytes have no file the platform could
 /// raster from, so they qualify on decodable data alone.
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(all(
+    any(target_os = "ios", target_os = "macos"),
+    feature = "apple-core-text"
+))]
 fn face_drawing(
     source: &FaceSource,
     required: &[char],
     weight: u16,
     accept_platform: bool,
+    strict_weight: bool,
 ) -> Option<ResolvedFace> {
     match source {
         FaceSource::File(path) => {
@@ -649,6 +806,7 @@ fn face_drawing(
                 data.as_ref(),
                 required,
                 weight,
+                strict_weight,
                 |collection_index, glyph_id| {
                     accept_platform
                         && crate::text_pipeline::core_text_raster::draws_glyph(
@@ -666,7 +824,7 @@ fn face_drawing(
         }
         FaceSource::Memory { bytes, .. } => {
             let (collection_index, is_color) =
-                face_in_data_drawing(bytes.as_ref(), required, weight, |_, _| false)?;
+                face_in_data_drawing(bytes.as_ref(), required, weight, strict_weight, |_, _| false)?;
             Some(ResolvedFace {
                 source: source.clone(),
                 collection_index,
@@ -688,59 +846,66 @@ fn face_drawing(
 /// A glyph qualifies through a color strike, an outline with a non-empty
 /// bounding box, or — for glyph data this crate cannot decode — through
 /// `platform_draws`, which the caller scopes to what its candidate allows.
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(all(
+    any(target_os = "ios", target_os = "macos"),
+    feature = "apple-core-text"
+))]
 fn face_in_data_drawing(
     data: &[u8],
     required: &[char],
     weight: u16,
+    strict_weight: bool,
     platform_draws: impl Fn(u32, u16) -> bool,
 ) -> Option<(u32, bool)> {
-    use skrifa::MetadataProvider;
-    use skrifa::instance::{LocationRef, Size};
-    use skrifa::raw::TableProvider;
-
-    use crate::text_pipeline::font_resolver::font_ref;
-
-    let face_count = match skrifa::raw::FileRef::new(data).ok()? {
-        skrifa::raw::FileRef::Collection(collection) => collection.len(),
-        skrifa::raw::FileRef::Font(_) => 1,
-    };
-    (0..face_count)
-        .filter_map(|collection_index| {
-            let face = font_ref(data, collection_index)?;
-            let is_color = FontRecord::face_is_color(&face);
-            let draws = |codepoint: &char| {
-                let Some(glyph_id) = face.charmap().map(*codepoint) else {
-                    return false;
-                };
-                if glyph_id.to_u32() == 0 {
-                    return false;
-                }
-                let has_outline = face
-                    .glyph_metrics(Size::unscaled(), LocationRef::default())
-                    .bounds(glyph_id)
-                    .is_some();
-                is_color
-                    || has_outline
-                    || platform_draws(collection_index, glyph_id.to_u32() as u16)
+    let mut candidates = Vec::new();
+    for collection_index in 0..64 {
+        let Ok(face) = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
+            data,
+            collection_index,
+        ) else {
+            break;
+        };
+        let is_color = face.has_color_tables() || face.has_apple_private_color_tables();
+        let draws = |codepoint: &char| {
+            let Ok(Some(glyph_id)) = face.glyph_index(*codepoint as u32) else {
+                return false;
             };
-            if !required.iter().all(draws) {
-                return None;
+            if glyph_id == 0 {
+                return false;
             }
-            let design = face
-                .os2()
-                .map_or(REGULAR_WEIGHT, |os2| os2.us_weight_class());
-            Some((collection_index, is_color, design.abs_diff(weight)))
-        })
+            let has_outline = face
+                .outline(glyph_id)
+                .ok()
+                .flatten()
+                .is_some()
+                || face.cff_outline(glyph_id).ok().flatten().is_some();
+            is_color
+                || has_outline
+                || platform_draws(collection_index, glyph_id)
+        };
+        if required.iter().all(draws) {
+            let design = face.design_weight().unwrap_or(REGULAR_WEIGHT);
+            let distance = design.abs_diff(weight);
+            if strict_weight && distance > WEIGHT_MATCH_TOLERANCE {
+                continue;
+            }
+            candidates.push((collection_index, is_color, distance));
+        }
+    }
+    candidates
+        .into_iter()
         .min_by_key(|(collection_index, _, distance)| (*distance, *collection_index))
         .map(|(collection_index, is_color, _)| (collection_index, is_color))
 }
 
 /// Platforms without per-codepoint font matching keep the pre-built chain.
-#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+#[cfg(not(all(
+    any(target_os = "ios", target_os = "macos"),
+    feature = "apple-core-text"
+)))]
 fn resolve_face_for_codepoint(
     _codepoint: char,
-    _probes: &[char],
+    _requirement: ScriptRequirement,
     _weight: u16,
 ) -> Option<ResolvedFace> {
     None
@@ -750,11 +915,31 @@ fn resolve_face_for_codepoint(
 mod tests {
     use super::*;
 
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        not(feature = "apple-core-text")
+    ))]
+    #[test]
+    fn portable_profile_does_not_resolve_apple_system_faces() {
+        assert!(resolve_face_for_codepoint(
+            '吗',
+            ScriptRequirement::probes('吗'),
+            REGULAR_WEIGHT,
+        )
+        .is_none());
+    }
+
     /// The `wght` value an emphasized run asks its faces to be designed at.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     const BOLD_WEIGHT: u16 = 700;
 
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn resolves_a_codepoint_no_probe_group_covers() {
         let record = fallback_for_codepoint('！', ScriptRequirement::probes('！'), REGULAR_WEIGHT)
@@ -763,7 +948,10 @@ mod tests {
         assert!(matches!(record.glyph_index('！'), Some(glyph_id) if glyph_id != 0));
     }
 
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn assigns_one_stable_id_per_face() {
         let requirement = ScriptRequirement::probes('你');
@@ -781,7 +969,31 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
+    #[test]
+    fn caches_the_selected_glyph_with_the_stable_face_answer() {
+        let requirement = ScriptRequirement::probes('你');
+        let (record, glyph_id) = fallback_glyph_for_codepoint(
+            '你',
+            requirement,
+            REGULAR_WEIGHT,
+        )
+        .expect("the platform fallback must expose a drawable Han glyph");
+        assert_ne!(glyph_id, 0);
+
+        let store = STORE.read().expect("fallback store read lock");
+        let key = ('你', requirement, REGULAR_WEIGHT);
+        assert_eq!(store.ids_by_codepoint.get(&key), Some(&Some(record.id)));
+        assert_eq!(store.glyphs_by_codepoint.get(&key), Some(&Some(glyph_id)));
+    }
+
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn exposes_resolved_faces_by_id_for_rasterizing_workers() {
         let record = fallback_for_codepoint('한', ScriptRequirement::probes('한'), REGULAR_WEIGHT)
@@ -874,6 +1086,50 @@ mod tests {
     }
 
     #[test]
+    fn the_language_hint_is_part_of_script_requirement_identity() {
+        let japanese = ScriptRequirement::from_run("漢字", Some(TextLanguage::Japanese));
+        let chinese = ScriptRequirement::from_run("漢字", Some(TextLanguage::Chinese));
+
+        assert_eq!(japanese.language(), Some(TextLanguage::Japanese));
+        assert_eq!(chinese.language(), Some(TextLanguage::Chinese));
+        assert_ne!(japanese, chinese);
+    }
+
+    #[test]
+    fn fallback_coverage_index_memoizes_decodability_per_face() {
+        let font_id = 0x3fff_ff00;
+        let record = FontRecord::from_bytes(
+            font_id,
+            include_bytes!("../../../fonts/GoogleSans-Regular.ttf").to_vec(),
+        )
+        .expect("the bundled test face should be readable");
+        let requirement = ScriptRequirement::probes('你');
+
+        assert!(cached_record_decodes_codepoint(&record, 'A'));
+        assert!(!cached_record_decodes_all(&record, requirement));
+        let first = FALLBACK_COVERAGE_INDEX
+            .read()
+            .expect("coverage index lock should be available");
+        let first_face = first
+            .get(&font_id)
+            .expect("the first fallback query must create a face index");
+        let first_glyph_count = first_face.glyphs.len();
+        assert_eq!(first_face.scripts.len(), 1);
+        drop(first);
+
+        assert!(cached_record_decodes_codepoint(&record, 'A'));
+        assert!(!cached_record_decodes_all(&record, requirement));
+        let second = FALLBACK_COVERAGE_INDEX
+            .read()
+            .expect("coverage index lock should be available");
+        let second_face = second
+            .get(&font_id)
+            .expect("the repeated fallback query must reuse the face index");
+        assert_eq!(second_face.glyphs.len(), first_glyph_count);
+        assert_eq!(second_face.scripts.len(), 1);
+    }
+
+    #[test]
     fn runs_without_ideographs_require_nothing() {
         for run in ["Hello, world!", "あいうえお", "한글", "😀"] {
             for language in [
@@ -906,11 +1162,11 @@ mod tests {
     }
 
     #[test]
-    fn requirements_are_fingerprinted_by_their_characters() {
+    fn requirements_are_fingerprinted_by_their_characters_and_language() {
         assert_eq!(
             ScriptRequirement::from_run("あの時は", None).fingerprint(),
-            ScriptRequirement::from_run("時", None).fingerprint(),
-            "the same demanded characters must share one cache key"
+            ScriptRequirement::from_run("時", Some(TextLanguage::Japanese)).fingerprint(),
+            "the same demanded characters and language must share one cache key"
         );
         assert_ne!(
             ScriptRequirement::from_run("時", None).fingerprint(),
@@ -925,6 +1181,35 @@ mod tests {
         assert_ne!(
             ScriptRequirement::EMPTY.fingerprint(),
             ScriptRequirement::from_run("時", None).fingerprint()
+        );
+    }
+
+    #[test]
+    fn fallback_cache_keys_include_the_complete_script_requirement() {
+        let codepoint = '好';
+        let japanese = ScriptRequirement::from_run("時", None);
+        let chinese = ScriptRequirement::from_run("吗", None);
+        let mut store = FallbackStore::default();
+
+        store
+            .ids_by_codepoint
+            .insert((codepoint, japanese, REGULAR_WEIGHT), Some(1));
+        store
+            .ids_by_codepoint
+            .insert((codepoint, chinese, REGULAR_WEIGHT), Some(2));
+
+        assert_eq!(store.ids_by_codepoint.len(), 2);
+        assert_eq!(
+            store
+                .ids_by_codepoint
+                .get(&(codepoint, japanese, REGULAR_WEIGHT)),
+            Some(&Some(1))
+        );
+        assert_eq!(
+            store
+                .ids_by_codepoint
+                .get(&(codepoint, chinese, REGULAR_WEIGHT)),
+            Some(&Some(2))
         );
     }
 
@@ -949,7 +1234,10 @@ mod tests {
     // Japanese face happens to carry are served by it and the simplified-only
     // ones fall through to a Chinese face — one word, two typefaces, two
     // stroke weights.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn one_word_of_han_is_served_by_one_face() {
         let faces: Vec<_> = "你好吗？顶多就"
@@ -973,7 +1261,10 @@ mod tests {
     // the rule cannot be asserted through the cascade on a developer machine.
     // It can be asserted where it acts: a face carrying only the Japanese half
     // of Han must be rejected for `你` even though it draws `你` perfectly.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_face_covering_only_half_of_han_is_not_chosen_for_it() {
         use crate::text_pipeline::apple_fonts::font_paths_for_codepoint;
@@ -985,8 +1276,8 @@ mod tests {
             .into_iter()
             .filter(|path| {
                 let source = FaceSource::File(path.clone());
-                face_drawing(&source, &['你'], REGULAR_WEIGHT, true).is_some()
-                    && face_drawing(&source, &required, REGULAR_WEIGHT, true).is_none()
+                face_drawing(&source, &['你'], REGULAR_WEIGHT, true, false).is_some()
+                    && face_drawing(&source, &required, REGULAR_WEIGHT, true, false).is_none()
             })
             .collect();
 
@@ -995,8 +1286,12 @@ mod tests {
             "apple systems always ship a japanese face carrying 你 but not 吗"
         );
 
-        let chosen =
-            resolve_face_for_codepoint('你', script_probes('你'), REGULAR_WEIGHT).expect("han must resolve");
+        let chosen = resolve_face_for_codepoint(
+            '你',
+            ScriptRequirement::probes('你'),
+            REGULAR_WEIGHT,
+        )
+        .expect("han must resolve");
         let FaceSource::File(chosen_path) = &chosen.source else {
             return; // A reassembled face is never one of the partial files.
         };
@@ -1013,7 +1308,10 @@ mod tests {
     // of every CJK language with faces Cupid decodes itself (Hiragino Sans GB
     // for simplified Han on a Japanese system), so whenever such a face covers
     // the requirement it must win over a platform-only face.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn han_resolves_to_a_face_cupid_decodes_itself() {
         for run in ["你好吗", "あの時は你好吗"] {
@@ -1031,7 +1329,10 @@ mod tests {
         }
     }
 
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn the_han_face_draws_the_probes_it_was_chosen_for() {
         let record =
@@ -1040,7 +1341,10 @@ mod tests {
         assert!(record_draws_all(&record, script_probes('你')));
     }
 
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn detects_color_faces_for_emoji() {
         let record = fallback_for_codepoint('😀', ScriptRequirement::EMPTY, REGULAR_WEIGHT)
@@ -1048,7 +1352,10 @@ mod tests {
         assert!(record.is_color, "emoji faces carry color glyph tables");
     }
 
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn resolved_faces_can_actually_be_rasterized() {
         for codepoint in ['你', '好', '！', '，'] {
@@ -1069,7 +1376,10 @@ mod tests {
     // reached the resolver — it only ever asked the platform about coverage.
     // Apple pairs every CJK UI face with a bolder sibling, so a bold request
     // must land on that one instead.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_bold_run_of_han_resolves_to_a_bolder_face() {
         let requirement = ScriptRequirement::from_run("你好", Some(TextLanguage::Chinese));
@@ -1090,7 +1400,10 @@ mod tests {
     // Choosing by weight may not undo the rule it sits on top of: the bolder
     // face still has to draw the whole script standing beside the character,
     // or a bold word arrives split across two typefaces again.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_bolder_face_still_covers_the_script_it_was_chosen_for() {
         let requirement = ScriptRequirement::from_run("你好吗", None);
@@ -1107,7 +1420,10 @@ mod tests {
 
     // One cached answer may not serve two weights, or the first run to ask
     // decides the stroke of every run after it.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn answers_are_cached_per_requested_weight() {
         let requirement = ScriptRequirement::probes('你');

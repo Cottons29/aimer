@@ -1,49 +1,51 @@
 mod glyph_run;
 
-use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
-#[allow(unused)]
-use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use hashbrown::{HashMap, HashSet};
 
-use skrifa::MetadataProvider;
-use skrifa::instance::{LocationRef, Size};
-use swash::FontRef;
-use swash::scale::image::Content;
-use swash::scale::{Render, ScaleContext, Source, StrikeWith};
-use swash::zeno::Format;
+use unicode_segmentation::UnicodeSegmentation;
 
-pub(super) use self::glyph_run::{GlyphRun, glyph_runs};
+pub(super) use self::glyph_run::{
+    GlyphRun, SEQUENTIAL_MAX_GLYPHS_PER_RUN, glyph_runs, group_into_runs,
+};
 use super::text_layout::FontId;
 use crate::font::{
     FontFamily, FontRegistry, FontStyle, FontWeight, TextLanguage, bundled_monospace_bytes,
 };
 use crate::text_pipeline::font_resolver::{
-    FontData, FontRecord, SharedFontRecord, advance_width_from_face, advance_widths_from_face,
-    font_ref, shared_fallback_chain,
+    FallbackScript, FontData, FontRecord, SharedFontRecord,
+    fallback_script_for_codepoint, fallback_script_for_font_id, shared_fallback_chain_for_script,
 };
 use crate::text_pipeline::glyph_metrics::{self, GlyphMetrics};
-use crate::text_pipeline::glyph_outline::rasterize_outline_glyph;
 use crate::text_pipeline::system_fallback::{
     SYSTEM_FALLBACK_ID_BASE, ScriptRequirement, WEIGHT_MATCH_TOLERANCE, fallback_by_id,
-    fallback_for_codepoint, script_probes,
+    fallback_glyph_for_codepoint, script_probes,
 };
+use crate::text_pipeline::unicode_script::Script;
 
 /// Embedded primary font (Roboto) — covers Latin and common scripts.
 const PRIMARY_FONT: &[u8] = include_bytes!("../../../fonts/GoogleSans-Regular.ttf");
 const MONOSPACE_FONT_ID: FontId = 0x7fff_fffe;
-// const JAPANESE_FONT: &[u8] =
-// include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf");
+/// Stable id reserved for the self-rasterized CJK fallback.
+///
+/// It lives below [`SYSTEM_FALLBACK_ID_BASE`] so a key can be recovered from a
+/// worker snapshot like any other internally decoded face, while staying away
+/// from ids assigned to runtime registrations and the platform fallback lanes.
+const BUNDLED_CJK_FONT_ID: FontId = 0x2000_0000;
+const BUNDLED_CJK_FONT: &[u8] =
+    include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf");
+static BUNDLED_CJK_RECORD: OnceLock<Option<FontRecord>> = OnceLock::new();
+
 /// A rasterized glyph bitmap with its metrics.
 ///
 /// `bitmap` layout depends on `is_color`:
 ///   * `is_color == false` — `width * height` bytes, single-channel coverage
-///     (8-bit alpha), as produced by Swash.
+///     (8-bit alpha), as produced by the active outline rasterizer.
 ///   * `is_color == true`  — `width * height * 4` bytes, RGBA8
-///     (non-premultiplied), as produced from `sbix` PNG strikes
-///     (AppleColorEmoji, etc.).
+///     (non-premultiplied), as produced by the owned COLR compositor or the
+///     compatibility color renderer.
 ///
 /// The text pipeline routes color glyphs to a separate RGBA8 atlas + shader.
 #[derive(Clone)]
@@ -65,11 +67,11 @@ pub struct RasterizedGlyph {
 
 /// OpenType weight a glyph key carries when nothing demands another one.
 ///
-/// Faces Cupid rasterizes itself draw their single design regardless of the
-/// requested weight — the weight already chose the face — so their keys stay
-/// on this value and one bitmap serves every style. Only glyphs of faces the
-/// *platform* draws carry a different weight, because those faces are
-/// variable and honor it — see [`GlyphRasterizer::platform_glyph_weight`].
+/// Static faces Cupid rasterizes itself draw their single design regardless of
+/// the requested weight, so their keys stay on this value and one bitmap
+/// serves every style. Variable faces are the exception: their keys carry the
+/// selected `wght` instance, just like platform-only faces — see
+/// [`GlyphRasterizer::glyph_weight_for_request`].
 pub(crate) const NORMAL_GLYPH_WEIGHT: u16 = 400;
 
 /// OpenType weight from which text reads as emphasized.
@@ -78,6 +80,49 @@ pub(crate) const NORMAL_GLYPH_WEIGHT: u16 = 400;
 /// Apple's own UI faces pair with bold text, so the threshold sits there
 /// rather than at `700`.
 pub(crate) const BOLD_WEIGHT_THRESHOLD: u16 = 600;
+const FALLBACK_REGULAR_NORMALIZATION_FACTOR: f32 = 0.035;
+const FALLBACK_REGULAR_NORMALIZATION_MIN_OFFSET: f32 = 0.9;
+static PRIMARY_PRINTABLE_ASCII_COVERAGE: OnceLock<bool> = OnceLock::new();
+
+/// Returns whether a glyph needs a small synthetic stroke to reach the
+/// requested weight. Regular text can need this too: a fallback face may only
+/// expose a W3/300 cut while the primary face is drawn at regular/400.
+#[inline]
+fn synthetic_weight_needed(requested: u16, drawn: u16) -> bool {
+    if requested < NORMAL_GLYPH_WEIGHT {
+        return false;
+    }
+
+    let delta = requested.saturating_sub(drawn);
+    if requested >= BOLD_WEIGHT_THRESHOLD {
+        delta > WEIGHT_MATCH_TOLERANCE
+    } else {
+        // At regular and medium weights, a one-cut deficit is visible and
+        // should be corrected. Bold keeps the historical strict comparison so
+        // a neighbouring semibold cut is not emboldened twice.
+        delta >= WEIGHT_MATCH_TOLERANCE
+    }
+}
+
+/// Computes the offset for the second coverage sample used by synthetic
+/// weight normalization. The offset scales with the requested deficit and is
+/// capped at the existing bold stroke so normal fallback glyphs receive only
+/// the amount of ink they are missing.
+#[inline]
+fn synthetic_weight_offset_for(
+    font_size: f32,
+    requested: u16,
+    drawn: u16,
+) -> Option<f32> {
+    if !synthetic_weight_needed(requested, drawn) {
+        return None;
+    }
+
+    let deficit = f32::from(requested.saturating_sub(drawn));
+    let bold_span = f32::from(BOLD_WEIGHT_THRESHOLD - NORMAL_GLYPH_WEIGHT);
+    let fraction = (deficit / bold_span.max(1.0)).clamp(0.0, 1.0);
+    Some((font_size.max(1.0) * 0.03 * fraction).max(0.5))
+}
 
 /// Key for caching rasterized-shaped glyphs.
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
@@ -89,11 +134,18 @@ pub struct GlyphKey {
     pub subpixel_y: u8,
     /// OpenType `wght` the glyph is rasterized at.
     ///
-    /// [`NORMAL_GLYPH_WEIGHT`] for every face Cupid decodes itself; the run's
-    /// effective weight for glyphs the platform draws, so one variable face
-    /// can stand beside light and bold text alike without every entry —
-    /// cache, metrics, atlas — collapsing onto a single stroke.
+    /// [`NORMAL_GLYPH_WEIGHT`] for static faces Cupid decodes itself; the
+    /// selected `wght` instance for readable variable faces and platform-only
+    /// faces, so one variable face can stand beside light and bold text alike
+    /// without every entry — cache, metrics, atlas — collapsing onto a single
+    /// stroke.
     pub weight: u16,
+    /// Per-face identity for an arbitrary OpenType variation instance.
+    ///
+    /// Zero selects the legacy/default coordinate path. Non-zero values are
+    /// interned by the shared Aimer face and make outline, metric, bitmap, and
+    /// atlas caches distinguish otherwise identical glyph requests.
+    pub variation_id: u32,
 }
 
 impl Hash for GlyphKey {
@@ -107,16 +159,55 @@ impl Hash for GlyphKey {
             ^ glyph_subpixel_and_weight
                 .wrapping_mul(0x9e37_79b1_85eb_ca87)
                 .rotate_left(17);
-        state.write_u64(compact);
+        state.write_u64(compact ^ u64::from(self.variation_id).rotate_left(37));
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ShapedRunGlyph {
     pub glyph_key: GlyphKey,
+    /// Horizontal advance in pixels. Vertical runs carry their pen movement
+    /// separately in [`Self::y_advance`].
     pub advance: f32,
+    /// Vertical advance in pixels, normally zero for horizontal text.
+    pub y_advance: f32,
     pub x_offset: f32,
     pub y_offset: f32,
     pub cluster: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SyntheticWeightPlan {
+    extra_offsets: [f32; 2],
+    extra_count: u8,
+}
+
+impl SyntheticWeightPlan {
+    pub(crate) fn extra_offsets(&self) -> &[f32] {
+        &self.extra_offsets[..usize::from(self.extra_count)]
+    }
+
+    #[cfg(test)]
+    fn span(&self) -> f32 {
+        let mut minimum = 0.0_f32;
+        let mut maximum = 0.0_f32;
+        for &offset in self.extra_offsets() {
+            minimum = minimum.min(offset);
+            maximum = maximum.max(offset);
+        }
+        maximum - minimum
+    }
+}
+
+#[derive(Default)]
+struct RunBuffers {
+    pending_keys: Vec<GlyphKey>,
+    fallback_keys: Vec<GlyphKey>,
+    metric_keys: Vec<GlyphKey>,
+    shaped_glyphs: Vec<ShapedRunGlyph>,
+    prepared: Vec<(GlyphKey, RasterizedGlyph)>,
+    pending_seen: HashSet<GlyphKey>,
+    metric_values: Vec<Option<GlyphMetrics>>,
 }
 
 impl GlyphKey {
@@ -129,6 +220,7 @@ impl GlyphKey {
             subpixel_x: 0,
             subpixel_y: 0,
             weight: NORMAL_GLYPH_WEIGHT,
+            variation_id: 0,
         }
     }
 
@@ -138,138 +230,19 @@ impl GlyphKey {
         self.weight = weight;
         self
     }
+
+    /// Returns this key addressed at an interned arbitrary variation
+    /// instance. The id is face-local and is normally obtained from
+    /// Aimer's variation-request API.
+    #[inline]
+    pub fn with_variation_id(mut self, variation_id: u32) -> Self {
+        self.variation_id = variation_id;
+        self
+    }
 }
 
-thread_local! {
-    /// The scaling context this thread renders every glyph through.
-    ///
-    /// A [`ScaleContext`] is not scratch space: it owns the caches swash
-    /// builds its scalers from, and the costly one is the hinting cache. An
-    /// entry there is a `HintingInstance`, whose construction *interprets* the
-    /// face's `fpgm` and `prep` bytecode programs — thousands of instructions
-    /// — and the result then serves every glyph of that face at that size. A
-    /// context that lives for one glyph is destroyed before a second glyph can
-    /// use it, which turns per-face work into per-glyph work: a freshly
-    /// scrolled paragraph or code block re-runs the same programs once per
-    /// glyph, and the interpreter dominates the frame.
-    ///
-    /// It is per thread rather than per rasterizer because it is `!Sync` while
-    /// glyph preparation runs on several threads, and because the caches are
-    /// then shared by every rasterizer a thread drives.
-    static SCALE_CONTEXT: RefCell<ScaleContext> = RefCell::new(new_scale_context());
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Counts the contexts built on the current thread, to prove the one above
-    /// is built once and not once per glyph.
-    static SCALE_CONTEXTS_CREATED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-
-    /// Counts the scalers built on the current thread, to prove a run of
-    /// glyphs is drawn through one of them.
-    static SCALERS_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-fn scale_contexts_created_here() -> usize {
-    SCALE_CONTEXTS_CREATED.get()
-}
-
-fn new_scale_context() -> ScaleContext {
-    #[cfg(test)]
-    SCALE_CONTEXTS_CREATED.set(SCALE_CONTEXTS_CREATED.get() + 1);
-
-    // Swash holds one parsed table proxy per face here, evicted least-recently
-    // used. A page mixes body, headings, bold, monospace and whatever fallback
-    // faces its scripts pull in, so the default of eight faces is raised to
-    // keep a realistic working set resident instead of re-parsing on every
-    // alternation.
-    ScaleContext::with_max_entries(16)
-}
-
-/// The identity `record`'s face is offered to swash's caches under.
-///
-/// Swash keys both its face cache and its hinting cache by an identifier it
-/// mints itself unless one is supplied — and it mints a *fresh* one for every
-/// [`FontRef`], so leaving the identity to swash would make every glyph a miss
-/// however long the context lives.
-///
-/// The face id and its index within the collection name the face; the length
-/// of its bytes stands beside them because those ids are not minted in one
-/// place — [`GlyphRasterizer::register_font_bytes`] numbers a runtime face
-/// from the chain the rasterizer holds — so two rasterizers can hand the same
-/// id to different faces. The caches are shared by the whole thread and a
-/// collision there would serve one face's parsed tables for another's glyphs,
-/// which the length makes vanishingly unlikely for a cost of nothing.
-#[inline]
-fn scaler_id(record: &FontRecord, data: &[u8]) -> [u64; 2] {
-    let face = (u64::from(record.id) << 32) | u64::from(record.collection_index);
-    [face, data.len() as u64]
-}
-
-/// Draws every glyph of `glyph_ids` from `record` at `font_size`.
-///
-/// The face is mapped, parsed and turned into a scaler once for the whole
-/// slice, and the advances come from a single reading of its metrics. That
-/// setup costs about as much as drawing half a dozen glyphs, so paying it per
-/// glyph — as drawing one at a time must — is a third of the cost of
-/// rasterizing a page of fresh text.
-///
-/// The returned vector is parallel to `glyph_ids`; an element is `None` where
-/// swash could not draw that glyph, leaving it to the caller's own fallbacks.
-fn rasterize_swash_run(
-    record: &FontRecord,
-    glyph_ids: &[u16],
-    font_size: f32,
-) -> Vec<Option<RasterizedGlyph>> {
-    let Some(data) = record.data() else {
-        return vec![None; glyph_ids.len()];
-    };
-    let data = data.as_ref();
-    let advances = advance_widths_from_face(
-        data,
-        record.collection_index,
-        glyph_ids.iter().copied(),
-        font_size,
-    );
-    let Some((font, advances)) =
-        FontRef::from_index(data, record.collection_index as usize).zip(advances)
-    else {
-        return vec![None; glyph_ids.len()];
-    };
-
-    let sources = [Source::Outline];
-    SCALE_CONTEXT.with_borrow_mut(|context| {
-        let mut scaler = context
-            .builder_with_id(font, scaler_id(record, data))
-            .size(font_size)
-            .hint(true)
-            .build();
-        #[cfg(test)]
-        SCALERS_BUILT.set(SCALERS_BUILT.get() + 1);
-        let mut render = Render::new(&sources);
-        let render = render.format(Format::Alpha);
-
-        glyph_ids
-            .iter()
-            .zip(advances)
-            .map(|(glyph_id, advance_width)| {
-                let advance_width = advance_width?;
-                let image = render.render(&mut scaler, *glyph_id)?;
-
-                Some(RasterizedGlyph {
-                    bitmap: image.data,
-                    width: image.placement.width,
-                    height: image.placement.height,
-                    offset_x: image.placement.left as f32,
-                    offset_y: (image.placement.top - image.placement.height as i32) as f32,
-                    advance_width,
-                    is_color: false,
-                })
-            })
-            .collect()
-    })
-}
+// Aimer owns the parsed face, outline, and coverage caches. No compatibility
+// scaling context is needed here.
 
 fn primary_font_record() -> FontRecord {
     static PRIMARY_FONT_RECORD: OnceLock<FontRecord> = OnceLock::new();
@@ -291,97 +264,23 @@ fn monospace_font_record() -> FontRecord {
 }
 
 // ---------------------------------------------------------------------------
-// Platform-specific system font loading
-// ---------------------------------------------------------------------------
-
-/// Try to load system font bytes for a given family name.
-/// Returns `None` if the font cannot be found or loading fails.
-///
-/// On Linux and Windows, Fontique resolves and loads the requested family.
-#[cfg(not(any(
-    target_arch = "wasm32",
-    target_os = "ios",
-    target_os = "macos",
-    target_os = "android"
-)))]
-fn load_system_font(family: &str) -> Option<Vec<u8>> {
-    let mut collection = fontique::Collection::new(fontique::CollectionOptions {
-        shared: false,
-        system_fonts: true,
-    });
-    let family = collection.family_by_name(family)?;
-    let font = family.default_font()?; // or family.fonts().first()?
-    Some(font.load(None)?.data().to_vec())
-}
-
-/// macOS / iOS: resolve a system font by family name through Core Text.
-///
-/// This avoids enumerating every installed face — the approach taken by
-/// generic font databases — which causes high RAM usage and slow startup on
-/// Apple platforms. See [`apple_fonts`] for the underlying lookup.
-///
-/// [`apple_fonts`]: crate::text_pipeline::apple_fonts
-#[allow(dead_code)]
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-pub(crate) fn load_system_font_path(family: &str) -> Option<PathBuf> {
-    crate::text_pipeline::apple_fonts::system_font_path(family)
-}
-
-// ---------------------------------------------------------------------------
 // Color glyph rasterization (embedded bitmaps and layered outlines)
 // ---------------------------------------------------------------------------
-/// Rasterizes a color glyph through Swash, which uses Skrifa for font scaling.
-///
-/// Embedded color bitmaps are preferred to preserve emoji artwork. Layered
-/// color outlines are used when no bitmap representation is available.
-fn rasterize_color_glyph(
-    record: &FontRecord,
-    glyph_id: u16,
-    font_size: f32,
-) -> Option<RasterizedGlyph> {
-    let data = record.data()?;
-    let font = FontRef::from_index(data.as_ref(), record.collection_index as usize)?;
-    let image = SCALE_CONTEXT.with_borrow_mut(|context| {
-        let mut scaler = context
-            .builder_with_id(font, scaler_id(record, data.as_ref()))
-            .size(font_size)
-            .hint(true)
-            .build();
-        Render::new(&[
-            Source::ColorBitmap(StrikeWith::BestFit),
-            Source::ColorOutline(0),
-        ])
-        .render(&mut scaler, glyph_id)
-    })?;
-    if image.content != Content::Color {
-        return None;
-    }
-    let advance_width =
-        advance_width_from_face(data.as_ref(), record.collection_index, glyph_id, font_size)?;
-
-    Some(RasterizedGlyph {
-        bitmap: image.data,
-        width: image.placement.width,
-        height: image.placement.height,
-        offset_x: image.placement.left as f32,
-        offset_y: (image.placement.top - image.placement.height as i32) as f32,
-        advance_width,
-        is_color: true,
-    })
-}
-
 /// Rasterizes a glyph through the platform, for faces Cupid cannot decode.
 ///
 /// Apple ships system fonts whose glyph data uses private formats — `hvgl`
 /// outlines in the Chinese UI face, `emjc` compressed strikes in the iOS emoji
-/// face — which no third-party rasterizer can read. The platform can, and the
+    /// face — which the owned outline decoder cannot read. The platform can, and the
 /// bitmap it produces is indistinguishable from a decoded one downstream.
 ///
 /// `weight` is the OpenType `wght` from the glyph key; the platform pins a
 /// variable face to it so the stroke matches the text standing beside the
 /// glyph. The advance is passed through rather than re-queried so a glyph
 /// keeps the `hmtx` advance shaping and layout already used for it.
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(all(
+    any(target_os = "ios", target_os = "macos"),
+    feature = "apple-core-text"
+))]
 fn rasterize_platform_glyph(
     record: &FontRecord,
     glyph_id: u16,
@@ -401,7 +300,10 @@ fn rasterize_platform_glyph(
 }
 
 /// Platforms whose fonts Cupid can always decode itself.
-#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+#[cfg(not(all(
+    any(target_os = "ios", target_os = "macos"),
+    feature = "apple-core-text"
+)))]
 fn rasterize_platform_glyph(
     _record: &FontRecord,
     _glyph_id: u16,
@@ -443,18 +345,10 @@ fn is_kana(codepoint: char) -> bool {
 /// `hvgl`. The check reads only the table directory, so it costs no parsing
 /// beyond the header.
 fn record_outlines_unreadable(record: &FontRecord) -> bool {
-    use skrifa::raw::TableProvider;
-
     if record.is_color {
         return false;
     }
-    let Some(data) = record.data() else {
-        return false;
-    };
-    let Some(face) = font_ref(data.as_ref(), record.collection_index) else {
-        return false;
-    };
-    face.glyf().is_err() && face.cff().is_err() && face.cff2().is_err()
+    !record.has_standard_outline()
 }
 
 #[inline]
@@ -484,8 +378,23 @@ pub fn point_inside(contours: &[Vec<(f32, f32)>], x: f32, y: f32) -> bool {
 pub(super) struct FontSnapshot {
     primary: SharedFontRecord,
     family_faces: Arc<[SharedFamilyFontRecord]>,
+    registered_font_revision: u64,
     fallbacks: Option<Arc<[SharedFontRecord]>>,
+    system_fallbacks_loaded: bool,
+    loaded_fallback_scripts: Arc<[FallbackScript]>,
+    registered_fallback_ids: Arc<[FontId]>,
     enable_fallbacks: bool,
+    /// Fallback face decisions resolved while the owner announced the batch.
+    /// Workers clone this small map so they do not repeat the same chain and
+    /// platform lookup for every grapheme of a shaped span.
+    resolved_codepoint_cache:
+        Arc<HashMap<(char, ScriptRequirement, u16), (FontId, u16, bool)>>,
+    /// The companion baseline discovered while resolving kana-less runs.
+    /// Carrying the tri-state value keeps workers from probing the same kana
+    /// solely to reconstruct an already-known effective weight.
+    default_companion_weight: Option<Option<u16>>,
+    /// Parsed Aimer faces that were made ready before worker execution.
+    aimer_faces: Arc<[(FontId, crate::text_pipeline::aimer_font::SharedParsedAimerFont)]>,
 }
 
 #[derive(Clone)]
@@ -540,21 +449,35 @@ pub struct GlyphRasterizer {
     /// Primary font (Roboto) for Latin/common glyphs.
     primary: FontRecord,
     family_faces: Vec<FamilyFontRecord>,
+    registered_font_revision: u64,
     /// Fallback fonts for extended Unicode coverage (CJK, etc.).
     /// Loaded lazily on first encounter of a glyph not in the primary font,
     /// to avoid the massive memory cost (~800MB) of parsing large CJK fonts
     /// when only ASCII text is rendered.
     fallbacks: Option<Vec<FontRecord>>,
+    /// Whether the broad platform/discovered fallback chain has been loaded.
+    /// `fallbacks` may already contain an explicitly
+    /// registered face without implying that the whole chain is resident.
+    system_fallbacks_loaded: bool,
+    /// Script lanes already requested by this rasterizer. A lane is recorded
+    /// separately from the broad-chain flag so one emoji miss does not make a
+    /// later CJK lookup believe every fallback lane is resident.
+    loaded_fallback_scripts: HashSet<FallbackScript>,
+    /// Runtime-registered faces are owned by the caller and survive a
+    /// process-local fallback release.
+    registered_fallback_ids: HashSet<FontId>,
     /// Whether to attempt loading fallbacks when needed.
     enable_fallbacks: bool,
     cache: HashMap<GlyphKey, RasterizedGlyph>,
     retained_bitmap_bytes: usize,
     advance_cache: HashMap<GlyphKey, f32>,
-    glyph_index_cache: HashMap<(FontId, char), Option<u16>>,
-    /// Whether a face covers the script demanded of it, keyed by the face and
-    /// the requirement's fingerprint — see [`ScriptRequirement`]. A Han
-    /// character otherwise re-tests every face in the chain on every lookup.
-    script_coverage_cache: HashMap<(FontId, u64), bool>,
+    /// Lazy cmap and script-coverage answers, partitioned by face.
+    coverage_index_cache: HashMap<FontId, CoverageIndex>,
+    /// Whether the fixed primary face covers the printable ASCII range.
+    ///
+    /// The shaping frontend can use one known face for a plain ASCII run
+    /// instead of repeating family and coverage resolution for every cluster.
+    primary_printable_ascii_coverage: Option<bool>,
     /// What the text currently being shaped or measured demands of a face.
     ///
     /// Set by [`Self::begin_script_run`] for the passes that hold the whole
@@ -564,7 +487,7 @@ pub struct GlyphRasterizer {
     /// First kana of the announced run, when it has one.
     ///
     /// The kana names the face whose stroke weight the run's platform-drawn
-    /// ideographs must match — see [`Self::platform_glyph_weight`].
+    /// ideographs must match — see [`Self::glyph_weight_for_request`].
     run_companion: Option<char>,
     /// The design weight of the face [`COMPANION_WEIGHT_PROBE`] resolves to,
     /// memoized after the first kana-less run asks for it.
@@ -572,26 +495,43 @@ pub struct GlyphRasterizer {
     /// This is the companion baseline of runs carrying no kana of their own
     /// — see [`Self::default_companion_weight`].
     default_companion_weight: Option<Option<u16>>,
+    /// Temporarily prevents the bundled Japanese face from answering the
+    /// companion-weight probe for an ambiguous Han-only run.
+    skip_bundled_cjk: bool,
     /// Whether a face's glyph data is readable only by the platform, per face.
     ///
-    /// Feeds [`Self::platform_glyph_weight`]; the answer costs a table-directory
+    /// Feeds [`Self::glyph_weight_for_request`]; the answer costs a table-directory
     /// probe, so it is remembered rather than re-derived per glyph.
     platform_only_cache: HashMap<FontId, bool>,
     /// A face's design weight — its `OS/2` weight class — per face.
     design_weight_cache: HashMap<FontId, Option<u16>>,
+    /// Whether a readable face exposes a valid `fvar` `wght` variation model.
+    variable_font_cache: HashMap<FontId, bool>,
     unsupported_codepoints: HashSet<char>,
     /// Cached font bytes per font_id to avoid re-reading from disk or
     /// re-cloning Arc<[u8]> on every `shape_cluster` call.
     font_bytes_cache: HashMap<FontId, FontData>,
-    /// Cached HarfRust shaping metadata per font id.
-    shaper_data_cache: HashMap<FontId, harfrust::ShaperData>,
-    /// Reusable `UnicodeBuffer` for HarfRust — reset between calls instead
-    /// of allocating a new buffer per cluster.
-    shape_buffer: Option<harfrust::UnicodeBuffer>,
+    /// Cached parsed Aimer face and OpenType layout state per font id.
+    aimer_font_cache:
+        HashMap<FontId, Option<crate::text_pipeline::aimer_font::AimerFontState>>,
+    /// Reusable storage for the current raster batch. Keeping this alongside
+    /// the rasterizer avoids allocating one pending/output vector per run.
+    run_buffers: RunBuffers,
+    /// Resolved fallback answers for one announced script requirement and
+    /// effective weight. A shaped run asks for the same face decision once per
+    /// grapheme; retaining the complete answer avoids rescanning the fallback
+    /// chain and re-entering the process-wide system resolver for each one.
+    /// Entries are cleared whenever the available face set changes.
+    resolved_codepoint_cache:
+        HashMap<(char, ScriptRequirement, u16), (FontId, u16, bool)>,
     #[cfg(test)]
     shape_call_count: usize,
     #[cfg(test)]
     rasterize_call_count: usize,
+    #[cfg(test)]
+    simple_ltr_path_count: usize,
+    #[cfg(test)]
+    reused_shape_output_count: usize,
 }
 
 #[derive(Clone)]
@@ -602,14 +542,28 @@ struct FamilyFontRecord {
     record: FontRecord,
 }
 
-fn registered_family_faces() -> Vec<FamilyFontRecord> {
-    let mut faces = vec![FamilyFontRecord {
+/// Lazy coverage answers owned by one face.
+///
+/// Keeping the cmap answers and the script decisions together makes
+/// invalidation face-granular: replacing one registered face does not evict
+/// every other face's coverage work. The index is intentionally lazy because
+/// CJK faces contain tens of thousands of mappings while most runs touch only
+/// a small handful of them.
+#[derive(Default)]
+struct CoverageIndex {
+    glyphs: HashMap<char, Option<u16>>,
+    scripts: HashMap<ScriptRequirement, bool>,
+}
+
+fn registered_family_faces() -> (Vec<FamilyFontRecord>, u64) {
+    let (registered_faces, revision) = FontRegistry::faces_with_revision();
+    let mut family_faces = vec![FamilyFontRecord {
         family: FontFamily::MONOSPACE,
         weight: FontWeight::Normal.numeric(),
         style: FontStyle::Normal,
         record: monospace_font_record(),
     }];
-    faces.extend(FontRegistry::faces().into_iter().filter_map(|face| {
+    family_faces.extend(registered_faces.into_iter().filter_map(|face| {
         Some(FamilyFontRecord {
             family: face.family,
             weight: face.weight,
@@ -617,7 +571,14 @@ fn registered_family_faces() -> Vec<FamilyFontRecord> {
             record: FontRecord::from_shared_bytes(face.face_id, face.bytes)?,
         })
     }));
-    faces
+    (family_faces, revision)
+}
+
+fn font_record_changed(previous: &FontRecord, current: &FontRecord) -> bool {
+    previous.collection_index != current.collection_index
+        || previous.is_color != current.is_color
+        || previous.bytes.as_deref() != current.bytes.as_deref()
+        || previous.path != current.path
 }
 
 fn family_style_distance(requested: FontStyle, candidate: FontStyle) -> u8 {
@@ -636,35 +597,48 @@ fn family_style_distance(requested: FontStyle, candidate: FontStyle) -> u8 {
 
 impl GlyphRasterizer {
     const BITMAP_CACHE_CAPACITY_BYTES: usize = 8 * 1024 * 1024;
-    const GLYPH_INDEX_CACHE_CAPACITY: usize = 16 * 1024;
+    const COVERAGE_GLYPH_CAPACITY: usize = 16 * 1024;
+    const COVERAGE_SCRIPT_CAPACITY: usize = 512;
 
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let primary = primary_font_record();
+        let (family_faces, registered_font_revision) = registered_family_faces();
 
         Self {
             primary,
-            family_faces: registered_family_faces(),
+            family_faces,
+            registered_font_revision,
             fallbacks: None, // loaded lazily on first miss
+            system_fallbacks_loaded: false,
+            loaded_fallback_scripts: HashSet::default(),
+            registered_fallback_ids: HashSet::default(),
             enable_fallbacks: true,
             cache: HashMap::default(),
             retained_bitmap_bytes: 0,
             advance_cache: HashMap::default(),
-            glyph_index_cache: HashMap::default(),
-            script_coverage_cache: HashMap::default(),
+            coverage_index_cache: HashMap::default(),
+            primary_printable_ascii_coverage: None,
             script_run: ScriptRequirement::EMPTY,
             run_companion: None,
             default_companion_weight: None,
+            skip_bundled_cjk: false,
             platform_only_cache: HashMap::default(),
             design_weight_cache: HashMap::default(),
+            variable_font_cache: HashMap::default(),
             unsupported_codepoints: HashSet::default(),
             font_bytes_cache: HashMap::default(),
-            shaper_data_cache: HashMap::default(),
-            shape_buffer: Some(harfrust::UnicodeBuffer::new()),
+            aimer_font_cache: HashMap::default(),
+            run_buffers: RunBuffers::default(),
+            resolved_codepoint_cache: HashMap::default(),
             #[cfg(test)]
             shape_call_count: 0,
             #[cfg(test)]
             rasterize_call_count: 0,
+            #[cfg(test)]
+            simple_ltr_path_count: 0,
+            #[cfg(test)]
+            reused_shape_output_count: 0,
         }
     }
 
@@ -673,34 +647,48 @@ impl GlyphRasterizer {
     /// needed.
     pub fn primary_only() -> Self {
         let primary = primary_font_record();
+        let (family_faces, registered_font_revision) = registered_family_faces();
         Self {
             primary,
-            family_faces: registered_family_faces(),
+            family_faces,
+            registered_font_revision,
             fallbacks: None,
+            system_fallbacks_loaded: false,
+            loaded_fallback_scripts: HashSet::default(),
+            registered_fallback_ids: HashSet::default(),
             enable_fallbacks: false,
             cache: HashMap::default(),
             retained_bitmap_bytes: 0,
             advance_cache: HashMap::default(),
-            glyph_index_cache: HashMap::default(),
-            script_coverage_cache: HashMap::default(),
+            coverage_index_cache: HashMap::default(),
+            primary_printable_ascii_coverage: None,
             script_run: ScriptRequirement::EMPTY,
             run_companion: None,
             default_companion_weight: None,
+            skip_bundled_cjk: false,
             platform_only_cache: HashMap::default(),
             design_weight_cache: HashMap::default(),
+            variable_font_cache: HashMap::default(),
             unsupported_codepoints: HashSet::default(),
             font_bytes_cache: HashMap::default(),
-            shaper_data_cache: HashMap::default(),
-            shape_buffer: Some(harfrust::UnicodeBuffer::new()),
+            aimer_font_cache: HashMap::default(),
+            run_buffers: RunBuffers::default(),
+            resolved_codepoint_cache: HashMap::default(),
             #[cfg(test)]
             shape_call_count: 0,
             #[cfg(test)]
             rasterize_call_count: 0,
+            #[cfg(test)]
+            simple_ltr_path_count: 0,
+            #[cfg(test)]
+            reused_shape_output_count: 0,
         }
     }
 
     /// Captures immutable font ownership for worker-local CPU preparation.
-    pub(super) fn font_snapshot(&self) -> FontSnapshot {
+    pub(super) fn font_snapshot(&mut self) -> FontSnapshot {
+        self.refresh_registered_family_faces();
+        let aimer_faces = self.prewarm_aimer_snapshot_faces();
         FontSnapshot {
             primary: SharedFontRecord::new(&self.primary),
             family_faces: Arc::from(
@@ -714,6 +702,7 @@ impl GlyphRasterizer {
                     })
                     .collect::<Vec<_>>(),
             ),
+            registered_font_revision: self.registered_font_revision,
             fallbacks: self.fallbacks.as_ref().map(|fallbacks| {
                 Arc::from(
                     fallbacks
@@ -722,11 +711,176 @@ impl GlyphRasterizer {
                         .collect::<Vec<_>>(),
                 )
             }),
+            system_fallbacks_loaded: self.system_fallbacks_loaded,
+            loaded_fallback_scripts: Arc::from(
+                FallbackScript::ALL
+                    .iter()
+                    .copied()
+                    .filter(|script| self.loaded_fallback_scripts.contains(script))
+                    .collect::<Vec<_>>(),
+            ),
+            registered_fallback_ids: Arc::from({
+                let mut ids = self
+                    .registered_fallback_ids
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>();
+                ids.sort_unstable();
+                ids
+            }),
             enable_fallbacks: self.enable_fallbacks,
+            resolved_codepoint_cache: Arc::new(self.resolved_codepoint_cache.clone()),
+            default_companion_weight: self.default_companion_weight,
+            aimer_faces,
         }
     }
 
+    /// Resolves the fallback faces needed by one complete text span before a
+    /// worker batch is launched.
+    ///
+    /// Worker contexts are deliberately independent for raster-cache safety,
+    /// but fallback resolution itself is deterministic and read-mostly. Doing
+    /// the face selection once on the owner lets the snapshot carry the
+    /// discovered records and the shared Aimer face parses to every worker.
+    /// The same grapheme boundaries and run announcement used by shaping are
+    /// used here, so this only moves resolution earlier; it does not change
+    /// face choice or glyph output.
+    pub(super) fn warm_fallbacks_for_text(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        family: FontFamily,
+        weight: FontWeight,
+        style: FontStyle,
+        language: Option<TextLanguage>,
+    ) {
+        if text.is_empty()
+            || (family == FontFamily::SANS_SERIF
+                && text
+                    .bytes()
+                    .all(|byte| byte == b'\n' || (b' '..=b'~').contains(&byte))
+                && self.primary_covers_printable_ascii())
+        {
+            return;
+        }
+
+        self.begin_script_run(text, language);
+        if family == FontFamily::SANS_SERIF {
+            // The primary face is the fixed SANS_SERIF choice. Avoid routing
+            // every grapheme through the general family selector (which would
+            // probe the primary cmap twice) and resolve only the codepoints
+            // that can actually enter the fallback chain. The cache key and
+            // effective weight are deliberately identical to
+            // `glyph_key_for_codepoint_at_weight`, so worker snapshots make
+            // the same face choice without re-entering fallback resolution.
+            let mut run_weight = None;
+            for (_, cluster) in text.grapheme_indices(true) {
+                let Some(codepoint) = cluster.chars().find(|codepoint| !codepoint.is_control())
+                else {
+                    continue;
+                };
+                if self
+                    .glyph_index_for_font(self.primary.id, codepoint)
+                    .is_some()
+                {
+                    continue;
+                }
+                let resolved_weight = match run_weight {
+                    Some(run_weight) => run_weight,
+                    None => {
+                        let resolved_weight = self.effective_run_weight(weight);
+                        run_weight = Some(resolved_weight);
+                        resolved_weight
+                    }
+                };
+                let requirement = self.requirement_for(codepoint);
+                let cache_key = (codepoint, requirement, resolved_weight);
+                if self.resolved_codepoint_cache.contains_key(&cache_key) {
+                    continue;
+                }
+                self.ensure_fallbacks_for_codepoint(codepoint);
+                let resolved = self.fallback_glyph_for_codepoint(
+                    codepoint,
+                    requirement,
+                    resolved_weight,
+                );
+                self.resolved_codepoint_cache.insert(cache_key, resolved);
+            }
+        } else {
+            for (_, cluster) in text.grapheme_indices(true) {
+                let _ = self.font_id_for_family_cluster(
+                    cluster, font_size, family, weight, style,
+                );
+            }
+        }
+        self.end_script_run();
+    }
+
+    /// Makes the faces selected by the announced batch ready before workers
+    /// start. Unselected fallback faces stay lazy; parsing every installed
+    /// script lane here would turn a narrow text update into a broad cold-start
+    /// scan and would not improve the resulting pixels.
+    fn prewarm_aimer_snapshot_faces(
+        &mut self,
+    ) -> Arc<[(FontId, crate::text_pipeline::aimer_font::SharedParsedAimerFont)]> {
+        let mut font_ids = Vec::with_capacity(
+            self.resolved_codepoint_cache.len() + self.family_faces.len() + 1,
+        );
+        font_ids.push(self.primary.id);
+        font_ids.extend(
+            self.family_faces
+                .iter()
+                .map(|face| face.record.id),
+        );
+        font_ids.extend(
+            self.fallbacks
+                .as_ref()
+                .into_iter()
+                .flatten()
+                .map(|record| record.id),
+        );
+        font_ids.extend(
+            self.resolved_codepoint_cache
+                .values()
+                .map(|(font_id, _, _)| *font_id),
+        );
+        font_ids.sort_unstable();
+        font_ids.dedup();
+
+        let mut faces = Vec::with_capacity(font_ids.len());
+        for font_id in font_ids {
+            self.ensure_aimer_font_cached(font_id);
+            let Some(shared) = self
+                .aimer_font_cache
+                .get(&font_id)
+                .and_then(|state| state.as_ref())
+                .and_then(|state| {
+                    state
+                        .prewarm_layout()
+                        .ok()
+                        .map(|_| state.shared())
+                })
+            else {
+                continue;
+            };
+            faces.push((font_id, shared));
+        }
+        Arc::from(faces)
+    }
+
     fn from_font_snapshot(snapshot: FontSnapshot) -> Self {
+        let aimer_font_cache = snapshot
+            .aimer_faces
+            .iter()
+            .map(|(font_id, shared)| {
+                (
+                    *font_id,
+                    Some(crate::text_pipeline::aimer_font::AimerFontState::from_shared(
+                        shared.clone(),
+                    )),
+                )
+            })
+            .collect();
         Self {
             primary: snapshot.primary.local_copy(),
             family_faces: snapshot
@@ -739,28 +893,39 @@ impl GlyphRasterizer {
                     record: face.record.local_copy(),
                 })
                 .collect(),
+            registered_font_revision: snapshot.registered_font_revision,
             fallbacks: snapshot
                 .fallbacks
                 .map(|fallbacks| fallbacks.iter().map(SharedFontRecord::local_copy).collect()),
+            system_fallbacks_loaded: snapshot.system_fallbacks_loaded,
+            loaded_fallback_scripts: snapshot.loaded_fallback_scripts.iter().copied().collect(),
+            registered_fallback_ids: snapshot.registered_fallback_ids.iter().copied().collect(),
             enable_fallbacks: snapshot.enable_fallbacks,
+            default_companion_weight: snapshot.default_companion_weight,
             cache: HashMap::default(),
             retained_bitmap_bytes: 0,
             advance_cache: HashMap::default(),
-            glyph_index_cache: HashMap::default(),
-            script_coverage_cache: HashMap::default(),
+            coverage_index_cache: HashMap::default(),
+            primary_printable_ascii_coverage: None,
             script_run: ScriptRequirement::EMPTY,
             run_companion: None,
-            default_companion_weight: None,
+            skip_bundled_cjk: false,
             platform_only_cache: HashMap::default(),
             design_weight_cache: HashMap::default(),
+            variable_font_cache: HashMap::default(),
             unsupported_codepoints: HashSet::default(),
             font_bytes_cache: HashMap::default(),
-            shaper_data_cache: HashMap::default(),
-            shape_buffer: Some(harfrust::UnicodeBuffer::new()),
+            aimer_font_cache,
+            run_buffers: RunBuffers::default(),
+            resolved_codepoint_cache: (*snapshot.resolved_codepoint_cache).clone(),
             #[cfg(test)]
             shape_call_count: 0,
             #[cfg(test)]
             rasterize_call_count: 0,
+            #[cfg(test)]
+            simple_ltr_path_count: 0,
+            #[cfg(test)]
+            reused_shape_output_count: 0,
         }
     }
 
@@ -775,6 +940,21 @@ impl GlyphRasterizer {
     }
 
     #[cfg(test)]
+    pub(super) fn record_simple_ltr_path(&mut self) {
+        self.simple_ltr_path_count += 1;
+    }
+
+    #[cfg(test)]
+    pub(super) fn simple_ltr_path_count(&self) -> usize {
+        self.simple_ltr_path_count
+    }
+
+    #[cfg(test)]
+    pub(super) fn reused_shape_output_count(&self) -> usize {
+        self.reused_shape_output_count
+    }
+
+    #[cfg(test)]
     pub fn reset_rasterize_call_count(&mut self) {
         self.rasterize_call_count = 0;
     }
@@ -784,12 +964,242 @@ impl GlyphRasterizer {
         self.rasterize_call_count
     }
 
-    /// Ensure fallback fonts are loaded. Called lazily on first glyph miss.
+    /// Ensure every platform-independent fallback lane is loaded.
+    ///
+    /// Ordinary misses use [`Self::ensure_fallbacks_for_script`] instead; this
+    /// broad operation remains available for an unknown codepoint and for an
+    /// explicit warm-all request.
     fn ensure_fallbacks(&mut self) {
-        if self.fallbacks.is_some() || !self.enable_fallbacks {
+        if self.system_fallbacks_loaded || !self.enable_fallbacks {
             return;
         }
-        self.fallbacks = Some(shared_fallback_chain());
+        for script in FallbackScript::ALL {
+            self.ensure_fallbacks_for_script(script);
+        }
+        self.system_fallbacks_loaded = true;
+    }
+
+    /// Loads one platform-independent fallback lane without warming unrelated
+    /// scripts. Apple still uses its per-codepoint cascade for the actual
+    /// record, but tracking the requested lane here keeps snapshot and release
+    /// behavior identical across platforms.
+    fn ensure_fallbacks_for_script(&mut self, script: FallbackScript) {
+        if !self.enable_fallbacks || self.loaded_fallback_scripts.contains(&script) {
+            return;
+        }
+        let chain = shared_fallback_chain_for_script(script);
+        let fallbacks = self.fallbacks.get_or_insert_with(Vec::new);
+        let mut changed = false;
+        for record in chain {
+            if !fallbacks.iter().any(|fallback| fallback.id == record.id) {
+                fallbacks.push(record);
+                changed = true;
+            }
+        }
+        if changed {
+            self.resolved_codepoint_cache.clear();
+        }
+        self.loaded_fallback_scripts.insert(script);
+    }
+
+    /// Loads the self-supplied CJK face without paying for unrelated scripts.
+    ///
+    /// This is deliberately a separate lane from the broad fallback chain:
+    /// the checked-in Japanese face is used only for a Japanese run, while
+    /// Chinese and Korean runs stay on their own language-aware cascade. Emoji
+    /// and less common scripts remain cold until they are asked for. The fixed
+    /// id keeps keys stable across worker snapshots and after a local fallback
+    /// release.
+    fn ensure_bundled_cjk_fallback(&mut self) {
+        if !self.enable_fallbacks
+            || (self.script_run.language() != Some(TextLanguage::Japanese)
+                && self.run_companion.is_none())
+        {
+            return;
+        }
+        let fallbacks = self.fallbacks.get_or_insert_with(Vec::new);
+        if fallbacks
+            .iter()
+            .any(|fallback| fallback.id == BUNDLED_CJK_FONT_ID)
+        {
+            return;
+        }
+        if let Some(record) = BUNDLED_CJK_RECORD
+            .get_or_init(|| {
+                FontRecord::from_static_bytes(BUNDLED_CJK_FONT_ID, BUNDLED_CJK_FONT)
+            })
+            .clone()
+        {
+            fallbacks.push(record);
+            self.resolved_codepoint_cache.clear();
+        }
+    }
+
+    /// Loads the smallest fallback set appropriate for `codepoint`.
+    fn ensure_fallbacks_for_codepoint(&mut self, codepoint: char) {
+        if let Some(script) = fallback_script_for_codepoint(codepoint) {
+            if script == FallbackScript::Cjk
+                && (self.script_run.language() == Some(TextLanguage::Japanese)
+                    || self.run_companion.is_some())
+            {
+                self.ensure_bundled_cjk_fallback();
+                let bundled_maps = self
+                    .glyph_index_for_font(BUNDLED_CJK_FONT_ID, codepoint)
+                    .is_some_and(|glyph_id| glyph_id != 0);
+                if !bundled_maps {
+                    self.ensure_fallbacks_for_script(script);
+                }
+                return;
+            }
+
+            self.ensure_fallbacks_for_script(script);
+            return;
+        }
+
+        // A codepoint outside the known lanes has no safe narrow candidate;
+        // retain the old broad behavior for that uncommon path.
+        self.ensure_fallbacks();
+    }
+
+    /// Releases discovered fallback faces and the local data derived from
+    /// them.
+    ///
+    /// Explicitly registered faces remain available. Discovered faces use
+    /// stable ids, so a later lookup or a worker holding an old [`GlyphKey`]
+    /// can load the same face again. Bitmap, metric, cmap and shaping entries
+    /// for released faces are invalidated together; retaining any of them
+    /// would either keep the face alive or allow a stale cache entry to select
+    /// the wrong record after reload.
+    pub fn release_fallbacks(&mut self) -> usize {
+        let Some(fallbacks) = self.fallbacks.take() else {
+            self.system_fallbacks_loaded = false;
+            self.loaded_fallback_scripts.clear();
+            return 0;
+        };
+
+        let mut released_ids: HashSet<FontId> = HashSet::default();
+        let retained = fallbacks
+            .into_iter()
+            .filter_map(|record| {
+                if self.registered_fallback_ids.contains(&record.id) {
+                    Some(record)
+                } else {
+                    released_ids.insert(record.id);
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if released_ids.is_empty() {
+            self.fallbacks = Some(retained);
+            self.system_fallbacks_loaded = false;
+            self.loaded_fallback_scripts.clear();
+            return 0;
+        }
+
+        self.fallbacks = (!retained.is_empty()).then_some(retained);
+        self.system_fallbacks_loaded = false;
+        self.loaded_fallback_scripts.clear();
+        self.resolved_codepoint_cache.clear();
+
+        self.invalidate_face_caches(&released_ids);
+
+        released_ids.len()
+    }
+
+    /// Ensures that a key naming a face from another preparation context can
+    /// find that face locally after lazy loading or fallback release.
+    fn ensure_fallback_loaded(&mut self, font_id: FontId) {
+        if self.font_record_by_id(font_id).is_some() {
+            return;
+        }
+        if font_id == BUNDLED_CJK_FONT_ID {
+            self.ensure_bundled_cjk_fallback();
+            return;
+        }
+        if let Some(script) = fallback_script_for_font_id(font_id) {
+            self.ensure_fallbacks_for_script(script);
+        } else if font_id < SYSTEM_FALLBACK_ID_BASE {
+            self.ensure_fallbacks();
+        } else {
+            self.ensure_system_fallback_loaded(font_id);
+        }
+    }
+
+    /// Refreshes the deterministic registered-family snapshot after the
+    /// process-wide registry changes. Replacements keep their face id but
+    /// invalidate every cache derived from the old bytes; removals invalidate
+    /// the same data before the old face disappears from the family snapshot.
+    fn refresh_registered_family_faces(&mut self) {
+        if FontRegistry::revision() == self.registered_font_revision {
+            return;
+        }
+        // A newly registered family face can win a fallback decision even when
+        // none of the old face ids disappeared, so selection answers must not
+        // survive a registry revision.
+        self.resolved_codepoint_cache.clear();
+        let (family_faces, revision) = registered_family_faces();
+        let changed_ids = self
+            .family_faces
+            .iter()
+            .filter(|face| face.family != FontFamily::MONOSPACE)
+            .filter_map(|previous| {
+                let current = family_faces
+                    .iter()
+                    .find(|face| face.record.id == previous.record.id);
+                current
+                    .is_none_or(|current| font_record_changed(&previous.record, &current.record))
+                    .then_some(previous.record.id)
+            })
+            .collect::<HashSet<_>>();
+        self.invalidate_face_caches(&changed_ids);
+        self.family_faces = family_faces;
+        self.registered_font_revision = revision;
+    }
+
+    /// Invalidates all data derived from the supplied face ids.
+    ///
+    /// The bitmap and metric caches are local to this rasterizer, while the
+    /// glyph metrics table is process-wide for worker reuse. They must be
+    /// invalidated together: keeping either one would allow an old face to
+    /// answer after a registration was replaced or removed.
+    fn invalidate_face_caches(&mut self, invalidated_ids: &HashSet<FontId>) {
+        if invalidated_ids.is_empty() {
+            return;
+        }
+
+        let invalidated_bitmap_bytes = self
+            .cache
+            .iter()
+            .filter(|(key, _)| invalidated_ids.contains(&key.font_id))
+            .map(|(_, glyph)| glyph.bitmap.capacity())
+            .sum::<usize>();
+        self.cache
+            .retain(|key, _| !invalidated_ids.contains(&key.font_id));
+        self.retained_bitmap_bytes = self
+            .retained_bitmap_bytes
+            .saturating_sub(invalidated_bitmap_bytes);
+        self.advance_cache
+            .retain(|key, _| !invalidated_ids.contains(&key.font_id));
+        self.coverage_index_cache
+            .retain(|font_id, _| !invalidated_ids.contains(font_id));
+        self.platform_only_cache
+            .retain(|font_id, _| !invalidated_ids.contains(font_id));
+        self.design_weight_cache
+            .retain(|font_id, _| !invalidated_ids.contains(font_id));
+        self.variable_font_cache
+            .retain(|font_id, _| !invalidated_ids.contains(font_id));
+        self.font_bytes_cache
+            .retain(|font_id, _| !invalidated_ids.contains(font_id));
+        self.aimer_font_cache
+            .retain(|font_id, _| !invalidated_ids.contains(font_id));
+        self.unsupported_codepoints.clear();
+        self.default_companion_weight = None;
+        self.resolved_codepoint_cache.clear();
+
+        for font_id in invalidated_ids.iter().copied() {
+            glyph_metrics::forget_font(font_id);
+        }
     }
 
     pub fn primary_font_id(&self) -> FontId {
@@ -802,6 +1212,7 @@ impl GlyphRasterizer {
         weight: FontWeight,
         style: FontStyle,
     ) -> FontId {
+        self.refresh_registered_family_faces();
         self.family_record(family, weight, style)
             .map_or(self.primary.id, |record| record.id)
     }
@@ -814,15 +1225,40 @@ impl GlyphRasterizer {
         weight: FontWeight,
         style: FontStyle,
     ) -> GlyphKey {
+        self.refresh_registered_family_faces();
         if let Some(font_id) = self
             .family_record(family, weight, style)
             .map(|record| record.id)
             && let Some(glyph_id) = self.glyph_index_for_font(font_id, codepoint)
         {
-            return GlyphKey::new(font_id, glyph_id, font_size);
+            let glyph_weight = self.glyph_weight_for_request(font_id, weight);
+            return GlyphKey::new(font_id, glyph_id, font_size).weighted(glyph_weight);
         }
 
         self.glyph_key_for_codepoint_at_weight(codepoint, font_size, weight)
+    }
+
+    /// Returns a family-resolved glyph key at arbitrary OpenType variation
+    /// axes. The key carries a face-local coordinate identity when the
+    /// selected face is an Aimer-readable variable font.
+    pub fn glyph_key_for_family_codepoint_with_variations(
+        &mut self,
+        codepoint: char,
+        font_size: f32,
+        family: FontFamily,
+        weight: FontWeight,
+        style: FontStyle,
+        axes: &[(u32, f32)],
+    ) -> GlyphKey {
+        let key = self.glyph_key_for_family_codepoint(
+            codepoint,
+            font_size,
+            family,
+            weight,
+            style,
+        );
+        let variation_id = self.variation_id_for_font(key.font_id, key.weight, axes);
+        key.with_variation_id(variation_id)
     }
 
     pub fn advance_width_for_family(
@@ -838,9 +1274,12 @@ impl GlyphRasterizer {
             return *width;
         }
         let width = self
-            .select_font_for_key(key)
-            .advance_width_for_glyph(key.glyph_id, font_size)
-            .unwrap_or(0.0);
+            .aimer_advance_width_for_key(key, font_size)
+            .unwrap_or_else(|| {
+                self.select_font_for_key(key)
+                    .advance_width_for_glyph(key.glyph_id, font_size)
+                    .unwrap_or(0.0)
+            });
         self.advance_cache.insert(key, width);
         width
     }
@@ -896,34 +1335,40 @@ impl GlyphRasterizer {
     pub fn register_font_bytes(&mut self, bytes: Vec<u8>) -> Option<FontId> {
         let font_id = self.next_fallback_font_id();
         let record = FontRecord::from_bytes(font_id, bytes)?;
-        self.ensure_fallbacks();
         self.fallbacks.get_or_insert_with(Vec::new).push(record);
+        self.registered_fallback_ids.insert(font_id);
         self.unsupported_codepoints.clear();
         self.cache.clear();
+        self.retained_bitmap_bytes = 0;
         self.advance_cache.clear();
-        self.glyph_index_cache.clear();
-        self.script_coverage_cache.clear();
+        self.coverage_index_cache.clear();
+        self.resolved_codepoint_cache.clear();
         self.platform_only_cache.clear();
         self.design_weight_cache.clear();
         glyph_metrics::forget_font(font_id);
         self.font_bytes_cache.remove(&font_id);
-        self.shaper_data_cache.remove(&font_id);
+        self.aimer_font_cache.remove(&font_id);
         Some(font_id)
     }
 
     /// Next id available for a font registered at runtime.
     ///
     /// Ids at or above [`SYSTEM_FALLBACK_ID_BASE`] belong to faces discovered
-    /// on demand and are owned by the shared store, so they are skipped here:
-    /// continuing from one of them would hand out an id the store may later
-    /// assign to a different face.
+    /// on demand and are owned by the shared store, so they are skipped here.
+    /// The platform-independent lanes also own a reserved high range below
+    /// that boundary; skipping it keeps a runtime registration from colliding
+    /// with a lane that has not been loaded yet.
     fn next_fallback_font_id(&self) -> FontId {
         self.fallbacks
             .as_ref()
             .into_iter()
             .flatten()
             .map(|record| record.id)
-            .filter(|id| *id < SYSTEM_FALLBACK_ID_BASE)
+            .filter(|id| {
+                *id < SYSTEM_FALLBACK_ID_BASE
+                    && fallback_script_for_font_id(*id).is_none()
+                    && *id != BUNDLED_CJK_FONT_ID
+            })
             .chain(std::iter::once(self.primary.id))
             .max()
             .unwrap_or(self.primary.id)
@@ -934,32 +1379,46 @@ impl GlyphRasterizer {
         self.glyph_key_for_codepoint_at_weight(codepoint, font_size, FontWeight::Normal)
     }
 
+    /// Returns a glyph key for `codepoint` at arbitrary OpenType variation
+    /// axes. Axis tags are packed big-endian four-byte tags such as
+    /// `u32::from_be_bytes(*b"wdth")`; the requested `FontWeight` remains the
+    /// `wght` value unless the axis list explicitly includes `wght`.
+    ///
+    /// The axis values are retained by the shared Aimer face and only a
+    /// compact face-local id is placed in the key. Invalid or unsupported
+    /// requests use the ordinary weight-only key.
+    pub fn glyph_key_for_codepoint_with_variations(
+        &mut self,
+        codepoint: char,
+        font_size: f32,
+        weight: FontWeight,
+        axes: &[(u32, f32)],
+    ) -> GlyphKey {
+        let key = self.glyph_key_for_codepoint_at_weight(codepoint, font_size, weight);
+        let variation_id = self.variation_id_for_font(key.font_id, key.weight, axes);
+        key.with_variation_id(variation_id)
+    }
+
     /// The key for `codepoint` when the text around it asks for `weight`.
     ///
     /// The style's weight already chose among the registered faces before the
-    /// fallback chain is consulted, so for faces Cupid decodes itself the key
-    /// stays on [`NORMAL_GLYPH_WEIGHT`]; a face only the platform draws is
-    /// addressed at the run's effective weight instead — see
-    /// [`Self::platform_glyph_weight`].
+    /// fallback chain is consulted, so static faces Cupid decodes itself stay
+    /// on [`NORMAL_GLYPH_WEIGHT`]. Readable variable faces and faces only the
+    /// platform draws are addressed at the run's effective weight instead —
+    /// see [`Self::glyph_weight_for_request`].
     fn glyph_key_for_codepoint_at_weight(
         &mut self,
         codepoint: char,
         font_size: f32,
         weight: FontWeight,
     ) -> GlyphKey {
-        if self
-            .glyph_index_for_font(self.primary.id, codepoint)
-            .is_none()
-            && !self.unsupported_codepoints.contains(&codepoint)
-        {
-            self.ensure_fallbacks();
-        }
+        let primary_glyph_id = self.glyph_index_for_font(self.primary.id, codepoint);
 
         // The primary face answers before any weight is computed: it is one
         // design serving every style, and asking what weight the run wants
         // would resolve the companion face — a fallback lookup — for text
         // that needs no fallback at all.
-        if let Some(glyph_id) = self.glyph_index_for_font(self.primary.id, codepoint) {
+        if let Some(glyph_id) = primary_glyph_id {
             return GlyphKey::new(self.primary.id, glyph_id, font_size);
         }
 
@@ -967,16 +1426,24 @@ impl GlyphRasterizer {
         // at, so an emphasized line lands on the family's bold cut instead of
         // its regular one — see [`Self::effective_run_weight`].
         let run_weight = self.effective_run_weight(weight);
-        let (font_id, glyph_id, supported) =
-            self.font_and_glyph_for_codepoint(codepoint, run_weight);
+        let cache_key = (codepoint, self.requirement_for(codepoint), run_weight);
+        let resolved = self.resolved_codepoint_cache.get(&cache_key).copied();
+        let (font_id, glyph_id, supported) = if let Some(resolved) = resolved {
+            // The snapshot already carries every face named by this map. Do
+            // not reload a fallback lane or re-enter the platform resolver on
+            // a worker cache hit; that was the work the owner performed while
+            // announcing the batch.
+            resolved
+        } else {
+            self.ensure_fallbacks_for_codepoint(codepoint);
+            let resolved = self.font_and_glyph_for_codepoint(codepoint, run_weight);
+            self.resolved_codepoint_cache.insert(cache_key, resolved);
+            resolved
+        };
         if !supported {
             self.unsupported_codepoints.insert(codepoint);
         }
-        let glyph_weight = if self.face_needs_platform_raster(font_id) {
-            run_weight
-        } else {
-            NORMAL_GLYPH_WEIGHT
-        };
+        let glyph_weight = self.glyph_weight_for_resolved_face(font_id, weight, run_weight);
         GlyphKey::new(font_id, glyph_id, font_size).weighted(glyph_weight)
     }
 
@@ -1001,16 +1468,91 @@ impl GlyphRasterizer {
     /// request for `700` is commonly answered by a `600` semibold.
     pub fn glyph_needs_synthetic_bold(&mut self, key: GlyphKey, requested: u16) -> bool {
         requested >= BOLD_WEIGHT_THRESHOLD
-            && requested.saturating_sub(self.drawn_weight(key)) > WEIGHT_MATCH_TOLERANCE
+            && synthetic_weight_needed(requested, self.drawn_weight(key))
+    }
+
+    /// Returns the synthetic-stroke offset needed for `key` to reach the
+    /// requested weight, including regular fallback text that is one design
+    /// cut lighter than the surrounding face.
+    pub(crate) fn synthetic_weight_offset(
+        &mut self,
+        key: GlyphKey,
+        requested: u16,
+        font_size: f32,
+    ) -> Option<f32> {
+        synthetic_weight_offset_for(font_size, requested, self.drawn_weight(key))
+    }
+
+    /// Returns the synthetic-stroke offset for a positioned glyph, including
+    /// the regular-weight correction used by fallback scripts whose nominal
+    /// W400 cut is visibly lighter than the embedded Latin face.
+    #[cfg(test)]
+    pub(crate) fn synthetic_weight_offset_for_codepoint(
+        &mut self,
+        key: GlyphKey,
+        requested: u16,
+        font_size: f32,
+        codepoint: char,
+    ) -> Option<f32> {
+        self.synthetic_weight_plan_for_codepoint(key, requested, font_size, codepoint)
+            .map(|plan| plan.span())
+    }
+
+    /// Returns the additional positioned copies needed to normalize a glyph's
+    /// optical weight. Most synthetic emphasis uses one copy shifted to the
+    /// right. Myanmar and Hangul use two half-shifts around the original so
+    /// their correction thickens the stroke without moving the glyph's visual
+    /// center.
+    pub(crate) fn synthetic_weight_plan_for_codepoint(
+        &mut self,
+        key: GlyphKey,
+        requested: u16,
+        font_size: f32,
+        codepoint: char,
+    ) -> Option<SyntheticWeightPlan> {
+        if requested == NORMAL_GLYPH_WEIGHT
+            && key.font_id != self.primary.id
+            && !self.face_needs_platform_raster(key.font_id)
+            && matches!(
+                fallback_script_for_codepoint(codepoint),
+                Some(FallbackScript::Myanmar | FallbackScript::Hangul)
+            )
+        {
+            // These system fallback families publish W400, but their regular
+            // outlines deposit less visual ink than the embedded Latin face.
+            // Two bounded half-shifts balance the stroke without changing the
+            // glyph's visual center or advance. The floor keeps the correction
+            // visible at the small sizes used by UI text.
+            let span = (font_size.max(1.0) * FALLBACK_REGULAR_NORMALIZATION_FACTOR)
+                .max(FALLBACK_REGULAR_NORMALIZATION_MIN_OFFSET);
+            let half_span = span * 0.5;
+            return Some(SyntheticWeightPlan {
+                extra_offsets: [-half_span, half_span],
+                extra_count: 2,
+            });
+        }
+
+        self.synthetic_weight_offset(key, requested, font_size)
+            .map(|offset| SyntheticWeightPlan {
+                extra_offsets: [offset, 0.0],
+                extra_count: 1,
+            })
     }
 
     /// The OpenType weight `key`'s bitmap is actually drawn at.
     ///
-    /// A face only the platform can draw is variable and is rendered at the
-    /// instance the key names; every other face renders the one design it was
-    /// cut at, whatever weight asked for it.
+    /// A variable face is rendered at the instance the key names; a static
+    /// face renders the one design it was cut at, whatever weight asked for
+    /// it.
     fn drawn_weight(&mut self, key: GlyphKey) -> u16 {
         if self.face_needs_platform_raster(key.font_id) {
+            key.weight
+        } else if self.face_has_weight_variations(key.font_id) {
+            // The owned variation path renders a readable face at the weight
+            // carried by the key. Its OS/2 class may describe the font's
+            // default instance (the bundled Noto face advertises W100 while
+            // its regular instance is W400), so that class is not the weight
+            // visible in the bitmap.
             key.weight
         } else {
             self.face_design_weight(key.font_id)
@@ -1024,7 +1566,7 @@ impl GlyphRasterizer {
             .is_none()
             && !self.unsupported_codepoints.contains(&codepoint)
         {
-            self.ensure_fallbacks();
+            self.ensure_fallbacks_for_codepoint(codepoint);
         }
 
         let (font_id, _, supported) =
@@ -1064,6 +1606,18 @@ impl GlyphRasterizer {
         // the `吗` beside it — drawn by the platform at the run's weight —
         // came out bold.
         let requirement = self.requirement_for(codepoint);
+        self.fallback_glyph_for_codepoint(codepoint, requirement, weight)
+    }
+
+    /// Resolves a codepoint already known to miss the primary face. Keeping
+    /// the primary probe outside this helper lets the batch fallback warm pass
+    /// reuse its result and its already-computed script requirement.
+    fn fallback_glyph_for_codepoint(
+        &mut self,
+        codepoint: char,
+        requirement: ScriptRequirement,
+        weight: u16,
+    ) -> (FontId, u16, bool) {
         let chain = self.chain_glyph_for_codepoint(codepoint, requirement, weight);
         if let Some((font_id, glyph_id, true)) = chain {
             return (font_id, glyph_id, true);
@@ -1125,14 +1679,13 @@ impl GlyphRasterizer {
     /// The OpenType weight glyphs of `font_id` are addressed and drawn at when
     /// the text around them asks for `requested`.
     ///
-    /// Faces whose glyph data Cupid decodes itself always answer
+    /// Static faces Cupid decodes itself always answer
     /// [`NORMAL_GLYPH_WEIGHT`]: they render their single design regardless,
     /// and keeping their keys on one value means one bitmap serves every
-    /// style. A face only the platform can draw is variable — that is why no
-    /// third-party rasterizer reads it — and must be told which instance to
-    /// render:
+    /// style. A readable variable face and a face only the platform can draw
+    /// must instead be told which instance to render:
     ///
-    /// * the baseline is the run's *companion weight* — the design weight of
+    /// * the platform-only baseline is the run's *companion weight* — the design weight of
     ///   the face drawing the run's kana. Apple pairs its Japanese UI faces at
     ///   `W3` (`300` on the `wght` scale) with regular text, so an ideograph
     ///   pinned to the default `400` stands visibly bolder than the かな beside
@@ -1147,11 +1700,34 @@ impl GlyphRasterizer {
     /// resolve to — see [`Self::default_companion_weight`] — so an ideograph
     /// keeps one stroke whether kana stand beside it yet or not, instead of
     /// snapping from bold to thin the moment one is typed.
-    fn platform_glyph_weight(&mut self, font_id: FontId, requested: FontWeight) -> u16 {
-        if !self.face_needs_platform_raster(font_id) {
-            return NORMAL_GLYPH_WEIGHT;
+    fn glyph_weight_for_request(&mut self, font_id: FontId, requested: FontWeight) -> u16 {
+        if self.face_needs_platform_raster(font_id) {
+            return self.effective_run_weight(requested);
         }
-        self.effective_run_weight(requested)
+        if self.face_has_weight_variations(font_id) {
+            return requested.numeric();
+        }
+        NORMAL_GLYPH_WEIGHT
+    }
+
+    /// Converts a resolved fallback answer into the key weight for one face.
+    /// The fallback search uses the effective run weight to choose a matching
+    /// face, but a readable variable face receives the caller's standard
+    /// OpenType request directly. Only platform-only faces need the companion
+    /// adjustment used by Apple's private variable fonts.
+    fn glyph_weight_for_resolved_face(
+        &mut self,
+        font_id: FontId,
+        requested: FontWeight,
+        run_weight: u16,
+    ) -> u16 {
+        if self.face_needs_platform_raster(font_id) {
+            run_weight
+        } else if self.face_has_weight_variations(font_id) {
+            requested.numeric()
+        } else {
+            NORMAL_GLYPH_WEIGHT
+        }
     }
 
     /// The `wght` value the run's faces should be designed and drawn at.
@@ -1167,7 +1743,11 @@ impl GlyphRasterizer {
     fn effective_run_weight(&mut self, requested: FontWeight) -> u16 {
         let baseline = self
             .run_companion_weight()
-            .or_else(|| self.default_companion_weight())
+            .or_else(|| {
+                (!self.script_run.is_empty())
+                    .then(|| self.default_companion_weight())
+                    .flatten()
+            })
             .unwrap_or(NORMAL_GLYPH_WEIGHT);
         let offset = i32::from(requested.numeric()) - i32::from(NORMAL_GLYPH_WEIGHT);
         (i32::from(baseline) + offset).clamp(1, 1000) as u16
@@ -1224,7 +1804,10 @@ impl GlyphRasterizer {
             return known;
         }
         let run = std::mem::replace(&mut self.script_run, ScriptRequirement::EMPTY);
+        let previous_skip_bundled_cjk = self.skip_bundled_cjk;
+        self.skip_bundled_cjk = true;
         let font_id = self.font_id_for_codepoint(COMPANION_WEIGHT_PROBE);
+        self.skip_bundled_cjk = previous_skip_bundled_cjk;
         self.script_run = run;
         let weight = self.face_design_weight(font_id);
         self.default_companion_weight = Some(weight);
@@ -1236,12 +1819,36 @@ impl GlyphRasterizer {
         if let Some(known) = self.design_weight_cache.get(&font_id) {
             return *known;
         }
-        let weight = self
-            .font_record_by_id(font_id)
-            .cloned()
-            .and_then(|record| record.design_weight());
+        let shared_weight = {
+            self.ensure_aimer_font_cached(font_id);
+            self.aimer_font_cache
+                .get(&font_id)
+                .and_then(|state| state.as_ref())
+                .and_then(crate::text_pipeline::aimer_font::AimerFontState::design_weight)
+        };
+        let weight = shared_weight.or_else(|| {
+            self.font_record_by_id(font_id)
+                .cloned()
+                .and_then(|record| record.design_weight())
+        });
         self.design_weight_cache.insert(font_id, weight);
         weight
+    }
+
+    /// Returns whether a readable face can be rendered through Aimer's
+    /// `fvar`/`gvar` `wght`-instance path.
+    fn face_has_weight_variations(&mut self, font_id: FontId) -> bool {
+        if let Some(known) = self.variable_font_cache.get(&font_id) {
+            return *known;
+        }
+        self.ensure_aimer_font_cached(font_id);
+        let variable = self
+            .aimer_font_cache
+            .get(&font_id)
+            .and_then(|state| state.as_ref())
+            .is_some_and(crate::text_pipeline::aimer_font::AimerFontState::has_weight_variations);
+        self.variable_font_cache.insert(font_id, variable);
+        variable
     }
 
     /// What a face must cover to be accepted for `codepoint`.
@@ -1286,6 +1893,19 @@ impl GlyphRasterizer {
             else {
                 break;
             };
+            if font_id == BUNDLED_CJK_FONT_ID
+                && (self.skip_bundled_cjk
+                    || (!script_probes(codepoint).is_empty()
+                        && self.script_run.language() != Some(TextLanguage::Japanese)
+                        && self.run_companion.is_none()))
+            {
+                // Noto Sans JP is the deterministic Japanese face we ship;
+                // an all-Han run without a Japanese language signal is
+                // ambiguous, so let the language-aware system cascade choose
+                // Chinese/Korean rather than silently applying Japanese glyph
+                // forms.
+                continue;
+            }
             let Some(glyph_id) = self.glyph_index_for_font(font_id, codepoint) else {
                 continue;
             };
@@ -1307,7 +1927,7 @@ impl GlyphRasterizer {
     /// table is read as regular, the weight it is drawn at everywhere else.
     ///
     /// A face only the platform can draw is exempt: it is variable — that is
-    /// why no third-party rasterizer reads it — and is *rendered* at the
+    /// why the owned outline decoder does not read it — and is *rendered* at the
     /// instance its key names, so it serves every weight and none of them is
     /// its design. Judging it by an `OS/2` weight it never publishes read it as
     /// regular and refused it a bold run, which is what left a bold `你好`
@@ -1315,6 +1935,11 @@ impl GlyphRasterizer {
     /// it while `你好吗` — where the simplified-only `吗` leaves no such face —
     /// arrived properly bold.
     fn face_matches_weight(&mut self, font_id: FontId, weight: u16) -> bool {
+        if self.face_has_weight_variations(font_id) {
+            // Aimer can select the requested `wght` instance for a readable
+            // variable face, so its OS/2 default class must not disqualify it.
+            return true;
+        }
         if self.face_needs_platform_raster(font_id) {
             return true;
         }
@@ -1332,15 +1957,22 @@ impl GlyphRasterizer {
         if requirement.is_empty() {
             return true;
         }
-        let cache_key = (font_id, requirement.fingerprint());
-        if let Some(covered) = self.script_coverage_cache.get(&cache_key) {
+        if let Some(covered) = self
+            .coverage_index_cache
+            .get(&font_id)
+            .and_then(|index| index.scripts.get(&requirement))
+        {
             return *covered;
         }
         let covered = requirement.as_slice().iter().all(|probe| {
             self.glyph_index_for_font(font_id, *probe)
                 .is_some_and(|glyph_id| glyph_id != 0)
         });
-        self.script_coverage_cache.insert(cache_key, covered);
+        let index = self.coverage_index_cache.entry(font_id).or_default();
+        if index.scripts.len() >= Self::COVERAGE_SCRIPT_CAPACITY {
+            index.scripts.clear();
+        }
+        index.scripts.insert(requirement, covered);
         covered
     }
 
@@ -1359,11 +1991,10 @@ impl GlyphRasterizer {
         if !self.enable_fallbacks || self.unsupported_codepoints.contains(&codepoint) {
             return None;
         }
-        let record = fallback_for_codepoint(codepoint, requirement, weight)?;
+        let (record, glyph_id) = fallback_glyph_for_codepoint(codepoint, requirement, weight)?;
         let font_id = record.id;
         self.adopt_fallback(record);
-        let glyph_id = self.glyph_index_for_font(font_id, codepoint)?;
-        (glyph_id != 0).then_some((font_id, glyph_id))
+        Some((font_id, glyph_id))
     }
 
     /// Adds a face to this rasterizer's chain unless its id is already there.
@@ -1371,6 +2002,10 @@ impl GlyphRasterizer {
         let fallbacks = self.fallbacks.get_or_insert_with(Vec::new);
         if !fallbacks.iter().any(|fallback| fallback.id == record.id) {
             fallbacks.push(record);
+            // Adoption order is part of fallback selection. A new face can
+            // therefore change the answer for an earlier codepoint even when
+            // that codepoint was already cached locally.
+            self.resolved_codepoint_cache.clear();
         }
     }
 
@@ -1390,19 +2025,46 @@ impl GlyphRasterizer {
     }
 
     fn glyph_index_for_font(&mut self, font_id: FontId, codepoint: char) -> Option<u16> {
-        let cache_key = (font_id, codepoint);
-        if let Some(glyph_id) = self.glyph_index_cache.get(&cache_key) {
+        if let Some(glyph_id) = self
+            .coverage_index_cache
+            .get(&font_id)
+            .and_then(|index| index.glyphs.get(&codepoint))
+        {
             return *glyph_id;
         }
 
-        let glyph_id = self
-            .font_record_by_id(font_id)
-            .and_then(|record| record.glyph_index(codepoint));
-        if self.glyph_index_cache.len() >= Self::GLYPH_INDEX_CACHE_CAPACITY {
-            self.glyph_index_cache.clear();
+        let glyph_id = {
+            self.ensure_aimer_font_cached(font_id);
+            self.aimer_font_cache
+                .get(&font_id)
+                .and_then(|state| state.as_ref())
+                .and_then(|state| state.glyph_index(codepoint))
+        };
+        let index = self.coverage_index_cache.entry(font_id).or_default();
+        if index.glyphs.len() >= Self::COVERAGE_GLYPH_CAPACITY {
+            index.glyphs.clear();
         }
-        self.glyph_index_cache.insert(cache_key, glyph_id);
+        index.glyphs.insert(codepoint, glyph_id);
         glyph_id
+    }
+
+    /// Reports whether the primary face covers every printable ASCII scalar.
+    ///
+    /// This is cached after the first query because the primary face is fixed
+    /// for the lifetime of a rasterizer. A run containing only printable ASCII
+    /// and hard breaks can then skip per-cluster family resolution safely.
+    pub(super) fn primary_covers_printable_ascii(&mut self) -> bool {
+        if let Some(covered) = self.primary_printable_ascii_coverage {
+            return covered;
+        }
+        let covered = *PRIMARY_PRINTABLE_ASCII_COVERAGE.get_or_init(|| {
+            (b' '..=b'~').all(|codepoint| {
+                self.glyph_index_for_font(self.primary.id, char::from(codepoint))
+                    .is_some()
+            })
+        });
+        self.primary_printable_ascii_coverage = Some(covered);
+        covered
     }
 
     fn font_record_by_id(&self, font_id: FontId) -> Option<&FontRecord> {
@@ -1422,13 +2084,126 @@ impl GlyphRasterizer {
             .find(|record| record.id == font_id)
     }
 
+    fn ensure_font_data_cached(&mut self, font_id: FontId) {
+        if self.font_bytes_cache.contains_key(&font_id) {
+            return;
+        }
+        let data = self.font_record_by_id(font_id).and_then(FontRecord::data);
+        if let Some(data) = data {
+            self.font_bytes_cache.insert(font_id, data);
+        }
+    }
+
+    fn ensure_aimer_font_cached(&mut self, font_id: FontId) {
+        if self.aimer_font_cache.contains_key(&font_id) {
+            return;
+        }
+        self.ensure_font_data_cached(font_id);
+        let state = self
+            .font_bytes_cache
+            .get(&font_id)
+            .cloned()
+            .and_then(|data| {
+                let collection_index = self.collection_index_for_font_id(font_id);
+                if font_id == self.primary.id {
+                    crate::text_pipeline::aimer_font::primary_state(data, collection_index)
+                } else {
+                    crate::text_pipeline::aimer_font::AimerFontState::from_font_data(
+                        data,
+                        collection_index,
+                    )
+                    .ok()
+                }
+        });
+        self.aimer_font_cache.insert(font_id, state);
+    }
+
+    fn variation_id_for_font(
+        &mut self,
+        font_id: FontId,
+        weight: u16,
+        axes: &[(u32, f32)],
+    ) -> u32 {
+        if axes.is_empty() {
+            return 0;
+        }
+        self.ensure_aimer_font_cached(font_id);
+        self.aimer_font_cache
+            .get(&font_id)
+            .and_then(|state| state.as_ref())
+            .and_then(|state| state.variation_instance_for_axes(weight, axes))
+            .unwrap_or(0)
+    }
+
+    fn aimer_advance_width_for_key(&mut self, key: GlyphKey, font_size: f32) -> Option<f32> {
+        if key.variation_id == 0 && !self.face_has_weight_variations(key.font_id) {
+            return None;
+        }
+        self.ensure_aimer_font_cached(key.font_id);
+        self.aimer_font_cache
+            .get(&key.font_id)
+            .and_then(|state| state.as_ref())
+            .filter(|state| key.variation_id != 0 || state.has_weight_variations())
+            .and_then(|state| {
+                state.advance_width_for_glyph_at_variation(
+                    key.glyph_id,
+                    font_size,
+                    key.weight,
+                    key.variation_id,
+                )
+            })
+    }
+
+    fn collection_index_for_font_id(&self, font_id: FontId) -> u32 {
+        self.font_record_by_id(font_id)
+            .map(|record| record.collection_index)
+            .unwrap_or(0)
+    }
+
+    fn rasterize_aimer_run_into_cache(
+        &mut self,
+        font_id: FontId,
+        pending: &[GlyphKey],
+        font_size: f32,
+    ) -> bool {
+        self.ensure_aimer_font_cached(font_id);
+
+        let aimer_font_cache = &mut self.aimer_font_cache;
+        let cache = &mut self.cache;
+        let retained_bitmap_bytes = &mut self.retained_bitmap_bytes;
+        let advance_cache = &mut self.advance_cache;
+        #[cfg(test)]
+        let rasterize_call_count = &mut self.rasterize_call_count;
+
+        match aimer_font_cache.get_mut(&font_id) {
+            Some(Some(state)) => state.rasterize_glyphs_into(pending, font_size, |key, glyph| {
+                #[cfg(test)]
+                {
+                    *rasterize_call_count += 1;
+                }
+                advance_cache.insert(key, glyph.advance_width);
+                glyph_metrics::store(key, &glyph);
+                Self::insert_cached_glyph_parts(
+                    cache,
+                    retained_bitmap_bytes,
+                    key,
+                    glyph,
+                );
+            }),
+            _ => false,
+        }
+    }
+
     #[cfg(test)]
     fn glyph_index_cache_len(&self) -> usize {
-        self.glyph_index_cache.len()
+        self.coverage_index_cache
+            .values()
+            .map(|index| index.glyphs.len())
+            .sum()
     }
 
     fn select_font_for_key(&mut self, key: GlyphKey) -> &mut FontRecord {
-        self.ensure_system_fallback_loaded(key.font_id);
+        self.ensure_fallback_loaded(key.font_id);
 
         if key.font_id == self.primary.id {
             &mut self.primary
@@ -1467,39 +2242,54 @@ impl GlyphRasterizer {
     /// resolved, mapped and turned into a scaler once for the whole slice
     /// rather than once per glyph. Duplicate keys are drawn once.
     pub(super) fn rasterize_run(&mut self, keys: &[GlyphKey], font_size: f32) {
-        let mut pending: Vec<GlyphKey> = Vec::with_capacity(keys.len());
+        self.refresh_registered_family_faces();
+        self.run_buffers.pending_keys.clear();
+        self.run_buffers.pending_seen.clear();
         for key in keys {
-            if !self.cache.contains_key(key) && !pending.contains(key) {
-                pending.push(*key);
+            if !self.cache.contains_key(key) && self.run_buffers.pending_seen.insert(*key) {
+                self.run_buffers.pending_keys.push(*key);
             }
         }
+        let pending = std::mem::take(&mut self.run_buffers.pending_keys);
+        self.rasterize_pending_run(pending, font_size);
+    }
+
+    fn rasterize_pending_run(&mut self, pending: Vec<GlyphKey>, font_size: f32) {
         let Some(first) = pending.first().copied() else {
+            self.run_buffers.pending_keys = pending;
             return;
         };
-        debug_assert!(
-            pending.iter().all(|key| key.font_id == first.font_id),
-            "one scaler draws one face"
-        );
+        debug_assert!(pending.iter().all(|key| key.font_id == first.font_id));
+        self.cache.reserve(pending.len());
+        self.advance_cache.reserve(pending.len());
 
-        if first.font_id < SYSTEM_FALLBACK_ID_BASE
-            && self.font_record_by_id(first.font_id).is_none()
-        {
-            self.ensure_fallbacks()
+        self.ensure_fallback_loaded(first.font_id);
+
+        let complete = self.rasterize_aimer_run_into_cache(first.font_id, &pending, font_size);
+        if complete {
+            self.run_buffers.pending_keys = pending;
+            return;
         }
-        self.ensure_system_fallback_loaded(first.font_id);
 
-        let prepared = {
-            let record = self
-                .font_record_by_id(first.font_id)
-                .unwrap_or(&self.primary);
-            if record.is_color {
-                Self::draw_color_run(record, &pending, font_size)
-            } else {
-                Self::draw_run(record, &pending, font_size)
-            }
-        };
+        let mut fallback = std::mem::take(&mut self.run_buffers.fallback_keys);
+        fallback.clear();
+        fallback.extend(
+            pending
+                .iter()
+                .filter(|key| !self.cache.contains_key(*key))
+                .copied(),
+        );
+        if fallback.is_empty() {
+            self.run_buffers.fallback_keys = fallback;
+            self.run_buffers.pending_keys = pending;
+            return;
+        }
 
-        for (key, glyph) in prepared {
+        let mut prepared = std::mem::take(&mut self.run_buffers.prepared);
+        prepared.clear();
+        self.draw_fallback_run(first.font_id, &fallback, font_size, &mut prepared);
+
+        for (key, glyph) in prepared.drain(..) {
             #[cfg(test)]
             {
                 self.rasterize_call_count += 1;
@@ -1508,94 +2298,49 @@ impl GlyphRasterizer {
             glyph_metrics::store(key, &glyph);
             self.insert_cached_glyph(key, glyph);
         }
+        self.run_buffers.prepared = prepared;
+        self.run_buffers.fallback_keys = fallback;
+        self.run_buffers.pending_keys = pending;
     }
 
-    /// Draws `pending` from a face Cupid decodes itself.
+    /// Draws only glyphs the owned reader declined.
     ///
-    /// Swash draws the run in one pass; a glyph it declines falls through to
-    /// Cupid's own outline rasterizer and then to the platform, and an empty
-    /// coverage with the face's advance is the last resort so that a glyph the
-    /// face cannot draw still occupies its width.
-    fn draw_run(
-        record: &FontRecord,
+    /// Aimer is the sole portable parser, shaper, and rasterizer. A private
+    /// Apple glyph may still be handed to the optional Core Text bridge; every
+    /// other unsupported glyph receives an empty, correctly-advancing cache
+    /// entry rather than silently invoking another font engine.
+    fn draw_fallback_run(
+        &mut self,
+        font_id: FontId,
         pending: &[GlyphKey],
         font_size: f32,
-    ) -> Vec<(GlyphKey, RasterizedGlyph)> {
-        let glyph_ids = pending.iter().map(|key| key.glyph_id).collect::<Vec<_>>();
-
-        rasterize_swash_run(record, &glyph_ids, font_size)
-            .into_iter()
-            .zip(pending)
-            .map(|(drawn, key)| {
-                let glyph = drawn
-                    .or_else(|| rasterize_outline_glyph(record, key.glyph_id, font_size))
-                    .or_else(|| {
-                        let fallback_advance = record
-                            .advance_width_for_glyph(key.glyph_id, font_size)
-                            .unwrap_or(0.0);
-                        rasterize_platform_glyph(
-                            record,
-                            key.glyph_id,
-                            font_size,
-                            key.weight,
-                            fallback_advance,
-                        )
-                        .or(Some(RasterizedGlyph {
-                            bitmap: Vec::new(),
-                            width: 0,
-                            height: 0,
-                            offset_x: 0.0,
-                            offset_y: 0.0,
-                            advance_width: fallback_advance,
-                            is_color: false,
-                        }))
-                    })
-                    .expect("the last resort always yields a glyph");
-
-                (*key, glyph)
-            })
-            .collect()
-    }
-
-    /// Draws `pending` from a color face.
-    ///
-    /// Color strikes are bitmaps rather than outlines, so there is no scaler to
-    /// share: each glyph is decoded on its own. Half the em is the advance an
-    /// emoji falls back to, which is what a square strike occupies.
-    fn draw_color_run(
-        record: &FontRecord,
-        pending: &[GlyphKey],
-        font_size: f32,
-    ) -> Vec<(GlyphKey, RasterizedGlyph)> {
-        pending
-            .iter()
-            .map(|key| {
-                let fallback_advance = record
-                    .advance_width_for_glyph(key.glyph_id, font_size)
-                    .unwrap_or(font_size * 0.5);
-                let glyph = rasterize_color_glyph(record, key.glyph_id, font_size)
-                    .or_else(|| {
-                        rasterize_platform_glyph(
-                            record,
-                            key.glyph_id,
-                            font_size,
-                            key.weight,
-                            fallback_advance,
-                        )
-                    })
-                    .unwrap_or_else(|| RasterizedGlyph {
-                        bitmap: Vec::new(),
-                        width: 0,
-                        height: 0,
-                        offset_x: 0.0,
-                        offset_y: 0.0,
-                        advance_width: fallback_advance,
-                        is_color: true,
-                    });
-
-                (*key, glyph)
-            })
-            .collect()
+        output: &mut Vec<(GlyphKey, RasterizedGlyph)>,
+    ) {
+        let record = self
+            .font_record_by_id(font_id)
+            .unwrap_or(&self.primary);
+        for key in pending.iter().copied() {
+            let fallback_advance = record
+                .advance_width_for_glyph(key.glyph_id, font_size)
+                .unwrap_or(font_size * 0.5);
+            let glyph = rasterize_platform_glyph(
+                record,
+                key.glyph_id,
+                font_size,
+                key.weight,
+                fallback_advance,
+            )
+            .unwrap_or_else(|| RasterizedGlyph {
+                bitmap: Vec::new(),
+                width: 0,
+                height: 0,
+                offset_x: 0.0,
+                offset_y: 0.0,
+                advance_width: fallback_advance,
+                is_color: record.is_color,
+            });
+            output.push((key, glyph));
+        }
     }
 
     pub fn rasterize_bitmap_key(&mut self, key: GlyphKey, font_size: f32) -> &RasterizedGlyph {
@@ -1637,32 +2382,57 @@ impl GlyphRasterizer {
     }
 
     fn insert_cached_glyph(&mut self, key: GlyphKey, glyph: RasterizedGlyph) {
-        if let Some(previous) = self.cache.remove(&key) {
-            self.retained_bitmap_bytes = self
-                .retained_bitmap_bytes
+        Self::insert_cached_glyph_parts(
+            &mut self.cache,
+            &mut self.retained_bitmap_bytes,
+            key,
+            glyph,
+        );
+    }
+
+    fn insert_cached_glyph_parts(
+        cache: &mut HashMap<GlyphKey, RasterizedGlyph>,
+        retained_bitmap_bytes: &mut usize,
+        key: GlyphKey,
+        glyph: RasterizedGlyph,
+    ) {
+        if let Some(previous) = cache.remove(&key) {
+            *retained_bitmap_bytes = retained_bitmap_bytes
                 .saturating_sub(previous.bitmap.capacity());
         }
 
         let incoming_bytes = glyph.bitmap.capacity();
-        self.make_bitmap_capacity_for(incoming_bytes);
-        self.retained_bitmap_bytes = self.retained_bitmap_bytes.saturating_add(incoming_bytes);
-        self.cache.insert(key, glyph);
+        Self::make_bitmap_capacity_for_parts(cache, retained_bitmap_bytes, incoming_bytes);
+        *retained_bitmap_bytes = retained_bitmap_bytes.saturating_add(incoming_bytes);
+        cache.insert(key, glyph);
     }
 
+    #[cfg(test)]
     fn make_bitmap_capacity_for(&mut self, incoming_bytes: usize) {
-        if self.retained_bitmap_bytes.saturating_add(incoming_bytes)
+        Self::make_bitmap_capacity_for_parts(
+            &mut self.cache,
+            &mut self.retained_bitmap_bytes,
+            incoming_bytes,
+        );
+    }
+
+    fn make_bitmap_capacity_for_parts(
+        cache: &mut HashMap<GlyphKey, RasterizedGlyph>,
+        retained_bitmap_bytes: &mut usize,
+        incoming_bytes: usize,
+    ) {
+        if retained_bitmap_bytes.saturating_add(incoming_bytes)
             <= Self::BITMAP_CACHE_CAPACITY_BYTES
         {
             return;
         }
 
-        for glyph in self.cache.values_mut() {
-            self.retained_bitmap_bytes = self
-                .retained_bitmap_bytes
+        for glyph in cache.values_mut() {
+            *retained_bitmap_bytes = retained_bitmap_bytes
                 .saturating_sub(glyph.bitmap.capacity());
             glyph.bitmap.clear();
             glyph.bitmap.shrink_to_fit();
-            if self.retained_bitmap_bytes.saturating_add(incoming_bytes)
+            if retained_bitmap_bytes.saturating_add(incoming_bytes)
                 <= Self::BITMAP_CACHE_CAPACITY_BYTES
             {
                 break;
@@ -1678,7 +2448,8 @@ impl GlyphRasterizer {
         self.cache.len()
     }
 
-    pub(super) fn needs_prepared_glyph(&self, key: GlyphKey, needs_bitmap: bool) -> bool {
+    pub(super) fn needs_prepared_glyph(&mut self, key: GlyphKey, needs_bitmap: bool) -> bool {
+        self.refresh_registered_family_faces();
         self.cache
             .get(&key)
             .is_none_or(|glyph| needs_bitmap && glyph.bitmap.is_empty())
@@ -1690,7 +2461,8 @@ impl GlyphRasterizer {
         self.insert_cached_glyph(key, glyph);
     }
 
-    pub(super) fn cached_glyph_descriptor(&self, key: GlyphKey) -> Option<(bool, u32, u32)> {
+    pub(super) fn cached_glyph_descriptor(&mut self, key: GlyphKey) -> Option<(bool, u32, u32)> {
+        self.refresh_registered_family_faces();
         self.cache
             .get(&key)
             .map(|glyph| (glyph.is_color, glyph.width, glyph.height))
@@ -1715,6 +2487,7 @@ impl GlyphRasterizer {
     /// created worker context reuses what any earlier frame or sibling worker
     /// measured, and publishes what it had to rasterize itself.
     pub(super) fn metrics_for_key(&mut self, key: GlyphKey, font_size: f32) -> GlyphMetrics {
+        self.refresh_registered_family_faces();
         if let Some(glyph) = self.cache.get(&key) {
             return GlyphMetrics::from(glyph);
         }
@@ -1727,16 +2500,86 @@ impl GlyphRasterizer {
         GlyphMetrics::from(glyph)
     }
 
-    /// Rasterizes every glyph `text` needs and hands back its coverage.
+    /// Makes the pixel boxes for one same-face shaped run available at once.
     ///
-    /// The glyphs are drawn in runs sharing a face, so a paragraph pays for
-    /// reading and scaling each face once rather than once per character.
-    pub fn preload_text(
+    /// Keys that already have process-wide metrics are not rasterized again.
+    /// Remaining keys are sent through one run so the scaler, outline cache,
+    /// and coverage path are reused. The callback receives one metric for each
+    /// input key, including duplicates, in the original order.
+    pub(super) fn with_metrics_for_keys<F>(
+        &mut self,
+        keys: &[GlyphKey],
+        font_size: f32,
+        mut emit: F,
+    ) where
+        F: FnMut(GlyphMetrics),
+    {
+        if keys.is_empty() {
+            return;
+        }
+
+        self.refresh_registered_family_faces();
+        let mut metric_values = std::mem::take(&mut self.run_buffers.metric_values);
+        glyph_metrics::cached_many(keys, &mut metric_values);
+        self.run_buffers.pending_keys.clear();
+        self.run_buffers.pending_seen.clear();
+        for (key, cached) in keys.iter().zip(&metric_values) {
+            if self.cache.contains_key(key) || cached.is_some() {
+                continue;
+            }
+            if self.run_buffers.pending_seen.insert(*key) {
+                self.run_buffers.pending_keys.push(*key);
+            }
+        }
+
+        let pending = std::mem::take(&mut self.run_buffers.pending_keys);
+        self.rasterize_pending_run(pending, font_size);
+
+        for (index, key) in keys.iter().enumerate() {
+            let metrics = if let Some(glyph) = self.cache.get(key) {
+                GlyphMetrics::from(glyph)
+            } else {
+                metric_values[index]
+                    .unwrap_or_else(|| self.metrics_for_key(*key, font_size))
+            };
+            emit(metrics);
+        }
+        self.run_buffers.metric_values = metric_values;
+    }
+
+    /// Makes the pixel boxes for shaped glyphs available without constructing
+    /// a temporary key vector at the call site.
+    pub(super) fn with_metrics_for_shaped_glyphs<F>(
+        &mut self,
+        glyphs: &[ShapedRunGlyph],
+        font_size: f32,
+        emit: F,
+    ) where
+        F: FnMut(GlyphMetrics),
+    {
+        let mut keys = std::mem::take(&mut self.run_buffers.metric_keys);
+        keys.clear();
+        keys.extend(glyphs.iter().map(|glyph| glyph.glyph_key));
+        self.with_metrics_for_keys(&keys, font_size, emit);
+        self.run_buffers.metric_keys = keys;
+    }
+
+    /// Rasterizes every glyph `text` needs and emits cached glyphs by reference.
+    ///
+    /// The callback runs synchronously while the glyph remains in this
+    /// rasterizer's cache; it must not retain the borrowed glyph. This avoids
+    /// cloning every bitmap for consumers such as the atlas uploader that use
+    /// each glyph immediately. The owned [`Self::preload_text`] API remains
+    /// available for callers that need to retain the results.
+    pub fn preload_text_into<F>(
         &mut self,
         text: &str,
         font_size: f32,
         language: Option<TextLanguage>,
-    ) -> Vec<(GlyphKey, RasterizedGlyph)> {
+        mut emit: F,
+    ) where
+        F: FnMut(GlyphKey, &RasterizedGlyph),
+    {
         // A glyph preloaded under a different face than the one shaping picks is
         // a wasted rasterization, so the warm-up sees the run and its language
         // too.
@@ -1748,14 +2591,45 @@ impl GlyphRasterizer {
             .collect::<Vec<_>>();
         self.end_script_run();
 
-        for run in glyph_runs(keys.iter().map(|key| (*key, font_size)).collect()) {
-            self.discard_partial_bitmaps(&run.keys);
-            self.rasterize_run(&run.keys, run.font_size);
+        let same_face = keys.first().is_none_or(|first| {
+            keys.iter().all(|key| key.font_id == first.font_id)
+        });
+        if same_face {
+            for chunk in keys.chunks(SEQUENTIAL_MAX_GLYPHS_PER_RUN) {
+                self.discard_partial_bitmaps(chunk);
+                self.rasterize_run(chunk, font_size);
+            }
+        } else {
+            let runs = group_into_runs(
+                keys.iter().copied().map(|key| (key, font_size)).collect(),
+                SEQUENTIAL_MAX_GLYPHS_PER_RUN,
+            );
+            for run in runs {
+                self.discard_partial_bitmaps(&run.keys);
+                self.rasterize_run(&run.keys, run.font_size);
+            }
         }
 
-        keys.into_iter()
-            .filter_map(|key| self.cached_glyph_for_commit(key).map(|glyph| (key, glyph)))
-            .collect()
+        for key in keys {
+            if let Some(glyph) = self.cache.get(&key) {
+                emit(key, glyph);
+            }
+        }
+    }
+
+    /// Rasterizes every glyph `text` needs and returns owned copies of the
+    /// resulting cache entries.
+    pub fn preload_text(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        language: Option<TextLanguage>,
+    ) -> Vec<(GlyphKey, RasterizedGlyph)> {
+        let mut output = Vec::with_capacity(text.chars().count());
+        self.preload_text_into(text, font_size, language, |key, glyph| {
+            output.push((key, glyph.clone()));
+        });
+        output
     }
 
     pub fn advance_width(&mut self, codepoint: char, font_size: f32) -> f32 {
@@ -1765,30 +2639,37 @@ impl GlyphRasterizer {
         }
 
         if key.font_id != self.primary.id {
-            self.ensure_fallbacks();
+            self.ensure_fallback_loaded(key.font_id);
         }
 
         let width = self
-            .select_font_for_key(key)
-            .advance_width_for_glyph(key.glyph_id, font_size)
-            .unwrap_or(0.0);
+            .aimer_advance_width_for_key(key, font_size)
+            .unwrap_or_else(|| {
+                self.select_font_for_key(key)
+                    .advance_width_for_glyph(key.glyph_id, font_size)
+                    .unwrap_or(0.0)
+            });
         self.advance_cache.insert(key, width);
         width
     }
 
     pub fn advance_width_for_key(&mut self, key: GlyphKey, font_size: f32) -> f32 {
+        self.refresh_registered_family_faces();
         if let Some(width) = self.advance_cache.get(&key) {
             return *width;
         }
 
         if key.font_id != self.primary.id {
-            self.ensure_fallbacks();
+            self.ensure_fallback_loaded(key.font_id);
         }
 
         let width = self
-            .select_font_for_key(key)
-            .advance_width_for_glyph(key.glyph_id, font_size)
-            .unwrap_or(0.0);
+            .aimer_advance_width_for_key(key, font_size)
+            .unwrap_or_else(|| {
+                self.select_font_for_key(key)
+                    .advance_width_for_glyph(key.glyph_id, font_size)
+                    .unwrap_or(0.0)
+            });
         self.advance_cache.insert(key, width);
         width
     }
@@ -1811,17 +2692,41 @@ impl GlyphRasterizer {
         weight: FontWeight,
         style: FontStyle,
     ) -> (f32, f32, f32) {
-        let record = self
-            .family_record(family, weight, style)
-            .unwrap_or(&self.primary);
-        let Some(data) = record.bytes.as_ref() else {
-            return (font_size * 0.8, font_size * -0.2, 0.0);
+        let stale_registered_family = family != FontFamily::SANS_SERIF
+            && family != FontFamily::MONOSPACE
+            && FontRegistry::revision() != self.registered_font_revision;
+        let current_record = if stale_registered_family {
+            FontRegistry::resolve(family, weight, style)
+                .and_then(|face| FontRecord::from_shared_bytes(face.face_id, face.bytes))
+        } else {
+            None
         };
-        let Some(face) = font_ref(data.as_ref(), record.collection_index) else {
-            return (font_size * 0.8, font_size * -0.2, 0.0);
+        let record = if stale_registered_family {
+            current_record.as_ref().unwrap_or(&self.primary)
+        } else {
+            self.family_record(family, weight, style)
+                .unwrap_or(&self.primary)
         };
-        let metrics = face.metrics(Size::new(font_size), LocationRef::default());
-        (metrics.ascent, metrics.descent, metrics.leading)
+        if record.id == self.primary.id
+            && font_size.is_finite()
+            && font_size > 0.0
+            && let Some(data) = record.data()
+            && let Some(metrics) = crate::text_pipeline::aimer_font::primary_metrics(
+                data,
+                record.collection_index,
+            )
+        {
+            let scale = font_size / f32::from(metrics.units_per_em);
+            return (
+                f32::from(metrics.ascender) * scale,
+                f32::from(metrics.descender) * scale,
+                f32::from(metrics.line_gap) * scale,
+            );
+        }
+        if let Some(metrics) = record.line_metrics(font_size) {
+            return metrics;
+        }
+        (font_size * 0.8, font_size * -0.2, 0.0)
     }
 
     /// Convenience: measure the advance width of a string.
@@ -1832,7 +2737,7 @@ impl GlyphRasterizer {
     /// Shape a single grapheme cluster using the correct font (primary or
     /// fallback).
     ///
-    /// Uses HarfRust to shape the entire cluster as a unit, so that
+    /// Uses Aimer's checked OpenType shaper to shape the entire cluster as a unit, so that
     /// complex-script sequences (e.g. Khmer base + COENG + subscript
     /// consonant) produce the correct ligature glyph IDs and advances
     /// rather than being split into separate unrelated glyphs.
@@ -1883,6 +2788,15 @@ impl GlyphRasterizer {
         style: FontStyle,
     ) -> Option<FontId> {
         let base_char = cluster.chars().find(|codepoint| !codepoint.is_control())?;
+        if family == FontFamily::SANS_SERIF {
+            // SANS_SERIF is the fixed embedded primary family. Re-entering the
+            // family-record selector here only repeats a primary cmap probe
+            // before the same fallback-aware key path does it again.
+            return Some(
+                self.glyph_key_for_codepoint_at_weight(base_char, font_size, weight)
+                    .font_id,
+            );
+        }
         Some(
             self.glyph_key_for_family_codepoint(base_char, font_size, family, weight, style)
                 .font_id,
@@ -1904,6 +2818,36 @@ impl GlyphRasterizer {
         self.shape_run_with_font_id(text, font_size, font_id, weight)
     }
 
+    /// Shapes a family-selected run at arbitrary OpenType variation axes.
+    pub fn shape_run_for_family_with_variations(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        family: FontFamily,
+        weight: FontWeight,
+        style: FontStyle,
+        axes: &[(u32, f32)],
+    ) -> Vec<ShapedRunGlyph> {
+        let Some(base_char) = text.chars().find(|codepoint| !codepoint.is_control()) else {
+            return Vec::new();
+        };
+        let key = self.glyph_key_for_family_codepoint_with_variations(
+            base_char,
+            font_size,
+            family,
+            weight,
+            style,
+            axes,
+        );
+        self.shape_run_with_font_id_with_variations(
+            text,
+            font_size,
+            key.font_id,
+            weight,
+            axes,
+        )
+    }
+
     pub fn shape_run_with_font_id(
         &mut self,
         text: &str,
@@ -1911,107 +2855,228 @@ impl GlyphRasterizer {
         font_id: FontId,
         weight: FontWeight,
     ) -> Vec<ShapedRunGlyph> {
-        if text.is_empty() {
-            return Vec::new();
-        }
-        self.ensure_system_fallback_loaded(font_id);
-        // One face shapes the whole run, so its glyphs share one weight; see
-        // [`Self::platform_glyph_weight`].
-        let glyph_weight = self.platform_glyph_weight(font_id, weight);
+        let mut output = Vec::new();
+        self.shape_run_with_font_id_into(
+            text,
+            font_size,
+            font_id,
+            weight,
+            None,
+            false,
+            None,
+            &mut output,
+        );
+        output
+    }
 
-        // Retrieve cached font bytes for this font_id, populating the cache on
-        // first access.  This avoids a file read (or Arc<[u8]> clone followed by
-        // a heap copy) on every call.
-        if !self.font_bytes_cache.contains_key(&font_id) {
-            let bytes = self
-                .family_faces
-                .iter()
-                .find(|face| face.record.id == font_id)
-                .and_then(|face| face.record.data())
-                .or_else(|| {
-                    if font_id == self.primary.id {
-                        return self.primary.data();
-                    }
-                    self.fallbacks
-                        .as_ref()
-                        .and_then(|fbs| fbs.iter().find(|fb| fb.id == font_id))
-                        .and_then(FontRecord::data)
-                });
-            if let Some(b) = bytes {
-                self.font_bytes_cache.insert(font_id, b);
-            }
-        }
+    /// Shapes a run at arbitrary OpenType variation axes through the
+    /// Aimer path. The returned glyph keys carry the same
+    /// variation identity that rasterization and metrics consume.
+    pub fn shape_run_with_font_id_with_variations(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        font_id: FontId,
+        weight: FontWeight,
+        axes: &[(u32, f32)],
+    ) -> Vec<ShapedRunGlyph> {
+        let glyph_weight = self.glyph_weight_for_request(font_id, weight);
+        let variation_id = self.variation_id_for_font(font_id, glyph_weight, axes);
+        let mut output = Vec::new();
+        self.shape_run_with_font_id_and_variation_into(
+            text,
+            font_size,
+            font_id,
+            weight,
+            None,
+            false,
+            variation_id,
+            None,
+            &mut output,
+        );
+        output
+    }
 
-        let font_data = match self.font_bytes_cache.get(&font_id) {
-            Some(data) => data,
-            None => return Vec::new(),
-        };
+    /// Shapes a run using the rasterizer's reusable output storage.
+    pub(super) fn shape_run_with_font_id_reusing(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        font_id: FontId,
+        weight: FontWeight,
+    ) -> Vec<ShapedRunGlyph> {
+        self.shape_run_with_font_id_reusing_with_options(
+            text,
+            font_size,
+            font_id,
+            weight,
+            None,
+            false,
+        )
+    }
 
-        // Shape the cluster with HarfRust.
-        let collection_index = self
-            .family_faces
-            .iter()
-            .find(|face| face.record.id == font_id)
-            .map(|face| face.record.collection_index)
-            .unwrap_or_else(|| {
-                if font_id == self.primary.id {
-                    return self.primary.collection_index;
-                }
-                self.fallbacks
-                    .as_ref()
-                    .and_then(|fbs| fbs.iter().find(|fb| fb.id == font_id))
-                    .map(|fb| fb.collection_index)
-                    .unwrap_or(0)
-            });
+    /// Shapes a run while passing the optional CJK language and vertical
+    /// substitution hints to the owned shaper.
+    pub(super) fn shape_run_with_font_id_reusing_with_options(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        font_id: FontId,
+        weight: FontWeight,
+        language: Option<TextLanguage>,
+        vertical: bool,
+    ) -> Vec<ShapedRunGlyph> {
+        self.shape_run_with_font_id_reusing_with_options_and_script(
+            text,
+            font_size,
+            font_id,
+            weight,
+            language,
+            vertical,
+            None,
+        )
+    }
 
-        let face = match harfrust::FontRef::from_index(font_data.as_ref(), collection_index) {
-            Ok(face) => face,
-            Err(_) => return Vec::new(),
-        };
-        self.shaper_data_cache
-            .entry(font_id)
-            .or_insert_with(|| harfrust::ShaperData::new(&face));
-        let shaper = self
-            .shaper_data_cache
-            .get(&font_id)
-            .expect("shaper data was just inserted")
-            .shaper(&face)
-            .build();
-
-        let upem = shaper.units_per_em() as f32;
-        let scale = if upem > 0.0 { font_size / upem } else { 1.0 };
-
-        // Re-use the pre-allocated UnicodeBuffer by taking it out, resetting it,
-        // filling it with the cluster text, shaping, then putting it back.
-        let mut buffer = self.shape_buffer.take().unwrap_or_default();
-        buffer.push_str(text);
-        buffer.guess_segment_properties();
+    /// Shapes a run with a paragraph-derived script hint.
+    ///
+    /// The hint only skips the owned-shaper eligibility scan. The checked
+    /// Aimer layout dispatcher still validates the text, so a stale or
+    /// unsupported hint follows the same owned fallback path.
+    pub(super) fn shape_run_with_font_id_reusing_with_options_and_script(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        font_id: FontId,
+        weight: FontWeight,
+        language: Option<TextLanguage>,
+        vertical: bool,
+        script_hint: Option<Script>,
+    ) -> Vec<ShapedRunGlyph> {
+        let mut output = std::mem::take(&mut self.run_buffers.shaped_glyphs);
         #[cfg(test)]
         {
-            self.shape_call_count += 1;
+            self.reused_shape_output_count += 1;
         }
-        let output = shaper.shape(buffer, harfrust::ShapeOptions::default());
+        self.shape_run_with_font_id_into(
+            text,
+            font_size,
+            font_id,
+            weight,
+            language,
+            vertical,
+            script_hint,
+            &mut output,
+        );
+        output
+    }
 
-        let result = output
-            .glyph_infos()
-            .iter()
-            .zip(output.glyph_positions())
-            .map(|(info, pos)| {
-                let glyph_id = info.glyph_id as u16;
-                ShapedRunGlyph {
-                    glyph_key: GlyphKey::new(font_id, glyph_id, font_size).weighted(glyph_weight),
-                    advance: pos.x_advance as f32 * scale,
-                    x_offset: pos.x_offset as f32 * scale,
-                    y_offset: pos.y_offset as f32 * scale,
-                    cluster: info.cluster as usize,
+    /// Copies cached shaped output into the rasterizer's reusable buffer.
+    pub(super) fn reuse_shaped_run_from_slice(
+        &mut self,
+        glyphs: &[ShapedRunGlyph],
+    ) -> Vec<ShapedRunGlyph> {
+        let mut output = std::mem::take(&mut self.run_buffers.shaped_glyphs);
+        output.clear();
+        output.extend_from_slice(glyphs);
+        output
+    }
+
+    /// Returns shaped output storage to the rasterizer for a later run.
+    pub(super) fn recycle_shaped_run(&mut self, mut glyphs: Vec<ShapedRunGlyph>) {
+        glyphs.clear();
+        self.run_buffers.shaped_glyphs = glyphs;
+    }
+
+    fn shape_run_with_font_id_into(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        font_id: FontId,
+        weight: FontWeight,
+        language: Option<TextLanguage>,
+        vertical: bool,
+        script_hint: Option<Script>,
+        output: &mut Vec<ShapedRunGlyph>,
+    ) {
+        self.shape_run_with_font_id_and_variation_into(
+            text,
+            font_size,
+            font_id,
+            weight,
+            language,
+            vertical,
+            0,
+            script_hint,
+            output,
+        );
+    }
+
+    fn shape_run_with_font_id_and_variation_into(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        font_id: FontId,
+        weight: FontWeight,
+        language: Option<TextLanguage>,
+        vertical: bool,
+        variation_id: u32,
+        _script_hint: Option<Script>,
+        output: &mut Vec<ShapedRunGlyph>,
+    ) {
+        output.clear();
+        if text.is_empty() {
+            return;
+        }
+        self.ensure_fallback_loaded(font_id);
+        // One face shapes the whole run, so its glyphs share one weight; see
+        // [`Self::glyph_weight_for_request`].
+        let glyph_weight = self.glyph_weight_for_request(font_id, weight);
+
+        self.ensure_aimer_font_cached(font_id);
+        if let Some(Some(state)) = self.aimer_font_cache.get(&font_id) {
+            if let Ok(Some(shaped)) = state.shape_run_with_options_at_variation(
+                text,
+                language,
+                vertical,
+                glyph_weight,
+                variation_id,
+            ) {
+                let upem = f32::from(shaped.units_per_em);
+                let scale = if upem > 0.0 { font_size / upem } else { 1.0 };
+                let shaped_glyphs = shaped.glyphs;
+                let has_horizontal_metric_variations =
+                    !vertical && state.has_horizontal_metric_variations();
+                #[cfg(test)]
+                {
+                    self.shape_call_count += 1;
                 }
-            })
-            .collect();
-
-        // Return the buffer (now a GlyphBuffer) back to a UnicodeBuffer for reuse.
-        self.shape_buffer = Some(output.clear());
-
-        result
+                output.extend(shaped_glyphs.iter().map(|glyph| {
+                    let horizontal_delta = if has_horizontal_metric_variations {
+                        state
+                            .horizontal_advance_delta_at_variation(
+                                glyph.glyph_id,
+                                glyph_weight,
+                                variation_id,
+                            )
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    ShapedRunGlyph {
+                        glyph_key: GlyphKey::new(font_id, glyph.glyph_id, font_size)
+                            .weighted(glyph_weight)
+                            .with_variation_id(variation_id),
+                        advance: (glyph.x_advance + horizontal_delta) as f32 * scale,
+                        y_advance: glyph.y_advance as f32 * scale,
+                        x_offset: glyph.x_offset as f32 * scale,
+                        y_offset: glyph.y_offset as f32 * scale,
+                        cluster: glyph.cluster,
+                    }
+                }));
+                crate::text_pipeline::aimer_font::recycle_shaped_glyphs(shaped_glyphs);
+                return;
+            }
+        }
     }
 }
 
@@ -2056,6 +3121,19 @@ mod tests {
         hasher.value
     }
 
+    /// The portable Aimer profile must not silently re-enter Core Text for a
+    /// glyph the owned reader declined. Its last-resort contract is an empty
+    /// bitmap with the shaped advance preserved by the caller.
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        not(feature = "apple-core-text")
+    ))]
+    #[test]
+    fn portable_owned_font_does_not_call_the_platform_rasterizer() {
+        let record = primary_font_record();
+        assert!(rasterize_platform_glyph(&record, 1, 16.0, 400, 8.0).is_none());
+    }
+
     #[test]
     fn glyph_key_hashes_as_one_compact_value() {
         let key = GlyphKey {
@@ -2065,6 +3143,7 @@ mod tests {
             subpixel_x: 1,
             subpixel_y: 2,
             weight: 400,
+            variation_id: 0,
         };
         let expected = compact_glyph_key_hash(key);
         for distinct_key in [
@@ -2086,6 +3165,10 @@ mod tests {
                 ..key
             },
             GlyphKey { weight: 300, ..key },
+            GlyphKey {
+                variation_id: 1,
+                ..key
+            },
         ] {
             assert_ne!(compact_glyph_key_hash(distinct_key), expected);
         }
@@ -2101,76 +3184,32 @@ mod tests {
         assert_fast_map(&rasterizer.advance_cache);
         assert_fast_set(&rasterizer.unsupported_codepoints);
         assert_fast_map(&rasterizer.font_bytes_cache);
-        assert_fast_map(&rasterizer.shaper_data_cache);
+        assert_fast_map(&rasterizer.aimer_font_cache);
     }
 
     #[test]
-    fn one_scaler_context_serves_every_glyph_a_thread_rasterizes() {
-        std::thread::spawn(|| {
-            let mut rasterizer = GlyphRasterizer::primary_only();
-            for codepoint in "the quick brown fox jumps over the lazy dog".chars() {
-                let key = rasterizer.glyph_key_for_codepoint(codepoint, 18.0);
-                rasterizer.rasterize_key(key, 18.0);
-            }
+    fn aimer_font_state_is_reused_for_repeated_shape_calls() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let font_id = rasterizer.primary_font_id();
 
-            assert_eq!(
-                scale_contexts_created_here(),
-                1,
-                "a context per glyph rebuilds the hinting instance for every glyph"
-            );
-        })
-        .join()
-        .expect("the rasterizing thread should not panic");
-    }
-
-    #[test]
-    fn a_face_reaches_the_scaler_under_a_stable_identity() {
-        let primary = primary_font_record();
-        let data = primary.data().expect("the primary font should be readable");
-        let monospace = monospace_font_record();
-        let monospace_data = monospace
-            .data()
-            .expect("the bundled monospace font should be readable");
+        let first = rasterizer.shape_run_with_font_id("AV", 16.0, font_id, FontWeight::Normal);
+        let second = rasterizer.shape_run_with_font_id("AV", 16.0, font_id, FontWeight::Normal);
 
         assert_eq!(
-            scaler_id(&primary, data.as_ref()),
-            scaler_id(&primary_font_record(), data.as_ref()),
-            "the same face must key the scaler caches the same way every time"
+            first
+                .iter()
+                .map(|glyph| (glyph.glyph_key, glyph.advance, glyph.cluster))
+                .collect::<Vec<_>>(),
+            second
+                .iter()
+                .map(|glyph| (glyph.glyph_key, glyph.advance, glyph.cluster))
+                .collect::<Vec<_>>(),
         );
-        assert_ne!(
-            scaler_id(&primary, data.as_ref()),
-            scaler_id(&monospace, monospace_data.as_ref())
-        );
-
-        let first = FontRef::from_index(data.as_ref(), 0).expect("the primary font should parse");
-        let second = FontRef::from_index(data.as_ref(), 0).expect("the primary font should parse");
-        assert_ne!(
-            first.key.value(),
-            second.key.value(),
-            "swash mints a fresh key per font reference, so the identity cannot be left to it"
-        );
-    }
-
-    #[test]
-    fn a_run_is_drawn_through_a_single_scaler() {
-        std::thread::spawn(|| {
-            let mut rasterizer = GlyphRasterizer::primary_only();
-            let keys = "the quick brown fox"
-                .chars()
-                .map(|codepoint| rasterizer.glyph_key_for_codepoint(codepoint, 18.0))
-                .collect::<Vec<_>>();
-            let before = SCALERS_BUILT.get();
-
-            rasterizer.rasterize_run(&keys, 18.0);
-
-            assert_eq!(
-                SCALERS_BUILT.get() - before,
-                1,
-                "a scaler per glyph re-reads the face and its metrics for every glyph"
-            );
-        })
-        .join()
-        .expect("the rasterizing thread should not panic");
+        assert_eq!(rasterizer.aimer_font_cache.len(), 1);
+        assert!(rasterizer
+            .aimer_font_cache
+            .get(&font_id)
+            .is_some_and(Option::is_some));
     }
 
     #[test]
@@ -2234,6 +3273,10 @@ mod tests {
         );
     }
 
+    #[cfg(any(
+        not(any(target_os = "ios", target_os = "macos")),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn codepoints_outside_the_static_probe_groups_rasterize_to_visible_glyphs() {
         let mut rasterizer = GlyphRasterizer::new();
@@ -2251,6 +3294,379 @@ mod tests {
         }
     }
 
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
+    #[test]
+    fn apple_host_fallback_matrix_rasterizes_nonbundled_script_samples() {
+        let mut rasterizer = GlyphRasterizer::new();
+        for (label, codepoint) in [
+            ("Arabic", 'م'),
+            ("Emoji", '😀'),
+            ("Korean", '한'),
+            ("Myanmar", 'မ'),
+        ] {
+            let key = rasterizer.glyph_key_for_codepoint(codepoint, 20.0);
+            assert_ne!(
+                key.glyph_id, 0,
+                "{label} {codepoint:?} resolved to .notdef instead of a host glyph"
+            );
+            let glyph = rasterizer.rasterize_key(key, 20.0);
+            assert!(
+                !glyph.bitmap.is_empty(),
+                "{label} {codepoint:?} rasterized to an empty host bitmap"
+            );
+        }
+    }
+
+    #[test]
+    fn aimer_font_rasterization_is_the_standard_glyph_path() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let key = rasterizer.glyph_key_for_codepoint('A', 16.0);
+        let expected = crate::text_pipeline::aimer_font::rasterize_font_glyph(
+            PRIMARY_FONT,
+            0,
+            key.glyph_id,
+            16.0,
+            key.subpixel_x,
+            key.subpixel_y,
+        )
+        .expect("the primary face's A glyph should use its Aimer outline");
+        let actual = rasterizer.rasterize_key(key, 16.0).clone();
+
+        assert_eq!(actual.bitmap, expected.bitmap);
+        assert_eq!((actual.width, actual.height), (expected.width, expected.height));
+        assert_eq!((actual.offset_x, actual.offset_y), (expected.offset_x, expected.offset_y));
+        assert_eq!(actual.advance_width, expected.advance_width);
+        assert!(!actual.is_color);
+    }
+
+    #[test]
+    fn owned_font_shapes_latin_runs_with_checked_open_type_tables() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let font_id = rasterizer.primary_font_id();
+        let shaped = rasterizer.shape_run_with_font_id(
+            "office",
+            1000.0,
+            font_id,
+            FontWeight::Normal,
+        );
+
+        assert_eq!(
+            shaped
+                .iter()
+                .map(|glyph| glyph.glyph_key.glyph_id)
+                .collect::<Vec<_>>(),
+            vec![271, 386, 203, 213]
+        );
+        assert_eq!(
+            shaped
+                .iter()
+                .map(|glyph| glyph.cluster)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 4, 5]
+        );
+        assert_eq!(
+            shaped
+                .iter()
+                .map(|glyph| glyph.advance)
+                .collect::<Vec<_>>(),
+                vec![574.0, 905.0, 530.0, 561.0]
+        );
+
+        let shaped = rasterizer.shape_run_with_font_id("AV", 1000.0, font_id, FontWeight::Normal);
+        assert_eq!(
+            shaped
+                .iter()
+                .map(|glyph| glyph.glyph_key.glyph_id)
+                .collect::<Vec<_>>(),
+            vec![1, 156]
+        );
+        assert_eq!(
+            shaped.iter().map(|glyph| glyph.advance).collect::<Vec<_>>(),
+            vec![590.0, 633.0]
+        );
+    }
+
+    #[test]
+    fn owned_font_routes_arabic_joining_forms_through_the_checked_shaper() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let font_id = rasterizer
+            .register_font_bytes(
+                crate::text_pipeline::aimer_font::tests::arabic_joining_font_for_test(),
+            )
+            .expect("the Arabic shaping fixture must register");
+        let shaped = rasterizer.shape_run_with_font_id("ببب", 1000.0, font_id, FontWeight::Normal);
+
+        assert_eq!(
+            shaped
+                .iter()
+                .map(|glyph| glyph.glyph_key.glyph_id)
+                .collect::<Vec<_>>(),
+            vec![3, 5, 4]
+        );
+        assert_eq!(
+            shaped
+                .iter()
+                .map(|glyph| glyph.cluster)
+                .collect::<Vec<_>>(),
+            vec![0, 2, 4]
+        );
+        assert_eq!(
+            shaped.iter().map(|glyph| glyph.advance).collect::<Vec<_>>(),
+            vec![700.0, 800.0, 700.0]
+        );
+
+        let shaped = rasterizer.shape_run_with_font_id("بَب", 1000.0, font_id, FontWeight::Normal);
+        assert_eq!(
+            shaped
+                .iter()
+                .map(|glyph| glyph.glyph_key.glyph_id)
+                .collect::<Vec<_>>(),
+            vec![3, 8, 4]
+        );
+        assert_eq!(
+            shaped
+                .iter()
+                .map(|glyph| glyph.cluster)
+                .collect::<Vec<_>>(),
+            vec![0, 2, 4]
+        );
+        assert_eq!(
+            shaped.iter().map(|glyph| glyph.advance).collect::<Vec<_>>(),
+            vec![700.0, 0.0, 700.0]
+        );
+        assert_eq!((shaped[1].x_offset, shaped[1].y_offset), (200.0, 700.0));
+
+        let shaped = rasterizer.shape_run_with_font_id("بب", 1000.0, font_id, FontWeight::Normal);
+        assert_eq!(shaped.len(), 1);
+        assert_eq!(shaped[0].glyph_key.glyph_id, 9);
+        assert_eq!(shaped[0].cluster, 0);
+        assert_eq!(shaped[0].advance, 900.0);
+
+        let shaped = rasterizer.shape_run_with_font_id("بََب", 1000.0, font_id, FontWeight::Normal);
+        assert_eq!(
+            shaped
+                .iter()
+                .map(|glyph| glyph.glyph_key.glyph_id)
+                .collect::<Vec<_>>(),
+            vec![3, 8, 8, 4]
+        );
+        assert_eq!((shaped[1].x_offset, shaped[1].y_offset), (200.0, 700.0));
+        assert_eq!((shaped[2].x_offset, shaped[2].y_offset), (250.0, 1000.0));
+
+        let shaped = rasterizer.shape_run_with_font_id("با", 1000.0, font_id, FontWeight::Normal);
+        assert_eq!(
+            shaped
+                .iter()
+                .map(|glyph| glyph.glyph_key.glyph_id)
+                .collect::<Vec<_>>(),
+            vec![3, 2]
+        );
+        assert_eq!((shaped[1].x_offset, shaped[1].y_offset), (100.0, 60.0));
+        assert_eq!(
+            shaped.iter().map(|glyph| glyph.advance).collect::<Vec<_>>(),
+            vec![700.0, 600.0]
+        );
+
+        let shaped = rasterizer.shape_run_with_font_id("اب", 1000.0, font_id, FontWeight::Normal);
+        assert_eq!(
+            shaped
+                .iter()
+                .map(|glyph| glyph.glyph_key.glyph_id)
+                .collect::<Vec<_>>(),
+            vec![7, 6]
+        );
+        assert_eq!(
+            shaped
+                .iter()
+                .map(|glyph| glyph.cluster)
+                .collect::<Vec<_>>(),
+            vec![0, 2]
+        );
+        assert_eq!(
+            shaped.iter().map(|glyph| glyph.advance).collect::<Vec<_>>(),
+            vec![600.0, 600.0]
+        );
+    }
+
+    #[test]
+    fn owned_rasterization_matches_scalar_reference_quality() {
+        const SIZES: &[f32] = &[9.0, 12.0, 16.0, 24.0, 32.0];
+        const LATIN: &[char] = &['A', 'a', 'e', 'g', 'M', 'S', '0', '@', '&', 'R'];
+        const CJK: &[char] = &['あ', '你', '漢', '語', '日', '本', '々', '猫'];
+
+        let latin = FontRecord::from_static_bytes(
+            0x2000_0001,
+            include_bytes!("../../../fonts/JetBrainsMono-Regular.ttf"),
+        )
+        .expect("the checked-in Latin quality face must load");
+        let cjk = FontRecord::from_static_bytes(
+            0x2000_0002,
+            include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf"),
+        )
+        .expect("the checked-in CJK quality face must load");
+
+        for (label, record, codepoints) in [("Latin", latin, LATIN), ("CJK", cjk, CJK)] {
+            let glyph_ids = codepoints
+                .iter()
+                .map(|codepoint| {
+                    record
+                        .glyph_index(*codepoint)
+                        .unwrap_or_else(|| panic!("{label} face must cover {codepoint:?}"))
+                })
+                .collect::<Vec<_>>();
+            let data = record.data().expect("quality face bytes must be present");
+            let mut stats = RasterQualityStats::default();
+
+            for font_size in SIZES {
+                let aimer = crate::text_pipeline::aimer_font::rasterize_font_glyphs(
+                    data.as_ref(),
+                    record.collection_index,
+                    &glyph_ids
+                        .iter()
+                        .map(|glyph_id| (*glyph_id, 0, 0))
+                        .collect::<Vec<_>>(),
+                    *font_size,
+                );
+                let reference = glyph_ids
+                    .iter()
+                    .map(|glyph_id| {
+                        crate::text_pipeline::aimer_font::rasterize_font_glyph(
+                            data.as_ref(),
+                            record.collection_index,
+                            *glyph_id,
+                            *font_size,
+                            0,
+                            0,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                assert_eq!(aimer.len(), reference.len());
+                for (aimer, reference) in aimer.iter().zip(reference.iter()) {
+                    accumulate_raster_quality(&mut stats, aimer.as_ref(), reference.as_ref());
+                }
+            }
+
+            let mean_absolute_error = stats.mean_absolute_error();
+            println!(
+                "Owned rasterization {label}: {} glyph samples, mean absolute coverage error {mean_absolute_error:.4}, max edge error {} px, missing {}",
+                stats.samples,
+                stats.max_edge_error,
+                stats.missing_samples,
+            );
+
+            assert_eq!(stats.missing_samples, 0, "{label} quality samples must draw");
+            assert!(
+                stats.max_edge_error <= 1,
+                "{label} unhinted bounds must stay within one pixel: {}",
+                stats.max_edge_error
+            );
+            assert!(
+                mean_absolute_error <= 0.30,
+                "{label} unhinted coverage error is too high: {mean_absolute_error:.4}"
+            );
+        }
+    }
+
+    #[derive(Default)]
+    struct RasterQualityStats {
+        samples: usize,
+        compared_pixels: u64,
+        absolute_error: u64,
+        max_edge_error: i32,
+        missing_samples: usize,
+    }
+
+    impl RasterQualityStats {
+        fn mean_absolute_error(&self) -> f64 {
+            if self.compared_pixels == 0 {
+                return 0.0;
+            }
+            self.absolute_error as f64 / (self.compared_pixels as f64 * 255.0)
+        }
+    }
+
+    fn accumulate_raster_quality(
+        stats: &mut RasterQualityStats,
+        aimer: Option<&RasterizedGlyph>,
+        reference: Option<&RasterizedGlyph>,
+    ) {
+        let (Some(aimer), Some(reference)) = (aimer, reference) else {
+            stats.missing_samples += 1;
+            return;
+        };
+        if aimer.bitmap.is_empty() || reference.bitmap.is_empty() {
+            stats.missing_samples += 1;
+            return;
+        }
+
+        assert!(
+            (aimer.advance_width - reference.advance_width).abs() <= 0.001,
+            "scalar and batched advances diverged: {} vs {}",
+            aimer.advance_width,
+            reference.advance_width
+        );
+        stats.samples += 1;
+        let aimer_x = aimer.offset_x.round() as i32;
+        let aimer_y = aimer.offset_y.round() as i32;
+        let reference_x = reference.offset_x.round() as i32;
+        let reference_y = reference.offset_y.round() as i32;
+        let aimer_right = aimer_x + i32::try_from(aimer.width).expect("width fits in i32");
+        let aimer_top = aimer_y + i32::try_from(aimer.height).expect("height fits in i32");
+        let reference_right =
+            reference_x + i32::try_from(reference.width).expect("width fits in i32");
+        let reference_top =
+            reference_y + i32::try_from(reference.height).expect("height fits in i32");
+        stats.max_edge_error = stats.max_edge_error.max(
+            (aimer_x - reference_x)
+                .abs()
+                .max((aimer_y - reference_y).abs())
+                .max((aimer_right - reference_right).abs())
+                .max((aimer_top - reference_top).abs()),
+        );
+
+        let left = aimer_x.min(reference_x);
+        let right = aimer_right.max(reference_right);
+        let bottom = aimer_y.min(reference_y);
+        let top = aimer_top.max(reference_top);
+        for y in bottom..top {
+            for x in left..right {
+                let aimer_coverage = raster_quality_pixel(aimer, aimer_x, aimer_y, x, y);
+                let reference_coverage =
+                    raster_quality_pixel(reference, reference_x, reference_y, x, y);
+                stats.absolute_error +=
+                    u64::from(aimer_coverage.abs_diff(reference_coverage));
+            }
+        }
+        stats.compared_pixels += u64::try_from(right - left).expect("width is non-negative")
+            * u64::try_from(top - bottom).expect("height is non-negative");
+    }
+
+    fn raster_quality_pixel(
+        glyph: &RasterizedGlyph,
+        origin_x: i32,
+        origin_y: i32,
+        x: i32,
+        y: i32,
+    ) -> u8 {
+        let local_x = x - origin_x;
+        let local_y = origin_y + i32::try_from(glyph.height).expect("height fits in i32") - 1 - y;
+        if local_x < 0
+            || local_y < 0
+            || local_x >= i32::try_from(glyph.width).expect("width fits in i32")
+            || local_y >= i32::try_from(glyph.height).expect("height fits in i32")
+        {
+            return 0;
+        }
+        let index = usize::try_from(local_y).expect("local y is non-negative")
+            * usize::try_from(glyph.width).expect("width fits in usize")
+            + usize::try_from(local_x).expect("local x is non-negative");
+        glyph.bitmap.get(index).copied().unwrap_or(0)
+    }
+
     /// A face carrying the Japanese half of Han and nothing of the rest.
     ///
     /// Apple systems always ship one, because Japanese faces have no reason to
@@ -2258,19 +3674,18 @@ mod tests {
     /// given character depends on the device's language, so the rule this face
     /// exists to test is asserted by adopting it directly rather than by
     /// hoping the cascade proposes it.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     fn japanese_only_han_face(next_id: FontId) -> FontRecord {
         use crate::text_pipeline::apple_fonts::font_paths_for_codepoint;
         use crate::text_pipeline::font_resolver::REGULAR_WEIGHT;
 
         let draws = |record: &FontRecord, codepoint: char| {
             record
-                .data()
-                .and_then(|data| {
-                    let face = font_ref(data.as_ref(), record.collection_index)?;
-                    face.charmap().map(codepoint)
-                })
-                .is_some_and(|glyph_id| glyph_id.to_u32() != 0)
+                .glyph_index(codepoint)
+                .is_some_and(|glyph_id| glyph_id != 0)
         };
 
         font_paths_for_codepoint('好', REGULAR_WEIGHT)
@@ -2293,7 +3708,10 @@ mod tests {
     // simplified-only characters beside them. Loaded first for the kana of
     // `あの時は`, that face would claim the Han it happens to cover and leave
     // `你吗` to another one — one line drawn in two typefaces.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn han_keeps_one_face_when_a_japanese_face_was_loaded_first() {
         let mut rasterizer = GlyphRasterizer::new();
@@ -2322,7 +3740,10 @@ mod tests {
     // seen from the other side: `時` drawn in a Chinese face reads bolder than
     // the `あの` and `は` around it. Told which text it is resolving, the
     // rasterizer keeps the word in one face.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_kanji_among_kana_keeps_the_face_its_kana_use() {
         let mut rasterizer = GlyphRasterizer::new();
@@ -2345,7 +3766,10 @@ mod tests {
 
     // And a Chinese word must still elect the face covering all of it, even
     // though a Japanese face sits at the head of the chain drawing part of it.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_chinese_run_rejects_a_face_covering_only_half_of_it() {
         let mut rasterizer = GlyphRasterizer::new();
@@ -2374,7 +3798,10 @@ mod tests {
     // Preferring a script-wide face may not cost coverage: every character of
     // a mixed line must still resolve to a real glyph, whichever face was
     // loaded first.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_mixed_japanese_and_chinese_line_draws_every_character() {
         let mut rasterizer = GlyphRasterizer::new();
@@ -2391,7 +3818,10 @@ mod tests {
     }
 
     /// A face whose glyphs only the platform can draw — Apple's `hvgl` file.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     fn platform_only_chinese_face(next_id: FontId) -> FontRecord {
         use crate::text_pipeline::apple_fonts::font_paths_for_codepoint;
         use crate::text_pipeline::font_resolver::REGULAR_WEIGHT;
@@ -2418,7 +3848,10 @@ mod tests {
     ///
     /// The face must not cover simplified-only Han, so the Han of a mixed run
     /// falls through to the platform-only face beside it.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     fn decodable_kana_face(next_id: FontId) -> (FontRecord, u16) {
         use crate::text_pipeline::apple_fonts::font_paths_for_codepoint;
         use crate::text_pipeline::font_resolver::REGULAR_WEIGHT;
@@ -2452,7 +3885,10 @@ mod tests {
     // default of 400 it stands beside kana whose face is designed at W3
     // (300). The key must carry the kana face's weight so the platform draws
     // the same stroke the reader sees around it.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_platform_drawn_ideograph_matches_the_weight_of_the_kana_beside_it() {
         // The chain is built by hand: `GlyphRasterizer::new()` shares a
@@ -2485,7 +3921,10 @@ mod tests {
     // line typed alone would render bolder, then snap thinner the moment a
     // kana lands beside it. The baseline therefore comes from the face kana
     // *would* resolve to, so the ideographs hold one stroke throughout.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_han_only_run_is_drawn_at_the_weight_kana_would_pair_with() {
         // The chain is built by hand: `GlyphRasterizer::new()` shares a
@@ -2522,7 +3961,10 @@ mod tests {
     // bold instance, carried as the style's distance from normal on top of
     // the companion baseline — W3 kana beside bold text ask for 600, Apple's
     // own W6/Semibold pairing.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_bold_run_addresses_the_platform_face_at_a_bold_instance() {
         // The chain is built by hand: `GlyphRasterizer::new()` shares a
@@ -2554,7 +3996,10 @@ mod tests {
     // told what weight the run asked for — the faces Cupid decodes itself
     // were chosen on coverage alone. Bold Han must reach a bolder stroke
     // whether the simplified-only character stands beside it or not.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_bold_han_run_is_drawn_bolder_whatever_stands_beside_it() {
         // A face Cupid decodes carries its stroke in its own design and is
@@ -2590,12 +4035,15 @@ mod tests {
     }
 
     // A face only the platform can draw is variable — that is the whole reason
-    // no third-party rasterizer reads it — so it is *rendered* at the instance
+    // the owned outline decoder does not read it — so it is *rendered* at the instance
     // the key names and no design weight of its own can disqualify it. Judged
     // by the `OS/2` weight it does not publish, such a face was read as regular
     // and refused for a bold run, which handed the run back to whatever lighter
     // face already covered it.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_face_only_the_platform_draws_answers_any_requested_weight() {
         let mut rasterizer = GlyphRasterizer::new();
@@ -2619,7 +4067,10 @@ mod tests {
     // answer was refused for publishing no matching design weight, so the run
     // kept that light cut. One word must not change stroke because a character
     // was typed beside it.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_bold_han_run_keeps_one_stroke_however_much_of_it_a_light_face_covers() {
         // The chain is built by hand and system lookups stay off, so the
@@ -2668,7 +4119,10 @@ mod tests {
     // synthetic stroke on top of it is what left `吗` heavier than the `你好`
     // beside it, which no reader sees at the regular weight because the
     // synthetic stroke only runs for bold.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_platform_glyph_drawn_bold_asks_for_no_synthetic_stroke() {
         let mut rasterizer = GlyphRasterizer::new();
@@ -2699,7 +4153,10 @@ mod tests {
     // Chinese one the moment `吗`, written only in Chinese, was typed. Saying
     // which language the text is in must settle the face before the word is
     // finished, and settle it the same way whatever the reader types next.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_chinese_field_keeps_one_face_while_the_word_is_being_typed() {
         // The chain is built by hand, with a Japanese face ahead of the
@@ -2747,7 +4204,10 @@ mod tests {
     // A Japanese field must not be dragged onto a Chinese face by the same
     // rule: kanji-only words are ordinary Japanese, and they stay on the face
     // the kana around them use.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_japanese_field_keeps_the_face_its_kana_use() {
         let face_of = |run: &str, language| {
@@ -2782,7 +4242,10 @@ mod tests {
     // agreeing, because the faces behind them reach the requested stroke by
     // different routes. Whatever route each takes, the run must be emboldened
     // by hand as a whole or not at all.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn a_bold_han_run_is_emboldened_by_hand_as_a_whole() {
         let run = "你好吗";
@@ -2855,6 +4318,120 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_regular_fallback_cut_gets_a_small_normalization_stroke() {
+        assert!(synthetic_weight_needed(NORMAL_GLYPH_WEIGHT, 300));
+        assert!(!synthetic_weight_needed(NORMAL_GLYPH_WEIGHT, NORMAL_GLYPH_WEIGHT));
+        assert!(!synthetic_weight_needed(300, 400));
+
+        let normal_offset = synthetic_weight_offset_for(20.0, NORMAL_GLYPH_WEIGHT, 300)
+            .expect("a W3 fallback should receive a normal-weight correction");
+        let bold_offset = synthetic_weight_offset_for(20.0, FontWeight::Bold.numeric(), 400)
+            .expect("a regular face should receive a bold correction");
+        assert!(normal_offset > 0.0);
+        assert!(normal_offset < bold_offset);
+    }
+
+    #[test]
+    fn observed_fallback_scripts_get_regular_weight_normalization() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let primary_id = rasterizer.primary_font_id();
+        let fallback_id = primary_id.saturating_add(1);
+        let key = GlyphKey::new(fallback_id, 1, 44.0).weighted(NORMAL_GLYPH_WEIGHT);
+
+        let myanmar_offset = rasterizer
+            .synthetic_weight_offset_for_codepoint(
+                key,
+                NORMAL_GLYPH_WEIGHT,
+                44.0,
+                'မ',
+            )
+            .expect("Myanmar regular fallback should receive a small correction");
+        let hangul_offset = rasterizer
+            .synthetic_weight_offset_for_codepoint(
+                key,
+                NORMAL_GLYPH_WEIGHT,
+                44.0,
+                '한',
+            )
+            .expect("Hangul regular fallback should receive a small correction");
+        assert!(myanmar_offset >= 1.0);
+        assert!(hangul_offset >= 1.0);
+
+        for codepoint in ['မ', '한'] {
+            let plan = rasterizer
+                .synthetic_weight_plan_for_codepoint(
+                    key,
+                    NORMAL_GLYPH_WEIGHT,
+                    44.0,
+                    codepoint,
+                )
+                .expect("fallback script should use a symmetric normalization plan");
+            assert_eq!(plan.extra_offsets().len(), 2);
+            assert!(plan.extra_offsets()[0] < 0.0);
+            assert!(plan.extra_offsets()[1] > 0.0);
+            assert!(
+                (plan.extra_offsets()[0] + plan.extra_offsets()[1]).abs() < f32::EPSILON
+            );
+        }
+
+        let primary_key = GlyphKey::new(primary_id, 1, 44.0).weighted(NORMAL_GLYPH_WEIGHT);
+        assert!(
+            rasterizer
+                .synthetic_weight_offset_for_codepoint(
+                    primary_key,
+                    NORMAL_GLYPH_WEIGHT,
+                    44.0,
+                    'မ',
+                )
+                .is_none(),
+            "the regular correction must not duplicate the embedded primary face"
+        );
+    }
+
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
+    #[test]
+    fn installed_myanmar_and_hangul_fallbacks_get_regular_normalization() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let primary_id = rasterizer.primary_font_id();
+        rasterizer.begin_script_run("မြန်မာ 한글", None);
+
+        for codepoint in ['မ', '한'] {
+            let key = rasterizer.glyph_key_for_family_codepoint(
+                codepoint,
+                44.0,
+                FontFamily::SANS_SERIF,
+                FontWeight::Normal,
+                FontStyle::Normal,
+            );
+            assert_ne!(
+                key.font_id, primary_id,
+                "{codepoint:?} must resolve to a fallback face"
+            );
+            assert!(
+                !rasterizer.face_needs_platform_raster(key.font_id),
+                "{codepoint:?} must use a readable fallback in the owned path"
+            );
+            let offset = rasterizer
+                .synthetic_weight_offset_for_codepoint(
+                    key,
+                    NORMAL_GLYPH_WEIGHT,
+                    44.0,
+                    codepoint,
+                )
+                .expect("the readable fallback should receive regular normalization");
+            assert!(
+                offset >= 1.0,
+                "{codepoint:?} normalization offset {offset} is too small"
+            );
+        }
+
+        rasterizer.end_script_run();
+    }
+
     // Faces Cupid rasterizes itself render one design regardless of the
     // requested weight — the weight already chose the face — so their keys
     // stay on the single neutral value and one bitmap serves every style.
@@ -2869,6 +4446,37 @@ mod tests {
             FontStyle::Normal,
         );
         assert_eq!(key.weight, NORMAL_GLYPH_WEIGHT);
+    }
+
+    #[test]
+    fn an_owned_variable_face_key_tracks_the_requested_weight() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let font_id = rasterizer
+            .register_font_bytes(
+                include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf").to_vec(),
+            )
+            .expect("the bundled variable CJK face should register");
+
+        let regular = rasterizer.glyph_key_for_family_codepoint(
+            '你',
+            20.0,
+            FontFamily::MONOSPACE,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        let bold = rasterizer.glyph_key_for_family_codepoint(
+            '你',
+            20.0,
+            FontFamily::MONOSPACE,
+            FontWeight::Bold,
+            FontStyle::Normal,
+        );
+
+        assert_eq!(regular.font_id, font_id);
+        assert_eq!(bold.font_id, font_id);
+        assert_eq!(regular.weight, NORMAL_GLYPH_WEIGHT);
+        assert_eq!(bold.weight, FontWeight::Bold.numeric());
+        assert_ne!(regular, bold);
     }
 
     #[test]
@@ -2948,8 +4556,83 @@ mod tests {
     }
 
     #[test]
+    fn batched_metrics_match_scalar_metrics_and_preserve_duplicate_order() {
+        let mut batched = GlyphRasterizer::new();
+        let keys = "Aimer metrics A"
+            .chars()
+            .map(|codepoint| batched.glyph_key_for_codepoint(codepoint, 17.0))
+            .collect::<Vec<_>>();
+
+        let mut actual = Vec::with_capacity(keys.len());
+        batched.with_metrics_for_keys(&keys, 17.0, |metrics| actual.push(metrics));
+
+        let mut scalar = GlyphRasterizer::new();
+        let expected = keys
+            .iter()
+            .copied()
+            .map(|key| scalar.metrics_for_key(key, 17.0))
+            .collect::<Vec<_>>();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn font_snapshot_is_naturally_send_and_sync() {
         assert_send_sync::<FontSnapshot>();
+    }
+
+    #[test]
+    fn worker_context_starts_with_a_prewarmed_primary_aimer_face() {
+        let mut renderer = GlyphRasterizer::new();
+        let primary_id = renderer.primary_font_id();
+        let snapshot = renderer.font_snapshot();
+        let worker = GlyphPreparationContext::new(snapshot);
+
+        assert!(
+            worker
+                .rasterizer
+                .aimer_font_cache
+                .get(&primary_id)
+                .is_some_and(Option::is_some),
+            "the worker snapshot should carry the primary parsed Aimer face"
+        );
+    }
+
+    #[test]
+    fn bundled_cjk_record_reuses_process_shared_font_bytes() {
+        let mut first = GlyphRasterizer::new();
+        first.begin_script_run("日本語", Some(TextLanguage::Japanese));
+        first.ensure_bundled_cjk_fallback();
+        first.end_script_run();
+        let first_bytes = first
+            .fallbacks
+            .as_ref()
+            .and_then(|fallbacks| {
+                fallbacks
+                    .iter()
+                    .find(|record| record.id == BUNDLED_CJK_FONT_ID)
+            })
+            .and_then(|record| record.bytes.as_ref())
+            .expect("the bundled Japanese face must be installed")
+            .clone();
+
+        let mut second = GlyphRasterizer::new();
+        second.begin_script_run("日本語", Some(TextLanguage::Japanese));
+        second.ensure_bundled_cjk_fallback();
+        second.end_script_run();
+        let second_bytes = second
+            .fallbacks
+            .as_ref()
+            .and_then(|fallbacks| {
+                fallbacks
+                    .iter()
+                    .find(|record| record.id == BUNDLED_CJK_FONT_ID)
+            })
+            .and_then(|record| record.bytes.as_ref())
+            .expect("the bundled Japanese face must be installed")
+            .clone();
+
+        assert!(std::sync::Arc::ptr_eq(&first_bytes, &second_bytes));
     }
 
     #[test]
@@ -3124,6 +4807,113 @@ mod tests {
     }
 
     #[test]
+    fn coverage_index_memoizes_glyph_and_script_answers_per_face() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let font_id = rasterizer.primary.id;
+        let requirement = ScriptRequirement::probes('你');
+
+        assert!(!rasterizer.font_covers_script(font_id, requirement));
+        let first = rasterizer
+            .coverage_index_cache
+            .get(&font_id)
+            .expect("the first coverage query must create a face index");
+        assert!(!first.glyphs.is_empty());
+        assert!(first.glyphs.len() <= requirement.as_slice().len());
+        assert_eq!(first.scripts.len(), 1);
+        let first_glyph_count = first.glyphs.len();
+
+        let _ = rasterizer.glyph_index_for_font(font_id, 'A');
+        let glyph_count = rasterizer
+            .coverage_index_cache
+            .get(&font_id)
+            .expect("the face index must remain attached to its font")
+            .glyphs
+            .len();
+        assert_eq!(glyph_count, first_glyph_count + 1);
+
+        assert!(!rasterizer.font_covers_script(font_id, requirement));
+        let second = rasterizer
+            .coverage_index_cache
+            .get(&font_id)
+            .expect("the repeated query must reuse the face index");
+        assert_eq!(second.glyphs.len(), glyph_count);
+        assert_eq!(second.scripts.len(), 1);
+    }
+
+    #[test]
+    fn batched_font_rasterization_matches_individual_rasterization() {
+        let text = "AaVv";
+        let mut batched = GlyphRasterizer::primary_only();
+        let actual = batched.preload_text(text, 16.0, None);
+
+        let mut individual = GlyphRasterizer::primary_only();
+        let expected = text
+            .chars()
+            .map(|codepoint| {
+                let key = individual.glyph_key_for_codepoint(codepoint, 16.0);
+                (key, individual.rasterize_key(key, 16.0).clone())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(actual.len(), expected.len());
+        for ((actual_key, actual_glyph), (expected_key, expected_glyph)) in actual.iter().zip(expected.iter()) {
+            assert_eq!(actual_key, expected_key);
+            assert_eq!(actual_glyph.bitmap, expected_glyph.bitmap);
+            assert_eq!(actual_glyph.width, expected_glyph.width);
+            assert_eq!(actual_glyph.height, expected_glyph.height);
+            assert_eq!(actual_glyph.offset_x, expected_glyph.offset_x);
+            assert_eq!(actual_glyph.offset_y, expected_glyph.offset_y);
+            assert_eq!(actual_glyph.advance_width, expected_glyph.advance_width);
+            assert_eq!(actual_glyph.is_color, expected_glyph.is_color);
+        }
+    }
+
+    #[test]
+    fn streamed_preload_emits_the_same_glyphs_as_owned_preload() {
+        let text = "AaVv";
+        let mut streamed = GlyphRasterizer::primary_only();
+        let mut streamed_glyphs = Vec::new();
+        streamed.preload_text_into(text, 16.0, None, |key, glyph| {
+            streamed_glyphs.push((key, glyph.clone()));
+        });
+
+        let mut owned = GlyphRasterizer::primary_only();
+        let owned_glyphs = owned.preload_text(text, 16.0, None);
+
+        assert_eq!(streamed_glyphs.len(), owned_glyphs.len());
+        for ((streamed_key, streamed_glyph), (owned_key, owned_glyph)) in
+            streamed_glyphs.iter().zip(owned_glyphs.iter())
+        {
+            assert_eq!(streamed_key, owned_key);
+            assert_eq!(streamed_glyph.bitmap, owned_glyph.bitmap);
+            assert_eq!(streamed_glyph.width, owned_glyph.width);
+            assert_eq!(streamed_glyph.height, owned_glyph.height);
+            assert_eq!(streamed_glyph.offset_x, owned_glyph.offset_x);
+            assert_eq!(streamed_glyph.offset_y, owned_glyph.offset_y);
+            assert_eq!(streamed_glyph.advance_width, owned_glyph.advance_width);
+            assert_eq!(streamed_glyph.is_color, owned_glyph.is_color);
+        }
+    }
+
+    #[cfg(all(
+        any(
+            not(any(target_os = "ios", target_os = "macos")),
+            feature = "apple-core-text"
+        )
+    ))]
+    #[test]
+    fn streamed_preload_keeps_mixed_faces_in_separate_runs() {
+        let mut rasterizer = GlyphRasterizer::new();
+        let glyphs = rasterizer.preload_text("A你B", 16.0, None);
+
+        assert_eq!(glyphs.len(), 3);
+        assert_eq!(glyphs[0].0.font_id, rasterizer.primary_font_id());
+        assert_ne!(glyphs[1].0.font_id, rasterizer.primary_font_id());
+        assert_eq!(glyphs[2].0.font_id, rasterizer.primary_font_id());
+        assert!(glyphs.iter().all(|(_, glyph)| glyph.advance_width > 0.0));
+    }
+
+    #[test]
     fn registered_families_resolve_consistently_across_rasterizers() {
         let family = FontRegistry::register(FontRegistration {
             family: "cupid-family-resolution-test",
@@ -3171,6 +4961,178 @@ mod tests {
             FontStyle::Normal,
         );
         assert_eq!(key.font_id, normal);
+    }
+
+    #[test]
+    fn a_family_registered_after_rasterizer_creation_is_seen_on_first_lookup() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let family = FontRegistry::register(FontRegistration {
+            family: "cupid-late-family-registration-test",
+            bytes: PRIMARY_FONT,
+            weight: FontWeight::Normal,
+            style: FontStyle::Normal,
+        })
+        .unwrap();
+        let registered_id = FontRegistry::resolve(family, FontWeight::Normal, FontStyle::Normal)
+            .expect("the registered face should be resolvable")
+            .face_id;
+
+        let key = rasterizer.glyph_key_for_family_codepoint(
+            'A',
+            16.0,
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+
+        assert_eq!(
+            key.font_id, registered_id,
+            "family lookup must observe a deterministic registration made after construction"
+        );
+    }
+
+    #[test]
+    fn registry_replacement_invalidates_all_face_derived_caches() {
+        let family = FontRegistry::register(FontRegistration {
+            family: "cupid-face-cache-replacement-test",
+            bytes: include_bytes!("../../../fonts/JetBrainsMono-Regular.ttf"),
+            weight: FontWeight::Normal,
+            style: FontStyle::Normal,
+        })
+        .expect("the original face should register");
+        let replacement = include_bytes!("../../../fonts/GoogleSans-Regular.ttf");
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let key = rasterizer.glyph_key_for_family_codepoint(
+            'A',
+            16.0,
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        let font_id = key.font_id;
+        let original_bitmap = rasterizer.rasterize_key(key, 16.0).bitmap.clone();
+        let _ = rasterizer.glyph_index_for_font(font_id, 'A');
+        let _ = rasterizer.font_covers_script(font_id, ScriptRequirement::probes('你'));
+        let _ = rasterizer.face_needs_platform_raster(font_id);
+        let _ = rasterizer.face_design_weight(font_id);
+        let _ = rasterizer.shape_cluster_for_family(
+            "A",
+            16.0,
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+
+        assert!(rasterizer.cache.keys().any(|cached| cached.font_id == font_id));
+        assert!(glyph_metrics::cached(key).is_some());
+        assert!(
+            rasterizer
+                .advance_cache
+                .keys()
+                .any(|cached| cached.font_id == font_id)
+        );
+        assert!(
+            rasterizer
+                .coverage_index_cache
+                .get(&font_id)
+                .is_some_and(|index| !index.glyphs.is_empty() && !index.scripts.is_empty())
+        );
+        assert!(rasterizer.platform_only_cache.contains_key(&font_id));
+        assert!(rasterizer.design_weight_cache.contains_key(&font_id));
+        assert!(rasterizer.font_bytes_cache.contains_key(&font_id));
+        assert!(rasterizer.aimer_font_cache.contains_key(&font_id));
+
+        FontRegistry::replace(FontRegistration {
+            family: "cupid-face-cache-replacement-test",
+            bytes: replacement,
+            weight: FontWeight::Normal,
+            style: FontStyle::Normal,
+        })
+        .expect("the replacement face should register");
+
+        rasterizer.refresh_registered_family_faces();
+        assert!(rasterizer.cache.keys().all(|cached| cached.font_id != font_id));
+        assert!(glyph_metrics::cached(key).is_none());
+        assert!(
+            rasterizer
+                .advance_cache
+                .keys()
+                .all(|cached| cached.font_id != font_id)
+        );
+        assert!(
+            rasterizer
+                .coverage_index_cache
+                .get(&font_id)
+                .is_none()
+        );
+        assert!(!rasterizer.platform_only_cache.contains_key(&font_id));
+        assert!(!rasterizer.design_weight_cache.contains_key(&font_id));
+        assert!(!rasterizer.font_bytes_cache.contains_key(&font_id));
+        assert!(!rasterizer.aimer_font_cache.contains_key(&font_id));
+
+        let replacement_key = rasterizer.glyph_key_for_family_codepoint(
+            'A',
+            16.0,
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        assert_eq!(replacement_key.font_id, font_id);
+
+        rasterizer.rasterize_key(replacement_key, 16.0);
+        assert!(rasterizer.cache.contains_key(&replacement_key));
+        assert_ne!(
+            rasterizer
+                .cache
+                .get(&replacement_key)
+                .expect("replacement glyph should be cached")
+                .bitmap,
+            original_bitmap,
+            "replacement bytes must be used after invalidation"
+        );
+        assert!(FontRegistry::remove(
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal
+        ));
+    }
+
+    #[test]
+    fn registry_removal_invalidates_cached_face_and_falls_back_to_primary() {
+        let family = FontRegistry::register(FontRegistration {
+            family: "cupid-face-cache-removal-test",
+            bytes: include_bytes!("../../../fonts/JetBrainsMono-Regular.ttf"),
+            weight: FontWeight::Normal,
+            style: FontStyle::Normal,
+        })
+        .expect("the face should register");
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let key = rasterizer.glyph_key_for_family_codepoint(
+            'A',
+            16.0,
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        let font_id = key.font_id;
+        rasterizer.rasterize_key(key, 16.0);
+        assert!(rasterizer.cache.keys().any(|cached| cached.font_id == font_id));
+
+        assert!(FontRegistry::remove(
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal
+        ));
+
+        let replacement_key = rasterizer.glyph_key_for_family_codepoint(
+            'A',
+            16.0,
+            family,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        assert_eq!(replacement_key.font_id, rasterizer.primary_font_id());
+        assert!(rasterizer.cache.keys().all(|cached| cached.font_id != font_id));
     }
 
     #[test]
@@ -3319,6 +5281,18 @@ mod tests {
     }
 
     #[test]
+    fn registering_a_face_does_not_warm_unrequested_fallback_lanes() {
+        let mut rasterizer = GlyphRasterizer::new();
+
+        rasterizer
+            .register_font_bytes(PRIMARY_FONT.to_vec())
+            .expect("embedded font bytes should register");
+
+        assert!(!rasterizer.system_fallbacks_loaded);
+        assert!(rasterizer.loaded_fallback_scripts.is_empty());
+    }
+
+    #[test]
     fn latin_lookup_does_not_load_fallbacks() {
         let mut rasterizer = GlyphRasterizer::new();
 
@@ -3328,6 +5302,164 @@ mod tests {
 
         assert!(rasterizer.fallbacks.is_none());
         assert!(rasterizer.unsupported_codepoints.is_empty());
+    }
+
+    #[test]
+    fn fallback_miss_loads_only_the_requested_script_lane() {
+        let mut rasterizer = GlyphRasterizer::new();
+
+        rasterizer.ensure_fallbacks_for_codepoint('😀');
+
+        assert!(!rasterizer.system_fallbacks_loaded);
+        assert!(rasterizer
+            .loaded_fallback_scripts
+            .contains(&FallbackScript::Emoji));
+        assert!(!rasterizer
+            .loaded_fallback_scripts
+            .contains(&FallbackScript::Cjk));
+        assert!(!rasterizer
+            .loaded_fallback_scripts
+            .contains(&FallbackScript::Arabic));
+    }
+
+    #[test]
+    fn releasing_fallbacks_forgets_loaded_script_lanes() {
+        let mut rasterizer = GlyphRasterizer::new();
+        rasterizer.ensure_fallbacks_for_codepoint('😀');
+        rasterizer.ensure_fallbacks_for_codepoint('你');
+
+        assert!(rasterizer
+            .loaded_fallback_scripts
+            .contains(&FallbackScript::Emoji));
+        assert!(rasterizer
+            .loaded_fallback_scripts
+            .contains(&FallbackScript::Cjk));
+
+        rasterizer.release_fallbacks();
+
+        assert!(rasterizer.loaded_fallback_scripts.is_empty());
+        assert!(!rasterizer.system_fallbacks_loaded);
+    }
+
+    #[test]
+    fn aimer_font_loads_bundled_cjk_fallback_only_on_cjk_miss() {
+        const EXPECTED_BUNDLED_CJK_FONT_ID: FontId = 0x2000_0000;
+
+        let mut rasterizer = GlyphRasterizer::new();
+        assert!(rasterizer.fallbacks.is_none());
+
+        let latin = rasterizer.glyph_key_for_codepoint('A', 32.0);
+        assert_eq!(latin.font_id, rasterizer.primary_font_id());
+        assert!(rasterizer.fallbacks.is_none());
+
+        rasterizer.begin_script_run("あの時は", Some(TextLanguage::Japanese));
+        let cjk = rasterizer.glyph_key_for_codepoint('時', 32.0);
+        rasterizer.end_script_run();
+        assert_eq!(cjk.font_id, EXPECTED_BUNDLED_CJK_FONT_ID);
+        assert!(rasterizer.fallbacks.as_ref().is_some_and(|fallbacks| {
+            fallbacks
+                .iter()
+                .any(|record| record.id == EXPECTED_BUNDLED_CJK_FONT_ID)
+        }));
+    }
+
+    #[test]
+    fn aimer_font_honors_an_explicit_japanese_language_for_han_only_runs() {
+        const EXPECTED_BUNDLED_CJK_FONT_ID: FontId = 0x2000_0000;
+
+        let mut rasterizer = GlyphRasterizer::new();
+        rasterizer.begin_script_run("漢字", Some(TextLanguage::Japanese));
+        rasterizer.ensure_bundled_cjk_fallback();
+        let (font_id, _, supported) =
+            rasterizer.font_and_glyph_for_codepoint('漢', NORMAL_GLYPH_WEIGHT);
+        rasterizer.end_script_run();
+
+        assert!(supported);
+        assert_eq!(font_id, EXPECTED_BUNDLED_CJK_FONT_ID);
+    }
+
+    #[test]
+    fn aimer_font_uses_the_japanese_bundle_for_kana_only_runs() {
+        const EXPECTED_BUNDLED_CJK_FONT_ID: FontId = 0x2000_0000;
+
+        let mut rasterizer = GlyphRasterizer::new();
+        rasterizer.begin_script_run("かな", None);
+        let key = rasterizer.glyph_key_for_codepoint('か', 32.0);
+        rasterizer.end_script_run();
+
+        assert_eq!(key.font_id, EXPECTED_BUNDLED_CJK_FONT_ID);
+    }
+
+    #[test]
+    fn aimer_font_does_not_use_japanese_bundle_for_chinese_or_korean_runs() {
+        const BUNDLED_CJK_FONT_ID: FontId = 0x2000_0000;
+
+        let mut rasterizer = GlyphRasterizer::new();
+        rasterizer.begin_script_run("你好", Some(TextLanguage::Chinese));
+        rasterizer.ensure_fallbacks_for_codepoint('你');
+        rasterizer.end_script_run();
+
+        assert!(!rasterizer
+            .fallbacks
+            .as_ref()
+            .is_some_and(|fallbacks| fallbacks.iter().any(|record| record.id == BUNDLED_CJK_FONT_ID)));
+        assert!(rasterizer
+            .loaded_fallback_scripts
+            .contains(&FallbackScript::Cjk));
+
+        rasterizer.begin_script_run("한글", Some(TextLanguage::Korean));
+        rasterizer.ensure_fallbacks_for_codepoint('한');
+        rasterizer.end_script_run();
+
+        assert!(!rasterizer
+            .fallbacks
+            .as_ref()
+            .is_some_and(|fallbacks| fallbacks.iter().any(|record| record.id == BUNDLED_CJK_FONT_ID)));
+        assert!(rasterizer
+            .loaded_fallback_scripts
+            .contains(&FallbackScript::Hangul));
+    }
+
+    #[test]
+    fn released_cjk_fallback_reloads_with_the_same_id() {
+        const EXPECTED_BUNDLED_CJK_FONT_ID: FontId = 0x2000_0000;
+
+        let mut rasterizer = GlyphRasterizer::new();
+        rasterizer.begin_script_run("あの時は", Some(TextLanguage::Japanese));
+        let first = rasterizer.glyph_key_for_codepoint('時', 32.0);
+        rasterizer.end_script_run();
+
+        assert_eq!(first.font_id, EXPECTED_BUNDLED_CJK_FONT_ID);
+        let first_glyph = rasterizer.rasterize_key(first, 32.0).clone();
+        assert!(!first_glyph.bitmap.is_empty());
+        assert_eq!(rasterizer.cached_glyph_count(), 1);
+        assert_eq!(rasterizer.release_fallbacks(), 1);
+        assert!(rasterizer.fallbacks.is_none());
+        assert_eq!(rasterizer.cached_glyph_count(), 0);
+        assert_eq!(rasterizer.bitmap_cache_bytes(), 0);
+
+        rasterizer.begin_script_run("あの時は", Some(TextLanguage::Japanese));
+        let reloaded = rasterizer.glyph_key_for_codepoint('時', 32.0);
+        rasterizer.end_script_run();
+
+        assert_eq!(reloaded.font_id, first.font_id);
+        assert_eq!(reloaded.glyph_id, first.glyph_id);
+    }
+
+    #[test]
+    fn fallback_release_keeps_explicitly_registered_faces() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let registered_id = rasterizer
+            .register_font_bytes(PRIMARY_FONT.to_vec())
+            .expect("the registered face should be readable");
+
+        assert_eq!(rasterizer.release_fallbacks(), 0);
+        let registered = rasterizer
+            .fallbacks
+            .as_ref()
+            .and_then(|fallbacks| fallbacks.iter().find(|record| record.id == registered_id))
+            .expect("explicit registrations must survive fallback release");
+        assert!(registered.glyph_index('A').is_some());
     }
 
     #[test]
@@ -3415,7 +5547,7 @@ mod tests {
         }
 
         // The shaped output should have fewer glyphs than codepoints (3).
-        // In practice HarfRust + Khmer Sangam MN produces 2 glyphs for this cluster:
+        // The platform reference for Khmer Sangam MN produces 2 glyphs for this cluster:
         // one for the base consonant with full advance, one zero-advance mark
         // (subscript).
         assert!(
@@ -3445,7 +5577,10 @@ mod tests {
         }
     }
 
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn fallback_chain_keeps_both_emoji_and_cjk() {
         let mut rasterizer = GlyphRasterizer::new();
@@ -3468,7 +5603,10 @@ mod tests {
         assert!(chain.iter().any(|fallback| !fallback.is_color));
     }
 
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn emoji_glyph_rasterizes_as_color() {
         let mut rasterizer = GlyphRasterizer::new();
@@ -3494,12 +5632,41 @@ mod tests {
         );
     }
 
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
+    #[test]
+    fn apple_color_symbol_glyphs_keep_their_bitmap_near_the_text_baseline() {
+        let mut rasterizer = GlyphRasterizer::new();
+
+        for codepoint in ['♿', '☑', '↔', '⌨'] {
+            let key = rasterizer.glyph_key_for_codepoint(codepoint, 18.0);
+            let glyph = rasterizer.glyph_metrics_for_key(key, 18.0);
+            assert!(glyph.is_color, "{codepoint:?} should use a color fallback");
+            assert!(glyph.width > 0 && glyph.height > 0);
+
+            // In the shared y-down layout contract the bitmap bottom is
+            // `baseline - offset_y`. Apple Color Emoji's zero sbix origin is
+            // a sentinel, not a bottom edge; accepting the old -height value
+            // puts the entire symbol below the baseline and outside a row.
+            assert!(
+                glyph.offset_y > -4.0 && glyph.offset_y < 4.0,
+                "{codepoint:?} bitmap bottom drifted from the baseline: offset_y={}",
+                glyph.offset_y
+            );
+        }
+    }
+
     /// Simplified Chinese is the hardest fallback case on Apple platforms:
     /// characters used only there — `吗`, `们`, `这` — are missing from the
     /// Japanese and Korean faces that happen to cover shared ideographs, so the
     /// only face left is the system's own Chinese font, whose outlines live in
-    /// a private table no third-party rasterizer can read.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    /// a private table the owned outline decoder cannot read.
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[test]
     fn simplified_chinese_only_codepoints_rasterize_to_visible_glyphs() {
         let mut rasterizer = GlyphRasterizer::new();

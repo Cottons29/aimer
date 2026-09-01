@@ -159,6 +159,237 @@ struct PendingGlyph {
     data: Vec<u8>,
 }
 
+/// Metadata for one rectangle copied from the reusable upload buffer.
+#[derive(Clone, Copy)]
+struct StagedGlyph {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    offset: u64,
+    bytes_per_row: u32,
+}
+
+#[derive(Clone, Copy)]
+struct PackedUploadGroup {
+    start: usize,
+    end: usize,
+    y: u32,
+    min_x: u32,
+    width: u32,
+    height: u32,
+}
+
+#[inline]
+fn aligned_upload_row_bytes(row_bytes: usize) -> usize {
+    (row_bytes + 255) & !255
+}
+
+/// Uploads all pending glyphs through one reusable buffer and one command
+/// submission. `copy_buffer_to_texture` requires 256-byte row alignment, so
+/// each small glyph is copied into an aligned row slice before the GPU copies
+/// it to its already-packed atlas rectangle.
+fn upload_pending(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    pending: &mut Vec<PendingGlyph>,
+    staging_buffer: &mut Option<wgpu::Buffer>,
+    staging_capacity: &mut usize,
+    staging_data: &mut Vec<u8>,
+    staging_copies: &mut Vec<StagedGlyph>,
+    bytes_per_pixel: usize,
+    label: &'static str,
+) {
+    if pending.is_empty() {
+        return;
+    }
+
+    // `queue.write_texture` accepts tightly packed rows, while a buffer copy
+    // pads every row to 256 bytes. Small glyph rectangles are common in UI
+    // text, so forcing each of them through an aligned staging slice can move
+    // several times more data than the bitmap contains. Keep the direct path
+    // for that shape of batch; reserve the reusable buffer for transfers where
+    // its single queue write is likely to amortize the padding.
+    let packed_bytes = pending
+        .iter()
+        .map(|glyph| {
+            glyph.width as usize * glyph.height as usize * bytes_per_pixel
+        })
+        .sum::<usize>();
+    let aligned_bytes = pending
+        .iter()
+        .map(|glyph| {
+            aligned_upload_row_bytes(glyph.width as usize * bytes_per_pixel)
+                * glyph.height as usize
+        })
+        .sum::<usize>();
+    if aligned_bytes > packed_bytes.saturating_mul(4) {
+        // The shelf packer allocates monotonically in x and then advances y.
+        // Coalesce each consecutive shelf segment into one tightly packed
+        // rectangle. The one-pixel gaps are zero-filled, so bilinear sampling
+        // still sees the same isolation padding as the individual writes.
+        let mut groups: Vec<PackedUploadGroup> = Vec::new();
+        for (index, glyph) in pending.iter().enumerate() {
+            if glyph.width == 0 || glyph.height == 0 {
+                continue;
+            }
+            let right = glyph.x + glyph.width;
+            if let Some(group) = groups.last_mut()
+                && group.y == glyph.y
+                && group.end == index
+            {
+                group.end += 1;
+                group.width = right - group.min_x;
+                group.height = group.height.max(glyph.height);
+            } else {
+                groups.push(PackedUploadGroup {
+                    start: index,
+                    end: index + 1,
+                    y: glyph.y,
+                    min_x: glyph.x,
+                    width: glyph.width,
+                    height: glyph.height,
+                });
+            }
+        }
+
+        for group in groups {
+            let row_bytes = group.width as usize * bytes_per_pixel;
+            staging_data.resize(row_bytes * group.height as usize, 0);
+            staging_data.fill(0);
+            for glyph in &pending[group.start..group.end] {
+                if glyph.width == 0 || glyph.height == 0 {
+                    continue;
+                }
+                let source_row_bytes = glyph.width as usize * bytes_per_pixel;
+                let x_offset = (glyph.x - group.min_x) as usize * bytes_per_pixel;
+                for row in 0..glyph.height as usize {
+                    let source_start = row * source_row_bytes;
+                    let target_start = row * row_bytes + x_offset;
+                    staging_data[target_start..target_start + source_row_bytes]
+                        .copy_from_slice(&glyph.data[source_start..source_start + source_row_bytes]);
+                }
+            }
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: group.min_x,
+                        y: group.y,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                staging_data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row_bytes as u32),
+                    rows_per_image: Some(group.height),
+                },
+                wgpu::Extent3d {
+                    width: group.width,
+                    height: group.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        pending.clear();
+        return;
+    }
+
+    let pending_batch = std::mem::take(pending);
+    staging_data.clear();
+    staging_copies.clear();
+    staging_copies.reserve(pending_batch.len());
+
+    for glyph in pending_batch.iter() {
+        if glyph.width == 0 || glyph.height == 0 {
+            continue;
+        }
+        let row_bytes = glyph.width as usize * bytes_per_pixel;
+        let bytes_per_row = aligned_upload_row_bytes(row_bytes);
+        let offset = staging_data.len();
+        let glyph_bytes = bytes_per_row * glyph.height as usize;
+        staging_data.resize(offset + glyph_bytes, 0);
+        for row in 0..glyph.height as usize {
+            let source_start = row * row_bytes;
+            let source_end = source_start + row_bytes;
+            let target_start = offset + row * bytes_per_row;
+            staging_data[target_start..target_start + row_bytes]
+                .copy_from_slice(&glyph.data[source_start..source_end]);
+        }
+        staging_copies.push(StagedGlyph {
+            x: glyph.x,
+            y: glyph.y,
+            width: glyph.width,
+            height: glyph.height,
+            offset: offset as u64,
+            bytes_per_row: bytes_per_row as u32,
+        });
+    }
+
+    if staging_data.is_empty() {
+        let mut pending_batch = pending_batch;
+        pending_batch.clear();
+        *pending = pending_batch;
+        return;
+    }
+
+    if *staging_capacity < staging_data.len() {
+        let capacity = staging_data.len().next_power_of_two();
+        *staging_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: capacity as u64,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        *staging_capacity = capacity;
+    }
+
+    let buffer = staging_buffer
+        .as_ref()
+        .expect("staging buffer is allocated for non-empty atlas data");
+    queue.write_buffer(buffer, 0, staging_data);
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some(label),
+    });
+    for copy in staging_copies.iter().copied() {
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo {
+                buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: copy.offset,
+                    bytes_per_row: Some(copy.bytes_per_row),
+                    rows_per_image: Some(copy.height),
+                },
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: copy.x,
+                    y: copy.y,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: copy.width,
+                height: copy.height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    queue.submit(Some(encoder.finish()));
+
+    let mut pending_batch = pending_batch;
+    pending_batch.clear();
+    *pending = pending_batch;
+}
+
 pub struct GlyphAtlas {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -170,7 +401,14 @@ pub struct GlyphAtlas {
     /// only its own bitmap, which is dropped after [`upload`](Self::upload), so
     /// no full-size CPU copy of the atlas is retained.
     pending: Vec<PendingGlyph>,
-    /// Incremented each time the texture is recreated (grow).
+    /// Reusable GPU upload storage; it grows only to the largest pending batch.
+    staging_buffer: Option<wgpu::Buffer>,
+    staging_capacity: usize,
+    /// Reusable CPU packing storage for aligned buffer-to-texture copies.
+    staging_data: Vec<u8>,
+    staging_copies: Vec<StagedGlyph>,
+    /// Incremented whenever the texture or its glyph-to-region layout changes.
+    /// The latter includes a max-size repack that keeps the same texture.
     generation: u64,
 }
 
@@ -194,6 +432,10 @@ impl GlyphAtlas {
             packer: ShelfPacker::new(width, height),
             cache: HashMap::new(),
             pending: Vec::new(),
+            staging_buffer: None,
+            staging_capacity: 0,
+            staging_data: Vec::new(),
+            staging_copies: Vec::new(),
             generation: 0,
         }
     }
@@ -230,7 +472,8 @@ impl GlyphAtlas {
         self.cache.get(key).copied()
     }
 
-    /// Returns the current atlas generation (incremented on texture recreate).
+    /// Returns the current atlas generation (incremented when the texture or
+    /// glyph-to-region layout is recreated).
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -257,6 +500,7 @@ impl GlyphAtlas {
             self.cache.clear();
             self.pending.clear();
             self.packer = ShelfPacker::new(self.width, self.height);
+            self.generation += 1;
         }
     }
 
@@ -308,38 +552,22 @@ impl GlyphAtlas {
         region
     }
 
-    /// Write every glyph staged since the last upload to the GPU texture, then
-    /// drop the staged bytes. Each glyph is written directly at its packed
-    /// position, so no full-size CPU buffer is materialized.
-    pub fn upload(&mut self, queue: &wgpu::Queue) {
-        if self.pending.is_empty() {
-            return;
-        }
-        for glyph in self.pending.drain(..) {
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: glyph.x,
-                        y: glyph.y,
-                        z: 0,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &glyph.data,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(glyph.width),
-                    rows_per_image: Some(glyph.height),
-                },
-                wgpu::Extent3d {
-                    width: glyph.width,
-                    height: glyph.height,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
+    /// Writes every glyph staged since the last upload through one reusable
+    /// staging buffer, then drops the per-glyph bitmap storage. No full-size
+    /// CPU mirror of the atlas is materialized.
+    pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        upload_pending(
+            device,
+            queue,
+            &self.texture,
+            &mut self.pending,
+            &mut self.staging_buffer,
+            &mut self.staging_capacity,
+            &mut self.staging_data,
+            &mut self.staging_copies,
+            1,
+            "glyph atlas upload",
+        );
     }
 
     /// Grow the atlas to fit more glyphs. Below [`MAX_SIZE`](Self::MAX_SIZE)
@@ -356,6 +584,7 @@ impl GlyphAtlas {
             self.cache.clear();
             self.pending.clear();
             self.packer = ShelfPacker::new(self.width, self.height);
+            self.generation += 1;
             return;
         }
 
@@ -437,6 +666,13 @@ pub struct ColorGlyphAtlas {
     /// Glyphs packed but not yet uploaded. Each entry owns only its own RGBA8
     /// bytes (dropped after [`upload`](Self::upload)); no full-size CPU mirror.
     pending: Vec<PendingGlyph>,
+    /// Reusable GPU upload storage; it grows only to the largest pending batch.
+    staging_buffer: Option<wgpu::Buffer>,
+    staging_capacity: usize,
+    /// Reusable CPU packing storage for aligned buffer-to-texture copies.
+    staging_data: Vec<u8>,
+    staging_copies: Vec<StagedGlyph>,
+    /// Incremented whenever the texture or its glyph-to-region layout changes.
     generation: u64,
 }
 
@@ -459,6 +695,10 @@ impl ColorGlyphAtlas {
             packer: ShelfPacker::new(width, height),
             cache: HashMap::new(),
             pending: Vec::new(),
+            staging_buffer: None,
+            staging_capacity: 0,
+            staging_data: Vec::new(),
+            staging_copies: Vec::new(),
             generation: 0,
         }
     }
@@ -493,6 +733,8 @@ impl ColorGlyphAtlas {
         self.cache.get(key).copied()
     }
 
+    /// Returns the current atlas generation (incremented when the texture or
+    /// glyph-to-region layout is recreated).
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -519,6 +761,7 @@ impl ColorGlyphAtlas {
             self.cache.clear();
             self.pending.clear();
             self.packer = ShelfPacker::new(self.width, self.height);
+            self.generation += 1;
         }
     }
 
@@ -566,35 +809,19 @@ impl ColorGlyphAtlas {
         region
     }
 
-    pub fn upload(&mut self, queue: &wgpu::Queue) {
-        if self.pending.is_empty() {
-            return;
-        }
-        for glyph in self.pending.drain(..) {
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: glyph.x,
-                        y: glyph.y,
-                        z: 0,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &glyph.data,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(glyph.width * Self::BYTES_PER_PIXEL),
-                    rows_per_image: Some(glyph.height),
-                },
-                wgpu::Extent3d {
-                    width: glyph.width,
-                    height: glyph.height,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
+    pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        upload_pending(
+            device,
+            queue,
+            &self.texture,
+            &mut self.pending,
+            &mut self.staging_buffer,
+            &mut self.staging_capacity,
+            &mut self.staging_data,
+            &mut self.staging_copies,
+            Self::BYTES_PER_PIXEL as usize,
+            "color glyph atlas upload",
+        );
     }
 
     fn grow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -604,6 +831,7 @@ impl ColorGlyphAtlas {
             self.cache.clear();
             self.pending.clear();
             self.packer = ShelfPacker::new(self.width, self.height);
+            self.generation += 1;
             return;
         }
 

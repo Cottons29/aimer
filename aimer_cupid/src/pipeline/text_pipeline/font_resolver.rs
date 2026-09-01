@@ -6,14 +6,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{LazyLock, RwLock};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+use std::sync::OnceLock;
 
 use aimer_utils::info;
-#[cfg(not(any(target_os = "ios", target_os = "macos")))]
-use fontique::{Collection, CollectionOptions, SourceKind};
-use skrifa::instance::{LocationRef, Size};
-use skrifa::raw::TableProvider;
-use skrifa::{FontRef, GlyphId, MetadataProvider};
 
 use crate::text_layout::FontId;
 
@@ -23,9 +20,188 @@ pub struct FontRecord {
     pub bytes: Option<Arc<[u8]>>,
     pub(crate) collection_index: u32,
     pub(crate) path: Option<Arc<PathBuf>>,
-    /// True when the font carries color glyph data (`sbix` / `CBDT` / `COLR`)
-    /// and should be rasterized via color-glyph tables.
+    /// True when the font carries color glyph data (`sbix` / `CBDT` / `COLR` /
+    /// `SVG `) or a private color strike such as Apple's `emjc`. Private
+    /// color data is marked here only to route it to the platform compatibility
+    /// renderer; the portable Aimer reader never decodes it.
     pub is_color: bool,
+}
+
+/// A script/category lane in the platform-independent fallback chain.
+///
+/// Each lane is discovered independently. This keeps a first emoji miss from
+/// enumerating every installed CJK, Arabic, and Indic face, while preserving a
+/// stable id range for faces found in a later lane. Apple platforms do not use
+/// these probe lanes for selection — Core Text resolves a face per codepoint —
+/// but the classification is still useful to keep the rasterizer's loading
+/// state explicit and testable.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub(crate) enum FallbackScript {
+    Emoji,
+    Cjk,
+    Hangul,
+    Arabic,
+    Hebrew,
+    Devanagari,
+    Tamil,
+    Thai,
+    Armenian,
+    Georgian,
+    Ethiopic,
+    Myanmar,
+    Khmer,
+    Tibetan,
+    Sinhala,
+    Telugu,
+    Kannada,
+    Malayalam,
+    Gujarati,
+    Gurmukhi,
+    Bengali,
+    Oriya,
+    Lao,
+    Mongolian,
+    Cherokee,
+    Yi,
+}
+
+impl FallbackScript {
+    pub(crate) const COUNT: usize = 26;
+    pub(crate) const ALL: [Self; Self::COUNT] = [
+        Self::Emoji,
+        Self::Cjk,
+        Self::Hangul,
+        Self::Arabic,
+        Self::Hebrew,
+        Self::Devanagari,
+        Self::Tamil,
+        Self::Thai,
+        Self::Armenian,
+        Self::Georgian,
+        Self::Ethiopic,
+        Self::Myanmar,
+        Self::Khmer,
+        Self::Tibetan,
+        Self::Sinhala,
+        Self::Telugu,
+        Self::Kannada,
+        Self::Malayalam,
+        Self::Gujarati,
+        Self::Gurmukhi,
+        Self::Bengali,
+        Self::Oriya,
+        Self::Lao,
+        Self::Mongolian,
+        Self::Cherokee,
+        Self::Yi,
+    ];
+
+    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+    const fn index(self) -> usize {
+        match self {
+            Self::Emoji => 0,
+            Self::Cjk => 1,
+            Self::Hangul => 2,
+            Self::Arabic => 3,
+            Self::Hebrew => 4,
+            Self::Devanagari => 5,
+            Self::Tamil => 6,
+            Self::Thai => 7,
+            Self::Armenian => 8,
+            Self::Georgian => 9,
+            Self::Ethiopic => 10,
+            Self::Myanmar => 11,
+            Self::Khmer => 12,
+            Self::Tibetan => 13,
+            Self::Sinhala => 14,
+            Self::Telugu => 15,
+            Self::Kannada => 16,
+            Self::Malayalam => 17,
+            Self::Gujarati => 18,
+            Self::Gurmukhi => 19,
+            Self::Bengali => 20,
+            Self::Oriya => 21,
+            Self::Lao => 22,
+            Self::Mongolian => 23,
+            Self::Cherokee => 24,
+            Self::Yi => 25,
+        }
+    }
+
+    /// Stable base id for the one face selected for this lane.
+    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+    pub(crate) const fn id_base(self) -> FontId {
+        FALLBACK_CHAIN_ID_BASE + self.index() as FontId * FALLBACK_CHAIN_ID_STRIDE
+    }
+
+    fn from_index(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+}
+
+/// Reserved ids for faces found by the platform-independent probe lanes.
+///
+/// Each lane currently contributes at most one face, but reserving a stride
+/// leaves room for a future deterministic per-lane shortlist without making
+/// runtime registration ids depend on which scripts happened to be rendered
+/// first.
+pub(crate) const FALLBACK_CHAIN_ID_BASE: FontId = 0x1000_0000;
+const FALLBACK_CHAIN_ID_STRIDE: FontId = 0x1000;
+
+/// Classifies a codepoint before a fallback lookup.
+pub(crate) fn fallback_script_for_codepoint(codepoint: char) -> Option<FallbackScript> {
+    match codepoint as u32 {
+        0x1F000..=0x1FAFF | 0x2600..=0x27BF => Some(FallbackScript::Emoji),
+        0x3000..=0x303F
+        | 0x3040..=0x30FF
+        | 0x31F0..=0x31FF
+        | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF
+        | 0xF900..=0xFAFF
+        | 0xFF00..=0xFFEF
+        | 0x20000..=0x3FFFF => Some(FallbackScript::Cjk),
+        0x1100..=0x11FF
+        | 0x3130..=0x318F
+        | 0xA960..=0xA97F
+        | 0xAC00..=0xD7FF => Some(FallbackScript::Hangul),
+        0x0590..=0x05FF => Some(FallbackScript::Hebrew),
+        0x0600..=0x06FF
+        | 0x0750..=0x077F
+        | 0x08A0..=0x08FF
+        | 0xFB50..=0xFDFF
+        | 0xFE70..=0xFEFF => Some(FallbackScript::Arabic),
+        0x0900..=0x097F => Some(FallbackScript::Devanagari),
+        0x0B80..=0x0BFF => Some(FallbackScript::Tamil),
+        0x0E00..=0x0E7F => Some(FallbackScript::Thai),
+        0x0530..=0x058F => Some(FallbackScript::Armenian),
+        0x10A0..=0x10FF => Some(FallbackScript::Georgian),
+        0x1200..=0x137F => Some(FallbackScript::Ethiopic),
+        0x1000..=0x109F => Some(FallbackScript::Myanmar),
+        0x1780..=0x17FF => Some(FallbackScript::Khmer),
+        0x0F00..=0x0FFF => Some(FallbackScript::Tibetan),
+        0x0D80..=0x0DFF => Some(FallbackScript::Sinhala),
+        0x0C00..=0x0C7F => Some(FallbackScript::Telugu),
+        0x0C80..=0x0CFF => Some(FallbackScript::Kannada),
+        0x0D00..=0x0D7F => Some(FallbackScript::Malayalam),
+        0x0A80..=0x0AFF => Some(FallbackScript::Gujarati),
+        0x0A00..=0x0A7F => Some(FallbackScript::Gurmukhi),
+        0x0980..=0x09FF => Some(FallbackScript::Bengali),
+        0x0B00..=0x0B7F => Some(FallbackScript::Oriya),
+        0x0E80..=0x0EFF => Some(FallbackScript::Lao),
+        0x1800..=0x18AF => Some(FallbackScript::Mongolian),
+        0x13A0..=0x13FF => Some(FallbackScript::Cherokee),
+        0xA000..=0xA4CF => Some(FallbackScript::Yi),
+        _ => None,
+    }
+}
+
+/// Maps a statically assigned chain id back to the lane that owns it.
+pub(crate) fn fallback_script_for_font_id(font_id: FontId) -> Option<FallbackScript> {
+    let offset = font_id.checked_sub(FALLBACK_CHAIN_ID_BASE)?;
+    if offset >= FallbackScript::COUNT as FontId * FALLBACK_CHAIN_ID_STRIDE {
+        return None;
+    }
+    FallbackScript::from_index((offset / FALLBACK_CHAIN_ID_STRIDE) as usize)
 }
 
 /// Immutable shared ownership of a font record used to seed local CPU contexts.
@@ -132,11 +308,6 @@ impl AsRef<[u8]> for FontData {
     }
 }
 
-/// Returns the requested face from a standalone font or TrueType collection.
-pub(crate) fn font_ref(data: &[u8], collection_index: u32) -> Option<FontRef<'_>> {
-    FontRef::from_index(data, collection_index).ok()
-}
-
 /// The OpenType `wght` value of a face that asks for no emphasis.
 ///
 /// This is both the weight a face is read as when it declares none and the
@@ -144,34 +315,21 @@ pub(crate) fn font_ref(data: &[u8], collection_index: u32) -> Option<FontRef<'_>
 /// unemphasized line takes does no weight work at all.
 pub(crate) const REGULAR_WEIGHT: u16 = 400;
 
+fn face_metadata(data: FontData, collection_index: u32) -> Option<bool> {
+    let face = crate::text_pipeline::aimer_font::SfntFace::from_font_data(
+        data,
+        collection_index,
+    )
+    .ok()?;
+    face.metrics().ok()?;
+    face.table(*b"cmap")?;
+    Some(face.has_color_tables() || face.has_apple_private_color_tables())
+}
+
 impl FontRecord {
     pub(crate) fn from_static_bytes(id: FontId, bytes: &'static [u8]) -> Option<Self> {
-        font_ref(bytes, 0)?;
-        Some(Self {
-            id,
-            bytes: Some(Arc::from(bytes)),
-            collection_index: 0,
-            path: None,
-            is_color: false,
-        })
-    }
-
-    pub fn from_bytes(id: FontId, bytes: Vec<u8>) -> Option<Self> {
-        let face = font_ref(&bytes, 0)?;
-        let is_color = Self::face_is_color(&face);
-        Some(Self {
-            id,
-            bytes: Some(Arc::from(bytes)),
-            collection_index: 0,
-            path: None,
-            is_color,
-        })
-    }
-
-    pub(crate) fn from_shared_bytes(id: FontId, bytes: Arc<[u8]>) -> Option<Self> {
-        let face = font_ref(bytes.as_ref(), 0)?;
-        let is_color = Self::face_is_color(&face);
-
+        let bytes: Arc<[u8]> = Arc::from(bytes);
+        let is_color = face_metadata(FontData::Shared(bytes.clone()), 0)?;
         Some(Self {
             id,
             bytes: Some(bytes),
@@ -181,27 +339,28 @@ impl FontRecord {
         })
     }
 
-    /// Returns true if this collection_index of `data` contains any color glyph
-    /// table that we know how to render (`sbix`, `CBDT`/`CBLC`, or
-    /// `COLR`/`CPAL`).
-    #[allow(dead_code)]
-    pub(crate) fn face_is_color(face: &FontRef<'_>) -> bool {
-        // sbix  — AppleColorEmoji (macOS/iOS)
-        // cbdt  — Noto Color Emoji (Android/Linux, older builds)
-        // colr  — Windows/Linux Segoe/Twemoji v1 layered outlines
-        face.sbix().is_ok() || face.cbdt().is_ok() || face.colr().is_ok()
+    pub fn from_bytes(id: FontId, bytes: Vec<u8>) -> Option<Self> {
+        let bytes: Arc<[u8]> = Arc::from(bytes);
+        let is_color = face_metadata(FontData::Shared(bytes.clone()), 0)?;
+        Some(Self {
+            id,
+            bytes: Some(bytes),
+            collection_index: 0,
+            path: None,
+            is_color,
+        })
     }
 
-    /// Probe the font with each `probes` codepoint; accept on the first match.
-    ///
-    /// This is [`any_probe_is_mapped`] applied to an already-parsed face. The
-    /// two must stay the same predicate: the fallback chain builder uses the
-    /// standalone form as a gate in front of the parse, and a gate that
-    /// rejected a face this accepts would silently drop it from the chain.
-    #[cfg_attr(any(target_os = "ios", target_os = "macos"), allow(dead_code))]
-    fn probes_match(face: &FontRef<'_>, probes: &[char]) -> bool {
-        let charmap = face.charmap();
-        any_probe_is_mapped(|codepoint| charmap.map(codepoint).map(|id| id.to_u32()), probes)
+    pub(crate) fn from_shared_bytes(id: FontId, bytes: Arc<[u8]>) -> Option<Self> {
+        let is_color = face_metadata(FontData::Shared(bytes.clone()), 0)?;
+
+        Some(Self {
+            id,
+            bytes: Some(bytes),
+            collection_index: 0,
+            path: None,
+            is_color,
+        })
     }
 
     /// Retain shared in-memory data or hand out the process-wide memory map of
@@ -225,7 +384,11 @@ impl FontRecord {
     #[allow(dead_code)]
     pub(crate) fn ensure_face(&self) -> Option<()> {
         let data = self.data()?;
-        font_ref(data.as_ref(), self.collection_index)?;
+        crate::text_pipeline::aimer_font::SfntFace::from_font_data(
+            data,
+            self.collection_index,
+        )
+        .ok()?;
         Some(())
     }
 
@@ -234,38 +397,74 @@ impl FontRecord {
     /// Fonts registered from memory have no path. A path is what identifies a
     /// face to the platform rasterizer, which is the only way to draw faces
     /// whose glyph data Cupid cannot decode.
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
     #[inline]
     pub(crate) fn path(&self) -> Option<&Path> {
         self.path.as_ref().map(|path| path.as_path())
     }
 
-    pub(crate) fn glyph_index(&self, codepoint: char) -> Option<u16> {
-        let data = self.data()?;
-        let face = font_ref(data.as_ref(), self.collection_index)?;
-        face.charmap().map(codepoint).map(|id| id.to_u32() as u16)
+    /// Returns whether this face has an outline table understood by the
+    /// Aimer-owned reader.
+    pub(crate) fn has_standard_outline(&self) -> bool {
+        let Some(data) = self.data() else {
+            return false;
+        };
+        crate::text_pipeline::aimer_font::SfntFace::from_font_data(
+            data,
+            self.collection_index,
+        )
+        .ok()
+        .is_some_and(|face| face.has_standard_outline())
     }
 
-    /// The `OS/2` weight class this face was designed at.
-    ///
-    /// This is the face's own stroke — `300` for a Hiragino `W3`, `600` for a
-    /// `PingFang Semibold` — as opposed to the weight a style *asks* for. The
-    /// two meet when a face has to be chosen for a run: a bold run wants the
-    /// sibling face designed near the weight it asked for, not the family's
-    /// regular cut emboldened by hand.
-    ///
-    /// Returns `None` for faces that cannot be read or that ship no `OS/2`
-    /// table, which callers comparing designs treat as "unknown" rather than
-    /// as any particular weight.
+    /// Returns a face's design weight from its `OS/2` table.
     pub(crate) fn design_weight(&self) -> Option<u16> {
         let data = self.data()?;
-        let face = font_ref(data.as_ref(), self.collection_index)?;
-        Some(face.os2().ok()?.us_weight_class())
+        crate::text_pipeline::aimer_font::SfntFace::from_bytes(
+            data.as_ref(),
+            self.collection_index,
+        )
+        .ok()?
+        .design_weight()
     }
 
+    /// Returns a glyph's scaled horizontal advance from the active reader.
     pub(crate) fn advance_width_for_glyph(&self, glyph_id: u16, font_size: f32) -> Option<f32> {
         let data = self.data()?;
         advance_width_from_face(data.as_ref(), self.collection_index, glyph_id, font_size)
+    }
+
+    /// Returns scaled ascent, descent, and line gap from the Aimer reader.
+    pub(crate) fn line_metrics(&self, font_size: f32) -> Option<(f32, f32, f32)> {
+        if !font_size.is_finite() || font_size <= 0.0 {
+            return None;
+        }
+        let data = self.data()?;
+        let metrics = crate::text_pipeline::aimer_font::metrics_from_font_data(
+            data,
+            self.collection_index,
+        )
+        .ok()?;
+        let scale = font_size / f32::from(metrics.units_per_em);
+        Some((
+            f32::from(metrics.ascender) * scale,
+            f32::from(metrics.descender) * scale,
+            f32::from(metrics.line_gap) * scale,
+        ))
+    }
+
+    pub(crate) fn glyph_index(&self, codepoint: char) -> Option<u16> {
+        let data = self.data()?;
+        crate::text_pipeline::aimer_font::SfntFace::from_font_data(
+            data,
+            self.collection_index,
+        )
+        .ok()?
+        .glyph_index(codepoint as u32)
+        .ok()?
     }
 }
 
@@ -275,37 +474,14 @@ pub fn advance_width_from_face(
     glyph_id: u16,
     font_size: f32,
 ) -> Option<f32> {
-    let face = font_ref(bytes, collection_index)?;
-    face.glyph_metrics(Size::new(font_size), LocationRef::default())
-        .advance_width(GlyphId::new(glyph_id as u32))
-}
-
-/// Advances of `glyph_ids`, in order, from one reading of the face.
-///
-/// Metrics are a property of the face at a size, not of a glyph: obtaining
-/// them parses the face and its horizontal metrics tables, and the result then
-/// answers for every glyph. Asking per glyph — as
-/// [`advance_width_from_face`] does — repeats that reading once per glyph,
-/// which is why a run of glyphs asks here instead.
-///
-/// An element is `None` where the face has no advance for that glyph, which is
-/// what tells the caller the face cannot draw it. Returns `None` only when the
-/// face itself cannot be read.
-pub fn advance_widths_from_face(
-    bytes: &[u8],
-    collection_index: u32,
-    glyph_ids: impl IntoIterator<Item = u16>,
-    font_size: f32,
-) -> Option<Vec<Option<f32>>> {
-    let face = font_ref(bytes, collection_index)?;
-    let metrics = face.glyph_metrics(Size::new(font_size), LocationRef::default());
-
-    Some(
-        glyph_ids
-            .into_iter()
-            .map(|glyph_id| metrics.advance_width(GlyphId::new(u32::from(glyph_id))))
-            .collect(),
-    )
+    if !font_size.is_finite() || font_size <= 0.0 {
+        return None;
+    }
+    let face = crate::text_pipeline::aimer_font::SfntFace::from_bytes(bytes, collection_index).ok()?;
+    let metrics = face.metrics().ok()?;
+    let advance = face.glyph_advance_with_metrics(glyph_id, metrics).ok()??;
+    let scale = font_size / f32::from(metrics.units_per_em);
+    Some(f32::from(advance) * scale)
 }
 
 /// A probe group: one script / category with the codepoints used to verify
@@ -340,7 +516,9 @@ const fn probe_group(label: &'static str, probes: &'static [char], hint_color: b
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
 static PROBE_GROUPS: &[ProbeGroup] = &[
     probe_group("emoji", &['😀', '👍'], true),
-    probe_group("cjk", &['你', '漢', '한'], false),
+    // Keep Hangul out of the Han lane. A pan-CJK face may carry both, but a
+    // Korean run must be able to select the Hangul lane independently.
+    probe_group("cjk", &['你', '漢'], false),
     probe_group("hangul", &['가', '나', '다'], false),
     probe_group("arabic", &['\u{0639}', '\u{0627}'], false), /* ع ا */
     probe_group("hebrew", &['\u{05D0}', '\u{05D1}'], false), /* א ב */
@@ -380,35 +558,22 @@ static PROBE_GROUPS: &[ProbeGroup] = &[
 /// declare a cmap entry for a codepoint but store the glyph as a composite with
 /// no direct outline (e.g., some older pan-Unicode fonts for certain CJK
 /// ranges).
-#[cfg(not(any(target_os = "ios", target_os = "macos")))]
-fn face_matches_probes(face: &FontRef<'_>, probes: &[char], hint_color: bool) -> Option<bool> {
-    if !FontRecord::probes_match(face, probes) {
-        return None;
-    }
-
+#[cfg(all(
+    not(any(target_os = "ios", target_os = "macos"))
+))]
+fn face_matches_probes(
+    face: &crate::text_pipeline::aimer_font::SfntFace<'_>,
+    probes: &[char],
+    hint_color: bool,
+) -> Option<bool> {
     if hint_color {
-        // For emoji probe groups we require real bitmap strike tables (sbix or
-        // cbdt).  Fonts that only carry COLR (e.g. LastResort.otf, most text
-        // fonts with COLR decorative glyphs) are not usable as emoji fonts here
-        // because our `rasterize_color_glyph` path prefers sbix/cbdt.
-        if face.sbix().is_err() && face.cbdt().is_err() {
-            return None;
-        }
-        return Some(true); // confirmed bitmap-color emoji font
+        return face.has_color_tables().then_some(true);
     }
 
-    // For non-color probe groups: require that the probe glyphs map to at least
-    // two *distinct* non-zero glyph IDs.  Pan-Unicode placeholder fonts like
-    // LastResort.otf map every codepoint to the same single "missing character"
-    // box (always glyph ID 4 in that font), so they pass a naïve bounding-box
-    // check but do not contain real script outlines.  If all probes resolve to
-    // the same glyph, we know the font is a placeholder and reject it.
-    let charmap = face.charmap();
     let glyph_ids: HashSet<u16> = probes
         .iter()
-        .filter_map(|&codepoint| charmap.map(codepoint))
-        .map(|id| id.to_u32() as u16)
-        .filter(|&id| id != 0) // 0 == .notdef, not meaningful
+        .filter_map(|&codepoint| face.glyph_index(codepoint as u32).ok().flatten())
+        .filter(|&id| id != 0)
         .collect();
 
     // Need at least 2 distinct non-zero glyph IDs among the probes.  Single-probe
@@ -421,37 +586,21 @@ fn face_matches_probes(face: &FontRef<'_>, probes: &[char], hint_color: bool) ->
 
     // Additionally verify at least one probe glyph has a non-empty bounding box
     // so we know the font can actually produce visible outlines for it.
-    let has_usable_outline = probes.iter().any(|&c| {
-        charmap
-            .map(c)
-            .and_then(|id| {
-                face.glyph_metrics(Size::unscaled(), LocationRef::default())
-                    .bounds(id)
-            })
+    let has_usable_outline = probes.iter().any(|&codepoint| {
+        let Some(glyph_id) = face.glyph_index(codepoint as u32).ok().flatten() else {
+            return false;
+        };
+        face.outline(glyph_id)
+            .ok()
+            .flatten()
             .is_some()
+            || face.cff_outline(glyph_id).ok().flatten().is_some()
     });
     if !has_usable_outline {
         return None;
     }
 
     Some(false) // non-color font confirmed usable
-}
-
-/// Apple platforms carry no pre-built fallback chain.
-///
-/// Core Text owns the cascade list the system itself renders with and can
-/// answer, for any single codepoint, which face would draw it. Guessing that
-/// list up front from a hardcoded table of script samples is both slower —
-/// every entry costs a query plus a memory map at first glyph miss — and
-/// incomplete, because a face chosen by a sample character is not guaranteed
-/// to cover the rest of its script (a Japanese face selected for `漢` has no
-/// glyph for `你`, which is how tofu boxes appear in otherwise fine text).
-///
-/// Faces are therefore resolved one codepoint at a time and cached process
-/// wide by [`system_fallback`](crate::text_pipeline::system_fallback).
-#[cfg(any(target_os = "ios", target_os = "macos"))]
-fn build_fallback_chain(_next_id: FontId) -> Vec<FontRecord> {
-    Vec::new()
 }
 
 /// Returns a mapping of `path` suitable for *probing* a candidate face: the
@@ -529,112 +678,77 @@ fn first_open_match(
         .find_map(|(group, _)| probe(group).map(|is_color| (group, is_color)))
 }
 
-/// Build the fallback chain dynamically from Fontique's platform font sources.
+/// Builds only the fallback face for `script`.
 ///
-/// Every face the platform exposes is visited exactly once: its bytes are
-/// mapped once, parsed at most once, and offered to the probe groups that are
-/// still unfilled via [`first_open_match`]. Faces that match nothing are
-/// recorded as seen so a second family listing the same file costs nothing.
-///
-/// A face is only parsed when its character map — which the enumerator has
-/// already indexed, so consulting it needs no parse — reports coverage of a
-/// script still missing from the chain. Most installed faces cover none, so
-/// most are dismissed on the character map alone.
-///
-/// The previous shape — one full sweep of the font set per probe group — made
-/// the cost `groups x faces`: a face rejected by the first group was re-opened,
-/// re-mapped and re-parsed for each of the remaining ones, and groups with no
-/// installed font (Yi, Cherokee, Mongolian on a typical desktop) always paid
-/// for a complete scan. On a distribution shipping several hundred font files
-/// that is tens of thousands of redundant parses, run synchronously on the
-/// thread rasterizing the frame.
-///
-/// The result is a flat `Vec<FontRecord>` ordered by probe group priority, with
-/// ids assigned consecutively from `next_id`.
-#[cfg(not(any(target_os = "ios", target_os = "macos")))]
-fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
-    let mut collection = Collection::new(CollectionOptions {
-        shared: false,
-        system_fonts: !cfg!(target_arch = "wasm32"),
-    });
-    let family_names: Vec<String> = collection.family_names().map(str::to_owned).collect();
+/// The platform collection is still walked until this lane has a usable face,
+/// but no face is parsed for unrelated scripts and no unrelated font record is
+/// retained. The caller gives each lane its own id range, so the result is
+/// independent of the order in which scripts first appear in the UI.
+#[cfg(all(
+    not(any(target_os = "ios", target_os = "macos"))
+))]
+fn build_fallback_chain_for_script(script: FallbackScript) -> Vec<FontRecord> {
+    build_fallback_chain_for_scripts(std::slice::from_ref(&script), script.id_base())
+}
 
-    let mut slots: Vec<Option<FontRecord>> = (0..PROBE_GROUPS.len()).map(|_| None).collect();
-    let mut open = vec![true; PROBE_GROUPS.len()];
-    let mut open_count = PROBE_GROUPS.len();
-    let mut seen_ids = HashSet::new();
+#[cfg(all(
+    not(any(target_os = "ios", target_os = "macos"))
+))]
+fn build_fallback_chain_for_scripts(
+    scripts: &[FallbackScript],
+    next_id: FontId,
+) -> Vec<FontRecord> {
+    let groups = scripts
+        .iter()
+        .map(|script| script.index())
+        .collect::<Vec<_>>();
 
-    'families: for family_name in &family_names {
-        let Some(family) = collection.family_by_name(family_name) else {
+    let mut slots: Vec<Option<FontRecord>> = (0..groups.len()).map(|_| None).collect();
+    let mut open = vec![true; groups.len()];
+    let mut open_count = groups.len();
+    if open_count == 0 {
+        return Vec::new();
+    }
+
+    for path in system_font_paths() {
+        let Some(mapping) = probe_font_file(&path) else {
             continue;
         };
-        for font_info in family.fonts() {
-            let source_id = font_info.source().id();
-            let ci = font_info.index();
-            if !seen_ids.insert((source_id, ci)) {
-                continue;
-            }
-
-            // The mapping used for probing is the shared one whenever the file
-            // is already published, and a private one otherwise: the cache
-            // never evicts, so filling it from a sweep of the entire font set
-            // would pin one mapping per installed font. Only the face that
-            // ends up in the chain is handed over to the cache, below.
-            let probe_mapping = match font_info.source().kind() {
-                SourceKind::Path(path) => match probe_font_file(path.as_ref()) {
-                    Some(mapping) => Some(mapping),
-                    None => continue,
-                },
-                SourceKind::Memory(_) => None,
-            };
-            let (data, record_bytes, record_path): (&[u8], _, _) = match font_info.source().kind() {
-                SourceKind::Path(path) => (
-                    probe_mapping.as_ref().map_or(&[][..], |mapping| &mapping[..]),
-                    None,
-                    Some(Arc::new(path.as_ref().to_path_buf())),
-                ),
-                SourceKind::Memory(bytes) => {
-                    (bytes.as_ref(), Some(Arc::from(bytes.as_ref())), None)
-                }
+        let data = &mapping[..];
+        for collection_index in 0..64 {
+            let Ok(face) = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
+                data,
+                collection_index,
+            ) else {
+                break;
             };
 
-            // The character map is the cheap gate in front of the parse: the
-            // enumerator already located the `cmap` subtable of every face, so
-            // asking it whether a script is present at all costs a bounds check
-            // and a lookup, while `font_ref` walks the table directory. A face
-            // covering none of the scripts still wanted — which is nearly every
-            // installed face, once the common ones are placed — is therefore
-            // rejected without ever being parsed.
-            let Some(charmap) = font_info.charmap_index().charmap(data) else {
-                continue;
-            };
-
-            let mut parsed = None;
             let Some((group, is_color)) = first_open_match(&open, |group| {
-                let group = &PROBE_GROUPS[group];
-                if !any_probe_is_mapped(|codepoint| charmap.map(codepoint), group.probes) {
+                let group = &PROBE_GROUPS[groups[group]];
+                if !any_probe_is_mapped(
+                    |codepoint| face.glyph_index(codepoint as u32).ok().flatten().map(u32::from),
+                    group.probes,
+                ) {
                     return None;
                 }
-                let face = parsed.get_or_insert_with(|| font_ref(data, ci)).as_ref()?;
-                face_matches_probes(face, group.probes, group.hint_color)
+                face_matches_probes(&face, group.probes, group.hint_color)
             }) else {
                 continue;
             };
 
+            let record_path = Arc::new(path.clone());
             slots[group] = Some(FontRecord {
-                id: next_id,
-                bytes: record_bytes,
-                collection_index: ci,
-                path: record_path.clone(),
+                id: next_id + group as FontId,
+                bytes: None,
+                collection_index,
+                path: Some(record_path.clone()),
                 is_color,
             });
-            if let (Some(path), Some(mapping)) = (record_path, probe_mapping) {
-                retain_probed_font_file(path.as_path(), mapping);
-            }
+            retain_probed_font_file(record_path.as_path(), mapping.clone());
             open[group] = false;
             open_count -= 1;
             if open_count == 0 {
-                break 'families;
+                return slots.into_iter().flatten().collect();
             }
         }
     }
@@ -642,21 +756,78 @@ fn build_fallback_chain(next_id: FontId) -> Vec<FontRecord> {
     slots
         .into_iter()
         .flatten()
-        .enumerate()
-        .map(|(index, record)| FontRecord {
-            id: next_id + index as FontId,
-            ..record
-        })
         .collect()
 }
 
-pub fn shared_fallback_chain() -> Vec<FontRecord> {
-    static FALLBACKS: OnceLock<Vec<FontRecord>> = OnceLock::new();
-    FALLBACKS.get_or_init(|| build_fallback_chain(1)).clone()
+#[cfg(all(
+    not(any(target_os = "ios", target_os = "macos"))
+))]
+fn system_font_paths() -> Vec<PathBuf> {
+    let mut roots = vec![
+        PathBuf::from("/usr/share/fonts"),
+        PathBuf::from("/usr/local/share/fonts"),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join(".fonts"));
+        roots.push(home.join(".local/share/fonts"));
+    }
+
+    let mut pending = roots;
+    let mut paths = Vec::new();
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+                continue;
+            };
+            if matches!(extension.to_ascii_lowercase().as_str(), "ttf" | "otf" | "ttc" | "otc") {
+                paths.push(path);
+            }
+        }
+    }
+    paths.sort_unstable();
+    paths.dedup();
+    paths
 }
 
-/// Pre-build the fallback chain and validate each fallback face with
-/// Skrifa, avoiding eager whole-font parsing during warmup. Safe to call
+pub fn shared_fallback_chain() -> Vec<FontRecord> {
+    FallbackScript::ALL
+        .iter()
+        .copied()
+        .flat_map(shared_fallback_chain_for_script)
+        .collect()
+}
+
+/// Returns the fallback faces for one script, building that lane at most once
+/// for the process.
+pub(crate) fn shared_fallback_chain_for_script(script: FallbackScript) -> Vec<FontRecord> {
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    {
+        let _ = script;
+        Vec::new()
+    }
+
+    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+    {
+        static FALLBACKS: OnceLock<
+            [OnceLock<Vec<FontRecord>>; FallbackScript::COUNT],
+        > = OnceLock::new();
+        let fallbacks = FALLBACKS.get_or_init(|| std::array::from_fn(|_| OnceLock::new()));
+        fallbacks[script.index()]
+            .get_or_init(|| build_fallback_chain_for_script(script))
+            .clone()
+    }
+}
+
+/// Pre-build the fallback chain and validate each fallback face with the
+/// checked Aimer reader, avoiding eager whole-font parsing during warmup. Safe to call
 /// from any thread; the inner `OnceLock` is also used by
 /// `GlyphRasterizer::ensure_fallbacks`.
 #[cfg_attr(
@@ -729,37 +900,70 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     use std::sync::Arc;
 
-    use skrifa::MetadataProvider;
+    use super::{
+        FallbackScript, any_probe_is_mapped, claim_warm_up, fallback_script_for_codepoint,
+        first_open_match,
+    };
 
-    use super::{any_probe_is_mapped, claim_warm_up, first_open_match};
-    
     #[cfg(not(target_arch = "wasm32"))]
     use super::{
-        FontData, FontRecord, cached_font_file, font_ref, mapped_font_file, publish_font_file,
+        FontData, FontRecord, cached_font_file, mapped_font_file, publish_font_file,
     };
 
     const TEST_FONT: &[u8] = include_bytes!("../../../fonts/JetBrainsMono-Regular.ttf");
 
     #[test]
-    fn skrifa_font_ref_rejects_invalid_data_and_preserves_face_metadata() {
-        assert!(font_ref(b"not a font", 0).is_none());
+    fn fallback_lane_classifier_keeps_scripts_distinct() {
+        assert_eq!(
+            fallback_script_for_codepoint('😀'),
+            Some(FallbackScript::Emoji)
+        );
+        assert_eq!(
+            fallback_script_for_codepoint('你'),
+            Some(FallbackScript::Cjk)
+        );
+        assert_eq!(
+            fallback_script_for_codepoint('한'),
+            Some(FallbackScript::Hangul)
+        );
+        assert_eq!(
+            fallback_script_for_codepoint('ع'),
+            Some(FallbackScript::Arabic)
+        );
+        assert_eq!(fallback_script_for_codepoint('A'), None);
+    }
 
-        let face = font_ref(TEST_FONT, 0).expect("bundled test font should parse");
-        let glyph_id = face
-            .charmap()
-            .map('A')
-            .expect("bundled test font should map Latin glyphs");
-        let advance = face
-            .glyph_metrics(
-                skrifa::instance::Size::new(16.0),
-                skrifa::instance::LocationRef::default(),
-            )
-            .advance_width(glyph_id)
-            .expect("mapped glyph should have an advance width");
+    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+    #[test]
+    fn fallback_lane_ids_are_stable_and_disjoint() {
+        for (index, script) in FallbackScript::ALL.iter().copied().enumerate() {
+            assert_eq!(script.id_base(), super::FALLBACK_CHAIN_ID_BASE + index as u32 * 0x1000);
+            assert_eq!(
+                super::fallback_script_for_font_id(script.id_base()),
+                Some(script)
+            );
+            assert_eq!(
+                super::fallback_script_for_font_id(script.id_base() + 1),
+                Some(script)
+            );
+        }
+    }
 
-        assert!(advance > 0.0);
-        assert!(face.outline_glyphs().get(glyph_id).is_some());
-        assert!(!FontRecord::face_is_color(&face));
+    #[test]
+    fn aimer_face_metadata_supports_a_registered_standard_font() {
+        let record = FontRecord::from_bytes(7, TEST_FONT.to_vec())
+            .expect("the checked-in face should pass the Aimer validator");
+
+        assert!(record.glyph_index('A').is_some_and(|glyph_id| glyph_id != 0));
+        assert_eq!(record.design_weight(), Some(400));
+        assert!(record.has_standard_outline());
+        assert!(!record.is_color);
+        assert!(record
+            .advance_width_for_glyph(record.glyph_index('A').unwrap(), 16.0)
+            .is_some_and(|advance| advance > 0.0));
+        assert!(record
+            .line_metrics(16.0)
+            .is_some_and(|(ascent, descent, _)| ascent > 0.0 && descent < 0.0));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -930,29 +1134,6 @@ mod tests {
             !any_probe_is_mapped(|_| Some(7), &[]),
             "a group without probes cannot be satisfied"
         );
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn the_cheap_gate_agrees_with_the_full_face_probe() {
-        let face = font_ref(TEST_FONT, 0).expect("bundled test font should parse");
-        let charmap = face.charmap();
-
-        for probes in [
-            &['A', 'B'][..],         // covered by the bundled monospace face
-            &['你', '漢', '한'][..], // not covered by it
-        ] {
-            let gate = any_probe_is_mapped(
-                |codepoint| charmap.map(codepoint).map(|id| id.to_u32()),
-                probes,
-            );
-
-            assert_eq!(
-                gate,
-                FontRecord::probes_match(&face, probes),
-                "the gate must admit exactly the faces the full probe accepts"
-            );
-        }
     }
 
     #[test]
