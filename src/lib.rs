@@ -1945,7 +1945,7 @@ mod tests {
             }
 
             fn build(&self, _ctx: &BuildContext) -> impl Widget {
-                let zone_updater = self.updater.clone();
+                let zone_updater = self.updater;
                 let presses = self.presses.clone();
                 let resizes = self.resizes.clone();
 
@@ -1955,7 +1955,7 @@ mod tests {
                     Duration::from_secs(30),
                     Curve::EaseInOut,
                     move |_delta| {
-                        let zone_updater = zone_updater.clone();
+                        let zone_updater = zone_updater;
                         let presses = presses.clone();
                         let resizes = resizes.clone();
 
@@ -3282,7 +3282,7 @@ mod tests {
                 let index = self.current_index;
                 // The real section hands this same clone to its buttons' callback, so a
                 // test drives exactly the updater a tap would.
-                SELECTION.replace(Some(self.state.clone()));
+                SELECTION.replace(Some(self.state));
                 Container::new()
                     .color(theme.background_color)
                     .child(Column::new().children([

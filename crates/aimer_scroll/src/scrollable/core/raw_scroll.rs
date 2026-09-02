@@ -337,6 +337,14 @@ impl ScrollPaintCache {
         self.tile_draws.borrow_mut().clear();
     }
 
+    fn clear_with_damage(&self, ctx: &BuildContext) {
+        self.isolated.clear_with_damage(ctx);
+        self.snapshot.borrow_mut().take();
+        self.tiles.borrow_mut().clear();
+        self.tile_cache.borrow_mut().clear();
+        self.tile_draws.borrow_mut().clear();
+    }
+
     fn clear_tiles(&self) {
         self.tiles.borrow_mut().clear();
         self.tile_cache.borrow_mut().clear();
@@ -481,7 +489,7 @@ impl<E: Element> RawScrollableContainer<E> {
             if self.draw_child_with_dynamic_islands(ctx, child_ctx, content_size, clip, transform) {
                 return;
             }
-            self.paint_cache.clear();
+            self.paint_cache.clear_with_damage(ctx);
             aimer_widget::record_paint_isolation_fallback();
             self.child.draw(child_ctx);
             return;
@@ -490,22 +498,26 @@ impl<E: Element> RawScrollableContainer<E> {
         let key = self.paint_key(ctx, content_size, clip, transform);
         if can_use_retained_layer(content_size) {
             self.paint_cache.clear_tiles();
-            self.paint_cache
-                .isolated
-                .draw(
-                    ctx,
-                    child_ctx,
-                    &self.child,
-                    key,
-                    content_size,
-                );
+            let geometry = aimer_widget::paint_damage_geometry(
+                ctx,
+                content_size,
+                clip.damage_bounds(),
+            );
+            self.paint_cache.isolated.draw_with_geometry(
+                ctx,
+                child_ctx,
+                &self.child,
+                key,
+                content_size,
+                geometry,
+            );
             return;
         }
 
         // A full layer would exceed the memory cap. Keep only the tiles around
         // the cache window, with a small overlap so elements crossing a tile
         // edge are recorded into the tile that owns their visible pixels.
-        self.paint_cache.isolated.clear();
+        self.paint_cache.isolated.clear_with_damage(ctx);
         self.paint_cache.invalidate_snapshot();
         if self.draw_child_with_retained_tiles(ctx, child_ctx, content_size, key) {
             let draws = self.paint_cache.tile_draws.borrow();

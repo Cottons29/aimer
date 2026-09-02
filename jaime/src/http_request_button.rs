@@ -89,7 +89,7 @@ fn request_callback(
                 return;
             }
             updater.set_state(|state| state.request = Request::InFlight);
-            let answered = updater.clone();
+            let answered = updater;
 
             let request = fetch_example().await;
             answered.set_state(move |state| state.request = request);
@@ -153,7 +153,7 @@ impl State<HttpRequestButton> for HttpRequestButtonState {
                             .padding(LayoutSpacing::all(12))
                             .box_child(
                                 Button::new()
-                                    .on_press_async(request_callback(self.updater.clone()))
+                                    .on_press_async(request_callback(self.updater))
                                     .box_child(
                                         Text::new("Fetch example.com")
                                             .text_align(TextAlign::MidCenter)

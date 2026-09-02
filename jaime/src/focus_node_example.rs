@@ -150,7 +150,7 @@ impl FocusNodeExampleState {
     /// One box: a focusable target wrapped around a decorated container.
     fn focus_box(&self, which: FocusBox) -> AnyWidget {
         let focused = self.focused == Some(which);
-        let updater = self.updater.clone();
+        let updater = self.updater;
         Focusable::new()
             .node(self.node(which).clone())
             .on_focus_change(move |gained| {
@@ -408,8 +408,8 @@ mod tests {
                 }
             };
             page(
-                test_box(&self.first, reporter(FocusBox::First, self.updater.clone())),
-                test_box(&self.second, reporter(FocusBox::Second, self.updater.clone())),
+                test_box(&self.first, reporter(FocusBox::First, self.updater)),
+                test_box(&self.second, reporter(FocusBox::Second, self.updater)),
             )
         }
     }

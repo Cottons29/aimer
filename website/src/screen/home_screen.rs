@@ -53,7 +53,7 @@ impl State<HomePage> for HomePageState {
         Self: Sized,
     {
         let controller = &self.controller;
-        let updater_clone = updater.clone();
+        let updater_clone = updater;
         controller.on_scroll(move |item: Vec2d| {
             let has_change = SHOW_ICON.load(Ordering::Relaxed);
             if item.y > 150.0 {

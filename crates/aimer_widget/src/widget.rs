@@ -6,6 +6,7 @@ use crate::{AnyElement, AnyWidget};
 
 pub mod child_builder;
 mod recovery;
+pub(crate) mod state_slots;
 pub mod stateful;
 pub mod stateless;
 

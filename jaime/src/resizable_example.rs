@@ -178,8 +178,8 @@ impl ResizableShowcaseState {
     /// `on_resize_zone` writes the side under the pointer, which is how the
     /// second readout knows what a click would grab before anything is dragged.
     fn panel(&self, app_theme: ThemeData) -> AnyWidget {
-        let updater = self.updater.clone();
-        let zone_updater = self.updater.clone();
+        let updater = self.updater;
+        let zone_updater = self.updater;
 
         Resizable::new()
             .width(START_WIDTH)

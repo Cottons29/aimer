@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::draw_cmd::{DrawList, RetainedDrawList, RetainedLayerContent, TextureRegistry};
+use crate::damage_region::DamageLayerChange;
 use crate::font::{FontFamily, FontStyle, FontWeight, TextLanguage};
 use crate::lru_map::LruMap;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
@@ -198,6 +199,13 @@ impl CupidCanvas {
             Rect::new(x, y, width, height),
             content,
         );
+    }
+
+    /// Records a retained-layer transition for framework damage derivation.
+    #[doc(hidden)]
+    #[inline]
+    pub fn record_damage(&self, change: DamageLayerChange) {
+        self.draw_list.borrow_mut().record_damage(change);
     }
 
     pub fn register_font_bytes(&self, bytes: Vec<u8>) -> Option<crate::text_layout::FontId> {

@@ -213,7 +213,7 @@ impl<R: Route> NavigatorState<R> {
 
 impl<R: Route + Router> State<Navigator<R>> for NavigatorState<R> {
     fn init_state(&mut self, updater: StateUpdater<Self>) {
-        self.updater = updater.clone();
+        self.updater = updater;
 
           #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
         {
@@ -246,7 +246,7 @@ impl<R: Route + Router> State<Navigator<R>> for NavigatorState<R> {
     }
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
-        let controller = navigator_controller(self.updater.clone());
+        let controller = navigator_controller(self.updater);
         ctx.insert_state(controller.clone());
 
         let top = self
@@ -538,35 +538,35 @@ fn navigator_controller<R: Route>(
 ) -> NavigatorController<R> {
     NavigatorController {
         push_fn: {
-            let updater = updater.clone();
+            let updater = updater;
             Rc::new(move |route: R| updater.read(|state| state.push(route)))
         },
         pop_fn: {
-            let updater = updater.clone();
+            let updater = updater;
             Rc::new(move || updater.read(|state| state.pop()))
         },
         can_pop_fn: {
-            let updater = updater.clone();
+            let updater = updater;
             Rc::new(move || updater.read(|state| state.history.len() > 1))
         },
         history_len_fn: {
-            let updater = updater.clone();
+            let updater = updater;
             Rc::new(move || updater.read(|state| state.history.len()))
         },
         routes_fn: {
-            let updater = updater.clone();
+            let updater = updater;
             Rc::new(move || updater.read(|state| state.routes()))
         },
         contains_route_fn: {
-            let updater = updater.clone();
+            let updater = updater;
             Rc::new(move |route| updater.read(|state| state.contains_route(route)))
         },
         current_route_fn: {
-            let updater = updater.clone();
+            let updater = updater;
             Rc::new(move || updater.read(|state| state.current_route()))
         },
         clear_fn: {
-            let updater = updater.clone();
+            let updater = updater;
             Rc::new(move || updater.read(|state| state.clear()))
         },
         set_route_fn: Rc::new(move |route| updater.read(|state| state.set_route(route))),

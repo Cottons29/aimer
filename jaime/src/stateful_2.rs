@@ -158,7 +158,7 @@ impl State<MyList> for MyListState {
                                             .child(
                                                 Button::new()
                                                     .on_press({
-                                                        let updater = self.updater.clone();
+                                                        let updater = self.updater;
                                                          move || {
                                                             println!("Button pressed with text: {}", updater.read_state().input_controller.value().text());
                                                             updater.set_state(|state| {
@@ -228,7 +228,7 @@ impl State<MyList> for MyListState {
                                                             Button::new()
                                                                 .on_press({
                                                                     let item_id = item.id.clone();
-                                                                    let updater = self.updater.clone();
+                                                                    let updater = self.updater;
                                                                     move || {
                                                                         let another_item_id = item_id.clone();
                                                                         updater.set_state( move |state| {

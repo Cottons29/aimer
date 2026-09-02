@@ -98,7 +98,7 @@ impl State<MyAnimatedList> for MyListState {
                                             .child(
                                                 Button::new()
                                                     .on_press({
-                                                        let updater = self.updater.clone();
+                                                        let updater = self.updater;
                                                         move || {
                                                             updater.set_state(|state| {
                                                                 let uuid = Uuid::new_v4().to_string();
@@ -163,7 +163,7 @@ impl State<MyAnimatedList> for MyListState {
                                                                 Button::new()
                                                                     .on_press({
                                                                         let item_id = item.id.clone();
-                                                                        let updater = self.updater.clone();
+                                                                        let updater = self.updater;
                                                                         move || {
                                                                             #[allow(clippy::collapsible_if)]
                                                                             updater.set_state_with(&item_id, |state, id| {

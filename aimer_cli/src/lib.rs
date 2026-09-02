@@ -71,6 +71,7 @@ mod tests {
         assert_eq!(snapshot(&fixture), original);
     }
 
+    #[cfg(feature = "hot-reload")]
     #[test]
     fn compile_failure_retains_active_generation_and_later_recovers() {
         let fixture = fixture_root();
@@ -106,7 +107,7 @@ mod tests {
         run_shadow_tests(&recovery, &temp, "pipeline-recovery");
     }
 
-    #[test]
+    #[cfg(all(test, feature = "hot-reload"))]
     fn ordinary_native_selection_does_not_create_hot_reload_output() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("application");

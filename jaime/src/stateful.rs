@@ -59,7 +59,7 @@ impl State<CounterWidget> for CounterState {
     // build the widget with state
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         // debug!("self.count: {}", self.count);
-        let updater = self.updater.clone();
+        let updater = self.updater;
         let theme = ThemeData::copied(ctx);
         Container::new()
             .color(theme.background_color)
@@ -126,7 +126,7 @@ impl State<CounterWidget> for CounterState {
                                 Button::new()
                                     .disabled(self.on_loading)
                                     .on_press({
-                                        let updater = self.updater.clone();
+                                        let updater = self.updater;
                                         move || {
                                             println!(
                                                 "Button pressed with state : {}",

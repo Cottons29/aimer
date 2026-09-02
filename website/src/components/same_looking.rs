@@ -95,7 +95,7 @@ impl State<SameLookingSection> for SameLookingSectionState {
                             .selected_index(self.current_index)
                             .compact(is_mobile(ctx))
                             .on_selected({
-                                let updater = self.state.clone();
+                                let updater = self.state;
                                 move |index| {
                                     let pattern = HapticPattern::new()
                                         .transient(0.0, 1.0, 1.0) // sharp tap at t=0

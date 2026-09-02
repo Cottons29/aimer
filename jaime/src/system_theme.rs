@@ -54,7 +54,7 @@ impl State<SystemThemeExample> for SystemThemeExampleState {
             .mode(self.mode)
             .duration(Duration::from_millis(400))
             .curve(Curve::EaseInOut)
-            .child(SystemThemePanel::new(self.mode, self.updater.clone()))
+            .child(SystemThemePanel::new(self.mode, self.updater))
     }
 }
 
@@ -80,8 +80,8 @@ impl StatelessWidget for SystemThemePanel {
         let showing = self.mode.resolve(system);
         let following = self.mode.follows_system();
 
-        let toggle_theme = self.updater.clone();
-        let toggle_following = self.updater.clone();
+        let toggle_theme = self.updater;
+        let toggle_following = self.updater;
 
         Container::new().color(theme.background_color).child(
             Column::new()

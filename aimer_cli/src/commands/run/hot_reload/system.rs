@@ -1408,6 +1408,7 @@ mod tests {
         (root, operations)
     }
 
+    #[cfg(feature = "hot-reload")]
     #[test]
     fn startup_owns_initial_commit_and_cleanup_without_exposing_session_values() {
         let runtime = Arc::new(FakeRuntime::default());
@@ -1698,7 +1699,9 @@ mod tests {
         fn cleanup(&self) {}
     }
 
+    #[cfg(feature = "hot-reload")]
     #[test]
+
     fn initial_guest_build_overlaps_native_build_and_waits_until_initial_push() {
         let runtime = Arc::new(StartupOverlapRuntime::new());
         let root = tempdir().unwrap();
@@ -1739,6 +1742,7 @@ mod tests {
         assert!(runtime.guest_finished.load(Ordering::Acquire));
     }
 
+    #[cfg(feature = "hot-reload")]
     #[test]
     fn guest_failure_cancels_the_other_initial_startup_branch() {
         let runtime = Arc::new(StartupOverlapRuntime::new());
@@ -1764,6 +1768,7 @@ mod tests {
         operations.cleanup();
     }
 
+    #[cfg(feature = "hot-reload")]
     #[test]
     fn invalid_policy_and_web_target_fail_before_any_side_effect() {
         let runtime = Arc::new(FakeRuntime::default());

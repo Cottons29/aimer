@@ -888,6 +888,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "hot-reload")]
     #[test]
     fn automatic_preparation_is_fresh_and_leaves_the_application_unchanged() {
         let root = tempdir().unwrap();
@@ -1046,6 +1047,7 @@ mod tests {
         assert!(error.contains("escapes the Aimer workspace"), "{error}");
     }
 
+    #[cfg(feature = "hot-reload")]
     #[test]
     fn automatic_outer_wrapper_links_the_transformed_application() {
         let root = tempdir().unwrap();

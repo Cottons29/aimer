@@ -1447,7 +1447,7 @@ impl PortableBuildContext {
         self.animation_slots.clear();
         self.rebuild_requested = false;
         self.frame_requested = false;
-        self.live_states.abort_build();
+        self.live_states.abort_build(&mut self.state_registry);
     }
 
     /// Publishes the host window metrics used by the next portable build.

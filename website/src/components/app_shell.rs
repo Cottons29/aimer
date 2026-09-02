@@ -95,7 +95,7 @@ impl State<AppShell> for AppShellState {
             .child(ThemedAppShellFrame {
                 active_tab: self.active_tab,
                 theme_mode: self.theme_mode,
-                theme_updater: self.updater.clone(),
+                theme_updater: self.updater,
             })
     }
 }
@@ -120,7 +120,7 @@ impl StatelessWidget for ThemedAppShellFrame {
             HeaderSection {
                 active_tab: self.active_tab,
                 theme_mode: self.theme_mode,
-                theme_updater: self.theme_updater.clone(),
+                theme_updater: self.theme_updater,
             }.boxed(),
             Expanded::new()
                 .child(Container::new().color(theme.background_color).child(Outlet))

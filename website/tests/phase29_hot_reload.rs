@@ -9,6 +9,7 @@ use tempfile::TempDir;
 const PACKAGE: &str = "website-phase29-hot-reload-app";
 
 #[test]
+#[cfg(feature = "hot-reload")]
 fn website_application_guest_proof_covers_change_state_callbacks_recovery_and_cleanup() {
     let fixture = fixture_root();
     let original = snapshot(&fixture);

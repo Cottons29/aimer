@@ -17,6 +17,7 @@ pub(crate) enum BuildPhase {
     Build,
     ToElement,
     AdoptConfig,
+    ReconcileChildren,
     KeyedState,
 }
 
@@ -29,6 +30,7 @@ impl fmt::Display for BuildPhase {
             Self::Build => f.write_str("build"),
             Self::ToElement => f.write_str("child to_element"),
             Self::AdoptConfig => f.write_str("adopt_config_from"),
+            Self::ReconcileChildren => f.write_str("child reconciliation"),
             Self::KeyedState => f.write_str("keyed state construction"),
         }
     }

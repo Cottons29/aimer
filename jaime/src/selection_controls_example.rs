@@ -138,7 +138,7 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let app_theme = ThemeData::copied(ctx);
 
-        let checkbox_updater = self.updater.clone();
+        let checkbox_updater = self.updater;
         let checkbox_theme = app_theme;
         let checkbox = Checkbox::new()
             .with_value(self.checkbox_value)
@@ -207,7 +207,7 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
             .with_label("Locked by policy (disabled)")
             .disabled(true);
 
-        let switch_updater = self.updater.clone();
+        let switch_updater = self.updater;
         let switch = Switch::new()
             .with_value(self.switch_value)
             .with_label("Email notifications")
@@ -215,7 +215,7 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
                 switch_updater.set_state(move |state| state.switch_value = value);
             });
 
-        let radio_updater = self.updater.clone();
+        let radio_updater = self.updater;
         let radios = RadioGroup::new()
             .try_options([
                 ChoiceOption::new("basic", "Basic", "basic"),
@@ -230,7 +230,7 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
                 radio_updater.set_state(move |state| state.radio_selected = value);
             });
 
-        let select_updater = self.updater.clone();
+        let select_updater = self.updater;
         let select = Select::new()
             .try_options([
                 ChoiceOption::new("small", "Small", "small"),
@@ -244,7 +244,7 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
                 select_updater.set_state(move |state| state.select_selected = Some(value));
             });
 
-        let autocomplete_updater = self.updater.clone();
+        let autocomplete_updater = self.updater;
         let autocomplete = Autocomplete::new()
             .try_options([
                 ChoiceOption::new("apple", "Apple", "apple"),
@@ -271,7 +271,7 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
             ])
             .boxed();
 
-        let reset_updater = self.updater.clone();
+        let reset_updater = self.updater;
         let reset = action_button("Reset all", app_theme, move || {
             reset_updater.set_state(|state| {
                 *state = SelectionControlsExampleState {
@@ -371,7 +371,7 @@ fn filter_chip(
     query: &'static str,
     app_theme: ThemeData,
 ) -> AnyWidget {
-    let updater = updater.clone();
+    let updater = *updater;
     action_button(label, app_theme, move || {
         updater.set_state(move |state| state.autocomplete_query = query.to_owned());
     })

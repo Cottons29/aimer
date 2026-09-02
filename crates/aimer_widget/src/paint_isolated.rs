@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use aimer_attribute::size::ResolvedSize;
 use aimer_canvas::{Canvas, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION,
-    RetainedLayerContent};
+    DamageBounds, DamageGeometry, DamageLayerChange, DamageTransform, RetainedLayerContent};
 
 use crate::base::BuildContext;
 use crate::components::element::Element;
@@ -64,6 +64,20 @@ impl PaintClip {
             border_radius_bits: border_radius.map(f32::to_bits),
             active: true,
         }
+    }
+
+    /// Returns the rectangular footprint used by the damage tracker.
+    #[doc(hidden)]
+    #[inline]
+    pub fn damage_bounds(self) -> Option<DamageBounds> {
+        self.active.then(|| {
+            DamageBounds::new(
+                f32::from_bits(self.bounds.bits[0]),
+                f32::from_bits(self.bounds.bits[1]),
+                f32::from_bits(self.bounds.bits[2]),
+                f32::from_bits(self.bounds.bits[3]),
+            )
+        })
     }
 }
 
@@ -318,6 +332,7 @@ impl<K: Copy + PartialEq> Default for PaintCache<K> {
 struct RetainedPaint<K: Copy + PartialEq> {
     cache: PaintCache<K>,
     content: Arc<RetainedLayerContent>,
+    geometry: DamageGeometry,
 }
 
 /// Framework-owned retained paint for one independently invalidated child.
@@ -372,10 +387,39 @@ impl<K: Copy + PartialEq> PaintIsolated<K> {
         key: K,
         content_size: ResolvedSize,
     ) -> PaintIsolatedOutcome {
+        self.draw_with_geometry(
+            ctx,
+            child_ctx,
+            child,
+            key,
+            content_size,
+            paint_damage_geometry(ctx, content_size, None),
+        )
+    }
+
+    /// Records or replays a child while submitting its old/new screen
+    /// footprint to the frame damage stream.
+    #[doc(hidden)]
+    #[inline]
+    pub fn draw_with_geometry(
+        &self,
+        ctx: &BuildContext,
+        child_ctx: &BuildContext,
+        child: &dyn Element,
+        key: K,
+        content_size: ResolvedSize,
+        geometry: DamageGeometry,
+    ) -> PaintIsolatedOutcome {
+        let cached_geometry = self
+            .cache
+            .borrow()
+            .as_ref()
+            .map(|cached| cached.geometry);
         let stable = child.is_paint_stable();
         #[cfg(debug_assertions)]
         let stable = stable && !crate::inspector_overlay::is_enabled();
         if !stable || !retained_layer_size_is_supported(content_size) {
+            self.record_damage(ctx, cached_geometry, Some(geometry), true);
             self.invalidate_cached_layer();
             self.paint_directly(child, child_ctx);
             return PaintIsolatedOutcome::DirectFallback;
@@ -391,6 +435,10 @@ impl<K: Copy + PartialEq> PaintIsolated<K> {
             cached.cache.can_reuse(key, false)
         });
         if can_replay {
+            self.record_damage(ctx, cached_geometry, Some(geometry), false);
+            if let Some(cached) = self.cache.borrow_mut().as_mut() {
+                cached.geometry = geometry;
+            }
             let content = self
                 .cache
                 .borrow()
@@ -408,6 +456,7 @@ impl<K: Copy + PartialEq> PaintIsolated<K> {
             return PaintIsolatedOutcome::Replayed;
         }
 
+        self.record_damage(ctx, cached_geometry, Some(geometry), true);
         self.invalidate_cached_layer();
 
         let recording_canvas = ctx.canvas.fork_for_recording();
@@ -440,6 +489,7 @@ impl<K: Copy + PartialEq> PaintIsolated<K> {
         self.cache.borrow_mut().replace(RetainedPaint {
             cache,
             content: content.clone(),
+            geometry,
         });
         ctx.canvas.draw_retained_layer(
             self.layer_id,
@@ -456,11 +506,64 @@ impl<K: Copy + PartialEq> PaintIsolated<K> {
         }
     }
 
+    /// Drops the cached layer and records its old footprint as removed.
+    #[doc(hidden)]
+    #[inline]
+    pub fn clear_with_damage(&self, ctx: &BuildContext) {
+        let old_geometry = self
+            .cache
+            .borrow_mut()
+            .take()
+            .map(|cached| cached.geometry);
+        if let Some(old_geometry) = old_geometry {
+            ctx.canvas.record_damage(
+                DamageLayerChange::new(self.layer_id, Some(old_geometry), None)
+                    .with_paint_invalidated(true),
+            );
+        }
+    }
+
+    #[inline]
+    fn record_damage(
+        &self,
+        ctx: &BuildContext,
+        old_geometry: Option<DamageGeometry>,
+        new_geometry: Option<DamageGeometry>,
+        paint_invalidated: bool,
+    ) {
+        if !paint_invalidated && old_geometry == new_geometry {
+            return;
+        }
+        let change = DamageLayerChange::new(self.layer_id, old_geometry, new_geometry)
+            .with_paint_invalidated(paint_invalidated);
+        ctx.canvas.record_damage(change);
+    }
+
     #[inline]
     fn paint_directly(&self, child: &dyn Element, child_ctx: &BuildContext) {
         crate::paint_stats::record_paint_isolation_fallback();
         child.draw(child_ctx);
     }
+}
+
+/// Builds the current screen-space footprint for a framework-owned retained
+/// layer. The bounds are local to the current canvas transform; the optional
+/// clip is expressed in the same local coordinates.
+#[doc(hidden)]
+#[inline]
+pub fn paint_damage_geometry(
+    ctx: &BuildContext,
+    content_size: ResolvedSize,
+    clip: Option<DamageBounds>,
+) -> DamageGeometry {
+    DamageGeometry::new(DamageBounds::new(
+        0.0,
+        0.0,
+        content_size.width,
+        content_size.height,
+    ))
+    .with_clip(clip)
+    .with_transform(DamageTransform::from_matrix(ctx.canvas.get_transform()))
 }
 
 impl<K: Copy + PartialEq> Default for PaintIsolated<K> {
@@ -908,6 +1011,47 @@ mod tests {
         );
         assert_eq!(draws.get(), 1);
         assert_eq!((geometry_x.get(), geometry_y.get()), (30.0, 40.0));
+    }
+
+    #[tokio::test]
+    async fn replay_records_old_and_new_layer_footprints_for_damage() {
+        let draws = Rc::new(Cell::new(0));
+        let child = CountingElement {
+            draws: draws.clone(),
+            stable: true,
+        }
+        .boxed();
+        let isolated = PaintIsolated::<u64>::new();
+        let size = ResolvedSize {
+            width: 40.0,
+            height: 40.0,
+        };
+
+        let first = context();
+        first.canvas.translate(Vec2d { x: 10.0, y: 20.0 });
+        assert_eq!(
+            isolated.draw(&first, &first, child.as_ref(), 1, size),
+            PaintIsolatedOutcome::Recorded
+        );
+
+        let second = context();
+        second.canvas.translate(Vec2d { x: 30.0, y: 40.0 });
+        assert_eq!(
+            isolated.draw(&second, &second, child.as_ref(), 1, size),
+            PaintIsolatedOutcome::Replayed
+        );
+        assert_eq!(draws.get(), 1);
+        assert_eq!(second.canvas.get_inner_canvas().draw_list().damage_records().len(), 1);
+
+        let tracker = second
+            .canvas
+            .get_inner_canvas()
+            .draw_list()
+            .damage_tracker(100, 100, 1.0);
+        assert_eq!(
+            tracker.damage().regions(),
+            &[aimer_canvas::DamageRect::new(10, 20, 60, 60)]
+        );
     }
 
     #[test]

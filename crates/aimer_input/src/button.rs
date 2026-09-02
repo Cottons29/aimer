@@ -441,7 +441,7 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
 
         MouseRegion::new()
             .on_hover_enter({
-                let updater = self.state_updater.clone();
+                let updater = self.state_updater;
                 move || {
                     updater.set_state(|s| {
                         s.is_hover = true;
@@ -449,7 +449,7 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
                 }
             })
             .on_hover_exit({
-                let updater = self.state_updater.clone();
+                let updater = self.state_updater;
                 move || {
                     updater.set_state(|s| {
                         s.is_hover = false;
@@ -476,7 +476,7 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
                     })
                     .on_right_tap(self.on_right_press.clone())
                     .on_gesture({
-                        let updater = self.state_updater.clone();
+                        let updater = self.state_updater;
                         move |event: GestureEvent| match event {
                             GestureEvent::TapDown { .. } => {
                                 updater.set_state(|state| state.is_pressed = true)

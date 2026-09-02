@@ -278,6 +278,7 @@ mod runtime_spec {
             venus.run_microtasks();
         }
 
+        eprintln!("{}", pings.load(Ordering::SeqCst));
         assert!(pings.load(Ordering::SeqCst) >= 1);
     }
 }

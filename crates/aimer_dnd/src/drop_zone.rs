@@ -250,7 +250,7 @@ impl State<DropZone<HasChild>> for DropZoneLiveState {
                 id: self.id,
                 extensions: self.extensions.clone(),
                 pending: self.pending.clone(),
-                updater: self.updater.clone(),
+                updater: self.updater,
             }),
         }
     }

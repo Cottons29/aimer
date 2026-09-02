@@ -47,7 +47,7 @@ impl State<AnimatedThemeExample> for AnimatedThemeExampleState {
             })
             .duration(Duration::from_millis(400))
             .curve(Curve::EaseInOut)
-            .child(ThemedPanel::new(self.is_dark, self.updater.clone()))
+            .child(ThemedPanel::new(self.is_dark, self.updater))
     }
 }
 
@@ -67,7 +67,7 @@ impl ThemedPanel {
 impl StatelessWidget for ThemedPanel {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let theme = ThemeData::of(ctx);
-        let updater = self.updater.clone();
+        let updater = self.updater;
 
         Container::new()
             .color(theme.background_color)

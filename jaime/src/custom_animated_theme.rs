@@ -98,7 +98,7 @@ impl State<CustomAnimatedThemeExample> for CustomAnimatedThemeExampleState {
             })
             .duration(Duration::from_millis(500))
             .curve(Curve::EaseInOut)
-            .child(CustomThemedPanel::new(self.is_dark, self.updater.clone()))
+            .child(CustomThemedPanel::new(self.is_dark, self.updater))
     }
 }
 
@@ -119,7 +119,7 @@ impl StatelessWidget for CustomThemedPanel {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let theme = MyTheme::of(ctx);
         let panel_width = ctx.copied::<MyTheme>().panel_width;
-        let updater = self.updater.clone();
+        let updater = self.updater;
         let background = Color::Rgba(
             theme.background_red,
             theme.background_green,

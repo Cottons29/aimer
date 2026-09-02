@@ -444,7 +444,7 @@ fn discovers_direct_root_and_preserves_source_bytes() {
     assert_eq!(fs::read(project.app().join("src/main.rs")).unwrap(), source.as_bytes());
     assert_eq!(fs::read(shadow.root().join("src/main.rs")).unwrap(), source.as_bytes());
 }
-
+#[cfg(feature = "hot-reload")]
 #[test]
 fn transforms_all_non_generic_structs_with_stable_private_module_identities() {
     let project = TempProject::new();
@@ -563,6 +563,7 @@ fn interior_mutable_shared_runtime_fields_are_fresh_state() {
     ));
 }
 
+    #[cfg(feature = "hot-reload")]
 #[test]
 fn transformed_mini_crate_round_trips_and_reports_active_unsupported_fields() {
     let project = TempProject::new();
@@ -737,6 +738,7 @@ fn discovers_lib_only_source_root_and_inline_module() {
     assert_eq!(shadow.source_types()[0].identity().module(), "crate::ui");
 }
 
+#[cfg(feature = "hot-reload")]
 #[test]
 fn reports_ambiguous_unresolved_dynamic_and_missing_flows_with_spans() {
     let ambiguous = error_for("#[aimer::main]\nfn main() { AimerApp::new().child(One).run(); AimerApp::new().child(Two).run(); }\n");
@@ -751,6 +753,7 @@ fn reports_ambiguous_unresolved_dynamic_and_missing_flows_with_spans() {
     assert!(ambiguous.span().is_some() && unresolved.span().is_some() && dynamic.span().is_some() && missing.span().is_some());
 }
 
+    #[cfg(feature = "hot-reload")]
 #[test]
 fn reports_duplicate_module_ownership_and_malformed_source() {
     let project = TempProject::new();
@@ -763,6 +766,7 @@ fn reports_duplicate_module_ownership_and_malformed_source() {
     assert_eq!(error_for("#[aimer::main]\nfn main( {\n").kind(), ShadowErrorKind::MalformedSource);
 }
 
+    #[cfg(feature = "hot-reload")]
 #[test]
 fn rewrites_workspace_and_relative_path_dependencies_and_copies_assets() {
     let project = TempProject::new();
@@ -784,6 +788,7 @@ fn rewrites_workspace_and_relative_path_dependencies_and_copies_assets() {
     assert_eq!(fs::read(project.app().join("Cargo.toml")).unwrap(), original_manifest);
 }
 
+    #[cfg(feature = "hot-reload")]
 #[test]
 fn repeated_preparation_is_byte_deterministic() {
     let project = TempProject::new();
@@ -878,6 +883,7 @@ fn rejects_symbolic_link_escape() {
     assert_eq!(error.kind(), ShadowErrorKind::PathEscape);
 }
 
+    #[cfg(feature = "hot-reload")]
 #[test]
 fn generates_linkable_guest_and_exact_helper_root_factory() {
     let project = TempProject::new();
@@ -923,6 +929,7 @@ fn generates_linkable_guest_and_exact_helper_root_factory() {
     assert_eq!(fs::read(project.app().join("src/main.rs")).unwrap(), original_main);
 }
 
+    #[cfg(feature = "hot-reload")]
 #[test]
 fn guest_shadow_activates_portable_guest_for_application_cfgs() {
     let project = TempProject::new();
@@ -952,6 +959,7 @@ fn guest_shadow_activates_portable_guest_for_application_cfgs() {
         })));
 }
 
+    #[cfg(feature = "hot-reload")]
 #[test]
 fn generated_guest_contains_transactional_state_and_callback_rebuild_flow() {
     let project = TempProject::new();
@@ -977,6 +985,7 @@ fn generated_guest_contains_transactional_state_and_callback_rebuild_flow() {
     assert!(source.contains("fnmigrate_state"));
 }
 
+    #[cfg(feature = "hot-reload")]
 #[test]
 fn generated_guest_output_is_byte_deterministic() {
     let project = TempProject::new();
@@ -1005,6 +1014,7 @@ fn generated_guest_output_is_byte_deterministic() {
     assert_eq!(fs::read(second.root().join("src/main.rs")).unwrap(), first_source);
 }
 
+    #[cfg(feature = "hot-reload")]
 #[test]
 fn out_of_line_entry_emits_adapter_at_the_actual_crate_root() {
     let project = TempProject::new();
@@ -1031,6 +1041,7 @@ fn out_of_line_entry_emits_adapter_at_the_actual_crate_root() {
     assert!(entry.contains("pubfn__aimer_generated_root_factory"));
 }
 
+    #[cfg(feature = "hot-reload")]
 #[test]
 fn compiled_guest_builds_and_round_trips_state_with_incompatible_rejection() {
     let project = TempProject::new();

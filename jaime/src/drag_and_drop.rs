@@ -158,9 +158,9 @@ impl DragBoardState {
             .collect();
 
         let locked_here = index == LOCKED_COLUMN;
-        let predicate = self.updater.clone();
-        let accepter = self.updater.clone();
-        let builder = self.updater.clone();
+        let predicate = self.updater;
+        let accepter = self.updater;
+        let builder = self.updater;
 
         DragTarget::<CardId>::new()
             .will_accept(move |id: &CardId| {
@@ -172,7 +172,7 @@ impl DragBoardState {
             .child(move |state: DragTargetState| {
                 let tiles = cards
                     .iter()
-                    .map(|card| draggable_card(card, builder.clone(), app_theme))
+                    .map(|card| draggable_card(card, builder, app_theme))
                     .collect::<Vec<AnyWidget>>();
                 column_body(title, accent, state, tiles, app_theme)
             })

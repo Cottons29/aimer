@@ -10,8 +10,8 @@ use quote::quote;
 use syn::{Item, ItemFn, parse_macro_input};
 
 use crate::auto_trait_impl::auto_impl;
-use crate::codegen::router::RouterCodegen;
 use crate::codegen::animatable::{animation_path, generate_animatable_impl};
+use crate::codegen::router::RouterCodegen;
 use crate::codegen::theme::{generate_theme_impl, style_path};
 use crate::codegen::{RawWidgetCodegen, StatefulWidgetCodegen, StatelessWidgetCodegen};
 use crate::unique_key::UniqueKeyInput;
@@ -459,8 +459,8 @@ pub fn theme_derive(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Animatable, attributes(animatable))]
 pub fn animatable_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
-    let output = animation_path()
-        .and_then(|animation_path| generate_animatable_impl(input, animation_path));
+    let output =
+        animation_path().and_then(|animation_path| generate_animatable_impl(input, animation_path));
     output.unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
@@ -484,6 +484,7 @@ pub fn key(input: TokenStream) -> TokenStream {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "hot-reload")]
     #[test]
     fn main_bootstraps_the_native_reload_host_before_application_code() {
         let input: ItemFn = syn::parse_quote! {
@@ -505,6 +506,7 @@ mod tests {
         assert!(bootstrap < application);
     }
 
+    #[cfg(feature = "hot-reload")]
     #[test]
     fn main_reserves_the_browser_entry_for_non_guest_wasm() {
         let input: ItemFn = syn::parse_quote! {
@@ -516,16 +518,15 @@ mod tests {
         assert!(expanded.contains("not (aimer_portable_guest)"));
         assert!(expanded.contains("wasm_bindgen (start)"));
     }
-
 }
 
-#[cfg(test)]
+#[cfg(all(feature = "hot-reload", test))]
 mod capability_compile_tests {
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Output};
 
-const VALID_CAPABILITY: &str = r#"
+    const VALID_CAPABILITY: &str = r#"
 #[aimer_macro::capability(
     name = "device-control",
     id = "com.example.device-control",
@@ -539,18 +540,19 @@ pub trait DeviceControl {
 }
 "#;
 
-#[test]
-fn capability_accepts_portable_metadata_and_wire_types() {
-    let output = check_case("valid_capability", VALID_CAPABILITY);
+    #[cfg(feature = "hot-reload")]
+    #[test]
+    fn capability_accepts_portable_metadata_and_wire_types() {
+        let output = check_case("valid_capability", VALID_CAPABILITY);
 
-    assert_success(&output);
-}
+        assert_success(&output);
+    }
 
-#[test]
-fn capability_uses_the_persistent_package_namespace() {
-    let output = check_case_with_metadata(
-        "package_namespace",
-        r#"
+    #[test]
+    fn capability_uses_the_persistent_package_namespace() {
+        let output = check_case_with_metadata(
+            "package_namespace",
+            r#"
 #[aimer_macro::capability(name = "haptics", abi = 1, since = "1.0.0")]
 pub trait Haptics {
     fn trigger(&self, kind: u32) -> aimer_anteros::CapabilityResult<()>;
@@ -563,17 +565,17 @@ const _: () = {
     assert!(id[0] == 0x96 && id[1] == 0xBE && id[15] == 0x56);
 };
 "#,
-        "crate-id = \"018f4e8b-7c65-7ad1-9b31-6b376bf90242\"",
-    );
+            "crate-id = \"018f4e8b-7c65-7ad1-9b31-6b376bf90242\"",
+        );
 
-    assert_success(&output);
-}
+        assert_success(&output);
+    }
 
-#[test]
-fn capability_uses_the_crates_io_source_from_aimer_build_metadata() {
-    let output = check_case_with_source(
-        "crates_io_namespace",
-        r#"
+    #[test]
+    fn capability_uses_the_crates_io_source_from_aimer_build_metadata() {
+        let output = check_case_with_source(
+            "crates_io_namespace",
+            r#"
 #[aimer_macro::capability(name = "haptics", abi = 1, since = "1.0.0")]
 pub trait Haptics {
     fn trigger(&self, kind: u32) -> aimer_anteros::CapabilityResult<()>;
@@ -592,84 +594,95 @@ const _: () = {
     }
 };
 "#,
-        Some("registry+https://github.com/rust-lang/crates.io-index"),
-    );
+            Some("registry+https://github.com/rust-lang/crates.io-index"),
+        );
 
-    assert_success(&output);
+        assert_success(&output);
+    }
+
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn capability_rejects_non_crates_io_sources_without_a_persistent_id() {
+        for (name, source) in [
+            (
+                "alternate_registry_namespace",
+                Some("registry+https://packages.example/index"),
+            ),
+            ("git_namespace", Some("git+https://example.com/sdk.git")),
+            ("workspace_namespace", None),
+            ("path_namespace", None),
+        ] {
+            let output = check_case_with_source(
+                name,
+                r#"
+#[aimer_macro::capability(name = "haptics", abi = 1, since = "1.0.0")]
+pub trait Haptics {
+    fn trigger(&self, kind: u32) -> aimer_anteros::CapabilityResult<()>;
 }
+"#,
+                source,
+            );
+            assert_failure(
+                &output,
+                "require `[package.metadata.aimer] crate-id` or an explicit `id`",
+            );
+        }
+    }
 
-#[test]
-fn capability_rejects_non_crates_io_sources_without_a_persistent_id() {
-    for (name, source) in [
-        (
-            "alternate_registry_namespace",
-            Some("registry+https://packages.example/index"),
-        ),
-        ("git_namespace", Some("git+https://example.com/sdk.git")),
-        ("workspace_namespace", None),
-        ("path_namespace", None),
-    ] {
-        let output = check_case_with_source(
-            name,
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn capability_rejects_a_missing_aimer_package_source_map() {
+        let output = check_case(
+            "missing_source_map",
             r#"
 #[aimer_macro::capability(name = "haptics", abi = 1, since = "1.0.0")]
 pub trait Haptics {
     fn trigger(&self, kind: u32) -> aimer_anteros::CapabilityResult<()>;
 }
 "#,
-            source,
         );
+
         assert_failure(
             &output,
-            "require `[package.metadata.aimer] crate-id` or an explicit `id`",
+            "Aimer capability package source map is unavailable",
         );
     }
-}
 
-#[test]
-fn capability_rejects_a_missing_aimer_package_source_map() {
-    let output = check_case(
-        "missing_source_map",
-        r#"
-#[aimer_macro::capability(name = "haptics", abi = 1, since = "1.0.0")]
-pub trait Haptics {
-    fn trigger(&self, kind: u32) -> aimer_anteros::CapabilityResult<()>;
-}
-"#,
-    );
-
-    assert_failure(&output, "Aimer capability package source map is unavailable");
-}
-
-#[test]
-fn capability_rejects_missing_and_ambiguous_source_map_entries() {
-    let source = r#"
+    #[cfg(feature = "portable-guest")]
+    #[test]
+    fn capability_rejects_missing_and_ambiguous_source_map_entries() {
+        let source = r#"
 #[aimer_macro::capability(name = "haptics", abi = 1, since = "1.0.0")]
 pub trait Haptics {
     fn trigger(&self, kind: u32) -> aimer_anteros::CapabilityResult<()>;
 }
 "#;
-    let missing = check_case_with_source_map("missing_source_entry", source, SourceMapCase::Missing);
-    assert_failure(
-        &missing,
-        "source map does not contain the compiling package",
-    );
+        let missing =
+            check_case_with_source_map("missing_source_entry", source, SourceMapCase::Missing);
+        assert_failure(
+            &missing,
+            "source map does not contain the compiling package",
+        );
 
-    let ambiguous = check_case_with_source_map(
-        "ambiguous_source_entry",
-        source,
-        SourceMapCase::Ambiguous(Some(
-            "registry+https://github.com/rust-lang/crates.io-index",
-        )),
-    );
-    assert_failure(&ambiguous, "source map contains an ambiguous manifest entry");
-}
+        let ambiguous = check_case_with_source_map(
+            "ambiguous_source_entry",
+            source,
+            SourceMapCase::Ambiguous(Some(
+                "registry+https://github.com/rust-lang/crates.io-index",
+            )),
+        );
+        assert_failure(
+            &ambiguous,
+            "source map contains an ambiguous manifest entry",
+        );
+    }
 
-#[test]
-fn capability_metadata_matches_the_native_golden_contract_on_wasm() {
-    let output = check_wasm_case(
-        "wasm_contract_parity",
-        r#"
+    #[cfg(feature = "hot-reload")]
+    #[test]
+    fn capability_metadata_matches_the_native_golden_contract_on_wasm() {
+        let output = check_wasm_case(
+            "wasm_contract_parity",
+            r#"
 #[aimer_macro::capability(
     name = "device-control",
     id = "com.example.device-control",
@@ -708,221 +721,216 @@ const _: () = {
     }
 };
 "#,
-    );
+        );
 
-    assert_success(&output);
-}
+        assert_success(&output);
+    }
 
-#[test]
-fn capability_rejects_invalid_contract_declarations() {
-    let cases = [
-        CompileFailure {
-            name: "missing_abi",
-            source: r#"
+    #[test]
+    #[cfg(feature = "portable-guest")]
+    fn capability_rejects_invalid_contract_declarations() {
+        let cases = [
+            CompileFailure {
+                name: "missing_abi",
+                source: r#"
 #[aimer_macro::capability(name = "payments", since = "1.0.0")]
 pub trait Payments {
     fn charge(&self, cents: u64) -> bool;
 }
 "#,
-            diagnostic: "missing required `abi` capability metadata",
-        },
-        CompileFailure {
-            name: "duplicate_method",
-            source: r#"
+                diagnostic: "missing required `abi` capability metadata",
+            },
+            CompileFailure {
+                name: "duplicate_method",
+                source: r#"
 #[aimer_macro::capability(name = "payments", id = "com.example.payments", abi = 1, since = "1.0.0")]
 pub trait Payments {
     fn charge(&self, cents: u64) -> aimer_anteros::CapabilityResult<bool>;
     fn charge(&self, cents: u32) -> aimer_anteros::CapabilityResult<bool>;
 }
 "#,
-            diagnostic: "duplicate capability method `charge`",
-        },
-        CompileFailure {
-            name: "generic_method",
-            source: r#"
+                diagnostic: "duplicate capability method `charge`",
+            },
+            CompileFailure {
+                name: "generic_method",
+                source: r#"
 #[aimer_macro::capability(name = "storage", id = "com.example.storage", abi = 1, since = "1.0.0")]
 pub trait Storage {
     fn read<T>(&self, key: u64) -> T;
 }
 "#,
-            diagnostic: "capability methods cannot declare generics",
-        },
-        CompileFailure {
-            name: "borrowed_return",
-            source: r#"
+                diagnostic: "capability methods cannot declare generics",
+            },
+            CompileFailure {
+                name: "borrowed_return",
+                source: r#"
 #[aimer_macro::capability(name = "locale", id = "com.example.locale", abi = 1, since = "1.0.0")]
 pub trait Locale {
     fn language(&self) -> aimer_anteros::CapabilityResult<&str>;
 }
 "#,
-            diagnostic: "capability return values cannot borrow data",
-        },
-        CompileFailure {
-            name: "native_layout",
-            source: r#"
+                diagnostic: "capability return values cannot borrow data",
+            },
+            CompileFailure {
+                name: "native_layout",
+                source: r#"
 #[aimer_macro::capability(name = "storage", id = "com.example.storage", abi = 1, since = "1.0.0")]
 pub trait Storage {
     fn open(&self, path: std::path::PathBuf) -> bool;
 }
 "#,
-            diagnostic: "unsupported capability wire type `std::path::PathBuf`",
-        },
-        CompileFailure {
-            name: "raw_pointer",
-            source: r#"
+                diagnostic: "unsupported capability wire type `std::path::PathBuf`",
+            },
+            CompileFailure {
+                name: "raw_pointer",
+                source: r#"
 #[aimer_macro::capability(name = "memory", id = "com.example.memory", abi = 1, since = "1.0.0")]
 pub trait Memory {
     fn inspect(&self, pointer: *const u8) -> u32;
 }
 "#,
-            diagnostic: "native pointers cannot cross a capability boundary",
-        },
-        CompileFailure {
-            name: "async_method",
-            source: r#"
+                diagnostic: "native pointers cannot cross a capability boundary",
+            },
+            CompileFailure {
+                name: "async_method",
+                source: r#"
 #[aimer_macro::capability(name = "storage", id = "com.example.storage", abi = 1, since = "1.0.0")]
 pub trait Storage {
     async fn read(&self, key: u64) -> Vec<u8>;
 }
 "#,
-            diagnostic: "async capability methods require a declared asynchronous handle schema",
-        },
-        CompileFailure {
-            name: "unsafe_method",
-            source: r#"
+                diagnostic: "async capability methods require a declared asynchronous handle schema",
+            },
+            CompileFailure {
+                name: "unsafe_method",
+                source: r#"
 #[aimer_macro::capability(name = "memory", id = "com.example.memory", abi = 1, since = "1.0.0")]
 pub trait Memory {
     unsafe fn inspect(&self, address: u64) -> u32;
 }
 "#,
-            diagnostic: "capability methods cannot be `unsafe`",
-        },
-        CompileFailure {
-            name: "non_standard_result",
-            source: r#"
+                diagnostic: "capability methods cannot be `unsafe`",
+            },
+            CompileFailure {
+                name: "non_standard_result",
+                source: r#"
 #[aimer_macro::capability(name = "haptics", id = "com.example.haptics", abi = 1, since = "1.0.0")]
 pub trait Haptics {
     fn trigger(&self, kind: u32) -> bool;
 }
 "#,
-            diagnostic: "capability methods must return `CapabilityResult<T>`",
-        },
-    ];
+                diagnostic: "capability methods must return `CapabilityResult<T>`",
+            },
+        ];
 
-    for case in cases {
-        let output = check_case(case.name, case.source);
-        assert_failure(&output, case.diagnostic);
+        for case in cases {
+            let output = check_case(case.name, case.source);
+            assert_failure(&output, case.diagnostic);
+        }
     }
-}
 
-struct CompileFailure {
-    name: &'static str,
-    source: &'static str,
-    diagnostic: &'static str,
-}
-
-fn check_case(name: &str, source: &str) -> Output {
-    check_case_with_options(name, source, "", None, None)
-}
-
-fn check_wasm_case(name: &str, source: &str) -> Output {
-    check_case_with_options(
-        name,
-        source,
-        "",
-        Some("wasm32-unknown-unknown"),
-        None,
-    )
-}
-
-fn check_case_with_metadata(name: &str, source: &str, aimer_metadata: &str) -> Output {
-    check_case_with_options(name, source, aimer_metadata, None, None)
-}
-
-fn check_case_with_source(name: &str, source: &str, package_source: Option<&str>) -> Output {
-    check_case_with_source_map(name, source, SourceMapCase::Package(package_source))
-}
-
-fn check_case_with_source_map(name: &str, source: &str, source_map: SourceMapCase<'_>) -> Output {
-    check_case_with_options(name, source, "", None, Some(source_map))
-}
-
-fn check_case_with_options(
-    name: &str,
-    source: &str,
-    aimer_metadata: &str,
-    target: Option<&str>,
-    source_map: Option<SourceMapCase<'_>>,
-) -> Output {
-    let fixture_dir = fixture_root().join(name);
-    if fixture_dir.exists() {
-        fs::remove_dir_all(&fixture_dir).unwrap();
+    struct CompileFailure {
+        name: &'static str,
+        source: &'static str,
+        diagnostic: &'static str,
     }
-    fs::create_dir_all(fixture_dir.join("src")).unwrap();
-    fs::write(
-        fixture_dir.join("Cargo.toml"),
-        fixture_manifest(name, aimer_metadata),
-    )
-    .unwrap();
-    fs::write(fixture_dir.join("src/lib.rs"), source).unwrap();
 
-    let mut command = Command::new(env!("CARGO"));
-    command
-        .arg("check")
-        .arg("--quiet")
-        .arg("--manifest-path")
-        .arg(fixture_dir.join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", fixture_root().join("target"));
-    if let Some(target) = target {
-        command.arg("--target").arg(target);
+    fn check_case(name: &str, source: &str) -> Output {
+        check_case_with_options(name, source, "", None, None)
     }
-    if let Some(source_map_case) = source_map {
-        let source_map = fixture_dir.join("capability-sources.toml");
-        let package_name = format!("aimer_macro_{name}");
-        let manifest_path = fixture_dir.join("Cargo.toml");
-        let package = |source: Option<&str>| {
-            let source = source
-                .map(|source| format!("source = {source:?}\n"))
-                .unwrap_or_default();
-            format!(
-                "[[packages]]\nname = {package_name:?}\nmanifest_path = {manifest_path:?}\n{source}",
-            )
-        };
-        let packages = match source_map_case {
-            SourceMapCase::Package(source) => package(source),
-            SourceMapCase::Missing => format!(
-                "[[packages]]\nname = \"different-package\"\nmanifest_path = {:?}\n",
-                fixture_dir.join("missing/Cargo.toml"),
-            ),
-            SourceMapCase::Ambiguous(source) => {
-                let package = package(source);
-                format!("{package}\n{package}")
-            }
-        };
+
+    fn check_wasm_case(name: &str, source: &str) -> Output {
+        check_case_with_options(name, source, "", Some("wasm32-unknown-unknown"), None)
+    }
+
+    fn check_case_with_metadata(name: &str, source: &str, aimer_metadata: &str) -> Output {
+        check_case_with_options(name, source, aimer_metadata, None, None)
+    }
+
+    fn check_case_with_source(name: &str, source: &str, package_source: Option<&str>) -> Output {
+        check_case_with_source_map(name, source, SourceMapCase::Package(package_source))
+    }
+
+    fn check_case_with_source_map(
+        name: &str,
+        source: &str,
+        source_map: SourceMapCase<'_>,
+    ) -> Output {
+        check_case_with_options(name, source, "", None, Some(source_map))
+    }
+
+    fn check_case_with_options(
+        name: &str,
+        source: &str,
+        aimer_metadata: &str,
+        target: Option<&str>,
+        source_map: Option<SourceMapCase<'_>>,
+    ) -> Output {
+        let fixture_dir = fixture_root().join(name);
+        if fixture_dir.exists() {
+            fs::remove_dir_all(&fixture_dir).unwrap();
+        }
+        fs::create_dir_all(fixture_dir.join("src")).unwrap();
         fs::write(
-            &source_map,
-            format!("version = 1\n\n{packages}"),
+            fixture_dir.join("Cargo.toml"),
+            fixture_manifest(name, aimer_metadata),
         )
         .unwrap();
-        command.env("AIMER_CAPABILITY_PACKAGE_SOURCE_MAP", source_map);
-    } else {
-        command.env_remove("AIMER_CAPABILITY_PACKAGE_SOURCE_MAP");
+        fs::write(fixture_dir.join("src/lib.rs"), source).unwrap();
+
+        let mut command = Command::new(env!("CARGO"));
+        command
+            .arg("check")
+            .arg("--quiet")
+            .arg("--manifest-path")
+            .arg(fixture_dir.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", fixture_root().join("target"));
+        if let Some(target) = target {
+            command.arg("--target").arg(target);
+        }
+        if let Some(source_map_case) = source_map {
+            let source_map = fixture_dir.join("capability-sources.toml");
+            let package_name = format!("aimer_macro_{name}");
+            let manifest_path = fixture_dir.join("Cargo.toml");
+            let package = |source: Option<&str>| {
+                let source = source
+                    .map(|source| format!("source = {source:?}\n"))
+                    .unwrap_or_default();
+                format!(
+                    "[[packages]]\nname = {package_name:?}\nmanifest_path = {manifest_path:?}\n{source}",
+                )
+            };
+            let packages = match source_map_case {
+                SourceMapCase::Package(source) => package(source),
+                SourceMapCase::Missing => format!(
+                    "[[packages]]\nname = \"different-package\"\nmanifest_path = {:?}\n",
+                    fixture_dir.join("missing/Cargo.toml"),
+                ),
+                SourceMapCase::Ambiguous(source) => {
+                    let package = package(source);
+                    format!("{package}\n{package}")
+                }
+            };
+            fs::write(&source_map, format!("version = 1\n\n{packages}")).unwrap();
+            command.env("AIMER_CAPABILITY_PACKAGE_SOURCE_MAP", source_map);
+        } else {
+            command.env_remove("AIMER_CAPABILITY_PACKAGE_SOURCE_MAP");
+        }
+        command.output().unwrap()
     }
-    command.output().unwrap()
-}
 
-#[derive(Clone, Copy)]
-enum SourceMapCase<'a> {
-    Package(Option<&'a str>),
-    Missing,
-    Ambiguous(Option<&'a str>),
-}
+    #[derive(Clone, Copy)]
+    enum SourceMapCase<'a> {
+        Package(Option<&'a str>),
+        Missing,
+        Ambiguous(Option<&'a str>),
+    }
 
-fn fixture_manifest(name: &str, aimer_metadata: &str) -> String {
-    let macro_crate = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = macro_crate.join("../..");
-    format!(
-        r#"[package]
+    fn fixture_manifest(name: &str, aimer_metadata: &str) -> String {
+        let macro_crate = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = macro_crate.join("../..");
+        format!(
+            r#"[package]
 name = "aimer_macro_{name}"
 version = "0.0.0"
 edition = "2024"
@@ -936,71 +944,71 @@ aimer_anteros = {{ path = {:?} }}
 [package.metadata.aimer]
 {aimer_metadata}
 "#,
-        macro_crate, workspace_root.join("aimer_anteros")
-    )
-}
-
-fn fixture_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/aimer_macro_capability_compile")
-}
-
-fn assert_success(output: &Output) {
-    assert!(
-        output.status.success(),
-        "fixture failed to compile:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn assert_failure(output: &Output, diagnostic: &str) {
-    assert!(!output.status.success(), "fixture unexpectedly compiled");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains(diagnostic),
-        "expected diagnostic `{diagnostic}` but compiler reported:\n{stderr}"
-    );
-}
-}
-
-
-#[cfg(test)]
-mod portable_guest_compile_tests {
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
-#[test]
-fn derived_widgets_lower_properties_and_children_through_portable_widget() {
-    let fixture = fixture_root();
-    if fixture.exists() {
-        fs::remove_dir_all(&fixture).unwrap();
+            macro_crate,
+            workspace_root.join("aimer_anteros")
+        )
     }
-    fs::create_dir_all(fixture.join("src")).unwrap();
-    fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
-    fs::write(fixture.join("src/lib.rs"), FIXTURE_SOURCE).unwrap();
 
-    let output = Command::new(env!("CARGO"))
-        .args(["test", "--quiet", "--features", "portable-guest"])
-        .arg("--manifest-path")
-        .arg(fixture.join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", fixture.join("target"))
-        .output()
-        .unwrap();
+    fn fixture_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/aimer_macro_capability_compile")
+    }
 
-    assert!(
-        output.status.success(),
-        "portable guest fixture failed:\n{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
+    fn assert_success(output: &Output) {
+        assert!(
+            output.status.success(),
+            "fixture failed to compile:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn assert_failure(output: &Output, diagnostic: &str) {
+        assert!(!output.status.success(), "fixture unexpectedly compiled");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(diagnostic),
+            "expected diagnostic `{diagnostic}` but compiler reported:\n{stderr}"
+        );
+    }
 }
 
-fn fixture_manifest() -> String {
-    let macro_crate = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = macro_crate.join("../..");
-    format!(
-        r#"[package]
+#[cfg(all(feature = "hot-reload", test))]
+mod portable_guest_compile_tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    #[test]
+    #[cfg(feature = "portable-guest")]
+    fn derived_widgets_lower_properties_and_children_through_portable_widget() {
+        let fixture = fixture_root();
+        if fixture.exists() {
+            fs::remove_dir_all(&fixture).unwrap();
+        }
+        fs::create_dir_all(fixture.join("src")).unwrap();
+        fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
+        fs::write(fixture.join("src/lib.rs"), FIXTURE_SOURCE).unwrap();
+
+        let output = Command::new(env!("CARGO"))
+            .args(["test", "--quiet", "--features", "portable-guest"])
+            .arg("--manifest-path")
+            .arg(fixture.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", fixture.join("target"))
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "portable guest fixture failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    fn fixture_manifest() -> String {
+        let macro_crate = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = macro_crate.join("../..");
+        format!(
+            r#"[package]
 name = "portable_guest_fixture"
 version = "0.0.0"
 edition = "2024"
@@ -1015,18 +1023,18 @@ aimer_macro = {{ path = {:?} }}
 aimer_widget = {{ path = {:?}, features = ["portable-guest"] }}
 aimer_anteros = {{ path = {:?} }}
 "#,
-        macro_crate,
-        workspace_root.join("crates/aimer_widget"),
-        workspace_root.join("aimer_anteros"),
-    )
-}
+            macro_crate,
+            workspace_root.join("crates/aimer_widget"),
+            workspace_root.join("aimer_anteros"),
+        )
+    }
 
-fn fixture_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/aimer_macro_portable_guest_compile")
-}
+    fn fixture_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/aimer_macro_portable_guest_compile")
+    }
 
-const FIXTURE_SOURCE: &str = r#"
+    const FIXTURE_SOURCE: &str = r#"
 use aimer_anteros::{PropertyValue, Version, WidgetSchemaId};
 use aimer_macro::PortableWidget;
 use aimer_widget::base::BuildContext;
@@ -1418,137 +1426,48 @@ fn derived_guest_lowering_binds_callbacks_from_schema_metadata() {
 "#;
 }
 
-
 #[cfg(test)]
 mod portable_schema_compile_tests {
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
 
-#[test]
-fn derive_generates_stable_widget_property_and_child_metadata() {
-    let fixture = fixture_root();
-    if fixture.exists() {
-        fs::remove_dir_all(&fixture).unwrap();
-    }
-    fs::create_dir_all(fixture.join("src")).unwrap();
-    fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
-    fs::write(fixture.join("src/lib.rs"), FIXTURE_SOURCE).unwrap();
-
-    let output = Command::new(env!("CARGO"))
-        .args(["test", "--quiet"])
-        .arg("--manifest-path")
-        .arg(fixture.join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", fixture.join("target"))
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "portable schema fixture failed:\n{}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-}
-
-#[test]
-fn derive_rejects_an_unreflected_unannotated_field() {
-    let fixture = fixture_root().with_file_name("aimer_macro_portable_schema_unsupported");
-    if fixture.exists() {
-        fs::remove_dir_all(&fixture).unwrap();
-    }
-    fs::create_dir_all(fixture.join("src")).unwrap();
-    fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
-    fs::write(fixture.join("src/lib.rs"), UNSUPPORTED_SOURCE).unwrap();
-
-    let output = Command::new(env!("CARGO"))
-        .args(["check", "--quiet"])
-        .arg("--manifest-path")
-        .arg(fixture.join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", fixture.join("target"))
-        .output()
-        .unwrap();
-    let diagnostic = String::from_utf8_lossy(&output.stderr);
-
-    assert!(!output.status.success());
-    assert!(diagnostic.contains("NativePaint"), "{diagnostic}");
-    assert!(diagnostic.contains("u64"), "{diagnostic}");
-    assert!(diagnostic.contains("PortableProperty"), "{diagnostic}");
-}
-
-#[test]
-fn derive_reports_a_missing_guest_property_codec() {
-    let fixture = fixture_root().with_file_name("aimer_macro_portable_guest_codec_unsupported");
-    if fixture.exists() {
-        fs::remove_dir_all(&fixture).unwrap();
-    }
-    fs::create_dir_all(fixture.join("src")).unwrap();
-    fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
-    fs::write(fixture.join("src/lib.rs"), UNSUPPORTED_GUEST_CODEC_SOURCE).unwrap();
-
-    let output = Command::new(env!("CARGO"))
-        .args(["check", "--quiet", "--features", "portable-guest"])
-        .arg("--manifest-path")
-        .arg(fixture.join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", fixture.join("target"))
-        .output()
-        .unwrap();
-    let diagnostic = String::from_utf8_lossy(&output.stderr);
-
-    assert!(!output.status.success());
-    assert!(diagnostic.contains("MissingCodec"), "{diagnostic}");
-    assert!(diagnostic.contains("PortableEncodeProperty"), "{diagnostic}");
-}
-
-#[test]
-fn automatic_materializer_rejects_callbacks_with_the_manual_hint() {
-    let fixture = fixture_root().with_file_name("aimer_macro_portable_materializer_callback");
-    if fixture.exists() {
-        fs::remove_dir_all(&fixture).unwrap();
-    }
-    fs::create_dir_all(fixture.join("src")).unwrap();
-    fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
-    fs::write(fixture.join("src/lib.rs"), CALLBACK_MATERIALIZER_SOURCE).unwrap();
-
-    let output = Command::new(env!("CARGO"))
-        .args(["check", "--quiet"])
-        .arg("--manifest-path")
-        .arg(fixture.join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", fixture.join("target"))
-        .output()
-        .unwrap();
-    let diagnostic = String::from_utf8_lossy(&output.stderr);
-
-    assert!(!output.status.success());
-    assert!(diagnostic.contains("does not support callbacks"), "{diagnostic}");
-    assert!(diagnostic.contains("materializer = path"), "{diagnostic}");
-}
-
-#[test]
-fn automatic_materializer_rejects_non_single_child_shapes_with_the_manual_hint() {
-    for (name, source, expected) in [
-        (
-            "optional_child",
-            OPTIONAL_CHILD_MATERIALIZER_SOURCE,
-            "does not support an optional child",
-        ),
-        (
-            "child_collection",
-            CHILD_COLLECTION_MATERIALIZER_SOURCE,
-            "does not support `#[portable_children]`",
-        ),
-        (
-            "conflicting_options",
-            CONFLICTING_MATERIALIZER_OPTIONS_SOURCE,
-            "cannot be combined",
-        ),
-    ] {
-        let fixture = fixture_root().with_file_name(format!("aimer_macro_{name}"));
+    #[cfg(feature = "hot-reload")]
+    #[test]
+    fn derive_generates_stable_widget_property_and_child_metadata() {
+        let fixture = fixture_root();
         if fixture.exists() {
             fs::remove_dir_all(&fixture).unwrap();
         }
         fs::create_dir_all(fixture.join("src")).unwrap();
         fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
-        fs::write(fixture.join("src/lib.rs"), source).unwrap();
+        fs::write(fixture.join("src/lib.rs"), FIXTURE_SOURCE).unwrap();
+
+        let output = Command::new(env!("CARGO"))
+            .args(["test", "--quiet"])
+            .arg("--manifest-path")
+            .arg(fixture.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", fixture.join("target"))
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "portable schema fixture failed:\n{}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    #[cfg(feature = "hot-reload")]
+    #[test]
+    fn derive_rejects_an_unreflected_unannotated_field() {
+        let fixture = fixture_root().with_file_name("aimer_macro_portable_schema_unsupported");
+        if fixture.exists() {
+            fs::remove_dir_all(&fixture).unwrap();
+        }
+        fs::create_dir_all(fixture.join("src")).unwrap();
+        fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
+        fs::write(fixture.join("src/lib.rs"), UNSUPPORTED_SOURCE).unwrap();
 
         let output = Command::new(env!("CARGO"))
             .args(["check", "--quiet"])
@@ -1560,18 +1479,117 @@ fn automatic_materializer_rejects_non_single_child_shapes_with_the_manual_hint()
         let diagnostic = String::from_utf8_lossy(&output.stderr);
 
         assert!(!output.status.success());
-        assert!(diagnostic.contains(expected), "{diagnostic}");
-        if name != "conflicting_options" {
-            assert!(diagnostic.contains("materializer = path"), "{diagnostic}");
+        assert!(diagnostic.contains("NativePaint"), "{diagnostic}");
+        assert!(diagnostic.contains("u64"), "{diagnostic}");
+        assert!(diagnostic.contains("PortableProperty"), "{diagnostic}");
+    }
+
+    #[cfg(feature = "hot-reload")]
+    #[test]
+    fn derive_reports_a_missing_guest_property_codec() {
+        let fixture = fixture_root().with_file_name("aimer_macro_portable_guest_codec_unsupported");
+        if fixture.exists() {
+            fs::remove_dir_all(&fixture).unwrap();
+        }
+        fs::create_dir_all(fixture.join("src")).unwrap();
+        fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
+        fs::write(fixture.join("src/lib.rs"), UNSUPPORTED_GUEST_CODEC_SOURCE).unwrap();
+
+        let output = Command::new(env!("CARGO"))
+            .args(["check", "--quiet", "--features", "portable-guest"])
+            .arg("--manifest-path")
+            .arg(fixture.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", fixture.join("target"))
+            .output()
+            .unwrap();
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+
+        assert!(!output.status.success());
+        assert!(diagnostic.contains("MissingCodec"), "{diagnostic}");
+        assert!(
+            diagnostic.contains("PortableEncodeProperty"),
+            "{diagnostic}"
+        );
+    }
+
+    #[cfg(feature = "hot-reload")]
+    #[test]
+    fn automatic_materializer_rejects_callbacks_with_the_manual_hint() {
+        let fixture = fixture_root().with_file_name("aimer_macro_portable_materializer_callback");
+        if fixture.exists() {
+            fs::remove_dir_all(&fixture).unwrap();
+        }
+        fs::create_dir_all(fixture.join("src")).unwrap();
+        fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
+        fs::write(fixture.join("src/lib.rs"), CALLBACK_MATERIALIZER_SOURCE).unwrap();
+
+        let output = Command::new(env!("CARGO"))
+            .args(["check", "--quiet"])
+            .arg("--manifest-path")
+            .arg(fixture.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", fixture.join("target"))
+            .output()
+            .unwrap();
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+
+        assert!(!output.status.success());
+        assert!(
+            diagnostic.contains("does not support callbacks"),
+            "{diagnostic}"
+        );
+        assert!(diagnostic.contains("materializer = path"), "{diagnostic}");
+    }
+
+    #[cfg(feature = "hot-reload")]
+    #[test]
+    fn automatic_materializer_rejects_non_single_child_shapes_with_the_manual_hint() {
+        for (name, source, expected) in [
+            (
+                "optional_child",
+                OPTIONAL_CHILD_MATERIALIZER_SOURCE,
+                "does not support an optional child",
+            ),
+            (
+                "child_collection",
+                CHILD_COLLECTION_MATERIALIZER_SOURCE,
+                "does not support `#[portable_children]`",
+            ),
+            (
+                "conflicting_options",
+                CONFLICTING_MATERIALIZER_OPTIONS_SOURCE,
+                "cannot be combined",
+            ),
+        ] {
+            let fixture = fixture_root().with_file_name(format!("aimer_macro_{name}"));
+            if fixture.exists() {
+                fs::remove_dir_all(&fixture).unwrap();
+            }
+            fs::create_dir_all(fixture.join("src")).unwrap();
+            fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
+            fs::write(fixture.join("src/lib.rs"), source).unwrap();
+
+            let output = Command::new(env!("CARGO"))
+                .args(["check", "--quiet"])
+                .arg("--manifest-path")
+                .arg(fixture.join("Cargo.toml"))
+                .env("CARGO_TARGET_DIR", fixture.join("target"))
+                .output()
+                .unwrap();
+            let diagnostic = String::from_utf8_lossy(&output.stderr);
+
+            assert!(!output.status.success());
+            assert!(diagnostic.contains(expected), "{diagnostic}");
+            if name != "conflicting_options" {
+                assert!(diagnostic.contains("materializer = path"), "{diagnostic}");
+            }
         }
     }
-}
 
-fn fixture_manifest() -> String {
-    let macro_crate = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = macro_crate.join("../..");
-    format!(
-        r#"[package]
+    fn fixture_manifest() -> String {
+        let macro_crate = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = macro_crate.join("../..");
+        format!(
+            r#"[package]
 name = "portable_schema_fixture"
 version = "0.0.0"
 edition = "2024"
@@ -1586,18 +1604,18 @@ aimer_macro = {{ path = {:?} }}
 aimer_widget = {{ path = {:?}, features = ["portable-guest"] }}
 aimer_anteros = {{ path = {:?} }}
 "#,
-        macro_crate,
-        workspace_root.join("crates/aimer_widget"),
-        workspace_root.join("aimer_anteros"),
-    )
-}
+            macro_crate,
+            workspace_root.join("crates/aimer_widget"),
+            workspace_root.join("aimer_anteros"),
+        )
+    }
 
-fn fixture_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/aimer_macro_portable_schema_compile")
-}
+    fn fixture_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/aimer_macro_portable_schema_compile")
+    }
 
-const FIXTURE_SOURCE: &str = r#"
+    const FIXTURE_SOURCE: &str = r#"
 use aimer_anteros::{
     ChildCardinality, ModelLimits, PropertyPresence, PropertyValue, PropertyValueKind,
     ValueSchemaMetadata, Version, WidgetDocument, WidgetDocumentView, WidgetNode, WidgetProperty,
@@ -1946,7 +1964,7 @@ fn generated_materializer_builds_properties_before_the_last_child_and_allows_ove
 }
 "#;
 
-const UNSUPPORTED_SOURCE: &str = r#"
+    const UNSUPPORTED_SOURCE: &str = r#"
 use aimer_macro::PortableWidget;
 
 struct NativePaint;
@@ -1958,7 +1976,7 @@ struct Card {
 }
 "#;
 
-const UNSUPPORTED_GUEST_CODEC_SOURCE: &str = r#"
+    const UNSUPPORTED_GUEST_CODEC_SOURCE: &str = r#"
 use aimer_anteros::{ValueSchemaMetadata, Version};
 use aimer_macro::PortableWidget;
 use aimer_widget::base::BuildContext;
@@ -1990,7 +2008,7 @@ impl Widget for MissingGuestCodec {
 }
 "#;
 
-const CALLBACK_MATERIALIZER_SOURCE: &str = r#"
+    const CALLBACK_MATERIALIZER_SOURCE: &str = r#"
 use aimer_macro::PortableWidget;
 
 #[derive(PortableWidget)]
@@ -2000,7 +2018,7 @@ struct CallbackWidget {
 }
 "#;
 
-const OPTIONAL_CHILD_MATERIALIZER_SOURCE: &str = r#"
+    const OPTIONAL_CHILD_MATERIALIZER_SOURCE: &str = r#"
 use aimer_macro::PortableWidget;
 
 #[derive(PortableWidget)]
@@ -2010,7 +2028,7 @@ struct OptionalChildWidget<W> {
 }
 "#;
 
-const CHILD_COLLECTION_MATERIALIZER_SOURCE: &str = r#"
+    const CHILD_COLLECTION_MATERIALIZER_SOURCE: &str = r#"
 use aimer_macro::PortableWidget;
 
 #[derive(PortableWidget)]
@@ -2020,7 +2038,7 @@ struct ChildCollectionWidget<W> {
 }
 "#;
 
-const CONFLICTING_MATERIALIZER_OPTIONS_SOURCE: &str = r#"
+    const CONFLICTING_MATERIALIZER_OPTIONS_SOURCE: &str = r#"
 use aimer_macro::PortableWidget;
 
 #[derive(PortableWidget)]
@@ -2031,81 +2049,84 @@ fn custom() {}
 "#;
 }
 
-
-#[cfg(test)]
+#[cfg(all(feature = "hot-reload", test))]
 mod portable_widget_compile_tests {
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Output};
 
-#[test]
-fn generated_widgets_use_the_portable_runtime_lifecycle() {
-    let output = run_fixture();
 
-    assert!(
-        output.status.success(),
-        "portable widget fixture failed:\n{}",
-        String::from_utf8_lossy(&output.stderr),
-    );
+    #[test]
+    fn generated_widgets_use_the_portable_runtime_lifecycle() {
+        let output = run_fixture();
 
-    let native = run_fixture_command(&[
-        "test",
-        "--no-run",
-        "--quiet",
-        "--no-default-features",
-        "--features",
-        "unsupported-state",
-    ]);
-    assert!(
-        native.status.success(),
-        "unsupported state affected the native expansion:\n{}",
-        String::from_utf8_lossy(&native.stderr),
-    );
-
-    let portable = run_fixture_command(&[
-        "test",
-        "--no-run",
-        "--quiet",
-        "--features",
-        "unsupported-state",
-    ]);
-    assert!(!portable.status.success(), "unsupported portable state unexpectedly compiled");
-    let diagnostic = String::from_utf8_lossy(&portable.stderr);
-    for required_bound in ["AimerReflectionType", "PortableApply", "PortableEncode"] {
         assert!(
-            diagnostic.contains(required_bound),
-            "missing portable bound diagnostic `{required_bound}`:\n{diagnostic}",
+            output.status.success(),
+            "portable widget fixture failed:\n{}",
+            String::from_utf8_lossy(&output.stderr),
         );
+
+        let native = run_fixture_command(&[
+            "test",
+            "--no-run",
+            "--quiet",
+            "--no-default-features",
+            "--features",
+            "unsupported-state",
+        ]);
+        assert!(
+            native.status.success(),
+            "unsupported state affected the native expansion:\n{}",
+            String::from_utf8_lossy(&native.stderr),
+        );
+
+        let portable = run_fixture_command(&[
+            "test",
+            "--no-run",
+            "--quiet",
+            "--features",
+            "unsupported-state",
+        ]);
+        assert!(
+            !portable.status.success(),
+            "unsupported portable state unexpectedly compiled"
+        );
+        let diagnostic = String::from_utf8_lossy(&portable.stderr);
+        for required_bound in ["AimerReflectionType", "PortableApply", "PortableEncode"] {
+            assert!(
+                diagnostic.contains(required_bound),
+                "missing portable bound diagnostic `{required_bound}`:\n{diagnostic}",
+            );
+        }
     }
-}
 
-fn run_fixture() -> Output {
-    let fixture = fixture_root();
-    if fixture.exists() {
-        fs::remove_dir_all(&fixture).unwrap();
+    fn run_fixture() -> Output {
+        let fixture = fixture_root();
+        if fixture.exists() {
+            fs::remove_dir_all(&fixture).unwrap();
+        }
+        fs::create_dir_all(fixture.join("src")).unwrap();
+        fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
+        fs::write(fixture.join("src/lib.rs"), FIXTURE_SOURCE).unwrap();
+
+        run_fixture_command(&["test", "--quiet"])
     }
-    fs::create_dir_all(fixture.join("src")).unwrap();
-    fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
-    fs::write(fixture.join("src/lib.rs"), FIXTURE_SOURCE).unwrap();
 
-    run_fixture_command(&["test", "--quiet"])
-}
+    fn run_fixture_command(arguments: &[&str]) -> Output {
+        Command::new(env!("CARGO"))
+            .args(arguments)
+            .arg("--manifest-path")
+            .arg(fixture_root().join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", fixture_root().join("target"))
+            .output()
+            .unwrap()
+    }
 
-fn run_fixture_command(arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO"))
-        .args(arguments)
-        .arg("--manifest-path")
-        .arg(fixture_root().join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", fixture_root().join("target"))
-        .output()
-        .unwrap()
-}
-
-fn fixture_manifest() -> String {
-    let macro_crate = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = macro_crate.join("../..");
-    format!(
-        r#"[package]
+    fn fixture_manifest() -> String {
+        let macro_crate = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = macro_crate.join("../..");
+        format!(
+            r#"[package]
 name = "aimer_macro_portable_widget"
 version = "0.0.0"
 edition = "2024"
@@ -2122,18 +2143,18 @@ aimer_macro = {{ path = {:?} }}
 aimer_widget = {{ path = {:?}, features = ["portable-guest"] }}
 aimer_anteros = {{ path = {:?} }}
 "#,
-        macro_crate,
-        workspace_root.join("crates/aimer_widget"),
-        workspace_root.join("aimer_anteros"),
-    )
-}
+            macro_crate,
+            workspace_root.join("crates/aimer_widget"),
+            workspace_root.join("aimer_anteros"),
+        )
+    }
 
-fn fixture_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/aimer_macro_portable_widget_compile")
-}
+    fn fixture_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/aimer_macro_portable_widget_compile")
+    }
 
-const FIXTURE_SOURCE: &str = r#"
+    const FIXTURE_SOURCE: &str = r#"
 extern crate self as aimer;
 
 pub use aimer_widget as widget;
@@ -2344,13 +2365,13 @@ mod tests {
 "#;
 }
 
-
 #[cfg(test)]
 mod capability_runtime_tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
+    #[cfg(feature = "hot-reload")]
     #[test]
     fn capability_runtime_expansions_preserve_external_macro_behavior() {
         let fixture = fixture_root();
@@ -2398,8 +2419,7 @@ aimer_anteros = {{ path = {:?}, features = ["wasm-hot-reload"] }}
     }
 
     fn fixture_root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/aimer_macro_capability_runtime")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/aimer_macro_capability_runtime")
     }
 
     fn fixture_source() -> String {

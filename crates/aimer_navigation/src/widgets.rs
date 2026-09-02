@@ -436,7 +436,7 @@ impl<K: Clone + PartialEq + ToString + 'static> State<TabBarWidget<K>>
             .boxed();
         };
         let handler = {
-            let updater = self.updater.clone();
+            let updater = self.updater;
             Rc::new(move |interaction| {
                 updater.set_state(move |state| {
                     if let Some(index) = apply_selection_interaction(&mut state.runtime, interaction)
@@ -660,7 +660,7 @@ impl<K: Clone + PartialEq + ToString + 'static> State<NavigationMenuWidget<K>>
         let selected = Some(model.selected_index());
         let focused = Some(model.focused_index());
         let handler = {
-            let updater = self.updater.clone();
+            let updater = self.updater;
             let overflow_node = self.overflow_node.clone();
             Rc::new(move |interaction| {
                 let overflow_node = overflow_node.clone();
@@ -951,10 +951,10 @@ impl<R: Route> State<RouteTabBarWidget<R>> for RouteTabBarWidgetState<R> {
         };
         let tabs = route_tabs_as_tabs(model);
         let handler = {
-            let updater = self.updater.clone();
+            let updater = self.updater;
             let navigator = navigator.clone();
             Rc::new(move |interaction| {
-                let updater = updater.clone();
+                let updater = updater;
                 let navigator = navigator.clone();
                 updater.set_state(move |state| {
                     if let Some(route) = apply_route_interaction(state, interaction, navigator.as_ref())
@@ -1237,7 +1237,7 @@ impl<K: Clone + PartialEq + ToString + 'static> State<TabViewWidget<K>> for TabV
             .boxed();
         };
         let handler = {
-            let updater = self.updater.clone();
+            let updater = self.updater;
             Rc::new(move |interaction| {
                 updater.set_state(move |state| {
                     if let Some(index) = apply_tab_view_interaction(&mut state.runtime, interaction) {
@@ -1514,7 +1514,7 @@ impl<K: Clone + PartialEq + ToString + 'static> State<BreadcrumbsWidget<K>>
             .map(|focus| (Some(model.current_index()), Some(focus.focused_index())))
             .unwrap_or((Some(model.current_index()), None));
         let handler = {
-            let updater = self.updater.clone();
+            let updater = self.updater;
             Rc::new(move |interaction| {
                 updater.set_state(move |state| {
                     if let Some(key) = apply_breadcrumb_interaction(state, interaction) {
@@ -1810,7 +1810,7 @@ impl<K: Clone + PartialEq + ToString + 'static> State<StepperWidget<K>> for Step
         let tabs = step_tabs(model);
         let focused = self.focus.as_ref().ok().map(TabBar::focused_index);
         let handler = {
-            let updater = self.updater.clone();
+            let updater = self.updater;
             Rc::new(move |interaction| {
                 updater.set_state(move |state| {
                     if let Some(key) = apply_stepper_interaction(state, interaction) {

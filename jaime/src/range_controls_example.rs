@@ -90,7 +90,7 @@ impl State<RangeControlsExample> for RangeControlsExampleState {
             .radius(10.0)
             .color(app_theme.primary_color);
 
-        let slider_updater = self.updater.clone();
+        let slider_updater = self.updater;
         let slider = Slider::new()
             .range(0.0..100.0)
             .step(1.0)
@@ -102,7 +102,7 @@ impl State<RangeControlsExample> for RangeControlsExampleState {
                 slider_updater.set_state(move |state| state.slider_value = value);
             });
 
-        let range_updater = self.updater.clone();
+        let range_updater = self.updater;
         let range_slider = RangeSlider::new()
             .range(0.0..100.0)
             .step(10.0)

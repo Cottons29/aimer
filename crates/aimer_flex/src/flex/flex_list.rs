@@ -698,7 +698,7 @@ impl State<StatefulRowWidget> for RowState {
         self.seen.borrow_mut().insert(self.item, self.counter);
         self.updaters
             .borrow_mut()
-            .insert(self.item, self.updater.clone());
+            .insert(self.item, self.updater);
         Leaf(ROW_EXTENT)
     }
 }

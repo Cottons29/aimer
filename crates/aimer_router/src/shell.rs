@@ -265,19 +265,19 @@ impl<R: Route> State<StatefulShell<R>> for StatefulShellState<R> {
         // Inject the imperative controller for descendants.
         ctx.insert_state(StatefulShellController::<R> {
             go_branch_fn: {
-                let updater = self.updater.clone();
+                let updater = self.updater;
                 Rc::new(move |index: usize| {
                     updater.set_state(move |state| state.active = index);
                 })
             },
             push_in_branch_fn: {
-                let updater = self.updater.clone();
+                let updater = self.updater;
                 Rc::new(move |index: usize, route: R| {
                     updater.set_state(move |state| branch_push(&mut state.branches, index, route));
                 })
             },
             pop_in_branch_fn: {
-                let updater = self.updater.clone();
+                let updater = self.updater;
                 Rc::new(move |index: usize| {
                     updater.set_state(move |state| branch_pop(&mut state.branches, index));
                 })

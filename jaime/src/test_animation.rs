@@ -110,7 +110,7 @@ impl SameLookingSectionState {
             .iter()
             .enumerate()
             .map({
-                let updater = self.state.clone();
+                let updater = self.state;
                 move |(i, l)| {
                     let index = i;
                     let is_selected = index == selected;
@@ -148,7 +148,7 @@ impl SameLookingSectionState {
                                 .text_decoration(TextDecoration::Underline),
                         )
                         .on_press({
-                            let updater = updater.clone();
+                            let updater = updater;
                             move || {
                                 println!("animation demo: tab {index} pressed");
                                 if updater.read_state().current_index != index {

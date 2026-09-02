@@ -1,4 +1,4 @@
-use std::fmt;
+ use std::fmt;
 
 use sha2::{Digest, Sha256};
 

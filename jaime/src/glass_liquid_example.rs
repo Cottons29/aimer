@@ -289,9 +289,9 @@ impl State<GlassLiquidExample> for GlassLiquidExampleState {
 
 impl GlassLiquidExampleState {
     fn blur_control(&self) -> AnyWidget {
-        let decrease = self.updater.clone();
-        let increase = self.updater.clone();
-        let reset = self.updater.clone();
+        let decrease = self.updater;
+        let increase = self.updater;
+        let reset = self.updater;
 
         Row::new()
             .vertical_alignment(BoxAlignment::Center)

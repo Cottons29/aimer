@@ -102,7 +102,7 @@ impl State<FileDropShowcase> for FileDropShowcaseState {
 impl FileDropShowcaseState {
     /// A zone restricted to images: anything else passes straight through it.
     fn image_zone(&self, app_theme: ThemeData) -> AnyWidget {
-        let updater = self.updater.clone();
+        let updater = self.updater;
         let received = self.images.clone();
 
         DropZone::new()
@@ -127,7 +127,7 @@ impl FileDropShowcaseState {
 
     /// A zone with no filter at all.
     fn anything_zone(&self, app_theme: ThemeData) -> AnyWidget {
-        let updater = self.updater.clone();
+        let updater = self.updater;
         let received = self.anything.clone();
 
         DropZone::new()

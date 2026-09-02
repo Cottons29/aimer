@@ -243,7 +243,7 @@ mod tests {
 
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
             self.observer.set(self.index);
-            *self.live_updater.borrow_mut() = Some(self.updater.clone());
+            *self.live_updater.borrow_mut() = Some(self.updater);
             // Content follows the selection (the image in the real app) AND a
             // Row of buttons whose highlight must follow the selection too.
             Column::new().children(vec![
@@ -478,7 +478,7 @@ mod tests {
         live_updater
             .borrow()
             .as_ref()
-            .cloned()
+            .copied()
             .expect("current live updater should be published from build()")
     }
 

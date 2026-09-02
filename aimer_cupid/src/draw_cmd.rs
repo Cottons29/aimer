@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use hashbrown::DefaultHashBuilder;
 
+use crate::damage_region::{DamageLayerChange, DamageTracker};
 use crate::font::{FontFamily, FontStyle, TextLanguage};
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::{TextOverflowMode, TextShadowRequest};
@@ -672,6 +673,7 @@ pub struct DrawListStats {
 
 pub struct DrawList {
     commands: Vec<DrawCommand>,
+    damage_records: Vec<DamageLayerChange>,
     transform_stack: Vec<Mat3>,
     current_transform: Mat3,
     texture_sizes: HashMap<TextureId, TextureMetadata>,
@@ -707,6 +709,7 @@ impl DrawList {
     pub(crate) fn with_texture_registry(texture_registry: Arc<TextureRegistry>) -> Self {
         Self {
             commands: Vec::with_capacity(16),
+            damage_records: Vec::with_capacity(4),
             transform_stack: Vec::with_capacity(16),
             current_transform: Mat3::identity(),
             texture_sizes: HashMap::new(),
@@ -718,12 +721,20 @@ impl DrawList {
     pub fn clear(&mut self) {
         self.release_texture_references();
         self.commands.clear();
+        self.damage_records.clear();
         self.transform_stack.clear();
         self.current_transform = Mat3::identity();
     }
 
     pub fn push(&mut self, cmd: DrawCommand) {
         self.commands.push(cmd);
+    }
+
+    /// Records a retained-layer transition for the next damage derivation.
+    #[doc(hidden)]
+    #[inline]
+    pub fn record_damage(&mut self, change: DamageLayerChange) {
+        self.damage_records.push(change);
     }
 
     pub fn fill_rect(
@@ -1208,6 +1219,25 @@ impl DrawList {
 
     pub fn commands(&self) -> &[DrawCommand] {
         &self.commands
+    }
+
+    /// Returns retained-layer transitions recorded with this frame.
+    #[doc(hidden)]
+    #[inline]
+    pub fn damage_records(&self) -> &[DamageLayerChange] {
+        &self.damage_records
+    }
+
+    /// Derives normalized device-pixel damage from this frame's retained-layer
+    /// transitions.
+    #[doc(hidden)]
+    #[inline]
+    pub fn damage_tracker(&self, width: u32, height: u32, device_scale: f32) -> DamageTracker {
+        let mut tracker = DamageTracker::new(width, height, device_scale);
+        for change in &self.damage_records {
+            tracker.record(*change);
+        }
+        tracker
     }
 
     /// Takes a snapshot when every command in this list can be replayed

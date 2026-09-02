@@ -1,9 +1,9 @@
 # Aimer framework `PaintIsolated` and damage-region repaint plan
 
-> Status: implementation in progress. Phase 0 diagnostics are wired, and the
-> first shared `PaintIsolated` seam plus backend-independent `DamageSet` model
-> are implemented. Persistent-target rendering and Jaime acceptance remain
-> future phases.
+> Status: implementation in progress. Phases 0-3 are complete. Phase 4 now
+> includes the persistent target and a conservative single-region repaint
+> path; the owned frame packet, complete capability coverage, diagnostics,
+> generic framework correctness suite, and Jaime acceptance remain.
 >
 > Scope: Aimer framework. Jaime is the first reproducible workload and acceptance fixture, not the owner of the fix.
 > Native desktop is the first target; the existing full-frame path remains the correctness fallback.
@@ -135,6 +135,32 @@ unchanged child and does not rasterize unchanged target pixels. Eliminating the 
 - Keep Jaime sidebar-only scrolling below 20% average process CPU in the defined native release/profile workload.
 - Keep native optimization opt-in until framework and Jaime acceptance passes.
 
+## Framework-level definition of done
+
+This work is complete only when the behavior is provided by reusable Aimer Modules and does not depend on Jaime types,
+layout assumptions, or a Jaime-specific renderer branch. Jaime is an acceptance fixture, not the implementation seam.
+
+- [ ] The framework owns an immutable frame packet that carries target validity and generations, device geometry,
+  damage regions, ordered layer metadata, retained-layer references, and resource lifetimes through raster submission.
+- [ ] Every visual invalidation that can change a target pixel records enough old/new geometry and dependency data to
+  derive conservative damage. Unknown provenance promotes to a full repaint.
+- [ ] Partial repaint loads a persistent target, clears only damaged device pixels, and replays every intersecting
+  dependency in paint order, including unchanged layers behind the changed content.
+- [ ] The renderer can process multiple regions and all supported paint paths, or explicitly promotes unsupported paths
+  before touching the persistent target.
+- [ ] Unaffected content is isolated on both sides of the pipeline: it is not rebuilt or re-recorded unnecessarily on
+  the framework path, and its target pixels are not rasterized again.
+- [ ] Generic framework tests compare partial output with an equivalent full repaint across geometry, ordering,
+  resources, effects, target lifecycle, and interaction-related invalidation.
+- [ ] Framework diagnostics expose why a frame was partial, skipped, or promoted, and release-profile measurements
+  separate build, layout, paint, encode, GPU, and present costs.
+- [ ] Jaime demonstrates the framework behavior with an unchanged content pane during sidebar scrolling, including the
+  agreed below-20%-CPU workload target.
+
+The first implementation is allowed to replay more commands than strictly necessary inside a damage region, but it is
+not allowed to claim full completion while the frame packet, invalidation coverage, target lifecycle, or fallback
+reasoning is implicit.
+
 ## Non-goals
 
 - Do not claim that every frame rebuilds the entire widget tree without counters.
@@ -205,6 +231,8 @@ persistent initialized target, not on a newly cleared empty target:
 - Damage tracker: consumes invalidation provenance from `PaintIsolated`, old/new layer bounds, clips, transforms,
   ordering changes, resource changes, and effect expansion.
 - Persistent target: owns the initialized color target/view, validity state, size/scale key, and bounded lifetime.
+- Owned frame packet: freezes target identity, device geometry, damage, ordered layer dependencies, retained-layer
+  references, and resource lifetimes for the raster thread.
 - Region renderer: for each damaged region, clears only that region, reloads preserved pixels, and replays every ordered
   layer that can affect it, including unchanged background layers behind a changed foreground.
 - Presentation Adapter: composites/presents the target and promotes to the existing full-frame path when the target or
@@ -348,33 +376,63 @@ scroll/transform details through their small Interfaces.
 
 ## Phase 4 — implement core damage-region repaint
 
-- [x] Define and test a deterministic device-pixel `DamageSet` with half-open rectangles, finite-value normalization,clipping, union, coalescing, and full-frame promotion thresholds.
+- [x] Define and test a deterministic device-pixel `DamageSet` with half-open rectangles, finite-value normalization,
+  clipping, union, coalescing, and full-frame promotion thresholds.
 - [x] Add a persistent target Module that retains the initialized color target/view between frames.
       `aimer_cupid::persistent_target::PersistentTarget` now owns the texture/view lifecycle and is used by the
       existing material-frame target path; a newly created target remains invalid until a complete paint finishes.
 - [x] Include target size, device scale, surface identity, renderer/context generation, and validity in the target key.
       `PersistentTargetKey` carries all of those fields, while resource reuse deliberately ignores only validity so an
       invalid target can retain its allocation and request a full repaint.
-- [ ] Make the first frame, resize, scale change, surface recreation, context loss, and unknown damage use a full repaint.
-- [ ] Derive damage from `PaintIsolated` invalidations, old/new layer bounds, clip/transform changes, ordering changes,
+- [x] Make the first frame, resize, scale change, surface recreation, context loss, and unknown damage use a full repaint.
+      `PersistentTargetState::full_repaint_reason` classifies each conservative promotion, and
+      `TargetEnsureResult::requires_full_repaint` keeps the full-clear path mandatory until a valid partial repaint
+      packet exists.
+- [x] Derive damage from `PaintIsolated` invalidations, old/new layer bounds, clip/transform changes, ordering changes,
   resource readiness, and conservative effect expansion.
-- [ ] For each damaged region, clear only that region, load preserved pixels, and repaint every intersecting layer in
-  paint order, including unchanged layers behind the changed layer.
-- [ ] Preserve unchanged target pixels; never filter the current draw list and leave omitted pixels blank.
-- [ ] Emit an owned frame packet containing target validity, damage set, retained-layer references, and resource lifetime
-  information safe for the raster thread.
-- [ ] Promote to the existing full-frame path when memory, target validity, bounds, ordering, effects, or renderer
-  capabilities are uncertain.
+      `DamageTracker` normalizes `DamageLayerChange` records, transforms and clips old/new footprints, expands bounded
+      effects, and promotes unknown geometry or ordering changes; `PaintIsolated` submits those transitions with the
+      frame `DrawList` while preserving its record/replay behavior.
+- [x] For the supported partial path, clear the single coalesced damage region with a replace-blend scissor, load
+  preserved pixels from the persistent target, and replay the complete resolved command stream in paint order under
+  that scissor so unchanged layers behind the changed layer are included. Disjoint regions, MSAA, custom/backdrop
+  commands, and untracked or unknown damage conservatively use the full path until their validity seams are ready.
+- [x] Preserve unchanged target pixels; never filter the current draw list and leave omitted pixels blank. The scene
+  target is persistent across swap-chain frames, while the final surface composite remains full-surface.
+- [ ] Emit an owned `FramePacket` containing target validity and generations, actual device scale and surface/context
+  identity, damage set, ordered layer metadata, retained-layer references, and resource lifetime information safe for
+  the raster thread. The current renderer derives damage directly inside `render_frame` and still uses placeholder
+  scale/identity values, so this is a required framework seam rather than a Jaime integration detail.
+- [ ] Feed real device scale, surface identity, renderer/context generations, and resource generations into the packet
+  and target key; invalidate the persistent target when any of those values change.
+- [ ] Add ordered layer metadata and dependency queries so the region renderer can process only layers intersecting each
+  damage region while preserving all required background, clip, transform, and effect dependencies. The current safe
+  slice replays the complete command stream under one scissor; that proves pixels but does not yet minimize command
+  preparation.
+- [ ] Support multiple damage regions and define measured coalescing/area thresholds. Until then, promote disjoint or
+  uncertain regions to the existing full-frame path.
+- [ ] Extend the partial capability matrix to MSAA, custom pipelines, backdrop reads, filters, shadows, and async
+  resources, or promote each unsupported path before modifying preserved target pixels.
+- [ ] Promote to the existing full-frame path when memory, target validity, bounds, ordering, effects, resource
+  readiness, or renderer capabilities are uncertain.
 - [ ] Add diagnostics for damage area, full-frame promotions, partial/full clears, target reuse, and fallback reasons.
 
 The first damage implementation may repaint the full layer set inside each damaged region. A spatial index is not needed
-until measurements show that layer intersection queries are material.
+until measurements show that layer intersection queries are material, but ordered layer metadata and dependency
+correctness are required before command filtering is enabled.
 
-## Phase 5 — validate the independent-sibling case in Jaime
+Implementation order for the remaining framework work: `FramePacket` ownership, real device geometry and generations,
+ordered layer/dependency metadata, multiple-region and renderer capability handling, then diagnostics. Only after those
+generic seams are covered should Jaime be used for the independent-sibling acceptance run.
 
-- [ ] Add a private Jaime/framework `ContentPane` Module that places `PaintIsolated` around the right content region.
-- [ ] Keep ordinary Jaime widget-user composition unchanged; `PaintIsolated` is internal to the framework/widget
-  Implementation.
+## Phase 5 — validate framework adopters, then prove the independent-sibling case in Jaime
+
+- [ ] Add at least one generic framework adopter/test fixture that places `PaintIsolated` around an independently
+  invalidated sibling region without importing Jaime code or assumptions.
+- [ ] Add a private Jaime/framework `ContentPane` Module only as the acceptance adapter that places `PaintIsolated`
+  around the right content region.
+- [ ] Keep ordinary application/widget-user composition unchanged; `PaintIsolated` is internal to the
+  framework/widget Implementation.
 - [ ] Keep the sidebar's existing `Scrollable` responsible for scrolling, culling, tile selection, and dynamic rows.
 - [ ] Ensure a sidebar offset changes neither the content paint generation nor the content layer's device bounds.
 - [ ] Ensure sidebar hover, pressed, focus, and selection visuals remain live where required.

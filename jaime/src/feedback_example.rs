@@ -225,21 +225,21 @@ impl State<FeedbackExample> for FeedbackExampleState {
             .progress_color(app_theme.primary_color.with_alpha(0.62));
         let spinner = self.spinner.size(32.0).color(app_theme.primary_color);
 
-        let progress_updater = self.updater.clone();
+        let progress_updater = self.updater;
         let advance_progress = action_button(
             "+10%",
             app_theme,
             true,
             move || progress_updater.set_state(|state| state.advance_progress()),
         );
-        let reset_updater = self.updater.clone();
+        let reset_updater = self.updater;
         let reset_progress = action_button(
             "Reset",
             app_theme,
             false,
             move || reset_updater.set_state(|state| state.reset_progress()),
         );
-        let motion_updater = self.updater.clone();
+        let motion_updater = self.updater;
         let toggle_motion = action_button(
             if self.motion_policy == MotionPolicy::Reduced {
                 "Enable motion"
@@ -250,7 +250,7 @@ impl State<FeedbackExample> for FeedbackExampleState {
             false,
             move || motion_updater.set_state(|state| state.toggle_motion()),
         );
-        let spinner_updater = self.updater.clone();
+        let spinner_updater = self.updater;
         let advance_spinner = action_button(
             "Advance 250ms",
             app_theme,
@@ -258,28 +258,28 @@ impl State<FeedbackExample> for FeedbackExampleState {
             move || spinner_updater.set_state(|state| state.advance_spinner()),
         );
 
-        let queue_updater = self.updater.clone();
+        let queue_updater = self.updater;
         let queue_toast = action_button(
             "Queue toast",
             app_theme,
             true,
             move || queue_updater.set_state(|state| state.queue_toast()),
         );
-        let advance_toast_updater = self.updater.clone();
+        let advance_toast_updater = self.updater;
         let advance_toast = action_button(
             "Advance 4s",
             app_theme,
             false,
             move || advance_toast_updater.set_state(|state| state.advance_toast_clock()),
         );
-        let dismiss_updater = self.updater.clone();
+        let dismiss_updater = self.updater;
         let dismiss_toast = action_button(
             "Dismiss",
             app_theme,
             false,
             move || dismiss_updater.set_state(|state| state.dismiss_toast()),
         );
-        let action_updater = self.updater.clone();
+        let action_updater = self.updater;
         let undo_toast = action_button(
             "Undo action",
             app_theme,
@@ -287,14 +287,14 @@ impl State<FeedbackExample> for FeedbackExampleState {
             move || action_updater.set_state(|state| state.activate_toast_action()),
         );
 
-        let show_updater = self.updater.clone();
+        let show_updater = self.updater;
         let show_tooltip = action_button(
             "Show tooltip",
             app_theme,
             true,
             move || show_updater.set_state(|state| state.show_tooltip()),
         );
-        let hide_updater = self.updater.clone();
+        let hide_updater = self.updater;
         let hide_tooltip = action_button(
             "Hide tooltip",
             app_theme,

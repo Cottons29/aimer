@@ -153,8 +153,8 @@ pub use crate::paint_stats::{
 #[cfg(not(feature = "portable-guest"))]
 #[doc(hidden)]
 pub use crate::paint_isolated::{
-    PaintBounds, PaintCache, PaintClip, PaintContract, PaintIsolated, PaintIsolatedOutcome,
-    PaintTransform,
+    paint_damage_geometry, PaintBounds, PaintCache, PaintClip, PaintContract, PaintIsolated,
+    PaintIsolatedOutcome, PaintTransform,
 };
 #[cfg(any(debug_assertions, feature = "frame-stats"))]
 pub use crate::components::element::{
@@ -208,10 +208,8 @@ pub use crate::reconciliation_plan::{
 pub use crate::safe_area::{SafeAreaInsets, safe_area_insets, set_safe_area_insets};
 pub use crate::widget::{AnyWidgetExt, DynWidget, PortableWidget, Widget};
 pub use crate::widget::child_builder::ChildBuilder;
-pub use crate::widget::stateful::{State, StateUpdater, StatefulElement, StatefulWidget};
-#[cfg(feature = "portable-guest")]
 #[doc(hidden)]
-pub use crate::widget::stateful::StateReadGuard;
+pub use crate::widget::stateful::{State, StateReadGuard, StateUpdater, StatefulElement, StatefulWidget};
 pub use crate::widget::stateless::{NamedWidget, StatelessElement, StatelessWidget};
 pub use crate::window_metrics::{WindowMetrics, notify_window_metrics_changed};
 

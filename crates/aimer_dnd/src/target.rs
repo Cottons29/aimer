@@ -270,7 +270,7 @@ impl<T: 'static> State<DragTarget<T, HasChild>> for DragTargetLiveState<T> {
                 id: self.id,
                 will_accept: self.will_accept.clone(),
                 on_accept: self.on_accept.clone(),
-                updater: self.updater.clone(),
+                updater: self.updater,
             }),
         }
     }

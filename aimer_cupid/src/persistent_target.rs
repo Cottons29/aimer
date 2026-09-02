@@ -11,6 +11,25 @@ pub(crate) enum TargetValidity {
     Valid,
 }
 
+/// Why a persistent target cannot safely reuse its previous pixels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FullRepaintReason {
+    /// No target has completed a paint yet.
+    FirstFrame,
+    /// The target dimensions changed.
+    Resize,
+    /// The device scale changed.
+    ScaleChanged,
+    /// The presentation surface identity changed.
+    SurfaceRecreated,
+    /// The renderer identity changed.
+    RendererRecreated,
+    /// The rendering context was recreated or lost.
+    ContextLost,
+    /// The target contents or damage provenance is unknown.
+    UnknownDamage,
+}
+
 /// Identity of the resource and rendering context for a persistent target.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PersistentTargetKey {
@@ -78,6 +97,17 @@ pub(crate) enum TargetEnsureResult {
     ReusedInvalid,
 }
 
+impl TargetEnsureResult {
+    /// Returns whether the caller must use the full-target clear/repaint path.
+    #[inline]
+    pub(crate) const fn requires_full_repaint(self) -> bool {
+        matches!(
+            self,
+            Self::Unavailable | Self::Created | Self::Recreated | Self::ReusedInvalid
+        )
+    }
+}
+
 /// CPU-side state shared by target policy and the GPU-backed target.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct PersistentTargetState {
@@ -98,6 +128,38 @@ impl PersistentTargetState {
     #[inline]
     pub(crate) fn can_reuse_contents(&self, key: PersistentTargetKey) -> bool {
         self.key == Some(key) && key.validity == TargetValidity::Valid
+    }
+
+    /// Explains why `key` requires a full repaint, or returns `None` when the
+    /// existing target identity and initialized pixels are safe to reuse.
+    #[inline]
+    pub(crate) fn full_repaint_reason(
+        &self,
+        key: PersistentTargetKey,
+    ) -> Option<FullRepaintReason> {
+        let Some(current) = self.key else {
+            return Some(FullRepaintReason::FirstFrame);
+        };
+
+        if current.width != key.width || current.height != key.height {
+            return Some(FullRepaintReason::Resize);
+        }
+        if current.scale_bits != key.scale_bits {
+            return Some(FullRepaintReason::ScaleChanged);
+        }
+        if current.surface_identity != key.surface_identity {
+            return Some(FullRepaintReason::SurfaceRecreated);
+        }
+        if current.renderer_generation != key.renderer_generation {
+            return Some(FullRepaintReason::RendererRecreated);
+        }
+        if current.context_generation != key.context_generation {
+            return Some(FullRepaintReason::ContextLost);
+        }
+        if current.validity != TargetValidity::Valid || key.validity != TargetValidity::Valid {
+            return Some(FullRepaintReason::UnknownDamage);
+        }
+        None
     }
 
     #[inline]
@@ -161,7 +223,9 @@ impl PersistentTarget {
             && self.format == Some(format)
             && self.state.same_resource(key);
         if resource_matches {
-            return if self.state.can_reuse_contents(key) {
+            return if self.state.can_reuse_contents(key)
+                && self.state.full_repaint_reason(key).is_none()
+            {
                 TargetEnsureResult::ReusedValid
             } else {
                 TargetEnsureResult::ReusedInvalid
@@ -260,6 +324,97 @@ mod tests {
         assert!(state.can_reuse_contents(valid));
         assert!(!state.can_reuse_contents(invalid));
         assert!(state.same_resource(invalid));
+    }
+
+    #[test]
+    fn target_changes_are_classified_as_full_repaint_requirements() {
+        let base = PersistentTargetKey::new(800, 600, 2.0, 7, 11, 13, TargetValidity::Valid);
+        let state = PersistentTargetState::initialized(base);
+
+        assert_eq!(
+            PersistentTargetState::default().full_repaint_reason(base),
+            Some(FullRepaintReason::FirstFrame)
+        );
+        assert_eq!(
+            state.full_repaint_reason(PersistentTargetKey::new(
+                801,
+                600,
+                2.0,
+                7,
+                11,
+                13,
+                TargetValidity::Valid,
+            )),
+            Some(FullRepaintReason::Resize)
+        );
+        assert_eq!(
+            state.full_repaint_reason(PersistentTargetKey::new(
+                800,
+                600,
+                1.0,
+                7,
+                11,
+                13,
+                TargetValidity::Valid,
+            )),
+            Some(FullRepaintReason::ScaleChanged)
+        );
+        assert_eq!(
+            state.full_repaint_reason(PersistentTargetKey::new(
+                800,
+                600,
+                2.0,
+                8,
+                11,
+                13,
+                TargetValidity::Valid,
+            )),
+            Some(FullRepaintReason::SurfaceRecreated)
+        );
+        assert_eq!(
+            state.full_repaint_reason(PersistentTargetKey::new(
+                800,
+                600,
+                2.0,
+                7,
+                12,
+                13,
+                TargetValidity::Valid,
+            )),
+            Some(FullRepaintReason::RendererRecreated)
+        );
+        assert_eq!(
+            state.full_repaint_reason(PersistentTargetKey::new(
+                800,
+                600,
+                2.0,
+                7,
+                11,
+                14,
+                TargetValidity::Valid,
+            )),
+            Some(FullRepaintReason::ContextLost)
+        );
+        assert_eq!(state.full_repaint_reason(base), None);
+
+        let invalid_state = PersistentTargetState::initialized(base.with_validity(TargetValidity::Invalid));
+        assert_eq!(
+            invalid_state.full_repaint_reason(base),
+            Some(FullRepaintReason::UnknownDamage)
+        );
+        assert_eq!(
+            state.full_repaint_reason(base.with_validity(TargetValidity::Unknown)),
+            Some(FullRepaintReason::UnknownDamage)
+        );
+    }
+
+    #[test]
+    fn target_ensure_results_report_when_the_full_clear_path_is_required() {
+        assert!(TargetEnsureResult::Created.requires_full_repaint());
+        assert!(TargetEnsureResult::Recreated.requires_full_repaint());
+        assert!(TargetEnsureResult::ReusedInvalid.requires_full_repaint());
+        assert!(TargetEnsureResult::Unavailable.requires_full_repaint());
+        assert!(!TargetEnsureResult::ReusedValid.requires_full_repaint());
     }
 
     #[test]

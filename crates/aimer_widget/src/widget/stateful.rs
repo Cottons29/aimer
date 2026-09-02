@@ -3,6 +3,7 @@ use std::cell::{Cell, RefCell, UnsafeCell};
 #[cfg(feature = "portable-guest")]
 use std::cell::Ref;
 use std::collections::{HashMap, VecDeque};
+use std::marker::PhantomData;
 use std::panic::Location;
 use std::rc::{Rc, Weak};
 
@@ -16,6 +17,9 @@ use aimer_utils::error;
 use crate::base::*;
 use crate::components::element::{
     DirtySource, identities_are_compatible, structural_children,
+};
+use super::state_slots::{
+    StateSlotReadGuard, StateSlotResolutionError, StateStorage, StateUpdaterGeneration,
 };
 use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
 use crate::{
@@ -162,6 +166,31 @@ fn recover_failure(
     }
 }
 
+#[track_caller]
+fn panic_state_updater_resolution(error: StateSlotResolutionError) -> ! {
+    let message = match error {
+        StateSlotResolutionError::Missing => {
+            "StateUpdater refers to a missing state slot"
+        }
+        StateSlotResolutionError::Stale => {
+            "StateUpdater refers to a dropped or stale state slot"
+        }
+        StateSlotResolutionError::Consumed => {
+            "StateUpdater refers to a state consumed during reconciliation"
+        }
+        StateSlotResolutionError::WrongType => {
+            "StateUpdater refers to a state slot with the wrong type"
+        }
+    };
+    error!("{message}: {:?}", error);
+    panic!("{message} (see error above)");
+}
+
+#[track_caller]
+fn panic_consumed_state() -> ! {
+    panic!("StateUpdater state was consumed during reconciliation");
+}
+
 impl Default for FailureState {
     fn default() -> Self {
         Self {
@@ -201,7 +230,7 @@ impl<S> StateMutationQueue<S> {
 }
 
 /// A handle that allows StatefulWidgets to trigger state mutations and
-/// rebuilds. This is the Rust equivalent of Flutter's `setState`.
+/// rebuilds.
 ///
 /// Mutations are queued as closures and applied on the render thread during
 /// the next rebuild. The queue is local to the UI thread, so it needs neither
@@ -212,40 +241,67 @@ impl<S> StateMutationQueue<S> {
 /// ```compile_fail
 /// fn require_send<T: Send>() {}
 /// fn require_sync<T: Sync>() {}
+///
 /// require_send::<aimer_widget::StateUpdater<()>>();
 /// require_sync::<aimer_widget::StateUpdater<()>>();
 /// ```
 pub struct StateUpdater<S> {
-    inner: Option<StateUpdaterBackend<S>>,
+    slot: Option<StateUpdaterGeneration<UpdaterSlot<S>>>,
+    _ui_thread_only: PhantomData<Rc<()>>,
 }
 
-enum StateUpdaterBackend<S> {
+enum UpdaterSlot<S> {
     Native(StateUpdaterInner<S>),
     #[cfg(feature = "portable-guest")]
     Portable(crate::portable::state::PortableStateHandle<S>),
 }
 
-/// A checked synchronous borrow returned by portable-enabled state updaters.
-///
-/// Native state keeps its established render-thread reference, while portable
-/// state holds a `RefCell` read borrow for the lifetime of this guard. Both
-/// variants dereference to `S`, preserving ordinary `read_state().field` use.
-#[cfg(feature = "portable-guest")]
-#[doc(hidden)]
-pub enum StateReadGuard<'a, S> {
-    Native(&'a S),
-    Portable(Ref<'a, S>),
+impl<S> Copy for StateUpdater<S> {}
+
+impl<S> Clone for StateUpdater<S> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
-#[cfg(feature = "portable-guest")]
-impl<S> std::ops::Deref for StateReadGuard<'_, S> {
+/// A synchronous borrow returned by a state updater.
+///
+/// The guard retains an arena read lease. Native state uses a pointer valid for
+/// that lease, while portable state additionally holds its `RefCell` borrow.
+/// Both variants dereference to `S`, preserving ordinary `read_state().field`
+/// use.
+#[doc(hidden)]
+pub struct StateReadGuard<'a, S: 'static> {
+    kind: StateReadGuardKind<S>,
+    _marker: PhantomData<&'a S>,
+}
+
+enum StateReadGuardKind<S: 'static> {
+    Native {
+        state: *const S,
+        _slot: StateSlotReadGuard<UpdaterSlot<S>>,
+    },
+    #[cfg(feature = "portable-guest")]
+    Portable {
+        state: Ref<'static, S>,
+        _slot: StateSlotReadGuard<UpdaterSlot<S>>,
+    },
+}
+
+impl<S: 'static> std::ops::Deref for StateReadGuard<'_, S> {
     type Target = S;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Native(state) => state,
-            Self::Portable(state) => state,
+        match &self.kind {
+            StateReadGuardKind::Native { state, .. } => {
+                // SAFETY: the native variant owns `slot`, whose read lease
+                // keeps the erased updater slot and its state alive.
+                unsafe { &**state }
+            }
+            #[cfg(feature = "portable-guest")]
+            StateReadGuardKind::Portable { state, .. } => state,
         }
     }
 }
@@ -259,25 +315,6 @@ struct StateUpdaterInner<S> {
     failure: Rc<FailureState>,
 }
 
-impl<S> Clone for StateUpdater<S> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.as_ref().map(|inner| match inner {
-                StateUpdaterBackend::Native(inner) => StateUpdaterBackend::Native(StateUpdaterInner {
-                    tx: inner.tx.clone(),
-                    state: inner.state.clone(),
-                    dirty_source: inner.dirty_source.clone(),
-                    failure: inner.failure.clone(),
-                }),
-                #[cfg(feature = "portable-guest")]
-                StateUpdaterBackend::Portable(handle) => {
-                    StateUpdaterBackend::Portable(handle.clone())
-                }
-            }),
-        }
-    }
-}
-
 impl<S: 'static> StateUpdater<S> {
     /// Create a new `StateUpdater` from a channel sender, shared state, and a
     /// tracked dirty source.
@@ -287,15 +324,20 @@ impl<S: 'static> StateUpdater<S> {
         state: Rc<SyncState<S>>,
         dirty_source: Rc<DirtySource>,
         failure: Rc<FailureState>,
-    ) -> Self {
-        Self {
-            inner: Some(StateUpdaterBackend::Native(StateUpdaterInner {
+    ) -> (StateStorage, Self) {
+        let (storage, slot) = StateStorage::insert(UpdaterSlot::Native(StateUpdaterInner {
                 tx,
                 state,
                 dirty_source,
                 failure,
-            })),
-        }
+            }));
+        (
+            storage,
+            Self {
+                slot: Some(slot),
+                _ui_thread_only: PhantomData,
+            },
+        )
     }
 
     /// Creates the hidden updater backend used by portable generated wrappers.
@@ -304,54 +346,173 @@ impl<S: 'static> StateUpdater<S> {
     #[inline]
     pub(crate) fn from_portable(
         handle: crate::portable::state::PortableStateHandle<S>,
-    ) -> Self {
-        Self { inner: Some(StateUpdaterBackend::Portable(handle)) }
-    }
-
-    #[cfg(not(feature = "portable-guest"))]
-    #[track_caller]
-    pub fn read_state(&self) -> &S {
-        match self.inner.as_ref() {
-            Some(StateUpdaterBackend::Native(inner)) => unsafe {
-                let state = inner.state.clone();
-                (&*state.0.get())
-                    .as_ref()
-                    .expect("State has already been consumed during reconciliation")
+    ) -> (StateStorage, Self) {
+        let (storage, slot) = StateStorage::insert(UpdaterSlot::Portable(handle));
+        (
+            storage,
+            Self {
+                slot: Some(slot),
+                _ui_thread_only: PhantomData,
             },
-            None => {
-                let loc = Location::caller();
-                error!("Attempted to read state from an uninitialized StateUpdater");
-                self.beautiful_error(loc);
-                panic!("State is not initialized (see error above)")
-            }
-        }
+        )
     }
 
-    /// Borrows the current state synchronously.
-    ///
-    /// Portable-enabled builds return a dereferencing guard so guest state can
-    /// remain safely checked without changing ordinary field-access syntax.
-    #[cfg(feature = "portable-guest")]
     #[track_caller]
     pub fn read_state(&self) -> StateReadGuard<'_, S> {
-        match self.inner.as_ref() {
-            Some(StateUpdaterBackend::Native(inner)) => unsafe {
-                StateReadGuard::Native(
-                    (&*inner.state.0.get())
-                        .as_ref()
-                        .expect("State has already been consumed during reconciliation"),
-                )
-            },
-            Some(StateUpdaterBackend::Portable(handle)) => {
-                StateReadGuard::Portable(handle.borrow())
-            }
+        let slot = match self.slot {
+            Some(slot) => slot,
             None => {
                 let loc = Location::caller();
                 error!("Attempted to read state from an uninitialized StateUpdater");
                 self.beautiful_error(loc);
-                panic!("State is not initialized (see error above)")
+                panic!("State is not initialized (see error above)");
+            }
+        };
+        let slot = slot
+            .try_read_guard()
+            .unwrap_or_else(|error| panic_state_updater_resolution(error));
+        match &*slot {
+            UpdaterSlot::Native(inner) => {
+                let state = unsafe {
+                    (&*inner.state.0.get())
+                        .as_ref()
+                        .unwrap_or_else(|| panic_consumed_state())
+                        as *const S
+                };
+                StateReadGuard {
+                    kind: StateReadGuardKind::Native {
+                        state,
+                        _slot: slot,
+                    },
+                    _marker: PhantomData,
+                }
+            }
+            #[cfg(feature = "portable-guest")]
+            UpdaterSlot::Portable(handle) => {
+                let state = handle.borrow();
+                // The slot read guard owns the `PortableStateHandle` until the
+                // `RefCell` borrow is dropped, so extending this borrow to the
+                // guard's owned lifetime is sound.
+                let state = unsafe {
+                    std::mem::transmute::<Ref<'_, S>, Ref<'static, S>>(state)
+                };
+                StateReadGuard {
+                    kind: StateReadGuardKind::Portable {
+                        state,
+                        _slot: slot,
+                    },
+                    _marker: PhantomData,
+                }
             }
         }
+    }
+
+    /// Reads the current state without checking updater validity.
+    ///
+    /// The returned guard retains the state slot until it is dropped, just
+    /// like [`Self::read_state`]. This method is intended for hot paths that
+    /// already establish the updater's lifetime and type invariants.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that this updater is initialized, its owning
+    /// element or portable context is still live, its slot contains the
+    /// expected state, and the state has not been consumed or failed. The
+    /// call must remain on the UI thread. Portable callers must also ensure
+    /// that no conflicting `RefCell` borrow is active. Violating these
+    /// requirements is undefined behavior. Prefer [`Self::try_read_state`]
+    /// when the updater may outlive its state.
+    #[track_caller]
+    pub unsafe fn read_state_unchecked(&self) -> StateReadGuard<'_, S> {
+        // SAFETY: the caller guarantees that this updater is initialized.
+        let slot = unsafe { self.slot.unwrap_unchecked() };
+        // SAFETY: the caller guarantees a live, correctly typed slot and a
+        // live owner lease while the read guard is acquired.
+        let slot = unsafe { slot.read_guard_unchecked() };
+        match &*slot {
+            UpdaterSlot::Native(inner) => {
+                // SAFETY: the caller guarantees that the native state exists
+                // and has not been consumed or failed.
+                let state = unsafe {
+                    (&*inner.state.0.get()).as_ref().unwrap_unchecked() as *const S
+                };
+                StateReadGuard {
+                    kind: StateReadGuardKind::Native {
+                        state,
+                        _slot: slot,
+                    },
+                    _marker: PhantomData,
+                }
+            }
+            #[cfg(feature = "portable-guest")]
+            UpdaterSlot::Portable(handle) => {
+                let state = handle.borrow();
+                // The slot read guard owns the `PortableStateHandle` until the
+                // `RefCell` borrow is dropped, so extending this borrow to the
+                // guard's owned lifetime is sound.
+                let state = unsafe {
+                    std::mem::transmute::<Ref<'_, S>, Ref<'static, S>>(state)
+                };
+                StateReadGuard {
+                    kind: StateReadGuardKind::Portable {
+                        state,
+                        _slot: slot,
+                    },
+                    _marker: PhantomData,
+                }
+            }
+        }
+    }
+
+    /// Returns whether this updater still resolves to a usable live state.
+    ///
+    /// This is a quiet check: it returns `false` for an empty, stale,
+    /// consumed, failed, or wrong-type slot and never emits a diagnostic.
+    #[inline]
+    pub fn has_state(&self) -> bool {
+        let Some(slot) = self.slot else {
+            return false;
+        };
+        slot.try_resolve(|slot| match slot {
+            UpdaterSlot::Native(inner) => {
+                if inner.failure.is_failed() {
+                    return false;
+                }
+                // Safety: the native rendering pipeline is single-threaded.
+                unsafe { (&*inner.state.0.get()).is_some() }
+            }
+            #[cfg(feature = "portable-guest")]
+            UpdaterSlot::Portable(_) => true,
+        })
+        .unwrap_or(false)
+    }
+
+    /// Attempts to borrow the current state without panicking when this
+    /// updater is empty or no longer resolves to a live slot.
+    ///
+    /// The callback is not invoked for an empty, stale, consumed, failed, or
+    /// wrong-type slot. Use this form for callbacks that may outlive the
+    /// element which created the updater.
+    #[inline]
+    pub fn try_read<R>(&self, read: impl FnOnce(&S) -> R) -> Option<R> {
+        let slot = self.slot?;
+        slot.try_resolve(|slot| match slot {
+            UpdaterSlot::Native(inner) => {
+                if inner.failure.is_failed() {
+                    return None;
+                }
+                // Safety: the native rendering pipeline is single-threaded.
+                let state = unsafe { (&*inner.state.0.get()).as_ref()? };
+                Some(read(state))
+            }
+            #[cfg(feature = "portable-guest")]
+            UpdaterSlot::Portable(handle) => {
+                let state = handle.try_borrow()?;
+                Some(read(&state))
+            }
+        })
+        .ok()
+        .flatten()
     }
 
     /// Create an empty `StateUpdater` that is not yet initialized.
@@ -369,7 +530,10 @@ impl<S: 'static> StateUpdater<S> {
     /// It has the same functionality as `StateUpdater<S>::new`
     #[inline]
     pub fn empty() -> Self {
-        Self { inner: None }
+        Self {
+            slot: None,
+            _ui_thread_only: PhantomData,
+        }
     }
 
     /// Mutate the state using a value that is cloned once and moved into the
@@ -420,16 +584,16 @@ impl<S: 'static> StateUpdater<S> {
     #[track_caller]
     pub fn set_state(&self, f: impl FnOnce(&mut S) + 'static) {
         crate::frame_work_stats::record_state_update();
-        let inner = match self.inner.as_ref() {
-            Some(inner) => inner,
+        let slot = match self.slot {
+            Some(slot) => slot,
             None => {
                 let loc = Location::caller();
                 self.beautiful_error(loc);
                 panic!("State is not initialized (see error above)");
             }
         };
-        match inner {
-            StateUpdaterBackend::Native(inner) => {
+        let result = slot.try_resolve(|slot| match slot {
+            UpdaterSlot::Native(inner) => {
                 if inner.failure.is_failed() {
                     return;
                 }
@@ -442,7 +606,78 @@ impl<S: 'static> StateUpdater<S> {
                 }
             }
             #[cfg(feature = "portable-guest")]
-            StateUpdaterBackend::Portable(handle) => handle.queue(f),
+            UpdaterSlot::Portable(handle) => handle.queue(f),
+        });
+        if let Err(error) = result {
+            panic_state_updater_resolution(error);
+        }
+    }
+
+    /// Attempts to queue a state mutation without panicking when this updater
+    /// is empty or no longer resolves to a live slot.
+    ///
+    /// Returns `Some(())` only when the mutation was accepted. A rejected
+    /// mutation is dropped without invoking it, marking the state dirty, or
+    /// requesting a frame.
+    #[inline]
+    pub fn try_set_state(&self, mutation: impl FnOnce(&mut S) + 'static) -> Option<()> {
+        let Some(slot) = self.slot else {
+            return None;
+        };
+        slot.try_resolve(|slot| match slot {
+            UpdaterSlot::Native(inner) => {
+                if inner.failure.is_failed() {
+                    return None;
+                }
+                // Safety: the native rendering pipeline is single-threaded.
+                if unsafe { (&*inner.state.0.get()).as_ref() }.is_none() {
+                    return None;
+                }
+                inner.tx.push(Box::new(mutation));
+                if inner.dirty_source.mark() {
+                    #[cfg(not(aimer_portable_guest))]
+                    request_animation_frame();
+                }
+                Some(())
+            }
+            #[cfg(feature = "portable-guest")]
+            UpdaterSlot::Portable(handle) => {
+                handle.queue(mutation);
+                Some(())
+            }
+        })
+        .ok()
+        .flatten()
+    }
+
+    /// Queues a state mutation without performing updater validity checks.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that this updater is initialized, its owning
+    /// element or portable context is still live, the updater's state slot has
+    /// not been consumed or failed, and the call is made on the UI thread.
+    /// Violating those requirements is undefined behavior. Prefer
+    /// [`Self::try_set_state`] when the updater may outlive its state.
+    #[track_caller]
+    pub unsafe fn set_state_unchecked(&self, mutation: impl FnOnce(&mut S) + 'static) {
+        crate::frame_work_stats::record_state_update();
+        // SAFETY: the caller guarantees that this updater is initialized.
+        let slot = unsafe { self.slot.unwrap_unchecked() };
+        // SAFETY: the caller guarantees a live, correctly typed slot and a
+        // live owner lease for the duration of this lookup.
+        unsafe {
+            slot.resolve_unchecked(|slot| match slot {
+                UpdaterSlot::Native(inner) => {
+                    inner.tx.push(Box::new(mutation));
+                    if inner.dirty_source.mark() {
+                        #[cfg(not(aimer_portable_guest))]
+                        request_animation_frame();
+                    }
+                }
+                #[cfg(feature = "portable-guest")]
+                UpdaterSlot::Portable(handle) => handle.queue(mutation),
+            });
         }
     }
 
@@ -454,8 +689,8 @@ impl<S: 'static> StateUpdater<S> {
     /// `rebuild_if_dirty`.
     #[track_caller]
     pub fn read<R>(&self, f: impl FnOnce(&S) -> R) -> R {
-        let inner = match self.inner.as_ref() {
-            Some(inner) => inner,
+        let slot = match self.slot {
+            Some(slot) => slot,
             None => {
                 let loc = Location::caller();
                 #[cfg(not(target_os = "ios"))]
@@ -463,18 +698,62 @@ impl<S: 'static> StateUpdater<S> {
                 panic!("State is not initialized (see error above)");
             }
         };
-        match inner {
-            StateUpdaterBackend::Native(inner) => {
+        slot.try_resolve(|slot| match slot {
+            UpdaterSlot::Native(inner) => {
                 // Safety: single-threaded rendering pipeline — no concurrent mutation.
                 let state = unsafe {
                     (&*inner.state.0.get())
                         .as_ref()
-                        .expect("State has already been consumed during reconciliation")
+                        .unwrap_or_else(|| panic_consumed_state())
                 };
                 f(state)
             }
             #[cfg(feature = "portable-guest")]
-            StateUpdaterBackend::Portable(handle) => handle.read(f),
+            UpdaterSlot::Portable(handle) => handle.read(f),
+        })
+        .unwrap_or_else(|error| panic_state_updater_resolution(error))
+    }
+
+    /// Attempts to obtain the checked guard used by [`Self::read_state`].
+    ///
+    /// The returned guard keeps the resolved slot live for as long as its
+    /// borrowed state is used. It returns `None` for empty, stale, consumed,
+    /// failed, or wrong-type slots and never emits a stale-callback diagnostic.
+    #[inline]
+    pub fn try_read_state(&self) -> Option<StateReadGuard<'_, S>> {
+        let slot = self.slot?;
+        let slot = slot.try_read_guard().ok()?;
+        match &*slot {
+            UpdaterSlot::Native(inner) => {
+                if inner.failure.is_failed() {
+                    return None;
+                }
+                let state = unsafe { (&*inner.state.0.get()).as_ref()? as *const S };
+                Some(StateReadGuard {
+                    kind: StateReadGuardKind::Native {
+                        state,
+                        _slot: slot,
+                    },
+                    _marker: PhantomData,
+                })
+            }
+            #[cfg(feature = "portable-guest")]
+            UpdaterSlot::Portable(handle) => {
+                let state = handle.try_borrow()?;
+                // The slot read guard owns the portable handle until the
+                // RefCell borrow is dropped, so extending this borrow to the
+                // returned guard's owned lifetime is sound.
+                let state = unsafe {
+                    std::mem::transmute::<Ref<'_, S>, Ref<'static, S>>(state)
+                };
+                Some(StateReadGuard {
+                    kind: StateReadGuardKind::Portable {
+                        state,
+                        _slot: slot,
+                    },
+                    _marker: PhantomData,
+                })
+            }
         }
     }
 
@@ -576,6 +855,7 @@ struct KeyedStateEntry {
     state_revision: Weak<Cell<u64>>,
     state_any: Weak<dyn Any>,
     state_sender: Weak<dyn Any>,
+    state_owner: Weak<super::state_slots::SlotOwner>,
     adopt_config_fn: Weak<AdoptConfigCallBack>,
 }
 
@@ -588,6 +868,7 @@ struct LiveKeyedState {
     state_revision: Rc<Cell<u64>>,
     state_any: Rc<dyn Any>,
     state_sender: Rc<dyn Any>,
+    state_storage: StateStorage,
     adopt_config_fn: Rc<AdoptConfigCallBack>,
 }
 
@@ -675,6 +956,10 @@ pub struct StatefulElement {
     /// Copies widget configuration from another element's state (passed as
     /// `&dyn Any`) into this element's live state via
     /// `State::adopt_config_from`.
+    ///
+    /// This element-side lease is the only strong owner of the updater slot
+    /// during ordinary native operation; copied updaters do not keep it alive.
+    state_storage: RefCell<StateStorage>,
     adopt_config_fn: SyncAdoptConfigFn,
     /// Set after a recovered reconciliation failure so later queued updates do
     /// not touch a state cell that reconciliation has already consumed.
@@ -780,6 +1065,7 @@ impl StatefulElement {
                     bounds: Cell::new(None),
                     state_any: SyncStateAny(UnsafeCell::new(live.state_any)),
                     state_sender: SyncStateAny(UnsafeCell::new(live.state_sender)),
+                    state_storage: RefCell::new(live.state_storage),
                     adopt_config_fn: SyncAdoptConfigFn(UnsafeCell::new(live.adopt_config_fn)),
                     failed: live.failed,
                     failure: live.failure,
@@ -804,7 +1090,7 @@ impl StatefulElement {
         let failed = Rc::new(Cell::new(false));
 
         // Create the updater and pass it into init_state.
-        let init_updater = StateUpdater::with(
+        let (state_storage, init_updater) = StateUpdater::with(
             tx.clone(),
             state_cell.clone(),
             dirty_source.clone(),
@@ -819,7 +1105,7 @@ impl StatefulElement {
                     .expect("State was consumed before initialization")
             };
             recover_operation(debug_name, BuildPhase::InitState, || {
-                s.init_state(init_updater.clone())
+                s.init_state(init_updater)
             })?;
         }
 
@@ -909,7 +1195,7 @@ impl StatefulElement {
         // refresh a preserved live state's widget props without
         // `StatefulElement` being generic over `W`.
         let state_any: Rc<dyn Any> = state_cell.clone();
-        let state_sender: Rc<dyn Any> = tx.clone();
+        let state_sender: Rc<dyn Any> = Rc::new(init_updater);
         let state_for_config = state_cell.clone();
         let key_for_config = key.clone();
         let adopt_config_fn: Rc<AdoptConfigCallBack> = Rc::new(move |new_any: &dyn Any| {
@@ -932,12 +1218,7 @@ impl StatefulElement {
                 }
             }
         });
-        let updater = StateUpdater::with(
-            tx,
-            state_cell,
-            dirty_source.clone(),
-            failure.clone(),
-        );
+        let updater = init_updater;
 
         let element = StatefulElement {
             child: SyncChild(UnsafeCell::new(child)),
@@ -953,6 +1234,7 @@ impl StatefulElement {
             bounds: Cell::new(None),
             state_any: SyncStateAny(UnsafeCell::new(state_any)),
             state_sender: SyncStateAny(UnsafeCell::new(state_sender)),
+            state_storage: RefCell::new(state_storage),
             adopt_config_fn: SyncAdoptConfigFn(UnsafeCell::new(adopt_config_fn)),
             failed,
             failure,
@@ -1057,13 +1339,32 @@ impl StatefulElement {
         // Carry live state from nested StatefulElements in the old tree into the
         // freshly-built new tree before replacing. This preserves runtime state
         // (e.g. selected tab index, scroll position) across the rebuild.
-        {
-            let old_child = unsafe { &*self.child.0.get() };
-            carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
-            crate::components::element::reconcile_generated_tree(
-                old_child.as_ref(),
-                new_child.as_ref(),
-            );
+        let child_reconciliation = recover_operation(
+            self.debug_name.get(),
+            BuildPhase::ReconcileChildren,
+            || {
+                let old_child = unsafe { &*self.child.0.get() };
+                carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
+                crate::components::element::reconcile_generated_tree(
+                    old_child.as_ref(),
+                    new_child.as_ref(),
+                );
+            },
+        );
+        if let Err(diagnostic) = child_reconciliation {
+            let error = {
+                let dirty_source = self.dirty_source.borrow();
+                recover_failure(
+                    &self.failure,
+                    &self.failed,
+                    &dirty_source,
+                    diagnostic,
+                )
+            };
+            unsafe {
+                *self.child.0.get() = error;
+            }
+            return;
         }
 
         // Install the newly-built child, replacing the old subtree.
@@ -1383,16 +1684,9 @@ fn carry_unkeyed_child_state_in_context(old: &dyn Element, new: &dyn Element, ct
 
 impl StatefulElement {
     fn state_updater<S: 'static>(&self) -> Option<StateUpdater<S>> {
-        let state_any = unsafe { (&*self.state_any.0.get()).clone() };
-        let state = state_any.downcast::<SyncState<S>>().ok()?;
         let sender_any = unsafe { (&*self.state_sender.0.get()).clone() };
-        let sender = sender_any.downcast::<StateMutationQueue<S>>().ok()?;
-        Some(StateUpdater::with(
-            sender,
-            state,
-            self.dirty_source.borrow().clone(),
-            self.failure.clone(),
-        ))
+        let sender = sender_any.downcast::<StateUpdater<S>>().ok()?;
+        Some(*sender)
     }
 
     /// Returns true if this element is marked dirty.
@@ -1505,6 +1799,12 @@ impl StatefulElement {
             }
         }
 
+        // Keep the live slot owner before dropping this element's candidate
+        // storage. The candidate updater is only a temporary configuration
+        // value; the preserved state and updater must continue to resolve the
+        // old live slot after adoption.
+        let live_storage = old.state_storage.borrow().clone_for_reconciliation();
+
         // Repoint this element's config-refresh machinery at the OLD state cell,
         // matching the `rebuild_fn` we just adopted. `rebuild_fn` now reads
         // `old`'s cell, but `self` was constructed with `state_any` /
@@ -1522,6 +1822,7 @@ impl StatefulElement {
             *self.state_sender.0.get() = (*old.state_sender.0.get()).clone();
             *self.adopt_config_fn.0.get() = (*old.adopt_config_fn.0.get()).clone();
         }
+        *self.state_storage.borrow_mut() = live_storage;
 
         // Materialize the adopted state *immediately*, during reconciliation —
         // do not defer to the next `draw`.
@@ -1544,13 +1845,39 @@ impl StatefulElement {
             rf(ctx)
         };
         // Carry live state from nested StatefulElements into the new tree.
-        {
-            let old_child = unsafe { &*self.child.0.get() };
-            carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
-            crate::components::element::reconcile_generated_tree(
-                old_child.as_ref(),
-                new_child.as_ref(),
-            );
+        let child_reconciliation = recover_operation(
+            self.debug_name.get(),
+            BuildPhase::ReconcileChildren,
+            || {
+                let old_child = unsafe { &*self.child.0.get() };
+                carry_child_state(old_child.as_ref(), new_child.as_ref(), ctx);
+                crate::components::element::reconcile_generated_tree(
+                    old_child.as_ref(),
+                    new_child.as_ref(),
+                );
+            },
+        );
+        if let Err(diagnostic) = child_reconciliation {
+            let diagnostic = match self.key.as_ref().or(old.key.as_ref()) {
+                Some(key) => diagnostic.with_site(key.diagnostic_site()),
+                None => diagnostic,
+            };
+            // The old child and old state owner remain installed. The candidate
+            // subtree is discarded below, while the diagnostic makes the
+            // failed handoff visible and prevents either element from being
+            // treated as a healthy future source of state.
+            self.failure.record(&diagnostic);
+            old.failure.record(&diagnostic);
+            self.failed.set(true);
+            old.failed.set(true);
+            self.dirty_source.borrow().clear();
+            old.dirty_source.borrow().clear();
+            unsafe {
+                *self.child.0.get() = diagnostic.into_error_element();
+            }
+            let cur_gen = self.rebuild_generation.get();
+            self.last_rebuilt_generation.set(cur_gen);
+            return;
         }
         // Install the newly-built child, replacing the old subtree.
         // Safety: single-threaded reconciliation; old child is not used past this
@@ -1590,6 +1917,7 @@ fn lookup_keyed_state(key: &crate::key::Key, debug_name: &'static str) -> Option
             state_revision: entry.state_revision.upgrade()?,
             state_any: entry.state_any.upgrade()?,
             state_sender: entry.state_sender.upgrade()?,
+            state_storage: StateStorage::from_owner(entry.state_owner.upgrade()?),
             adopt_config_fn: entry.adopt_config_fn.upgrade()?,
         })
     })
@@ -1602,6 +1930,7 @@ fn register_keyed_state(element: &StatefulElement) {
     let rebuild_fn = unsafe { (&*element.rebuild_fn.0.get()).clone() };
     let state_any = unsafe { (&*element.state_any.0.get()).clone() };
     let state_sender = unsafe { (&*element.state_sender.0.get()).clone() };
+    let state_owner = element.state_storage.borrow().downgrade();
     let adopt_config_fn = unsafe { (&*element.adopt_config_fn.0.get()).clone() };
     let failed = element.failed.clone();
     let failure = element.failure.clone();
@@ -1630,6 +1959,7 @@ fn register_keyed_state(element: &StatefulElement) {
                 state_revision: Rc::downgrade(&element.state_revision.borrow()),
                 state_any: Rc::downgrade(&state_any),
                 state_sender: Rc::downgrade(&state_sender),
+                state_owner,
                 adopt_config_fn: Rc::downgrade(&adopt_config_fn),
             },
         );
@@ -2218,6 +2548,7 @@ mod tests {
         Build,
         ToElement,
         AdoptConfig,
+        ChildRuntimeAdoption,
     }
 
     struct LifecycleWidget {
@@ -2234,6 +2565,11 @@ mod tests {
 
     struct LifecycleChild {
         panic_in_to_element: bool,
+        panic_in_runtime_adoption: bool,
+    }
+
+    struct LifecycleChildElement {
+        panic_in_runtime_adoption: bool,
     }
 
     impl Widget for LifecycleChild {
@@ -2241,7 +2577,31 @@ mod tests {
             if self.panic_in_to_element {
                 panic!("child conversion failed");
             }
-            TestLeaf.boxed()
+            LifecycleChildElement {
+                panic_in_runtime_adoption: self.panic_in_runtime_adoption,
+            }
+            .boxed()
+        }
+    }
+
+    impl VisitorElement for LifecycleChildElement {
+        fn debug_name(&self) -> &'static str {
+            "LifecycleChildElement"
+        }
+    }
+
+    impl Drawable for LifecycleChildElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl LayoutElement for LifecycleChildElement {}
+    impl EventElement for LifecycleChildElement {}
+
+    impl Rebuildable for LifecycleChildElement {
+        fn adopt_runtime_state_from(&self, _old: &dyn Element) {
+            if self.panic_in_runtime_adoption {
+                panic!("child runtime-state adoption failed");
+            }
         }
     }
 
@@ -2284,6 +2644,7 @@ mod tests {
             }
             LifecycleChild {
                 panic_in_to_element: self.phase == PanicPhase::ToElement,
+                panic_in_runtime_adoption: self.phase == PanicPhase::ChildRuntimeAdoption,
             }
         }
     }
@@ -2331,6 +2692,55 @@ mod tests {
     #[test]
     fn initial_child_conversion_panic_becomes_error_element() {
         assert_initial_phase_recovers(PanicPhase::ToElement);
+    }
+
+    #[test]
+    fn child_reconciliation_failure_keeps_the_old_owner_and_rejects_the_candidate() {
+        let context = dummy_build_context();
+        let (old, old_updater) = StatefulElement::new_with_name(
+            lifecycle_widget(PanicPhase::None),
+            &context,
+            "LifecycleWidget",
+            None,
+        );
+        let (new, candidate_updater) = StatefulElement::new_with_name(
+            lifecycle_widget(PanicPhase::ChildRuntimeAdoption),
+            &context,
+            "LifecycleWidget",
+            None,
+        );
+
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            carry_stateful(&old, &new, &context);
+        }));
+
+        assert!(result.is_ok(), "child reconciliation failure must be recovered");
+        assert!(has_error_child(&new));
+        assert_eq!(candidate_updater.try_read(|_| ()), None);
+        drop(new);
+
+        assert!(old_updater.read(|state| state.phase == PanicPhase::ChildRuntimeAdoption));
+        assert_eq!(old_updater.try_read(|_| ()), None);
+    }
+
+    #[test]
+    fn rebuild_child_reconciliation_failure_becomes_a_stable_error_element() {
+        let context = dummy_build_context();
+        let widget = lifecycle_widget(PanicPhase::None);
+        let updater_slot = widget.updater.clone();
+        let element = StatefulElement::from_widget(widget, &context, "LifecycleWidget", None);
+        let updater = updater_slot.borrow().as_ref().unwrap().clone();
+        updater.set_state(|state| state.phase = PanicPhase::ChildRuntimeAdoption);
+
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            element.rebuild_if_dirty(&context);
+        }));
+
+        assert!(result.is_ok(), "child reconciliation failure must be recovered");
+        assert!(has_error_child(element.as_ref()));
+        assert_eq!(updater.try_read(|_| ()), None);
+        element.rebuild_if_dirty(&context);
+        assert!(has_error_child(element.as_ref()));
     }
 
     #[test]
@@ -2496,6 +2906,32 @@ mod tests {
         carry_stateful(old.as_ref(), new.as_ref(), &context);
 
         assert!(has_error_child(new.as_ref()));
+    }
+
+    #[test]
+    fn failed_unkeyed_adoption_keeps_the_old_owner_and_rejects_the_candidate() {
+        let context = dummy_build_context();
+        let (old, old_updater) = StatefulElement::new_with_name(
+            lifecycle_widget(PanicPhase::None),
+            &context,
+            "LifecycleWidget",
+            None,
+        );
+        let (new, candidate_updater) = StatefulElement::new_with_name(
+            lifecycle_widget(PanicPhase::AdoptConfig),
+            &context,
+            "LifecycleWidget",
+            None,
+        );
+
+        carry_stateful(&old, &new, &context);
+
+        assert!(has_error_child(&new));
+        assert_eq!(candidate_updater.try_read(|_| ()), None);
+        drop(new);
+
+        assert!(old_updater.read(|state| state.phase) == PanicPhase::None);
+        assert_eq!(old_updater.try_read(|_| ()), None);
     }
 
     #[test]
@@ -2804,6 +3240,157 @@ mod tests {
             updater.read(|_s| {});
         }));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn try_operations_on_an_empty_updater_are_quiet_noops() {
+        let updater: StateUpdater<i32> = StateUpdater::empty();
+        let callback_called = Rc::new(Cell::new(false));
+        let callback_called_by_read = callback_called.clone();
+        assert_eq!(
+            updater.try_read(move |_| {
+                callback_called_by_read.set(true);
+                1
+            }),
+            None,
+        );
+        let callback_called_by_mutation = callback_called.clone();
+        assert_eq!(
+            updater.try_set_state(move |_| callback_called_by_mutation.set(true)),
+            None,
+        );
+        assert!(updater.try_read_state().is_none());
+        assert!(!callback_called.get());
+    }
+
+    struct StaleUpdaterWidget;
+
+    struct StaleUpdaterState {
+        value: String,
+    }
+
+    impl StatefulWidget for StaleUpdaterWidget {
+        type State = StaleUpdaterState;
+
+        fn create_state(self) -> Self::State {
+            Self::State {
+                value: String::from("live"),
+            }
+        }
+    }
+
+    impl State<StaleUpdaterWidget> for StaleUpdaterState {
+        fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            LeafProbe
+        }
+    }
+
+    #[test]
+    fn try_operations_reject_a_copied_updater_after_unmount() {
+        let context = dummy_build_context();
+        let (element, updater) = StatefulElement::new_with_name(
+            StaleUpdaterWidget,
+            &context,
+            "StaleUpdaterWidget",
+            None,
+        );
+        let copied = updater;
+
+        assert_eq!(copied.try_read(|state| state.value.clone()), Some(String::from("live")));
+        assert_eq!(
+            copied.try_set_state(|state| state.value.push_str("-updated")),
+            Some(()),
+        );
+        assert_eq!(
+            copied.try_set_state(|state| state.value.push_str("-again")),
+            Some(()),
+        );
+        element.rebuild_if_dirty(&context);
+        assert_eq!(updater.try_read(|state| state.value.clone()), Some(String::from("live-updated-again")));
+
+        let guard = copied.try_read_state().expect("live state should be readable");
+
+        drop(element);
+
+        assert_eq!(guard.value, "live-updated-again");
+        drop(guard);
+
+        let callback_called = Rc::new(Cell::new(false));
+        let callback_called_by_mutation = callback_called.clone();
+        assert_eq!(
+            copied.try_set_state(move |_| callback_called_by_mutation.set(true)),
+            None,
+        );
+        assert!(!callback_called.get());
+        assert_eq!(copied.try_read(|_| String::from("unexpected")), None);
+        assert!(copied.try_read_state().is_none());
+    }
+
+    #[test]
+    fn delayed_callback_rejects_all_state_operations_after_native_unmount() {
+        let context = dummy_build_context();
+        let (element, updater) = StatefulElement::new_with_name(
+            StaleUpdaterWidget,
+            &context,
+            "StaleUpdaterWidget",
+            None,
+        );
+        let read_called = Rc::new(Cell::new(false));
+        let mutation_called = Rc::new(Cell::new(false));
+        let delayed: Rc<RefCell<Option<Box<dyn FnOnce()>>>> = Rc::new(RefCell::new(None));
+        let delayed_callback = delayed.clone();
+        let read_called_by_callback = read_called.clone();
+        let mutation_called_by_callback = mutation_called.clone();
+        delayed_callback.borrow_mut().replace(Box::new(move || {
+            assert!(!updater.has_state());
+            assert_eq!(
+                updater.try_read(move |_| {
+                    read_called_by_callback.set(true);
+                }),
+                None,
+            );
+            assert_eq!(
+                updater.try_set_state(move |_| mutation_called_by_callback.set(true)),
+                None,
+            );
+            assert!(updater.try_read_state().is_none());
+        }));
+
+        drop(element);
+        delayed
+            .borrow_mut()
+            .take()
+            .expect("delayed callback should be retained")();
+
+        assert!(!read_called.get());
+        assert!(!mutation_called.get());
+    }
+
+    #[test]
+    fn has_state_and_unchecked_updates_require_a_live_updater() {
+        let context = dummy_build_context();
+        let (element, updater) = StatefulElement::new_with_name(
+            StaleUpdaterWidget,
+            &context,
+            "StaleUpdaterWidget",
+            None,
+        );
+        assert!(updater.has_state());
+
+        unsafe {
+            updater.set_state_unchecked(|state| state.value.push_str("-unchecked"));
+        }
+        element.rebuild_if_dirty(&context);
+        assert_eq!(updater.try_read(|state| state.value.clone()), Some(String::from("live-unchecked")));
+        let unchecked_guard = unsafe { updater.read_state_unchecked() };
+        assert_eq!(unchecked_guard.value, "live-unchecked");
+
+        drop(element);
+        assert!(!updater.has_state());
+        assert_eq!(unchecked_guard.value, "live-unchecked");
+        drop(unchecked_guard);
     }
 
     struct OwnedConfigWidget;

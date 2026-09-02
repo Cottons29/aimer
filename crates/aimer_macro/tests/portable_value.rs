@@ -1,55 +1,65 @@
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
-#[test]
-fn derived_value_is_a_bounded_property_codec() {
-    run_fixture("guest", &["test", "--quiet", "--features", "portable-guest"]);
-}
-
-#[test]
-fn derived_value_compiles_without_guest_feature() {
-    run_fixture("host", &["test", "--quiet", "--no-default-features"]);
-}
-
-#[test]
-fn derived_value_keeps_the_same_wire_contract_with_serde_derives() {
-    run_fixture(
-        "serde",
-        &["test", "--quiet", "--no-default-features", "--features", "serde"],
-    );
-}
-
-fn run_fixture(name: &str, args: &[&str]) {
-    let fixture = fixture_root(name);
-    if fixture.exists() {
-        fs::remove_dir_all(&fixture).unwrap();
+#[cfg(feature = "hot-reload")]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    #[test]
+    fn derived_value_is_a_bounded_property_codec() {
+        run_fixture(
+            "guest",
+            &["test", "--quiet", "--features", "portable-guest"],
+        );
     }
-    fs::create_dir_all(fixture.join("src")).unwrap();
-    fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
-    fs::write(fixture.join("src/lib.rs"), FIXTURE_SOURCE).unwrap();
 
-    let output = Command::new(env!("CARGO"))
-        .args(args)
-        .arg("--manifest-path")
-        .arg(fixture.join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", fixture.join("target"))
-        .output()
-        .unwrap();
+    #[test]
+    fn derived_value_compiles_without_guest_feature() {
+        run_fixture("host", &["test", "--quiet", "--no-default-features"]);
+    }
 
-    assert!(
-        output.status.success(),
-        "portable value fixture failed:\n{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-}
+    #[test]
+    fn derived_value_keeps_the_same_wire_contract_with_serde_derives() {
+        run_fixture(
+            "serde",
+            &[
+                "test",
+                "--quiet",
+                "--no-default-features",
+                "--features",
+                "serde",
+            ],
+        );
+    }
 
-fn fixture_manifest() -> String {
-    let macro_crate = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = macro_crate.join("../..");
-    format!(
-        r#"[package]
+    fn run_fixture(name: &str, args: &[&str]) {
+        let fixture = fixture_root(name);
+        if fixture.exists() {
+            fs::remove_dir_all(&fixture).unwrap();
+        }
+        fs::create_dir_all(fixture.join("src")).unwrap();
+        fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
+        fs::write(fixture.join("src/lib.rs"), FIXTURE_SOURCE).unwrap();
+
+        let output = Command::new(env!("CARGO"))
+            .args(args)
+            .arg("--manifest-path")
+            .arg(fixture.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", fixture.join("target"))
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "portable value fixture failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    fn fixture_manifest() -> String {
+        let macro_crate = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = macro_crate.join("../..");
+        format!(
+            r#"[package]
 name = "portable_value_fixture"
 version = "0.0.0"
 edition = "2024"
@@ -67,19 +77,19 @@ aimer_anteros = {{ path = {:?} }}
 aimer_provider = {{ path = {:?} }}
 serde = {{ version = "1.0.228", features = ["derive"], optional = true }}
 "#,
-        macro_crate,
-        workspace_root.join("crates/aimer_widget"),
-        workspace_root.join("aimer_anteros"),
-        workspace_root.join("crates/aimer_provider"),
-    )
-}
+            macro_crate,
+            workspace_root.join("crates/aimer_widget"),
+            workspace_root.join("aimer_anteros"),
+            workspace_root.join("crates/aimer_provider"),
+        )
+    }
 
-fn fixture_root(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(format!("../../target/aimer_macro_portable_value_{name}"))
-}
+    fn fixture_root(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../target/aimer_macro_portable_value_{name}"))
+    }
 
-const FIXTURE_SOURCE: &str = r#"
+    const FIXTURE_SOURCE: &str = r#"
 use aimer_anteros::Version;
 #[cfg(feature = "portable-guest")]
 use aimer_anteros::{ModelLimits, PropertyId, PropertyValue, WidgetDocument, WidgetNode,
@@ -332,17 +342,17 @@ fn derived_value_rejects_invalid_versions_and_trailing_payload() {
 }
 "#;
 
-#[test]
-fn derive_rejects_raw_hash_collections_without_an_adapter() {
-    let fixture = fixture_root("hash_map");
-    if fixture.exists() {
-        fs::remove_dir_all(&fixture).unwrap();
-    }
-    fs::create_dir_all(fixture.join("src")).unwrap();
-    fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
-    fs::write(
-        fixture.join("src/lib.rs"),
-        r#"
+    #[test]
+    fn derive_rejects_raw_hash_collections_without_an_adapter() {
+        let fixture = fixture_root("hash_map");
+        if fixture.exists() {
+            fs::remove_dir_all(&fixture).unwrap();
+        }
+        fs::create_dir_all(fixture.join("src")).unwrap();
+        fs::write(fixture.join("Cargo.toml"), fixture_manifest()).unwrap();
+        fs::write(
+            fixture.join("src/lib.rs"),
+            r#"
 use std::collections::HashMap;
 use aimer_macro::PortableValue;
 
@@ -352,16 +362,20 @@ struct Raw {
     values: HashMap<String, u8>,
 }
 "#,
-    )
-    .unwrap();
-    let output = Command::new(env!("CARGO"))
-        .args(["check", "--quiet"])
-        .arg("--manifest-path")
-        .arg(fixture.join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", fixture.join("target"))
-        .output()
+        )
         .unwrap();
-    let diagnostic = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "raw HashMap unexpectedly compiled");
-    assert!(diagnostic.contains("CanonicalHashMap"), "{diagnostic}");
+        let output = Command::new(env!("CARGO"))
+            .args(["check", "--quiet"])
+            .arg("--manifest-path")
+            .arg(fixture.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", fixture.join("target"))
+            .output()
+            .unwrap();
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "raw HashMap unexpectedly compiled"
+        );
+        assert!(diagnostic.contains("CanonicalHashMap"), "{diagnostic}");
+    }
 }

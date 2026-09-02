@@ -314,7 +314,7 @@ mod tests {
 
     impl State<BuildRecordingCounterWidget> for BuildRecordingCounterState {
         fn init_state(&mut self, updater: StateUpdater<Self>) {
-            self.updater = updater.clone();
+            self.updater = updater;
             *self.published_updater.borrow_mut() = Some(updater);
         }
 
@@ -417,7 +417,7 @@ mod tests {
         fn build(&self, _ctx: &BuildContext) -> impl Widget {
             self.observed_label.set(self.config_label);
             self.observed_runtime.set(self.runtime);
-            *self.live_updater.borrow_mut() = Some(self.updater.clone());
+            *self.live_updater.borrow_mut() = Some(self.updater);
             EmptyWidget
         }
     }
@@ -428,7 +428,7 @@ mod tests {
         live_updater
             .borrow()
             .as_ref()
-            .cloned()
+            .copied()
             .expect("live updater should be published from build()")
     }
 
@@ -608,7 +608,7 @@ mod tests {
             self.updater = updater;
         }
         fn build(&self, ctx: &BuildContext) -> impl Widget {
-            *self.live_updater.borrow_mut() = Some(self.updater.clone());
+            *self.live_updater.borrow_mut() = Some(self.updater);
 
             // container -> row -> [ text-leaf(counter), nested stateful button ]
             let leaf: AnyElement = RecordingLeaf {
@@ -696,6 +696,39 @@ mod tests {
             7,
             "a stable key must preserve state across wrapper changes"
         );
+    }
+
+    #[test]
+    fn unkeyed_adoption_discards_the_candidate_updater_slot() {
+        let ctx = dummy_build_context();
+        let observer = Rc::new(Cell::new(0usize));
+
+        let (old_stateful, old_updater) = StatefulElement::new_with_name(
+            CounterWidget {
+                observer: observer.clone(),
+            },
+            &ctx,
+            "Counter",
+            None,
+        );
+        old_updater.set_state(|state| state.counter = 7);
+        old_stateful.rebuild_if_dirty(&ctx);
+
+        let (replacement, candidate_updater) = StatefulElement::new_with_name(
+            CounterWidget {
+                observer: observer.clone(),
+            },
+            &ctx,
+            "Counter",
+            None,
+        );
+        assert_eq!(candidate_updater.try_read(|state| state.counter), Some(1));
+
+        carry_child_state(&old_stateful, &replacement, &ctx);
+
+        assert_eq!(observer.get(), 7);
+        assert_eq!(old_updater.try_read(|state| state.counter), Some(7));
+        assert_eq!(candidate_updater.try_read(|state| state.counter), None);
     }
 
     #[test]
@@ -1371,7 +1404,7 @@ mod tests {
 
             fn build(&self, _ctx: &BuildContext) -> impl Widget {
                 self.observer.set(self.counter);
-                *self.live_updater.borrow_mut() = Some(self.updater.clone());
+                *self.live_updater.borrow_mut() = Some(self.updater);
                 EmptyWidget
             }
         }
@@ -1721,7 +1754,7 @@ mod tests {
             live_updater
                 .borrow()
                 .as_ref()
-                .cloned()
+                .copied()
                 .expect("current live updater should be published from build()")
         }
 

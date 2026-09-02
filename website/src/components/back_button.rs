@@ -78,11 +78,11 @@ impl State<BlogBackButton> for BlogBackButtonState {
 
         MouseRegion::new()
             .on_hover_enter({
-                let updater = self.updater.clone();
+                let updater = self.updater;
                 move || updater.set_state(|state| state.is_hover = true)
             })
             .on_hover_exit({
-                let updater = self.updater.clone();
+                let updater = self.updater;
                 move || updater.set_state(|state| state.is_hover = false)
             })
             .current_state(self.current_state.clone())

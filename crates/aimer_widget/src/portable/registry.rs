@@ -154,6 +154,12 @@ impl StateRegistry {
         self.entries.get(&slot_id).map(|entry| entry.revision)
     }
 
+    #[inline]
+    #[cfg(feature = "portable-guest")]
+    pub(crate) fn remove(&mut self, slot_id: StableSlotId) -> bool {
+        self.entries.remove(&slot_id).is_some()
+    }
+
     /// Encodes all entries in stable slot-ID order.
     pub fn export(&self) -> Result<Vec<u8>, StateRegistryError> {
         let mut output = Vec::new();

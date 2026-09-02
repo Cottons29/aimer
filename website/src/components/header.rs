@@ -50,7 +50,7 @@ impl StatelessWidget for HeaderSection {
             Container::new().width(36).height(36).box_child(
                 Button::new()
                     .on_press({
-                        let updater = self.theme_updater.clone();
+                        let updater = self.theme_updater;
                         move || updater.set_state(AppShellState::toggle_theme)
                     })
                     .decoration(

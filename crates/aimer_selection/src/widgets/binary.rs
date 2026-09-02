@@ -110,23 +110,23 @@ impl State<Checkbox> for CheckboxState {
             self.error.as_deref(),
             content,
         );
-        let updater = self.updater.clone();
+        let updater = self.updater;
         wrap_interactive(
             self.disabled,
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move || updater.set_state(|state| state.propose_activation())
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |pressed| updater.set_state(move |state| state.pressed = pressed)
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |hovered| updater.set_state(move |state| state.hovered = hovered)
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |key| {
                     if is_activation_key(key) {
                         updater.set_state(|state| state.propose_activation());
@@ -228,23 +228,23 @@ impl State<Switch> for SwitchState {
                 self.disabled,
             ),
         );
-        let updater = self.updater.clone();
+        let updater = self.updater;
         wrap_interactive(
             self.disabled,
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move || updater.set_state(|state| state.propose_activation())
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |pressed| updater.set_state(move |state| state.pressed = pressed)
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |hovered| updater.set_state(move |state| state.hovered = hovered)
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |key| {
                     if is_activation_key(key) {
                         updater.set_state(|state| state.propose_activation());
@@ -349,23 +349,23 @@ impl<T: Clone + 'static> State<Radio<T>> for RadioState<T> {
                 self.disabled,
             ),
         );
-        let updater = self.updater.clone();
+        let updater = self.updater;
         wrap_interactive(
             self.disabled,
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move || updater.set_state(|state| state.propose_activation())
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |pressed| updater.set_state(move |state| state.pressed = pressed)
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |hovered| updater.set_state(move |state| state.hovered = hovered)
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |key| {
                     if is_activation_key(key) {
                         updater.set_state(|state| state.propose_activation());

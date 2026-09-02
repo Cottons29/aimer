@@ -4,6 +4,7 @@ use std::sync::Arc;
 use aimer_utils::debug;
 
 use crate::custom_pipeline::{CustomPipeline, CustomPipelineSlot, RenderContext};
+use crate::damage_region::{DamageRect, DamageTracker};
 use crate::draw_cmd::{
     DrawCommand, DrawList, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION,
     RetainedLayerContent,
@@ -340,12 +341,12 @@ struct MultisampleTarget {
     sample_count: u32,
 }
 
-struct MaterialFrameTarget {
+struct FrameTarget {
     target: PersistentTarget,
     composite_bind_group: wgpu::BindGroup,
 }
 
-impl MaterialFrameTarget {
+impl FrameTarget {
     fn new(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
@@ -376,6 +377,12 @@ impl MaterialFrameTarget {
         composite_pipeline: &FrameCompositePipeline,
     ) -> TargetEnsureResult {
         let result = self.target.ensure(device, format, key);
+        if result.requires_full_repaint() {
+            // The current renderer still uses the full-clear path. Keep the
+            // allocation, but make the target's validity explicit until a
+            // damage packet is available to prove a partial repaint safe.
+            self.target.invalidate();
+        }
         if matches!(
             result,
             TargetEnsureResult::Created | TargetEnsureResult::Recreated
@@ -406,6 +413,103 @@ impl MaterialFrameTarget {
     #[inline]
     fn mark_valid(&mut self) {
         self.target.mark_valid();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RepaintMode {
+    /// The persistent scene target has no reusable pixels, or the frame cannot
+    /// establish a bounded repaint safely.
+    Full,
+    /// Repaint one normalized region while preserving every other target
+    /// pixel. Disjoint or otherwise uncertain damage is promoted to `Full` by
+    /// [`choose_repaint_mode`].
+    Partial(DamageRect),
+    /// The frame contains an explicit, empty damage record and the target can
+    /// be presented unchanged.
+    Skip,
+}
+
+/// A tiny replace-blend pipeline used to clear a scissored damage region.
+///
+/// Render-pass load clears operate on the complete attachment and therefore
+/// cannot be used for partial repaint. This pipeline writes transparent pixels
+/// with blending disabled; the scissor rectangle limits the replacement to the
+/// stale region before the normal premultiplied-alpha pipelines repaint it.
+struct ClearPipeline {
+    pipeline: wgpu::RenderPipeline,
+}
+
+impl ClearPipeline {
+    fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        pipeline_cache: Option<&wgpu::PipelineCache>,
+        antialiasing: crate::AntiAlias,
+    ) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("damage clear shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                r#"
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    return vec4<f32>(positions[index], 0.0, 1.0);
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+}
+"#
+                .into(),
+            ),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("damage clear pipeline layout"),
+            bind_group_layouts: &[],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("damage clear pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: crate::pipeline::multisample_state(antialiasing),
+            multiview_mask: None,
+            cache: pipeline_cache,
+        });
+        Self { pipeline }
+    }
+
+    #[inline]
+    fn clear_region(&self, pass: &mut wgpu::RenderPass<'_>, region: DamageRect) {
+        pass.set_scissor_rect(region.x(), region.y(), region.width(), region.height());
+        pass.set_pipeline(&self.pipeline);
+        pass.draw(0..3, 0..1);
     }
 }
 
@@ -506,7 +610,8 @@ pub struct Renderer {
     deferred_outlines: Vec<RectInstance>,
     textures_to_remove: Vec<u32>,
     multisample_target: Option<MultisampleTarget>,
-    material_frame_target: Option<MaterialFrameTarget>,
+    frame_target: Option<FrameTarget>,
+    damage_clear_pipeline: ClearPipeline,
     frame_composite_pipeline: FrameCompositePipeline,
     antialiasing: crate::AntiAlias,
     retained_layers: HashMap<u64, RetainedLayer>,
@@ -534,6 +639,8 @@ impl Renderer {
         let material_pipeline =
             MaterialPipeline::new(device, format, cache.as_ref(), antialiasing);
         let frame_composite_pipeline = FrameCompositePipeline::new(device, format, cache.as_ref());
+        let damage_clear_pipeline =
+            ClearPipeline::new(device, format, cache.as_ref(), antialiasing);
 
         let renderer = Self {
             rect_pipeline: RectPipeline::new(device, format, cache.as_ref(), antialiasing),
@@ -552,7 +659,8 @@ impl Renderer {
             deferred_outlines: Vec::new(),
             textures_to_remove: Vec::new(),
             multisample_target: None,
-            material_frame_target: None,
+            frame_target: None,
+            damage_clear_pipeline,
             frame_composite_pipeline,
             antialiasing,
             retained_layers: HashMap::new(),
@@ -698,9 +806,11 @@ impl Renderer {
     /// custom pipelines that implement backdrop capture.
     ///
     /// `source_texture` must be the texture represented by `view` and must
-    /// have been created with `COPY_SRC`. Callers that cannot provide one can
-    /// use [`Self::render`], which creates and reuses an internal shader-backed
-    /// scene target whenever the draw list contains ordered material commands.
+    /// have been created with `COPY_SRC`. It remains part of this compatibility
+    /// entry point, but the renderer now paints into its own persistent scene
+    /// target so damage can safely be loaded across swap-chain images; backdrop
+    /// reads are taken from that target and the finished scene is composited to
+    /// `view`.
     #[allow(clippy::too_many_arguments)]
     pub fn render_with_source_texture(
         &mut self,
@@ -735,27 +845,12 @@ impl Renderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
-        source_texture: Option<&wgpu::Texture>,
+        _source_texture: Option<&wgpu::Texture>,
         width: u32,
         height: u32,
         is_srgb: bool,
         draw_list: &DrawList,
     ) {
-        if source_texture.is_some() || !draw_list_uses_material(draw_list) {
-            self.render_impl(
-                device,
-                queue,
-                view,
-                source_texture,
-                None,
-                width,
-                height,
-                is_srgb,
-                draw_list,
-            );
-            return;
-        }
-
         let target_key = PersistentTargetKey::new(
             width,
             height,
@@ -765,20 +860,30 @@ impl Renderer {
             0,
             TargetValidity::Valid,
         );
-        let mut target = self.material_frame_target.take().unwrap_or_else(|| {
-            MaterialFrameTarget::new(
+        let mut target = self.frame_target.take().unwrap_or_else(|| {
+            FrameTarget::new(
                 device,
                 self.surface_format,
                 target_key,
                 &self.frame_composite_pipeline,
             )
         });
-        let _ = target.ensure(
+        let ensure = target.ensure(
             device,
             self.surface_format,
             target_key,
             &self.frame_composite_pipeline,
         );
+        let damage = draw_list.damage_tracker(width, height, 1.0);
+        let repaint = if self.antialiasing.uses_multisampling() {
+            // The current multisample target is shared with retained-layer
+            // refreshes, so its sample contents are not yet a separately
+            // tracked persistent scene. Keep this capability on the proven
+            // full path until that target gets its own validity key.
+            RepaintMode::Full
+        } else {
+            choose_repaint_mode(ensure, draw_list, &damage)
+        };
         self.render_impl(
             device,
             queue,
@@ -789,9 +894,10 @@ impl Renderer {
             height,
             is_srgb,
             draw_list,
+            repaint,
         );
         target.mark_valid();
-        self.material_frame_target = Some(target);
+        self.frame_target = Some(target);
     }
 
     fn prepare_retained_layers(
@@ -909,6 +1015,7 @@ impl Renderer {
             layer_height,
             is_srgb,
             &layer_draw_list,
+            RepaintMode::Full,
         );
         true
     }
@@ -952,6 +1059,7 @@ impl Renderer {
         height: u32,
         is_srgb: bool,
         draw_list: &DrawList,
+        repaint: RepaintMode,
     ) {
         self.transform_stack.clear();
         self.clip_stack.clear();
@@ -1536,7 +1644,11 @@ impl Renderer {
                     sample_count,
                 );
             }
-            let store = if backdrop_capture_needed {
+            // The multisample attachment is itself persistent now. Keeping its
+            // samples after every pass is required for a later partial repaint
+            // to load the unchanged pixels before resolving back into the
+            // single-sample scene target.
+            let store = if backdrop_capture_needed || matches!(repaint, RepaintMode::Partial(_)) {
                 wgpu::StoreOp::Store
             } else {
                 wgpu::StoreOp::Discard
@@ -1547,14 +1659,25 @@ impl Renderer {
             (view, None, wgpu::StoreOp::Store)
         };
 
-        {
+        if !matches!(repaint, RepaintMode::Skip) {
+            let partial_region = match repaint {
+                RepaintMode::Partial(region) => Some(region),
+                RepaintMode::Full | RepaintMode::Skip => None,
+            };
             let mut pass = begin_render_pass(
                 &mut encoder,
                 render_view,
                 resolve_target,
-                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                if partial_region.is_some() {
+                    wgpu::LoadOp::Load
+                } else {
+                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                },
                 store,
             );
+            if let Some(region) = partial_region {
+                self.damage_clear_pipeline.clear_region(&mut pass, region);
+            }
 
             // Render commands in draw order to preserve correct z-ordering
             // across rects, images, text and text decorations. Consecutive
@@ -1772,6 +1895,14 @@ impl Renderer {
                                 wgpu::LoadOp::Load,
                                 store,
                             );
+                            if let Some(region) = partial_region {
+                                pass.set_scissor_rect(
+                                    region.x(),
+                                    region.y(),
+                                    region.width(),
+                                    region.height(),
+                                );
+                            }
                         }
 
                         // Render the custom pipeline
@@ -1838,14 +1969,31 @@ impl Renderer {
     }
 }
 
-fn draw_list_uses_material(draw_list: &DrawList) -> bool {
-    draw_list.commands().iter().any(|command| {
-        matches!(
-            command,
-            DrawCommand::Custom { pipeline_name, .. }
-                if pipeline_name == MATERIAL_PIPELINE_NAME
-        )
-    })
+fn choose_repaint_mode(
+    ensure: TargetEnsureResult,
+    draw_list: &DrawList,
+    damage: &DamageTracker,
+) -> RepaintMode {
+    if ensure.requires_full_repaint()
+        || damage.damage().is_full_frame()
+        || draw_list.damage_records().is_empty()
+        || draw_list_has_custom_commands(draw_list)
+    {
+        return RepaintMode::Full;
+    }
+
+    match damage.damage().regions() {
+        [] => RepaintMode::Skip,
+        [region] => RepaintMode::Partial(*region),
+        _ => RepaintMode::Full,
+    }
+}
+
+fn draw_list_has_custom_commands(draw_list: &DrawList) -> bool {
+    draw_list
+        .commands()
+        .iter()
+        .any(|command| matches!(command, DrawCommand::Custom { .. }))
 }
 
 fn begin_render_pass<'a>(

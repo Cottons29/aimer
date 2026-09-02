@@ -24,7 +24,7 @@ impl StatefulWidget for Counter {
 impl State<Counter> for CounterState {
     fn init_state(&mut self, updater: StateUpdater<Self>) { self.updater = updater; }
     fn build(&self, _: &BuildContext) -> impl Widget {
-        let updater = self.updater.clone();
+        let updater = self.updater;
         Button::new()
             .on_press(move || updater.set_state(|state| state.count += EXPECTED_INCREMENT))
             .child(Text::new(format!("{EXPECTED_LABEL}: {}", self.count)))

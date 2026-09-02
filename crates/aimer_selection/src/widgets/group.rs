@@ -78,7 +78,7 @@ impl<T: Clone + PartialEq + 'static> State<RadioGroup<T>> for RadioGroupState<T>
                     Some(option.label()),
                     disabled,
                 );
-                let updater = self.updater.clone();
+                let updater = self.updater;
                 wrap_interactive(
                     disabled,
                     Rc::new(move || {
@@ -106,11 +106,11 @@ impl<T: Clone + PartialEq + 'static> State<RadioGroup<T>> for RadioGroupState<T>
             self.control.interaction_state().error(),
             body.boxed(),
         );
-        let updater = self.updater.clone();
+        let updater = self.updater;
         wrap_interactive(
             self.control.interaction_state().disabled(),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move || {
                     updater.set_state(|state| {
                         let _ = state.handle(InputEvent::PointerDown);
@@ -119,7 +119,7 @@ impl<T: Clone + PartialEq + 'static> State<RadioGroup<T>> for RadioGroupState<T>
                 }
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |pressed| {
                     updater.set_state(move |state| {
                         let event = if pressed {
@@ -132,11 +132,11 @@ impl<T: Clone + PartialEq + 'static> State<RadioGroup<T>> for RadioGroupState<T>
                 }
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |hovered| updater.set_state(move |state| state.hovered = hovered)
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |key| {
                     updater.set_state(move |state| {
                         let _ = state.handle(InputEvent::KeyDown(key));
@@ -280,11 +280,11 @@ impl<T: Clone + PartialEq + 'static> State<Select<T>> for SelectState<T> {
                 .children(children)
                 .boxed(),
         );
-        let updater = self.updater.clone();
+        let updater = self.updater;
         wrap_interactive(
             self.control.interaction_state().disabled(),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move || {
                     updater.set_state(|state| {
                         let _ = state.handle(InputEvent::PointerDown);
@@ -293,7 +293,7 @@ impl<T: Clone + PartialEq + 'static> State<Select<T>> for SelectState<T> {
                 }
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |pressed| {
                     updater.set_state(move |state| {
                         let event = if pressed {
@@ -306,11 +306,11 @@ impl<T: Clone + PartialEq + 'static> State<Select<T>> for SelectState<T> {
                 }
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |hovered| updater.set_state(move |state| state.hovered = hovered)
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |key| {
                     updater.set_state(move |state| {
                         let _ = state.handle(InputEvent::KeyDown(key));
@@ -337,7 +337,7 @@ fn option_row<T: Clone + PartialEq + 'static>(
         Some(option.label()),
         disabled,
     );
-    let updater = state.updater.clone();
+    let updater = state.updater;
     wrap_interactive(
         disabled,
         Rc::new(move || {
@@ -461,7 +461,7 @@ impl<T: Clone + PartialEq + 'static> State<Autocomplete<T>> for AutocompleteStat
                         Some(option.label()),
                         disabled,
                     );
-                    let updater = self.updater.clone();
+                    let updater = self.updater;
                     wrap_interactive(
                         disabled,
                         Rc::new(move || {
@@ -498,11 +498,11 @@ impl<T: Clone + PartialEq + 'static> State<Autocomplete<T>> for AutocompleteStat
             )
             .boxed(),
         );
-        let updater = self.updater.clone();
+        let updater = self.updater;
         wrap_interactive(
             self.control.interaction_state().disabled(),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move || {
                     updater.set_state(|state| {
                         let _ = state.handle(InputEvent::PointerDown);
@@ -511,7 +511,7 @@ impl<T: Clone + PartialEq + 'static> State<Autocomplete<T>> for AutocompleteStat
                 }
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |pressed| {
                     updater.set_state(move |state| {
                         let event = if pressed {
@@ -524,11 +524,11 @@ impl<T: Clone + PartialEq + 'static> State<Autocomplete<T>> for AutocompleteStat
                 }
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |hovered| updater.set_state(move |state| state.hovered = hovered)
             }),
             Rc::new({
-                let updater = updater.clone();
+                let updater = updater;
                 move |key| {
                     if is_activation_key(key)
                         || matches!(

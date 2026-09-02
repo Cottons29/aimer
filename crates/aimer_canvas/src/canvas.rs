@@ -9,6 +9,7 @@ pub use aimer_cupid::draw_cmd::{
     RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION, RETAINED_LAYER_MAX_TILES_PER_FRAME,
     RETAINED_LAYER_TILE_SIZE, RetainedDrawList, RetainedLayerContent,
 };
+pub use aimer_cupid::damage_region::DamageLayerChange;
 pub use aimer_cupid::font::TextLanguage;
 pub use aimer_cupid::font::{FontFamily, FontStyle};
 pub use aimer_cupid::text_pipeline::text_layout::TextInteractionLayout;
@@ -495,6 +496,13 @@ impl<'a> AimerCanvas<'a> {
     ) {
         self.inner
             .draw_retained_layer_at(layer_id, x, y, width, height, content);
+    }
+
+    /// Records a retained-layer transition for framework damage derivation.
+    #[doc(hidden)]
+    #[inline]
+    pub fn record_damage(&self, change: DamageLayerChange) {
+        self.inner.record_damage(change);
     }
 }
 

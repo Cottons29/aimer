@@ -126,7 +126,7 @@ impl FloatingShowcaseState {
     /// Opens a dropdown menu below its trigger, aligned on the leading edge.
     fn menu_trigger(&self, app_theme: ThemeData) -> AnyWidget {
         let anchor = self.menu_anchor.clone();
-        let updater = self.updater.clone();
+        let updater = self.updater;
         trigger("Open menu", anchor.clone(), move || {
             Floating::new()
                 .anchor(anchor.clone())
@@ -134,7 +134,7 @@ impl FloatingShowcaseState {
                 .align(FloatingAlign::Start)
                 .gap(6.0)
                 .animation(enter_animation())
-                .child(menu_panel(updater.clone(), app_theme))
+                .child(menu_panel(updater, app_theme))
                 .show();
         }, app_theme)
     }
@@ -158,7 +158,7 @@ impl FloatingShowcaseState {
     /// does not fit and the overflow policy flips the panel above the trigger.
     fn corner_trigger(&self, app_theme: ThemeData) -> AnyWidget {
         let anchor = self.corner_anchor.clone();
-        let updater = self.updater.clone();
+        let updater = self.updater;
         trigger("Flip near the edge", anchor.clone(), move || {
             Floating::new()
                 .anchor(anchor.clone())
@@ -167,7 +167,7 @@ impl FloatingShowcaseState {
                 .gap(6.0)
                 .overflow(OverflowPolicy::Flip)
                 .animation(enter_animation())
-                .child(menu_panel(updater.clone(), app_theme))
+                .child(menu_panel(updater, app_theme))
                 .show();
         }, app_theme)
     }
@@ -234,7 +234,7 @@ fn menu_panel(
             Column::new().children(
                 MENU_ITEMS
                     .iter()
-                    .map(|item| menu_item(item, updater.clone(), app_theme))
+                    .map(|item| menu_item(item, updater, app_theme))
                     .collect::<Vec<AnyWidget>>(),
             ),
         )

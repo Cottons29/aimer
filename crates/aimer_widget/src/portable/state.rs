@@ -8,6 +8,7 @@ use super::{
     StableSlotId, StateRegistryError, StableTypeId,
 };
 use crate::{State, StateUpdater, StatefulWidget};
+use crate::widget::state_slots::StateStorage;
 
 type PortableStateMutation<S> = Box<dyn FnOnce(&mut S)>;
 
@@ -62,6 +63,11 @@ impl<S> PortableStateHandle<S> {
         self.state.borrow()
     }
 
+    #[inline]
+    pub(crate) fn try_borrow(&self) -> Option<std::cell::Ref<'_, S>> {
+        self.state.try_borrow().ok()
+    }
+
     fn drain(&self) -> usize {
         let mut applied = 0;
         let mut state = self.state.borrow_mut();
@@ -85,6 +91,7 @@ impl<S> PortableStateHandle<S> {
 struct LiveStateEntry {
     type_id: StableTypeId,
     handle: Box<dyn Any>,
+    _state_storage: StateStorage,
     drain: fn(&dyn Any, StableSlotId, &mut super::StateRegistry) -> Result<(), StateRegistryError>,
 }
 
@@ -111,21 +118,37 @@ where
 pub(super) struct PortableLiveStateRegistry {
     entries: BTreeMap<StableSlotId, LiveStateEntry>,
     claimed: BTreeSet<StableSlotId>,
+    created_entries: BTreeSet<StableSlotId>,
+    created_snapshots: BTreeSet<StableSlotId>,
 }
 
 impl PortableLiveStateRegistry {
     #[inline]
     pub(super) const fn new() -> Self {
-        Self { entries: BTreeMap::new(), claimed: BTreeSet::new() }
+        Self {
+            entries: BTreeMap::new(),
+            claimed: BTreeSet::new(),
+            created_entries: BTreeSet::new(),
+            created_snapshots: BTreeSet::new(),
+        }
     }
 
     #[inline]
     pub(super) fn finish_generation(&mut self) {
+        self.entries.retain(|slot, _| self.claimed.contains(slot));
         self.claimed.clear();
+        self.created_entries.clear();
+        self.created_snapshots.clear();
     }
 
     #[inline]
-    pub(super) fn abort_build(&mut self) {
+    pub(super) fn abort_build(&mut self, state_registry: &mut super::StateRegistry) {
+        for slot in std::mem::take(&mut self.created_entries) {
+            self.entries.remove(&slot);
+        }
+        for slot in std::mem::take(&mut self.created_snapshots) {
+            state_registry.remove(slot);
+        }
         self.claimed.clear();
     }
 
@@ -182,21 +205,25 @@ impl PortableBuildContext {
             return Ok(());
         }
 
-        if self.state_registry().revision(slot).is_some() {
+        let has_snapshot = self.state_registry().revision(slot).is_some();
+        if has_snapshot {
             self.state_registry().restore_into(slot, &mut candidate)?;
         } else {
             self.state_registry_mut().insert(slot, 0, &candidate)?;
         }
         let handle = PortableStateHandle::new(candidate);
-        {
-            let updater = StateUpdater::from_portable(handle.clone());
-            handle.state.borrow_mut().init_state(updater);
-        }
+        let (state_storage, updater) = StateUpdater::from_portable(handle.clone());
+        handle.state.borrow_mut().init_state(updater);
         self.live_states.entries.insert(slot, LiveStateEntry {
             type_id: W::State::TYPE_ID,
             handle: Box::new(handle),
+            _state_storage: state_storage,
             drain: drain_live_state::<W::State>,
         });
+        self.live_states.created_entries.insert(slot);
+        if !has_snapshot {
+            self.live_states.created_snapshots.insert(slot);
+        }
         self.live_states.claimed.insert(slot);
         Ok(())
     }
@@ -262,7 +289,7 @@ impl PortableBuildContext {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     use aimer_anteros::{AsyncCallbackSchemaMetadata, EventId, Version, WidgetSchemaId};
@@ -484,6 +511,32 @@ mod tests {
     }
 
     #[test]
+    fn portable_unchecked_update_uses_the_live_state_slot() {
+        let initializations = Rc::new(Cell::new(0));
+        let state_slot = slot(11);
+        let mut context = context();
+        context
+            .seed_stateful_state::<CounterWidget>(
+                state_slot,
+                CounterState::new(1, "unchecked", initializations),
+            )
+            .unwrap();
+
+        let updater = context
+            .with_stateful_state::<CounterWidget, _>(state_slot, |state, _, _| {
+                assert!(state.updater.has_state());
+                unsafe {
+                    state.updater.set_state_unchecked(|state| state.count += 4);
+                }
+                Ok(state.updater)
+            })
+            .unwrap();
+
+        assert_eq!(updater.try_read(|state| state.count), Some(5));
+        assert!(updater.has_state());
+    }
+
+    #[test]
     fn imported_retained_state_is_restored_while_new_configuration_stays_fresh() {
         let initializations = Rc::new(Cell::new(0));
         let state_slot = slot(2);
@@ -548,6 +601,115 @@ mod tests {
     }
 
     #[test]
+    fn unclaimed_state_is_pruned_and_reappearing_slots_get_new_updaters() {
+        let initializations = Rc::new(Cell::new(0));
+        let state_slot = slot(31);
+        let mut context = context();
+        context
+            .seed_stateful_state::<CounterWidget>(
+                state_slot,
+                CounterState::new(1, "first", initializations.clone()),
+            )
+            .unwrap();
+        let old_updater = context
+            .with_stateful_state::<CounterWidget, _>(state_slot, |state, _, _| {
+                Ok(state.updater)
+            })
+            .unwrap();
+
+        finish_generation(&mut context, 310);
+        finish_generation(&mut context, 311);
+
+        assert_eq!(old_updater.try_read(|state| state.count), None);
+        assert_eq!(old_updater.try_set_state(|state| state.count = 99), None);
+
+        context
+            .seed_stateful_state::<CounterWidget>(
+                state_slot,
+                CounterState::new(8, "reappeared", initializations),
+            )
+            .unwrap();
+        let new_updater = context
+            .with_stateful_state::<CounterWidget, _>(state_slot, |state, _, _| {
+                Ok(state.updater)
+            })
+            .unwrap();
+
+        assert_eq!(new_updater.try_read(|state| state.count), Some(1));
+        assert_eq!(old_updater.try_read(|state| state.count), None);
+    }
+
+    #[test]
+    fn dropping_the_portable_context_invalidates_copied_updaters() {
+        let initializations = Rc::new(Cell::new(0));
+        let state_slot = slot(32);
+        let mut context = context();
+        context
+            .seed_stateful_state::<CounterWidget>(
+                state_slot,
+                CounterState::new(1, "context", initializations),
+            )
+            .unwrap();
+        let updater = context
+            .with_stateful_state::<CounterWidget, _>(state_slot, |state, _, _| {
+                Ok(state.updater)
+            })
+            .unwrap();
+
+        drop(context);
+
+        assert_eq!(updater.try_read(|state| state.count), None);
+        assert_eq!(updater.try_set_state(|state| state.count = 2), None);
+    }
+
+    #[test]
+    fn delayed_callback_rejects_all_state_operations_after_portable_context_drop() {
+        let initializations = Rc::new(Cell::new(0));
+        let state_slot = slot(33);
+        let mut context = context();
+        context
+            .seed_stateful_state::<CounterWidget>(
+                state_slot,
+                CounterState::new(1, "delayed", initializations),
+            )
+            .unwrap();
+        let updater = context
+            .with_stateful_state::<CounterWidget, _>(state_slot, |state, _, _| {
+                Ok(state.updater)
+            })
+            .unwrap();
+        let read_called = Rc::new(Cell::new(false));
+        let mutation_called = Rc::new(Cell::new(false));
+        let delayed: Rc<RefCell<Option<Box<dyn FnOnce()>>>> = Rc::new(RefCell::new(None));
+        let delayed_callback = delayed.clone();
+        let read_called_by_callback = read_called.clone();
+        let mutation_called_by_callback = mutation_called.clone();
+        delayed_callback.borrow_mut().replace(Box::new(move || {
+            assert!(!updater.has_state());
+            assert_eq!(
+                updater.try_read(move |_| {
+                    read_called_by_callback.set(true);
+                }),
+                None,
+            );
+            assert_eq!(
+                updater.try_set_state(move |_| mutation_called_by_callback.set(true)),
+                None,
+            );
+            assert!(updater.try_read_state().is_none());
+        }));
+
+        drop(context);
+        delayed
+            .borrow_mut()
+            .take()
+            .expect("delayed callback should be retained")();
+
+        assert!(!read_called.get());
+        assert!(!mutation_called.get());
+    }
+
+    #[test]
     fn duplicate_slots_and_live_type_mismatches_are_rejected() {
         let initializations = Rc::new(Cell::new(0));
         let state_slot = slot(4);
@@ -578,25 +740,98 @@ mod tests {
     }
 
     #[test]
+    fn failed_build_keeps_previous_live_entries_and_discards_new_slots() {
+        let initializations = Rc::new(Cell::new(0));
+        let retained_slot = slot(34);
+        let new_slot = slot(35);
+        let mut context = context();
+        context
+            .seed_stateful_state::<CounterWidget>(
+                retained_slot,
+                CounterState::new(3, "retained", initializations.clone()),
+            )
+            .unwrap();
+        let retained_updater = context
+            .with_stateful_state::<CounterWidget, _>(retained_slot, |state, _, _| {
+                Ok(state.updater)
+            })
+            .unwrap();
+        finish_generation(&mut context, 340);
+
+        let failed_updater = Rc::new(RefCell::new(None));
+        let failed_updater_for_build = failed_updater.clone();
+        let failed = context.with_build_transaction(|context| {
+            context.seed_stateful_state::<CounterWidget>(
+                new_slot,
+                CounterState::new(8, "new", initializations.clone()),
+            )?;
+            let updater = context
+                .with_stateful_state::<CounterWidget, _>(new_slot, |state, _, _| {
+                    Ok(state.updater)
+                })?;
+            failed_updater_for_build.replace(Some(updater));
+            Err::<(), PortableBuildError>(PortableBuildError::IncompleteTree)
+        });
+
+        assert!(matches!(failed, Err(PortableBuildError::IncompleteTree)));
+        assert!(retained_updater.has_state());
+        assert_eq!(
+            retained_updater.try_read(|state| (state.count, state.label.clone())),
+            Some((3, String::from("retained"))),
+        );
+        assert_eq!(
+            failed_updater
+                .borrow()
+                .as_ref()
+                .expect("failed build should publish its temporary updater")
+                .try_read(|state| state.count),
+            None,
+        );
+        context
+            .with_stateful_state::<CounterWidget, _>(retained_slot, |state, _, _| {
+                assert_eq!(state.count, 3);
+                assert_eq!(state.label, "retained");
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
     fn failed_build_releases_claimed_slots_for_the_next_attempt() {
         let initializations = Rc::new(Cell::new(0));
         let state_slot = slot(41);
+        let failed_updater = Rc::new(RefCell::new(None));
         let mut context = context();
 
+        let failed_updater_for_build = failed_updater.clone();
         let failed = context.with_build_transaction(|context| {
             context.seed_stateful_state::<CounterWidget>(
                 state_slot,
                 CounterState::new(1, "failed", initializations.clone()),
             )?;
+            let updater = context.with_stateful_state::<CounterWidget, _>(
+                state_slot,
+                |state, _, _| Ok(state.updater),
+            )?;
+            failed_updater_for_build.replace(Some(updater));
             Err::<(), PortableBuildError>(PortableBuildError::IncompleteTree)
         });
         assert!(matches!(failed, Err(PortableBuildError::IncompleteTree)));
+        assert_eq!(context.state_registry().revision(state_slot), None);
+        assert_eq!(failed_updater.borrow().as_ref().unwrap().try_read(|state| state.count), None);
 
         context
             .with_build_transaction(|context| {
                 context.seed_stateful_state::<CounterWidget>(
                     state_slot,
                     CounterState::new(2, "retry", initializations),
+                )?;
+                context.with_stateful_state::<CounterWidget, _>(
+                    state_slot,
+                    |state, _, _| {
+                        assert_eq!(state.count, 2);
+                        Ok(())
+                    },
                 )?;
                 finish_generation(context, 410);
                 Ok::<(), PortableBuildError>(())
@@ -645,9 +880,9 @@ mod tests {
                 CounterState::new(2, "callback", initializations),
             )
             .unwrap();
-        let updater = context
-            .with_stateful_state::<CounterWidget, _>(state_slot, |state, _, _| {
-                Ok(state.updater.clone())
+            let updater = context
+                .with_stateful_state::<CounterWidget, _>(state_slot, |state, _, _| {
+                Ok(state.updater)
             })
             .unwrap();
         let node = context
@@ -702,7 +937,7 @@ mod tests {
             .unwrap();
         let updater = context
             .with_stateful_state::<CounterWidget, _>(state_slot, |state, _, _| {
-                Ok(state.updater.clone())
+                Ok(state.updater)
             })
             .unwrap();
         let node = context
@@ -718,7 +953,7 @@ mod tests {
                     AsyncCallbackSchemaMetadata::new(Version::new(1, 0), 1, 32),
                     callback_id,
                     move || {
-                        let updater = updater.clone();
+                        let updater = updater;
                         Box::pin(async move {
                             updater.set_state(|state| state.count += 5);
                         })

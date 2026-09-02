@@ -210,9 +210,9 @@ impl FormExampleState {
             ))
             .border_radius(6);
 
-        let changed_updater = self.updater.clone();
-        let blurred_updater = self.updater.clone();
-        let submitted_updater = self.updater.clone();
+        let changed_updater = self.updater;
+        let blurred_updater = self.updater;
+        let submitted_updater = self.updater;
 
         Column::new()
             .gaps(LayoutSpacing::all(Spacing::Px(4)))
@@ -305,8 +305,8 @@ impl State<FormExample> for FormExampleState {
             app_theme,
         );
 
-        let submit_updater = self.updater.clone();
-        let reset_updater = self.updater.clone();
+        let submit_updater = self.updater;
+        let reset_updater = self.updater;
         let buttons = Row::new()
             .gaps(LayoutSpacing::all(Spacing::Px(12)))
             .children([

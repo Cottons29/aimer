@@ -8,6 +8,11 @@ pub use canvas::{
     RETAINED_LAYER_MAX_TILES_PER_FRAME, RETAINED_LAYER_TILE_SIZE, RetainedDrawList,
     RetainedLayerContent, TextHorizontalAlign, TextOverflowMode,
 };
+#[doc(hidden)]
+pub use aimer_cupid::damage_region::{
+    DamageAddResult, DamageBounds, DamageGeometry, DamageLayerChange, DamagePolicy, DamageRect,
+    DamageSet, DamageTracker, DamageTransform,
+};
 pub use canvas::TextInteractionLayout;
 pub use material::{
     record_material, MaterialClip, MaterialDrawRequest, MaterialKind, MaterialMotionPolicy,

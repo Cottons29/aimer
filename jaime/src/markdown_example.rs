@@ -246,7 +246,7 @@ impl State<CustomMarkdownExample> for CustomMarkdownExampleState {
 
     fn build(&self, ctx: &aimer::BuildContext) -> impl Widget {
         let app_theme = ThemeData::copied(ctx);
-        let updater = self.updater.clone();
+        let updater = self.updater;
         Column::new().children([
             Text::new(format!("Button presses: {}", self.presses))
                 .text_style(TextStyle::new().color(app_theme.on_background_color))

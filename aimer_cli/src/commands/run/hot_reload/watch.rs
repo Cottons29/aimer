@@ -403,6 +403,7 @@ mod tests {
         assert_eq!(watcher.source_changed(), WatchAction::StartBuild);
     }
 
+    #[cfg(feature = "hot-reload")]
     #[test]
     fn repeated_compile_failure_and_cancelled_reload_cycles_return_to_idle() {
         const CYCLES: usize = 10_000;

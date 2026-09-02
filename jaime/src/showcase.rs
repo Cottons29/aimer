@@ -497,7 +497,7 @@ impl State<ExampleShowcase> for ExampleShowcaseState {
                 Expanded::new()
                     .child(
                         Row::new().children(vec![
-                            sidebar(self.selected, self.updater.clone(), app_theme),
+                            sidebar(self.selected, self.updater, app_theme),
                             SizedBox::new()
                                 .width(Dimension::Px(1.0))
                                 .color(theme::divider(&app_theme))
@@ -527,7 +527,7 @@ fn sidebar(
     //     &mut EXAMPLES
     //         .iter()
     //         .copied()
-    //         .map(|example| example_button(example, selected == example, updater.clone(), app_theme))
+    //         .map(|example| example_button(example, selected == example, updater, app_theme))
     //         .collect::<Vec<AnyWidget>>(),
     // );
 
@@ -548,7 +548,7 @@ fn sidebar(
                 .box_child(example_button(
                     **example,
                     selected == **example,
-                    updater.clone(),
+                    updater,
                     app_theme,
                 ))
         });

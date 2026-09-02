@@ -53,6 +53,7 @@ mod deferred_frame_uploads {
 
     use std::sync::Arc;
 
+    use crate::damage_region::{DamageBounds, DamageGeometry, DamageLayerChange};
     use crate::draw_cmd::{DrawList, RetainedLayerContent};
     use crate::pipeline::material::{MaterialKind, MaterialRequest, MATERIAL_PIPELINE_NAME};
     use crate::renderer::Renderer;
@@ -326,6 +327,75 @@ mod deferred_frame_uploads {
         assert_dominant(&pixels, 2, 2, 1, "swapped background");
         assert_dominant(&pixels, 20, 20, 2, "image after swap");
         assert_dominant(&pixels, 44, 44, 0, "swapped square");
+    }
+
+    #[test]
+    fn partial_repaint_preserves_unchanged_pixels_outside_the_damage_region() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut renderer = Renderer::new(&device, FORMAT);
+
+        let mut first_frame = DrawList::new();
+        first_frame.fill_rect(
+            Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            Color::black(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        first_frame.fill_rect(
+            Rect::new(4.0, 4.0, 16.0, 16.0),
+            Color::red(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        first_frame.fill_rect(
+            Rect::new(40.0, 40.0, 16.0, 16.0),
+            Color::blue(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        let first = render_and_read(&device, &queue, &mut renderer, &first_frame);
+        assert_dominant(&first, 8, 8, 0, "first unchanged sibling");
+        assert_dominant(&first, 48, 48, 2, "first changed sibling");
+
+        let mut second_frame = DrawList::new();
+        second_frame.fill_rect(
+            Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            Color::black(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        second_frame.fill_rect(
+            Rect::new(40.0, 40.0, 16.0, 16.0),
+            Color::green(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        second_frame.record_damage(
+            DamageLayerChange::new(
+                2,
+                Some(DamageGeometry::new(DamageBounds::new(40.0, 40.0, 16.0, 16.0))),
+                Some(DamageGeometry::new(DamageBounds::new(40.0, 40.0, 16.0, 16.0))),
+            )
+            .with_paint_invalidated(true),
+        );
+
+        let second = render_and_read(&device, &queue, &mut renderer, &second_frame);
+        assert_dominant(
+            &second,
+            8,
+            8,
+            0,
+            "unchanged sibling outside the damage region",
+        );
+        assert_dominant(&second, 48, 48, 1, "repainted damaged sibling");
     }
 
     #[test]
