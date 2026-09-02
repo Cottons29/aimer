@@ -117,10 +117,10 @@ async fn calendar_view_consumes_the_provided_surface_token() {
         .commands()
         .iter()
         .any(|command| matches!(command, DrawCommand::FillRect { color, .. }
-            if (color.r - 1.0 / 255.0).abs() < f32::EPSILON
-                && (color.g - 2.0 / 255.0).abs() < f32::EPSILON
-                && (color.b - 3.0 / 255.0).abs() < f32::EPSILON
-                && (color.a - 1.0).abs() < f32::EPSILON)));
+            if color.r == 1
+                && color.g == 2
+                && color.b == 3
+                && color.a == 255)));
 }
 
 #[tokio::test]
@@ -148,7 +148,9 @@ async fn calendar_range_paints_endpoints_opaque_and_interior_dates_dimmed() {
         .iter()
         .filter_map(|command| match command {
             DrawCommand::FillRect { color, .. }
-                if color.r > 0.95 && color.g < 0.05 && color.b < 0.05 => Some(color.a),
+                if color.r == 255 && color.g == 0 && color.b == 0 => {
+                    Some(f32::from(color.a) / 255.0)
+                }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -180,10 +182,10 @@ async fn calendar_view_bridges_legacy_theme_data_into_semantic_tokens() {
         .commands()
         .iter()
         .any(|command| matches!(command, DrawCommand::FillRect { color, .. }
-            if (color.r - 4.0 / 255.0).abs() < f32::EPSILON
-                && (color.g - 5.0 / 255.0).abs() < f32::EPSILON
-                && (color.b - 6.0 / 255.0).abs() < f32::EPSILON
-                && (color.a - 1.0).abs() < f32::EPSILON)));
+            if color.r == 4
+                && color.g == 5
+                && color.b == 6
+                && color.a == 255)));
 }
 
 #[tokio::test]
@@ -422,10 +424,10 @@ async fn date_time_picker_overlay_paints_a_separating_border() {
                 ..
             } if rect.height > 42.0
                 && border_width.iter().all(|width| *width > 0.0)
-                && (border_color.r - f32::from(outline_r) / 255.0).abs() < f32::EPSILON
-                && (border_color.g - f32::from(outline_g) / 255.0).abs() < f32::EPSILON
-                && (border_color.b - f32::from(outline_b) / 255.0).abs() < f32::EPSILON
-                && (border_color.a - f32::from(outline_a) / 255.0).abs() < f32::EPSILON
+                && border_color.r == outline_r
+                && border_color.g == outline_g
+                && border_color.b == outline_b
+                && border_color.a == outline_a
         )));
 }
 
@@ -462,10 +464,10 @@ async fn color_picker_overlay_paints_a_separating_border() {
                 ..
             } if rect.height > 42.0
                 && border_width.iter().all(|width| *width > 0.0)
-                && (border_color.r - f32::from(outline_r) / 255.0).abs() < f32::EPSILON
-                && (border_color.g - f32::from(outline_g) / 255.0).abs() < f32::EPSILON
-                && (border_color.b - f32::from(outline_b) / 255.0).abs() < f32::EPSILON
-                && (border_color.a - f32::from(outline_a) / 255.0).abs() < f32::EPSILON
+                && border_color.r == outline_r
+                && border_color.g == outline_g
+                && border_color.b == outline_b
+                && border_color.a == outline_a
         )));
 }
 

@@ -1935,19 +1935,24 @@ mod tests {
     }
     impl EventElement for CapturingElement {
         fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
-            self.events.fetch_add(1, Ordering::SeqCst);
             match event {
                 ElementEvent::PointerDown(pointer) => {
+                    self.events.fetch_add(1, Ordering::SeqCst);
                     aimer_widget::EventResult::consumed().with_pointer_capture(
                         aimer_widget::PointerKey::new(pointer.source, pointer.id),
                     )
                 }
                 ElementEvent::PointerUp(pointer) => {
+                    self.events.fetch_add(1, Ordering::SeqCst);
                     aimer_widget::EventResult::consumed().with_pointer_release(
                         aimer_widget::PointerKey::new(pointer.source, pointer.id),
                     )
                 }
-                _ => aimer_widget::EventResult::consumed(),
+                ElementEvent::PointerMove(_) => {
+                    self.events.fetch_add(1, Ordering::SeqCst);
+                    aimer_widget::EventResult::consumed()
+                }
+                _ => aimer_widget::EventResult::ignored(),
             }
         }
     }

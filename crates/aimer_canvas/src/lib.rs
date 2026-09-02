@@ -4,9 +4,9 @@ pub mod shape;
 
 pub use canvas::{
     AimerCanvas as Canvas, CanvasRendering, FontFamily, FontStyle, InnerCanvas,
-    RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION, RETAINED_LAYER_MAX_TILES_PER_FRAME,
-    RETAINED_LAYER_TILE_SIZE, RetainedDrawList, RetainedLayerContent, TextHorizontalAlign,
-    TextOverflowMode,
+    Mat3, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION,
+    RETAINED_LAYER_MAX_TILES_PER_FRAME, RETAINED_LAYER_TILE_SIZE, RetainedDrawList,
+    RetainedLayerContent, TextHorizontalAlign, TextOverflowMode,
 };
 pub use canvas::TextInteractionLayout;
 pub use material::{

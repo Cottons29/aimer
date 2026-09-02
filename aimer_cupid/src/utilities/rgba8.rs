@@ -76,7 +76,7 @@ impl Rgba8 {
 
 #[inline]
 const fn quantize_channel(value: f32) -> u8 {
-    if value != value || value == f32::INFINITY || value == f32::NEG_INFINITY {
+    if  value == f32::INFINITY || value == f32::NEG_INFINITY {
         return 0;
     }
     if !(value > 0.0) {

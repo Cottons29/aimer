@@ -243,6 +243,7 @@ mod tests {
     use std::cell::Cell;
 
     use crate::base::{BuildContext, WindowHandle};
+    use crate::components::element::test_generation_guard;
     use crate::{
         AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable,
         ReconciliationMatchKind, VisitorElement, element_tree_generation,
@@ -261,6 +262,7 @@ mod tests {
         ]);
         let old_ids = child_ids(old.as_ref());
         let new_ids = child_ids(new.as_ref());
+        let _generation_guard = test_generation_guard();
         let generation = element_tree_generation();
 
         let plan = plan_element_reconciliation(old.as_ref(), new.as_ref());

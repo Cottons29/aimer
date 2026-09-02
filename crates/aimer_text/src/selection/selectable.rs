@@ -8,7 +8,7 @@ use aimer_widget::base::{BuildContext, Color, WindowHandle};
 use crate::selection::session::{SelectionSession, SelectionSlot};
 use crate::selection::{TextHitRegion, text_offset_at};
 
-use aimer_cupid::text_layout::TextInteractionLayout;
+use aimer_cupid::text_layout::{TextInteractionLayout, TextWritingMode};
 use aimer_cupid::utilities::Mat3;
 use crate::TextAccessibilitySnapshot;
 
@@ -155,7 +155,17 @@ impl TextGeometry {
                 return false;
             };
             let left = snapshot.layout.origin_x;
-            let top = snapshot.layout.origin_y;
+            // `origin_y` is the first line's baseline, while `metrics.height`
+            // covers the line box from its top. Using the baseline as the top
+            // rejects the upper part of every ordinary paragraph, which makes
+            // a press on text miss selection and lets an enclosing scrollable
+            // steal the drag.
+            let top = match snapshot.layout.writing_mode {
+                TextWritingMode::HorizontalTb => {
+                    snapshot.layout.origin_y - snapshot.layout.metrics.ascent
+                }
+                TextWritingMode::VerticalRl => snapshot.layout.origin_y,
+            };
             return local_x >= left
                 && local_x <= left + snapshot.layout.metrics.width
                 && local_y >= top
@@ -504,5 +514,17 @@ mod tests {
                 bounds: Bounds::new(20.0, 42.0, 20.0, 60.0),
             }]
         );
+    }
+
+    #[test]
+    fn aimer_interaction_contains_the_line_box_above_a_baseline_origin() {
+        let geometry = TextGeometry::new(WindowHandle::headless(PhysicalSize::new(200, 200), 1.0));
+        let mut layout = interaction_layout();
+        layout.origin_y = layout.lines[0].baseline;
+        geometry.save_painted_bounds(1.0, Mat3::identity(), 10.0, 20.0);
+        geometry.set_interaction_layout(Some(layout), Mat3::identity(), 1.0);
+
+        assert!(geometry.contains_point(5.0, 4.0));
+        assert!(!geometry.contains_point(5.0, 25.0));
     }
 }

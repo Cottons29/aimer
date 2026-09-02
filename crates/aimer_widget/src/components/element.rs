@@ -28,6 +28,8 @@ static NEXT_ELEMENT_ID: AtomicU64 = AtomicU64::new(1);
 static ELEMENT_TREE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static REBUILD_INVALIDATION_GENERATION: AtomicU64 = AtomicU64::new(0);
 static LAYOUT_INVALIDATION_GENERATION: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+static TEST_ELEMENT_TREE_GENERATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 thread_local! {
     /// Nested `mark_needs_rebuild` calls share one invalidation generation.
@@ -1430,12 +1432,24 @@ pub(crate) fn with_rebuild_invalidation<R>(operation: impl FnOnce() -> R) -> R {
 }
 
 fn advance_element_tree_generation() {
+    #[cfg(test)]
+    let _generation_lock = TEST_ELEMENT_TREE_GENERATION_LOCK
+        .lock()
+        .expect("element-tree generation test lock must not be poisoned");
+
     invalidate_dirty_paths();
     ELEMENT_TREE_GENERATION
         .fetch_update(Ordering::Release, Ordering::Relaxed, |generation| {
             generation.checked_add(1)
         })
         .expect("exhausted all element-tree generations");
+}
+
+#[cfg(test)]
+pub(crate) fn test_generation_guard() -> std::sync::MutexGuard<'static, ()> {
+    TEST_ELEMENT_TREE_GENERATION_LOCK
+        .lock()
+        .expect("element-tree generation test lock must not be poisoned")
 }
 
 pub(crate) fn structural_children(element: &dyn Element) -> SmallVec<[&dyn Element; 8]> {
@@ -3873,6 +3887,10 @@ mod tests {
     }
 
     impl LayoutElement for HoverProbeRoot {
+        fn is_layout_stable(&self) -> bool {
+            true
+        }
+
         fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
             Some(self.bounds)
         }

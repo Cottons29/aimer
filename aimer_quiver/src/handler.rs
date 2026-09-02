@@ -361,16 +361,14 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
     /// Asks for the frame that continues an animation.
     ///
-    /// A native window goes through the platform requester, the only path iOS
-    /// honours for a request issued from inside the draw cycle. A headless
-    /// window has no platform behind it, so the request is recorded on its
-    /// handle for whoever pumps the frames to find.
+    /// Both native and headless applications go through the thread-local
+    /// requester. Native setup installs the platform wake there; headless setup
+    /// installs a requester that records the request on its in-memory window.
+    /// Keeping one route also lets nested callers replace the requester while
+    /// they test or embed an application.
     #[inline]
     pub(crate) fn request_animation_frame(&self) {
-        match &self.window {
-            Some(window @ WindowHandle::Headless(_)) => window.request_redraw(),
-            _ => aimer_events::window::request_animation_frame(),
-        }
+        aimer_events::window::request_animation_frame();
     }
 
     /// Tells the runtime how fast the display it is drawing on actually is.

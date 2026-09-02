@@ -9,6 +9,13 @@ description = "Isolated experiments for Aimer's core ownership model, published 
 [features]
 # Forward the release flex benchmark control to the root framework dependency.
 force-scalar = ["aimer/force-scalar"]
+# The before/after benchmark depends on the historical framework revision,
+# which is intentionally not part of this checkout.
+legacy-benchmark = []
+
+[[example]]
+name = "production_widget_benchmark"
+required-features = ["legacy-benchmark"]
 
 [dependencies]
 aimer_rubick.workspace = true

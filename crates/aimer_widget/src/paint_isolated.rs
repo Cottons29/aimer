@@ -327,7 +327,9 @@ struct RetainedPaint<K: Copy + PartialEq> {
 /// contract changes. The child itself remains available for rebuild, layout,
 /// and event routing; this type only chooses whether its paint is recorded or
 /// replayed for the current frame. Geometry synchronization is performed
-/// separately from the retained paint path.
+/// separately from the retained paint path. Framework adopters should use
+/// [`PaintContract`] as the common part of that key so content/rebuild
+/// generations, bounds, scale, clip, transform, and resources are not omitted.
 ///
 /// This is an internal framework API. Ordinary widget users do not construct
 /// it; built-in Modules such as scroll views and panes own its lifetime.
@@ -810,6 +812,38 @@ mod tests {
         }
 
         assert_eq!(draws.get(), 10);
+    }
+
+    #[tokio::test]
+    async fn context_contract_captures_scale_and_renderer_resource_epoch() {
+        let ctx = context();
+        let base = PaintContract::from_context(
+            &ctx,
+            1,
+            2,
+            3,
+            4,
+            PaintBounds::new(0.0, 0.0, 40.0, 40.0),
+            PaintClip::none(),
+            PaintTransform::from_canvas(&ctx.canvas),
+        );
+
+        ctx.canvas.load_image_with_id(91, &[255, 0, 0, 255], 1, 1);
+        let mut scaled_ctx = ctx.clone();
+        scaled_ctx.scale = 2.0;
+        let changed = PaintContract::from_context(
+            &scaled_ctx,
+            1,
+            2,
+            3,
+            4,
+            PaintBounds::new(0.0, 0.0, 40.0, 40.0),
+            PaintClip::none(),
+            PaintTransform::from_canvas(&scaled_ctx.canvas),
+        );
+
+        assert_ne!(base.device_scale_bits, changed.device_scale_bits);
+        assert_ne!(base.resource_generation, changed.resource_generation);
     }
 
     #[tokio::test]

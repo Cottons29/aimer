@@ -35,7 +35,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use crate::font::TextLanguage;
 use crate::text_layout::FontId;
@@ -165,6 +165,15 @@ impl FallbackStore {
 static STORE: LazyLock<RwLock<FallbackStore>> =
     LazyLock::new(|| RwLock::new(FallbackStore::default()));
 
+/// Serializes cold platform resolutions.
+///
+/// The store itself is safe to access concurrently, but a platform cascade
+/// query happens outside its lock. Without a second check after that query,
+/// two workers can observe different snapshots of the discovered faces and
+/// choose different files for two codepoints in the same script. Cached hits
+/// do not take this lock; only a miss pays the serialization cost.
+static FALLBACK_RESOLUTION_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
 /// Lazy decodability answers for immutable, process-wide fallback faces.
 ///
 /// The fallback store keeps a face for the lifetime of the process, so these
@@ -201,6 +210,16 @@ pub(crate) fn fallback_for_codepoint(
     weight: u16,
 ) -> Option<FontRecord> {
     let cache_key = (codepoint, requirement, weight);
+    if let Ok(store) = STORE.read()
+        && let Some(cached) = store.ids_by_codepoint.get(&cache_key)
+    {
+        return cached.and_then(|font_id| store.record_by_id(font_id).cloned());
+    }
+
+    // Keep the fast cached path above the lock. Recheck after taking it because
+    // another worker may have resolved this exact key while this caller was
+    // waiting.
+    let _resolution = FALLBACK_RESOLUTION_LOCK.lock().ok()?;
     if let Ok(store) = STORE.read()
         && let Some(cached) = store.ids_by_codepoint.get(&cache_key)
     {

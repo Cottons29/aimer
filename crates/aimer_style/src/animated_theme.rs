@@ -1144,10 +1144,9 @@ mod tests {
             state, ctx,
         )
         .to_element(ctx);
-        // A tick places the retained child again, which marks the subtree
-        // inside it for rebuild; the rebuild pass is what a running frame does
-        // next.
-        frame.rebuild_if_dirty(ctx);
+        // Drawing is the frame boundary: it ticks the controller, places the
+        // retained child again, and rebuilds the marked subtree before paint.
+        frame.draw(ctx);
     }
 
     #[tokio::test]

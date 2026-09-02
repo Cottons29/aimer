@@ -272,6 +272,10 @@ impl WindowEventHandler {
             x: (item.location.x / scale) as f32,
             y: (item.location.y / scale) as f32,
         };
+        // Wheel/trackpad streams can arrive while a finger is still down. Keep
+        // the shared event position at the latest contact so those scroll
+        // frames hit the viewport instead of the outside-window sentinel.
+        app.cursor_pos = pos;
         // info!("Location: {pos:?}" );
         let touch_id = item.id;
         // All touch events are passed through with their finger ID.
@@ -701,9 +705,7 @@ impl WindowEventHandler {
             // can race that later request and make one input burst produce an
             // extra native frame; the platform requester coalesces the wake
             // until the display loop delivers it.
-            if let Some(window) = &app.window {
-                window.request_redraw();
-            }
+            app.request_animation_frame();
         }
     }
 

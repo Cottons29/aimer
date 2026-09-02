@@ -321,7 +321,7 @@ contract or use a separately verified paint-only Adapter.
 - [x] Record the stable child into a renderer-owned layer on first paint or after invalidation.
 - [x] Replay a valid layer without invoking normal child paint or command recording.
 - [x] Keep the child element available for rebuild, layout, and interaction processing.
-- [ ] Track every content/rebuild generation, layout/bounds, device scale, clip, transform, and resource generation; the initial Scrollable key plus element paint-invalidation tracking covers the current stable path.
+- [x] Track every content/rebuild generation, layout/bounds, device scale, clip, transform, and resource generation through the shared `PaintContract`; `Scrollable` supplies the complete contract while its live scroll translation remains composition-only, and element paint-invalidation tracking remains the conservative fallback.
 - [x] Keep the retained layer alive through the current frame command ownership model.
 - [x] Bound memory; cache absence or failed recording falls back to direct paint.
 - [x] Keep the direct path available through the conservative stability/size checks.

@@ -77,6 +77,12 @@ impl Default for AlphaState {
 }
 
 #[inline]
+fn apply_alpha(mut color: [f32; 4], alpha: f32) -> [f32; 4] {
+    color[3] *= alpha;
+    color
+}
+
+#[inline]
 fn packed_color(color: Color, alpha: f32) -> Rgba8 {
     Rgba8::from(color).with_opacity(alpha)
 }
@@ -1949,6 +1955,14 @@ mod tests {
         assert_eq!(state.current(), 1.0);
         state.set(-1.0);
         assert_eq!(state.current(), 0.0);
+    }
+
+    #[test]
+    fn apply_alpha_scales_only_the_alpha_channel() {
+        assert_eq!(
+            apply_alpha([0.1, 0.2, 0.3, 0.8], 0.25),
+            [0.1, 0.2, 0.3, 0.8 * 0.25]
+        );
     }
 
     // Regression: `BoxOutline` is meant to bleed just outside its own box,

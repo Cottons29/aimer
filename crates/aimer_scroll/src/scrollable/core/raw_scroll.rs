@@ -2016,6 +2016,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn changing_parent_transform_or_bounds_re_records_retained_paint() {
+        let draws = Rc::new(Cell::new(0));
+        let scrollable = drawing_scrollable(draws.clone());
+        let mut ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
+
+        scrollable.draw(&ctx);
+        assert_eq!(draws.get(), 1);
+
+        ctx.canvas.begin_frame();
+        ctx.canvas.scale(2.0, 1.0);
+        scrollable.draw(&ctx);
+        assert_eq!(draws.get(), 2, "a parent transform changes the paint contract");
+
+        ctx.canvas.begin_frame();
+        ctx.parent_pos = Vec2d { x: 4.0, y: 6.0 };
+        scrollable.draw(&ctx);
+        assert_eq!(draws.get(), 3, "moving the retained bounds changes the paint contract");
+    }
+
+    #[tokio::test]
     async fn replacing_a_retained_image_invalidates_the_paint_layer() {
         aimer_widget::reset_paint_stats();
         let draws = Rc::new(Cell::new(0));

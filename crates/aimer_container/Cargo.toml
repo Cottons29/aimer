@@ -7,6 +7,7 @@ edition = "2024"
 portable-guest = [
     "aimer_widget/portable-guest",
     "aimer_style/portable-guest",
+    "aimer_text/portable-guest",
     "dep:aimer_anteros",
 ]
 
@@ -29,7 +30,7 @@ aimer_cupid.workspace = true
 aimer_flex.workspace = true
 aimer_scroll.workspace = true
 aimer_space.workspace = true
-aimer_text = { workspace = true, features = ["portable-guest"] }
+aimer_text.workspace = true
 winit.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
