@@ -22,14 +22,20 @@ jobs:
           targets: x86_64-apple-darwin, aarch64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim, wasm32-unknown-unknown
           components: clippy
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
       - name: Clippy (deny warnings)
         run: cargo clippy --workspace
 
-      - name: Run tests
-        run: cargo test --workspace
+      - name: Run tests with nextest
+        run: cargo nextest run --workspace
+
+      - name: Run doctests
+        run: cargo test --doc --workspace
 
       - name: Check SIMD dispatch targets and scalar fallback
         run: bash scripts/simd_target_checks.sh
