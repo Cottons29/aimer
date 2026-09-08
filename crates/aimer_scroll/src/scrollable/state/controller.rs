@@ -146,9 +146,11 @@ pub struct ScrollState {
     /// target only and no other target pays for it.
     #[cfg(target_arch = "wasm32")]
     pub(crate) web_recovery_end: crate::scrollable::web_recovery_end::WebRecoveryEnd,
-    /// Content size computed once at the start of each `draw`, reused by the
-    /// scrollbar drawing path so child layout is not recomputed within a frame.
+    /// Latest content size observed by the scroll container.
     pub(crate) cached_content_size: Cell<ResolvedSize>,
+    /// Whether `cached_content_size` is initialized and can be used as a
+    /// previous-frame extent hint while new content is verified.
+    pub(crate) cached_content_size_valid: Cell<bool>,
     /// Wall-clock instant the current release fling started, or `None` when no
     /// cubic-bézier fling is active. While `Some`, momentum is driven by the
     /// curve rather than by per-frame velocity decay.
@@ -252,7 +254,9 @@ impl ScrollState {
     /// Used during reconciliation: when a parent rebuild produces a fresh
     /// scrollable, the newly built controller copies the offset from the old
     /// one so the viewport stays where the user left it instead of snapping
-    /// to the top.
+    /// to the top. It also carries the last content extent when the scale is
+    /// unchanged, allowing a newly measured prediction to be verified before
+    /// it affects the preserved offset.
     pub(crate) fn adopt_scroll_state(&self, prev: &ScrollState) {
         self.scroll_offset.set(prev.scroll_offset.get());
         self.pointer_velocity.set(prev.pointer_velocity.get());
@@ -294,6 +298,12 @@ impl ScrollState {
             .set(prev.highest_overscroll_offset.get());
         self.overscroll_peak_at.set(prev.overscroll_peak_at.get());
         self.device_contact.set(prev.device_contact.get());
+        if prev.last_scale.get() == self.last_scale.get() {
+            self.cached_content_size
+                .set(prev.cached_content_size.get());
+            self.cached_content_size_valid
+                .set(prev.cached_content_size_valid.get());
+        }
     }
 
     /// Whether the edges rubber-band for the device that is currently
@@ -1666,6 +1676,7 @@ impl ScrollState {
             cached_v_track_width: Cell::new(0.0),
             cached_h_track_width: Cell::new(0.0),
             cached_content_size: Cell::new(Default::default()),
+            cached_content_size_valid: Cell::new(false),
             fling_start_time: Cell::new(None),
             fling_start_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             fling_target_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
@@ -1762,6 +1773,11 @@ mod tests {
         let prev = ctrl_with_offset(Vec2d { x: 3.0, y: 150.0 });
         prev.pointer_velocity.set(Vec2d { x: 0.0, y: -12.0 });
         prev.spring_velocity.set(Vec2d { x: 0.0, y: -200.0 });
+        prev.cached_content_size.set(ResolvedSize {
+            width: 320.0,
+            height: 1_200.0,
+        });
+        prev.cached_content_size_valid.set(true);
 
         let fresh = ctrl_with_offset(Vec2d { x: 0.0, y: 0.0 });
         assert_eq!(
@@ -1776,6 +1792,8 @@ mod tests {
         assert_eq!(fresh.scroll_offset.get().y, 150.0);
         assert_eq!(fresh.pointer_velocity.get().y, -12.0);
         assert_eq!(fresh.spring_velocity.get().y, -200.0);
+        assert_eq!(fresh.cached_content_size.get().height, 1_200.0);
+        assert!(fresh.cached_content_size_valid.get());
     }
 
     /// A bouncy engine parked 40 px past the start edge, in a viewport large

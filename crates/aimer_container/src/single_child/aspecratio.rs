@@ -185,31 +185,6 @@ struct RawAspectRatio {
 
 impl Drawable for RawAspectRatio {
     fn draw(&self, ctx: &BuildContext) {
-        let child_ctx = self.child_context(ctx);
-        self.child.draw(&child_ctx);
-    }
-
-    #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        let child_ctx = self.child_context(ctx);
-        self.child.paint(&child_ctx);
-    }
-
-    #[inline]
-    fn sync_paint_geometry(&self, ctx: &BuildContext) {
-        let child_ctx = self.child_context(ctx);
-        self.child.sync_paint_geometry(&child_ctx);
-    }
-
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
-}
-
-impl RawAspectRatio {
-    #[inline]
-    fn child_context<'a>(&self, ctx: &BuildContext<'a>) -> BuildContext<'a> {
         let size = self.computed_size(ctx);
         let mut child_ctx = ctx.clone();
         child_ctx.parent_size = size;
@@ -219,7 +194,12 @@ impl RawAspectRatio {
             max_width: size.width,
             max_height: size.height,
         };
-        child_ctx
+        self.child.draw(&child_ctx);
+    }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        self.child.is_paint_stable()
     }
 }
 

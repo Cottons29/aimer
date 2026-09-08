@@ -487,6 +487,16 @@ impl EventElement for RetainedChildElement {
         }
     }
 
+    /// Reconciliation and focus traversal need the retained element itself as
+    /// the placement's structural child. Descendants are visited after that
+    /// element by the normal walk, which keeps positional state handoff aligned
+    /// when the retained element owns a child list.
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        if let Some(child) = self.child() {
+            visitor(child);
+        }
+    }
+
     /// Offers the retained child's own children, for the reason given on
     /// [`Self::event_children`]: this placement is hit-tested with the child's
     /// bounds and answers with the child's handler, so the child must not also
@@ -499,23 +509,18 @@ impl EventElement for RetainedChildElement {
 }
 
 impl Drawable for RetainedChildElement {
+    #[inline]
+    fn prepare_layout(&self, ctx: &BuildContext) -> bool {
+        if let Some(child) = self.child() {
+            child.prepare_layout(ctx)
+        } else {
+            false
+        }
+    }
+
     fn draw(&self, ctx: &BuildContext) {
         if let Some(child) = self.child() {
             child.draw(ctx);
-        }
-    }
-
-    #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        if let Some(child) = self.child() {
-            child.paint(ctx);
-        }
-    }
-
-    #[inline]
-    fn sync_paint_geometry(&self, ctx: &BuildContext) {
-        if let Some(child) = self.child() {
-            child.sync_paint_geometry(ctx);
         }
     }
 
@@ -793,6 +798,63 @@ mod tests {
         assert_eq!(
             addresses[0], addresses[1],
             "every placement must reach the element the first build produced"
+        );
+    }
+
+    /// Reconciliation must pair a retained placement with the element it
+    /// represents before walking that element's descendants.
+    #[tokio::test]
+    async fn structural_walk_exposes_the_retained_element_before_its_children() {
+        struct Parent {
+            child: AnyElement,
+        }
+
+        impl VisitorElement for Parent {
+            fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+                visitor(&self.child);
+            }
+
+            fn debug_name(&self) -> &'static str {
+                "StructuralParent"
+            }
+        }
+
+        impl EventElement for Parent {}
+        impl LayoutElement for Parent {}
+        impl Rebuildable for Parent {}
+        impl Drawable for Parent {
+            fn draw(&self, _ctx: &BuildContext) {}
+        }
+
+        struct ParentWidget;
+
+        impl Widget for ParentWidget {
+            fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+                Parent {
+                    child: Counter {
+                        events: Rc::new(Cell::new(0)),
+                    }
+                    .boxed(),
+                }
+                .boxed()
+            }
+
+            fn debug_name(&self) -> &'static str {
+                "ParentWidget"
+            }
+        }
+
+        impl crate::widget::PortableWidget for ParentWidget {}
+
+        let ctx = context();
+        let placement = ChildBuilder::from_widget(ParentWidget).build(&ctx);
+        let mut names = Vec::new();
+        placement.structural_children(&mut |child| names.push(child.debug_name()));
+
+        assert_eq!(
+            names,
+            vec!["StructuralParent"],
+            "a retained placement must pair with its represented element before descending"
         );
     }
 

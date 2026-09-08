@@ -885,17 +885,8 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        crate::frame_work_stats::record_paint_call();
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
-        record_draw_traversal();
-        record_paint_element(self.id.get());
-        self.element.paint(ctx);
-    }
-
-    #[inline]
-    fn sync_paint_geometry(&self, ctx: &BuildContext) {
-        self.element.sync_paint_geometry(ctx);
+    fn prepare_layout(&self, ctx: &BuildContext) -> bool {
+        self.element.prepare_layout(ctx)
     }
 
     #[inline]
@@ -1110,13 +1101,8 @@ impl Drawable for AnyElement {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        self.as_ref().paint(ctx)
-    }
-
-    #[inline]
-    fn sync_paint_geometry(&self, ctx: &BuildContext) {
-        self.as_ref().sync_paint_geometry(ctx)
+    fn prepare_layout(&self, ctx: &BuildContext) -> bool {
+        self.as_ref().prepare_layout(ctx)
     }
 
     #[inline]
@@ -1323,13 +1309,8 @@ impl Drawable for Box<dyn Element> {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        self.as_ref().paint(ctx)
-    }
-
-    #[inline]
-    fn sync_paint_geometry(&self, ctx: &BuildContext) {
-        self.as_ref().sync_paint_geometry(ctx)
+    fn prepare_layout(&self, ctx: &BuildContext) -> bool {
+        self.as_ref().prepare_layout(ctx)
     }
 
     #[inline]

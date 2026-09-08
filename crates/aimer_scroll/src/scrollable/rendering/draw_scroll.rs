@@ -4,6 +4,7 @@ use aimer_widget::base::BuildContext;
 use aimer_widget::{Drawable, Element, LayoutElement};
 
 use crate::ScrollAxis;
+use crate::scrollable::constants::SNAP_EPSILON;
 use crate::raw_scroll::{DragMode, RawScrollableContainer};
 use crate::scrollable::cache_extent::cache_rect;
 use crate::scrollable::recovery_end::finish_overscroll_recovery;
@@ -45,18 +46,94 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         let max_dim = 1e7_f32;
         let viewport_w = raw_viewport_w.min(max_dim);
         let viewport_h = raw_viewport_h.min(max_dim);
-        let content_size = self.content_size(ctx);
-        #[cfg(not(feature = "portable-guest"))]
-        let paint_transform = aimer_widget::PaintTransform::from_canvas(&ctx.canvas);
-        #[cfg(not(feature = "portable-guest"))]
-        let paint_clip = aimer_widget::PaintClip::rect(0.0, 0.0, viewport_w.round(), viewport_h.round());
-        // Cache content size for the rest of this frame (scrollbar drawing reads
-        // it) to avoid recomputing the child layout multiple times per draw.
-        self.ctrl.cached_content_size.set(content_size);
+        let previous_content_size = self.ctrl.cached_content_size.get();
+        let previous_max_scroll = self.ctrl.cached_max_scroll.get();
+        let previous_offset = self.ctrl.scroll_offset.get();
+        let preserve_content_end = self.ctrl.cached_content_size_valid.get()
+            && match self.ctrl.axis {
+                ScrollAxis::Vertical => {
+                    previous_max_scroll.y > SNAP_EPSILON
+                        && (previous_offset.y + previous_max_scroll.y).abs() <= SNAP_EPSILON
+                }
+                ScrollAxis::Horizontal => {
+                    previous_max_scroll.x > SNAP_EPSILON
+                        && (previous_offset.x + previous_max_scroll.x).abs() <= SNAP_EPSILON
+                }
+            };
+        // Materialize and refine the visible window before physics can clamp
+        // against its estimate and before any commands enter retained paint.
+        let mut prepare_ctx = ctx.clone();
+        prepare_ctx.box_constraint.min_width = prepare_ctx.box_constraint.min_width.min(viewport_w);
+        prepare_ctx.box_constraint.min_height = prepare_ctx.box_constraint.min_height.min(viewport_h);
+        prepare_ctx.box_constraint.max_width = viewport_w;
+        prepare_ctx.box_constraint.max_height = viewport_h;
+        prepare_ctx.parent_size = ResolvedSize { width: viewport_w, height: viewport_h };
+        match self.ctrl.axis {
+            ScrollAxis::Vertical => prepare_ctx.box_constraint.max_height = f32::MAX,
+            ScrollAxis::Horizontal => prepare_ctx.box_constraint.max_width = f32::MAX,
+        }
+        let initial_offset = self.ctrl.scroll_offset.get();
+        prepare_ctx.visible_rect = Some(cache_rect(
+            self.ctrl.axis,
+            Vec2d {
+                x: -initial_offset.x,
+                y: -initial_offset.y,
+            },
+            (viewport_w, viewport_h),
+            Vec2d::ZERO,
+        ));
+        let mut prepared_extent = self.child.prepare_layout(&prepare_ctx);
+        let initial_content_size = self.content_size(ctx);
+        let mut content_size = initial_content_size;
+        // Refining the end anchor can expose another window. Bound the work
+        // just as the windowed flex layout bounds its own reconciliation.
+        for _ in 0..3 {
+            let offset = self.ctrl.scroll_offset.get();
+            prepare_ctx.visible_rect = Some(cache_rect(
+                self.ctrl.axis,
+                Vec2d { x: -offset.x, y: -offset.y },
+                (viewport_w, viewport_h),
+                Vec2d::ZERO,
+            ));
+            prepared_extent |= self.child.prepare_layout(&prepare_ctx);
+            let refined = self.child.computed_size(&prepare_ctx);
+            if refined == content_size {
+                break;
+            }
+            self.refresh_content_size_after_draw(
+                ctx, viewport_w, viewport_h, content_size, true, preserve_content_end,
+            );
+            content_size = refined;
+        }
+        if content_size != initial_content_size
+            && self.ctrl.drag_mode.get() == DragMode::None
+            && !scrolling_before_draw
+        {
+            // A layout shrink is not a user overscroll gesture. Settle an idle
+            // viewport immediately instead of painting a spring-back frame.
+            let offset = self.ctrl.clamp_offset(self.ctrl.scroll_offset.get());
+            self.ctrl.set_scroll_offset(offset);
+        }
+        // A newly built scroll element can briefly report a predicted extent
+        // before its windowed child paints and refines that prediction. Keep the
+        // last known range for physics during that frame so a preserved offset
+        // is not clamped toward the prediction before the child can correct it.
+        let provisional_extent = !prepared_extent
+            && self.ctrl.cached_content_size_valid.get()
+            && self.ctrl.last_scale.get() == ctx.scale
+            && previous_content_size != content_size
+            && initial_content_size == content_size;
+        let range_content_size = if provisional_extent {
+            previous_content_size
+        } else {
+            self.ctrl.cached_content_size.set(content_size);
+            self.ctrl.cached_content_size_valid.set(true);
+            content_size
+        };
         let transform = ctx.canvas.get_transform_translation();
         let layout_size = self.layout_size(ctx);
-        let max_x = (content_size.width - viewport_w).max(0.0);
-        let max_y = (content_size.height - viewport_h).max(0.0);
+        let max_x = (range_content_size.width - viewport_w).max(0.0);
+        let max_y = (range_content_size.height - viewport_h).max(0.0);
 
         self.bounds.save(
             ctx.scale,
@@ -78,6 +155,24 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         }
 
         self.ctrl.cached_max_scroll.set(final_max);
+
+        if prepared_extent && preserve_content_end {
+            let mut offset = self.ctrl.scroll_offset.get();
+            match self.ctrl.axis {
+                ScrollAxis::Vertical => offset.y = -final_max.y,
+                ScrollAxis::Horizontal => offset.x = -final_max.x,
+            }
+            self.ctrl.set_scroll_offset(offset);
+        }
+
+        if prepared_extent
+            && content_size != previous_content_size
+            && self.ctrl.drag_mode.get() == DragMode::None
+            && !scrolling_before_draw
+        {
+            let offset = self.ctrl.clamp_offset(self.ctrl.scroll_offset.get());
+            self.ctrl.set_scroll_offset(offset);
+        }
 
         let user_min = self.ctrl.scroll_behavior.min_scroll;
         self.ctrl.cached_min_scroll.set(Vec2d {
@@ -201,15 +296,20 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // still updates its physics and bounds without walking its content.
         if ctx.is_rect_visible(0.0, 0.0, viewport_w, viewport_h) {
             #[cfg(not(feature = "portable-guest"))]
-            self.draw_child_with_retained_paint(
-                ctx,
-                &child_ctx,
-                content_size,
-                paint_clip,
-                paint_transform,
-            );
+            self.draw_child_with_retained_paint(ctx, &child_ctx, content_size);
             #[cfg(feature = "portable-guest")]
             self.child.draw(&child_ctx);
+
+            if provisional_extent || !self.child.is_layout_stable() {
+                self.refresh_content_size_after_draw(
+                    ctx,
+                    viewport_w,
+                    viewport_h,
+                    content_size,
+                    provisional_extent,
+                    preserve_content_end,
+                );
+            }
         }
 
         // Restore before drawing scrollbars (they are separate in-flow children).

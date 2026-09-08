@@ -638,6 +638,7 @@ impl<W: Widget + 'static> ScrollableState<W> {
             cached_v_track_width: Cell::new(0.0),
             cached_h_track_width: Cell::new(0.0),
             cached_content_size: Cell::new(Default::default()),
+            cached_content_size_valid: Cell::new(false),
             fling_start_time: Cell::new(None),
             fling_start_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             fling_target_offset: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
