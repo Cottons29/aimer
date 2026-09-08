@@ -332,7 +332,7 @@ mod tests {
     /// The deadline is generous because CI machines stall; a passing run never
     /// comes near it.
     fn wait_until(what: &str, condition: impl Fn() -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + Duration::from_secs(120);
         while !condition() {
             assert!(Instant::now() < deadline, "timed out waiting for {what}");
             thread::yield_now();
