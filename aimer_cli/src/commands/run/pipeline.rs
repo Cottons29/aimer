@@ -16,6 +16,7 @@ use crate::commands::run::helpers::set_status;
 use crate::commands::run::ios::IosRunner;
 use crate::commands::run::macos::MacosRunner;
 use crate::commands::run::web::WebRunner;
+use crate::session::SessionHandle;
 use crate::targets::Targets;
 
 /// Everything a per-target runner needs to build and launch the app.
@@ -31,6 +32,9 @@ pub struct RunContext {
     /// flag: the cargo profile, the Xcode configuration, the Gradle task and
     /// therefore the artifact paths.
     pub release: bool,
+    /// Optional control session for process identity publication and agent
+    /// restart/stop commands.
+    pub session: Option<SessionHandle>,
 }
 
 /// One step of the unified run pipeline, in the order [`drive`] executes them.
@@ -126,8 +130,14 @@ pub fn drive(mut runner: Box<dyn Runner>, ctx: RunContext) {
     }
 
     set_status(&ctx.tx, Status::Running);
+    if let Some(session) = &ctx.session {
+        session.set_status(crate::session::SessionStatus::Running, None);
+    }
     wait_for_child(&ctx.current_child);
     set_status(&ctx.tx, Status::Idling);
+    if let Some(session) = &ctx.session {
+        session.set_status(crate::session::SessionStatus::Idling, None);
+    }
 }
 
 /// Resolve the [`Runner`] for a target, or `None` if the target is not
@@ -296,6 +306,7 @@ mod tests {
             inspector_address: "127.0.0.1".parse().unwrap(),
             inspector_port: 0,
             release: false,
+            session: None,
         };
         (ctx, rx)
     }

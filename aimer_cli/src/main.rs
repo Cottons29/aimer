@@ -13,6 +13,7 @@ pub mod commands;
 pub mod config;
 pub mod console;
 pub mod errors;
+pub mod session;
 pub mod targets;
 pub mod tui;
 
@@ -170,6 +171,42 @@ enum Commands {
         /// Print every Widget IR stage after successful native materialization.
         #[arg(long, requires = "unstable")]
         verbose_widget_ir: bool,
+        /// Do not start or register the private MCP control session.
+        #[arg(long)]
+        no_mcp: bool,
+    },
+
+    /// Expose a running Aimer session as an MCP server over stdio.
+    Mcp {
+        /// Install the Aimer MCP server for one or more supported agents.
+        #[arg(
+            long,
+            value_name = "AGENT",
+            num_args = 1..,
+            value_delimiter = ',',
+            conflicts_with = "attach"
+        )]
+        install: Option<Vec<String>>,
+        /// Install in the user's global agent configuration instead of binding
+        /// the entry to the current Aimer project.
+        #[arg(long, requires = "install", conflicts_with_all = ["project", "attach"])]
+        global: bool,
+        /// Project path used for automatic session discovery.
+        #[arg(long, conflicts_with = "attach")]
+        project: Option<std::path::PathBuf>,
+        /// Attach to this exact session ID.
+        #[arg(long, conflicts_with = "project")]
+        attach: Option<String>,
+    },
+
+    /// List live Aimer run sessions.
+    Sessions {
+        /// Restrict discovery to a project path.
+        #[arg(long)]
+        project: Option<std::path::PathBuf>,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Build the project for a target without launching it
@@ -246,6 +283,7 @@ fn main() -> anyhow::Result<()> {
             release: _,
             unstable,
             verbose_widget_ir,
+            no_mcp,
         }) => {
             let policy = execution_policy.expect("run commands always resolve an execution policy");
             commands::run::execute(
@@ -255,7 +293,44 @@ fn main() -> anyhow::Result<()> {
                 policy,
                 *verbose_widget_ir,
                 matches!(unstable, Some(UnstableFeature::InlineRender)),
+                *no_mcp,
             )?;
+        }
+        Some(Commands::Mcp {
+            project,
+            attach,
+            install,
+            global,
+        }) => {
+            if let Some(agents) = install {
+                let scope = if *global {
+                    commands::mcp_install::InstallScope::Global
+                } else {
+                    commands::mcp_install::InstallScope::Project(
+                        project
+                            .clone()
+                            .unwrap_or(std::env::current_dir()?),
+                    )
+                };
+                let reports = commands::mcp_install::install(agents, scope)?;
+                for report in reports {
+                    let state = if report.changed {
+                        "installed"
+                    } else {
+                        "already installed"
+                    };
+                    println!(
+                        "Aimer MCP {state} for {} in {}",
+                        report.agent,
+                        report.path.display()
+                    );
+                }
+            } else {
+                commands::mcp::execute(project.clone(), attach.clone())?;
+            }
+        }
+        Some(Commands::Sessions { project, json }) => {
+            commands::mcp::list_sessions(project.clone(), *json)?;
         }
         Some(Commands::Build { target, release }) => {
             commands::build::execute(target.map(|t| t.to_string()), *release)?;
@@ -361,6 +436,63 @@ mod tests {
         let cli = Cli::try_parse_from(["aimer", "run"]).unwrap();
 
         assert!(cli.validate_unstable_invocation().is_ok());
+    }
+
+    #[test]
+    fn run_can_disable_automatic_mcp_registration() {
+        let cli = Cli::try_parse_from(["aimer", "run", "--no-mcp"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Run { no_mcp: true, .. })
+        ));
+    }
+
+    #[test]
+    fn mcp_project_and_exact_attach_are_mutually_exclusive() {
+        assert!(
+            Cli::try_parse_from(["aimer", "mcp", "--project", ".", "--attach", "abc"])
+                .is_err()
+        );
+        assert!(Cli::try_parse_from(["aimer", "mcp", "--attach", "abc"]).is_ok());
+    }
+
+    #[test]
+    fn mcp_global_install_accepts_multiple_agents() {
+        let cli = Cli::try_parse_from([
+            "aimer",
+            "mcp",
+            "--install",
+            "codex",
+            "claude",
+            "--global",
+        ])
+        .unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Mcp {
+                install: Some(agents),
+                global: true,
+                ..
+            }) if agents == vec!["codex", "claude"]
+        ));
+    }
+
+    #[test]
+    fn mcp_global_flag_requires_install() {
+        assert!(Cli::try_parse_from(["aimer", "mcp", "--global"]).is_err());
+    }
+
+    #[test]
+    fn mcp_install_rejects_global_project_and_exact_attach_combinations() {
+        assert!(
+            Cli::try_parse_from(["aimer", "mcp", "--install", "codex", "--global", "--project", "."])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["aimer", "mcp", "--install", "codex", "--attach", "abc"])
+                .is_err()
+        );
     }
 
     #[test]

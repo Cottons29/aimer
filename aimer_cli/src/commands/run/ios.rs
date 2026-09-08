@@ -90,8 +90,6 @@ impl Runner for IosRunner {
             &self.build_target(),
             &ctx.tx,
             &ctx.current_child,
-            ctx.inspector_address,
-            ctx.inspector_port,
             ctx.release,
         ) else {
             return Flow::Abort;
@@ -143,6 +141,16 @@ impl Runner for IosRunner {
             &ctx.current_child,
         ) {
             return Flow::Abort;
+        }
+
+        if let Some(session) = &ctx.session {
+            session.set_process(
+                Some(crate::session::ProcessIdentity::unavailable(
+                    crate::session::ProcessScope::Device,
+                    Some(bundle_id),
+                )),
+                None,
+            );
         }
 
         Flow::Continue

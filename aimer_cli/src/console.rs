@@ -19,6 +19,7 @@ use crate::commands::run::pipeline::{self, RunContext};
 use crate::commands::run::utilities::{LogStyling, get_project_root};
 use crate::targets::Targets;
 use crate::tui::RawModeGuard;
+use crate::session::{LogStream, SessionCommand, SessionHandle, SessionStatus};
 use aimer_inspector::InspectorServer;
 use aimer_utils::AnimInstant;
 use anyhow::Context;
@@ -42,6 +43,7 @@ fn spawn_runner(
     inspector_address: IpAddr,
     inspector_port: u16,
     release: bool,
+    session: Option<SessionHandle>,
 ) -> Arc<Mutex<Option<Child>>> {
     let current_child = Arc::new(Mutex::new(None));
     let current_child_clone = Arc::clone(&current_child);
@@ -57,6 +59,7 @@ fn spawn_runner(
                 inspector_address,
                 inspector_port,
                 release,
+                session: session.map(|session| session.scoped()),
             };
             thread::spawn(move || pipeline::drive(runner, ctx));
         }
@@ -70,6 +73,60 @@ fn spawn_runner(
     }
 
     current_child
+}
+
+pub(crate) fn observe_session_event(session: Option<&SessionHandle>, event: &RunnerEvent) {
+    let Some(session) = session else {
+        return;
+    };
+    match event {
+        RunnerEvent::BuildLog(message) => {
+            session.push_log(LogStream::Build, "info", message.clone(), None);
+        }
+        RunnerEvent::BuildReport(report) => {
+            let message = report.lines().join("\n");
+            session.push_log(LogStream::Build, "error", message.clone(), None);
+            session.set_status(SessionStatus::Error, Some(message));
+        }
+        RunnerEvent::AppLog(log) => {
+            let message = crate::console::state::strip_ansi(log.message());
+            let location = log
+                .source_location()
+                .map(crate::console::state::strip_ansi);
+            session.push_log(
+                LogStream::App,
+                "info",
+                message,
+                location,
+            );
+        }
+        RunnerEvent::AppPanic(report) => {
+            let message = report.lines().join("\n");
+            session.push_log(LogStream::App, "error", message.clone(), None);
+            session.set_status(SessionStatus::Error, Some(message));
+        }
+        RunnerEvent::StatusChange(status) => {
+            let status = match status {
+                Status::Locking => SessionStatus::Locking,
+                Status::Fetching(_) => SessionStatus::Fetching,
+                Status::Compiling(_) => SessionStatus::Compiling,
+                Status::Building(_) => SessionStatus::Building,
+                Status::Launching => SessionStatus::Launching,
+                Status::Running => SessionStatus::Running,
+                Status::Idling => SessionStatus::Idling,
+                Status::Error => SessionStatus::Error,
+            };
+            session.set_status(status, None);
+        }
+        RunnerEvent::HotReload => {
+            session.push_log(
+                LogStream::System,
+                "info",
+                "file change detected; rebuilding".to_string(),
+                None,
+            );
+        }
+    }
 }
 
 /// Returns true if the current terminal is known to support the ConEmu
@@ -138,7 +195,12 @@ fn hit_test(view: &PaneView, col: u16, row: u16) -> Option<(usize, usize)> {
     Some((vr.line, vr.start + within))
 }
 
-pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<()> {
+pub fn start(
+    device: Device,
+    pkg_name: String,
+    release: bool,
+    session: Option<SessionHandle>,
+) -> anyhow::Result<()> {
     let _guard = RawModeGuard::with_alternate_screen()?;
 
     let backend = CrosstermBackend::new(stdout());
@@ -177,6 +239,7 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
         inspector_handle.address,
         inspector_handle.port,
         release,
+        session.clone(),
     );
 
     // Hot-reload file watcher
@@ -234,8 +297,62 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
         .open(lib_path)?;
 
     loop {
+        let mut stop_requested = false;
+        while let Some(command) = session.as_ref().and_then(SessionHandle::take_command) {
+            match command {
+                SessionCommand::Restart { reply } => {
+                    if session
+                        .as_ref()
+                        .expect("session command requires a session")
+                        .accept_restart(reply)
+                        .is_err()
+                    {
+                        continue;
+                    }
+                    if let Some(mut child) = current_child.lock().unwrap().take() {
+                        let _ = child.kill();
+                    }
+                    state.status = Status::Compiling(0);
+                    current_child = spawn_runner(
+                        device.clone(),
+                        pkg_name.clone(),
+                        tx.clone(),
+                        inspector_handle.address,
+                        inspector_handle.port,
+                        release,
+                        session.clone(),
+                    );
+                }
+                SessionCommand::Stop { reply } => {
+                    if let Some(mut child) = current_child.lock().unwrap().take() {
+                        let _ = child.kill();
+                    }
+                    session
+                        .as_ref()
+                        .expect("session command requires a session")
+                        .complete_stop(reply);
+                    stop_requested = true;
+                }
+                SessionCommand::ClearLogs { request, reply } => {
+                    let stream = request.stream;
+                    session
+                        .as_ref()
+                        .expect("session command requires a session")
+                        .complete_clear_logs(request, reply);
+                    match stream {
+                        Some(LogStream::App) => state.app_logs.clear(),
+                        Some(LogStream::Build) => state.build_logs.clear(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if stop_requested {
+            break;
+        }
         // Process all pending events
         while let Ok(event) = rx.try_recv() {
+            observe_session_event(session.as_ref(), &event);
             match event {
                 RunnerEvent::BuildLog(msg) => state.push_build_log(msg),
                 RunnerEvent::BuildReport(report) => state.push_build_report(report),
@@ -269,6 +386,7 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
                                     inspector_handle.address,
                                     inspector_handle.port,
                                     release,
+                                    session.clone(),
                                 );
                             }
                         }
@@ -349,6 +467,7 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
                                     inspector_handle.address,
                                     inspector_handle.port,
                                     release,
+                                    session.clone(),
                                 );
                             }
                         }
@@ -577,7 +696,12 @@ pub fn start(device: Device, pkg_name: String, release: bool) -> anyhow::Result<
 /// Prints build and app logs directly to stdout/stderr without creating an
 /// alternate screen or using ratatui. Designed for IDE and CI integrations
 /// where no terminal device is available.
-pub fn start_no_tui(device: Device, pkg_name: String, release: bool) -> anyhow::Result<()> {
+pub fn start_no_tui(
+    device: Device,
+    pkg_name: String,
+    release: bool,
+    session: Option<SessionHandle>,
+) -> anyhow::Result<()> {
     let (tx, rx) = crossbeam::channel::unbounded();
 
     // Starting inspector server
@@ -607,9 +731,63 @@ pub fn start_no_tui(device: Device, pkg_name: String, release: bool) -> anyhow::
         inspector_handle.address,
         inspector_handle.port,
         release,
+        session.clone(),
     );
-    // Simple blocking event loop — print logs to stdout/stderr.
-    while let Ok(event) = rx.recv() {
+    // Poll the runner and the private control endpoint together so a no-TUI
+    // run remains attachable even while no log line is being emitted.
+    loop {
+        let mut stop_requested = false;
+        while let Some(command) = session.as_ref().and_then(SessionHandle::take_command) {
+            match command {
+                SessionCommand::Restart { reply } => {
+                    if session
+                        .as_ref()
+                        .expect("session command requires a session")
+                        .accept_restart(reply)
+                        .is_err()
+                    {
+                        continue;
+                    }
+                    if let Some(mut child) = current_child.lock().unwrap().take() {
+                        let _ = child.kill();
+                    }
+                    current_child = spawn_runner(
+                        device.clone(),
+                        pkg_name.clone(),
+                        tx.clone(),
+                        inspector_handle.address,
+                        inspector_handle.port,
+                        release,
+                        session.clone(),
+                    );
+                }
+                SessionCommand::Stop { reply } => {
+                    if let Some(mut child) = current_child.lock().unwrap().take() {
+                        let _ = child.kill();
+                    }
+                    session
+                        .as_ref()
+                        .expect("session command requires a session")
+                        .complete_stop(reply);
+                    stop_requested = true;
+                }
+                SessionCommand::ClearLogs { request, reply } => {
+                    session
+                        .as_ref()
+                        .expect("session command requires a session")
+                        .complete_clear_logs(request, reply);
+                }
+            }
+        }
+        if stop_requested {
+            break;
+        }
+        let event = match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(event) => event,
+            Err(crossbeam::channel::RecvTimeoutError::Timeout) => continue,
+            Err(crossbeam::channel::RecvTimeoutError::Disconnected) => break,
+        };
+        observe_session_event(session.as_ref(), &event);
         match event {
             RunnerEvent::BuildLog(msg) => {
                 eprintln!("[build] {}", msg);
@@ -656,6 +834,7 @@ pub fn start_no_tui(device: Device, pkg_name: String, release: bool) -> anyhow::
                         inspector_handle.address,
                         inspector_handle.port,
                         release,
+                        session.clone(),
                     );
                 }
             }
@@ -663,4 +842,38 @@ pub fn start_no_tui(device: Device, pkg_name: String, release: bool) -> anyhow::
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::{RunConfiguration, SessionRuntime, SessionStatus};
+
+    #[test]
+    fn running_status_is_not_overwritten_by_an_older_launch_event() {
+        let temp = tempfile::tempdir().unwrap();
+        let runtime = SessionRuntime::start_in(
+            temp.path().join("sessions"),
+            RunConfiguration {
+                project_root: temp.path().to_path_buf(),
+                target: "macos".to_string(),
+                device: None,
+                execution_policy: "debug/native-aot/disabled".to_string(),
+                parent_pid: std::process::id(),
+            },
+        )
+        .unwrap();
+        let handle = runtime.handle();
+
+        observe_session_event(
+            Some(&handle),
+            &RunnerEvent::StatusChange(Status::Launching),
+        );
+        observe_session_event(
+            Some(&handle),
+            &RunnerEvent::StatusChange(Status::Running),
+        );
+
+        assert_eq!(handle.snapshot().status, SessionStatus::Running);
+    }
 }

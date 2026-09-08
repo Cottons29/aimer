@@ -293,8 +293,6 @@ impl Runner for AndroidRunner {
             &build_target(&plan),
             &ctx.tx,
             &ctx.current_child,
-            ctx.inspector_address,
-            ctx.inspector_port,
             ctx.release,
         ) else {
             return Flow::Abort;
@@ -390,6 +388,15 @@ impl Runner for AndroidRunner {
         wait_for_child(&ctx.current_child);
 
         let pid = Self::app_pid(ctx, &app_id);
+        if let Some(session) = &ctx.session {
+            session.set_process(
+                Some(crate::session::ProcessIdentity::device_app(
+                    pid.as_deref().and_then(|pid| pid.parse::<u32>().ok()),
+                    Some(app_id.clone()),
+                )),
+                None,
+            );
+        }
         if pid.is_none() {
             build_log(
                 &ctx.tx,

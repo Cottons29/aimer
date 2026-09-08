@@ -6,5 +6,7 @@ pub mod completions;
 pub mod create;
 pub mod doctor;
 pub mod migrate;
+pub mod mcp;
+pub mod mcp_install;
 pub mod run;
 pub mod version;

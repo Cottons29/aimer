@@ -20,6 +20,7 @@ use crossterm::terminal;
 use tokio::runtime::Runtime;
 
 use crate::commands::run::Device;
+use crate::session::{LogStream, SessionCommand, SessionHandle};
 use crate::console::hotkeys::{ConsoleAction, ConsolePane, map_key_event};
 use crate::console::stage::{StageBook, StageId, StageKind, StageProgress, StageStatus};
 use crate::console::state::{AppState, RunnerEvent, Status, strip_ansi};
@@ -580,9 +581,10 @@ pub fn start(
     pkg_name: String,
     release: bool,
     hot_reload_enabled: bool,
+    control_session: Option<SessionHandle>,
 ) -> anyhow::Result<()> {
     if !stdout().is_terminal() {
-        return super::start_no_tui(device, pkg_name, release);
+        return super::start_no_tui(device, pkg_name, release, control_session);
     }
 
     let _guard = RawModeGuard::new()?;
@@ -622,6 +624,7 @@ pub fn start(
         inspector_handle.address,
         inspector_handle.port,
         release,
+        control_session.clone(),
     );
 
     let mut session = InlineSession::new_with_hot_reload(&device, hot_reload_enabled);
@@ -631,7 +634,64 @@ pub fn start(
     let mut quit = false;
 
     while !quit {
+        while let Some(command) = control_session
+            .as_ref()
+            .and_then(SessionHandle::take_command)
+        {
+            match command {
+                SessionCommand::Restart { reply } => {
+                    if control_session
+                        .as_ref()
+                        .expect("session command requires a session")
+                        .accept_restart(reply)
+                        .is_err()
+                    {
+                        continue;
+                    }
+                    if let Some(mut child) = current_child.lock().unwrap().take() {
+                        let _ = child.kill();
+                    }
+                    session.apply_status(Status::Compiling(0));
+                    renderer.reset();
+                    current_child = super::spawn_runner(
+                        device.clone(),
+                        pkg_name.clone(),
+                        tx.clone(),
+                        inspector_handle.address,
+                        inspector_handle.port,
+                        release,
+                        control_session.clone(),
+                    );
+                }
+                SessionCommand::Stop { reply } => {
+                    if let Some(mut child) = current_child.lock().unwrap().take() {
+                        let _ = child.kill();
+                    }
+                    control_session
+                        .as_ref()
+                        .expect("session command requires a session")
+                        .complete_stop(reply);
+                    quit = true;
+                }
+                SessionCommand::ClearLogs { request, reply } => {
+                    let stream = request.stream;
+                    control_session
+                        .as_ref()
+                        .expect("session command requires a session")
+                        .complete_clear_logs(request, reply);
+                    match stream {
+                        Some(LogStream::App) => session.state.app_logs.clear(),
+                        Some(LogStream::Build) => session.state.build_logs.clear(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if quit {
+            break;
+        }
         while let Ok(event) = rx.try_recv() {
+            super::observe_session_event(control_session.as_ref(), &event);
             session.apply_event(event);
         }
 
@@ -683,6 +743,7 @@ pub fn start(
                         inspector_handle.address,
                         inspector_handle.port,
                         release,
+                        control_session.clone(),
                     );
                 }
                 ConsoleAction::SelectPane(pane) => select_pane(&mut session, pane),

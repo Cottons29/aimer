@@ -1,5 +1,4 @@
 use std::io::{BufRead, BufReader, Read};
-use std::net::IpAddr;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -114,8 +113,6 @@ pub fn spawn_cargo_build(
     target: &CargoBuildTarget,
     tx: &Sender<RunnerEvent>,
     current_child: &Arc<Mutex<Option<Child>>>,
-    inspector_address: IpAddr,
-    inspector_port: u16,
     release: bool,
 ) -> Option<ExitStatus> {
     let mut cmd = cargo_command(target, release);
@@ -125,9 +122,6 @@ pub fn spawn_cargo_build(
         let _ = tx.send(RunnerEvent::StatusChange(Status::Error));
         return None;
     }
-
-    cmd.env("DEFAULT_INSPECTOR_PORT", inspector_port.to_string());
-    cmd.env("DEFAULT_INSPECTOR_ADDRESS", inspector_address.to_string());
 
     let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
         Ok(child) => child,
