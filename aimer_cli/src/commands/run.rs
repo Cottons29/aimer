@@ -279,6 +279,7 @@ pub fn execute(
     policy: ExecutionPolicy,
     verbose_widget_ir: bool,
     inline_render: bool,
+    no_mcp: bool,
 ) -> anyhow::Result<()> {
     let selection = native_pipeline_release(policy);
 
@@ -329,6 +330,34 @@ pub fn execute(
 
     let pkg_name = crate::config::resolve_package_name(std::path::Path::new("."));
 
+    let session_runtime = if selection != PipelineSelection::HotReload
+        && !no_mcp
+        && crate::config::mcp_auto_start()
+    {
+        let configuration = crate::session::RunConfiguration {
+            project_root: project_root.clone(),
+            target: selected_device.target.to_string(),
+            device: Some(selected_device.id.clone()),
+            execution_policy: format!(
+                "{}/{}/{}",
+                policy.profile(),
+                policy.runtime(),
+                policy.reload()
+            ),
+            parent_pid: std::process::id(),
+        };
+        match crate::session::SessionRuntime::start(configuration) {
+            Ok(runtime) => Some(runtime),
+            Err(error) => {
+                eprintln!("warning: MCP control is unavailable: {error}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let session = session_runtime.as_ref().map(|runtime| runtime.handle());
+
     if selection == PipelineSelection::HotReload {
         return run_hot_reload(
             project_root,
@@ -343,7 +372,7 @@ pub fn execute(
     };
 
     if no_tui {
-        console::start_no_tui(selected_device, pkg_name, release)
+        console::start_no_tui(selected_device, pkg_name, release, session)
             .context("console exited with an error")?;
     } else if inline_render {
         console::start_inline(
@@ -351,10 +380,11 @@ pub fn execute(
             pkg_name,
             release,
             policy.reload() == ReloadPolicy::HotReload,
+            session,
         )
             .context("inline console exited with an error")?;
     } else {
-        console::start(selected_device, pkg_name, release)
+        console::start(selected_device, pkg_name, release, session)
             .context("interactive console exited with an error")?;
     }
     Ok(())

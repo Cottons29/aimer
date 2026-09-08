@@ -157,40 +157,6 @@ pub struct FrameContentStats {
     pub scroll_offset_updates: u64,
     /// Number of window redraw requests observed by the framework.
     pub redraw_requests: u64,
-    /// Number of children considered for framework-owned paint isolation.
-    pub paint_isolation_candidates: u64,
-    /// Number of retained paint command streams recorded.
-    pub paint_isolation_records: u64,
-    /// Number of retained paint command streams replayed from cache.
-    pub paint_isolation_replays: u64,
-    /// Number of retained paint caches invalidated before drawing.
-    pub paint_isolation_invalidations: u64,
-    /// Number of isolation attempts that used direct child drawing.
-    pub paint_isolation_fallbacks: u64,
-    /// Number of bounded retained tiles recorded.
-    pub paint_isolation_tile_records: u64,
-    /// Number of bounded retained tiles replayed from cache.
-    pub paint_isolation_tile_replays: u64,
-    /// Number of frames using the current full-target repaint path.
-    pub damage_full_frames: u64,
-    /// Number of frames rendered from a partial damage set.
-    pub damage_partial_frames: u64,
-    /// Number of partial damage regions submitted to the renderer.
-    pub damage_regions: u64,
-    /// Number of regions coalesced before a partial repaint.
-    pub damage_merged_regions: u64,
-    /// Number of partial frames promoted to a full repaint.
-    pub damage_full_frame_promotions: u64,
-    /// Number of frames that reused an initialized persistent target.
-    pub damage_target_reuses: u64,
-    /// Number of partial target clears.
-    pub damage_partial_clears: u64,
-    /// Number of full-target clears.
-    pub damage_full_clears: u64,
-    /// Full-target pixels covered by the current full-frame path.
-    pub damage_full_pixels: u64,
-    /// Pixels covered by partial damage regions.
-    pub damage_partial_pixels: u64,
 }
 
 impl FrameContentStats {
@@ -449,23 +415,6 @@ struct FrameContentAccumulator {
     state_updates: AtomicU64,
     scroll_offset_updates: AtomicU64,
     redraw_requests: AtomicU64,
-    paint_isolation_candidates: AtomicU64,
-    paint_isolation_records: AtomicU64,
-    paint_isolation_replays: AtomicU64,
-    paint_isolation_invalidations: AtomicU64,
-    paint_isolation_fallbacks: AtomicU64,
-    paint_isolation_tile_records: AtomicU64,
-    paint_isolation_tile_replays: AtomicU64,
-    damage_full_frames: AtomicU64,
-    damage_partial_frames: AtomicU64,
-    damage_regions: AtomicU64,
-    damage_merged_regions: AtomicU64,
-    damage_full_frame_promotions: AtomicU64,
-    damage_target_reuses: AtomicU64,
-    damage_partial_clears: AtomicU64,
-    damage_full_clears: AtomicU64,
-    damage_full_pixels: AtomicU64,
-    damage_partial_pixels: AtomicU64,
 }
 
 impl FrameContentAccumulator {
@@ -477,7 +426,6 @@ impl FrameContentAccumulator {
         text_cache_hits: u64,
         text_cache_misses: u64,
         rebuild: aimer_widget::RebuildStats,
-        paint: aimer_widget::PaintStats,
         work: aimer_widget::FrameWorkStats,
     ) {
         self.frames.fetch_add(1, Ordering::Relaxed);
@@ -528,31 +476,6 @@ impl FrameContentAccumulator {
             .fetch_add(work.scroll_offset_updates, Ordering::Relaxed);
         self.redraw_requests
             .fetch_add(work.redraw_requests, Ordering::Relaxed);
-        self.paint_isolation_candidates
-            .fetch_add(paint.candidates, Ordering::Relaxed);
-        self.paint_isolation_records
-            .fetch_add(paint.records, Ordering::Relaxed);
-        self.paint_isolation_replays
-            .fetch_add(paint.replays, Ordering::Relaxed);
-        self.paint_isolation_invalidations
-            .fetch_add(paint.invalidations, Ordering::Relaxed);
-        self.paint_isolation_fallbacks
-            .fetch_add(paint.fallbacks, Ordering::Relaxed);
-        self.paint_isolation_tile_records
-            .fetch_add(paint.tile_records, Ordering::Relaxed);
-        self.paint_isolation_tile_replays
-            .fetch_add(paint.tile_replays, Ordering::Relaxed);
-    }
-
-    #[inline]
-    #[cfg(any(feature = "frame-stats", debug_assertions))]
-    fn record_full_frame_damage(&self, width: u32, height: u32) {
-        self.damage_full_frames.fetch_add(1, Ordering::Relaxed);
-        self.damage_full_clears.fetch_add(1, Ordering::Relaxed);
-        self.damage_full_pixels.fetch_add(
-            u64::from(width).saturating_mul(u64::from(height)),
-            Ordering::Relaxed,
-        );
     }
 
     fn snapshot(&self) -> FrameContentStats {
@@ -582,25 +505,6 @@ impl FrameContentAccumulator {
             state_updates: self.state_updates.load(Ordering::Relaxed),
             scroll_offset_updates: self.scroll_offset_updates.load(Ordering::Relaxed),
             redraw_requests: self.redraw_requests.load(Ordering::Relaxed),
-            paint_isolation_candidates: self.paint_isolation_candidates.load(Ordering::Relaxed),
-            paint_isolation_records: self.paint_isolation_records.load(Ordering::Relaxed),
-            paint_isolation_replays: self.paint_isolation_replays.load(Ordering::Relaxed),
-            paint_isolation_invalidations: self.paint_isolation_invalidations.load(Ordering::Relaxed),
-            paint_isolation_fallbacks: self.paint_isolation_fallbacks.load(Ordering::Relaxed),
-            paint_isolation_tile_records: self.paint_isolation_tile_records.load(Ordering::Relaxed),
-            paint_isolation_tile_replays: self.paint_isolation_tile_replays.load(Ordering::Relaxed),
-            damage_full_frames: self.damage_full_frames.load(Ordering::Relaxed),
-            damage_partial_frames: self.damage_partial_frames.load(Ordering::Relaxed),
-            damage_regions: self.damage_regions.load(Ordering::Relaxed),
-            damage_merged_regions: self.damage_merged_regions.load(Ordering::Relaxed),
-            damage_full_frame_promotions: self
-                .damage_full_frame_promotions
-                .load(Ordering::Relaxed),
-            damage_target_reuses: self.damage_target_reuses.load(Ordering::Relaxed),
-            damage_partial_clears: self.damage_partial_clears.load(Ordering::Relaxed),
-            damage_full_clears: self.damage_full_clears.load(Ordering::Relaxed),
-            damage_full_pixels: self.damage_full_pixels.load(Ordering::Relaxed),
-            damage_partial_pixels: self.damage_partial_pixels.load(Ordering::Relaxed),
         }
     }
 
@@ -630,23 +534,6 @@ impl FrameContentAccumulator {
         self.state_updates.store(0, Ordering::Relaxed);
         self.scroll_offset_updates.store(0, Ordering::Relaxed);
         self.redraw_requests.store(0, Ordering::Relaxed);
-        self.paint_isolation_candidates.store(0, Ordering::Relaxed);
-        self.paint_isolation_records.store(0, Ordering::Relaxed);
-        self.paint_isolation_replays.store(0, Ordering::Relaxed);
-        self.paint_isolation_invalidations.store(0, Ordering::Relaxed);
-        self.paint_isolation_fallbacks.store(0, Ordering::Relaxed);
-        self.paint_isolation_tile_records.store(0, Ordering::Relaxed);
-        self.paint_isolation_tile_replays.store(0, Ordering::Relaxed);
-        self.damage_full_frames.store(0, Ordering::Relaxed);
-        self.damage_partial_frames.store(0, Ordering::Relaxed);
-        self.damage_regions.store(0, Ordering::Relaxed);
-        self.damage_merged_regions.store(0, Ordering::Relaxed);
-        self.damage_full_frame_promotions.store(0, Ordering::Relaxed);
-        self.damage_target_reuses.store(0, Ordering::Relaxed);
-        self.damage_partial_clears.store(0, Ordering::Relaxed);
-        self.damage_full_clears.store(0, Ordering::Relaxed);
-        self.damage_full_pixels.store(0, Ordering::Relaxed);
-        self.damage_partial_pixels.store(0, Ordering::Relaxed);
     }
 }
 
@@ -691,23 +578,6 @@ static FRAME_CONTENT_STATS: FrameContentAccumulator = FrameContentAccumulator {
     state_updates: AtomicU64::new(0),
     scroll_offset_updates: AtomicU64::new(0),
     redraw_requests: AtomicU64::new(0),
-    paint_isolation_candidates: AtomicU64::new(0),
-    paint_isolation_records: AtomicU64::new(0),
-    paint_isolation_replays: AtomicU64::new(0),
-    paint_isolation_invalidations: AtomicU64::new(0),
-    paint_isolation_fallbacks: AtomicU64::new(0),
-    paint_isolation_tile_records: AtomicU64::new(0),
-    paint_isolation_tile_replays: AtomicU64::new(0),
-    damage_full_frames: AtomicU64::new(0),
-    damage_partial_frames: AtomicU64::new(0),
-    damage_regions: AtomicU64::new(0),
-    damage_merged_regions: AtomicU64::new(0),
-    damage_full_frame_promotions: AtomicU64::new(0),
-    damage_target_reuses: AtomicU64::new(0),
-    damage_partial_clears: AtomicU64::new(0),
-    damage_full_clears: AtomicU64::new(0),
-    damage_full_pixels: AtomicU64::new(0),
-    damage_partial_pixels: AtomicU64::new(0),
 };
 
 static FRAME_REQUEST_STATS: FrameRequestAccumulator = FrameRequestAccumulator {
@@ -794,7 +664,6 @@ pub fn record_frame_content(
     text_cache_hits: u64,
     text_cache_misses: u64,
     rebuild: aimer_widget::RebuildStats,
-    paint: aimer_widget::PaintStats,
     work: aimer_widget::FrameWorkStats,
 ) {
     FRAME_CONTENT_STATS.record(
@@ -803,17 +672,8 @@ pub fn record_frame_content(
         text_cache_hits,
         text_cache_misses,
         rebuild,
-        paint,
         work,
     );
-}
-
-/// Records one frame using the current full-target repaint path.
-#[doc(hidden)]
-#[inline]
-#[cfg(any(feature = "frame-stats", debug_assertions))]
-pub(crate) fn record_full_frame_damage(width: u32, height: u32) {
-    FRAME_CONTENT_STATS.record_full_frame_damage(width, height);
 }
 
 /// Takes a periodic debug report and resets the two frame accumulators.
@@ -1026,15 +886,6 @@ mod tests {
                 stateful_builds: 1,
                 stateless_builds: 0,
             },
-            aimer_widget::PaintStats {
-                candidates: 2,
-                records: 1,
-                replays: 0,
-                invalidations: 1,
-                fallbacks: 0,
-                tile_records: 0,
-                tile_replays: 0,
-            },
             aimer_widget::FrameWorkStats {
                 layout_calls: 3,
                 hit_test_visits: 4,
@@ -1067,15 +918,6 @@ mod tests {
                 stateful_builds: 0,
                 stateless_builds: 1,
             },
-            aimer_widget::PaintStats {
-                candidates: 1,
-                records: 0,
-                replays: 1,
-                invalidations: 0,
-                fallbacks: 1,
-                tile_records: 0,
-                tile_replays: 1,
-            },
             aimer_widget::FrameWorkStats {
                 layout_calls: 1,
                 hit_test_visits: 2,
@@ -1089,8 +931,6 @@ mod tests {
                 redraw_requests: 3,
             },
         );
-        accumulator.record_full_frame_damage(10, 20);
-
         let stats = accumulator.snapshot();
         assert_eq!(stats.frames, 2);
         assert_eq!(stats.drawn_nodes, 16);
@@ -1117,23 +957,6 @@ mod tests {
         assert_eq!(stats.state_updates, 3);
         assert_eq!(stats.scroll_offset_updates, 5);
         assert_eq!(stats.redraw_requests, 7);
-        assert_eq!(stats.paint_isolation_candidates, 3);
-        assert_eq!(stats.paint_isolation_records, 1);
-        assert_eq!(stats.paint_isolation_replays, 1);
-        assert_eq!(stats.paint_isolation_invalidations, 1);
-        assert_eq!(stats.paint_isolation_fallbacks, 1);
-        assert_eq!(stats.paint_isolation_tile_records, 0);
-        assert_eq!(stats.paint_isolation_tile_replays, 1);
-        assert_eq!(stats.damage_full_frames, 1);
-        assert_eq!(stats.damage_partial_frames, 0);
-        assert_eq!(stats.damage_regions, 0);
-        assert_eq!(stats.damage_merged_regions, 0);
-        assert_eq!(stats.damage_full_frame_promotions, 0);
-        assert_eq!(stats.damage_target_reuses, 0);
-        assert_eq!(stats.damage_partial_clears, 0);
-        assert_eq!(stats.damage_full_clears, 1);
-        assert_eq!(stats.damage_full_pixels, 200);
-        assert_eq!(stats.damage_partial_pixels, 0);
         assert_eq!(stats.average_drawn_nodes(), 8.0);
         assert_eq!(stats.average_draw_commands(), 15.0);
         assert_eq!(stats.average_retained_layers(), 1.5);

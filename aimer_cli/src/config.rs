@@ -3,6 +3,47 @@ use std::path::Path;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
+/// User-level configuration stored at `~/.aimer/config.toml`.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct UserConfig {
+    #[serde(default)]
+    mcp: Option<McpConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct McpConfig {
+    #[serde(default = "default_true")]
+    auto_start: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Returns whether `aimer run` should register a control session by default.
+/// Invalid or missing user configuration is intentionally fail-open so a
+/// broken optional config file cannot prevent a normal application run.
+pub fn mcp_auto_start() -> bool {
+    let Some(home) = dirs::home_dir() else {
+        return true;
+    };
+    let path = home.join(".aimer/config.toml");
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return true;
+    };
+    mcp_auto_start_from(&contents)
+}
+
+fn mcp_auto_start_from(contents: &str) -> bool {
+    match toml::from_str::<UserConfig>(contents) {
+        Ok(config) => config.mcp.map_or(true, |mcp| mcp.auto_start),
+        Err(error) => {
+            tracing::debug!(error = %error, "ignoring invalid user aimer configuration");
+            true
+        }
+    }
+}
+
 /// Cargo compilation profile selected for an Aimer application run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BuildProfile {
@@ -315,6 +356,14 @@ pub fn parse_cargo_package_name(dir: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_auto_start_honours_the_global_opt_out() {
+        assert!(!mcp_auto_start_from("[mcp]\nauto_start = false\n"));
+        assert!(mcp_auto_start_from("[mcp]\nauto_start = true\n"));
+        assert!(mcp_auto_start_from("[other]\nvalue = 1\n"));
+        assert!(mcp_auto_start_from("not valid toml"));
+    }
 
     #[test]
     fn execution_policy_accepts_only_the_supported_matrix() {

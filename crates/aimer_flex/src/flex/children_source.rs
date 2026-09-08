@@ -137,6 +137,18 @@ pub(crate) trait ChildrenSource {
     /// immediately drop.
     fn live_start(&self) -> Option<usize>;
 
+    /// Index to use as a representative child when rebuilding a predicted
+    /// layout, when one is known from the source's previous window.
+    ///
+    /// This is separate from [`ChildrenSource::live_start`]: a freshly built
+    /// window is intentionally empty, but a replacement can still remember
+    /// which part of the old window was representative without installing
+    /// those old elements by position.
+    #[inline]
+    fn probe_index(&self) -> Option<usize> {
+        self.live_start()
+    }
+
     /// Whether children are materialized on demand rather than up front.
     ///
     /// A container that measures its children cannot use a windowed source, so
@@ -267,6 +279,8 @@ pub(crate) struct WindowedChildren<T, F> {
     /// Held rather than installed: a row is worth reviving only once this source
     /// builds the same identity, and the window it will build is not known yet.
     inherited: UnsafeCell<Vec<RetainedRow>>,
+    /// Representative row from the source this one replaced, if any.
+    probe: Cell<Option<usize>>,
     /// Only ever borrowed from the single render thread, and never across a
     /// call that can resize the window.
     live: UnsafeCell<Window>,
@@ -296,6 +310,7 @@ impl<T, F> WindowedChildren<T, F> {
             builder,
             keyed,
             inherited: UnsafeCell::new(Vec::new()),
+            probe: Cell::new(None),
             live: UnsafeCell::new(Window {
                 start: 0,
                 elements: VecDeque::new(),
@@ -484,6 +499,11 @@ where
     }
 
     #[inline]
+    fn probe_index(&self) -> Option<usize> {
+        self.live_start().or(self.probe.get())
+    }
+
+    #[inline]
     fn is_windowed(&self) -> bool {
         !self.eager.get()
     }
@@ -593,6 +613,9 @@ where
     }
 
     fn adopt_retained(&self, children: Vec<RetainedRow>) {
+        if self.probe.get().is_none() {
+            self.probe.set(children.first().map(|row| row.index));
+        }
         let inherited = unsafe { self.inherited_mut() };
         inherited.extend(children);
         // Rebuilds can chain without a frame in between, so the unclaimed tail
@@ -773,6 +796,22 @@ mod tests {
         children.window(700..704, &ctx);
 
         assert_eq!(children.live_start(), Some(700 - OVERSCAN));
+    }
+
+    /// A replacement starts with an empty live window, but it still needs the
+    /// old window's representative row when it has to predict its extent.
+    #[test]
+    fn an_adopted_window_keeps_its_previous_probe_index() {
+        let built = Rc::new(Cell::new(0));
+        let old = source(&built);
+        let ctx = dummy_build_context(100.0, 100.0, None);
+
+        old.window(700..704, &ctx);
+        let new = source(&built);
+        new.adopt_retained(old.take_retained());
+
+        assert_eq!(new.live_start(), None, "the new window must stay empty");
+        assert_eq!(new.probe_index(), Some(700 - OVERSCAN));
     }
 
     /// A row that was scrolled out and back has to come back as the *same*

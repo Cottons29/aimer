@@ -818,6 +818,11 @@ fn a_corrected_extent_survives_a_rebuild_of_the_container() {
     assert_eq!(old.computed_size(&ctx).height, exact);
 
     let new = varying_column(&counters, 1, 20).to_element(&ctx);
+    let predicted_before_state_handoff = new.computed_size(&ctx).height;
+    assert_ne!(
+        predicted_before_state_handoff, exact,
+        "the replacement must be measured before state handoff to cover the stale-cache path"
+    );
     carry_element_state(old.as_ref(), new.as_ref(), &ctx);
 
     assert_eq!(
@@ -1093,6 +1098,23 @@ fn an_undeclared_list_predicts_its_total_from_one_probe() {
         counters.built.get() <= VISIBLE_BUDGET,
         "built {} rows to predict one extent",
         counters.built.get()
+    );
+}
+
+/// A leading row may carry one-off spacing (for example, a list's top inset),
+/// so it must not become the representative extent for every row when a list
+/// is first measured at a deep scroll offset.
+#[test]
+fn a_deep_list_does_not_use_a_special_first_row_as_its_probe() {
+    let counters = Counters::default();
+    let ctx = scrolled_context(14.0 * ROW_EXTENT);
+
+    let element = varying_column(&counters, 0, 20).to_element(&ctx);
+
+    assert_eq!(
+        element.computed_size(&ctx).height,
+        20.0 * ROW_EXTENT,
+        "the first row's one-off height must not be extrapolated to every row"
     );
 }
 

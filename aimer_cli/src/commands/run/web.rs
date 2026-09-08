@@ -144,6 +144,19 @@ impl Runner for WebRunner {
             return Flow::Abort;
         }
 
+        if let Some(session) = &ctx.session {
+            let pid = ctx
+                .current_child
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|child| child.id());
+            session.set_process(
+                Some(crate::session::ProcessIdentity::web_runner(pid, None)),
+                Some("http://127.0.0.1:8080".to_string()),
+            );
+        }
+
         Flow::Continue
     }
 }

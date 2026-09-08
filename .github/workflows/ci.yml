@@ -28,7 +28,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Clippy (deny warnings)
+      - name: Clippy
         run: cargo clippy --workspace
 
       - name: Run tests with nextest

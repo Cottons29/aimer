@@ -7,44 +7,28 @@ use crate::components::element::Element;
 pub trait Drawable {
     fn draw(&self, ctx: &BuildContext);
 
-    /// Paints the element without performing a separate geometry bookkeeping
-    /// pass.
-    ///
-    /// The default keeps existing elements source-compatible by delegating to
-    /// [`Drawable::draw`]. Elements whose ordinary draw path updates hit-test
-    /// or other retained geometry should override this method and keep that
-    /// bookkeeping in [`Drawable::sync_paint_geometry`]. The framework calls
-    /// this method only after [`Drawable::is_paint_stable`] has opted the
-    /// element into retained paint.
+    /// Gives layout-aware containers a chance to reconcile viewport-dependent
+    /// geometry before the visible paint pass. The return value is `true` when
+    /// the element has made its content extent authoritative for this context;
+    /// callers may then update an end-anchored scroll position before painting.
+    /// The default is intentionally a no-op: ordinary leaves have no layout
+    /// work that can be prepared without painting.
     #[doc(hidden)]
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        self.draw(ctx);
+    fn prepare_layout(&self, _ctx: &BuildContext) -> bool {
+        false
     }
 
-    /// Synchronizes geometry that must remain live while paint is replayed.
-    ///
-    /// This hook must not emit paint commands. It is intentionally separate
-    /// from [`Drawable::paint`] so retained paint cannot make hit-testing,
-    /// focus, or other interaction geometry stale when a transform changes.
-    /// The conservative default is a no-op for elements whose interaction
-    /// geometry is already derived from layout or is not retained by the
-    /// element.
-    #[doc(hidden)]
-    #[inline]
-    fn sync_paint_geometry(&self, _ctx: &BuildContext) {}
-
     /// Returns whether this element's paint can be recorded once and replayed
-    /// under a different transform without running its paint implementation
-    /// again.
+    /// under a different transform without running `draw` again.
     ///
-    /// Implementors must return `true` only when [`Drawable::paint`] has no
-    /// observable side effects outside the command stream: it must not update
-    /// event or hit-test geometry, advance animation/input state, start
-    /// asynchronous work, or depend on the current viewport/cursor.
-    /// Structural, style, text, image, and scale changes are still invalidated
-    /// by the owner of a retained stream. The conservative default keeps
-    /// custom and dynamic elements on the normal draw path.
+    /// Implementors must return `true` only when drawing has no observable
+    /// side effects outside the command stream: it must not update event or
+    /// hit-test geometry, advance animation/input state, start asynchronous
+    /// work, or depend on the current viewport/cursor. Structural, style,
+    /// text, image, and scale changes are still invalidated by the owner of a
+    /// retained stream. The conservative default keeps custom and dynamic
+    /// elements on the normal draw path.
     #[inline]
     fn is_paint_stable(&self) -> bool {
         false
@@ -60,9 +44,7 @@ pub trait Drawable {
     /// currently visible frame (`live_ctx`). The callbacks receive the child,
     /// its un-translated context, its device-snapped local offset, and an
     /// optional parent clip. A caller owns the actual recording/compositing
-    /// policy; stable callbacks must use [`Self::paint`] and synchronize live
-    /// geometry separately, while dynamic callbacks use [`Self::draw`]. This
-    /// method only exposes the safe partition.
+    /// policy; this method only exposes the safe partition.
     #[doc(hidden)]
     fn draw_paint_islands(
         &self,
@@ -91,13 +73,8 @@ impl Drawable for Box<dyn Drawable> {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        self.as_ref().paint(ctx);
-    }
-
-    #[inline]
-    fn sync_paint_geometry(&self, ctx: &BuildContext) {
-        self.as_ref().sync_paint_geometry(ctx);
+    fn prepare_layout(&self, ctx: &BuildContext) -> bool {
+        self.as_ref().prepare_layout(ctx)
     }
 
     #[inline]

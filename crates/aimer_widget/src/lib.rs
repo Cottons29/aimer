@@ -14,9 +14,6 @@ pub mod portable;
 pub mod reconcile;
 mod reconciliation_plan;
 mod frame_work_stats;
-#[cfg(not(feature = "portable-guest"))]
-mod paint_isolated;
-mod paint_stats;
 mod rebuild_stats;
 pub mod safe_area;
 mod widget;
@@ -142,19 +139,6 @@ pub use crate::frame_work_stats::{
     record_hit_test_visit, record_layout_call, record_paint_call, record_redraw_request,
     record_root_draw_call, record_scroll_event, record_scroll_offset_update, record_scroll_step,
     record_smoothing_step, record_state_update, reset_frame_work_stats, take_frame_work_stats,
-};
-pub use crate::paint_stats::PaintStats;
-pub use crate::paint_stats::{
-    record_paint_isolation_candidate, record_paint_isolation_fallback,
-    record_paint_isolation_invalidation, record_paint_isolation_record,
-    record_paint_isolation_replay, record_paint_isolation_tile_record,
-    record_paint_isolation_tile_replay, reset_paint_stats, take_paint_stats,
-};
-#[cfg(not(feature = "portable-guest"))]
-#[doc(hidden)]
-pub use crate::paint_isolated::{
-    paint_damage_geometry, PaintBounds, PaintCache, PaintClip, PaintContract, PaintIsolated,
-    PaintIsolatedOutcome, PaintTransform,
 };
 #[cfg(any(debug_assertions, feature = "frame-stats"))]
 pub use crate::components::element::{

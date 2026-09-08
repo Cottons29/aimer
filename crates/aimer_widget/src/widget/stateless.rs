@@ -313,21 +313,6 @@ impl Drawable for StatelessElement {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        // Rebuilds are serviced by the owning frame/lifecycle pass. This
-        // method is deliberately paint-only so a pure retained wrapper does
-        // not re-enter rebuild or the child's normal draw path.
-        let child = unsafe { &*self.child.0.get() };
-        child.paint(ctx);
-    }
-
-    #[inline]
-    fn sync_paint_geometry(&self, ctx: &BuildContext) {
-        let child = unsafe { &*self.child.0.get() };
-        child.sync_paint_geometry(ctx);
-    }
-
-    #[inline]
     fn is_paint_stable(&self) -> bool {
         // A self-rebuilding element may replace its child on the next dirty
         // pass, so only a pure wrapper can transparently expose the child's

@@ -45,6 +45,18 @@ pub struct StyledLog {
 }
 
 impl StyledLog {
+    /// The styled message without its optional source-location suffix.
+    #[inline]
+    pub fn message(&self) -> &str {
+        &self.text
+    }
+
+    /// The optional source-location suffix kept separate from the message.
+    #[inline]
+    pub fn source_location(&self) -> Option<&str> {
+        self.location.as_deref()
+    }
+
     /// A line without a source location, shown as-is whatever the toggle says.
     #[inline]
     pub fn plain(text: impl Into<String>) -> Self {

@@ -52,8 +52,6 @@ impl Runner for DesktopRunner {
             },
             &ctx.tx,
             &ctx.current_child,
-            ctx.inspector_address,
-            ctx.inspector_port,
             ctx.release,
         ) else {
             return Flow::Abort;
@@ -113,6 +111,25 @@ impl Runner for DesktopRunner {
             stream_stderr_as_app_log,
         ) {
             return Flow::Abort;
+        }
+
+        if let Some(pid) = ctx
+            .current_child
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|child| child.id())
+        {
+            if let Some(session) = &ctx.session {
+                session.set_process(
+                    Some(crate::session::ProcessIdentity::host_app(
+                        pid,
+                        Some(std::path::PathBuf::from(&app_exec_path)),
+                        None,
+                    )),
+                    None,
+                );
+            }
         }
 
         Flow::Continue

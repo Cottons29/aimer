@@ -790,7 +790,22 @@ impl RawFlex {
             return None;
         }
 
-        let index = self.children.live_start().unwrap_or(0);
+        // Prefer the representative row retained by a previous window. If a
+        // list is starting cold at a deep offset, row zero is not a useful
+        // representative either: it may carry one-off leading spacing. The
+        // first viewport row is therefore the fallback in that case.
+        let cold_probe = || {
+            let main_start = ctx.visible_rect.map(|(x, y, _, _)| {
+                if is_row { x } else { y }
+            });
+            (main_start.is_some_and(|start| start > 0.0) && len > 1).then_some(1)
+        };
+        let index = self
+            .children
+            .probe_index()
+            .or_else(cold_probe)
+            .unwrap_or(0)
+            .min(len - 1);
         if self.children.get(index).is_none() {
             self.children.window(index..index + 1, ctx);
         }
@@ -980,6 +995,15 @@ impl RawFlex {
 }
 
 impl Drawable for RawFlex {
+    #[doc(hidden)]
+    fn prepare_layout(&self, ctx: &BuildContext) -> bool {
+        if self.overflow_behavior != OverflowBehavior::Wrap {
+            self.prepare_paint_partition(ctx).is_some()
+        } else {
+            false
+        }
+    }
+
     fn draw(&self, ctx: &BuildContext) {
         self.layout.invalidate_hit_test_index();
         let (gap_x, gap_y) = self.resole_gaps(ctx);
@@ -1434,8 +1458,20 @@ impl Rebuildable for RawFlex {
             && old.overflow_behavior == self.overflow_behavior
             && old.item_extent == self.item_extent
         {
+            // The replacement may already have been measured before this
+            // handoff. Drop that provisional table so the learned table from
+            // the old container can be adopted instead of being ignored by
+            // `FlexLayoutCache::adopt`'s empty-slot guard.
+            self.layout.invalidate();
             self.layout.adopt(&old.layout);
         }
+
+        // A replacement can be measured once before reconciliation reaches
+        // this element. That measurement describes the replacement's initial
+        // window, not the retained rows/table adopted above, so keeping it
+        // would make the next scrollable preflight report the stale extent.
+        // Retain the flex table itself, but force computed_size to consult it.
+        self.cache.invalidate();
     }
 }
 
