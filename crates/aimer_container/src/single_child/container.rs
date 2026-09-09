@@ -221,6 +221,19 @@ pub struct RawContainer<T: Element> {
 }
 
 impl<E: Element> RawContainer<E> {
+    /// Returns whether this container only forwards layout and a rectangular
+    /// clip. Such a wrapper can expose the child's paint islands without
+    /// recording its own decoration or translating an inset.
+    #[inline]
+    fn can_delegate_paint_islands(&self) -> bool {
+        self.width == Dimension::Auto
+            && self.height == Dimension::Auto
+            && self.padding == LayoutSpacing::default()
+            && self.margin == LayoutSpacing::default()
+            && self.color.is_none()
+            && self.box_decoration == BoxDecoration::default()
+    }
+
     /// A container is *opaque* when it paints a background — either an explicit
     /// `color` or a `box_decoration.background_color`. An opaque container
     /// visually covers whatever sits behind it in a `Stack`, so it must also
@@ -470,6 +483,108 @@ impl<T: Element> Drawable for RawContainer<T> {
         }
         ctx.canvas.clear_clip();
         ctx.canvas.restore();
+    }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        // Only a completely transparent, zero-inset wrapper can disappear
+        // from the retained draw stream without changing its layout or
+        // occlusion contract. Decorated containers still need their ordinary
+        // draw to keep bounds and clipping current.
+        self.can_delegate_paint_islands() && self.child.is_paint_stable()
+    }
+
+    #[doc(hidden)]
+    fn draw_paint_islands(
+        &self,
+        retained_ctx: &BuildContext,
+        live_ctx: &BuildContext,
+        draw_stable: &mut dyn FnMut(
+            &dyn Element,
+            &BuildContext,
+            Vec2d,
+            Option<ResolvedSize>,
+        ),
+        draw_dynamic: &mut dyn FnMut(
+            &dyn Element,
+            &BuildContext,
+            Vec2d,
+            Option<ResolvedSize>,
+        ),
+    ) -> bool {
+        if !self.can_delegate_paint_islands() {
+            return false;
+        }
+
+        let child_size = self.content_size(live_ctx);
+        if !child_size.width.is_finite() || !child_size.height.is_finite() {
+            return false;
+        }
+
+        // This transparent wrapper is not painted by the delegated path, but
+        // its live screen bounds still participate in routed input and culling.
+        let (start_x, start_y) = live_ctx.canvas.get_transform_translation();
+        let scale = live_ctx.scale;
+        self.bounds.set(Some((
+            Vec2d {
+                x: start_x / scale,
+                y: start_y / scale,
+            },
+            Vec2d {
+                x: (start_x + child_size.width) / scale,
+                y: (start_y + child_size.height) / scale,
+            },
+        )));
+
+        // Match the ordinary draw path's child context. A scrollable has an
+        // unbounded constraint on its main axis, so replacing it with the
+        // measured content size would change flex justification and wrapping.
+        let child_parent_size = ResolvedSize {
+            width: live_ctx.box_constraint.max_width,
+            height: live_ctx.box_constraint.max_height,
+        };
+        let mut retained_child_ctx = retained_ctx.clone();
+        retained_child_ctx.parent_size = child_parent_size;
+        retained_child_ctx.visible_rect = None;
+
+        let mut live_child_ctx = live_ctx.clone();
+        live_child_ctx.parent_size = child_parent_size;
+        // The ordinary container path clips the child to its content box. The
+        // island callbacks express clips at their parent's origin, so a plain
+        // wrapper can preserve that contract by intersecting the child's clip
+        // with this box before forwarding it.
+        let wrapper_clip = child_parent_size;
+        let clip = |child_clip: Option<ResolvedSize>| {
+            Some(match child_clip {
+                Some(child_clip) => ResolvedSize {
+                    width: child_clip.width.min(wrapper_clip.width),
+                    height: child_clip.height.min(wrapper_clip.height),
+                },
+                None => wrapper_clip,
+            })
+        };
+
+        let mut forward_stable =
+            |element: &dyn Element,
+             child_ctx: &BuildContext,
+             offset: Vec2d,
+             child_clip: Option<ResolvedSize>| {
+                draw_stable(element, child_ctx, offset, clip(child_clip));
+            };
+        let mut forward_dynamic =
+            |element: &dyn Element,
+             child_ctx: &BuildContext,
+             offset: Vec2d,
+             child_clip: Option<ResolvedSize>| {
+                draw_dynamic(element, child_ctx, offset, clip(child_clip));
+            };
+
+        self.child.draw_paint_islands(
+            &retained_child_ctx,
+            &live_child_ctx,
+            &mut forward_stable,
+            &mut forward_dynamic,
+        )
     }
 }
 

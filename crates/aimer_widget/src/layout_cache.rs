@@ -1,4 +1,5 @@
-use std::cell::UnsafeCell;
+use std::any::Any;
+use std::cell::{RefCell, UnsafeCell};
 
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::size::ResolvedSize;
@@ -111,6 +112,7 @@ impl Measurement {
 pub struct LayoutCache {
     computed: UnsafeCell<Option<Measurement>>,
     content: UnsafeCell<Option<Measurement>>,
+    extra: RefCell<Option<Box<dyn Any>>>,
 }
 
 impl LayoutCache {
@@ -118,7 +120,35 @@ impl LayoutCache {
         Self {
             computed: UnsafeCell::new(None),
             content: UnsafeCell::new(None),
+            extra: RefCell::new(None),
         }
+    }
+
+    /// Runs `callback` with one auxiliary cache slot owned by this layout
+    /// cache.
+    ///
+    /// The slot is useful for a layout element that has an expensive retained
+    /// helper whose type belongs to another crate. It is deliberately separate
+    /// from the measurement entries: invalidating a measurement does not drop
+    /// the helper, while the helper can invalidate its own derived state. One
+    /// cache owns at most one auxiliary type; changing the requested type
+    /// replaces the previous value.
+    pub fn with_extra<T: 'static, R>(
+        &self,
+        callback: impl FnOnce(&mut Option<T>) -> R,
+    ) -> R {
+        let mut extra = self.extra.borrow_mut();
+        let replace = extra
+            .as_ref()
+            .is_none_or(|value| !value.is::<Option<T>>());
+        if replace {
+            *extra = Some(Box::new(None::<T>));
+        }
+        let slot = extra
+            .as_mut()
+            .and_then(|value| value.downcast_mut::<Option<T>>())
+            .expect("the auxiliary layout-cache slot has the requested type");
+        callback(slot)
     }
 
     /// Returns cached computed_size if constraint, scale, element tree, and
@@ -149,7 +179,9 @@ impl LayoutCache {
         *guard = Some(Self::measurement(constraint, scale_bits, size));
     }
 
-    /// Clears all cached values (call at the start of each frame).
+    /// Clears the memoized measurement values (call when layout inputs change).
+    /// Auxiliary state from [`Self::with_extra`] is retained and owns its own
+    /// invalidation policy.
     pub fn invalidate(&self) {
         unsafe {
             *self.computed.get() = None;
@@ -247,6 +279,15 @@ mod tests {
 
         assert_eq!(cache.get_computed(wider, 1.0_f32.to_bits()), None);
         assert_eq!(cache.get_computed(constraint, 2.0_f32.to_bits()), None);
+    }
+
+    #[test]
+    fn an_auxiliary_value_survives_measurement_invalidation() {
+        let cache = LayoutCache::new();
+        cache.with_extra(|slot: &mut Option<u32>| *slot = Some(42));
+        cache.invalidate();
+
+        assert_eq!(cache.with_extra(|slot: &mut Option<u32>| *slot), Some(42));
     }
 
     #[test]

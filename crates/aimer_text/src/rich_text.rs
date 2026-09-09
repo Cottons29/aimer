@@ -1660,6 +1660,7 @@ impl Drawable for RawRichText {
         let geometry_state = self.geometry();
         slot.stamp();
         let layout = self.paragraph.prepare(ctx);
+        let paint_mode = self.paragraph.static_paint_mode();
         let shared_layout = layout.aimer_interaction.clone();
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         let transform = ctx.canvas.get_transform();
@@ -1767,28 +1768,45 @@ impl Drawable for RawRichText {
             }
         }
 
-        {
-            let hovered_link = self.hovered_link.borrow().clone();
-            let mut link_regions = self.link_regions.borrow_mut();
+        let hovered_link = self.hovered_link.borrow().clone();
+        let mut link_regions = self.link_regions.borrow_mut();
+        let mut visit_link = |span: &ResolvedTextSpan, fragment: &crate::paragraph::PreparedFragment| {
+            if let Some(target) = &span.link {
+                link_regions.push(LinkRegion {
+                    target: target.clone(),
+                    bounds: Bounds::new(
+                        (abs_x + fragment.x) / ctx.scale,
+                        (abs_y + fragment.baseline - fragment.ascent) / ctx.scale,
+                        fragment.width / ctx.scale,
+                        fragment.height / ctx.scale,
+                    ),
+                });
+            }
+        };
+        if let Some(mode) = paint_mode {
+            if !self
+                .paragraph
+                .draw_cached_static_paint(ctx, &layout, mode)
+            {
+                self.paragraph.draw_static_spans(ctx, &layout, mode);
+            }
+            self.paragraph.draw_dynamic_spans(
+                ctx,
+                &layout,
+                mode,
+                |span| display_color(span, hovered_link.as_ref(), self.link_hover_color),
+                &mut visit_link,
+            );
+        } else {
             self.paragraph.draw_spans(
                 ctx,
                 &layout,
                 |span| display_color(span, hovered_link.as_ref(), self.link_hover_color),
-                |span, fragment| {
-                    if let Some(target) = &span.link {
-                        link_regions.push(LinkRegion {
-                            target: target.clone(),
-                            bounds: Bounds::new(
-                                (abs_x + fragment.x) / ctx.scale,
-                                (abs_y + fragment.baseline - fragment.ascent) / ctx.scale,
-                                fragment.width / ctx.scale,
-                                fragment.height / ctx.scale,
-                            ),
-                        });
-                    }
-                },
+                &mut visit_link,
             );
         }
+        drop(visit_link);
+        drop(link_regions);
 
         self.set_hovered_link(self.link_at(ctx.cursor_pos.x, ctx.cursor_pos.y));
 
@@ -2541,14 +2559,27 @@ mod tests {
             WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
             runtime.handle().clone(),
         );
+        let link_target: Rc<str> = Rc::from("https://aimer.dev");
         let text = RawRichText {
-            paragraph: Paragraph::new(vec![ResolvedTextSpan::plain(
-                Rc::from("italic"),
-                TextStyle::new()
-                    .font_size(20)
-                    .font_style(aimer_style::FontStyle::Italic),
-            )], TextAlign::TopLeft, TextOverflow::Clip),
-            plain_text: Rc::from("italic"),
+            paragraph: Paragraph::new(
+                vec![
+                    ResolvedTextSpan::plain(
+                        Rc::from("italic"),
+                        TextStyle::new()
+                            .font_size(20)
+                            .font_style(aimer_style::FontStyle::Italic),
+                    ),
+                    ResolvedTextSpan {
+                        text: Rc::from("link"),
+                        style: TextStyle::default(),
+                        link: Some(link_target.clone()),
+                    },
+                    ResolvedTextSpan::plain(Rc::from("tail"), TextStyle::default()),
+                ],
+                TextAlign::TopLeft,
+                TextOverflow::Clip,
+            ),
+            plain_text: Rc::from("italiclinktail"),
             on_link: LinkCallback::default(),
             link_hover_color: None,
             selectable: false,

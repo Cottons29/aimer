@@ -163,6 +163,7 @@ const WIDTH_INDEPENDENCE_SLACK: f32 = 0.5;
 /// [`primary`](Self::primary) first and falls back to
 /// [`fallback`](Self::fallback) — the width-keyed entry an earlier frame may
 /// have minted before the shaping existed.
+#[derive(Clone)]
 pub(super) struct SpanLayoutKeys {
     /// The width-independent sibling key; also what a preparation batch
     /// shapes under.

@@ -3,8 +3,14 @@ pub(crate) mod geometry;
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
+#[cfg(not(feature = "portable-guest"))]
+use std::sync::Arc;
 
 use aimer_attribute::ResolvedSize;
+#[cfg(not(feature = "portable-guest"))]
+use aimer_canvas::{
+    Canvas, Mat3, RetainedLayerContent, RetainedLayerPadding, next_retained_layer_id,
+};
 use aimer_style::{FontStyle, LineHeight, TextAlign, TextDecorationLine, TextOverflow};
 use aimer_style::TextTransform;
 use aimer_widget::base::{BuildContext, Color};
@@ -12,7 +18,8 @@ use aimer_widget::layout_invalidation_generation;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::paragraph::geometry::{
-    PreparedBackground, prepare_background_runs, vertical_span_is_visible,
+    DecorationPaint, PreparedBackground, prepare_background_runs, prepare_decoration_paint,
+    vertical_span_is_visible,
 };
 use crate::text_span::{
     ResolvedTextSpan, adjusted_grapheme_advance, adjusted_width, ellipsize_first_line,
@@ -35,6 +42,20 @@ pub(crate) struct PreparedFragment {
     pub descent: f32,
 }
 
+/// Cached line geometry for one decorated fragment.
+///
+/// The paint color is intentionally not stored here: a link can change its
+/// inherited color while its layout remains valid. The physical stroke values
+/// and line centers, however, depend only on the prepared fragment and scale.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PreparedDecoration {
+    pub fragment_index: usize,
+    pub paint: DecorationPaint,
+    pub underline_center: f32,
+    pub line_through_center: f32,
+    pub overline_center: f32,
+}
+
 /// Cached geometry of one grapheme cluster, in element-local physical pixels.
 ///
 /// Measuring graphemes is the expensive part of hit testing and of painting a
@@ -45,6 +66,17 @@ pub(crate) struct GraphemeBox {
     pub rendered_range: Range<usize>,
     pub x: f32,
     pub width: f32,
+}
+
+/// A rendered grapheme's source slice and prepared local x position.
+///
+/// The paragraph painter reuses this geometry for letter- and word-spaced
+/// runs, so dynamic link paint does not segment and measure the same text on
+/// every frame.
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedTextRun {
+    pub rendered_range: Range<usize>,
+    pub x: f32,
 }
 
 /// A hard line break, which owns no glyphs but is still selectable and
@@ -63,7 +95,9 @@ pub(crate) struct PreparedLineBreak {
 /// ratio.
 pub(crate) struct PreparedLayout {
     pub fragments: Vec<PreparedFragment>,
+    pub decorations: Vec<PreparedDecoration>,
     pub graphemes: Vec<GraphemeBox>,
+    pub paint_runs: Vec<Vec<PreparedTextRun>>,
     pub backgrounds: Vec<PreparedBackground>,
     pub line_breaks: Vec<PreparedLineBreak>,
     pub line_heights: Vec<f32>,
@@ -71,11 +105,133 @@ pub(crate) struct PreparedLayout {
     pub aimer_interaction: Option<aimer_cupid::text_layout::TextInteractionLayout>,
 }
 
+fn prepare_decorations(
+    fragments: &[PreparedFragment],
+    spans: &[ResolvedTextSpan],
+    scale: f32,
+) -> Vec<PreparedDecoration> {
+    fragments
+        .iter()
+        .enumerate()
+        .filter_map(|(fragment_index, fragment)| {
+            let span = &spans[fragment.span_index];
+            let font_size = span.style.font_size.max(1) as f32 * scale;
+            let paint = prepare_decoration_paint(span.style.text_decoration, font_size, scale)?;
+            Some(PreparedDecoration {
+                fragment_index,
+                paint,
+                underline_center: fragment.baseline
+                    + fragment.descent.max(1.0) * 0.5
+                    + paint.offset,
+                line_through_center: fragment.baseline - fragment.ascent * 0.35 + paint.offset,
+                overline_center: fragment.baseline - fragment.ascent + paint.offset,
+            })
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct PreparedLayoutKey {
     width_bits: u32,
     scale_bits: u32,
     layout_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ParagraphPaintMode {
+    /// The paragraph has no links, so every span is static.
+    All,
+    /// Only spans before this index are static; the remaining spans are links.
+    Prefix(usize),
+}
+
+#[cfg(not(feature = "portable-guest"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ParagraphPaintCacheKey {
+    layout: usize,
+    scale_bits: u32,
+    mode: ParagraphPaintMode,
+    width_bits: u32,
+    height_bits: u32,
+    padding: [u32; 4],
+    font_revision: u64,
+}
+
+#[cfg(not(feature = "portable-guest"))]
+struct ParagraphPaintCache {
+    layer_id: u64,
+    key: Option<ParagraphPaintCacheKey>,
+    content: Option<Arc<RetainedLayerContent>>,
+}
+
+#[cfg(not(feature = "portable-guest"))]
+impl Default for ParagraphPaintCache {
+    fn default() -> Self {
+        Self {
+            layer_id: next_retained_layer_id(),
+            key: None,
+            content: None,
+        }
+    }
+}
+
+#[cfg(not(feature = "portable-guest"))]
+impl ParagraphPaintCache {
+    fn clear(&mut self) {
+        self.key = None;
+        self.content = None;
+    }
+}
+
+impl ParagraphPaintMode {
+    #[inline]
+    fn includes_static_span(self, span_index: usize) -> bool {
+        match self {
+            Self::All => true,
+            Self::Prefix(prefix) => span_index < prefix,
+        }
+    }
+
+    #[inline]
+    fn includes_dynamic_span(self, span_index: usize) -> bool {
+        match self {
+            Self::All => false,
+            Self::Prefix(prefix) => span_index >= prefix,
+        }
+    }
+}
+
+#[cfg(not(feature = "portable-guest"))]
+fn shadow_padding_for_spans(spans: &[ResolvedTextSpan]) -> RetainedLayerPadding {
+    let mut padding = RetainedLayerPadding::ZERO;
+    for span in spans {
+        let Some(shadow) = span.style.text_shadow else {
+            continue;
+        };
+        if shadow.color.as_u32() >> 24 == 0 {
+            continue;
+        }
+        let offset_x = shadow
+            .offset_x
+            .is_finite()
+            .then_some(shadow.offset_x)
+            .unwrap_or(0.0);
+        let offset_y = shadow
+            .offset_y
+            .is_finite()
+            .then_some(shadow.offset_y)
+            .unwrap_or(0.0);
+        let blur = shadow
+            .blur
+            .is_finite()
+            .then_some(shadow.blur.max(0.0))
+            .unwrap_or(0.0);
+        padding.left = padding.left.max((blur - offset_x).max(0.0));
+        padding.right = padding.right.max((blur + offset_x).max(0.0));
+        padding.top = padding.top.max((blur - offset_y).max(0.0));
+        padding.bottom = padding.bottom.max((blur + offset_y).max(0.0));
+    }
+    padding
 }
 
 /// Resolves the color a span is painted with, letting a hovered link override
@@ -113,6 +269,10 @@ pub(crate) struct Paragraph {
     line_height: LineHeight,
     text_indent: f32,
     layout_cache: RefCell<Option<(PreparedLayoutKey, Rc<PreparedLayout>)>>,
+    #[cfg(not(feature = "portable-guest"))]
+    logical_shadow_padding: RetainedLayerPadding,
+    #[cfg(not(feature = "portable-guest"))]
+    paint_cache: RefCell<ParagraphPaintCache>,
 }
 
 impl Paragraph {
@@ -138,6 +298,8 @@ impl Paragraph {
         line_height: LineHeight,
         text_indent: f32,
     ) -> Self {
+        #[cfg(not(feature = "portable-guest"))]
+        let logical_shadow_padding = shadow_padding_for_spans(&spans);
         Self {
             spans,
             text_align,
@@ -145,6 +307,10 @@ impl Paragraph {
             line_height,
             text_indent,
             layout_cache: RefCell::new(None),
+            #[cfg(not(feature = "portable-guest"))]
+            logical_shadow_padding,
+            #[cfg(not(feature = "portable-guest"))]
+            paint_cache: RefCell::new(ParagraphPaintCache::default()),
         }
     }
 
@@ -153,6 +319,22 @@ impl Paragraph {
     #[inline]
     pub const fn needs_clip(&self) -> bool {
         matches!(self.overflow, TextOverflow::Clip | TextOverflow::Ellipsis)
+    }
+
+    /// Returns the safe static/dynamic partition for this paragraph.
+    ///
+    /// A leading non-link run followed by link runs can be split without
+    /// changing paint order. Interleaved links stay on the ordinary painter,
+    /// while the CPU text cache still applies to the commands it emits.
+    pub(crate) fn static_paint_mode(&self) -> Option<ParagraphPaintMode> {
+        let first_link = self.spans.iter().position(|span| span.link.is_some());
+        let Some(first_link) = first_link else {
+            return Some(ParagraphPaintMode::All);
+        };
+        self.spans[first_link..]
+            .iter()
+            .all(|span| span.link.is_some())
+            .then_some(ParagraphPaintMode::Prefix(first_link))
     }
 
     /// The width lines are laid out against, preferring an explicit constraint
@@ -169,6 +351,8 @@ impl Paragraph {
     #[inline]
     pub fn invalidate(&self) {
         self.layout_cache.borrow_mut().take();
+        #[cfg(not(feature = "portable-guest"))]
+        self.paint_cache.borrow_mut().clear();
     }
 
     /// Returns the layout for the current width and scale, computing it only
@@ -603,7 +787,8 @@ impl Paragraph {
                 }
             })
             .collect::<Vec<_>>();
-        let graphemes = self.measure_graphemes(ctx, &fragments);
+        let decorations = prepare_decorations(&fragments, &self.spans, ctx.scale);
+        let (graphemes, paint_runs) = self.measure_graphemes(ctx, &fragments);
         let backgrounds = prepare_background_runs(&fragments, &self.spans);
         let line_breaks = layout
             .line_breaks
@@ -641,7 +826,9 @@ impl Paragraph {
 
         PreparedLayout {
             fragments,
+            decorations,
             graphemes,
+            paint_runs,
             backgrounds,
             line_breaks,
             line_heights,
@@ -674,12 +861,10 @@ impl Paragraph {
         &self,
         ctx: &BuildContext,
         fragments: &[PreparedFragment],
-    ) -> Vec<GraphemeBox> {
+    ) -> (Vec<GraphemeBox>, Vec<Vec<PreparedTextRun>>) {
         let mut graphemes = Vec::new();
+        let mut paint_runs = vec![Vec::new(); fragments.len()];
         for (fragment_index, fragment) in fragments.iter().enumerate() {
-            if fragment.source_range.is_none() && fragment.rendered_source_ranges.is_empty() {
-                continue;
-            }
             let style = self.spans[fragment.span_index].style;
             let font_size = style.font_size.max(1) as f32 * ctx.scale;
             let mut x = fragment.x;
@@ -700,6 +885,10 @@ impl Paragraph {
                         )
                     },
                 );
+                paint_runs[fragment_index].push(PreparedTextRun {
+                    rendered_range: offset..offset + grapheme.len(),
+                    x,
+                });
                 let source_range = if fragment.rendered_source_ranges.is_empty() {
                     fragment
                         .source_range
@@ -722,7 +911,7 @@ impl Paragraph {
                 x += width;
             }
         }
-        graphemes
+        (graphemes, paint_runs)
     }
 
     /// Paints the inline backgrounds that lie inside the visible rectangle.
@@ -743,19 +932,193 @@ impl Paragraph {
         }
     }
 
-    /// Paints every visible fragment with its decorations.
+    /// Paints every visible fragment and then its cached decorations.
     ///
     /// `color_for` resolves the paint color of a span, letting the caller apply
     /// interaction state such as a hovered link. `visit` observes each painted
-    /// fragment, which callers use to collect link regions.
+    /// fragment, which callers use to collect link regions. Decorations are
+    /// emitted in a second pass so adjacent lines can share one renderer draw.
     pub fn draw_spans(
         &self,
         ctx: &BuildContext,
         layout: &PreparedLayout,
         color_for: impl Fn(&ResolvedTextSpan) -> Color,
+        visit: impl FnMut(&ResolvedTextSpan, &PreparedFragment),
+    ) {
+        self.draw_filtered_spans(
+            ctx,
+            layout,
+            |_| true,
+            |_| true,
+            |_| true,
+            color_for,
+            visit,
+        );
+    }
+
+    /// Paints the immutable part of a paragraph.
+    ///
+    /// Every glyph shadow is included, even when its foreground belongs to a
+    /// link that will be painted dynamically. This keeps the expensive shadow
+    /// work in the retained layer while allowing link hover to replace only
+    /// the foreground color.
+    pub(crate) fn draw_static_spans(
+        &self,
+        ctx: &BuildContext,
+        layout: &PreparedLayout,
+        mode: ParagraphPaintMode,
+    ) {
+        self.draw_filtered_spans(
+            ctx,
+            layout,
+            |span_index| mode.includes_static_span(span_index),
+            |_| true,
+            |span_index| mode.includes_static_span(span_index),
+            |span| span.style.color,
+            |_, _| {},
+        );
+    }
+
+    /// Paints the dynamic link portion of a safely partitioned paragraph.
+    ///
+    /// Shadows are intentionally omitted because [`Self::draw_static_spans`]
+    /// owns them. `visit` is still called for every dynamic fragment so link
+    /// hit regions are rebuilt on every frame.
+    pub(crate) fn draw_dynamic_spans(
+        &self,
+        ctx: &BuildContext,
+        layout: &PreparedLayout,
+        mode: ParagraphPaintMode,
+        color_for: impl Fn(&ResolvedTextSpan) -> Color,
+        visit: impl FnMut(&ResolvedTextSpan, &PreparedFragment),
+    ) {
+        self.draw_filtered_spans(
+            ctx,
+            layout,
+            |span_index| mode.includes_dynamic_span(span_index),
+            |_| false,
+            |span_index| mode.includes_dynamic_span(span_index),
+            color_for,
+            visit,
+        );
+    }
+
+    /// Draws the static paragraph portion through a renderer-owned retained
+    /// layer when the current transform is translation-only.
+    ///
+    /// The layer is recorded without the current viewport so scrolling cannot
+    /// turn the first visible frame into an incomplete snapshot. Returning
+    /// `false` asks the caller to use the filtered direct painter instead.
+    #[cfg(not(feature = "portable-guest"))]
+    pub(crate) fn draw_cached_static_paint(
+        &self,
+        ctx: &BuildContext,
+        layout: &Rc<PreparedLayout>,
+        mode: ParagraphPaintMode,
+    ) -> bool {
+        if !is_translation_only(ctx.canvas.get_transform()) {
+            return false;
+        }
+
+        let padding = self.shadow_padding(ctx.scale);
+        let width = layout.size.width + padding.left + padding.right;
+        let height = layout.size.height + padding.top + padding.bottom;
+        if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+            return false;
+        }
+        let key = ParagraphPaintCacheKey {
+            layout: Rc::as_ptr(layout) as usize,
+            scale_bits: ctx.scale.to_bits(),
+            mode,
+            width_bits: width.to_bits(),
+            height_bits: height.to_bits(),
+            padding: [
+                padding.left.to_bits(),
+                padding.top.to_bits(),
+                padding.right.to_bits(),
+                padding.bottom.to_bits(),
+            ],
+            font_revision: aimer_cupid::font::FontRegistry::revision(),
+        };
+
+        let cached = {
+            let cache = self.paint_cache.borrow();
+            (cache.key == Some(key)).then(|| cache.content.clone()).flatten()
+        };
+        let content = if let Some(content) = cached {
+            content
+        } else {
+            let recording_canvas = ctx.canvas.fork_for_recording();
+            let mut recording_ctx = ctx.clone();
+            recording_ctx.canvas = Canvas::new(&recording_canvas);
+            recording_ctx.visible_rect = None;
+            self.draw_static_spans(&recording_ctx, layout, mode);
+            let recorded = recording_canvas.take_draw_list();
+            let Some(snapshot) = recorded.retained_snapshot() else {
+                return false;
+            };
+            let content = Arc::new(RetainedLayerContent::from_snapshot_with_padding(
+                snapshot, padding,
+            ));
+            if !content.is_compositor_safe() {
+                return false;
+            }
+            let mut cache = self.paint_cache.borrow_mut();
+            cache.key = Some(key);
+            cache.content = Some(content.clone());
+            content
+        };
+
+        let layer_id = self.paint_cache.borrow().layer_id;
+        ctx.canvas.draw_retained_layer_at(
+            layer_id,
+            -padding.left,
+            -padding.top,
+            width,
+            height,
+            content,
+        );
+        true
+    }
+
+    #[cfg(feature = "portable-guest")]
+    pub(crate) fn draw_cached_static_paint(
+        &self,
+        _ctx: &BuildContext,
+        _layout: &Rc<PreparedLayout>,
+        _mode: ParagraphPaintMode,
+    ) -> bool {
+        false
+    }
+
+    /// Returns asymmetric physical padding large enough for every visible
+    /// text shadow in this paragraph.
+    #[cfg(not(feature = "portable-guest"))]
+    pub(crate) fn shadow_padding(&self, scale: f32) -> RetainedLayerPadding {
+        let scale = scale.is_finite().then_some(scale.abs()).unwrap_or(1.0);
+        let scale_extent = |extent: f32| {
+            let scaled = extent * scale;
+            scaled.is_finite().then_some(scaled).unwrap_or(f32::INFINITY)
+        };
+        RetainedLayerPadding::new(
+            scale_extent(self.logical_shadow_padding.left),
+            scale_extent(self.logical_shadow_padding.top),
+            scale_extent(self.logical_shadow_padding.right),
+            scale_extent(self.logical_shadow_padding.bottom),
+        )
+    }
+
+    fn draw_filtered_spans(
+        &self,
+        ctx: &BuildContext,
+        layout: &PreparedLayout,
+        foreground_for: impl Fn(usize) -> bool,
+        shadow_for: impl Fn(usize) -> bool,
+        decoration_for: impl Fn(usize) -> bool,
+        color_for: impl Fn(&ResolvedTextSpan) -> Color,
         mut visit: impl FnMut(&ResolvedTextSpan, &PreparedFragment),
     ) {
-        for fragment in &layout.fragments {
+        for (fragment_index, fragment) in layout.fragments.iter().enumerate() {
             if !vertical_span_is_visible(
                 fragment.baseline - fragment.ascent,
                 fragment.height,
@@ -778,16 +1141,16 @@ impl Paragraph {
             let has_spacing = span.style.letter_spacing.is_finite()
                 && span.style.word_spacing.is_finite()
                 && (span.style.letter_spacing != 0.0 || span.style.word_spacing != 0.0);
-            if let Some(shadow) = span.style.text_shadow
+            if shadow_for(fragment.span_index)
+                && let Some(shadow) = span.style.text_shadow
                 && shadow.color.as_u32() >> 24 != 0
             {
                 if has_spacing {
-                    let rendered_graphemes = fragment.text.graphemes(true).collect::<Vec<_>>();
-                    let mut x = 0.0;
-                    for (index, grapheme) in rendered_graphemes.iter().enumerate() {
+                    for run in &layout.paint_runs[fragment_index] {
+                        let grapheme = &fragment.text[run.rendered_range.clone()];
                         ctx.canvas.draw_text_shadow_styled(
                             grapheme,
-                            (fragment.x + x, fragment.baseline).into(),
+                            (run.x, fragment.baseline).into(),
                             font_size,
                             shadow.color,
                             span.style.font_family,
@@ -799,21 +1162,6 @@ impl Paragraph {
                             )
                                 .into(),
                             shadow.blur * ctx.scale,
-                        );
-                        x += adjusted_grapheme_advance(
-                            grapheme,
-                            &span.style,
-                            index,
-                            rendered_graphemes.len(),
-                            &mut |text, style| {
-                                ctx.canvas.measure_text_styled(
-                                    text,
-                                    font_size,
-                                    style.font_family,
-                                    style.font_style,
-                                    style.font_weight.numeric(),
-                                )
-                            },
                         );
                     }
                 } else {
@@ -830,52 +1178,56 @@ impl Paragraph {
                     );
                 }
             }
-            if has_spacing {
-                let rendered_graphemes = fragment.text.graphemes(true).collect::<Vec<_>>();
-                let mut x = 0.0;
-                for (index, grapheme) in rendered_graphemes.iter().enumerate() {
+            if foreground_for(fragment.span_index) {
+                if has_spacing {
+                    for run in &layout.paint_runs[fragment_index] {
+                        let grapheme = &fragment.text[run.rendered_range.clone()];
+                        ctx.canvas.draw_text_styled(
+                            grapheme,
+                            (run.x, fragment.baseline).into(),
+                            font_size,
+                            color,
+                            span.style.font_family,
+                            span.style.font_style,
+                                span.style.font_weight.numeric(),
+                            );
+                    }
+                } else {
                     ctx.canvas.draw_text_styled(
-                        grapheme,
-                        (fragment.x + x, fragment.baseline).into(),
+                        &fragment.text,
+                        (fragment.x, fragment.baseline).into(),
                         font_size,
                         color,
                         span.style.font_family,
                         span.style.font_style,
                         span.style.font_weight.numeric(),
                     );
-                    x += adjusted_grapheme_advance(
-                        grapheme,
-                        &span.style,
-                        index,
-                        rendered_graphemes.len(),
-                        &mut |text, style| {
-                            ctx.canvas.measure_text_styled(
-                                text,
-                                font_size,
-                                style.font_family,
-                                style.font_style,
-                                style.font_weight.numeric(),
-                            )
-                        },
-                    );
                 }
-            } else {
-                ctx.canvas.draw_text_styled(
-                    &fragment.text,
-                    (fragment.x, fragment.baseline).into(),
-                    font_size,
-                    color,
-                    span.style.font_family,
-                    span.style.font_style,
-                    span.style.font_weight.numeric(),
-                );
+                visit(span, fragment);
             }
             if italic {
                 ctx.canvas.set_italic(false);
             }
+        }
 
-            self.draw_decorations(ctx, fragment, span, color, font_size);
-            visit(span, fragment);
+        for decoration in &layout.decorations {
+            let fragment = &layout.fragments[decoration.fragment_index];
+            if !vertical_span_is_visible(
+                fragment.baseline - fragment.ascent,
+                fragment.height,
+                ctx.visible_rect,
+            ) {
+                continue;
+            }
+            let span = &self.spans[fragment.span_index];
+            if !decoration_for(fragment.span_index) {
+                continue;
+            }
+            let color = decoration
+                .paint
+                .dedicated_color
+                .unwrap_or_else(|| color_for(span));
+            self.draw_decorations(ctx, fragment, decoration, color);
         }
     }
 
@@ -883,49 +1235,31 @@ impl Paragraph {
         &self,
         ctx: &BuildContext,
         fragment: &PreparedFragment,
-        span: &ResolvedTextSpan,
+        decoration: &PreparedDecoration,
         color: Color,
-        font_size: f32,
     ) {
-        let decoration = span.style.text_decoration;
-        let lines = decoration.line;
-        if lines.is_none() {
-            return;
-        }
-        let color = decoration.color.unwrap_or(color);
-        let thickness = decoration
-            .thickness
-            .map(|value| value * ctx.scale)
-            .unwrap_or((font_size * 0.06).max(1.0));
-        let offset = decoration.offset * ctx.scale;
-        let (band_height, period) = match decoration.style {
-            aimer_style::TextDecorationStyle::Double => (thickness * 3.0, 1.0),
-            aimer_style::TextDecorationStyle::Dotted => (thickness, (thickness * 2.0).max(2.0)),
-            aimer_style::TextDecorationStyle::Dashed => (thickness, (thickness * 4.0).max(2.0)),
-            aimer_style::TextDecorationStyle::Wavy => (thickness * 4.0, (thickness * 6.0).max(4.0)),
-            aimer_style::TextDecorationStyle::Solid => (thickness, 1.0),
-        };
+        let paint = decoration.paint;
         let draw_decoration = |center_y: f32| {
             ctx.canvas.draw_text_decoration(
-                (fragment.x, center_y - band_height / 2.0).into(),
+                (fragment.x, center_y - paint.band_height / 2.0).into(),
                 ResolvedSize {
                     width: fragment.width,
-                    height: band_height,
+                    height: paint.band_height,
                 },
                 color,
-                decoration.style.id(),
-                thickness,
-                period,
+                paint.style.id(),
+                paint.thickness,
+                paint.period,
             );
         };
-        if lines.contains(TextDecorationLine::UNDERLINE) {
-            draw_decoration(fragment.baseline + fragment.descent.max(1.0) * 0.5 + offset);
+        if paint.lines.contains(TextDecorationLine::UNDERLINE) {
+            draw_decoration(decoration.underline_center);
         }
-        if lines.contains(TextDecorationLine::LINE_THROUGH) {
-            draw_decoration(fragment.baseline - fragment.ascent * 0.35 + offset);
+        if paint.lines.contains(TextDecorationLine::LINE_THROUGH) {
+            draw_decoration(decoration.line_through_center);
         }
-        if lines.contains(TextDecorationLine::OVERLINE) {
-            draw_decoration(fragment.baseline - fragment.ascent + offset);
+        if paint.lines.contains(TextDecorationLine::OVERLINE) {
+            draw_decoration(decoration.overline_center);
         }
     }
 }
@@ -1000,14 +1334,29 @@ fn merge_line_source_range(
     }
 }
 
+#[cfg(not(feature = "portable-guest"))]
+fn is_translation_only(transform: Mat3) -> bool {
+    transform.cols[0][0] == 1.0
+        && transform.cols[0][1] == 0.0
+        && transform.cols[0][2] == 0.0
+        && transform.cols[1][0] == 0.0
+        && transform.cols[1][1] == 1.0
+        && transform.cols[1][2] == 0.0
+        && transform.cols[2][2] == 1.0
+        && transform.cols[2][0].is_finite()
+        && transform.cols[2][1].is_finite()
+}
+
 #[cfg(test)]
 mod tests {
     use std::rc::Rc;
 
-    use aimer_style::{LineHeight, TextStyle};
-    use aimer_widget::base::Color;
+    use aimer_style::{
+        LineHeight, TextDecoration, TextDecorationLine, TextDecorationStyle, TextStyle,
+    };
+    use aimer_widget::base::{BuildContext, Color};
 
-    use super::{Paragraph, display_color};
+    use super::{Paragraph, ParagraphPaintMode, display_color};
     use crate::text_span::ResolvedTextSpan;
 
     #[test]
@@ -1036,6 +1385,119 @@ mod tests {
     }
 
     #[test]
+    fn static_paint_mode_accepts_only_a_leading_base_and_link_suffix() {
+        let linked = ResolvedTextSpan {
+            text: Rc::from("link"),
+            style: TextStyle::default(),
+            link: Some(Rc::from("target")),
+        };
+        let plain = ResolvedTextSpan::plain(Rc::from("plain"), TextStyle::default());
+
+        let prefix = Paragraph::new(
+            vec![plain.clone(), linked.clone()],
+            aimer_style::TextAlign::TopLeft,
+            aimer_style::TextOverflow::Clip,
+        );
+        assert_eq!(prefix.static_paint_mode(), Some(ParagraphPaintMode::Prefix(1)));
+
+        let interleaved = Paragraph::new(
+            vec![linked, plain],
+            aimer_style::TextAlign::TopLeft,
+            aimer_style::TextOverflow::Clip,
+        );
+        assert_eq!(interleaved.static_paint_mode(), None);
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+    #[test]
+    fn static_paragraph_paint_reuses_its_layer_and_leaves_link_paint_dynamic() {
+        use std::sync::Arc;
+
+        use aimer_attribute::{ResolvedSize, Vec2d};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_style::{TextAlign, TextOverflow, TextShadow};
+        use aimer_widget::base::WindowHandle;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 240.0,
+                height: 80.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(240, 80), 1.0),
+            runtime.handle().clone(),
+        );
+        let link_target: Rc<str> = Rc::from("https://aimer.dev");
+        let paragraph = Paragraph::new(
+            vec![
+                ResolvedTextSpan::plain(
+                    Rc::from("base "),
+                    TextStyle::new().text_shadow(TextShadow::new()),
+                ),
+                ResolvedTextSpan {
+                    text: Rc::from("link"),
+                    style: TextStyle::default(),
+                    link: Some(link_target),
+                },
+            ],
+            TextAlign::TopLeft,
+            TextOverflow::Clip,
+        );
+        let layout = paragraph.prepare(&context);
+        let mode = paragraph
+            .static_paint_mode()
+            .expect("a base plus link suffix is safely partitionable");
+
+        assert!(paragraph.draw_cached_static_paint(&context, &layout, mode));
+        let first_content = paragraph
+            .paint_cache
+            .borrow()
+            .content
+            .as_ref()
+            .map(Arc::as_ptr);
+        assert!(first_content.is_some());
+
+        let mut visited = 0;
+        paragraph.draw_dynamic_spans(
+            &context,
+            &layout,
+            mode,
+            |_| Color::Hex(0x388BFD),
+            |_, _| visited += 1,
+        );
+        assert_eq!(visited, 1);
+        assert!(inner
+            .draw_list()
+            .commands()
+            .iter()
+            .any(|command| matches!(command, DrawCommand::RetainedLayer { .. })));
+        assert!(inner
+            .draw_list()
+            .commands()
+            .iter()
+            .any(|command| matches!(command, DrawCommand::DrawText { .. })));
+
+        inner.begin_frame();
+        assert!(paragraph.draw_cached_static_paint(&context, &layout, mode));
+        let second_content = paragraph
+            .paint_cache
+            .borrow()
+            .content
+            .as_ref()
+            .map(Arc::as_ptr);
+        assert_eq!(first_content, second_content);
+    }
+
+    #[test]
     fn line_height_resolves_natural_absolute_and_factor_forms() {
         let paragraph = super::Paragraph::with_layout(
             Vec::new(),
@@ -1061,6 +1523,139 @@ mod tests {
             aimer_style::TextOverflow::Clip,
         );
         assert_eq!(normal.resolved_line_height(20.0, 16.0), 20.0);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn prepared_layout_caches_decoration_geometry_per_fragment() {
+        use aimer_attribute::{ResolvedSize, Vec2d};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_style::{TextAlign, TextOverflow};
+        use aimer_widget::base::{BuildContext, WindowHandle};
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        let paragraph = Paragraph::with_layout(
+            vec![ResolvedTextSpan::plain(
+                Rc::from("first\nsecond"),
+                TextStyle::new()
+                    .font_size(16)
+                    .text_decoration(
+                        TextDecoration::new()
+                            .line(TextDecorationLine::UNDERLINE | TextDecorationLine::OVERLINE)
+                            .style(TextDecorationStyle::Dashed)
+                            .thickness(2.0)
+                            .offset(1.0),
+                    ),
+            )],
+            TextAlign::TopLeft,
+            TextOverflow::Clip,
+            LineHeight::Px(40.0),
+            0.0,
+        );
+
+        let first = paragraph.prepare(&context);
+        let second = paragraph.prepare(&context);
+
+        assert!(Rc::ptr_eq(&first, &second));
+        assert_eq!(first.decorations.len(), 2);
+        assert_eq!(first.decorations[0].fragment_index, 0);
+        assert_eq!(first.decorations[1].fragment_index, 1);
+        assert_eq!(first.decorations[0].paint.style, TextDecorationStyle::Dashed);
+        assert_eq!(first.decorations[0].paint.thickness, 2.0);
+        assert_eq!(first.decorations[0].paint.offset, 1.0);
+        assert!(
+            (first.decorations[1].underline_center
+                - first.decorations[0].underline_center
+                - 40.0)
+                .abs()
+            < 0.001
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cached_decorations_resolve_inherited_color_when_painted() {
+        use aimer_attribute::{ResolvedSize, Vec2d};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_style::{TextAlign, TextDecoration, TextDecorationLine, TextOverflow};
+        use aimer_widget::base::WindowHandle;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        let paragraph = Paragraph::with_layout(
+            vec![ResolvedTextSpan::plain(
+                Rc::from("link"),
+                TextStyle::new().text_decoration(
+                    TextDecoration::new().line(TextDecorationLine::UNDERLINE),
+                ),
+            )],
+            TextAlign::TopLeft,
+            TextOverflow::Wrap,
+            LineHeight::Normal,
+            0.0,
+        );
+        let layout = paragraph.prepare(&context);
+        let red = Color::Rgba(255, 0, 0, 255);
+        paragraph.draw_spans(&context, &layout, |_| red, |_, _| {});
+        let rendered_red = inner
+            .draw_list()
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                DrawCommand::DrawTextDecoration { color, .. } => Some(*color),
+                _ => None,
+            })
+            .expect("the decorated paragraph should emit a decoration");
+
+        inner.begin_frame();
+        let blue = Color::Rgba(0, 0, 255, 255);
+        paragraph.draw_spans(&context, &layout, |_| blue, |_, _| {});
+        let rendered_blue = inner
+            .draw_list()
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                DrawCommand::DrawTextDecoration { color, .. } => Some(*color),
+                _ => None,
+            })
+            .expect("the decorated paragraph should emit a decoration");
+
+        let expected_red: aimer_cupid::utilities::Color = red.into();
+        let expected_blue: aimer_cupid::utilities::Color = blue.into();
+        assert_eq!(rendered_red.to_array(), expected_red.to_array());
+        assert_eq!(rendered_blue.to_array(), expected_blue.to_array());
     }
 
     #[cfg(not(target_arch = "wasm32"))]

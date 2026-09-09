@@ -715,17 +715,30 @@ both the 60 Hz (16,666.667 µs) and 120 Hz (8,333.333 µs) budgets. Every worklo
 
 | Profile / workload | Active wall p50/p95 µs | Build ms | Commands / nodes / retained | Allocs / frame |
 | --- | ---: | ---: | ---: | ---: |
-| Debug Home / static | 28.50 / 100.12 | 0.031 | 9 / 3 / 2 | 57.45 |
-| Debug Blog / static | 26.33 / 126.29 | 0.030 | 9 / 3 / 2 | 57.45 |
-| Debug Latest / dynamic islands | 44.33 / 121.83 | 0.047 | 44 / 9 / 1 | 12.95 |
-| Release Home / static | 2.33 / 10.29 | 0.003 | 9 / 3 / 2 | 57.45 |
-| Release Blog / static | 1.00 / 1.92 | 0.001 | 9 / 3 / 2 | 57.45 |
-| Release Latest / dynamic islands | 1.75 / 17.08 | 0.002 | 44 / 9 / 1 | 12.95 |
+| Debug Home / static | 69.92 / 90.08 | 0.066 | 239 / 43 / 0 | 5.25 |
+| Debug Blog / static | 48.50 / 66.08 | 0.045 | 239 / 43 / 0 | 5.25 |
+| Debug Latest / dynamic islands | 27.46 / 37.67 | 0.025 | 44 / 9 / 1 | 6.90 |
+| Release Home / static | 5.88 / 31.96 | 0.008 | 239 / 43 / 0 | 5.25 |
+| Release Blog / static | 5.21 / 42.62 | 0.007 | 239 / 43 / 0 | 5.25 |
+| Release Latest / dynamic islands | 2.71 / 7.92 | 0.003 | 44 / 9 / 1 | 6.90 |
 
-The static synthetic workload is 512 rows and therefore exercises the bounded tile path (two retained tiles in the
-visible frame). The dynamic synthetic workload has a stable prefix and live suffix within the single-layer dimension
-limit (one retained layer in the visible frame). Its focused regression verifies that the stable child is painted once
-while the dynamic child is painted again after an offset-only draw.
+The current main-based rerun keeps the dynamic synthetic workload at one retained layer, but the all-static Home and
+Blog probes report zero retained layers and replay 239 commands across 43 visited nodes. This is because the current
+`RawFlex` contract deliberately rejects whole-tree stability and its island partition requires a dynamic suffix; the
+static-only retained-layer gate therefore remains open. The focused regression still verifies that a stable prefix is
+painted once while a dynamic suffix is painted again after an offset-only draw.
+
+The final local rerun reported zero over-budget samples at both refresh budgets, `requests=21/19/20` for every active
+workload, and `pending=false` after settling. The headless runner exposed RSS in this environment: active runs grew by
+at most 400 KiB in debug and 224 KiB in release, while settled runs were flat or within 16 KiB. This acceptance fixture
+uses probe rectangles rather than text, so its `text misses/frame=0` counters are not a text-workload measurement.
+The text-specific safety path is covered separately: plain `RawTextWidget` paragraphs are retained through
+`LayoutCache`, while rich/selectable/link-bearing and shadowed text remain on direct dynamic drawing paths.
+The main-based text scroll profile measured 53.83/60.67 us (p50/p95) debug and 10.75/12.79 us release, with 206
+commands, 35 nodes, zero retained layers, 15 text commands, and zero text-cache misses per frame. The release Cupid
+pipeline benchmarks measured 112.324 us average and 157.5 us worst for warmed four-times-viewport scrolling; mixed-script
+warm cache hits averaged 297 ns, while cold repeated preparation averaged 928.488 us with 389.603 us shaping,
+29.526 us layout, 143.620 us glyph work, and 60.469 us instance building.
 
 The real macOS website was also launched with `aimer run -d macos --no-tui` and `--release --no-tui`. Activity Monitor
 was filtered to `website` while each screen followed the same four-direction traversal. These are sampled ranges across
@@ -764,3 +777,10 @@ This phase is complete only when:
   in the Activity Monitor samples, but the headless sandbox could not collect RSS or a GPU-cache byte trace.
 - [x] The settled headless app requests no continuing redraw (`pending=false`); debug/release native and headless results,
   focused tests, and relevant crate tests are recorded above.
+
+Final focused validation in the optimization worktree passed `cargo test -p aimer_widget -p aimer_text -p aimer_scroll
+--lib` (272, 213, and 177 tests respectively), the retained paint-island regression, and
+`cargo check -p aimer_container --lib`; `git diff --check` is clean. The workspace-wide `--all-features` run remains
+blocked by the repository's pre-existing 60 `jaime` portable-state trait errors and missing `aimer_legacy` benchmark
+packages; the container unit-test command also encounters the existing dev-dependency feature-unification `BuildCanvas`
+mismatch in `aimer_scroll`.

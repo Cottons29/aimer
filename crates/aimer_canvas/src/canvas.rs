@@ -7,7 +7,8 @@ pub use aimer_cupid::canvas::TextMetrics;
 pub use aimer_cupid::utilities::Mat3;
 pub use aimer_cupid::draw_cmd::{
     RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION, RETAINED_LAYER_MAX_TILES_PER_FRAME,
-    RETAINED_LAYER_TILE_SIZE, RetainedDrawList, RetainedLayerContent,
+    RETAINED_LAYER_TILE_SIZE, RetainedDrawList, RetainedLayerContent, RetainedLayerPadding,
+    next_retained_layer_id,
 };
 pub use aimer_cupid::font::TextLanguage;
 pub use aimer_cupid::font::{FontFamily, FontStyle};

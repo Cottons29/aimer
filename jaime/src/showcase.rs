@@ -485,8 +485,6 @@ impl State<ExampleShowcase> for ExampleShowcaseState {
         let app_theme = ThemeData::copied(ctx);
 
         Container::new()
-            // .width(Dimension::Percent(100.0))
-            // .height(Dimension::Percent(100.0))
             .box_decoration(
                 BoxDecoration::new()
                     .background_color(app_theme.background_color)
@@ -718,12 +716,12 @@ fn content(selected: ExampleId, app_theme: ThemeData) -> AnyWidget {
                 .child(
                     Container::new()
                         .width(Dimension::Percent(100.0))
-                        .padding(LayoutSpacing::all(Spacing::Px(24)))
-                        .box_decoration(
-                            BoxDecoration::new()
-                                .background_color(theme::raised_surface(&app_theme))
-                                .border_radius(14),
-                        )
+                        // .padding(LayoutSpacing::all(Spacing::Px(24)))
+                        // .box_decoration(
+                        //     BoxDecoration::new()
+                        //         .background_color(theme::raised_surface(&app_theme))
+                        //         .border_radius(14),
+                        // )
                         .child(build_example(selected, app_theme)),
                 )
                 .boxed(),

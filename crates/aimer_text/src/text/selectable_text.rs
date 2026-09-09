@@ -145,6 +145,7 @@ impl Drawable for RawSelectableText {
         let geometry_state = self.geometry();
         slot.stamp();
         let layout = self.paragraph.prepare(ctx);
+        let paint_mode = self.paragraph.static_paint_mode();
         let shared_layout = layout.aimer_interaction.clone();
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         let transform = ctx.canvas.get_transform();
@@ -247,8 +248,17 @@ impl Drawable for RawSelectableText {
             }
         }
 
-        self.paragraph
-            .draw_spans(ctx, &layout, |span| span.style.color, |_, _| {});
+        if let Some(mode) = paint_mode {
+            if !self
+                .paragraph
+                .draw_cached_static_paint(ctx, &layout, mode)
+            {
+                self.paragraph.draw_static_spans(ctx, &layout, mode);
+            }
+        } else {
+            self.paragraph
+                .draw_spans(ctx, &layout, |span| span.style.color, |_, _| {});
+        }
 
         if clipped {
             ctx.canvas.clear_clip();

@@ -278,13 +278,37 @@ enum ResolvedKind {
     /// Kept in draw order so text is painted at its own z-position instead of
     /// on top of everything at the end.
     Text(usize),
-    /// Index into `decoration_requests` (one instance per decoration).
-    TextDecoration(usize),
+    /// Contiguous range in `decoration_requests` (one instance per
+    /// decoration). Keeping the range in draw order lets the renderer batch
+    /// adjacent lines without reordering them across other commands.
+    TextDecoration { start: usize, end: usize },
     Svg(usize),
     Custom {
         pipeline_index: usize,
         command_index: Option<usize>,
     },
+}
+
+#[inline]
+fn push_decoration_range(resolved: &mut Vec<ResolvedCmd>, index: usize) {
+    let extended = resolved.last_mut().is_some_and(|resolved| {
+        let ResolvedKind::TextDecoration { end, .. } = &mut resolved.kind else {
+            return false;
+        };
+        if *end != index {
+            return false;
+        }
+        *end += 1;
+        true
+    });
+    if !extended {
+        resolved.push(ResolvedCmd {
+            kind: ResolvedKind::TextDecoration {
+                start: index,
+                end: index + 1,
+            },
+        });
+    }
 }
 
 pub struct SvgRenderItem {
@@ -1241,9 +1265,7 @@ impl Renderer {
                         clip_rect: clip_to_array(self.clip_stack.last()),
                         clip_border_radius: clip_border_radius(self.clip_stack.last()),
                     });
-                    self.resolved.push(ResolvedCmd {
-                        kind: ResolvedKind::TextDecoration(deco_idx),
-                    });
+                    push_decoration_range(&mut self.resolved, deco_idx);
                 }
                 DrawCommand::Svg {
                     scene,
@@ -1692,8 +1714,7 @@ impl Renderer {
                         }
                         self.text_pipeline.render_request(&mut pass, index);
                     }
-                    ResolvedKind::TextDecoration(index) => {
-                        let index = *index;
+                    ResolvedKind::TextDecoration { start, end } => {
                         self.rect_pipeline.flush(&mut pass);
                         if let Some(tid) = current_texture_id.take()
                             && !image_batch.is_empty()
@@ -1707,7 +1728,8 @@ impl Renderer {
                             );
                             image_batch.clear();
                         }
-                        self.text_pipeline.render_decoration(&mut pass, index);
+                        self.text_pipeline
+                            .render_decoration_range(&mut pass, *start, *end);
                     }
                     ResolvedKind::Svg(index) => {
                         self.rect_pipeline.flush(&mut pass);
@@ -1907,6 +1929,29 @@ mod tests {
         assert_eq!(state.current(), 0.25);
         state.restore();
         assert_eq!(state.current(), 0.8);
+    }
+
+    #[test]
+    fn adjacent_decoration_commands_coalesce_without_crossing_other_commands() {
+        let mut resolved = Vec::new();
+        push_decoration_range(&mut resolved, 0);
+        push_decoration_range(&mut resolved, 1);
+        resolved.push(ResolvedCmd {
+            kind: ResolvedKind::Text(0),
+        });
+        push_decoration_range(&mut resolved, 2);
+        push_decoration_range(&mut resolved, 3);
+
+        assert_eq!(resolved.len(), 3);
+        assert!(matches!(
+            resolved[0].kind,
+            ResolvedKind::TextDecoration { start: 0, end: 2 }
+        ));
+        assert!(matches!(resolved[1].kind, ResolvedKind::Text(0)));
+        assert!(matches!(
+            resolved[2].kind,
+            ResolvedKind::TextDecoration { start: 2, end: 4 }
+        ));
     }
 
     #[test]

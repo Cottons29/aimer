@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use aimer_attribute::Bounds;
+use aimer_style::{TextDecoration, TextDecorationLine, TextDecorationStyle};
 
 use crate::paragraph::{PreparedFragment, PreparedLayout};
 use crate::selection::TextHitRegion;
@@ -26,6 +27,65 @@ pub(crate) struct PreparedSelection {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+}
+
+/// Paint-independent physical parameters for one text decoration style.
+///
+/// Position and width belong to the cached fragment geometry, while the
+/// inherited color is resolved during painting so link hover can change it
+/// without rebuilding the layout.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DecorationPaint {
+    pub lines: TextDecorationLine,
+    pub style: TextDecorationStyle,
+    pub dedicated_color: Option<aimer_widget::base::Color>,
+    pub thickness: f32,
+    pub offset: f32,
+    pub band_height: f32,
+    pub period: f32,
+}
+
+/// Resolves the style-dependent physical parameters shared by plain and
+/// paragraph-backed text.
+///
+/// Returns `None` for decorations that only request synthetic italic, because
+/// italic is a glyph paint flag rather than a decoration line.
+#[inline]
+pub(crate) fn prepare_decoration_paint(
+    decoration: TextDecoration,
+    font_size: f32,
+    scale: f32,
+) -> Option<DecorationPaint> {
+    let lines = decoration.line;
+    let has_stroke = lines.contains(TextDecorationLine::UNDERLINE)
+        || lines.contains(TextDecorationLine::LINE_THROUGH)
+        || lines.contains(TextDecorationLine::OVERLINE);
+    if !has_stroke {
+        return None;
+    }
+
+    let thickness = decoration
+        .thickness
+        .map(|value| value * scale)
+        .unwrap_or((font_size * 0.06).max(1.0));
+    let offset = decoration.offset * scale;
+    let (band_height, period) = match decoration.style {
+        TextDecorationStyle::Double => (thickness * 3.0, 1.0),
+        TextDecorationStyle::Dotted => (thickness, (thickness * 2.0).max(2.0)),
+        TextDecorationStyle::Dashed => (thickness, (thickness * 4.0).max(2.0)),
+        TextDecorationStyle::Wavy => (thickness * 4.0, (thickness * 6.0).max(4.0)),
+        TextDecorationStyle::Solid => (thickness, 1.0),
+    };
+
+    Some(DecorationPaint {
+        lines,
+        style: decoration.style,
+        dedicated_color: decoration.color,
+        thickness,
+        offset,
+        band_height,
+        period,
+    })
 }
 
 /// Reports whether a vertical band intersects the visible rectangle.
@@ -250,14 +310,49 @@ fn flush_fragment_run(
 mod tests {
     use std::rc::Rc;
 
-    use aimer_style::TextStyle;
+    use aimer_style::{TextDecoration, TextDecorationLine, TextDecorationStyle, TextStyle};
 
     use super::{
-        PreparedSelection, prepare_background_runs, snap_selection_lines_to_pixels,
-        vertical_span_is_visible,
+        PreparedSelection, prepare_background_runs, prepare_decoration_paint,
+        snap_selection_lines_to_pixels, vertical_span_is_visible,
     };
     use crate::paragraph::PreparedFragment;
     use crate::text_span::ResolvedTextSpan;
+
+    #[test]
+    fn decoration_paint_resolves_physical_stroke_geometry_once() {
+        let paint = prepare_decoration_paint(
+            TextDecoration::new()
+                .line(
+                    TextDecorationLine::UNDERLINE
+                        | TextDecorationLine::LINE_THROUGH
+                        | TextDecorationLine::OVERLINE,
+                )
+                .style(TextDecorationStyle::Wavy)
+                .thickness(2.0)
+                .offset(3.0),
+            16.0,
+            2.0,
+        )
+        .expect("real decoration lines should produce paint geometry");
+
+        assert_eq!(paint.lines.bits(), 0b0111);
+        assert_eq!(paint.style, TextDecorationStyle::Wavy);
+        assert_eq!(paint.thickness, 4.0);
+        assert_eq!(paint.offset, 6.0);
+        assert_eq!(paint.band_height, 16.0);
+        assert_eq!(paint.period, 24.0);
+    }
+
+    #[test]
+    fn italic_only_decoration_has_no_stroke_geometry() {
+        assert!(prepare_decoration_paint(
+            TextDecoration::new().line(TextDecorationLine::ITALIC),
+            16.0,
+            1.0,
+        )
+        .is_none());
+    }
 
     #[test]
     fn rich_text_visibility_keeps_partial_lines_and_rejects_hidden_lines() {

@@ -556,7 +556,9 @@ mod resized_text_preparation {
     use crate::AntiAlias;
     use crate::font::{FontFamily, FontStyle};
     use crate::text_layout::TextHorizontalAlign;
-    use crate::text_pipeline::{TextDrawRequest, TextOverflowMode, TextPipelineV2};
+    use crate::text_pipeline::{
+        RichTextSpan, TextDrawRequest, TextOverflowMode, TextPipelineV2, TextShadowRequest,
+    };
     use crate::utilities::Rgba8;
     use aimer_utils::SyncFuture;
 
@@ -640,6 +642,59 @@ mod resized_text_preparation {
             }
         }
         panic!("text preparation never settled");
+    }
+
+    #[test]
+    fn moving_shadowed_rich_text_reuses_its_paint_templates() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        let mut pipeline = pipeline(&device);
+        let mut first = line(0, 400, 0.0);
+        first.text = Arc::from("shadowed rich text");
+        first.spans = vec![
+            RichTextSpan::new("shadowed "),
+            RichTextSpan::new("rich text"),
+        ];
+        first.overflow = TextOverflowMode::Clip;
+        first.bounds_height = 0.0;
+        first.shadow = Some(TextShadowRequest {
+            offset_x: 2.0,
+            offset_y: 1.0,
+            blur: 3.0,
+            color: Rgba8::new(0, 0, 0, 160),
+        });
+        let first_profile = pipeline.prepare_profiled(
+            &device,
+            &queue,
+            400,
+            HEIGHT,
+            false,
+            std::slice::from_ref(&first),
+            &[],
+        );
+        assert_eq!(first_profile.paint_cache_misses, 2);
+
+        let mut moved = first;
+        moved.x += 17.5;
+        moved.color = Rgba8::new(32, 64, 96, 255);
+        moved.spans[1].color = Some(Rgba8::new(200, 40, 80, 255));
+        moved.clip_rect = [8.0, 0.0, 360.0, HEIGHT as f32];
+        let second_profile = pipeline.prepare_profiled(
+            &device,
+            &queue,
+            400,
+            HEIGHT,
+            false,
+            std::slice::from_ref(&moved),
+            &[],
+        );
+
+        assert_eq!(second_profile.paint_cache_hits, 2);
+        assert_eq!(second_profile.paint_cache_misses, 0);
+        assert!(pipeline.frame_glyph_instances().0 > 0);
     }
 
     // The heart of the guard: the frame whose surface size changed must draw its

@@ -14,6 +14,7 @@ mod deferred_preparation;
 mod font_resolver;
 pub mod glyph_atlas;
 mod glyph_metrics;
+mod paint_cache;
 pub mod glyph_rasterizer;
 mod layout_cache;
 mod preparation_batch;
@@ -35,7 +36,7 @@ use hashbrown::{HashMap, HashSet};
 use aimer_utils::AnimInstant;
 use bytemuck::{Pod, Zeroable};
 
-use crate::font::{FontFamily, FontStyle, FontWeight, TextLanguage};
+use crate::font::{FontFamily, FontRegistry, FontStyle, FontWeight, TextLanguage};
 use crate::pipeline::frame_upload::FrameUpload;
 use crate::pipeline::image_pipeline::InstanceBufferPolicy;
 use crate::text_pipeline::cache_key::{
@@ -52,6 +53,10 @@ use crate::text_pipeline::glyph_rasterizer::{
     GlyphKey, GlyphPreparationContext, GlyphRasterizer, glyph_runs,
 };
 use crate::text_pipeline::layout_cache::LayoutCache;
+use crate::text_pipeline::paint_cache::{
+    CachedPaintKind, CachedPaintGlyph, CachedTextPaint, TextPaintCache, TextPaintCacheKey,
+    sanitize_shadow,
+};
 use crate::text_pipeline::preparation_batch::{BatchExecutor, IndexedJob, PreparationBatch};
 use crate::text_pipeline::text_layout::{
     ShapedText, layout_shaped_text_result,
@@ -229,6 +234,7 @@ fn shadow_intersects_clip(
 }
 
 #[inline]
+#[cfg(test)]
 fn shadow_is_visible(color: Rgba8) -> bool {
     color.as_array()[3] > 0
 }
@@ -424,7 +430,7 @@ impl RichTextSpan {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
 pub enum TextOverflowMode {
     #[default]
     Clip,
@@ -457,6 +463,7 @@ struct PreparedFrameCache {
     is_srgb: bool,
     atlas_generation: u64,
     color_atlas_generation: u64,
+    font_revision: u64,
     requests: Vec<TextDrawRequest>,
     decorations: Vec<TextDecorationDraw>,
 }
@@ -468,6 +475,7 @@ impl PreparedFrameCache {
         is_srgb: bool,
         atlas_generation: u64,
         color_atlas_generation: u64,
+        font_revision: u64,
         requests: &[TextDrawRequest],
         decorations: &[TextDecorationDraw],
     ) -> Self {
@@ -477,6 +485,7 @@ impl PreparedFrameCache {
             is_srgb,
             atlas_generation,
             color_atlas_generation,
+            font_revision,
             requests: requests.to_vec(),
             decorations: decorations.to_vec(),
         }
@@ -489,6 +498,7 @@ impl PreparedFrameCache {
         is_srgb: bool,
         atlas_generation: u64,
         color_atlas_generation: u64,
+        font_revision: u64,
         requests: &[TextDrawRequest],
         decorations: &[TextDecorationDraw],
     ) -> bool {
@@ -497,6 +507,7 @@ impl PreparedFrameCache {
             && self.is_srgb == is_srgb
             && self.atlas_generation == atlas_generation
             && self.color_atlas_generation == color_atlas_generation
+            && self.font_revision == font_revision
             && self.requests.len() == requests.len()
             && self
                 .requests
@@ -620,6 +631,10 @@ pub struct TextPreparationProfile {
     /// Whether the call reused the complete retained frame without rebuilding
     /// layout, atlas plans, instances, or uploads.
     pub cache_hit: bool,
+    /// Number of span paint templates reused during this call.
+    pub paint_cache_hits: usize,
+    /// Number of span paint templates built during this call.
+    pub paint_cache_misses: usize,
     /// Request culling and off-screen layout-miss analysis.
     pub request_analysis: Duration,
     /// All `SpanLayoutKeys` construction done by the call.
@@ -726,6 +741,9 @@ pub struct TextPipelineV2 {
     /// for wrapping/ellipsis text, but shaped glyph ids and advances only
     /// depend on text content and font size.
     shaping_cache: HashMap<ShapingCacheKey, Arc<ShapedText>>,
+    /// Origin-relative glyph/shadow geometry reused when position, clip, or
+    /// foreground color changes without changing text layout.
+    paint_cache: TextPaintCache,
     /// Per-request glyph ranges recorded during `prepare` so the renderer can
     /// draw a single text request at its own z-position (interleaved with
     /// rects/images) instead of drawing all text in one final pass — the
@@ -1001,6 +1019,7 @@ impl TextPipelineV2 {
             last_prepared_surface: (0, 0),
             layout_cache: LayoutCache::new(Self::LAYOUT_CACHE_CAPACITY),
             shaping_cache: HashMap::new(),
+            paint_cache: TextPaintCache::default(),
             request_ranges: Vec::new(),
             visible_span_ranges: Vec::new(),
             visible_span_keys: Vec::new(),
@@ -1713,6 +1732,171 @@ impl TextPipelineV2 {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn build_text_paint_template(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        request: &TextDrawRequest,
+        keys: &SpanLayoutKeys,
+        font_weight: u16,
+        italic: bool,
+        mut profile: Option<&mut TextPreparationProfile>,
+    ) -> Option<Arc<CachedTextPaint>> {
+        let positioned = self
+            .layout_cache
+            .peek_with_fallback(&keys.primary, keys.fallback.as_ref())?;
+        let line_offsets = if request.writing_mode.is_vertical() {
+            None
+        } else {
+            match request.horizontal_align {
+                TextHorizontalAlign::Left => None,
+                _ => Some(line_alignment_offsets(
+                    &positioned_line_widths(positioned),
+                    request.bounds_width,
+                    request.horizontal_align,
+                )),
+            }
+        };
+        let shadow = sanitize_shadow(request.shadow);
+        let sample_count: usize = shadow.map_or(0, |shadow| {
+            if shadow.blur == 0.0 { 1 } else { 8 }
+        });
+        let shadow_coverage_exponent = shadow
+            .map(|shadow| coverage_exponent(shadow.color.to_unorm_array()))
+            .unwrap_or(1.0);
+        let mut glyphs = Vec::with_capacity(
+            positioned
+                .len()
+                .saturating_mul(sample_count.saturating_add(1)),
+        );
+
+        for pg in positioned {
+            let key = pg.glyph_key;
+            let (region, target_color_list) = if let Some(region) = self.atlas.get(&key) {
+                (region, false)
+            } else if let Some(region) = self.color_atlas.get(&key) {
+                (region, true)
+            } else {
+                let atlas_population_started = profile.is_some().then(Instant::now);
+                let rg = self.rasterizer.rasterize_bitmap_key(key, pg.font_size);
+                let (is_color, glyph_width, glyph_height) =
+                    (rg.is_color, rg.width, rg.height);
+                let region = if is_color {
+                    self.color_atlas.get_or_insert(
+                        device,
+                        queue,
+                        key,
+                        glyph_width,
+                        glyph_height,
+                        &rg.bitmap,
+                    )
+                } else {
+                    self.atlas.get_or_insert(
+                        device,
+                        queue,
+                        key,
+                        glyph_width,
+                        glyph_height,
+                        &rg.bitmap,
+                    )
+                };
+                self.rasterizer.release_bitmap(key);
+                if let (Some(profile), Some(started)) =
+                    (profile.as_deref_mut(), atlas_population_started)
+                {
+                    profile.atlas_population += started.elapsed();
+                }
+                (region, is_color)
+            };
+
+            let size = glyph_quad_size((region.width, region.height));
+            let line_offset = line_offsets
+                .as_ref()
+                .map_or(0.0, |offsets| offsets[pg.line_index]);
+            let local_position = [pg.x + line_offset, pg.y];
+            let skew = if italic { 0.25 } else { 0.0 };
+
+            if let Some(shadow) = shadow {
+                for sample in 0..sample_count {
+                    let (blur_x, blur_y) = if sample_count == 1 {
+                        (0.0, 0.0)
+                    } else {
+                        let angle =
+                            sample as f32 * std::f32::consts::TAU / sample_count as f32;
+                        (angle.cos() * shadow.blur, angle.sin() * shadow.blur)
+                    };
+                    glyphs.push(CachedPaintGlyph {
+                        local_position,
+                        offset: [
+                            shadow.offset_x + blur_x,
+                            shadow.offset_y + blur_y,
+                        ],
+                        size,
+                        region,
+                        color_atlas: target_color_list,
+                        skew,
+                        kind: CachedPaintKind::Shadow,
+                    });
+                }
+            }
+
+            glyphs.push(CachedPaintGlyph {
+                local_position,
+                offset: [0.0, 0.0],
+                size,
+                region,
+                color_atlas: target_color_list,
+                skew,
+                kind: CachedPaintKind::Foreground,
+            });
+            if !target_color_list {
+                if let Some(plan) = self.rasterizer.synthetic_weight_plan_for_codepoint(
+                    key,
+                    font_weight,
+                    pg.font_size,
+                    pg.codepoint,
+                ) {
+                    for &offset in plan.extra_offsets() {
+                        glyphs.push(CachedPaintGlyph {
+                            local_position,
+                            offset: [offset, 0.0],
+                            size,
+                            region,
+                            color_atlas: false,
+                            skew,
+                            kind: CachedPaintKind::Foreground,
+                        });
+                    }
+                }
+            }
+        }
+
+        let (advance_x, advance_y) = if request.writing_mode.is_vertical() {
+            (
+                0.0,
+                positioned
+                    .iter()
+                    .map(|glyph| glyph.y + glyph.height as f32)
+                    .max_by(f32::total_cmp)
+                    .unwrap_or(0.0)
+                    .max(0.0),
+            )
+        } else {
+            positioned.last().map_or((0.0, 0.0), |last| {
+                (last.x + last.width as f32, last.y)
+            })
+        };
+
+        Some(Arc::new(CachedTextPaint {
+            glyphs,
+            advance_x,
+            advance_y,
+            shadow,
+            shadow_coverage_exponent,
+        }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -1783,6 +1967,11 @@ impl TextPipelineV2 {
 
         let atlas_generation = self.atlas.generation();
         let color_atlas_generation = self.color_atlas.generation();
+        self.paint_cache.ensure_generations(
+            atlas_generation,
+            color_atlas_generation,
+            FontRegistry::revision(),
+        );
         let frame_cache_hit = !self.postponed_preparation
             && self.prepared_frame_generation == self.frame_generation
             && self.prepared_frame.as_ref().is_some_and(|cached| {
@@ -1792,6 +1981,7 @@ impl TextPipelineV2 {
                     is_srgb,
                     atlas_generation,
                     color_atlas_generation,
+                    FontRegistry::revision(),
                     requests,
                     decorations,
                 )
@@ -2046,6 +2236,16 @@ impl TextPipelineV2 {
             self.planned_color_atlas_generation = self.color_atlas.generation();
         }
 
+        // Planning can repack a full atlas before the assembly loop starts.
+        // Refresh the paint cache after that decision as well as at frame
+        // entry, otherwise a reset could leave cached quads pointing at the
+        // old glyph coordinates for this very frame.
+        self.paint_cache.ensure_generations(
+            self.atlas.generation(),
+            self.color_atlas.generation(),
+            FontRegistry::revision(),
+        );
+
         if let (Some(profile), Some(started)) = (profile.as_deref_mut(), atlas_planning_started) {
             profile.atlas_planning += started.elapsed();
             profile.alpha_glyphs += self.alpha_glyph_descriptors.len();
@@ -2094,12 +2294,14 @@ impl TextPipelineV2 {
             } else {
                 &req.spans
             };
-            let span_keys = &self.visible_span_keys[self.visible_span_ranges[index].clone()];
+            let span_key_range = self.visible_span_ranges[index].clone();
 
             let mut cursor_x = req.x;
             let mut cursor_y = req.y;
 
-            for (span, keys) in spans.iter().zip(span_keys) {
+            for (span_index, span) in spans.iter().enumerate() {
+                let key_index = span_key_range.start + span_index;
+                debug_assert!(key_index < span_key_range.end);
                 let color = span.color.unwrap_or(req.color);
                 let font_weight = span
                     .font_weight
@@ -2109,188 +2311,120 @@ impl TextPipelineV2 {
                 // the glyph shaders (0.25 ≈ 14°). Ceiling: not a real italic
                 // face (no cursive glyph forms, advances unchanged). Upgrade
                 // path: load a real italic/oblique face and key the atlas by it.
-                let skew = if span.italic.unwrap_or(req.italic) {
-                    0.25
-                } else {
-                    0.0
-                };
-                // Layout is always computed at origin (0, 0) so the cached
-                // positions are purely relative and can be shifted cheaply.
-                // A peek, not a get: the planning loop above already stamped
-                // this frame's layouts.
-                let positioned = self
-                    .layout_cache
-                    .peek_with_fallback(&keys.primary, keys.fallback.as_ref())
-                    .expect("collected text layout must be committed before rendering");
-                // Left-aligned lines — the overwhelmingly common case — all
-                // start at the origin, so the per-line offset table (two
-                // vectors rebuilt per span per frame) is only computed when
-                // an alignment actually shifts something.
-                let line_offsets = if req.writing_mode.is_vertical() {
-                    None
-                } else {
-                    match req.horizontal_align {
-                    TextHorizontalAlign::Left => None,
-                    _ => Some(line_alignment_offsets(
-                        &positioned_line_widths(positioned),
-                        req.bounds_width,
-                        req.horizontal_align,
-                    )),
+                let italic = span.italic.unwrap_or(req.italic);
+                let paint_key = TextPaintCacheKey::new(
+                    &self.visible_span_keys[key_index],
+                    req,
+                    font_weight,
+                    italic,
+                );
+                let cached = if let Some(cached) = self.paint_cache.get(&paint_key) {
+                    if let Some(profile) = profile.as_deref_mut() {
+                        profile.paint_cache_hits += 1;
                     }
-                };
-                // The blend-space correction depends only on the span's
-                // color; one `powf` serves every glyph of the span.
-                let span_coverage_exponent = coverage_exponent(color.to_unorm_array());
-                for pg in positioned {
-                    let key = pg.glyph_key;
-                    // One atlas probe answers both "where is the bitmap" and
-                    // "is it color": a rasterized glyph lives in exactly one
-                    // of the two atlases. Only a miss on both asks the
-                    // rasterizer — a glyph arriving from the ahead-of-view
-                    // cache, whose bitmap insert is a cache hit.
-                    let (region, target_color_list) = if let Some(region) = self.atlas.get(&key) {
-                        (region, false)
-                    } else if let Some(region) = self.color_atlas.get(&key) {
-                        (region, true)
-                    } else {
-                        let atlas_population_started = profile.is_some().then(Instant::now);
-                        let rg = self.rasterizer.rasterize_bitmap_key(key, pg.font_size);
-                        let (is_color, glyph_width, glyph_height) =
-                            (rg.is_color, rg.width, rg.height);
-                        let region = if is_color {
-                            self.color_atlas.get_or_insert(
-                                device,
-                                queue,
-                                key,
-                                glyph_width,
-                                glyph_height,
-                                &rg.bitmap,
-                            )
-                        } else {
-                            self.atlas.get_or_insert(
-                                device,
-                                queue,
-                                key,
-                                glyph_width,
-                                glyph_height,
-                                &rg.bitmap,
-                            )
-                        };
-                        self.rasterizer.release_bitmap(key);
-                        if let (Some(profile), Some(started)) =
-                            (profile.as_deref_mut(), atlas_population_started)
-                        {
-                            profile.atlas_population += started.elapsed();
-                        }
-                        (region, is_color)
+                    cached
+                } else {
+                    if let Some(profile) = profile.as_deref_mut() {
+                        profile.paint_cache_misses += 1;
+                    }
+                    // Cloning is limited to misses so cache hits never hold
+                    // an immutable borrow of the pipeline across template
+                    // construction.
+                    let keys = self.visible_span_keys[key_index].clone();
+                    let Some(paint) = self.build_text_paint_template(
+                        device,
+                        queue,
+                        req,
+                        &keys,
+                        font_weight,
+                        italic,
+                        profile.as_deref_mut(),
+                    ) else {
+                        return;
                     };
+                    self.paint_cache.insert(paint_key, paint.clone());
+                    paint
+                };
 
-                    let size = glyph_quad_size((region.width, region.height));
-                    let line_offset = line_offsets
-                        .as_ref()
-                        .map_or(0.0, |offsets| offsets[pg.line_index]);
-                    let position =
-                        snap_to_pixel_grid([pg.x + cursor_x + line_offset, pg.y + cursor_y]);
-                    let foreground_visible = glyph_intersects_clip(position, size, req.clip_rect);
-                    let shadow_visible = req.shadow.is_some_and(|shadow| {
-                        shadow_intersects_clip(position, size, shadow, req.clip_rect)
-                    });
-                    if !foreground_visible && !shadow_visible {
+                let span_coverage_exponent = coverage_exponent(color.to_unorm_array());
+                let shadow = cached.shadow;
+                let mut cull_key = None;
+                let mut foreground_visible = false;
+                let mut shadow_visible = false;
+                for paint_glyph in &cached.glyphs {
+                    if paint_glyph.kind == CachedPaintKind::Foreground && !req.draw_glyphs {
                         continue;
                     }
+
+                    // The cached position is relative to the span origin. It
+                    // must be snapped after the current request translation is
+                    // added so scrolling preserves the original pixel-grid
+                    // behavior without rebuilding the template.
+                    let position = snap_to_pixel_grid([
+                        paint_glyph.local_position[0] + cursor_x,
+                        paint_glyph.local_position[1] + cursor_y,
+                    ]);
+                    let next_cull_key = (position, paint_glyph.size);
+                    if cull_key != Some(next_cull_key) {
+                        foreground_visible = glyph_intersects_clip(
+                            position,
+                            paint_glyph.size,
+                            req.clip_rect,
+                        );
+                        shadow_visible = shadow.is_some_and(|shadow| {
+                            shadow_intersects_clip(
+                                position,
+                                paint_glyph.size,
+                                shadow,
+                                req.clip_rect,
+                            )
+                        });
+                        cull_key = Some(next_cull_key);
+                    }
+                    let visible = match paint_glyph.kind {
+                        CachedPaintKind::Shadow => shadow_visible,
+                        CachedPaintKind::Foreground => foreground_visible,
+                    };
+                    if !visible {
+                        continue;
+                    }
+
+                    let (color, coverage_exponent) = match paint_glyph.kind {
+                        CachedPaintKind::Shadow => {
+                            let shadow = shadow.expect("cached shadow glyph requires a shadow");
+                            (shadow.color, cached.shadow_coverage_exponent)
+                        }
+                        CachedPaintKind::Foreground => (color, span_coverage_exponent),
+                    };
                     let instance = GlyphInstance {
-                        position,
-                        size,
+                        position: [
+                            position[0] + paint_glyph.offset[0],
+                            position[1] + paint_glyph.offset[1],
+                        ],
+                        size: paint_glyph.size,
                         uv_rect: [
-                            region.x as f32,
-                            region.y as f32,
-                            (region.x + region.width) as f32,
-                            (region.y + region.height) as f32,
+                            paint_glyph.region.x as f32,
+                            paint_glyph.region.y as f32,
+                            (paint_glyph.region.x + paint_glyph.region.width) as f32,
+                            (paint_glyph.region.y + paint_glyph.region.height) as f32,
                         ],
                         color,
                         clip_rect: req.clip_rect,
                         clip_border_radius: req.clip_border_radius,
-                        skew,
-                        coverage_exponent: span_coverage_exponent,
+                        skew: paint_glyph.skew,
+                        coverage_exponent,
                         _pad: [0.0; 2],
                     };
 
-                    if let Some(shadow) = req.shadow
-                        && shadow_visible
-                        && shadow_is_visible(shadow.color)
-                    {
-                        let offset_x = shadow
-                            .offset_x
-                            .is_finite()
-                            .then_some(shadow.offset_x)
-                            .unwrap_or(0.0);
-                        let offset_y = shadow
-                            .offset_y
-                            .is_finite()
-                            .then_some(shadow.offset_y)
-                            .unwrap_or(0.0);
-                        let blur = shadow
-                            .blur
-                            .is_finite()
-                            .then_some(shadow.blur.max(0.0))
-                            .unwrap_or(0.0);
-                        let sample_count = if blur == 0.0 { 1 } else { 8 };
-                        let shadow_coverage_exponent =
-                            coverage_exponent(shadow.color.to_unorm_array());
-                        for sample in 0..sample_count {
-                            let (blur_x, blur_y) = if sample_count == 1 {
-                                (0.0, 0.0)
-                            } else {
-                                let angle =
-                                    sample as f32 * std::f32::consts::TAU / sample_count as f32;
-                                (angle.cos() * blur, angle.sin() * blur)
-                            };
-                            let mut shadow_instance = instance;
-                            shadow_instance.position[0] += offset_x + blur_x;
-                            shadow_instance.position[1] += offset_y + blur_y;
-                            shadow_instance.color = shadow.color;
-                            shadow_instance.coverage_exponent = shadow_coverage_exponent;
-                            if target_color_list {
-                                self.color_instances.push(shadow_instance);
-                            } else {
-                                self.instances.push(shadow_instance);
-                            }
-                        }
-                    }
-
-                    if req.draw_glyphs && foreground_visible {
-                        if target_color_list {
-                            self.color_instances.push(instance);
-                        } else {
-                            self.instances.push(instance);
-                            if let Some(plan) = self.rasterizer.synthetic_weight_plan_for_codepoint(
-                                key,
-                                font_weight,
-                                pg.font_size,
-                                pg.codepoint,
-                            ) {
-                                for &offset in plan.extra_offsets() {
-                                    let mut synthetic = instance;
-                                    synthetic.position[0] += offset;
-                                    self.instances.push(synthetic);
-                                }
-                            }
-                        }
+                    if paint_glyph.color_atlas {
+                        self.color_instances.push(instance);
+                    } else {
+                        self.instances.push(instance);
                     }
                 }
 
-                if req.writing_mode.is_vertical() {
-                    if let Some(last_y) = positioned
-                        .iter()
-                        .map(|glyph| glyph.y + glyph.height as f32)
-                        .max_by(f32::total_cmp)
-                    {
-                        cursor_y += last_y.max(0.0);
-                    }
-                } else if let Some(last) = positioned.last() {
-                    cursor_x += last.x + last.width as f32;
-                    cursor_y += last.y;
-                }
+                cursor_x += cached.advance_x;
+                cursor_y += cached.advance_y;
             }
 
             self.request_ranges.push(TextRequestRange {
@@ -2429,6 +2563,7 @@ impl TextPipelineV2 {
                 is_srgb,
                 self.atlas.generation(),
                 self.color_atlas.generation(),
+                FontRegistry::revision(),
                 requests,
                 decorations,
             ));
@@ -2573,19 +2708,31 @@ impl TextPipelineV2 {
         }
     }
 
-    /// Draw a single decoration line (underline/overline/strike) at its
-    /// position in the draw stream so it layers with its text. One
-    /// decoration request maps to exactly one instance. Reuses the alpha
-    /// `bind_group` (it only needs the viewport uniform).
-    pub fn render_decoration(&self, pass: &mut wgpu::RenderPass<'_>, index: usize) {
-        if index >= self.decoration_instances.len() {
+    /// Draws one contiguous decoration range at its position in the draw
+    /// stream so it layers with its text. The range retains request order and
+    /// maps each decoration request to one instance, but sets the pipeline and
+    /// vertex buffer only once for the whole range.
+    pub(crate) fn render_decoration_range(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        start: usize,
+        end: usize,
+    ) {
+        let end = end.min(self.decoration_instances.len());
+        if start >= end {
             return;
         }
         pass.set_pipeline(&self.decoration_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_vertex_buffer(0, self.decoration_instance_buffer.slice(..));
-        let start = index as u32;
-        pass.draw(0..6, start..start + 1);
+        pass.draw(0..6, start as u32..end as u32);
+    }
+
+    /// Draws a single decoration line (underline/overline/strike) at its
+    /// position in the draw stream. This compatibility wrapper retains the
+    /// old one-line interface for callers outside the renderer.
+    pub fn render_decoration(&self, pass: &mut wgpu::RenderPass<'_>, index: usize) {
+        self.render_decoration_range(pass, index, index.saturating_add(1));
     }
 
     /// Measure text width using the rasterizer.
@@ -2634,20 +2781,31 @@ mod tests {
     #[test]
     fn prepared_frame_cache_requires_exact_render_inputs() {
         let requests = vec![cache_request("same", 0.0)];
-        let cache = PreparedFrameCache::new(400, 300, false, 7, 9, &requests, &[]);
+        let cache = PreparedFrameCache::new(
+            400,
+            300,
+            false,
+            7,
+            9,
+            11,
+            &requests,
+            &[],
+        );
 
-        assert!(cache.matches(400, 300, false, 7, 9, &requests, &[]));
+        assert!(cache.matches(400, 300, false, 7, 9, 11, &requests, &[]));
         assert!(!cache.matches(
             400,
             300,
             false,
             7,
             9,
+            11,
             &[cache_request("same", 1.0)],
             &[]
         ));
-        assert!(!cache.matches(401, 300, false, 7, 9, &requests, &[]));
-        assert!(!cache.matches(400, 300, false, 8, 9, &requests, &[]));
+        assert!(!cache.matches(401, 300, false, 7, 9, 11, &requests, &[]));
+        assert!(!cache.matches(400, 300, false, 8, 9, 11, &requests, &[]));
+        assert!(!cache.matches(400, 300, false, 7, 9, 12, &requests, &[]));
     }
 
     #[test]
@@ -2655,13 +2813,13 @@ mod tests {
         let mut request = cache_request("outer", 0.0);
         request.spans.push(super::RichTextSpan::new("inner"));
         let requests = vec![request];
-        let cache = PreparedFrameCache::new(400, 300, false, 0, 0, &requests, &[]);
+        let cache = PreparedFrameCache::new(400, 300, false, 0, 0, 0, &requests, &[]);
 
         let mut changed = cache_request("outer", 0.0);
         changed
             .spans
             .push(super::RichTextSpan::new("changed"));
-        assert!(!cache.matches(400, 300, false, 0, 0, &[changed], &[]));
+        assert!(!cache.matches(400, 300, false, 0, 0, 0, &[changed], &[]));
     }
 
     /// How many atlas texels one pixel of `quad_size` spans.

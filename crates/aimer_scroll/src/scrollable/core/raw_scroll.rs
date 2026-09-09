@@ -11,7 +11,7 @@ use aimer_attribute::size::ResolvedSize;
 #[cfg(not(feature = "portable-guest"))]
 use aimer_canvas::{
     Canvas, InnerCanvas, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION,
-    RETAINED_LAYER_MAX_TILES_PER_FRAME, RETAINED_LAYER_TILE_SIZE,
+    RETAINED_LAYER_MAX_TILES_PER_FRAME, RETAINED_LAYER_TILE_SIZE, next_retained_layer_id,
 };
 use aimer_widget::base::*;
 use aimer_widget::{
@@ -28,8 +28,6 @@ use aimer_widget::components::element::{
 };
 #[cfg(not(feature = "portable-guest"))]
 use std::sync::Arc;
-#[cfg(not(feature = "portable-guest"))]
-use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use crate::scrollable::controller::DragMode;
 use crate::scrollable::controller::ScrollState;
@@ -348,13 +346,10 @@ pub(crate) struct ScrollPaintCache {
 }
 
 #[cfg(not(feature = "portable-guest"))]
-static NEXT_SCROLL_LAYER_ID: AtomicU64 = AtomicU64::new(1);
-
-#[cfg(not(feature = "portable-guest"))]
 impl Default for ScrollPaintCache {
     fn default() -> Self {
         Self {
-            layer_id: NEXT_SCROLL_LAYER_ID.fetch_add(1, Ordering::Relaxed),
+            layer_id: next_retained_layer_id(),
             snapshot: RefCell::new(None),
             tiles: RefCell::new(HashMap::new()),
             tile_key: Cell::new(None),
@@ -795,7 +790,7 @@ impl<E: Element> RawScrollableContainer<E> {
                         return false;
                     };
                     let tile = RetainedPaintTile {
-                        layer_id: NEXT_SCROLL_LAYER_ID.fetch_add(1, Ordering::Relaxed),
+                        layer_id: next_retained_layer_id(),
                         rect,
                         content: content.clone(),
                         element_ids,
@@ -1617,6 +1612,24 @@ mod tests {
 
     impl Rebuildable for PrepareBeforeMeasureChild {}
 
+    struct DrawingWidget {
+        draws: Rc<Cell<usize>>,
+        stable: bool,
+        size: ResolvedSize,
+    }
+
+    impl aimer_widget::PortableWidget for DrawingWidget {}
+
+    impl aimer_widget::Widget for DrawingWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            DrawingChild {
+                draws: self.draws,
+                stable: self.stable,
+                size: self.size,
+            }
+            .boxed()
+        }
+    }
 
     struct DrawingColumn {
         children: Vec<AnyElement>,
@@ -1730,6 +1743,16 @@ mod tests {
 
     impl Rebuildable for DrawingColumn {}
 
+    struct DrawingColumnWidget(DrawingColumn);
+
+    impl aimer_widget::PortableWidget for DrawingColumnWidget {}
+
+    impl aimer_widget::Widget for DrawingColumnWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            self.0.boxed()
+        }
+    }
+
     fn drawing_scrollable(draws: Rc<Cell<usize>>) -> RawScrollableContainer<AnyElement> {
         drawing_scrollable_with_stability(draws, true)
     }
@@ -1748,16 +1771,12 @@ mod tests {
         )
     }
 
-    fn drawing_scrollable_with_size(
-        draws: Rc<Cell<usize>>,
-        stable: bool,
-        size: ResolvedSize,
-    ) -> RawScrollableContainer<AnyElement> {
+    fn raw_scrollable(child: AnyElement) -> RawScrollableContainer<AnyElement> {
         let mut state = ScrollState::for_test_at(Vec2d::default());
         state.axis = crate::ScrollAxis::Vertical;
 
         RawScrollableContainer {
-            child: DrawingChild { draws, stable, size }.boxed(),
+            child,
             ctrl: Rc::new(state),
             vertical_scroll_bar: None,
             horizontal_scroll_bar: None,
@@ -1771,6 +1790,14 @@ mod tests {
             #[cfg(not(feature = "portable-guest"))]
             paint_cache: Default::default(),
         }
+    }
+
+    fn drawing_scrollable_with_size(
+        draws: Rc<Cell<usize>>,
+        stable: bool,
+        size: ResolvedSize,
+    ) -> RawScrollableContainer<AnyElement> {
+        raw_scrollable(DrawingChild { draws, stable, size }.boxed())
     }
 
     fn drawing_context(visible_rect: Option<(f32, f32, f32, f32)>) -> BuildContext<'static> {
@@ -1795,6 +1822,98 @@ mod tests {
         };
         context.visible_rect = visible_rect;
         context
+    }
+
+    #[tokio::test]
+    async fn a_container_with_stable_content_reports_stable_paint() {
+        use aimer_widget::Widget as _;
+
+        let ctx = drawing_context(None);
+        let element = aimer_container::Container::new()
+            .child(DrawingWidget {
+                draws: Rc::new(Cell::new(0)),
+                stable: true,
+                size: ResolvedSize {
+                    width: 100.0,
+                    height: 100.0,
+                },
+            })
+            .to_element(&ctx);
+
+        assert!(element.is_paint_stable());
+    }
+
+    #[tokio::test]
+    async fn a_decorated_container_stays_on_the_direct_paint_path() {
+        use aimer_widget::Widget as _;
+
+        let ctx = drawing_context(None);
+        let element = aimer_container::Container::new()
+            .color(Color::WHITE)
+            .child(DrawingWidget {
+                draws: Rc::new(Cell::new(0)),
+                stable: true,
+                size: ResolvedSize {
+                    width: 100.0,
+                    height: 100.0,
+                },
+            })
+            .to_element(&ctx);
+
+        assert!(!element.is_paint_stable());
+    }
+
+    #[tokio::test]
+    async fn a_transparent_container_delegates_dynamic_paint_islands() {
+        use aimer_widget::Widget as _;
+
+        let static_draws = Rc::new(Cell::new(0));
+        let dynamic_draws = Rc::new(Cell::new(0));
+        let build_ctx = drawing_context(None);
+        let child = aimer_container::Container::new()
+            .child(DrawingColumnWidget(DrawingColumn {
+                children: vec![
+                    DrawingChild {
+                        draws: static_draws.clone(),
+                        stable: true,
+                        size: ResolvedSize {
+                            width: 100.0,
+                            height: 100.0,
+                        },
+                    }
+                    .boxed(),
+                    DrawingChild {
+                        draws: dynamic_draws.clone(),
+                        stable: false,
+                        size: ResolvedSize {
+                            width: 100.0,
+                            height: 100.0,
+                        },
+                    }
+                    .boxed(),
+                ],
+                size: ResolvedSize {
+                    width: 100.0,
+                    height: 400.0,
+                },
+            }))
+            .to_element(&build_ctx);
+        let scrollable = raw_scrollable(child);
+        let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
+
+        scrollable.draw(&ctx);
+        assert_eq!(static_draws.get(), 1);
+        assert_eq!(dynamic_draws.get(), 1);
+        assert_eq!(
+            ctx.canvas.get_inner_canvas().draw_list().stats().retained_layers,
+            1
+        );
+
+        ctx.canvas.begin_frame();
+        scrollable.ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -20.0 });
+        scrollable.draw(&ctx);
+        assert_eq!(static_draws.get(), 1, "the stable prefix should be replayed");
+        assert_eq!(dynamic_draws.get(), 2, "the dynamic suffix should stay live");
     }
 
     #[tokio::test]

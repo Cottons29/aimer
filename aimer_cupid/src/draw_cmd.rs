@@ -35,6 +35,66 @@ pub const RETAINED_LAYER_TILE_SIZE: u32 = 1_024;
 /// turning one frame into an unbounded tile-recording job.
 pub const RETAINED_LAYER_MAX_TILES_PER_FRAME: usize = 64;
 
+/// Physical-pixel padding around a retained layer's local content.
+///
+/// The order is left, top, right, bottom. Padding is used for paint that is
+/// allowed to bleed outside the layer's logical bounds, such as a text shadow.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RetainedLayerPadding {
+    /// Pixels kept to the left of the content origin.
+    pub left: f32,
+    /// Pixels kept above the content origin.
+    pub top: f32,
+    /// Pixels kept to the right of the content bounds.
+    pub right: f32,
+    /// Pixels kept below the content bounds.
+    pub bottom: f32,
+}
+
+impl RetainedLayerPadding {
+    /// No extra pixels around the layer.
+    pub const ZERO: Self = Self {
+        left: 0.0,
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+    };
+
+    /// Creates padding in physical pixels.
+    #[inline]
+    pub const fn new(left: f32, top: f32, right: f32, bottom: f32) -> Self {
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    #[inline]
+    fn is_valid(self) -> bool {
+        self.left.is_finite()
+            && self.top.is_finite()
+            && self.right.is_finite()
+            && self.bottom.is_finite()
+            && self.left >= 0.0
+            && self.top >= 0.0
+            && self.right >= 0.0
+            && self.bottom >= 0.0
+    }
+}
+
+/// Allocates an ID for a renderer-owned retained layer.
+///
+/// IDs are process-wide because a renderer receives scroll and widget layers
+/// through the same command stream. Callers should allocate once and retain
+/// the result for the lifetime of the cached layer.
+#[inline]
+pub fn next_retained_layer_id() -> u64 {
+    static NEXT_RETAINED_LAYER_ID: AtomicU64 = AtomicU64::new(1);
+    NEXT_RETAINED_LAYER_ID.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Shared state between the canvas-side draw list and the renderer.
 ///
 /// A finished draw list can be moved to the raster thread while the canvas
@@ -442,25 +502,43 @@ pub struct RetainedLayerContent {
     snapshot: Mutex<RetainedDrawList>,
     texture_ids: Box<[TextureId]>,
     compositor_safe: bool,
+    padding: RetainedLayerPadding,
 }
 
 impl RetainedLayerContent {
     /// Wraps a validated retained snapshot for renderer-side layer caching.
     #[inline]
     pub fn from_snapshot(snapshot: RetainedDrawList) -> Self {
+        Self::from_snapshot_with_padding(snapshot, RetainedLayerPadding::ZERO)
+    }
+
+    /// Wraps a validated snapshot and records physical pixels reserved around
+    /// its logical bounds for paint that bleeds outside them.
+    ///
+    /// A shadowed text command is compositor-safe only when this padding is
+    /// large enough for its finite, sanitized offset and blur. Unsupported or
+    /// insufficiently padded content remains valid for direct replay.
+    #[inline]
+    pub fn from_snapshot_with_padding(
+        snapshot: RetainedDrawList,
+        padding: RetainedLayerPadding,
+    ) -> Self {
         let texture_ids = snapshot.texture_ids().into();
-        let compositor_safe = snapshot.commands.iter().all(|command| match command {
-            DrawCommand::FillRect { outline_width, .. } => {
-                outline_width.iter().all(|width| *width <= 0.0)
-            }
-            DrawCommand::DrawText { shadow, .. } => shadow.is_none(),
-            DrawCommand::DrawShadowRect { .. } => false,
-            _ => true,
-        });
+        let compositor_safe = padding.is_valid()
+            && snapshot.commands.iter().all(|command| match command {
+                DrawCommand::FillRect { outline_width, .. } => {
+                    outline_width.iter().all(|width| *width <= 0.0)
+                }
+                DrawCommand::DrawText { shadow, .. } => shadow
+                    .is_none_or(|shadow| shadow_is_covered(shadow, padding)),
+                DrawCommand::DrawShadowRect { .. } => false,
+                _ => true,
+            });
         Self {
             snapshot: Mutex::new(snapshot),
             texture_ids,
             compositor_safe,
+            padding,
         }
     }
 
@@ -479,6 +557,13 @@ impl RetainedLayerContent {
         self.compositor_safe
     }
 
+    /// Returns the physical pixels reserved on the left, top, right, and
+    /// bottom edges of this layer.
+    #[inline]
+    pub fn padding(&self) -> RetainedLayerPadding {
+        self.padding
+    }
+
     /// Materializes a temporary draw list for a layer refresh.
     ///
     /// This clones only the already-validated, retention-safe commands. It is
@@ -487,7 +572,11 @@ impl RetainedLayerContent {
     pub(crate) fn to_draw_list(&self) -> DrawList {
         let snapshot = self.snapshot.lock().unwrap();
         let mut draw_list = DrawList::with_texture_registry(snapshot.texture_registry.clone());
-        draw_list.append_retained(&snapshot, Mat3::identity());
+        if self.padding != RetainedLayerPadding::ZERO {
+            draw_list.translate(self.padding.left, self.padding.top);
+        }
+        let base = *draw_list.current_transform();
+        draw_list.append_retained(&snapshot, base);
         draw_list
     }
 
@@ -495,6 +584,24 @@ impl RetainedLayerContent {
         let snapshot = self.snapshot.lock().unwrap();
         draw_list.append_retained(&snapshot, base);
     }
+}
+
+#[inline]
+fn shadow_is_covered(shadow: TextShadowRequest, padding: RetainedLayerPadding) -> bool {
+    if shadow.color.0[3] == 0 {
+        return true;
+    }
+    let offset_x = shadow.offset_x.is_finite().then_some(shadow.offset_x).unwrap_or(0.0);
+    let offset_y = shadow.offset_y.is_finite().then_some(shadow.offset_y).unwrap_or(0.0);
+    let blur = shadow
+        .blur
+        .is_finite()
+        .then_some(shadow.blur.max(0.0))
+        .unwrap_or(0.0);
+    padding.left >= (blur - offset_x).max(0.0)
+        && padding.right >= (blur + offset_x).max(0.0)
+        && padding.top >= (blur - offset_y).max(0.0)
+        && padding.bottom >= (blur + offset_y).max(0.0)
 }
 
 #[inline]
@@ -1763,6 +1870,97 @@ mod memory_tests {
         assert!(matches!(
             frame.commands().first(),
             Some(DrawCommand::RetainedLayer { layer_id: 7, .. })
+        ));
+    }
+
+    #[test]
+    fn padded_text_shadow_is_safe_and_translated_only_when_rasterized() {
+        let mut recorded = DrawList::new();
+        recorded.push(DrawCommand::DrawText {
+            position: Vec2d::new(0.0, 16.0),
+            text: Arc::from("shadow"),
+            font_size: 16.0,
+            color: Color::white(),
+            bounds_width: Some(100.0),
+            bounds_height: Some(24.0),
+            overflow: TextOverflowMode::Clip,
+            horizontal_align: TextHorizontalAlign::Left,
+            font_family: FontFamily::SANS_SERIF,
+            font_style: FontStyle::Normal,
+            font_weight: 400,
+            shadow: Some(TextShadowRequest {
+                offset_x: 2.0,
+                offset_y: -3.0,
+                blur: 4.0,
+                color: Rgba8::new(0, 0, 0, 255),
+            }),
+            draw_glyphs: true,
+        });
+        let content = RetainedLayerContent::from_snapshot_with_padding(
+            recorded
+                .retained_snapshot()
+                .expect("text commands should be retainable"),
+            RetainedLayerPadding::new(2.0, 7.0, 6.0, 1.0),
+        );
+
+        assert!(content.is_compositor_safe());
+        assert_eq!(
+            content.padding(),
+            RetainedLayerPadding::new(2.0, 7.0, 6.0, 1.0)
+        );
+
+        let layer_draw_list = content.to_draw_list();
+        assert!(matches!(
+            layer_draw_list.commands().first(),
+            Some(DrawCommand::SetTransform { matrix })
+                if matrix.cols[2][0] == 2.0 && matrix.cols[2][1] == 7.0
+        ));
+        assert!(matches!(
+            layer_draw_list.commands().get(1),
+            Some(DrawCommand::DrawText { position, .. })
+                if position.x == 0.0 && position.y == 16.0
+        ));
+    }
+
+    #[test]
+    fn insufficient_text_shadow_padding_uses_direct_fallback() {
+        let mut recorded = DrawList::new();
+        recorded.push(DrawCommand::DrawText {
+            position: Vec2d::new(0.0, 16.0),
+            text: Arc::from("shadow"),
+            font_size: 16.0,
+            color: Color::white(),
+            bounds_width: Some(100.0),
+            bounds_height: Some(24.0),
+            overflow: TextOverflowMode::Clip,
+            horizontal_align: TextHorizontalAlign::Left,
+            font_family: FontFamily::SANS_SERIF,
+            font_style: FontStyle::Normal,
+            font_weight: 400,
+            shadow: Some(TextShadowRequest {
+                offset_x: 0.0,
+                offset_y: 0.0,
+                blur: 4.0,
+                color: Rgba8::new(0, 0, 0, 255),
+            }),
+            draw_glyphs: true,
+        });
+        let content = Arc::new(RetainedLayerContent::from_snapshot_with_padding(
+            recorded
+                .retained_snapshot()
+                .expect("text commands should be retainable"),
+            RetainedLayerPadding::new(3.0, 4.0, 4.0, 4.0),
+        ));
+        assert!(!content.is_compositor_safe());
+
+        let mut frame = DrawList::new();
+        frame.draw_retained_layer(10, Rect::new(0.0, 0.0, 100.0, 24.0), content);
+
+        assert_eq!(frame.stats().retained_layers, 0);
+        assert!(matches!(
+            frame.commands().first(),
+            Some(DrawCommand::DrawText { position, .. })
+                if position.x == 0.0 && position.y == 16.0
         ));
     }
 

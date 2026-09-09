@@ -1123,8 +1123,9 @@ fn line_break_opportunities_into(text: &str, allowed: &mut Vec<bool>) {
 ///
 /// Spaces, digits and most punctuation are `Script::Common`, and combining
 /// marks that adopt the script of their base are `Script::Inherited`; neither
-/// identifies a writing system, so both are reported as `None` and left to the
-/// run they are surrounded by.
+/// identifies a writing system, so both are reported as `None` and normally
+/// left to the run they are surrounded by. Complex-script runs keep them out
+/// of their shaping buffer when they sit at a script boundary.
 fn cluster_script(cluster: &str) -> Option<Script> {
     cluster
         .chars()
@@ -1158,6 +1159,45 @@ fn extends_script_value(run_script: &mut Option<Script>, script: Option<Script>)
             true
         }
     }
+}
+
+/// Complex-script shapers must receive only their script's grapheme clusters.
+///
+/// Common characters are useful context for Latin shaping, but passing a
+/// leading or trailing space/punctuation cluster through an owned Khmer/Indic
+/// shaper can change contextual substitutions. Keep those clusters in a
+/// neighboring neutral run and let the complex run start and end on a strong
+/// script cluster.
+#[inline]
+fn script_requires_neutral_boundary(script: Option<Script>) -> bool {
+    matches!(
+        script,
+        Some(
+            Script::Arabic
+                | Script::Bengali
+                | Script::Devanagari
+                | Script::Gurmukhi
+                | Script::Gujarati
+                | Script::Oriya
+                | Script::Tamil
+                | Script::Telugu
+                | Script::Kannada
+                | Script::Malayalam
+                | Script::Sinhala
+                | Script::Thai
+                | Script::Lao
+                | Script::Khmer
+                | Script::Myanmar
+        )
+    )
+}
+
+#[inline]
+fn is_shaping_control_cluster(cluster: &str) -> bool {
+    !cluster.is_empty()
+        && cluster
+            .chars()
+            .all(|codepoint| matches!(codepoint, '\u{200b}' | '\u{200c}' | '\u{200d}'))
 }
 
 /// A contiguous run of text that shares the same BiDi level and script, and can
@@ -1211,10 +1251,28 @@ fn collect_shaping_runs<'a>(
 
             let run_start_index = grapheme_index;
             let mut script = cluster_script(cluster);
+            let leading_neutral_run = script.is_none();
             grapheme_index += 1;
             while grapheme_index < graphemes.len() {
                 let next_cluster = graphemes[grapheme_index].1;
-                if next_cluster == "\n" || !extends_script_run(&mut script, next_cluster) {
+                if next_cluster == "\n" {
+                    break;
+                }
+                if leading_neutral_run && cluster_script(next_cluster).is_some() {
+                    // Common/inherited clusters before a strong script must
+                    // not become that script's leading context. A Khmer
+                    // shaper, for example, may inspect the beginning of its
+                    // buffer when forming a coeng leg; feeding it the space
+                    // and slash before `សួស្តី` changes the selected form.
+                    break;
+                }
+                if script_requires_neutral_boundary(script)
+                    && cluster_script(next_cluster).is_none()
+                    && !is_shaping_control_cluster(next_cluster)
+                {
+                    break;
+                }
+                if !extends_script_run(&mut script, next_cluster) {
                     break;
                 }
                 grapheme_index += 1;
@@ -2445,6 +2503,7 @@ pub fn shape_text_styled_with_writing_mode(
 
             let run_start_index = grapheme_index;
             let mut run_script = cluster_plan.script;
+            let leading_neutral_run = run_script.is_none();
             grapheme_index += 1;
             while grapheme_index < scratch.cluster_plans.len() {
                 let next_plan = scratch.cluster_plans[grapheme_index];
@@ -2453,6 +2512,10 @@ pub fn shape_text_styled_with_writing_mode(
                 let next_cluster = &text[next_start..next_end];
                 if next_cluster == "\n"
                     || next_plan.font_id != Some(font_id)
+                    || (leading_neutral_run && next_plan.script.is_some())
+                    || (script_requires_neutral_boundary(run_script)
+                        && next_plan.script.is_none()
+                        && !is_shaping_control_cluster(next_cluster))
                     || !extends_script_value(&mut run_script, next_plan.script)
                 {
                     break;
@@ -3701,6 +3764,21 @@ mod tests {
                 khmer_glyph_ids(&isolated)
             );
         }
+    }
+
+    #[test]
+    fn khmer_shape_is_not_changed_by_common_context() {
+        let khmer = "សួស្តី";
+        let text = format!("Straße / café\u{301} / 你好 / {khmer} — mixed CASE and spaces");
+        let mut rasterizer = GlyphRasterizer::new();
+        let isolated = shape_text(&mut rasterizer, khmer, 16.0);
+        let mixed = shape_text(&mut rasterizer, &text, 16.0);
+
+        assert_eq!(
+            khmer_glyph_ids(&isolated),
+            khmer_glyph_ids(&mixed),
+            "common spaces and punctuation must not change the Khmer subscript leg"
+        );
     }
 
     #[test]

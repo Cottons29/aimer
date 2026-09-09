@@ -489,7 +489,12 @@ impl FontRegistry {
     }
 
     /// Returns the current registration revision.
-    pub(crate) fn revision() -> u64 {
+    ///
+    /// Paint and shaping caches include this value because replacing or
+    /// removing a registered face changes the glyphs produced for the same
+    /// text/style key.
+    #[inline]
+    pub fn revision() -> u64 {
         registry()
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
