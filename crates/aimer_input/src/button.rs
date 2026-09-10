@@ -509,11 +509,10 @@ impl<W: Widget + 'static> ButtonState<W> {
             return decoration;
         }
 
-        if self.is_pressed {
-            if let Some(decoration) = &self.press_decoration {
+        if self.is_pressed
+            && let Some(decoration) = &self.press_decoration {
                 return decoration.clone();
             }
-        }
 
         let decoration = if self.is_hover {
             self.hover_decoration

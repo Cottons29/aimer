@@ -8,6 +8,7 @@ mod animatable_example;
 mod animated_layout_example;
 mod assets_media_example;
 mod color_sync;
+pub mod custom_text_field_caret_example;
 mod custom_shape_example;
 mod custom_animated_theme;
 mod custom_font;
@@ -486,9 +487,10 @@ fn test_image() {
 
 #[cfg(all(test, not(feature = "portable-guest")))]
 mod text_editing_example_tests {
-    use aimer::Widget;
+    use aimer::{AimerApp, Widget};
     use std::any::{Any, TypeId};
 
+    use crate::custom_text_field_caret_example::CustomTextFieldCaretExample;
     use crate::text_area_example::TextAreaExample;
     use crate::text_field_example::TextFieldExample;
 
@@ -504,5 +506,21 @@ mod text_editing_example_tests {
         let example = TextAreaExample::new();
 
         assert_eq!(Widget::debug_name(&example), "TextAreaExample");
+    }
+
+    #[test]
+    fn custom_text_field_caret_example_is_constructible_as_a_widget() {
+        let example = CustomTextFieldCaretExample::new();
+
+        assert_eq!(Widget::debug_name(&example), "CustomTextFieldCaretExample");
+    }
+
+    #[test]
+    fn custom_text_field_caret_example_mounts_headlessly() {
+        let mut app = AimerApp::start_headless(crate::theme::provide(
+            CustomTextFieldCaretExample::new().boxed(),
+        ));
+
+        app.pump_frames(2);
     }
 }

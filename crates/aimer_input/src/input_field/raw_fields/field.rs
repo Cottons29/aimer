@@ -97,37 +97,33 @@ mod input_type_tests {
 
 #[allow(dead_code)]
 pub struct Cursor {
-    cursor: String,
     offset: Cell<usize>,
     /// Selection anchor (the end that doesn't move). `None` means no selection.
     selection_anchor: Cell<Option<usize>>,
     /// Blink timeline shared with the owning field state, so the phase outlives
     /// the element it is painted from.
     blink: CaretBlink,
-    radius: Option<f32>,
-    color: Colors,
 }
 
 impl Cursor {
     /// Creates a cursor with a blink timeline of its own.
-    pub fn new(color: Colors) -> Self {
-        Self::with_blink(color, CaretBlink::new())
+    pub fn new(_color: Colors) -> Self {
+        Self::with_blink(_color, CaretBlink::new())
     }
 
     /// Creates a cursor that blinks on `blink`.
     ///
     /// A field built by [`TextField`] passes the timeline owned by its state,
-    /// which is what keeps the caret rhythm continuous across rebuilds.
+    /// which is what keeps the caret rhythm continuous across rebuilds. The
+    /// color argument remains accepted for source compatibility; visual color
+    /// belongs to the field's caret widget rather than to editing state.
     ///
     /// [`TextField`]: crate::input_field::TextField
-    pub fn with_blink(color: Colors, blink: CaretBlink) -> Self {
+    pub fn with_blink(_color: Colors, blink: CaretBlink) -> Self {
         Self {
-            cursor: "|".to_string(),
             offset: Cell::new(0),
             selection_anchor: Cell::new(None),
             blink,
-            radius: None,
-            color,
         }
     }
 
@@ -228,6 +224,7 @@ pub(crate) struct RawFieldConfig {
     pub disabled_decoration: Option<BoxDecoration>,
     pub selection_color: Color,
     pub cursor_color: Colors,
+    pub caret_builder: Option<CaretBuilder>,
     pub on_changed: TextFieldCallback,
     pub on_submitted: TextFieldCallback,
     pub on_focus: TextFieldCallback,
@@ -245,25 +242,49 @@ pub(crate) struct RawFieldConfig {
 pub(crate) struct RawTextFieldWidget {
     config: RawFieldConfig,
     caret: CaretBlink,
+    caret_context: CaretContext,
+    caret_slot: Rc<CaretSlot>,
     focus_node: FocusNode,
 }
 
 impl RawTextFieldWidget {
     /// Creates the widget for a field configured by `config` blinking on
-    /// `caret`.
+    /// `caret` and sharing `caret_context` with its retained caret child.
     #[inline]
-    pub(crate) fn new(config: RawFieldConfig, caret: CaretBlink, focus_node: FocusNode) -> Self {
+    pub(crate) fn new(
+        config: RawFieldConfig,
+        caret: CaretBlink,
+        caret_context: CaretContext,
+        caret_slot: Rc<CaretSlot>,
+        focus_node: FocusNode,
+    ) -> Self {
         Self {
             config,
             caret,
+            caret_context,
+            caret_slot,
             focus_node,
         }
     }
 }
 
 impl Widget for RawTextFieldWidget {
-    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
-        RawTextField::new(self.config, self.caret, self.focus_node).boxed()
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let cursor_color = self.config.cursor_color;
+        let caret = self.caret_slot.build(
+            self.config.caret_builder.as_ref(),
+            self.caret_context.clone(),
+            cursor_color,
+            ctx,
+        );
+        let field = RawTextField::with_caret_context(
+            self.config,
+            self.caret,
+            self.caret_context,
+            self.focus_node,
+        );
+
+        RawTextFieldHost::new(field, caret).boxed()
     }
 }
 
@@ -318,6 +339,8 @@ pub(crate) struct RawTextField {
     pub enable: bool,
     pub expand: ExpandDirection,
     pub cursor: Cursor,
+    /// Color supplied to the builtin caret and composition underlines.
+    pub caret_color: Colors,
     pub decoration: BoxDecoration,
     pub hover_decoration: Option<BoxDecoration>,
     pub focus_decoration: Option<BoxDecoration>,
@@ -345,6 +368,10 @@ pub(crate) struct RawTextField {
     pub ime_enabled: Cell<bool>,
     pub ime_cursor_area: Cell<Option<ImeCaretArea>>,
     pub padding: LayoutSpacing,
+    /// Shared presentation state consumed by the retained caret child.
+    pub(crate) caret_context: CaretContext,
+    /// Physical canvas offset from the field origin to its text content.
+    pub(crate) caret_origin: Cell<(f32, f32)>,
     /// The open clipboard menu, or `None` while none is showing.
     ///
     /// The menu is a modal: the host places it above every clip and dismisses
@@ -468,11 +495,25 @@ impl RawTextField {
         caret: CaretBlink,
         focus_node: FocusNode,
     ) -> Self {
+        let caret_context = CaretContext::new(caret.clone());
+        Self::with_caret_context(config, caret, caret_context, focus_node)
+    }
+
+    /// Builds a field using presentation state owned by its mounted widget.
+    ///
+    /// The shared context is what lets a retained custom caret continue to
+    /// observe the replacement field after configuration reconciliation.
+    pub(crate) fn with_caret_context(
+        config: RawFieldConfig,
+        caret: CaretBlink,
+        caret_context: CaretContext,
+        focus_node: FocusNode,
+    ) -> Self {
         let controller_attachment = config
             .controller
             .attach(|_, _| aimer_events::window::request_animation_frame());
         let observed_revision = config.controller.revision();
-        let cursor = Cursor::with_blink(config.cursor_color, caret);
+        let cursor = Cursor::with_blink(config.cursor_color, caret.clone());
         let (anchor, focus) = config.controller.selection_graphemes();
         cursor.set_offset(focus);
         cursor.set_selection_anchor((anchor != focus).then_some(anchor));
@@ -497,6 +538,7 @@ impl RawTextField {
             enable: config.enable,
             expand: config.expand,
             cursor,
+            caret_color: config.cursor_color,
             decoration: config.decoration,
             hover_decoration: config.hover_decoration,
             focus_decoration: config.focus_decoration,
@@ -524,6 +566,8 @@ impl RawTextField {
             ime_enabled: Cell::new(false),
             ime_cursor_area: Cell::new(None),
             padding: config.padding,
+            caret_context,
+            caret_origin: Cell::new((0.0, 0.0)),
             menu: RefCell::new(None),
             menu_shape: Cell::new(None),
             touch_hold: TouchHold::new(),
@@ -534,6 +578,64 @@ impl RawTextField {
             #[cfg(test)]
             test_clock: Cell::new(None),
         }
+    }
+
+    /// Returns the live context consumed by the visual caret child.
+    #[inline]
+    pub(crate) fn caret_context(&self) -> CaretContext {
+        self.caret_context.clone()
+    }
+
+    /// Publishes the field-local caret rectangle in logical pixels.
+    #[inline]
+    pub(crate) fn publish_caret(
+        &self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        scale: f32,
+    ) {
+        let scale = if scale > 0.0 { scale } else { 1.0 };
+        let (origin_x, origin_y) = self.caret_origin.get();
+        self.caret_context.publish(
+            CaretGeometry {
+                x: (origin_x + x) / scale,
+                y: (origin_y + y) / scale,
+                width: width / scale,
+                height: height / scale,
+            },
+            self.cursor.offset(),
+            self.is_focused(),
+            !self.is_composing(),
+            self.is_composing(),
+        );
+    }
+
+    /// Publishes the insertion point inside an active IME composition.
+    #[inline]
+    pub(crate) fn publish_composition_caret(
+        &self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        scale: f32,
+    ) {
+        let scale = if scale > 0.0 { scale } else { 1.0 };
+        let (origin_x, origin_y) = self.caret_origin.get();
+        self.caret_context.publish(
+            CaretGeometry {
+                x: (origin_x + x) / scale,
+                y: (origin_y + y) / scale,
+                width: width / scale,
+                height: height / scale,
+            },
+            self.cursor.offset(),
+            self.is_focused(),
+            true,
+            true,
+        );
     }
 
     /// The instant gestures are reckoned against.

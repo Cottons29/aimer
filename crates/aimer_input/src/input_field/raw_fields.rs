@@ -19,11 +19,13 @@ use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
 use aimer_text::{RawTextWidget, TextSource};
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, LayoutCache, LayoutElement,
-    FocusNode, PointerKey, Rebuildable, VisitorElement, Widget,
+    AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult,
+    LayoutCache, LayoutElement, FocusNode, PointerKey, Rebuildable, VisitorElement, Widget,
 };
 
-use crate::input_field::caret::CaretBlink;
+use crate::input_field::caret::{
+    CaretBlink, CaretBuilder, CaretContext, CaretGeometry, DefaultCaret,
+};
 use crate::input_field::context_menu::{FieldAction, HoldOutcome, TouchHold};
 use crate::editable_text::{
     ControllerAttachment, EditableGeometry, EditableGeometryCache, EditableGeometryKey,
@@ -51,6 +53,7 @@ macro_rules! ime_trace {
 
 include!("raw_fields/callback.rs");
 include!("raw_fields/field.rs");
+include!("raw_fields/caret_host.rs");
 include!("raw_fields/composition.rs");
 include!("raw_fields/edit_helpers.rs");
 include!("raw_fields/dimensions.rs");

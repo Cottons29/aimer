@@ -170,7 +170,7 @@ impl RawTextField {
         preedit_widget.draw(&preedit_ctx);
         canvas.restore();
 
-        let color: Color = self.cursor.color.into();
+        let color: Color = self.caret_color.into();
         let underline_y = top + height * 0.85;
         canvas.fill_color_rect(
             (origin_x, underline_y).into(),
@@ -202,16 +202,15 @@ impl RawTextField {
             );
         } else {
             // The caret inside a composition is the field's caret, sized on
-            // the same line the composition is drawn on.
+            // the same line the composition is drawn on. The retained caret
+            // widget paints it after this preedit has been drawn.
             let (caret_top, caret_height) = caret_band(top, height);
-            canvas.fill_color_rect(
-                (start_x, caret_top).into(),
-                ResolvedSize {
-                    width: 1.5 * scale,
-                    height: caret_height,
-                },
-                color,
-                [0.0; 4],
+            self.publish_composition_caret(
+                start_x,
+                caret_top,
+                1.5 * scale,
+                caret_height,
+                scale,
             );
         }
     }
@@ -227,10 +226,10 @@ mod composition_tests {
 
     use aimer_events::element::ElementEvent;
     use aimer_events::text_editing::{NativeTextRange, TextEditingDelta};
-    use aimer_widget::EventElement;
+    use aimer_widget::{Drawable, EventElement};
 
     use super::ImeCaretArea;
-    use super::test_support::{commit, focused_field};
+    use super::test_support::{commit, dummy_build_context, focused_field};
     use crate::TextEditingController as TextFieldController;
     use crate::input_field::raw_fields::TextFieldCallback;
 
@@ -374,6 +373,21 @@ mod composition_tests {
         assert_eq!(field.preedit_cursor.get(), Some((6, 6)));
         assert_eq!(field.display_text(), "", "a composition is provisional");
         assert_eq!(field.cursor.offset(), 0);
+    }
+
+    #[test]
+    fn a_composing_caret_is_published_for_the_retained_caret_widget() {
+        let field = focused_field(TextFieldController::new());
+        assert!(field.on_event(&preedit("ni", Some((2, 2)))).is_consumed());
+        let context = field.caret_context();
+        let build_context = dummy_build_context(240.0, 60.0);
+
+        field.draw(&build_context);
+
+        assert!(context.is_focused());
+        assert!(context.is_composing());
+        assert!(context.is_available());
+        assert!(context.is_visible());
     }
 
     #[test]

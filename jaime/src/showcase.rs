@@ -13,6 +13,7 @@ use crate::color_sync::ColorSync;
 use crate::custom_animated_theme::custom_animated_theme_example;
 use crate::custom_font::custom_font_example;
 use crate::custom_shape_example::custom_shape_example;
+use crate::custom_text_field_caret_example::CustomTextFieldCaretExample;
 use crate::data_view_example::data_view_example;
 use crate::dnd_completion_example::dnd_completion_example;
 use crate::drag_and_drop::DragBoard;
@@ -89,6 +90,7 @@ enum ExampleId {
     FocusNode,
     TextArea,
     TextField,
+    CustomTextFieldCaret,
     Markdown,
     CustomMarkdown,
     Counter,
@@ -145,6 +147,7 @@ const EXAMPLES: &[ExampleId] = &[
     ExampleId::FocusNode,
     ExampleId::TextArea,
     ExampleId::TextField,
+    ExampleId::CustomTextFieldCaret,
     ExampleId::Markdown,
     ExampleId::CustomMarkdown,
     ExampleId::Counter,
@@ -204,6 +207,7 @@ impl ExampleId {
             Self::FocusNode => "FocusNode",
             Self::TextArea => "TextArea",
             Self::TextField => "TextField",
+            Self::CustomTextFieldCaret => "Custom TextField caret",
             Self::Markdown => "Markdown",
             Self::CustomMarkdown => "Custom Markdown",
             Self::Counter => "Stateful counter",
@@ -253,7 +257,11 @@ impl ExampleId {
             Self::GlassLiquid => "◌",
             Self::Storage => "▣",
             Self::AnimatedLayout => "↗",
-            Self::TextProperties | Self::Text | Self::TextArea | Self::TextField => "T",
+            Self::TextProperties
+            | Self::Text
+            | Self::TextArea
+            | Self::TextField
+            | Self::CustomTextFieldCaret => "T",
             Self::Window => "▣",
             Self::Resizable => "↗",
             Self::FileDrop => "⇩",
@@ -310,6 +318,7 @@ impl ExampleId {
             Self::FocusNode => "focus-node",
             Self::TextArea => "text-area",
             Self::TextField => "text-field",
+            Self::CustomTextFieldCaret => "custom-text-field-caret",
             Self::Markdown => "markdown",
             Self::CustomMarkdown => "custom-markdown",
             Self::Counter => "counter",
@@ -408,6 +417,9 @@ impl ExampleId {
             Self::FocusNode => "Move keyboard focus between explicit focus targets.",
             Self::TextArea => "Edit multiline text with wrapping and bounded growth.",
             Self::TextField => "Edit a single line and submit it with Return.",
+            Self::CustomTextFieldCaret => {
+                "Replace the builtin insertion cursor with a themed retained widget."
+            }
             Self::Markdown => "Render Jaime's bundled Markdown document.",
             Self::CustomMarkdown => "Render custom blocks, inline widgets, and typed syntax.",
             Self::Counter => "Update retained state from button callbacks.",
@@ -758,6 +770,7 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::FocusNode => FocusNodeExample::new().boxed(),
         ExampleId::TextArea => TextAreaExample::new().boxed(),
         ExampleId::TextField => TextFieldExample::new().boxed(),
+        ExampleId::CustomTextFieldCaret => CustomTextFieldCaretExample::new().boxed(),
         ExampleId::Markdown => jaime_markdown_viewer().boxed(),
         ExampleId::CustomMarkdown => custom_markdown_viewer().boxed(),
         ExampleId::Counter => CounterWidget::new(1).boxed(),

@@ -1,5 +1,8 @@
-use aimer::style::{AnimatedTheme, FontFamily, FontWeight, TextDecoration, TextStyle, ThemeData};
-use aimer::{Color, MarkdownTheme, SpanStyle, Widget};
+use aimer::style::{
+    AnimatedTheme, BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontFamily, FontWeight,
+    Stroke, TextDecoration, TextStyle, ThemeData,
+};
+use aimer::{Color, Colors, MarkdownTheme, SpanStyle, Widget};
 
 /// The single visual theme used by Jaime's showcase shell and regular examples.
 ///
@@ -48,6 +51,48 @@ pub fn raised_surface(theme: &ThemeData) -> Color {
 #[inline]
 pub fn recessed_surface(theme: &ThemeData) -> Color {
     theme.background_color.lighten(0.06)
+}
+
+/// Creates the normal decoration shared by Jaime's text inputs.
+#[inline]
+pub fn input_decoration(theme: &ThemeData) -> BoxDecoration {
+    BoxDecoration::new()
+        .background_color(recessed_surface(theme))
+        .border(input_border(divider(theme), Stroke::Px(1.0)))
+        .border_radius(10)
+}
+
+/// Creates the hover decoration shared by Jaime's text inputs.
+#[inline]
+pub fn input_hover_decoration(theme: &ThemeData) -> BoxDecoration {
+    BoxDecoration::new()
+        .background_color(raised_surface(theme))
+        .border(input_border(theme.primary_color.with_alpha(0.64), Stroke::Px(1.0)))
+        .border_radius(10)
+}
+
+/// Creates the focused decoration shared by Jaime's text inputs.
+#[inline]
+pub fn input_focus_decoration(theme: &ThemeData) -> BoxDecoration {
+    BoxDecoration::new()
+        .background_color(raised_surface(theme))
+        .border(input_border(theme.primary_color, Stroke::Px(1.5)))
+        .border_radius(10)
+}
+
+/// Converts a themed [`Color`] into the legacy cursor-color representation.
+#[inline]
+pub fn input_cursor_color(theme: &ThemeData) -> Colors {
+    Colors::Custom(theme.primary_color.as_u32())
+}
+
+fn input_border(color: Color, stroke: Stroke) -> BoxBorder {
+    BoxBorder::all(
+        BorderSlice::new()
+            .style(BorderStyle::Solid)
+            .stroke(stroke)
+            .color(color),
+    )
 }
 
 /// Creates the Markdown renderer theme from the same semantic palette.
@@ -113,6 +158,20 @@ mod tests {
         assert_eq!(muted_text(&theme), theme.on_background_color.with_alpha(0.72));
         assert_eq!(raised_surface(&theme), theme.surface_color.lighten(0.08));
         assert_eq!(recessed_surface(&theme), theme.background_color.lighten(0.06));
+    }
+
+    #[test]
+    fn input_decorations_use_the_active_theme_roles() {
+        let theme = app_theme();
+        let normal = input_decoration(&theme);
+        let hover = input_hover_decoration(&theme);
+        let focus = input_focus_decoration(&theme);
+
+        assert_eq!(normal.background_color.get(), Some(recessed_surface(&theme)));
+        assert_eq!(normal.border.left.color, divider(&theme));
+        assert_eq!(hover.background_color.get(), Some(raised_surface(&theme)));
+        assert_eq!(focus.border.left.color, theme.primary_color);
+        assert_eq!(input_cursor_color(&theme).as_u32(), theme.primary_color.as_u32());
     }
 
     #[test]

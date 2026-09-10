@@ -63,6 +63,11 @@ impl StatelessWidget for TextAreaExample {
                         .text_style(text_style.color(theme.on_surface_color))
                         .min_lines(1)
                         .max_lines(Some(10))
+                        .decoration(theme::input_decoration(&theme))
+                        .hover_decoration(theme::input_hover_decoration(&theme))
+                        .focus_decoration(theme::input_focus_decoration(&theme))
+                        .cursor_color(theme::input_cursor_color(&theme))
+                        .selection_color(theme.primary_color.with_alpha(0.28))
                         .padding(LayoutSpacing::all(Spacing::Px(12)))
                         .on_changed(|text: String| {
                             println!("TextArea contains {} bytes", text.len())

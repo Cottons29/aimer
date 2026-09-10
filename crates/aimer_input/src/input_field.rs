@@ -474,6 +474,7 @@ pub mod raw_fields;
 
 use std::cell::Cell;
 use std::panic::Location;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use aimer_macro::PortableWidget;
@@ -486,9 +487,9 @@ use aimer_widget::{
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
 
-use crate::input_field::caret::CaretBlink;
+use crate::input_field::caret::{CaretBlink, CaretBuilder, CaretContext};
 use crate::input_field::raw_fields::{
-    ExpandDirection, InputType, RawFieldConfig, RawTextFieldWidget, TextFieldCallback,
+    CaretSlot, ExpandDirection, InputType, RawFieldConfig, RawTextFieldWidget, TextFieldCallback,
 };
 use crate::TextEditingController;
 
@@ -545,8 +546,13 @@ use crate::TextEditingController;
 /// * `disabled_decoration` - The decoration applied to the `TextField` when it
 ///   is disabled. Defaults to `None`.
 ///
-/// * `cursor_color` - Color of the text cursor. Defaults to a default `Colors`
+/// * `cursor_color` - Color of the builtin insertion cursor and IME underline.
+///   It does not style a custom caret. Defaults to a default `Colors`
 ///   implementation.
+///
+/// * `caret` - A non-portable factory for a retained custom caret. The factory
+///   receives live geometry, focus, composition, and blink state through
+///   `CaretContext`.
 ///
 /// * `on_changed` - Callback triggered when the input text changes. Accepts a
 ///   `TextFieldCallback` which is wrapped with an `AsyncTextFieldCallback`.
@@ -628,6 +634,8 @@ pub struct TextField {
     #[portable_skip]
     pub cursor_color: Colors,
     #[portable_skip]
+    pub caret_builder: Option<CaretBuilder>,
+    #[portable_skip]
     pub on_changed: TextFieldCallback,
     #[portable_skip]
     pub on_submitted: TextFieldCallback,
@@ -698,6 +706,10 @@ fn validate_portable_text_field(
 pub struct TextFieldState {
     config: RawFieldConfig,
     caret: CaretBlink,
+    /// Presentation state shared by every raw field candidate and its caret.
+    caret_context: CaretContext,
+    /// Retains the caret element while the raw field widget is rebuilt.
+    caret_slot: Rc<CaretSlot>,
     focus_node: FocusNode,
     provided_focus_node: bool,
     updater: StateUpdater<Self>,
@@ -736,6 +748,8 @@ impl TextFieldState {
         RawTextFieldWidget::new(
             self.config.clone(),
             self.caret.clone(),
+            self.caret_context.clone(),
+            self.caret_slot.clone(),
             self.focus_node.clone(),
         )
     }
@@ -831,6 +845,7 @@ impl TextField {
             disabled_decoration: None,
             selection_color: Color::Rgba(66, 133, 244, 100),
             cursor_color: Colors::default(),
+            caret_builder: None,
             on_changed: TextFieldCallback::default(),
             on_submitted: TextFieldCallback::default(),
             on_focus: TextFieldCallback::default(),
@@ -876,6 +891,7 @@ impl TextField {
             disabled_decoration: self.disabled_decoration.clone(),
             selection_color: self.selection_color,
             cursor_color: self.cursor_color,
+            caret_builder: self.caret_builder.clone(),
             on_changed: self.on_changed.clone(),
             on_submitted: self.on_submitted.clone(),
             on_focus: self.on_focus.clone(),
@@ -888,9 +904,12 @@ impl TextField {
     /// Creates shared field state using `config` and this field's focus node.
     #[inline]
     pub(crate) fn create_state_with_config(&self, config: RawFieldConfig) -> TextFieldState {
+        let caret = CaretBlink::new();
         TextFieldState {
             config,
-            caret: CaretBlink::new(),
+            caret_context: CaretContext::new(caret.clone()),
+            caret_slot: Rc::new(CaretSlot::new()),
+            caret,
             focus_node: self.focus_node.clone().unwrap_or_default(),
             provided_focus_node: self.focus_node.is_some(),
             updater: StateUpdater::empty(),
@@ -1049,10 +1068,35 @@ impl TextField {
         self
     }
 
-    /// Sets the color of the insertion cursor.
+    /// Sets the color of the builtin insertion cursor.
+    ///
+    /// This has no effect on a custom caret builder. Custom carets receive the
+    /// live [`CaretContext`] and choose their own visual style.
     #[inline]
     pub fn cursor_color(mut self, cursor_color: Colors) -> Self {
         self.cursor_color = cursor_color;
+        self
+    }
+
+    /// Replaces the builtin insertion cursor with a custom caret widget.
+    ///
+    /// The builder runs once when the field's visual caret element is mounted.
+    /// The returned widget is retained, while its [`CaretContext`] continues to
+    /// report live geometry and focus state as the field changes.
+    #[inline]
+    pub fn caret<F, W>(mut self, builder: F) -> Self
+    where
+        F: Fn(CaretContext) -> W + 'static,
+        W: Widget + 'static,
+    {
+        self.caret_builder = Some(CaretBuilder::new(builder));
+        self
+    }
+
+    /// Restores the builtin insertion cursor after a custom builder was set.
+    #[inline]
+    pub fn builtin_caret(mut self) -> Self {
+        self.caret_builder = None;
         self
     }
 
@@ -1118,11 +1162,15 @@ impl Default for TextField {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
     use std::time::Duration;
 
     use aimer_animation::AnimInstant;
 
     use super::*;
+    use crate::input::DefaultCaret;
+    use crate::input_field::raw_fields::test_support::dummy_build_context;
 
     const HALF: Duration = Duration::from_millis(500);
 
@@ -1165,6 +1213,41 @@ mod tests {
 
         assert!(state.caret().is_visible());
         assert_eq!(state.caret().period(), CaretBlink::DEFAULT_PERIOD);
+    }
+
+    #[test]
+    fn a_custom_caret_builder_is_retained_in_field_configuration() {
+        let state = TextField::new()
+            .caret(|context| DefaultCaret::new(context, Colors::default()))
+            .create_state();
+
+        assert!(state.config.caret_builder.is_some());
+    }
+
+    #[test]
+    fn builtin_caret_restores_the_default_configuration() {
+        let state = TextField::new()
+            .caret(|context| DefaultCaret::new(context, Colors::default()))
+            .builtin_caret()
+            .create_state();
+
+        assert!(state.config.caret_builder.is_none());
+    }
+
+    #[test]
+    fn custom_caret_builder_mounts_one_retained_widget() {
+        let builds = Rc::new(Cell::new(0));
+        let seen = builds.clone();
+        let state = TextField::new().caret(move |context| {
+            seen.set(seen.get() + 1);
+            DefaultCaret::new(context, Colors::default())
+        }).create_state();
+        let context = dummy_build_context(200.0, 40.0);
+
+        let _first = Widget::to_element(state.focusable_field(), &context);
+        let _second = Widget::to_element(state.focusable_field(), &context);
+
+        assert_eq!(builds.get(), 1);
     }
 
     #[test]
@@ -1223,11 +1306,13 @@ mod focus_tests {
     use aimer_attribute::position::Vec2d;
     use aimer_events::element::{ElementEvent, KeyAction, Modifiers};
     use aimer_events::pointer::{PointerButton, PointerInfo};
+    use aimer_style::LayoutSpacing;
     use aimer_widget::{
-        AnyElement, Drawable, Element, EventDispatcher, FocusNode, VisitorElement,
+        AnyElement, Drawable, Element, EventDispatcher, FocusNode, Focusable, VisitorElement,
     };
 
     use super::*;
+    use crate::input::DefaultCaret;
     use crate::input_field::raw_fields::test_support::dummy_build_context;
 
     /// The extent the field is built and drawn at.
@@ -1286,7 +1371,7 @@ mod focus_tests {
             if element.focus_node().is_some() {
                 names.push(VisitorElement::debug_name(element));
             }
-            element.visit_children(&mut |child| walk(child, names));
+            element.focus_children(&mut |child| walk(child, names));
         }
 
         let mut names = Vec::new();
@@ -1334,6 +1419,54 @@ mod focus_tests {
         commit(&mut dispatcher, &element, "你好");
 
         assert_eq!(controller.text(), "你好");
+    }
+
+    #[test]
+    fn public_caret_context_follows_focus_and_layout() {
+        let node = FocusNode::new();
+        let context = Rc::new(std::cell::RefCell::new(None));
+        let captured = Rc::clone(&context);
+        let (element, build_context) = drawn(
+            TextField::new()
+                .padding(LayoutSpacing::all(4))
+                .focus_node(node.clone())
+                .caret(move |caret_context| {
+                    *captured.borrow_mut() = Some(caret_context.clone());
+                    DefaultCaret::new(caret_context, Colors::default())
+                }),
+        );
+        let mut dispatcher = EventDispatcher::new();
+
+        press(&mut dispatcher, &element, INSIDE);
+        element.draw(&build_context);
+
+        let context = context
+            .borrow()
+            .as_ref()
+            .expect("the caret builder must receive a context")
+            .clone();
+        assert!(context.is_focused());
+        assert!(context.is_available());
+        assert_eq!(context.offset(), 0);
+        assert_eq!(context.geometry().x, 4.0);
+        assert!(context.geometry().height > 0.0);
+    }
+
+    #[test]
+    fn custom_caret_subtrees_are_not_focus_targets() {
+        let field_node = FocusNode::new();
+        let caret_node = FocusNode::new();
+        let (element, _context) = drawn(
+            TextField::new()
+                .focus_node(field_node)
+                .caret(move |context| {
+                    Focusable::new()
+                        .node(caret_node.clone())
+                        .child(DefaultCaret::new(context, Colors::default()))
+                }),
+        );
+
+        assert_eq!(focus_targets(&element), ["Focusable"]);
     }
 
     /// Pressing a field that already holds focus changes nothing about its

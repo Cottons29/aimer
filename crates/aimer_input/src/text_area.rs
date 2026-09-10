@@ -11,6 +11,7 @@ use aimer_widget::{
 use aimer_widget::portable::{PortableBuildContext, PortableBuildError, SourceFingerprint};
 
 use crate::TextEditingController;
+use crate::input_field::caret::CaretContext;
 use crate::input_field::raw_fields::{ExpandDirection, InputType, TextFieldCallback};
 use crate::input_field::{TextField, TextFieldState};
 
@@ -301,10 +302,35 @@ impl TextArea {
         self
     }
 
-    /// Sets the color of the insertion cursor.
+    /// Sets the color of the builtin insertion cursor.
+    ///
+    /// This has no effect on a custom caret builder. Custom carets receive the
+    /// live [`CaretContext`] and choose their own visual style.
     #[inline]
     pub fn cursor_color(mut self, cursor_color: Colors) -> Self {
         self.field = self.field.cursor_color(cursor_color);
+        self
+    }
+
+    /// Replaces the builtin insertion cursor with a custom caret widget.
+    ///
+    /// The builder runs once when the area's visual caret element is mounted.
+    /// The returned widget is retained, while its [`CaretContext`] continues to
+    /// report live geometry and focus state as the area changes.
+    #[inline]
+    pub fn caret<F, W>(mut self, builder: F) -> Self
+    where
+        F: Fn(CaretContext) -> W + 'static,
+        W: Widget + 'static,
+    {
+        self.field = self.field.caret(builder);
+        self
+    }
+
+    /// Restores the builtin insertion cursor after a custom builder was set.
+    #[inline]
+    pub fn builtin_caret(mut self) -> Self {
+        self.field = self.field.builtin_caret();
         self
     }
 
@@ -440,7 +466,7 @@ mod tests {
     use aimer_widget::base::{Color, Colors};
     use aimer_widget::{FocusNode, Key, Widget};
 
-    use crate::input::{TextArea, TextEditingController};
+    use crate::input::{DefaultCaret, TextArea, TextEditingController};
     use crate::input_field::raw_fields::{ExpandDirection, InputType};
 
     #[test]
@@ -466,6 +492,15 @@ mod tests {
         assert_eq!(config.min_lines, Some(6));
         assert_eq!(config.max_lines, Some(6));
         assert_eq!(config.expand, ExpandDirection::Vertical);
+    }
+
+    #[test]
+    fn a_custom_caret_builder_reaches_the_created_state() {
+        let state = TextArea::new()
+            .caret(|context| DefaultCaret::new(context, Colors::default()))
+            .create_state();
+
+        assert!(state.config().caret_builder.is_some());
     }
 
     #[test]

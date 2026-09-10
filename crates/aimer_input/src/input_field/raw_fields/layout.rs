@@ -25,6 +25,14 @@ impl Drawable for RawTextField {
         if self.observed_revision.get() != self.controller.revision() {
             self.sync_cursor_from_controller();
         }
+        let caret_context = self.caret_context();
+        caret_context.publish(
+            caret_context.geometry(),
+            self.cursor.offset(),
+            self.is_focused(),
+            false,
+            self.is_composing(),
+        );
         ctx.canvas.save();
         // Han is unified, so the ideographs a field holds do not say whether
         // they want a Chinese or a Japanese face: `你好` is covered by both and
@@ -82,6 +90,7 @@ impl Drawable for RawTextField {
         let pad_bottom = self.padding.bottom.value(box_height, scale);
         let pad_left = self.padding.left.value(box_width, scale);
         let pad_right = self.padding.right.value(box_width, scale);
+        self.caret_origin.set((ol + pad_left, ot + pad_top));
 
         ctx.canvas.save();
         let radii = decoration
@@ -253,6 +262,7 @@ impl Drawable for RawTextField {
                     content_origin,
                     scale,
                 );
+                self.publish_caret(cursor_x, cursor_top, 1.5 * scale, cursor_height, scale);
 
                 if self.is_composing() {
                     self.with_preedit(|preedit| {
@@ -267,19 +277,6 @@ impl Drawable for RawTextField {
                             scale,
                         );
                     });
-                } else if self.cursor.is_visible() {
-                    let cursor_color: Color = self.cursor.color.into();
-                    let stroke_w = 1.5 * scale;
-
-                    ctx.canvas.fill_color_rect(
-                        (cursor_x, cursor_top).into(),
-                        ResolvedSize {
-                            width: stroke_w,
-                            height: cursor_height,
-                        },
-                        cursor_color,
-                        [0.0; 4],
-                    );
                 }
             }
         } else {
@@ -400,6 +397,13 @@ impl Drawable for RawTextField {
                                 content_origin,
                                 scale,
                             );
+                            self.publish_caret(
+                                cursor_x,
+                                cursor_top,
+                                1.5 * scale,
+                                cursor_height,
+                                scale,
+                            );
 
                             // The composition replaces the caret: drawing both
                             // would blink an insertion bar over the first
@@ -417,19 +421,6 @@ impl Drawable for RawTextField {
                                         scale,
                                     );
                                 });
-                            } else if self.cursor.is_visible() {
-                                let cursor_color: Color = self.cursor.color.into();
-                                let stroke_w = 1.5 * scale;
-
-                                ctx.canvas.fill_color_rect(
-                                    (cursor_x, cursor_top).into(),
-                                    ResolvedSize {
-                                        width: stroke_w,
-                                        height: cursor_height,
-                                    },
-                                    cursor_color,
-                                    [0.0; 4],
-                                );
                             }
                     }
                 }
@@ -499,6 +490,7 @@ impl Drawable for RawTextField {
                         content_origin,
                         scale,
                     );
+                    self.publish_caret(cursor_x, cursor_top, 1.5 * scale, cursor_height, scale);
 
                     // The composition replaces the caret: drawing both would
                     // blink an insertion bar over the first composing glyph.
@@ -515,19 +507,6 @@ impl Drawable for RawTextField {
                                 scale,
                             );
                         });
-                    } else if self.cursor.is_visible() {
-                        let cursor_color: Color = self.cursor.color.into();
-                        let stroke_w = 1.5 * scale;
-
-                        ctx.canvas.fill_color_rect(
-                            (cursor_x, cursor_top).into(),
-                            ResolvedSize {
-                                width: stroke_w,
-                                height: cursor_height,
-                            },
-                            cursor_color,
-                            [0.0; 4],
-                        );
                     }
                 }
             }

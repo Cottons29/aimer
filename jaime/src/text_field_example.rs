@@ -58,7 +58,18 @@ impl Widget for TextFieldExample {
                         .controller(self.controller.clone())
                         .input_type(InputType::Text)
                         .hint("Type a short message")
+                        .hint_style(
+                            TextStyle::new()
+                                .font_size(16)
+                                .color(crate::theme::muted_text(&theme)),
+                        )
+                        .text_style(TextStyle::new().font_size(16).color(theme.on_surface_color))
                         .max_length(Some(80))
+                        .decoration(crate::theme::input_decoration(&theme))
+                        .hover_decoration(crate::theme::input_hover_decoration(&theme))
+                        .focus_decoration(crate::theme::input_focus_decoration(&theme))
+                        .cursor_color(crate::theme::input_cursor_color(&theme))
+                        .selection_color(theme.primary_color.with_alpha(0.28))
                         .padding(LayoutSpacing::all(Spacing::Px(12)))
                         .on_submitted(|text: String| println!("Submitted: {text}"))
                         .boxed(),

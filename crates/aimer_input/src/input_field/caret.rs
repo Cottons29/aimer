@@ -1,6 +1,234 @@
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::Duration;
 
 use aimer_animation::{AnimInstant, AnimationController, Curve};
+use aimer_widget::base::{BuildContext, Color};
+use aimer_widget::{
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
+    VisitorElement, Widget,
+};
+
+/// The local logical rectangle occupied by a caret.
+///
+/// Coordinates are relative to the text field's outer local origin. The
+/// rectangle includes the field's outline and padding and uses logical pixels
+/// rather than device pixels, so a custom caret can use it directly with normal
+/// widget dimensions.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CaretGeometry {
+    /// Horizontal position of the caret's leading edge.
+    pub x: f32,
+    /// Vertical position of the caret's top edge.
+    pub y: f32,
+    /// Width reserved for the caret.
+    pub width: f32,
+    /// Height reserved for the caret.
+    pub height: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct CaretSnapshot {
+    geometry: CaretGeometry,
+    offset: usize,
+    focused: bool,
+    available: bool,
+    composing: bool,
+}
+
+/// Read-only state supplied to a custom text-field caret widget.
+///
+/// The context is backed by the mounted field, so a caret element can retain
+/// this value and read the current geometry while the field scrolls, edits, or
+/// changes focus. The context is intentionally separate from the text editing
+/// controller: a caret can observe presentation state without being able to
+/// mutate the field.
+#[derive(Clone)]
+pub struct CaretContext {
+    snapshot: Rc<Cell<CaretSnapshot>>,
+    blink: CaretBlink,
+}
+
+impl CaretContext {
+    #[inline]
+    pub(crate) fn new(blink: CaretBlink) -> Self {
+        Self {
+            snapshot: Rc::new(Cell::new(CaretSnapshot::default())),
+            blink,
+        }
+    }
+
+    /// Returns the caret rectangle in text-field local coordinates.
+    #[inline]
+    pub fn geometry(&self) -> CaretGeometry {
+        self.snapshot.get().geometry
+    }
+
+    /// Returns the current caret position in grapheme-cluster units.
+    #[inline]
+    pub fn offset(&self) -> usize {
+        self.snapshot.get().offset
+    }
+
+    /// Returns whether the owning field currently has focus.
+    #[inline]
+    pub fn is_focused(&self) -> bool {
+        self.snapshot.get().focused
+    }
+
+    /// Returns whether the field produced a caret geometry for the current
+    /// frame.
+    #[inline]
+    pub fn is_available(&self) -> bool {
+        self.snapshot.get().available
+    }
+
+    /// Returns whether the builtin caret should be shown.
+    ///
+    /// The builtin caret remains solid while an input method reports its
+    /// composition caret; ordinary insertion carets follow the shared blink
+    /// timeline.
+    #[inline]
+    pub fn is_visible(&self) -> bool {
+        let snapshot = self.snapshot.get();
+        snapshot.focused
+            && snapshot.available
+            && (snapshot.composing || self.blink.is_visible())
+    }
+
+    /// Returns whether the input method is currently replacing the caret with
+    /// composing text.
+    #[inline]
+    pub fn is_composing(&self) -> bool {
+        self.snapshot.get().composing
+    }
+
+    /// Returns the shared blink timeline used by the owning field.
+    #[inline]
+    pub fn blink(&self) -> &CaretBlink {
+        &self.blink
+    }
+
+    #[inline]
+    pub(crate) fn publish(
+        &self,
+        geometry: CaretGeometry,
+        offset: usize,
+        focused: bool,
+        available: bool,
+        composing: bool,
+    ) {
+        self.snapshot.set(CaretSnapshot {
+            geometry,
+            offset,
+            focused,
+            available,
+            composing,
+        });
+    }
+}
+
+/// A cloneable factory for a custom caret widget.
+///
+/// The factory is called when a text field mounts its visual caret. The
+/// resulting widget is retained as a normal element, so stateful custom carets
+/// are not recreated on every frame.
+pub struct CaretBuilder(Rc<dyn Fn(CaretContext) -> AnyWidget>);
+
+impl CaretBuilder {
+    /// Creates a caret factory from a function that builds a widget for the
+    /// field-provided context.
+    #[inline]
+    pub fn new<F, W>(builder: F) -> Self
+    where
+        F: Fn(CaretContext) -> W + 'static,
+        W: Widget + 'static,
+    {
+        Self(Rc::new(move |context| builder(context).boxed()))
+    }
+
+    #[inline]
+    pub(crate) fn build(&self, context: CaretContext) -> AnyWidget {
+        (self.0)(context)
+    }
+}
+
+impl Clone for CaretBuilder {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self(Rc::clone(&self.0))
+    }
+}
+
+/// The builtin vertical-bar caret used when a field has no custom builder.
+///
+/// A text field positions this widget at the current insertion point and
+/// supplies its live [`CaretContext`]. The widget deliberately reads the
+/// context during painting, so its retained element follows scrolling,
+/// selection movement, focus, and blink changes without being rebuilt.
+pub struct DefaultCaret {
+    context: CaretContext,
+    color: Rc<Cell<Color>>,
+}
+
+impl DefaultCaret {
+    /// Creates the builtin caret for a field-provided context and color.
+    #[inline]
+    pub fn new(context: CaretContext, color: impl Into<Color>) -> Self {
+        Self::with_color_cell(context, Rc::new(Cell::new(color.into())))
+    }
+
+    #[inline]
+    pub(crate) fn with_color_cell(context: CaretContext, color: Rc<Cell<Color>>) -> Self {
+        Self { context, color }
+    }
+}
+
+impl aimer_widget::PortableWidget for DefaultCaret {}
+
+impl Widget for DefaultCaret {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+        DefaultCaretElement {
+            context: self.context,
+            color: self.color,
+        }
+        .boxed()
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "DefaultCaret"
+    }
+}
+
+struct DefaultCaretElement {
+    context: CaretContext,
+    color: Rc<Cell<Color>>,
+}
+
+impl Drawable for DefaultCaretElement {
+    fn draw(&self, ctx: &BuildContext) {
+        if !self.context.is_focused() || !self.context.is_visible() {
+            return;
+        }
+
+        ctx.canvas.fill_color_rect(
+            (0.0, 0.0).into(),
+            ctx.parent_size,
+            self.color.get(),
+            [0.0; 4],
+        );
+    }
+}
+
+impl VisitorElement for DefaultCaretElement {
+    fn debug_name(&self) -> &'static str {
+        "DefaultCaret"
+    }
+}
+
+impl EventElement for DefaultCaretElement {}
+impl LayoutElement for DefaultCaretElement {}
+impl Rebuildable for DefaultCaretElement {}
 
 /// The blink timeline of a text field caret.
 ///
@@ -211,5 +439,25 @@ mod tests {
         assert!(!blink.tick(start + Duration::from_millis(99)));
         assert!(blink.tick(start + Duration::from_millis(100)));
         assert!(blink.tick(start + Duration::from_millis(200)));
+    }
+
+    #[test]
+    fn caret_context_starts_hidden_until_the_field_publishes_geometry() {
+        let context = CaretContext::new(CaretBlink::new());
+
+        assert_eq!(context.geometry(), CaretGeometry::default());
+        assert_eq!(context.offset(), 0);
+        assert!(!context.is_focused());
+        assert!(!context.is_available());
+        assert!(!context.is_visible());
+        assert!(!context.is_composing());
+    }
+
+    #[test]
+    fn builtin_caret_is_a_widget() {
+        fn assert_widget<W: Widget>(_: W) {}
+
+        let context = CaretContext::new(CaretBlink::new());
+        assert_widget(DefaultCaret::new(context, aimer_widget::base::Colors::default()));
     }
 }
