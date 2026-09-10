@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+bundled-fonts = ["aimer_cupid/bundled-fonts"]
 portable-guest = ["aimer_widget/portable-guest"]
 
 [dependencies]

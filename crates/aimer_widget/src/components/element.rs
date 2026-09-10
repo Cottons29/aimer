@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_cupid::damage_region::{DamageRect, DamageSet};
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_focus::{FocusCandidate, FocusCandidates, FocusManager, FocusNode, FocusTrapId};
 use aimer_rubick::ErasedFrom;
@@ -59,7 +60,7 @@ thread_local! {
     static DIRTY_INDEXED_ROOTS: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
     static DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL: Cell<bool> = const { Cell::new(false) };
     static REBUILD_TRAVERSAL_DEPTH: Cell<usize> = const { Cell::new(0) };
-    static REBUILD_PATH: RefCell<Vec<ElementId>> = RefCell::new(Vec::new());
+    static REBUILD_PATH: RefCell<Vec<ElementId>> = const { RefCell::new(Vec::new()) };
     static REBUILD_FORCE_DESCEND_DEPTH: Cell<usize> = const { Cell::new(0) };
     static REBUILD_MARK_DEPTH: Cell<usize> = const { Cell::new(0) };
     static DRAW_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -70,10 +71,16 @@ thread_local! {
     static PAINT_INVALIDATED_ELEMENTS: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
     static PAINT_INVALIDATED_SUBTREES: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
     static PAINT_INVALIDATION_UNKNOWN: Cell<bool> = const { Cell::new(false) };
+    /// Damage accumulated by retained paint owners during the current frame.
+    /// The target is thread-local because widget trees and their canvases are
+    /// single-threaded; the finished [`DamageSet`] is copied into the frame
+    /// packet before presentation moves to another thread.
+    static FRAME_PAINT_DAMAGE: RefCell<Option<DamageSet>> = const { RefCell::new(None) };
+    static FRAME_PAINT_TARGET: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
     /// One identity set per retained recording operation. A stack keeps a
     /// nested scroll's recording isolated from the tile currently being
     /// recorded by its parent.
-    static PAINT_TRACKING_STACK: RefCell<Vec<HashSet<ElementId>>> = RefCell::new(Vec::new());
+    static PAINT_TRACKING_STACK: RefCell<Vec<HashSet<ElementId>>> = const { RefCell::new(Vec::new()) };
     #[cfg(any(debug_assertions, feature = "frame-stats"))]
     static DRAW_TRAVERSAL_COUNT: Cell<u64> = const { Cell::new(0) };
     #[cfg(any(debug_assertions, feature = "frame-stats"))]
@@ -90,6 +97,54 @@ pub fn begin_event_frame() {
     EVENT_FRAME_EPOCH.with(|epoch| {
         let next = epoch.get().unwrap_or(0).wrapping_add(1);
         epoch.set(Some(next));
+    });
+}
+
+/// Starts collecting damage for one device-sized frame target.
+///
+/// The first frame for a target is conservatively full. Subsequent frames can
+/// remain empty when every retained paint owner replays unchanged content.
+#[doc(hidden)]
+pub fn begin_paint_frame(width: u32, height: u32) {
+    let target_changed = FRAME_PAINT_TARGET.with(|target| {
+        let changed = target.get() != Some((width, height));
+        target.set(Some((width, height)));
+        changed
+    });
+    FRAME_PAINT_DAMAGE.with(|damage| {
+        let mut next = DamageSet::new(width, height);
+        if target_changed {
+            next.mark_full();
+        }
+        *damage.borrow_mut() = Some(next);
+    });
+}
+
+/// Takes the damage collected since [`begin_paint_frame`].
+#[doc(hidden)]
+pub fn take_paint_frame_damage(width: u32, height: u32) -> DamageSet {
+    FRAME_PAINT_DAMAGE
+        .with(|damage| damage.borrow_mut().take())
+        .unwrap_or_else(|| DamageSet::full(width, height))
+}
+
+/// Adds one conservative device-pixel footprint to the current frame.
+#[doc(hidden)]
+pub fn mark_paint_damage(rectangle: DamageRect) {
+    FRAME_PAINT_DAMAGE.with(|damage| {
+        if let Some(damage) = damage.borrow_mut().as_mut() {
+            damage.add(rectangle);
+        }
+    });
+}
+
+/// Forces the current frame to repaint its complete target.
+#[doc(hidden)]
+pub fn mark_paint_damage_full() {
+    FRAME_PAINT_DAMAGE.with(|damage| {
+        if let Some(damage) = damage.borrow_mut().as_mut() {
+            damage.mark_full();
+        }
     });
 }
 
@@ -831,6 +886,10 @@ impl<E: Element + 'static> EventElement for ElementNode<E> {
         self.element.structural_children(visitor);
     }
 
+    fn focus_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.element.focus_children(visitor);
+    }
+
     fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.element.hit_test_children(visitor);
     }
@@ -882,6 +941,17 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
         if after != before {
             self.set_subtree_generation(after);
         }
+    }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        record_paint_element(self.id.get());
+        self.element.paint(ctx);
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.element.sync_paint_geometry(ctx);
     }
 
     #[inline]
@@ -1064,6 +1134,10 @@ impl EventElement for AnyElement {
         self.as_ref().structural_children(visitor)
     }
 
+    fn focus_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref().focus_children(visitor)
+    }
+
     fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().hit_test_children(visitor)
     }
@@ -1098,6 +1172,16 @@ impl EventElement for AnyElement {
 impl Drawable for AnyElement {
     fn draw(&self, ctx: &BuildContext) {
         self.as_ref().draw(ctx)
+    }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        self.as_ref().paint(ctx)
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.as_ref().sync_paint_geometry(ctx)
     }
 
     #[inline]
@@ -1272,6 +1356,10 @@ impl EventElement for Box<dyn Element> {
         self.as_ref().structural_children(visitor)
     }
 
+    fn focus_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.as_ref().focus_children(visitor)
+    }
+
     fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.as_ref().hit_test_children(visitor)
     }
@@ -1306,6 +1394,16 @@ impl EventElement for Box<dyn Element> {
 impl Drawable for Box<dyn Element> {
     fn draw(&self, ctx: &BuildContext) {
         self.as_ref().draw(ctx)
+    }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        self.as_ref().paint(ctx)
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.as_ref().sync_paint_geometry(ctx)
     }
 
     #[inline]
@@ -1440,7 +1538,7 @@ pub(crate) fn structural_children(element: &dyn Element) -> SmallVec<[&dyn Eleme
 }
 
 #[inline]
-fn structural_child_at<'a>(element: &'a dyn Element, target: usize) -> Option<&'a dyn Element> {
+fn structural_child_at(element: &dyn Element, target: usize) -> Option<&dyn Element> {
     let mut index = 0;
     let mut result = None;
     element.structural_children(&mut |child| {
@@ -2167,11 +2265,10 @@ impl EventDispatcher {
                 }
                 CaptureRequest::None => {}
             }
-            if was_captured && matches!(event, ElementEvent::PointerUp(_)) {
-                if let Some(pointer) = pointer {
+            if was_captured && matches!(event, ElementEvent::PointerUp(_))
+                && let Some(pointer) = pointer {
                     self.nested_captures.remove(&(boundary, pointer));
                 }
-            }
             if matches!(event, ElementEvent::Cancel) {
                 self.nested_captures
                     .retain(|(captured_boundary, _), _| *captured_boundary != boundary);
@@ -2722,7 +2819,7 @@ fn collect_focus_candidates(
     if let (Some(id), Some(node)) = (element.element_id(), element.focus_node()) {
         candidates.push(FocusCandidate::new(id, node.clone(), element.autofocus()));
     }
-    element.structural_children(&mut |child| collect_focus_candidates(child, candidates));
+    element.focus_children(&mut |child| collect_focus_candidates(child, candidates));
 }
 
 fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
@@ -2801,9 +2898,9 @@ fn resolve_element_path<'a>(
     (current.element_id() == Some(owner)).then_some(current)
 }
 
-fn dispatch_routed_event<'tree>(
+fn dispatch_routed_event(
     dispatcher: &mut EventDispatcher,
-    root: &'tree dyn Element,
+    root: &dyn Element,
     pos: Vec2d,
     event: &ElementEvent,
 ) -> RoutedEventResult {
@@ -2910,9 +3007,9 @@ fn focus_candidate_at(element: &dyn Element, pos: Vec2d) -> Option<FocusCandidat
     contains(element, pos).then(|| FocusCandidate::new(id, node.clone(), element.autofocus()))
 }
 
-fn dispatch_routed_event_inner<'tree, 'path>(
+fn dispatch_routed_event_inner<'tree>(
     dispatcher: &mut EventDispatcher,
-    path_root: &'path dyn Element,
+    path_root: &dyn Element,
     root: &'tree dyn Element,
     pos: Vec2d,
     event: &ElementEvent,
@@ -3131,6 +3228,25 @@ mod tests {
     use super::*;
     use crate::focus::FocusTrap;
     use crate::{FocusNode, Key};
+
+    #[test]
+    fn paint_damage_starts_full_once_and_tracks_later_local_regions() {
+        begin_paint_frame(37, 23);
+        assert!(take_paint_frame_damage(37, 23).is_full());
+
+        begin_paint_frame(37, 23);
+        assert!(take_paint_frame_damage(37, 23).is_empty());
+
+        begin_paint_frame(37, 23);
+        mark_paint_damage(DamageRect::new(4, 5, 6, 7));
+        assert_eq!(
+            take_paint_frame_damage(37, 23).regions(),
+            &[DamageRect::new(4, 5, 6, 7)]
+        );
+
+        begin_paint_frame(38, 23);
+        assert!(take_paint_frame_damage(38, 23).is_full());
+    }
 
     struct StructuralTraversalElement {
         event_child: AnyElement,

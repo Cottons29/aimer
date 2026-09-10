@@ -1,19 +1,21 @@
 //! Deterministic font-family registration shared by Aimer styles and Cupid.
 //!
 //! Register immutable font bytes before `AimerApp::start`. Generic sans-serif
-//! and monospace handles are always available without operating-system lookup.
-//! Resolution prefers the requested style, then the nearest numeric weight;
-//! normal style is the deterministic fallback when the requested style is not
-//! registered. Cupid retains the selected family where it has glyphs and uses
-//! its existing Unicode fallback chain only for missing glyphs.
+//! and monospace handles are available without an application-owned font when
+//! the host has readable system faces; enable the `bundled-fonts` feature when
+//! deterministic checked-in faces are preferred. Resolution prefers the
+//! requested style, then the nearest numeric weight; normal style is the
+//! deterministic fallback when the requested style is not registered. Cupid
+//! retains the selected family where it has glyphs and uses its existing
+//! Unicode fallback chain only for missing glyphs.
 //!
 //! On Apple without `apple-core-text`, the portable path intentionally relies
-//! on bundled faces and bytes supplied through [`FontRegistration`] rather than
-//! system fallback. Apple system files can contain private `hvgl` outline or
-//! `emjc` color data that the owned reader does not interpret; registering such
-//! a file does not make it portable. Applications targeting that profile should
-//! bundle a licensed, readable replacement for every required script, weight,
-//! style, and color format.
+//! on application-registered faces or the opt-in `bundled-fonts` feature rather
+//! than system fallback. Apple system files can contain private `hvgl` outline
+//! or `emjc` color data that the owned reader does not interpret; registering
+//! such a file does not make it portable. Applications targeting that profile
+//! should bundle a licensed, readable replacement for every required script,
+//! weight, style, and color format.
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -122,9 +124,9 @@ impl TextLanguage {
 pub struct FontFamily(u64);
 
 impl FontFamily {
-    /// Aimer's bundled sans-serif family.
+    /// Aimer's generic sans-serif family.
     pub const SANS_SERIF: Self = Self(0);
-    /// Aimer's bundled monospace family.
+    /// Aimer's generic monospace family.
     pub const MONOSPACE: Self = Self(1);
 
     #[doc(hidden)]
@@ -145,14 +147,22 @@ impl Default for FontFamily {
     }
 }
 
-/// Returns the built-in monospace face used by Cupid's deterministic generic
-/// monospace family.
+/// Returns the optional built-in monospace face.
 ///
-/// Applications that need additional scripts should bundle and register their
-/// own licensed font bytes with [`FontRegistry::register`].
+/// This returns the checked-in face only when the `bundled-fonts` feature is
+/// enabled. Without that feature it returns an empty slice, and generic text
+/// rendering uses host fonts or application-registered faces instead.
 #[doc(hidden)]
 pub const fn bundled_monospace_bytes() -> &'static [u8] {
-    include_bytes!("../fonts/JetBrainsMono-Regular.ttf")
+    #[cfg(feature = "bundled-fonts")]
+    {
+        include_bytes!("../fonts/JetBrainsMono-Regular.ttf")
+    }
+
+    #[cfg(not(feature = "bundled-fonts"))]
+    {
+        &[]
+    }
 }
 
 /// Immutable application-owned font bytes and the face metadata used to match
@@ -515,6 +525,12 @@ impl FontRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(feature = "bundled-fonts"))]
+    #[test]
+    fn bundled_monospace_is_opt_in() {
+        assert!(bundled_monospace_bytes().is_empty());
+    }
 
     const TEST_FONT: &[u8] = include_bytes!("../fonts/JetBrainsMono-Regular.ttf");
     const REPLACEMENT_FONT: &[u8] = include_bytes!("../fonts/GoogleSans-Regular.ttf");

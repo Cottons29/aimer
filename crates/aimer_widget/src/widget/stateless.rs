@@ -55,12 +55,12 @@ fn materialize_named_widget(
             actual: children.len(),
         });
     }
-    Ok(children
+    children
         .pop()
         .ok_or(crate::portable::PortableMaterializeError::InvalidChildCount {
             expected: 1,
             actual: 0,
-        })?)
+        })
 }
 
 impl NamedWidget {
@@ -313,6 +313,20 @@ impl Drawable for StatelessElement {
     }
 
     #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        // A stateless element that exposes stable paint is a transparent
+        // wrapper. Its paint-only path must not re-enter the rebuild path.
+        let child = unsafe { &*self.child.0.get() };
+        child.paint(ctx);
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let child = unsafe { &*self.child.0.get() };
+        child.sync_paint_geometry(ctx);
+    }
+
+    #[inline]
     fn is_paint_stable(&self) -> bool {
         // A self-rebuilding element may replace its child on the next dirty
         // pass, so only a pure wrapper can transparently expose the child's
@@ -323,6 +337,12 @@ impl Drawable for StatelessElement {
 }
 
 impl LayoutElement for StatelessElement {
+    #[inline]
+    fn is_layout_stable(&self) -> bool {
+        self.rebuild_fn.is_none()
+            && unsafe { &*self.child.0.get() }.is_layout_stable()
+    }
+
     fn pos(&self) -> Option<Vec2d> {
         unsafe { &*self.child.0.get() }.pos()
     }

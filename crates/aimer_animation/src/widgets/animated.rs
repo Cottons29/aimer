@@ -6,8 +6,8 @@ use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
-    RequiredChild, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, PaintDamageTracker,
+    Rebuildable, RequiredChild, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -40,6 +40,53 @@ impl AnimationEffect {
     /// Interpolate between `from` and `to` using progress `t` (0.0–1.0).
     fn lerp(from: f32, to: f32, t: f32) -> f32 {
         from + (to - from) * t
+    }
+
+    #[inline]
+    fn is_finite(self) -> bool {
+        match self {
+            Self::Opacity { from, to } | Self::Scale { from, to } | Self::Rotate { from, to } => {
+                from.is_finite() && to.is_finite()
+            }
+            Self::Translate {
+                from_x,
+                from_y,
+                to_x,
+                to_y,
+            } => {
+                from_x.is_finite()
+                    && from_y.is_finite()
+                    && to_x.is_finite()
+                    && to_y.is_finite()
+            }
+            Self::SlideX { from, to } | Self::SlideY { from, to } => {
+                from.is_finite() && to.is_finite()
+            }
+        }
+    }
+
+    #[inline]
+    fn sampled_value_is_finite(self, t: f32) -> bool {
+        if !t.is_finite() || !self.is_finite() {
+            return false;
+        }
+        match self {
+            Self::Opacity { from, to } | Self::Scale { from, to } | Self::Rotate { from, to } => {
+                Self::lerp(from, to, t).is_finite()
+            }
+            Self::Translate {
+                from_x,
+                from_y,
+                to_x,
+                to_y,
+            } => {
+                Self::lerp(from_x, to_x, t).is_finite()
+                    && Self::lerp(from_y, to_y, t).is_finite()
+            }
+            Self::SlideX { from, to } | Self::SlideY { from, to } => {
+                Self::lerp(from, to, t).is_finite()
+            }
+        }
     }
 }
 
@@ -116,6 +163,8 @@ impl<T: Widget + 'static> Widget for Animated<T> {
             effect: self.effect,
             animating,
             window,
+            damage: PaintDamageTracker::new(),
+            last_value: Cell::new(None),
         }
         .boxed()
     }
@@ -130,6 +179,8 @@ struct AnimatedElement {
     effect: AnimationEffect,
     animating: Cell<bool>,
     window: WindowHandle,
+    damage: PaintDamageTracker,
+    last_value: Cell<Option<u32>>,
 }
 
 // Safety: rendering pipeline is single-threaded
@@ -151,6 +202,18 @@ impl Drawable for AnimatedElement {
         self.clip_to_bounds(ctx);
 
         self.apply_effect(ctx, curved_value);
+        let visual_changed = crate::widgets::damage::sample_changed(&self.last_value, curved_value);
+        if self.effect.sampled_value_is_finite(curved_value) {
+            crate::widgets::damage::mark_bounded_animation_damage(
+                &self.damage,
+                ctx,
+                self.child.as_ref(),
+                curved_value,
+                visual_changed,
+            );
+        } else {
+            self.damage.mark_full();
+        }
         self.child.draw(ctx);
 
         ctx.canvas.clear_clip();

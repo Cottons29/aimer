@@ -148,6 +148,12 @@ impl FallbackScript {
 pub(crate) const FALLBACK_CHAIN_ID_BASE: FontId = 0x1000_0000;
 const FALLBACK_CHAIN_ID_STRIDE: FontId = 0x1000;
 
+/// Stable id used for the desktop system sans-serif face when bundled fonts
+/// are disabled. It stays below the process-wide platform-fallback range and
+/// the bundled CJK lane, so runtime registrations remain collision-free.
+#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+pub(crate) const SYSTEM_PRIMARY_FONT_ID: FontId = 0x3000_0000;
+
 /// Classifies a codepoint before a fallback lookup.
 pub(crate) fn fallback_script_for_codepoint(codepoint: char) -> Option<FallbackScript> {
     match codepoint as u32 {
@@ -327,6 +333,22 @@ fn face_metadata(data: FontData, collection_index: u32) -> Option<bool> {
 }
 
 impl FontRecord {
+    /// Creates a non-rendering placeholder used when no bundled or host font
+    /// is available. Applications can replace it by registering a font before
+    /// rendering; the placeholder keeps rasterizer construction fallible-free
+    /// and still gives unsupported glyphs a stable id.
+    #[allow(dead_code)]
+    pub(crate) const fn unavailable(id: FontId) -> Self {
+        Self {
+            id,
+            bytes: None,
+            collection_index: 0,
+            path: None,
+            is_color: false,
+        }
+    }
+
+    #[cfg(any(feature = "bundled-fonts", test))]
     pub(crate) fn from_static_bytes(id: FontId, bytes: &'static [u8]) -> Option<Self> {
         let bytes: Arc<[u8]> = Arc::from(bytes);
         let is_color = face_metadata(FontData::Shared(bytes.clone()), 0)?;
@@ -361,6 +383,37 @@ impl FontRecord {
             path: None,
             is_color,
         })
+    }
+
+    /// Creates a lazily mapped record for an on-disk system font.
+    ///
+    /// The file is validated and its mapping is published once, but the font
+    /// bytes remain file-backed rather than becoming part of the application
+    /// binary or an eagerly copied heap allocation.
+    #[allow(dead_code)]
+    pub(crate) fn from_file(
+        id: FontId,
+        path: PathBuf,
+        collection_index: u32,
+    ) -> Option<Self> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let data = mapped_font_file(&path)?;
+            let is_color = face_metadata(FontData::Mapped(data), collection_index)?;
+            return Some(Self {
+                id,
+                bytes: None,
+                collection_index,
+                path: Some(Arc::new(path)),
+                is_color,
+            });
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (id, path, collection_index);
+            None
+        }
     }
 
     /// Retain shared in-memory data or hand out the process-wide memory map of
@@ -767,6 +820,15 @@ fn system_font_paths() -> Vec<PathBuf> {
         PathBuf::from("/usr/share/fonts"),
         PathBuf::from("/usr/local/share/fonts"),
     ];
+    #[cfg(target_os = "android")]
+    roots.extend([
+        PathBuf::from("/system/fonts"),
+        PathBuf::from("/product/fonts"),
+    ]);
+    #[cfg(target_os = "windows")]
+    if let Some(windows_directory) = std::env::var_os("WINDIR") {
+        roots.push(PathBuf::from(windows_directory).join("Fonts"));
+    }
     if let Some(home) = dirs::home_dir() {
         roots.push(home.join(".fonts"));
         roots.push(home.join(".local/share/fonts"));
@@ -795,6 +857,127 @@ fn system_font_paths() -> Vec<PathBuf> {
     paths.sort_unstable();
     paths.dedup();
     paths
+}
+
+#[cfg(all(
+    not(any(target_os = "ios", target_os = "macos")),
+    not(target_arch = "wasm32")
+))]
+fn path_looks_monospace(path: &Path) -> bool {
+    let name = path.to_string_lossy().to_ascii_lowercase();
+    ["mono", "fixed", "courier", "console", "code"]
+        .iter()
+        .any(|hint| name.contains(hint))
+}
+
+#[cfg(all(
+    not(any(target_os = "ios", target_os = "macos")),
+    not(target_arch = "wasm32")
+))]
+fn system_font_record_from_paths(
+    id: FontId,
+    probes: &[char],
+    prefer_monospace: bool,
+) -> Option<FontRecord> {
+    let mut paths = system_font_paths();
+    if prefer_monospace {
+        paths.sort_by_key(|path| (!path_looks_monospace(path), path.clone()));
+    }
+
+    for path in paths {
+        let Some(mapping) = probe_font_file(&path) else {
+            continue;
+        };
+        let data = &mapping[..];
+        for collection_index in 0..64 {
+            let Ok(face) = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
+                data,
+                collection_index,
+            ) else {
+                break;
+            };
+            let is_color = face.has_color_tables() || face.has_apple_private_color_tables();
+            let covers = probes.iter().all(|&codepoint| {
+                let Ok(Some(glyph_id)) = face.glyph_index(codepoint as u32) else {
+                    return false;
+                };
+                glyph_id != 0
+                    && (is_color
+                        || face.outline(glyph_id).ok().flatten().is_some()
+                        || face.cff_outline(glyph_id).ok().flatten().is_some())
+            });
+            if !covers {
+                continue;
+            }
+
+            let path = Arc::new(path.clone());
+            retain_probed_font_file(path.as_path(), mapping.clone());
+            return Some(FontRecord {
+                id,
+                bytes: None,
+                collection_index,
+                path: Some(path),
+                is_color,
+            });
+        }
+    }
+    None
+}
+
+/// Finds the first readable desktop face that can serve ordinary sans-serif
+/// text. The result is cached process-wide and remains file-backed.
+#[cfg(any(
+    not(any(target_os = "ios", target_os = "macos")),
+    all(
+        any(target_os = "ios", target_os = "macos"),
+        not(feature = "apple-core-text")
+    )
+))]
+pub(crate) fn system_primary_font() -> Option<FontRecord> {
+    #[cfg(all(
+        not(any(target_os = "ios", target_os = "macos")),
+        not(target_arch = "wasm32")
+    ))]
+    {
+        static PRIMARY: OnceLock<Option<FontRecord>> = OnceLock::new();
+        PRIMARY
+            .get_or_init(|| system_font_record_from_paths(SYSTEM_PRIMARY_FONT_ID, &['A', 'a', '0'], false))
+            .clone()
+    }
+
+    #[cfg(any(target_arch = "wasm32", target_os = "ios", target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// Finds a readable desktop monospace face without putting a font in the
+/// application binary. The caller supplies the generic-family id so the
+/// bundled and system implementations share the same key space.
+#[cfg(any(
+    not(any(target_os = "ios", target_os = "macos")),
+    all(
+        any(target_os = "ios", target_os = "macos"),
+        not(feature = "apple-core-text")
+    )
+))]
+pub(crate) fn system_monospace_font(id: FontId) -> Option<FontRecord> {
+    #[cfg(all(
+        not(any(target_os = "ios", target_os = "macos")),
+        not(target_arch = "wasm32")
+    ))]
+    {
+        static MONOSPACE: OnceLock<Option<FontRecord>> = OnceLock::new();
+        MONOSPACE
+            .get_or_init(|| system_font_record_from_paths(id, &['M', 'i', '0'], true))
+            .clone()
+    }
+
+    #[cfg(any(target_arch = "wasm32", target_os = "ios", target_os = "macos"))]
+    {
+        let _ = id;
+        None
+    }
 }
 
 pub fn shared_fallback_chain() -> Vec<FontRecord> {

@@ -314,6 +314,17 @@ pub trait EventElement: VisitorElement {
         }
     }
 
+    /// Visit children that can participate in focus traversal.
+    ///
+    /// This defaults to the full structural tree because most elements use the
+    /// same children for painting, events, reconciliation, and focus. A visual
+    /// overlay that must remain part of reconciliation but cannot own focus can
+    /// override this to omit that overlay while leaving
+    /// [`EventElement::structural_children`] complete.
+    fn focus_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.structural_children(visitor);
+    }
+
     /// Visit children that a pointer could plausibly hit.
     ///
     /// Position-based dispatch uses this hook instead of

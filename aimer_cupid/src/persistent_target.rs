@@ -20,6 +20,7 @@ pub(crate) struct PersistentTargetKey {
     surface_identity: u64,
     renderer_generation: u64,
     context_generation: u64,
+    resource_generation: u64,
     validity: TargetValidity,
 }
 
@@ -35,6 +36,31 @@ impl PersistentTargetKey {
         context_generation: u64,
         validity: TargetValidity,
     ) -> Self {
+        Self::new_with_resource(
+            width,
+            height,
+            scale,
+            surface_identity,
+            renderer_generation,
+            context_generation,
+            0,
+            validity,
+        )
+    }
+
+    /// Creates a target identity including the resource epoch used by a
+    /// retained frame.
+    #[inline]
+    pub(crate) fn new_with_resource(
+        width: u32,
+        height: u32,
+        scale: f32,
+        surface_identity: u64,
+        renderer_generation: u64,
+        context_generation: u64,
+        resource_generation: u64,
+        validity: TargetValidity,
+    ) -> Self {
         Self {
             width,
             height,
@@ -42,6 +68,7 @@ impl PersistentTargetKey {
             surface_identity,
             renderer_generation,
             context_generation,
+            resource_generation,
             validity,
         }
     }
@@ -60,6 +87,7 @@ impl PersistentTargetKey {
             && self.surface_identity == other.surface_identity
             && self.renderer_generation == other.renderer_generation
             && self.context_generation == other.context_generation
+            && self.resource_generation == other.resource_generation
     }
 }
 

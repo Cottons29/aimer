@@ -473,6 +473,11 @@ impl<E: Element> RawScrollableContainer<E> {
         child_ctx: &BuildContext,
         content_size: ResolvedSize,
     ) {
+        // Paint-only recording deliberately skips the element draw wrapper, so
+        // establish rebuild paths and reconcile dirty descendants before cache
+        // validation. The indexed rebuild path prunes clean branches; this is
+        // the lifecycle half that a retained paint stream must not absorb.
+        self.child.rebuild_if_dirty(child_ctx);
         let stable = self.child.is_paint_stable();
         #[cfg(debug_assertions)]
         let stable = stable && !aimer_widget::inspector_overlay::is_enabled();
@@ -519,7 +524,7 @@ impl<E: Element> RawScrollableContainer<E> {
             // still prevents it from reaching the framebuffer when replayed.
             recording_ctx.visible_rect = None;
             aimer_widget::components::element::begin_paint_tracking();
-            self.child.draw(&recording_ctx);
+            self.child.paint(&recording_ctx);
             let element_ids = aimer_widget::components::element::take_paint_tracking();
 
             let recorded = recording_canvas.take_draw_list();
@@ -629,7 +634,7 @@ impl<E: Element> RawScrollableContainer<E> {
                     recording.set_clip(0.0, 0.0, clip.width, clip.height);
                 }
                 recording.translate(offset.x, offset.y);
-                element.draw(&paint_ctx);
+                element.paint(&paint_ctx);
                 if clip.is_some() {
                     recording.clear_clip();
                 }
@@ -830,7 +835,7 @@ impl<E: Element> RawScrollableContainer<E> {
                 .min(content_size.height - rect.y + RETAINED_LAYER_TILE_OVERLAP_PX),
         ));
         aimer_widget::components::element::begin_paint_tracking();
-        self.child.draw(&recording_ctx);
+        self.child.paint(&recording_ctx);
         let element_ids = aimer_widget::components::element::take_paint_tracking();
 
         let recorded = recording_canvas.take_draw_list();

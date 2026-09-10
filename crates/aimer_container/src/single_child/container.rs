@@ -486,6 +486,41 @@ impl<T: Element> Drawable for RawContainer<T> {
     }
 
     #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        // `is_paint_stable` only returns true for this transparent, zero-inset
+        // shape, so retaining it does not need the live bounds/clip bookkeeping
+        // performed by `draw`.
+        self.child.paint(ctx);
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        if !self.can_delegate_paint_islands() {
+            return;
+        }
+        let size = self.content_size(ctx);
+        let (start_x, start_y) = ctx.canvas.get_transform_translation();
+        let scale = ctx.scale;
+        if size.width.is_finite()
+            && size.height.is_finite()
+            && scale.is_finite()
+            && scale > 0.0
+        {
+            self.bounds.set(Some((
+                Vec2d {
+                    x: start_x / scale,
+                    y: start_y / scale,
+                },
+                Vec2d {
+                    x: (start_x + size.width) / scale,
+                    y: (start_y + size.height) / scale,
+                },
+            )));
+        }
+        self.child.sync_paint_geometry(ctx);
+    }
+
+    #[inline]
     fn is_paint_stable(&self) -> bool {
         // Only a completely transparent, zero-inset wrapper can disappear
         // from the retained draw stream without changing its layout or
@@ -627,6 +662,11 @@ impl<T: Element> EventElement for RawContainer<T> {
 }
 
 impl<T: Element> LayoutElement for RawContainer<T> {
+    #[inline]
+    fn is_layout_stable(&self) -> bool {
+        self.can_delegate_paint_islands() && self.child.is_layout_stable()
+    }
+
     fn size(&self) -> Option<Size> {
         Some(Size {
             width: self.width,

@@ -194,6 +194,17 @@ impl Drawable for RawCustomShape {
     }
 
     #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        self.paint_shape(ctx);
+        self.child.paint(ctx);
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.child.sync_paint_geometry(ctx);
+    }
+
+    #[inline]
     fn is_paint_stable(&self) -> bool {
         self.child.is_paint_stable()
     }

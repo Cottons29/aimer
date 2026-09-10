@@ -37,19 +37,12 @@ struct PlainDecorationCache {
     lines: Vec<PlainDecorationLine>,
 }
 
+#[derive(Default)]
 struct RawTextAuxCache {
     paragraph: Option<Paragraph>,
     plain_decorations: Option<PlainDecorationCache>,
 }
 
-impl Default for RawTextAuxCache {
-    fn default() -> Self {
-        Self {
-            paragraph: None,
-            plain_decorations: None,
-        }
-    }
-}
 
 /// Low-level element that lays out and paints one run of text.
 ///
@@ -269,6 +262,11 @@ impl Drawable for RawTextWidget {
                 }
             }
         }
+        self.paint(ctx);
+    }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
         if self.uses_paragraph_layout() {
             self.draw_paragraph(ctx);
             return;
@@ -453,6 +451,11 @@ fn vertical_alignment_baseline(
 }
 
 impl LayoutElement for RawTextWidget {
+    #[inline]
+    fn is_layout_stable(&self) -> bool {
+        true
+    }
+
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         if self.uses_paragraph_layout() {
             return self.with_paragraph(|paragraph| paragraph.prepare(ctx).size);

@@ -7,6 +7,32 @@ use crate::components::element::Element;
 pub trait Drawable {
     fn draw(&self, ctx: &BuildContext);
 
+    /// Emits only the visual commands for this element.
+    ///
+    /// This is the paint-only half of [`Self::draw`]. It may be recorded and
+    /// replayed by an internal retained-paint owner, so it must not rebuild a
+    /// child, update hit-test or focus geometry, advance animation/input
+    /// state, start asynchronous work, or depend on the cursor or viewport.
+    /// The default keeps existing custom elements on the ordinary live path;
+    /// an implementation must override this method before opting into
+    /// [`Self::is_paint_stable`].
+    #[doc(hidden)]
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        self.draw(ctx);
+    }
+
+    /// Synchronizes live geometry needed by interaction and hit testing before
+    /// a retained paint replay.
+    ///
+    /// This hook is deliberately separate from [`Self::paint`]. A cached
+    /// visual subtree must still publish current bounds and layout-derived
+    /// interaction state even when no descendant paint commands are emitted.
+    /// The default is a no-op for leaves whose geometry is already available.
+    #[doc(hidden)]
+    #[inline]
+    fn sync_paint_geometry(&self, _ctx: &BuildContext) {}
+
     /// Gives layout-aware containers a chance to reconcile viewport-dependent
     /// geometry before the visible paint pass. The return value is `true` when
     /// the element has made its content extent authoritative for this context;
@@ -20,15 +46,18 @@ pub trait Drawable {
     }
 
     /// Returns whether this element's paint can be recorded once and replayed
-    /// under a different transform without running `draw` again.
+    /// under a different transform without running its live `draw` lifecycle
+    /// again.
     ///
     /// Implementors must return `true` only when drawing has no observable
     /// side effects outside the command stream: it must not update event or
     /// hit-test geometry, advance animation/input state, start asynchronous
-    /// work, or depend on the current viewport/cursor. Structural, style,
-    /// text, image, and scale changes are still invalidated by the owner of a
-    /// retained stream. The conservative default keeps custom and dynamic
-    /// elements on the normal draw path.
+    /// work, or depend on the current viewport/cursor. The matching
+    /// [`Self::paint`] implementation must emit the complete visual command
+    /// stream without those side effects. Structural, style, text, image, and
+    /// scale changes are still invalidated by the owner of a retained stream.
+    /// The conservative default keeps custom and dynamic elements on the
+    /// normal draw path.
     #[inline]
     fn is_paint_stable(&self) -> bool {
         false
@@ -70,6 +99,16 @@ pub trait Drawable {
 impl Drawable for Box<dyn Drawable> {
     fn draw(&self, ctx: &BuildContext) {
         self.as_ref().draw(ctx);
+    }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        self.as_ref().paint(ctx);
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.as_ref().sync_paint_geometry(ctx);
     }
 
     #[inline]

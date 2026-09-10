@@ -333,16 +333,12 @@ pub(crate) fn adjusted_grapheme_advance(
     count: usize,
     measure: &mut dyn FnMut(&str, &TextStyle) -> f32,
 ) -> f32 {
-    let letter_spacing = style
+    let letter_spacing = if style
         .letter_spacing
-        .is_finite()
-        .then_some(style.letter_spacing)
-        .unwrap_or(0.0);
-    let word_spacing = style
+        .is_finite() { style.letter_spacing } else { 0.0 };
+    let word_spacing = if style
         .word_spacing
-        .is_finite()
-        .then_some(style.word_spacing)
-        .unwrap_or(0.0);
+        .is_finite() { style.word_spacing } else { 0.0 };
     let spacing = if index + 1 < count {
         letter_spacing
     } else {
@@ -360,16 +356,12 @@ pub(crate) fn adjusted_width(
     style: &TextStyle,
     measure: &mut dyn FnMut(&str, &TextStyle) -> f32,
 ) -> f32 {
-    let letter_spacing = style
+    let letter_spacing = if style
         .letter_spacing
-        .is_finite()
-        .then_some(style.letter_spacing)
-        .unwrap_or(0.0);
-    let word_spacing = style
+        .is_finite() { style.letter_spacing } else { 0.0 };
+    let word_spacing = if style
         .word_spacing
-        .is_finite()
-        .then_some(style.word_spacing)
-        .unwrap_or(0.0);
+        .is_finite() { style.word_spacing } else { 0.0 };
     if letter_spacing == 0.0 && word_spacing == 0.0 {
         return measure(text, style);
     }

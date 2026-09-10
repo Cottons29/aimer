@@ -1056,7 +1056,10 @@ mod tests {
         use aimer::{Color, RichText, SpanStyle, TextSpan};
         use aimer_assets::{FontError, FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight};
 
-        const TEST_FONT: &[u8] = aimer_assets::bundled_monospace_bytes();
+        // Test-only fixture: production builds do not pull the optional
+        // bundled-fonts feature merely to exercise registration validation.
+        const TEST_FONT: &[u8] =
+            include_bytes!("../aimer_cupid/fonts/JetBrainsMono-Regular.ttf");
 
         #[test]
         fn named_font_registration_is_validated_and_stable() {

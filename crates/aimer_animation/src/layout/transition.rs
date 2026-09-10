@@ -974,6 +974,8 @@ impl<T: aimer_widget::Widget + 'static> aimer_widget::Widget for AnimatedLayout<
             child: self.child.to_element(ctx),
             transition: std::cell::RefCell::new(LayoutTransition::new(self.config)),
             window: ctx.window.clone(),
+            damage: aimer_widget::PaintDamageTracker::new(),
+            last_geometry: std::cell::Cell::new(None),
         }
         .boxed()
     }
@@ -989,6 +991,8 @@ struct AnimatedLayoutElement {
     child: aimer_widget::AnyElement,
     transition: std::cell::RefCell<LayoutTransition>,
     window: aimer_widget::base::WindowHandle,
+    damage: aimer_widget::PaintDamageTracker,
+    last_geometry: std::cell::Cell<Option<LayoutGeometry>>,
 }
 
 impl AnimatedLayoutElement {
@@ -1015,6 +1019,13 @@ impl aimer_widget::Drawable for AnimatedLayoutElement {
         let now = AnimInstant::now();
         let geometry = self.geometry(ctx, now);
         let natural = self.child.computed_size(ctx);
+        let geometry_changed = self.last_geometry.replace(Some(geometry)) != Some(geometry);
+        let active = self.transition.borrow().is_animating();
+        if geometry_changed || active || !geometry.is_finite() || !natural.width.is_finite()
+            || !natural.height.is_finite()
+        {
+            self.damage.mark_full();
+        }
         let scale_x = if natural.width > 0.0 {
             (geometry.width / natural.width).max(0.0)
         } else {
@@ -1031,7 +1042,7 @@ impl aimer_widget::Drawable for AnimatedLayoutElement {
         self.child.draw(ctx);
         ctx.canvas.restore();
 
-        if self.transition.borrow().is_animating() {
+        if active {
             request_animation_frame()
         }
     }

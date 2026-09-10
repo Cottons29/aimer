@@ -9,7 +9,8 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
-    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    PaintDamageTracker, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
+    VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -234,6 +235,7 @@ impl Widget for AnimatedSwitcherFrame {
             old_child: UnsafeCell::new(self.old_child.as_ref().map(|child| child.build(ctx))),
             in_controller: self.in_controller.clone(),
             out_controller: self.out_controller.clone(),
+            damage: PaintDamageTracker::new(),
         }
         .boxed()
     }
@@ -246,6 +248,7 @@ struct AnimatedSwitcherElement {
     old_child: UnsafeCell<Option<AnyElement>>,
     in_controller: AnimationController,
     out_controller: AnimationController,
+    damage: PaintDamageTracker,
 }
 
 unsafe impl Send for AnimatedSwitcherElement {}
@@ -258,6 +261,12 @@ impl Drawable for AnimatedSwitcherElement {
         // Tick both controllers
         let in_value = self.in_controller.tick(now);
         let out_value = self.out_controller.tick(now);
+        let active = self.in_controller.is_animating() || self.out_controller.is_animating();
+        let has_old_child = unsafe { (&*self.old_child.get()).is_some() };
+        crate::widgets::damage::mark_dynamic_animation_damage(
+            &self.damage,
+            active || has_old_child,
+        );
 
         // Draw old child (fading out)
         if let Some(old) = unsafe { &*self.old_child.get() }
@@ -275,7 +284,7 @@ impl Drawable for AnimatedSwitcherElement {
         self.current_child.draw(ctx);
         ctx.canvas.restore();
 
-        if self.in_controller.is_animating() || self.out_controller.is_animating() {
+        if active {
             request_next_frame();
         } else if out_value >= 1.0 {
             unsafe { *self.old_child.get() = None };

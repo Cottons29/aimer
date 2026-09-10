@@ -8,6 +8,8 @@ use crate::draw_cmd::{
     DrawCommand, DrawList, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION,
     RetainedLayerContent,
 };
+use crate::damage_region::DamageRect;
+use crate::frame::{FramePacket, FrameRenderMetadata};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::pipeline_cache;
 use crate::pipeline::frame_composite::FrameCompositePipeline;
@@ -712,10 +714,61 @@ impl Renderer {
         self.frame_index = self.frame_index.saturating_add(1);
         self.active_retained_layers.clear();
         self.prepare_retained_layers(device, queue, is_srgb, draw_list);
-        self.render_frame(
-            device, queue, view, None, width, height, is_srgb, draw_list,
-        );
+        self.render_frame(device, queue, view, None, width, height, is_srgb, draw_list);
         self.reclaim_retained_layers();
+    }
+
+    /// Renders a finished frame packet, retaining the scene target when the
+    /// packet carries a valid partial-damage contract.
+    #[doc(hidden)]
+    pub fn render_packet(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        packet: &FramePacket,
+        is_srgb: bool,
+    ) {
+        let frame = packet.frame();
+        self.render_frame_with_metadata(
+            device,
+            queue,
+            view,
+            frame.width,
+            frame.height,
+            is_srgb,
+            &frame.draw_list,
+            packet.metadata(),
+        );
+    }
+
+    /// Renders an already-recorded draw list with an explicit damage contract.
+    ///
+    /// This is the borrowed form of [`Self::render_packet`] used by presenters
+    /// that receive a frame packet without taking ownership of its draw list.
+    #[doc(hidden)]
+    pub fn render_frame_with_metadata(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        draw_list: &DrawList,
+        metadata: &FrameRenderMetadata,
+    ) {
+        self.render_with_metadata(
+            device,
+            queue,
+            view,
+            None,
+            width,
+            height,
+            is_srgb,
+            draw_list,
+            metadata,
+        );
     }
 
     /// Renders a frame while making its single-sample target available to
@@ -754,6 +807,258 @@ impl Renderer {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn render_with_metadata(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        source_texture: Option<&wgpu::Texture>,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        draw_list: &DrawList,
+        metadata: &FrameRenderMetadata,
+    ) {
+        self.frame_index = self.frame_index.saturating_add(1);
+        self.active_retained_layers.clear();
+        self.prepare_retained_layers(device, queue, is_srgb, draw_list);
+
+        let persistent_contract = source_texture.is_none()
+            && !self.antialiasing.uses_multisampling()
+            && !draw_list_uses_material(draw_list)
+            && metadata.damage().target_size() == (width, height)
+            && metadata.device_scale().is_finite()
+            && metadata.device_scale() > 0.0;
+
+        if !persistent_contract {
+            self.render_frame(
+                device,
+                queue,
+                view,
+                source_texture,
+                width,
+                height,
+                is_srgb,
+                draw_list,
+            );
+        } else if metadata.damage().is_empty()
+            && self.render_reuse_persistent_target(
+                device,
+                queue,
+                view,
+                width,
+                height,
+                metadata,
+            ) {
+            self.reclaim_retained_layers();
+            return;
+        } else if metadata.damage().regions().len() == 1
+            && !metadata.damage().is_full()
+            && self.render_partial(
+                device,
+                queue,
+                view,
+                width,
+                height,
+                is_srgb,
+                draw_list,
+                metadata,
+            )
+        {
+            self.reclaim_retained_layers();
+            return;
+        } else {
+            if !self.render_full_to_persistent_target(
+                device,
+                queue,
+                view,
+                width,
+                height,
+                is_srgb,
+                draw_list,
+                metadata,
+            ) {
+                self.render_frame(
+                    device,
+                    queue,
+                    view,
+                    source_texture,
+                    width,
+                    height,
+                    is_srgb,
+                    draw_list,
+                );
+            }
+        }
+        self.reclaim_retained_layers();
+    }
+
+    fn target_key(
+        width: u32,
+        height: u32,
+        metadata: &FrameRenderMetadata,
+        validity: TargetValidity,
+    ) -> PersistentTargetKey {
+        PersistentTargetKey::new_with_resource(
+            width,
+            height,
+            metadata.device_scale(),
+            metadata.surface_identity(),
+            metadata.renderer_generation(),
+            metadata.context_generation(),
+            metadata.resource_generation(),
+            validity,
+        )
+    }
+
+    fn render_reuse_persistent_target(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        metadata: &FrameRenderMetadata,
+    ) -> bool {
+        let key = Self::target_key(width, height, metadata, TargetValidity::Valid);
+        let Some(mut target) = self.material_frame_target.take() else {
+            return false;
+        };
+        let result = target.ensure(
+            device,
+            self.surface_format,
+            key,
+            &self.frame_composite_pipeline,
+        );
+        if !matches!(result, TargetEnsureResult::ReusedValid) {
+            self.material_frame_target = Some(target);
+            return false;
+        }
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("cupid retained frame composite encoder"),
+        });
+        {
+            let mut pass = begin_render_pass(
+                &mut encoder,
+                view,
+                None,
+                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                wgpu::StoreOp::Store,
+            );
+            self.frame_composite_pipeline
+                .render(&mut pass, &target.composite_bind_group);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+        self.material_frame_target = Some(target);
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_full_to_persistent_target(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        draw_list: &DrawList,
+        metadata: &FrameRenderMetadata,
+    ) -> bool {
+        if !has_renderable_dimensions(width, height) {
+            return false;
+        }
+        let key = Self::target_key(width, height, metadata, TargetValidity::Valid);
+        let mut target = self.material_frame_target.take().unwrap_or_else(|| {
+            MaterialFrameTarget::new(
+                device,
+                self.surface_format,
+                key,
+                &self.frame_composite_pipeline,
+            )
+        });
+        let result = target.ensure(
+            device,
+            self.surface_format,
+            key,
+            &self.frame_composite_pipeline,
+        );
+        if matches!(result, TargetEnsureResult::Unavailable) {
+            self.material_frame_target = Some(target);
+            return false;
+        }
+        let target_view = target.view();
+        self.render_impl(
+            device,
+            queue,
+            target_view,
+            None,
+            Some((view, &target.composite_bind_group)),
+            width,
+            height,
+            is_srgb,
+            draw_list,
+            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            None,
+        );
+        target.mark_valid();
+        self.material_frame_target = Some(target);
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_partial(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        draw_list: &DrawList,
+        metadata: &FrameRenderMetadata,
+    ) -> bool {
+        if metadata.damage().target_size() != (width, height) {
+            return false;
+        }
+        let Some(damage) = metadata.damage().regions().first().copied() else {
+            return false;
+        };
+        let key = Self::target_key(width, height, metadata, TargetValidity::Valid);
+        let Some(mut target) = self.material_frame_target.take() else {
+            return false;
+        };
+        let result = target.ensure(
+            device,
+            self.surface_format,
+            key,
+            &self.frame_composite_pipeline,
+        );
+        if !matches!(result, TargetEnsureResult::ReusedValid) {
+            self.material_frame_target = Some(target);
+            return false;
+        }
+
+        self.render_impl(
+            device,
+            queue,
+            target.view(),
+            None,
+            Some((view, &target.composite_bind_group)),
+            width,
+            height,
+            is_srgb,
+            draw_list,
+            wgpu::LoadOp::Load,
+            Some(damage),
+        );
+        target.mark_valid();
+        self.material_frame_target = Some(target);
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn render_frame(
         &mut self,
         device: &wgpu::Device,
@@ -765,6 +1070,9 @@ impl Renderer {
         is_srgb: bool,
         draw_list: &DrawList,
     ) {
+        if !has_renderable_dimensions(width, height) {
+            return;
+        }
         if source_texture.is_some() || !draw_list_uses_material(draw_list) {
             self.render_impl(
                 device,
@@ -776,6 +1084,8 @@ impl Renderer {
                 height,
                 is_srgb,
                 draw_list,
+                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                None,
             );
             return;
         }
@@ -813,6 +1123,8 @@ impl Renderer {
             height,
             is_srgb,
             draw_list,
+            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            None,
         );
         target.mark_valid();
         self.material_frame_target = Some(target);
@@ -933,6 +1245,8 @@ impl Renderer {
             layer_height,
             is_srgb,
             &layer_draw_list,
+            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            None,
         );
         true
     }
@@ -976,6 +1290,8 @@ impl Renderer {
         height: u32,
         is_srgb: bool,
         draw_list: &DrawList,
+        load: wgpu::LoadOp<wgpu::Color>,
+        damage: Option<DamageRect>,
     ) {
         self.transform_stack.clear();
         self.clip_stack.clear();
@@ -1574,9 +1890,12 @@ impl Renderer {
                 &mut encoder,
                 render_view,
                 resolve_target,
-                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                load,
                 store,
             );
+            if let Some(damage) = damage {
+                pass.set_scissor_rect(damage.x, damage.y, damage.width, damage.height);
+            }
 
             // Render commands in draw order to preserve correct z-ordering
             // across rects, images, text and text decorations. Consecutive
@@ -1603,6 +1922,9 @@ impl Renderer {
                     _ => {}
                 }
             }
+            if damage.is_some() {
+                total_rect_instances += 1;
+            }
             self.rect_pipeline.begin_frame(
                 device,
                 queue,
@@ -1619,6 +1941,11 @@ impl Renderer {
                 height,
                 is_srgb,
             );
+
+            if let Some(damage) = damage {
+                self.rect_pipeline.push(clear_rect_instance(damage));
+                self.rect_pipeline.flush_clear(&mut pass);
+            }
 
             let mut image_batch: Vec<ImageInstance> = Vec::new();
             let mut current_texture_id: Option<u32> = None;
@@ -1868,6 +2195,25 @@ fn draw_list_uses_material(draw_list: &DrawList) -> bool {
                 if pipeline_name == MATERIAL_PIPELINE_NAME
         )
     })
+}
+
+#[inline]
+fn clear_rect_instance(damage: DamageRect) -> RectInstance {
+    RectInstance {
+        position: [damage.x as f32, damage.y as f32],
+        size: [damage.width as f32, damage.height as f32],
+        color: Rgba8::TRANSPARENT,
+        border_radius: [0.0; 4],
+        border_width: [0.0; 4],
+        border_color: Rgba8::TRANSPARENT,
+        outline_width: [0.0; 4],
+        outline_color: Rgba8::TRANSPARENT,
+        clip_rect: [0.0, 0.0, -1.0, 0.0],
+        clip_border_radius: [0.0; 4],
+        shadow_params: [0.0; 4],
+        shadow_color: Rgba8::TRANSPARENT,
+        shadow_flags: [0.0; 4],
+    }
 }
 
 fn begin_render_pass<'a>(

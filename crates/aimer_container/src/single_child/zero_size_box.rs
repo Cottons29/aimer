@@ -44,6 +44,11 @@ impl VisitorElement for ZeroSizedBox {
 impl EventElement for ZeroSizedBox {}
 
 impl LayoutElement for ZeroSizedBox {
+    #[inline]
+    fn is_layout_stable(&self) -> bool {
+        true
+    }
+
     fn size(&self) -> Option<Size> {
         Some(Size {
             width: Dimension::Px(0.0),

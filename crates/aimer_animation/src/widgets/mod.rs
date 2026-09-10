@@ -1,3 +1,4 @@
+mod damage;
 pub mod animated;
 pub mod animated_builder;
 pub mod animated_switcher;
@@ -37,3 +38,6 @@ pub(crate) mod test_frame_requester {
         REQUESTS.with(Cell::get)
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+mod damage_tests;

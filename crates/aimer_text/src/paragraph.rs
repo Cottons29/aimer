@@ -211,16 +211,12 @@ fn shadow_padding_for_spans(spans: &[ResolvedTextSpan]) -> RetainedLayerPadding 
         if shadow.color.as_u32() >> 24 == 0 {
             continue;
         }
-        let offset_x = shadow
+        let offset_x = if shadow
             .offset_x
-            .is_finite()
-            .then_some(shadow.offset_x)
-            .unwrap_or(0.0);
-        let offset_y = shadow
+            .is_finite() { shadow.offset_x } else { 0.0 };
+        let offset_y = if shadow
             .offset_y
-            .is_finite()
-            .then_some(shadow.offset_y)
-            .unwrap_or(0.0);
+            .is_finite() { shadow.offset_y } else { 0.0 };
         let blur = shadow
             .blur
             .is_finite()
@@ -669,11 +665,9 @@ impl Paragraph {
 
     fn compute_layout(&self, ctx: &BuildContext) -> PreparedLayout {
         let wrap_width = self.wrap_width(ctx);
-        let first_line_indent = self
+        let first_line_indent = (if self
             .text_indent
-            .is_finite()
-            .then_some(self.text_indent)
-            .unwrap_or(0.0)
+            .is_finite() { self.text_indent } else { 0.0 })
             * ctx.scale;
         let mut layout = layout_resolved_spans_with_indent(
             &self.spans,
@@ -1050,7 +1044,7 @@ impl Paragraph {
         } else {
             let recording_canvas = ctx.canvas.fork_for_recording();
             let mut recording_ctx = ctx.clone();
-            recording_ctx.canvas = Canvas::new(&recording_canvas);
+            recording_ctx.replace_canvas(Canvas::new(&recording_canvas));
             recording_ctx.visible_rect = None;
             self.draw_static_spans(&recording_ctx, layout, mode);
             let recorded = recording_canvas.take_draw_list();
@@ -1098,7 +1092,7 @@ impl Paragraph {
         let scale = scale.is_finite().then_some(scale.abs()).unwrap_or(1.0);
         let scale_extent = |extent: f32| {
             let scaled = extent * scale;
-            scaled.is_finite().then_some(scaled).unwrap_or(f32::INFINITY)
+            if scaled.is_finite() { scaled } else { f32::INFINITY }
         };
         RetainedLayerPadding::new(
             scale_extent(self.logical_shadow_padding.left),

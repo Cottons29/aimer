@@ -1454,13 +1454,12 @@ where
                 let max_key_bytes = decoder.limits.max_key_bytes;
                 let key = decoder.scoped(LimitKind::KeyBytes, max_key_bytes, K::decode)?;
                 let key_end = decoder.cursor;
-                if let Some((previous_start, previous_end)) = previous {
-                    if decoder.input[previous_start..previous_end]
+                if let Some((previous_start, previous_end)) = previous
+                    && decoder.input[previous_start..previous_end]
                         >= decoder.input[key_start..key_end]
                     {
                         return Err(DecodeError::NonCanonicalOrder);
                     }
-                }
                 let max_value_bytes = decoder.limits.max_value_bytes;
                 let value = decoder.scoped(LimitKind::ValueBytes, max_value_bytes, V::decode)?;
                 if values.insert(key, value).is_some() {
@@ -1570,13 +1569,12 @@ where
                 let max_key_bytes = decoder.limits.max_key_bytes;
                 let value = decoder.scoped(LimitKind::KeyBytes, max_key_bytes, T::decode)?;
                 let entry_end = decoder.cursor;
-                if let Some((previous_start, previous_end)) = previous {
-                    if decoder.input[previous_start..previous_end]
+                if let Some((previous_start, previous_end)) = previous
+                    && decoder.input[previous_start..previous_end]
                         >= decoder.input[entry_start..entry_end]
                     {
                         return Err(DecodeError::NonCanonicalOrder);
                     }
-                }
                 if !values.insert(value) {
                     return Err(DecodeError::DuplicateEntry);
                 }

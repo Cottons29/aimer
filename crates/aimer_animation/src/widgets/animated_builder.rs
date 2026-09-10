@@ -7,7 +7,7 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, EventResult,
-    LayoutElement, Rebuildable, VisitorElement, Widget, carry_element_state,
+    LayoutElement, PaintDamageTracker, Rebuildable, VisitorElement, Widget, carry_element_state,
 };
 use aimer_widget::portable::__anteros::{
     BUILTIN_WIDGET_SCHEMA_VERSION, ChildCardinality, PortableWidgetSchemaMetadata,
@@ -540,6 +540,7 @@ impl Widget for AnimatedBuilder {
             builder: self.builder.clone(),
             last_value: Cell::new(curved_value),
             window,
+            damage: PaintDamageTracker::new(),
         }
         .boxed()
     }
@@ -557,6 +558,7 @@ struct AnimatedBuilderElement {
     builder: Rc<AnimatedElementBuilder>,
     last_value: Cell<f32>,
     window: WindowHandle,
+    damage: PaintDamageTracker,
 }
 
 // Safety: rendering pipeline is single-threaded
@@ -566,7 +568,8 @@ unsafe impl Sync for AnimatedBuilderElement {}
 impl Drawable for AnimatedBuilderElement {
     fn draw(&self, ctx: &BuildContext) {
         let curved_value = self.controller.tick(AnimInstant::now());
-        if curved_value != self.last_value.get() {
+        let output_changed = curved_value != self.last_value.get();
+        if output_changed {
             let child = (self.builder)(curved_value, ctx);
             // The builder is called fresh whenever the curved value changes,
             // but its element still owns runtime state an ordinary rebuild
@@ -576,6 +579,11 @@ impl Drawable for AnimatedBuilderElement {
             unsafe { *self.child.get() = child };
             self.last_value.set(curved_value);
         }
+
+        crate::widgets::damage::mark_dynamic_animation_damage(
+            &self.damage,
+            output_changed || self.controller.is_animating(),
+        );
 
         unsafe { &*self.child.get() }.draw(ctx);
 

@@ -631,7 +631,16 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
     /// twice does not rebuild its tree twice. The tree is drawn inside a saved
     /// canvas scope so a widget that leaves a transform behind cannot leak it
     /// into the next frame.
-    pub(crate) fn draw(&mut self, canvas: &aimer_canvas::InnerCanvas, width: u32, height: u32) {
+    pub(crate) fn draw(
+        &mut self,
+        canvas: &aimer_canvas::InnerCanvas,
+        width: u32,
+        height: u32,
+    ) -> (f32, aimer_cupid::damage_region::DamageSet) {
+        aimer_widget::begin_paint_frame(width, height);
+        let rebuild_generation_before = aimer_widget::rebuild_invalidation_generation();
+        let layout_generation_before = aimer_widget::layout_invalidation_generation();
+        let texture_epoch_before = canvas.texture_cache_epoch();
         #[cfg(any(debug_assertions, feature = "frame-stats"))]
         let inner_canvas = canvas;
         let canvas = aimer_canvas::Canvas::new(canvas);
@@ -689,6 +698,7 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             if let Some(root) = root {
                 #[cfg(feature = "wasm-hot-reload")]
                 if live_layout_required {
+                    aimer_widget::mark_paint_damage_full();
                     root.rebuild_if_dirty(&build_ctx);
                     root.layout(&build_ctx);
                 }
@@ -703,6 +713,7 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
 
                 #[cfg(debug_assertions)]
                 if self.inspector_enabled {
+                    aimer_widget::mark_paint_damage_full();
                     // Save and restore canvas state to ensure the inspector overlay
                     // always renders at the top layer above all widgets,
                     // unaffected by any residual transforms.
@@ -724,6 +735,7 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             .as_ref()
             .and_then(crate::hot_reload::LiveReloadHost::reload_overlay)
         {
+            aimer_widget::mark_paint_damage_full();
             overlay.layout(&build_ctx);
             build_ctx.canvas.save();
             overlay.draw(&build_ctx);
@@ -746,6 +758,22 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                 work_stats,
             );
         }
+
+        let mut damage = aimer_widget::take_paint_frame_damage(width, height);
+        let rebuild_changed =
+            rebuild_generation_before != aimer_widget::rebuild_invalidation_generation();
+        let layout_or_texture_changed =
+            layout_generation_before != aimer_widget::layout_invalidation_generation()
+                || texture_epoch_before != build_ctx.canvas.texture_cache_epoch();
+        if layout_or_texture_changed || (rebuild_changed && damage.is_empty()) {
+            // Layout and texture changes can affect paint outside a retained
+            // owner's footprint. Keep those transitions on the correctness-
+            // first full-target path until every producer has a precise
+            // footprint contract. A clean rebuild epoch is safe to keep empty
+            // because the retained owner already marked its old/new bounds.
+            damage.mark_full();
+        }
+        (self.scale, damage)
     }
 }
 
@@ -1049,8 +1077,14 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         };
         let (render_ctx, mut drawer) = self.split_for_frame(window);
 
-        let outcome =
-            render_ctx.render_frame(move |canvas, width, height| drawer.draw(canvas, width, height));
+        #[cfg(target_arch = "wasm32")]
+        let outcome = render_ctx.render_frame(move |canvas, width, height| {
+            let _ = drawer.draw(canvas, width, height);
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        let outcome = render_ctx.render_frame_packet(move |canvas, width, height| {
+            drawer.draw(canvas, width, height)
+        });
         // A deferred frame is still in flight on the raster thread: it reports
         // the first-frame notification and any retry itself, from `on_present`,
         // because the outcome is not known until a frame later.

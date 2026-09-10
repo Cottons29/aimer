@@ -9,7 +9,8 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
-    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    PaintDamageTracker, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
+    VisitorElement, Widget,
     carry_element_state,
 };
 #[cfg(feature = "portable-guest")]
@@ -327,6 +328,7 @@ impl<T: Animatable + Clone + PartialEq + 'static> Widget for ImplicitAnimatedFra
             builder: self.builder.clone(),
             controller: self.controller.clone(),
             tween: self.tween.clone(),
+            damage: PaintDamageTracker::new(),
         }
         .boxed()
     }
@@ -344,6 +346,7 @@ struct ImplicitAnimatedElement<T: Animatable + Clone + PartialEq + 'static> {
     builder: Rc<ImplicitElementBuilder<T>>,
     controller: AnimationController,
     tween: Rc<LocalCell<Option<Tween<T>>>>,
+    damage: PaintDamageTracker,
 }
 
 unsafe impl<T: Animatable + Clone + PartialEq + 'static> Send for ImplicitAnimatedElement<T> {}
@@ -378,6 +381,11 @@ impl<T: Animatable + Clone + PartialEq + 'static> Drawable for ImplicitAnimatedE
             carry_element_state(unsafe { &*self.child.get() }.as_ref(), new_child.as_ref(), ctx);
             unsafe { *self.child.get() = new_child };
         }
+
+        crate::widgets::damage::mark_dynamic_animation_damage(
+            &self.damage,
+            changed || self.controller.is_animating(),
+        );
 
         unsafe { &*self.child.get() }.draw(ctx);
 
@@ -711,6 +719,7 @@ mod tests {
             builder: Rc::new(|_, _| TestElement.boxed()),
             controller,
             tween: Rc::new(LocalCell::new(Some(Tween::new(0.0, 1.0)))),
+            damage: PaintDamageTracker::new(),
         };
 
         element.draw(&ctx);
@@ -756,6 +765,7 @@ mod tests {
             builder,
             controller,
             tween: Rc::new(LocalCell::new(Some(Tween::new(0.0, 1.0)))),
+            damage: PaintDamageTracker::new(),
         };
 
         // A draw whose interpolated value changed rebuilds the child (ids 1,

@@ -2,7 +2,8 @@
 pub mod render_ctx {
     use aimer_cupid::AntiAlias;
     use aimer_cupid::canvas::CupidCanvas;
-    use aimer_cupid::frame::Frame;
+    use aimer_cupid::damage_region::DamageSet;
+    use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
     use aimer_cupid::gpu_context::{GpuContext, render_dimensions};
     use aimer_cupid::renderer::Renderer;
     use winit::dpi::PhysicalSize;
@@ -101,6 +102,20 @@ pub mod render_ctx {
         }
 
         fn present(&mut self, frame: &Frame) -> bool {
+            self.present_inner(frame, None)
+        }
+
+        fn present_packet(&mut self, packet: &FramePacket) -> bool {
+            self.present_inner(packet.frame(), Some(packet.metadata()))
+        }
+    }
+
+    impl GpuPresenter {
+        fn present_inner(
+            &mut self,
+            frame: &Frame,
+            metadata: Option<&FrameRenderMetadata>,
+        ) -> bool {
             let encode = PhaseTimer::start();
 
             let surface = match self.gpu.begin_frame() {
@@ -128,6 +143,17 @@ pub mod render_ctx {
                     frame.height,
                     self.gpu.is_srgb,
                     &frame.draw_list,
+                );
+            } else if let Some(metadata) = metadata {
+                self.renderer.render_frame_with_metadata(
+                    &self.gpu.device,
+                    &self.gpu.queue,
+                    &view,
+                    frame.width,
+                    frame.height,
+                    self.gpu.is_srgb,
+                    &frame.draw_list,
+                    metadata,
                 );
             } else {
                 self.renderer.render(
@@ -199,6 +225,10 @@ pub mod render_ctx {
         canvas: Option<CupidCanvas>,
         surface_size: SurfaceSize,
         antialiasing: AntiAlias,
+        surface_identity: u64,
+        renderer_generation: u64,
+        context_generation: u64,
+        resource_generation: u64,
     }
 
     impl Default for WgpuApi {
@@ -216,6 +246,10 @@ pub mod render_ctx {
                 canvas: None,
                 surface_size: SurfaceSize::default(),
                 antialiasing,
+                surface_identity: 1,
+                renderer_generation: 1,
+                context_generation: 1,
+                resource_generation: 0,
             }
         }
 
@@ -282,6 +316,7 @@ pub mod render_ctx {
             if !self.surface_size.resize(size) {
                 return;
             }
+            self.resource_generation = self.resource_generation.wrapping_add(1);
 
             match &mut self.presentation {
                 #[cfg(not(feature = "raster-thread"))]
@@ -310,6 +345,17 @@ pub mod render_ctx {
             }
         }
 
+        /// Record a frame with the widget damage contract and present it.
+        pub fn render_frame_packet(
+            &mut self,
+            draw_fn: impl FnOnce(&CupidCanvas, u32, u32) -> (f32, DamageSet),
+        ) -> PresentOutcome {
+            match self.build_frame_packet(draw_fn) {
+                Some(packet) => self.present_packet(packet),
+                None => PresentOutcome::Dropped,
+            }
+        }
+
         /// Record a frame without touching the swap chain.
         ///
         /// The widget walk runs here, entirely on the CPU. Keeping it out of
@@ -322,6 +368,19 @@ pub mod render_ctx {
         ///
         /// [`present`]: WgpuApi::present
         pub fn build_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> Option<Frame> {
+            self.build_frame_packet(|canvas, width, height| {
+                draw_fn(canvas, width, height);
+                (1.0, DamageSet::full(width, height))
+            })
+            .map(FramePacket::into_frame)
+        }
+
+        /// Record a frame and retain the damage information returned by the
+        /// widget walk.
+        pub fn build_frame_packet(
+            &mut self,
+            draw_fn: impl FnOnce(&CupidCanvas, u32, u32) -> (f32, DamageSet),
+        ) -> Option<FramePacket> {
             if !self.is_ready() {
                 return None;
             }
@@ -342,11 +401,24 @@ pub mod render_ctx {
 
             let build = PhaseTimer::start();
             canvas.begin_frame();
-            draw_fn(canvas, width, height);
+            let (scale, damage) = draw_fn(canvas, width, height);
+            let damage = if damage.target_size() == (width, height) {
+                damage
+            } else {
+                DamageSet::full(width, height)
+            };
             let frame = Frame::new(canvas.take_draw_list(), width, height);
+            let metadata = FrameRenderMetadata::new(
+                scale,
+                self.surface_identity,
+                self.renderer_generation,
+                self.context_generation,
+                self.resource_generation,
+                damage,
+            );
             build.finish(FramePhase::Build);
 
-            Some(frame)
+            Some(FramePacket::new(frame, metadata))
         }
 
         /// Put a recorded frame on screen, or hand it to the raster thread.
@@ -360,12 +432,26 @@ pub mod render_ctx {
         /// The frame's buffer is handed back to the canvas either way, so a
         /// dropped frame does not cost an allocation on the next one.
         pub fn present(&mut self, frame: Frame) -> PresentOutcome {
+            let metadata = FrameRenderMetadata::new(
+                1.0,
+                self.surface_identity,
+                self.renderer_generation,
+                self.context_generation,
+                self.resource_generation,
+                DamageSet::full(frame.width, frame.height),
+            );
+            self.present_packet(FramePacket::new(frame, metadata))
+        }
+
+        /// Put a metadata-carrying frame packet on screen, or hand it to the
+        /// raster thread.
+        pub fn present_packet(&mut self, packet: FramePacket) -> PresentOutcome {
             match &mut self.presentation {
                 #[cfg(not(feature = "raster-thread"))]
                 Some(Presentation::Inline(presenter)) => {
-                    let presented = presenter.present(&frame);
+                    let presented = presenter.present_packet(&packet);
                     if let Some(canvas) = &self.canvas {
-                        canvas.recycle_draw_list(frame.into_draw_list());
+                        canvas.recycle_draw_list(packet.into_frame().into_draw_list());
                     }
                     PresentOutcome::from_presented(presented)
                 }
@@ -374,7 +460,7 @@ pub mod render_ctx {
                     // Blocks while a frame is still queued: that backpressure is
                     // what caps latency at one frame. The buffer comes back over
                     // the recycle channel, not here.
-                    if raster.submit(frame) {
+                    if raster.submit_packet(packet) {
                         PresentOutcome::Deferred
                     } else {
                         PresentOutcome::Dropped

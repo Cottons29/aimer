@@ -9,7 +9,8 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
-    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    PaintDamageTracker, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
+    VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -330,6 +331,7 @@ impl Widget for MorphTransitionFrame {
             } else {
                 MorphState::Idle
             }),
+            damage: PaintDamageTracker::new(),
         }
         .boxed()
     }
@@ -392,6 +394,7 @@ struct MorphTransitionElement {
     new_snapshot: LocalCell<LayoutSnapshot>,
     has_background_color: bool,
     morph_state: Cell<MorphState>,
+    damage: PaintDamageTracker,
 }
 
 // Safety: rendering pipeline is single-threaded
@@ -419,6 +422,11 @@ impl Drawable for MorphTransitionElement {
         let is_animating = self.controller.is_animating();
 
         let morph_state = self.morph_state.get();
+
+        crate::widgets::damage::mark_dynamic_animation_damage(
+            &self.damage,
+            is_animating || morph_state != MorphState::Idle,
+        );
 
         match morph_state {
             MorphState::Idle => {

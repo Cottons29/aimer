@@ -12,7 +12,7 @@ pub(super) use self::glyph_run::{
 };
 use super::text_layout::FontId;
 use crate::font::{
-    FontFamily, FontRegistry, FontStyle, FontWeight, TextLanguage, bundled_monospace_bytes,
+    FontFamily, FontRegistry, FontStyle, FontWeight, TextLanguage,
 };
 use crate::text_pipeline::font_resolver::{
     FallbackScript, FontData, FontRecord, SharedFontRecord,
@@ -23,9 +23,13 @@ use crate::text_pipeline::system_fallback::{
     SYSTEM_FALLBACK_ID_BASE, ScriptRequirement, WEIGHT_MATCH_TOLERANCE, fallback_by_id,
     fallback_glyph_for_codepoint, script_probes,
 };
+#[cfg(not(any(feature = "bundled-fonts", test)))]
+use crate::text_pipeline::system_fallback::{system_monospace_font, system_primary_font};
 use crate::text_pipeline::unicode_script::Script;
 
-/// Embedded primary font (Roboto) — covers Latin and common scripts.
+/// The bundled primary face is compiled only for the opt-in deterministic
+/// profile and for this module's unit tests.
+#[cfg(any(feature = "bundled-fonts", test))]
 const PRIMARY_FONT: &[u8] = include_bytes!("../../../fonts/GoogleSans-Regular.ttf");
 const MONOSPACE_FONT_ID: FontId = 0x7fff_fffe;
 /// Stable id reserved for the self-rasterized CJK fallback.
@@ -34,8 +38,10 @@ const MONOSPACE_FONT_ID: FontId = 0x7fff_fffe;
 /// worker snapshot like any other internally decoded face, while staying away
 /// from ids assigned to runtime registrations and the platform fallback lanes.
 const BUNDLED_CJK_FONT_ID: FontId = 0x2000_0000;
+#[cfg(any(feature = "bundled-fonts", test))]
 const BUNDLED_CJK_FONT: &[u8] =
     include_bytes!("../../../fonts/NotoSansJP-VariableFont_wght.ttf");
+#[cfg(any(feature = "bundled-fonts", test))]
 static BUNDLED_CJK_RECORD: OnceLock<Option<FontRecord>> = OnceLock::new();
 
 /// A rasterized glyph bitmap with its metrics.
@@ -244,23 +250,36 @@ impl GlyphKey {
 // Aimer owns the parsed face, outline, and coverage caches. No compatibility
 // scaling context is needed here.
 
-fn primary_font_record() -> FontRecord {
-    static PRIMARY_FONT_RECORD: OnceLock<FontRecord> = OnceLock::new();
-    PRIMARY_FONT_RECORD
+#[cfg(any(feature = "bundled-fonts", test))]
+fn monospace_font_record() -> Option<FontRecord> {
+    static MONOSPACE_FONT_RECORD: OnceLock<Option<FontRecord>> = OnceLock::new();
+    MONOSPACE_FONT_RECORD
         .get_or_init(|| {
-            FontRecord::from_static_bytes(0, PRIMARY_FONT).expect("failed to load primary font")
+            FontRecord::from_static_bytes(
+                MONOSPACE_FONT_ID,
+                include_bytes!("../../../fonts/JetBrainsMono-Regular.ttf"),
+            )
         })
         .clone()
 }
 
-fn monospace_font_record() -> FontRecord {
-    static MONOSPACE_FONT_RECORD: OnceLock<FontRecord> = OnceLock::new();
-    MONOSPACE_FONT_RECORD
-        .get_or_init(|| {
-            FontRecord::from_static_bytes(MONOSPACE_FONT_ID, bundled_monospace_bytes())
-                .expect("failed to load bundled monospace font")
-        })
+#[cfg(not(any(feature = "bundled-fonts", test)))]
+fn monospace_font_record() -> Option<FontRecord> {
+    system_monospace_font(MONOSPACE_FONT_ID)
+}
+
+#[cfg(any(feature = "bundled-fonts", test))]
+fn primary_font_record() -> FontRecord {
+    static PRIMARY_FONT_RECORD: OnceLock<Option<FontRecord>> = OnceLock::new();
+    PRIMARY_FONT_RECORD
+        .get_or_init(|| FontRecord::from_static_bytes(0, PRIMARY_FONT))
         .clone()
+        .expect("failed to load primary font")
+}
+
+#[cfg(not(any(feature = "bundled-fonts", test)))]
+fn primary_font_record() -> FontRecord {
+    system_primary_font().unwrap_or_else(|| FontRecord::unavailable(0))
 }
 
 // ---------------------------------------------------------------------------
@@ -446,7 +465,7 @@ impl GlyphPreparationContext {
 }
 
 pub struct GlyphRasterizer {
-    /// Primary font (Roboto) for Latin/common glyphs.
+    /// Primary sans-serif font, either bundled or selected from the host.
     primary: FontRecord,
     family_faces: Vec<FamilyFontRecord>,
     registered_font_revision: u64,
@@ -557,12 +576,15 @@ struct CoverageIndex {
 
 fn registered_family_faces() -> (Vec<FamilyFontRecord>, u64) {
     let (registered_faces, revision) = FontRegistry::faces_with_revision();
-    let mut family_faces = vec![FamilyFontRecord {
-        family: FontFamily::MONOSPACE,
-        weight: FontWeight::Normal.numeric(),
-        style: FontStyle::Normal,
-        record: monospace_font_record(),
-    }];
+    let mut family_faces = Vec::new();
+    if let Some(record) = monospace_font_record() {
+        family_faces.push(FamilyFontRecord {
+            family: FontFamily::MONOSPACE,
+            weight: FontWeight::Normal.numeric(),
+            style: FontStyle::Normal,
+            record,
+        });
+    }
     family_faces.extend(registered_faces.into_iter().filter_map(|face| {
         Some(FamilyFontRecord {
             family: face.family,
@@ -1011,27 +1033,35 @@ impl GlyphRasterizer {
     /// id keeps keys stable across worker snapshots and after a local fallback
     /// release.
     fn ensure_bundled_cjk_fallback(&mut self) {
-        if !self.enable_fallbacks
-            || (self.script_run.language() != Some(TextLanguage::Japanese)
-                && self.run_companion.is_none())
+        #[cfg(not(any(feature = "bundled-fonts", test)))]
         {
             return;
         }
-        let fallbacks = self.fallbacks.get_or_insert_with(Vec::new);
-        if fallbacks
-            .iter()
-            .any(|fallback| fallback.id == BUNDLED_CJK_FONT_ID)
+
+        #[cfg(any(feature = "bundled-fonts", test))]
         {
-            return;
-        }
-        if let Some(record) = BUNDLED_CJK_RECORD
-            .get_or_init(|| {
-                FontRecord::from_static_bytes(BUNDLED_CJK_FONT_ID, BUNDLED_CJK_FONT)
-            })
-            .clone()
-        {
-            fallbacks.push(record);
-            self.resolved_codepoint_cache.clear();
+            if !self.enable_fallbacks
+                || (self.script_run.language() != Some(TextLanguage::Japanese)
+                    && self.run_companion.is_none())
+            {
+                return;
+            }
+            let fallbacks = self.fallbacks.get_or_insert_with(Vec::new);
+            if fallbacks
+                .iter()
+                .any(|fallback| fallback.id == BUNDLED_CJK_FONT_ID)
+            {
+                return;
+            }
+            if let Some(record) = BUNDLED_CJK_RECORD
+                .get_or_init(|| {
+                    FontRecord::from_static_bytes(BUNDLED_CJK_FONT_ID, BUNDLED_CJK_FONT)
+                })
+                .clone()
+            {
+                fallbacks.push(record);
+                self.resolved_codepoint_cache.clear();
+            }
         }
     }
 
@@ -1369,9 +1399,12 @@ impl GlyphRasterizer {
                     && fallback_script_for_font_id(*id).is_none()
                     && *id != BUNDLED_CJK_FONT_ID
             })
-            .chain(std::iter::once(self.primary.id))
+            .chain((self.primary.id < SYSTEM_FALLBACK_ID_BASE
+                && fallback_script_for_font_id(self.primary.id).is_none()
+                && self.primary.id != BUNDLED_CJK_FONT_ID)
+                .then_some(self.primary.id))
             .max()
-            .unwrap_or(self.primary.id)
+            .unwrap_or(0)
             .saturating_add(1)
     }
 
@@ -1485,7 +1518,7 @@ impl GlyphRasterizer {
 
     /// Returns the synthetic-stroke offset for a positioned glyph, including
     /// the regular-weight correction used by fallback scripts whose nominal
-    /// W400 cut is visibly lighter than the embedded Latin face.
+    /// W400 cut is visibly lighter than the primary Latin face.
     #[cfg(test)]
     pub(crate) fn synthetic_weight_offset_for_codepoint(
         &mut self,
@@ -1519,7 +1552,7 @@ impl GlyphRasterizer {
             )
         {
             // These system fallback families publish W400, but their regular
-            // outlines deposit less visual ink than the embedded Latin face.
+            // outlines deposit less visual ink than the primary Latin face.
             // Two bounded half-shifts balance the stroke without changing the
             // glyph's visual center or advance. The floor keeps the correction
             // visible at the small sizes used by UI text.
@@ -2789,7 +2822,7 @@ impl GlyphRasterizer {
     ) -> Option<FontId> {
         let base_char = cluster.chars().find(|codepoint| !codepoint.is_control())?;
         if family == FontFamily::SANS_SERIF {
-            // SANS_SERIF is the fixed embedded primary family. Re-entering the
+            // SANS_SERIF is the fixed primary family. Re-entering the
             // family-record selector here only repeats a primary cmap probe
             // before the same fallback-aware key path does it again.
             return Some(
@@ -3092,6 +3125,14 @@ mod tests {
     use crate::text_pipeline::text_layout::{layout_shaped_text, shape_text_styled};
 
     fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn runtime_font_ids_skip_a_system_primary_face() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        rasterizer.primary.id = SYSTEM_FALLBACK_ID_BASE;
+
+        assert_eq!(rasterizer.next_fallback_font_id(), 1);
+    }
 
     #[derive(Default)]
     struct HashWriteCounter {
@@ -5493,7 +5534,7 @@ mod tests {
             assert_ne!(
                 key.font_id,
                 rasterizer.primary_font_id(),
-                "U+{:04X} {} should use a Khmer fallback font, not the primary (Roboto)",
+                "U+{:04X} {} should use a Khmer fallback font, not the primary",
                 c as u32,
                 c
             );
@@ -5557,12 +5598,12 @@ mod tests {
             cluster.chars().count()
         );
 
-        // Each shaped glyph must use the Khmer fallback font (not Roboto primary).
+        // Each shaped glyph must use the Khmer fallback font (not the primary).
         for (key, _, _, _) in &shaped {
             assert_ne!(
                 key.font_id,
                 rasterizer.primary_font_id(),
-                "Khmer cluster glyph must use a fallback font, not primary (Roboto)"
+                "Khmer cluster glyph must use a fallback font, not the primary"
             );
         }
 

@@ -98,12 +98,12 @@ fn materialize_child_builder(
             actual: children.len(),
         });
     }
-    Ok(children
+    children
         .pop()
         .ok_or(crate::portable::PortableMaterializeError::InvalidChildCount {
             expected: 1,
             actual: 0,
-        })?)
+        })
 }
 
 /// Where a [`ChildBuilder`] gets its subtree from.
@@ -383,7 +383,7 @@ impl VisitorElement for RetainedChildElement {
     fn element_type_id(&self) -> TypeId {
         self.child()
             .map(VisitorElement::element_type_id)
-            .unwrap_or_else(|| TypeId::of::<Self>())
+            .unwrap_or_else(TypeId::of::<Self>)
     }
 
     fn reconciliation_key(&self) -> Option<&Key> {
@@ -402,6 +402,13 @@ impl VisitorElement for RetainedChildElement {
 }
 
 impl LayoutElement for RetainedChildElement {
+    #[inline]
+    fn is_layout_stable(&self) -> bool {
+        self.child()
+            .map(LayoutElement::is_layout_stable)
+            .unwrap_or(false)
+    }
+
     fn pos(&self) -> Option<Vec2d> {
         self.child().and_then(LayoutElement::pos)
     }
@@ -521,6 +528,20 @@ impl Drawable for RetainedChildElement {
     fn draw(&self, ctx: &BuildContext) {
         if let Some(child) = self.child() {
             child.draw(ctx);
+        }
+    }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        if let Some(child) = self.child() {
+            child.paint(ctx);
+        }
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        if let Some(child) = self.child() {
+            child.sync_paint_geometry(ctx);
         }
     }
 

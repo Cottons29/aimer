@@ -22,6 +22,8 @@ use super::state_slots::{
     StateSlotReadGuard, StateSlotResolutionError, StateStorage, StateUpdaterGeneration,
 };
 use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+use crate::paint_isolated::{PaintCache, PaintContract};
 use crate::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
     VisitorElement, Widget,
@@ -630,9 +632,7 @@ impl<S: 'static> StateUpdater<S> {
                     return None;
                 }
                 // Safety: the native rendering pipeline is single-threaded.
-                if unsafe { (&*inner.state.0.get()).as_ref() }.is_none() {
-                    return None;
-                }
+                unsafe { (&*inner.state.0.get()).as_ref() }?;
                 inner.tx.push(Box::new(mutation));
                 if inner.dirty_source.mark() {
                     #[cfg(not(aimer_portable_guest))]
@@ -965,6 +965,8 @@ pub struct StatefulElement {
     /// not touch a state cell that reconciliation has already consumed.
     failed: Rc<Cell<bool>>,
     failure: Rc<FailureState>,
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+    paint_cache: PaintCache,
 }
 
 impl StatefulElement {
@@ -1069,6 +1071,8 @@ impl StatefulElement {
                     adopt_config_fn: SyncAdoptConfigFn(UnsafeCell::new(live.adopt_config_fn)),
                     failed: live.failed,
                     failure: live.failure,
+                    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+                    paint_cache: PaintCache::default(),
                 };
                 let updater = element
                     .state_updater()
@@ -1238,6 +1242,8 @@ impl StatefulElement {
             adopt_config_fn: SyncAdoptConfigFn(UnsafeCell::new(adopt_config_fn)),
             failed,
             failure,
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+            paint_cache: PaintCache::default(),
         };
 
         let element = if KeyedStateScope::is_active() {
@@ -2020,7 +2026,39 @@ impl Drawable for StatefulElement {
         self.rebuild_if_dirty(ctx);
         // Safety: single-threaded rendering pipeline
         let child = unsafe { &*self.child.0.get() };
+
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+        {
+            if !crate::inspector_overlay::is_enabled() {
+                child.sync_paint_geometry(ctx);
+                if let Some(key) = PaintContract::new(
+                    ctx,
+                    child.content_size(ctx),
+                    self.rebuild_generation.get(),
+                ) && self.paint_cache.paint_or_replay(ctx, child, key)
+                {
+                    return;
+                }
+            }
+            self.paint_cache.clear_for_live_paint();
+        }
+
         child.draw(ctx);
+    }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        // Stateful elements are cache owners, not transparent retained
+        // children. If an outer recording reaches one, it must not trigger a
+        // rebuild or recursively create a second retained layer.
+        let child = unsafe { &*self.child.0.get() };
+        child.paint(ctx);
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let child = unsafe { &*self.child.0.get() };
+        child.sync_paint_geometry(ctx);
     }
 }
 
@@ -2175,6 +2213,165 @@ mod tests {
     impl LayoutElement for TestLeaf {}
     impl EventElement for TestLeaf {}
     impl Rebuildable for TestLeaf {}
+
+    #[allow(dead_code)]
+    struct PaintCountWidget {
+        draws: Rc<Cell<usize>>,
+        paints: Rc<Cell<usize>>,
+    }
+
+    #[allow(dead_code)]
+    struct PaintCountElement {
+        draws: Rc<Cell<usize>>,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl Widget for PaintCountWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            PaintCountElement {
+                draws: self.draws,
+                paints: self.paints,
+            }
+            .boxed()
+        }
+    }
+
+    impl crate::widget::PortableWidget for PaintCountWidget {}
+
+    impl VisitorElement for PaintCountElement {
+        fn debug_name(&self) -> &'static str {
+            "PaintCountElement"
+        }
+    }
+
+    impl Drawable for PaintCountElement {
+        fn draw(&self, ctx: &BuildContext) {
+            self.draws.set(self.draws.get() + 1);
+            ctx.canvas.fill_rect(
+                Vec2d::ZERO,
+                ResolvedSize {
+                    width: 8.0,
+                    height: 8.0,
+                },
+            );
+        }
+
+        fn paint(&self, ctx: &BuildContext) {
+            self.paints.set(self.paints.get() + 1);
+            ctx.canvas.fill_rect(
+                Vec2d::ZERO,
+                ResolvedSize {
+                    width: 8.0,
+                    height: 8.0,
+                },
+            );
+        }
+
+        fn is_paint_stable(&self) -> bool {
+            true
+        }
+    }
+
+    impl LayoutElement for PaintCountElement {
+        fn is_layout_stable(&self) -> bool {
+            true
+        }
+    }
+
+    impl EventElement for PaintCountElement {}
+    impl Rebuildable for PaintCountElement {}
+
+    #[allow(dead_code)]
+    struct PaintCountState {
+        draws: Rc<Cell<usize>>,
+        paints: Rc<Cell<usize>>,
+    }
+
+    #[allow(dead_code)]
+    struct PaintCountStateful {
+        draws: Rc<Cell<usize>>,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl StatefulWidget for PaintCountStateful {
+        type State = PaintCountState;
+
+        fn create_state(self) -> Self::State {
+            PaintCountState {
+                draws: self.draws,
+                paints: self.paints,
+            }
+        }
+    }
+
+    impl State<PaintCountStateful> for PaintCountState {
+        fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            PaintCountWidget {
+                draws: self.draws.clone(),
+                paints: self.paints.clone(),
+            }
+        }
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+    #[test]
+    fn a_clean_stateful_frame_replays_paint_without_redrawing_the_child() {
+        let ctx = dummy_build_context();
+        let draws = Rc::new(Cell::new(0));
+        let paints = Rc::new(Cell::new(0));
+        let (element, _updater) = StatefulElement::new(
+            PaintCountStateful {
+                draws: draws.clone(),
+                paints: paints.clone(),
+            },
+            &ctx,
+        );
+        let element = element.boxed();
+
+        ctx.canvas.begin_frame();
+        element.draw(&ctx);
+        let first_commands = ctx.canvas.get_inner_canvas().take_draw_list().stats().commands;
+
+        ctx.canvas.begin_frame();
+        element.draw(&ctx);
+        let second_commands = ctx.canvas.get_inner_canvas().take_draw_list().stats().commands;
+
+        assert_eq!(draws.get(), 0);
+        assert!(paints.get() >= 1);
+        assert_eq!(first_commands, second_commands);
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+    #[test]
+    fn a_stateful_update_re_records_only_the_changed_paint() {
+        let ctx = dummy_build_context();
+        let draws = Rc::new(Cell::new(0));
+        let paints = Rc::new(Cell::new(0));
+        let (element, updater) = StatefulElement::new(
+            PaintCountStateful {
+                draws: draws.clone(),
+                paints: paints.clone(),
+            },
+            &ctx,
+        );
+        let element = element.boxed();
+
+        ctx.canvas.begin_frame();
+        element.draw(&ctx);
+        let first_commands = ctx.canvas.get_inner_canvas().take_draw_list().stats().commands;
+
+        updater.set_state(|_| {});
+
+        ctx.canvas.begin_frame();
+        element.draw(&ctx);
+        let second_commands = ctx.canvas.get_inner_canvas().take_draw_list().stats().commands;
+
+        assert_eq!(draws.get(), 0);
+        assert!(paints.get() >= 2);
+        assert_eq!(first_commands, second_commands);
+    }
 
     struct RebuildCountLeaf {
         rebuilds: Rc<Cell<usize>>,

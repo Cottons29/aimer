@@ -18,7 +18,7 @@ use std::sync::mpsc::{Receiver, RecvError, SyncSender, sync_channel};
 use std::thread::JoinHandle;
 
 use aimer_cupid::draw_cmd::DrawList;
-use aimer_cupid::frame::Frame;
+use aimer_cupid::frame::{Frame, FramePacket};
 use winit::dpi::PhysicalSize;
 
 /// The GPU-facing half of a frame's lifetime, as the raster thread sees it.
@@ -39,13 +39,23 @@ pub trait FramePresenter: Send {
     /// Returns `false` when the surface texture could not be acquired, which the
     /// caller reports back so the UI thread can schedule another redraw.
     fn present(&mut self, frame: &Frame) -> bool;
+
+    /// Encode a frame packet and present it.
+    ///
+    /// Presenters that understand retained targets may use the packet's damage
+    /// metadata. Existing presenters remain correct through the full-frame
+    /// compatibility implementation.
+    #[inline]
+    fn present_packet(&mut self, packet: &FramePacket) -> bool {
+        self.present(packet.frame())
+    }
 }
 
 /// What the UI thread sends to the raster thread.
 ///
 /// Frames and resizes share one channel precisely so they stay ordered.
 enum RasterMessage {
-    Frame(Frame),
+    Frame(FramePacket),
     Resize(PhysicalSize<u32>),
 }
 
@@ -91,11 +101,11 @@ impl RasterThread {
                 loop {
                     match inbox.recv() {
                         Ok(RasterMessage::Resize(size)) => presenter.resize(size),
-                        Ok(RasterMessage::Frame(frame)) => {
-                            let presented = presenter.present(&frame);
+                        Ok(RasterMessage::Frame(packet)) => {
+                            let presented = presenter.present_packet(&packet);
                             // Hand the buffer back before reporting, so the next
                             // frame the UI thread builds can already reuse it.
-                            let _ = recycle_tx.send(frame.into_draw_list());
+                            let _ = recycle_tx.send(packet.into_frame().into_draw_list());
                             on_present(presented);
                         }
                         // The handle was dropped: every queued message has been
@@ -119,9 +129,14 @@ impl RasterThread {
     /// [`RasterThread`]. Returns `false` only if the worker has gone away, in
     /// which case the frame is dropped.
     pub fn submit(&self, frame: Frame) -> bool {
+        self.submit_packet(FramePacket::full(frame))
+    }
+
+    /// Queue a frame packet for presentation.
+    pub fn submit_packet(&self, packet: FramePacket) -> bool {
         self.messages
             .as_ref()
-            .is_some_and(|messages| messages.send(RasterMessage::Frame(frame)).is_ok())
+            .is_some_and(|messages| messages.send(RasterMessage::Frame(packet)).is_ok())
     }
 
     /// Queue a surface reconfiguration, ordered against the frame stream.
@@ -160,6 +175,8 @@ mod tests {
     use std::sync::mpsc::channel;
     use std::sync::{Arc, Mutex};
 
+    use aimer_cupid::damage_region::{DamageRect, DamageSet};
+    use aimer_cupid::frame::FrameRenderMetadata;
     use aimer_cupid::utilities::{Color, Rect};
 
     use super::*;
@@ -190,6 +207,25 @@ mod tests {
                 .unwrap()
                 .push(Seen::Frame(frame.width, frame.height));
             self.succeed
+        }
+    }
+
+    struct PacketRecordingPresenter {
+        partial_packets: Arc<AtomicUsize>,
+    }
+
+    impl FramePresenter for PacketRecordingPresenter {
+        fn resize(&mut self, _size: PhysicalSize<u32>) {}
+
+        fn present(&mut self, _frame: &Frame) -> bool {
+            true
+        }
+
+        fn present_packet(&mut self, packet: &FramePacket) -> bool {
+            if !packet.metadata().damage().is_full() {
+                self.partial_packets.fetch_add(1, Ordering::AcqRel);
+            }
+            true
         }
     }
 
@@ -225,6 +261,28 @@ mod tests {
             .take_recycled()
             .expect("the presented buffer should be returned");
         assert_eq!(recycled.commands().len(), 1);
+    }
+
+    #[test]
+    fn a_submitted_packet_preserves_partial_damage_for_the_presenter() {
+        let partial_packets = Arc::new(AtomicUsize::new(0));
+        let (done, presented) = channel();
+        let raster = RasterThread::spawn(
+            PacketRecordingPresenter {
+                partial_packets: partial_packets.clone(),
+            },
+            move |ok| done.send(ok).unwrap(),
+        );
+
+        let mut damage = DamageSet::new(16, 16);
+        damage.add(DamageRect::new(2, 3, 4, 5));
+        let packet = FramePacket::new(
+            frame(16, 16),
+            FrameRenderMetadata::new(1.0, 1, 1, 1, 1, damage),
+        );
+        assert!(raster.submit_packet(packet));
+        assert!(presented.recv().unwrap());
+        assert_eq!(partial_packets.load(Ordering::Acquire), 1);
     }
 
     #[test]

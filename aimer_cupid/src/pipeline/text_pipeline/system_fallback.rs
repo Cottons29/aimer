@@ -330,6 +330,66 @@ pub(crate) fn fallback_by_id(font_id: FontId) -> Option<FontRecord> {
     STORE.read().ok()?.record_by_id(font_id).cloned()
 }
 
+/// Resolves the generic sans-serif face without embedding a font in the
+/// application binary.
+///
+/// Apple uses its language-aware Core Text cascade. Other desktop targets use
+/// the existing on-disk font discovery path, which maps only the selected face
+/// and keeps the mapping shared with later fallback lookups.
+pub(crate) fn system_primary_font() -> Option<FontRecord> {
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
+    {
+        return fallback_for_codepoint('A', ScriptRequirement::EMPTY, REGULAR_WEIGHT)
+            .filter(|record| record.glyph_index('A').is_some_and(|glyph_id| glyph_id != 0));
+    }
+
+    #[cfg(not(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    )))]
+    {
+        crate::text_pipeline::font_resolver::system_primary_font()
+    }
+}
+
+/// Resolves the generic monospace face from the host font catalogue.
+pub(crate) fn system_monospace_font(font_id: FontId) -> Option<FontRecord> {
+    #[cfg(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    ))]
+    {
+        use crate::text_pipeline::apple_fonts::system_font_path;
+
+        for family in ["SF Mono", "Menlo", "Monaco", "Courier New"] {
+            let Some(path) = system_font_path(family) else {
+                continue;
+            };
+            let Some(record) = FontRecord::from_file(font_id, path, 0) else {
+                continue;
+            };
+            if ['M', 'i', '0']
+                .iter()
+                .all(|&codepoint| record.glyph_index(codepoint).is_some_and(|id| id != 0))
+            {
+                return Some(record);
+            }
+        }
+        None
+    }
+
+    #[cfg(not(all(
+        any(target_os = "ios", target_os = "macos"),
+        feature = "apple-core-text"
+    )))]
+    {
+        crate::text_pipeline::font_resolver::system_monospace_font(font_id)
+    }
+}
+
 /// Sample characters that a face serving `codepoint`'s script should cover.
 ///
 /// Asking the platform about a single character is not enough to choose a

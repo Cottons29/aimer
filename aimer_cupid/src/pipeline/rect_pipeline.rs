@@ -60,6 +60,7 @@ impl RectInstance {
 
 pub struct RectPipeline {
     pipeline: wgpu::RenderPipeline,
+    clear_pipeline: wgpu::RenderPipeline,
     viewport_buffer: wgpu::Buffer,
     viewport_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
@@ -166,6 +167,39 @@ impl RectPipeline {
             cache: pipeline_cache,
         });
 
+        // A partial repaint first clears its damaged pixels while preserving
+        // the rest of the persistent target. The ordinary rect pipeline uses
+        // alpha blending, so a transparent rect would be a no-op; this twin
+        // pipeline writes the same transparent fragment with replacement.
+        let clear_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rect clear pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Some(RectInstance::layout())],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: crate::pipeline::multisample_state(antialiasing),
+            multiview_mask: None,
+            cache: pipeline_cache,
+        });
+
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("rect instance buffer"),
             size: (Self::INITIAL_CAPACITY * size_of::<RectInstance>()) as u64,
@@ -175,6 +209,7 @@ impl RectPipeline {
 
         Self {
             pipeline,
+            clear_pipeline,
             viewport_buffer,
             viewport_bind_group,
             instance_buffer,
@@ -274,6 +309,29 @@ impl RectPipeline {
 
         let byte_offset = (self.frame_instance_offset * size_of::<RectInstance>()) as u64;
         pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.viewport_bind_group, &[]);
+        pass.set_vertex_buffer(0, self.instance_buffer.slice(byte_offset..));
+        pass.draw(0..6, 0..pending as u32);
+
+        self.frame_instance_offset = self.instances.len();
+    }
+
+    /// Records a replacement draw for the pending transparent rects. The
+    /// caller must set a scissor covering the damage before invoking this
+    /// method; the same instance buffer is then reused by the normal blended
+    /// pipeline for the scene replay.
+    pub fn flush_clear(&mut self, pass: &mut wgpu::RenderPass<'_>) {
+        let pending = self.instances.len() - self.frame_instance_offset;
+        if pending == 0 {
+            return;
+        }
+        debug_assert!(
+            self.instances.len() <= self.instance_policy.capacity(),
+            "begin_frame must be told the clear rect plus frame rect count"
+        );
+
+        let byte_offset = (self.frame_instance_offset * size_of::<RectInstance>()) as u64;
+        pass.set_pipeline(&self.clear_pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
         pass.set_vertex_buffer(0, self.instance_buffer.slice(byte_offset..));
         pass.draw(0..6, 0..pending as u32);

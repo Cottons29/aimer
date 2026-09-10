@@ -54,6 +54,8 @@ impl<T: Widget + 'static> Widget for FadeTransition<T> {
             child,
             controller,
             animating,
+            damage: aimer_widget::PaintDamageTracker::new(),
+            last_value: Cell::new(None),
         }
         .boxed()
     }
@@ -65,6 +67,8 @@ macro_rules! impl_transition_element {
             child: AnyElement,
             controller: AnimationController,
             animating: Cell<bool>,
+            damage: aimer_widget::PaintDamageTracker,
+            last_value: Cell<Option<u32>>,
         }
 
         unsafe impl Send for $name {}
@@ -81,6 +85,17 @@ macro_rules! impl_transition_element {
 
                 ctx.canvas.save();
                 $apply(ctx, curved_value);
+                let visual_changed = crate::widgets::damage::sample_changed(
+                    &self.last_value,
+                    curved_value,
+                );
+                crate::widgets::damage::mark_bounded_animation_damage(
+                    &self.damage,
+                    ctx,
+                    self.child.as_ref(),
+                    curved_value,
+                    visual_changed,
+                );
                 self.child.draw(ctx);
                 ctx.canvas.restore();
 
@@ -194,6 +209,8 @@ impl<T: Widget + 'static> Widget for SlideTransition<T> {
             controller,
             animating,
             offset,
+            damage: aimer_widget::PaintDamageTracker::new(),
+            last_value: Cell::new(None),
         }
         .boxed()
     }
@@ -204,6 +221,8 @@ struct SlideTransitionElement {
     controller: AnimationController,
     animating: Cell<bool>,
     offset: (f32, f32),
+    damage: aimer_widget::PaintDamageTracker,
+    last_value: Cell<Option<u32>>,
 }
 
 unsafe impl Send for SlideTransitionElement {}
@@ -226,6 +245,14 @@ impl Drawable for SlideTransitionElement {
 
         ctx.canvas.save();
         ctx.canvas.translate((dx, dy).into());
+        let visual_changed = crate::widgets::damage::sample_changed(&self.last_value, curved_value);
+        crate::widgets::damage::mark_bounded_animation_damage(
+            &self.damage,
+            ctx,
+            self.child.as_ref(),
+            curved_value,
+            visual_changed,
+        );
         self.child.draw(ctx);
         ctx.canvas.restore();
 
@@ -318,6 +345,8 @@ impl<T: Widget + 'static> Widget for ScaleTransition<T> {
             child,
             controller,
             animating,
+            damage: aimer_widget::PaintDamageTracker::new(),
+            last_value: Cell::new(None),
         }
         .boxed()
     }
@@ -327,6 +356,8 @@ struct ScaleTransitionElement {
     child: AnyElement,
     controller: AnimationController,
     animating: Cell<bool>,
+    damage: aimer_widget::PaintDamageTracker,
+    last_value: Cell<Option<u32>>,
 }
 
 unsafe impl Send for ScaleTransitionElement {}
@@ -348,6 +379,14 @@ impl Drawable for ScaleTransitionElement {
         ctx.canvas.translate((cx, cy).into());
         ctx.canvas.scale(curved_value, curved_value);
         ctx.canvas.translate((-cx, -cy).into());
+        let visual_changed = crate::widgets::damage::sample_changed(&self.last_value, curved_value);
+        crate::widgets::damage::mark_bounded_animation_damage(
+            &self.damage,
+            ctx,
+            self.child.as_ref(),
+            curved_value,
+            visual_changed,
+        );
         self.child.draw(ctx);
         ctx.canvas.restore();
 
@@ -441,6 +480,8 @@ impl<T: Widget + 'static> Widget for RotationTransition<T> {
             child,
             controller,
             animating,
+            damage: aimer_widget::PaintDamageTracker::new(),
+            last_value: Cell::new(None),
         }
         .boxed()
     }
@@ -450,6 +491,8 @@ struct RotationTransitionElement {
     child: AnyElement,
     controller: AnimationController,
     animating: Cell<bool>,
+    damage: aimer_widget::PaintDamageTracker,
+    last_value: Cell<Option<u32>>,
 }
 
 unsafe impl Send for RotationTransitionElement {}
@@ -473,6 +516,14 @@ impl Drawable for RotationTransitionElement {
         ctx.canvas.translate((cx, cy).into());
         ctx.canvas.rotate(angle);
         ctx.canvas.translate((-cx, -cy).into());
+        let visual_changed = crate::widgets::damage::sample_changed(&self.last_value, curved_value);
+        crate::widgets::damage::mark_bounded_animation_damage(
+            &self.damage,
+            ctx,
+            self.child.as_ref(),
+            curved_value,
+            visual_changed,
+        );
         self.child.draw(ctx);
         ctx.canvas.restore();
 

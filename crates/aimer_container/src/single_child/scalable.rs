@@ -125,12 +125,27 @@ impl Drawable for RawScalable {
     }
 
     #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        self.child.paint(&self.child_context(ctx));
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.child.sync_paint_geometry(&self.child_context(ctx));
+    }
+
+    #[inline]
     fn is_paint_stable(&self) -> bool {
         self.child.is_paint_stable()
     }
 }
 
 impl LayoutElement for RawScalable {
+    #[inline]
+    fn is_layout_stable(&self) -> bool {
+        self.child.is_layout_stable()
+    }
+
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.child.computed_size(&self.child_context(ctx))
     }

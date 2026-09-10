@@ -1,4 +1,6 @@
 pub mod custom_pipeline;
+#[doc(hidden)]
+pub mod damage_region;
 pub mod draw_cmd;
 pub mod font;
 pub mod frame;
@@ -52,7 +54,9 @@ mod deferred_frame_uploads {
 
     use std::sync::Arc;
 
+    use crate::damage_region::{DamageRect, DamageSet};
     use crate::draw_cmd::{DrawList, RetainedLayerContent};
+    use crate::frame::FrameRenderMetadata;
     use crate::pipeline::material::{MaterialKind, MaterialRequest, MATERIAL_PIPELINE_NAME};
     use crate::renderer::Renderer;
     use crate::utilities::{Color, Rect};
@@ -126,6 +130,11 @@ mod deferred_frame_uploads {
             renderer.render(device, queue, &view, SIZE, SIZE, false, draw);
         }
 
+        read_target(device, queue, &target)
+    }
+
+    /// Reads an offscreen RGBA8 target after the submitted work completes.
+    fn read_target(device: &wgpu::Device, queue: &wgpu::Queue, target: &wgpu::Texture) -> Vec<u8> {
         // SIZE * 4 = 256 bytes per row, which happens to satisfy wgpu's row
         // alignment requirement for texture-to-buffer copies.
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
@@ -171,6 +180,27 @@ mod deferred_frame_uploads {
             .to_vec();
         readback.unmap();
         pixels
+    }
+
+    fn solid_frame(background: Color, patch: Option<(Rect, Color)>) -> DrawList {
+        let mut draw = DrawList::new();
+        draw.fill_rect(
+            Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            background,
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        if let Some((rect, color)) = patch {
+            draw.fill_rect(
+                rect,
+                color,
+                [0.0; 4],
+                [0.0; 4],
+                Color::transparent(),
+            );
+        }
+        draw
     }
 
     fn material_frame(background: Color) -> DrawList {
@@ -511,6 +541,66 @@ mod deferred_frame_uploads {
         assert_dominant(&second, 16, 16, 0, "composited retained layer position");
         assert_eq!(renderer.memory_stats().retained_layer_count, 1);
         assert_eq!(pixel(&second, 8, 8)[3], 0, "the layer should have moved");
+    }
+
+    #[test]
+    fn partial_damage_repaints_the_region_and_preserves_the_persistent_target() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut renderer = Renderer::new(&device, FORMAT);
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("partial damage regression target"),
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&Default::default());
+
+        let first_frame = solid_frame(Color::red(), None);
+        renderer.render_frame_with_metadata(
+            &device,
+            &queue,
+            &view,
+            SIZE,
+            SIZE,
+            false,
+            &first_frame,
+            &FrameRenderMetadata::full(SIZE, SIZE),
+        );
+        let first = read_target(&device, &queue, &target);
+        assert_dominant(&first, 2, 2, 0, "persistent target baseline");
+
+        let second_frame = solid_frame(
+            Color::red(),
+            Some((Rect::new(8.0, 8.0, 8.0, 8.0), Color::blue())),
+        );
+        let mut damage = DamageSet::new(SIZE, SIZE);
+        damage.add(DamageRect::new(6, 6, 12, 12));
+        let metadata = FrameRenderMetadata::new(1.0, 0, 0, 0, 0, damage);
+        renderer.render_frame_with_metadata(
+            &device,
+            &queue,
+            &view,
+            SIZE,
+            SIZE,
+            false,
+            &second_frame,
+            &metadata,
+        );
+        let second = read_target(&device, &queue, &target);
+
+        assert_dominant(&second, 2, 2, 0, "undamaged persistent pixels");
+        assert_dominant(&second, 10, 10, 2, "repainted damaged pixels");
     }
 
     #[test]

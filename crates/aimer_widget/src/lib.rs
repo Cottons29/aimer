@@ -15,6 +15,9 @@ pub mod reconcile;
 mod reconciliation_plan;
 mod frame_work_stats;
 mod rebuild_stats;
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+mod paint_isolated;
+mod paint_damage;
 pub mod safe_area;
 mod widget;
 pub mod window_metrics;
@@ -131,8 +134,12 @@ pub use crate::components::diagnostics::{
 pub use crate::components::drawable::Drawable;
 pub use crate::components::element::{
     Element, ElementId, ElementPath, EventDispatchContext, EventDispatcher, begin_event_frame,
-    element_tree_generation, layout_invalidation_generation, rebuild_invalidation_generation,
+    begin_paint_frame, element_tree_generation, layout_invalidation_generation,
+    mark_paint_damage, mark_paint_damage_full, rebuild_invalidation_generation,
+    take_paint_frame_damage,
 };
+#[doc(hidden)]
+pub use crate::paint_damage::PaintDamageTracker;
 pub use crate::rebuild_stats::RebuildStats;
 pub use crate::frame_work_stats::FrameWorkStats;
 pub use crate::frame_work_stats::{

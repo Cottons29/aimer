@@ -79,6 +79,12 @@ apple-core-text = [
     "aimer_canvas/apple-core-text",
     "aimer_text/apple-core-text",
 ]
+# Opt into the checked-in Google Sans, JetBrains Mono, and CJK faces. By
+# default Cupid resolves host fonts and keeps these assets out of app binaries.
+bundled-fonts = [
+    "aimer_cupid/bundled-fonts",
+    "aimer_assets/bundled-fonts",
+]
 # Benchmark control: compare the release flex path with its scalar kernel.
 force-scalar = ["aimer_flex/force-scalar"]
 # Present frames from a dedicated raster thread. Off by default — see the

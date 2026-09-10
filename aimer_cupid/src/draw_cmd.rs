@@ -440,6 +440,24 @@ pub struct RetainedDrawList {
     texture_ids: Box<[TextureId]>,
 }
 
+impl Clone for RetainedDrawList {
+    fn clone(&self) -> Self {
+        Self {
+            commands: self
+                .commands
+                .iter()
+                .map(|command| {
+                    command
+                        .clone_for_retention()
+                        .expect("retained draw lists contain only cloneable commands")
+                })
+                .collect(),
+            texture_registry: self.texture_registry.clone(),
+            texture_ids: self.texture_ids.clone(),
+        }
+    }
+}
+
 impl RetainedDrawList {
     fn from_draw_list(draw_list: &DrawList) -> Option<Self> {
         let mut transform_depth = 0_usize;
