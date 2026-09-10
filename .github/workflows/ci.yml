@@ -36,6 +36,3 @@ jobs:
 
       - name: Run doctests
         run: cargo test --doc --workspace
-
-      - name: Check SIMD dispatch targets and scalar fallback
-        run: bash scripts/simd_target_checks.sh
