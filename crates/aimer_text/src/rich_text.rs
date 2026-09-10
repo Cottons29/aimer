@@ -1660,7 +1660,12 @@ impl Drawable for RawRichText {
         let geometry_state = self.geometry();
         slot.stamp();
         let layout = self.paragraph.prepare(ctx);
-        let paint_mode = self.paragraph.static_paint_mode();
+        // Selectable text must stay on the live paint path. Besides painting
+        // the selection overlay, this keeps its source-bearing text commands
+        // in the current draw list instead of hiding them in a retained layer.
+        let paint_mode = (!self.selectable)
+            .then(|| self.paragraph.static_paint_mode())
+            .flatten();
         let shared_layout = layout.aimer_interaction.clone();
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         let transform = ctx.canvas.get_transform();

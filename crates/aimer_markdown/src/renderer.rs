@@ -1021,6 +1021,7 @@ mod tests {
             .collect::<String>();
 
         assert!(text.contains("rust"));
+        eprintln!("{}", text);
         assert!(text.contains("fn main() {}"));
     }
 
