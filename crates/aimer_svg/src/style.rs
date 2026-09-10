@@ -28,8 +28,8 @@ impl SvgStyle {
         self
     }
 
-    pub const fn stroke(mut self, stroke: SvgColor) -> Self {
-        self.stroke = Some(Some(stroke));
+    pub fn stroke(mut self, stroke: impl Into<SvgColor>) -> Self {
+        self.stroke = Some(Some(stroke.into()));
         self
     }
 

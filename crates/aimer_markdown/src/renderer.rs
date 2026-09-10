@@ -109,7 +109,7 @@ fn build_code_header(value: &str, language: Option<&str>, theme: &MarkdownTheme)
                             .horizontal_alignment(BoxAlignment::Center)
                             .children([Svg::new(document).width(20.0).height(20.0).style(
                                 "path",
-                                SvgStyle::new().stroke(theme.code_block.color.into()),
+                                SvgStyle::new().stroke(theme.code_block.color),
                             )]),
                     ),
             )

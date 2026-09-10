@@ -167,7 +167,7 @@ cargo test -p aimer_animation test_curve_linear
 cargo test -p aimer_animation
 
 # Entire workspace (use when the change scope warrants it)
-cargo test --workspace --all-features
+cargo test --workspace
 ```
 
 Before handing off:

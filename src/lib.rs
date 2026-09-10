@@ -2,6 +2,7 @@ extern crate self as aimer;
 
 pub use aimer_accessibility as accessibility;
 pub use aimer_canvas as canvas;
+pub use aimer_collapsible as collapsible;
 pub use aimer_cupid as cupid;
 pub use aimer_data_view as data_view;
 pub use aimer_feedback as feedback;
@@ -37,6 +38,7 @@ pub use aimer_attribute::position::Vec2d;
 pub use aimer_attribute::size::{ResolvedSize, Size};
 pub use aimer_color::prelude::*;
 pub use aimer_container::*;
+pub use aimer_collapsible::{CollapsibleList, ListBody, ListHeader};
 pub use aimer_ctxmenu::{
     ContextMenu, ContextMenuDismiss, ContextMenuItem, ContextMenuRows, ContextMenuShape,
     ContextMenuStyle,
@@ -140,6 +142,8 @@ mod public_api_tests {
         assert_reachable::<crate::dnd::AutoScroller>();
         assert_reachable::<crate::dnd::FileDropPolicy>();
         assert_reachable::<crate::dnd::ReorderableList<u64>>();
+        assert_reachable::<crate::collapsible::ListHeader>();
+        assert_reachable::<crate::CollapsibleList>();
     }
 
     #[cfg(feature = "svg")]

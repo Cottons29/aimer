@@ -445,11 +445,12 @@ impl LayoutElement for ScaleTransitionElement {
 // RotationTransition
 // ---------------------------------------------------------------------------
 
-/// Animates rotation (in full turns) for its child based on the controller's
-/// value.
+/// Animates rotation for its child based on the controller's value.
 ///
-/// At value 0.0 the child is at 0 rotation; at 1.0 it has completed one full
-/// turn (2π radians).
+/// By default, a controller value of 0.0 means 0 turns and a value of 1.0
+/// means one full turn (2π radians). Use [`Self::turn_range`] when the
+/// transition should cover a different range, such as a disclosure chevron's
+/// 0.0 to -0.25 turns.
 #[derive(aimer_macro::PortableWidget)]
 #[portable_widget(
     id = "aimer_animation::RotationTransition",
@@ -459,6 +460,10 @@ impl LayoutElement for ScaleTransitionElement {
 pub struct RotationTransition<T: Widget + 'static> {
     #[portable_skip]
     pub turns: AnimationController,
+    #[portable_skip]
+    begin_turns: f32,
+    #[portable_skip]
+    end_turns: f32,
     #[portable_child]
     pub child: T,
 }
@@ -467,7 +472,25 @@ impl<T: Widget> RotationTransition<T> {
     /// Creates a centered rotation transition without starting or resetting
     /// `turns`.
     pub fn new(turns: AnimationController, child: T) -> Self {
-        Self { turns, child }
+        Self {
+            turns,
+            begin_turns: 0.0,
+            end_turns: 1.0,
+            child,
+        }
+    }
+
+    /// Sets the rotation range, in full turns, represented by controller
+    /// values 0.0 and 1.0.
+    ///
+    /// Negative values rotate counterclockwise. For example,
+    /// `turn_range(0.0, -0.25)` rotates a child 90° counterclockwise as the
+    /// controller advances.
+    #[inline]
+    pub fn turn_range(mut self, begin_turns: f32, end_turns: f32) -> Self {
+        self.begin_turns = begin_turns;
+        self.end_turns = end_turns;
+        self
     }
 }
 
@@ -479,6 +502,8 @@ impl<T: Widget + 'static> Widget for RotationTransition<T> {
         RotationTransitionElement {
             child,
             controller,
+            begin_turns: self.begin_turns,
+            end_turns: self.end_turns,
             animating,
             damage: aimer_widget::PaintDamageTracker::new(),
             last_value: Cell::new(None),
@@ -490,6 +515,8 @@ impl<T: Widget + 'static> Widget for RotationTransition<T> {
 struct RotationTransitionElement {
     child: AnyElement,
     controller: AnimationController,
+    begin_turns: f32,
+    end_turns: f32,
     animating: Cell<bool>,
     damage: aimer_widget::PaintDamageTracker,
     last_value: Cell<Option<u32>>,
@@ -507,8 +534,9 @@ impl Drawable for RotationTransitionElement {
             v
         };
 
-        // Convert turns to radians: 1.0 turn = 2π radians
-        let angle = curved_value * std::f32::consts::TAU;
+        // Convert the configured turn range to radians: 1.0 turn = 2π radians.
+        let turns = interpolate_turns(self.begin_turns, self.end_turns, curved_value);
+        let angle = turns * std::f32::consts::TAU;
         let cx = ctx.box_constraint.max_width / 2.0;
         let cy = ctx.box_constraint.max_height / 2.0;
 
@@ -531,6 +559,11 @@ impl Drawable for RotationTransitionElement {
             request_next_frame();
         }
     }
+}
+
+#[inline]
+fn interpolate_turns(begin_turns: f32, end_turns: f32, progress: f32) -> f32 {
+    begin_turns + (end_turns - begin_turns) * progress
 }
 
 impl VisitorElement for RotationTransitionElement {
@@ -674,6 +707,13 @@ mod tests {
         let controller = AnimationController::with_millis(100, Curve::Linear);
         controller.forward_from_first_tick();
         controller
+    }
+
+    #[test]
+    fn rotation_transition_interpolates_a_custom_turn_range() {
+        assert_eq!(interpolate_turns(0.0, -0.25, 0.0), 0.0);
+        assert_eq!(interpolate_turns(0.0, -0.25, 0.5), -0.125);
+        assert_eq!(interpolate_turns(0.0, -0.25, 1.0), -0.25);
     }
 
     fn assert_defers_next_frame(widget: impl Widget + 'static) {

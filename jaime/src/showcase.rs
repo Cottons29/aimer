@@ -10,6 +10,7 @@ use crate::animated_theme::AnimatedThemeExample;
 use crate::assets_media_example::assets_media_example;
 use crate::async_builder::async_builder_example;
 use crate::color_sync::ColorSync;
+use crate::collapsible_list_example::collapsible_list_example;
 use crate::custom_animated_theme::custom_animated_theme_example;
 use crate::custom_font::custom_font_example;
 use crate::custom_shape_example::custom_shape_example;
@@ -95,6 +96,7 @@ enum ExampleId {
     CustomMarkdown,
     Counter,
     StatefulList,
+    CollapsibleList,
     AsyncBuilder,
     SelectableText,
     SystemTheme,
@@ -152,6 +154,7 @@ const EXAMPLES: &[ExampleId] = &[
     ExampleId::CustomMarkdown,
     ExampleId::Counter,
     ExampleId::StatefulList,
+    ExampleId::CollapsibleList,
     ExampleId::AsyncBuilder,
     ExampleId::SelectableText,
     ExampleId::SystemTheme,
@@ -174,6 +177,104 @@ const EXAMPLES: &[ExampleId] = &[
     ExampleId::Positioned,
     ExampleId::BorderOutline,
     ExampleId::AssetImage,
+];
+
+struct ExampleCategory {
+    label: &'static str,
+    examples: &'static [ExampleId],
+}
+
+const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
+    ExampleCategory {
+        label: "Controls",
+        examples: &[
+            ExampleId::Accessibility,
+            ExampleId::ChoiceControls,
+            ExampleId::RangeControls,
+            ExampleId::Forms,
+            ExampleId::Pickers,
+            ExampleId::Feedback,
+            ExampleId::TextArea,
+            ExampleId::TextField,
+            ExampleId::CustomTextFieldCaret,
+            ExampleId::SelectableText,
+        ],
+    },
+    ExampleCategory {
+        label: "Navigation",
+        examples: &[
+            ExampleId::Navigation,
+            ExampleId::RoutingContext,
+            ExampleId::Floating,
+            ExampleId::Modal,
+            ExampleId::Routing,
+        ],
+    },
+    ExampleCategory {
+        label: "State & data",
+        examples: &[
+            ExampleId::Animatable,
+            ExampleId::DataView,
+            ExampleId::Storage,
+            ExampleId::Counter,
+            ExampleId::StatefulList,
+            ExampleId::CollapsibleList,
+            ExampleId::AsyncBuilder,
+        ],
+    },
+    ExampleCategory {
+        label: "Content",
+        examples: &[
+            ExampleId::I18n,
+            ExampleId::TextProperties,
+            ExampleId::Markdown,
+            ExampleId::CustomMarkdown,
+            ExampleId::Text,
+        ],
+    },
+    ExampleCategory {
+        label: "Layout",
+        examples: &[
+            ExampleId::AnimatedLayout,
+            ExampleId::Window,
+            ExampleId::Resizable,
+            ExampleId::FocusNode,
+            ExampleId::Overflow,
+            ExampleId::JustifyContent,
+            ExampleId::Positioned,
+            ExampleId::BorderOutline,
+        ],
+    },
+    ExampleCategory {
+        label: "Media & styling",
+        examples: &[
+            ExampleId::StyleTokens,
+            ExampleId::SvgCompletion,
+            ExampleId::AssetsMedia,
+            ExampleId::GlassLiquid,
+            ExampleId::CustomShape,
+            ExampleId::SystemTheme,
+            ExampleId::AnimatedTheme,
+            ExampleId::CustomAnimatedTheme,
+            ExampleId::Svg,
+            ExampleId::CustomFont,
+            ExampleId::ColorSync,
+            ExampleId::AssetImage,
+        ],
+    },
+    ExampleCategory {
+        label: "Interaction & runtime",
+        examples: &[
+            ExampleId::DndCompletion,
+            ExampleId::FileDrop,
+            ExampleId::DragAndDrop,
+            ExampleId::HttpRequest,
+            ExampleId::Loading,
+            ExampleId::AnimatedList,
+            ExampleId::Animation,
+            ExampleId::PanicRecovery,
+        ],
+    },
 ];
 
 impl ExampleId {
@@ -212,6 +313,7 @@ impl ExampleId {
             Self::CustomMarkdown => "Custom Markdown",
             Self::Counter => "Stateful counter",
             Self::StatefulList => "Stateful list",
+            Self::CollapsibleList => "Collapsible list",
             Self::AsyncBuilder => "AsyncBuilder",
             Self::SelectableText => "Selectable text",
             Self::SystemTheme => "System theme",
@@ -269,6 +371,7 @@ impl ExampleId {
             Self::FocusNode => "◎",
             Self::Markdown | Self::CustomMarkdown => "▤",
             Self::Counter | Self::StatefulList | Self::AnimatedList => "♙",
+            Self::CollapsibleList => "⌄",
             Self::Animation => "◈",
             Self::AsyncBuilder | Self::HttpRequest => "⇄",
             Self::SelectableText => "⌁",
@@ -323,6 +426,7 @@ impl ExampleId {
             Self::CustomMarkdown => "custom-markdown",
             Self::Counter => "counter",
             Self::StatefulList => "stateful-list",
+            Self::CollapsibleList => "collapsible-list",
             Self::AsyncBuilder => "async-builder",
             Self::SelectableText => "selectable-text",
             Self::SystemTheme => "system-theme",
@@ -424,6 +528,7 @@ impl ExampleId {
             Self::CustomMarkdown => "Render custom blocks, inline widgets, and typed syntax.",
             Self::Counter => "Update retained state from button callbacks.",
             Self::StatefulList => "Add and remove items while preserving list state.",
+            Self::CollapsibleList => "Keep a header visible while toggling a retained body.",
             Self::AsyncBuilder => "Load asynchronous content through an AsyncSnapshot.",
             Self::SelectableText => "Select text across nested widgets and rich spans.",
             Self::SystemTheme => "Follow the system appearance or choose a theme explicitly.",
@@ -527,42 +632,25 @@ fn sidebar(
     updater: StateUpdater<ExampleShowcaseState>,
     app_theme: ThemeData,
 ) -> AnyWidget {
-    // let mut childrn = vec![
-    //     SizedBox::new()
-    //         .height(if cfg!(target_os = "macos") { 38 } else { 18 })
-    //         .boxed(),
-    // ];
-    //
-    // childrn.append(
-    //     &mut EXAMPLES
-    //         .iter()
-    //         .copied()
-    //         .map(|example| example_button(example, selected == example, updater, app_theme))
-    //         .collect::<Vec<AnyWidget>>(),
-    // );
+    let categories = EXAMPLE_CATEGORIES
+        .iter()
+        .enumerate()
+        .map(|(index, category)| {
+            let category = example_category(category, selected, updater, app_theme);
+            if cfg!(target_os = "macos") && index == 0 {
+                Container::new()
+                    .margin(LayoutSpacing::new().top(38))
+                    .child(category)
+                    .boxed()
+            } else {
+                category
+            }
+        })
+        .collect::<Vec<AnyWidget>>();
 
     let list = Column::new()
         .gaps(LayoutSpacing::new().bottom(3))
-        .list(
-            EXAMPLES
-                .into_iter()
-                .enumerate(),
-        )
-        .builder(move |(index, example)| {
-            // LayoutSpacing::new().top(38)
-            Container::new()
-                .margin(case!(
-                    cfg!(target_os = "macos") && *index == 0,
-                    LayoutSpacing::new().top(38)
-                ))
-                .box_child(example_button(
-                    **example,
-                    selected == **example,
-                    updater,
-                    app_theme,
-                ))
-        });
-    // .children(childrn);
+        .children(categories);
 
     Container::new()
         .width(Dimension::Px(SIDEBAR_WIDTH))
@@ -580,6 +668,39 @@ fn sidebar(
                 .axis(ScrollAxis::Vertical)
                 .child(list),
         )
+        .boxed()
+}
+
+fn example_category(
+    category: &ExampleCategory,
+    selected: ExampleId,
+    updater: StateUpdater<ExampleShowcaseState>,
+    app_theme: ThemeData,
+) -> AnyWidget {
+    let examples = category
+        .examples
+        .iter()
+        .copied()
+        .map(|example| example_button(example, selected == example, updater, app_theme))
+        .collect::<Vec<AnyWidget>>();
+
+    CollapsibleList::new()
+        .animation_millis(300)
+        .header(
+            ListHeader::new().child(
+                Text::new(category.label).text_style(
+                    TextStyle::new()
+                        .font_size(14)
+                        .font_weight(FontWeight::Bold)
+                        .color(theme::muted_text(&app_theme)),
+                ),
+            ),
+        )
+        .body(ListBody::new().child(
+            Column::new()
+                .gaps(LayoutSpacing::new().bottom(3))
+                .children(examples),
+        ))
         .boxed()
 }
 
@@ -775,6 +896,7 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::CustomMarkdown => custom_markdown_viewer().boxed(),
         ExampleId::Counter => CounterWidget::new(1).boxed(),
         ExampleId::StatefulList => MyList::new().boxed(),
+        ExampleId::CollapsibleList => collapsible_list_example().boxed(),
         ExampleId::AsyncBuilder => async_builder_example().boxed(),
         ExampleId::SelectableText => selectable_text_example().boxed(),
         ExampleId::SystemTheme => SystemThemeExample::new().boxed(),
@@ -956,6 +1078,27 @@ mod tests {
             .collect::<HashSet<_>>();
 
         assert_eq!(keys.len(), EXAMPLES.len());
+    }
+
+    #[test]
+    fn sidebar_categories_cover_each_registered_example_once() {
+        let categorized = EXAMPLE_CATEGORIES
+            .iter()
+            .flat_map(|category| {
+                assert!(!category.label.is_empty());
+                assert!(!category.examples.is_empty());
+                category.examples.iter().map(|example| example.key())
+            })
+            .collect::<Vec<_>>();
+        let registered = EXAMPLES
+            .iter()
+            .map(|example| example.key())
+            .collect::<HashSet<_>>();
+        let categorized_set = categorized.iter().copied().collect::<HashSet<_>>();
+
+        assert_eq!(categorized.len(), EXAMPLES.len());
+        assert_eq!(categorized_set.len(), categorized.len());
+        assert_eq!(categorized_set, registered);
     }
 
     #[test]

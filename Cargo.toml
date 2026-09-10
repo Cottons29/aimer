@@ -55,6 +55,7 @@ aimer_i18n.workspace = true
 aimer_media.workspace = true
 aimer_storage.workspace = true
 aimer_shape.workspace = true
+aimer_collapsible.workspace = true
 aimer_canvas.workspace = true
 aimer_cupid.workspace = true
 aimer_std.workspace = true
@@ -183,6 +184,7 @@ members = [
     "crates/aimer_media",
     "crates/aimer_storage",
     "crates/aimer_shape",
+    "crates/aimer_collapsible",
     "aimer_anteros/device_tests/ios",
     "aimer_anteros/device_tests/ios_transport"
 ]
@@ -231,6 +233,7 @@ aimer_i18n = { path = "crates/aimer_i18n" }
 aimer_media = { path = "crates/aimer_media" }
 aimer_storage = { path = "crates/aimer_storage" }
 aimer_shape = { path = "crates/aimer_shape" }
+aimer_collapsible = { path = "crates/aimer_collapsible" }
 aimer_native = { path = "crates/aimer_native" }
 aimer_haptics = { path = "crates/aimer_haptics" }
 aimer_ctxmenu = { path = "crates/aimer_ctxmenu" }
@@ -266,7 +269,7 @@ lyon = "1.0.19"
 usvg = { version = "0.47.0", default-features = false }
 naga = { version = "30.0.0", features = ["wgsl-in"] }
 
-# Markdown
+# Markdown - Optinal Feature
 
 markdown = "1.0.0"
 arborium = "2.18.0"
@@ -287,7 +290,7 @@ unicode-bidi = "0.3.18"
 unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.13.3"
 
-# Hot Reload
+# Hot Reload  - Experimental Feature
 
 walrus = "0.26.5"
 linkme = "0.3.35"

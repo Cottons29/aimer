@@ -8,6 +8,7 @@ mod animatable_example;
 mod animated_layout_example;
 mod assets_media_example;
 mod color_sync;
+mod collapsible_list_example;
 pub mod custom_text_field_caret_example;
 mod custom_shape_example;
 mod custom_animated_theme;
