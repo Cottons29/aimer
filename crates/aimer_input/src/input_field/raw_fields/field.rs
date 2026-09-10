@@ -163,13 +163,14 @@ impl Cursor {
 
     /// Returns the ordered (start, end) of the current selection, or `None`.
     pub fn selection_range(&self) -> Option<(usize, usize)> {
-        self.selection_anchor().map(|anchor| {
+        self.selection_anchor().and_then(|anchor| {
             let offset = self.offset();
-            if anchor <= offset {
+            let range = if anchor <= offset {
                 (anchor, offset)
             } else {
                 (offset, anchor)
-            }
+            };
+            (range.0 != range.1).then_some(range)
         })
     }
 
@@ -357,6 +358,7 @@ pub(crate) struct RawTextField {
     pub read_only: bool,
     pub mouse_held: Cell<Option<PointerKey>>,
     pub last_click_time: Cell<AnimInstant>,
+    pub last_click_pos: Cell<Option<Vec2d>>,
     pub click_count: Cell<u8>,
     pub pending_click: Cell<Option<Vec2d>>,
     pub scroll_x: Cell<f32>,
@@ -438,6 +440,7 @@ impl Rebuildable for RawTextField {
         self.cursor.set_selection_anchor(old.cursor.selection_anchor());
         self.mouse_held.set(old.mouse_held.get());
         self.last_click_time.set(old.last_click_time.get());
+        self.last_click_pos.set(old.last_click_pos.get());
         self.click_count.set(old.click_count.get());
         self.pending_click.set(old.pending_click.get());
         self.scroll_x.set(old.scroll_x.get());
@@ -555,6 +558,7 @@ impl RawTextField {
             read_only: config.read_only,
             mouse_held: Cell::new(None),
             last_click_time: Cell::new(AnimInstant::now()),
+            last_click_pos: Cell::new(None),
             click_count: Cell::new(0),
             pending_click: Cell::new(None),
             scroll_x: Cell::new(0.0),
@@ -824,6 +828,21 @@ impl RawTextField {
     fn cursor_selection(&self) -> (usize, usize) {
         let focus = self.cursor.offset();
         (self.cursor.selection_anchor().unwrap_or(focus), focus)
+    }
+
+    /// Mirrors a canvas-driven cursor or selection change into the retained
+    /// editing value and the platform editor.
+    ///
+    /// Pointer hit-testing and the clipboard menu resolve their offsets from
+    /// the painted geometry, so they update [`Cursor`] directly. The controller
+    /// remains the source of truth for native editor deltas and survives field
+    /// rebuilds; leaving it stale makes the next native edit use the old range.
+    fn sync_selection_to_controller(&self) {
+        let (anchor, focus) = self.cursor_selection();
+        if self.controller.set_selection_graphemes(anchor, focus) {
+            self.observed_revision.set(self.controller.revision());
+            self.sync_platform_text_state();
+        }
     }
 
     fn replace_cursor_selection(&self, text: &str, max_length: Option<usize>) -> bool {

@@ -600,6 +600,14 @@ impl<W: Widget + 'static> ScrollableState<W> {
                 y: -logical.y * ctx.scale,
             };
         }
+        let initial_offset = ScrollState::axis_only(self.axis, initial_offset);
+        let initial_velocity = ScrollState::axis_only(
+            self.axis,
+            Vec2d {
+                x: self.scroll_behavior.velocity.x * ctx.scale,
+                y: self.scroll_behavior.velocity.y * ctx.scale,
+            },
+        );
 
         // Which devices the target trusts with a rubber band is fixed for the
         // life of the engine; only the device currently scrolling changes.
@@ -616,10 +624,7 @@ impl<W: Widget + 'static> ScrollableState<W> {
             drag_mode: Cell::new(DragMode::None),
             cached_max_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
             cached_min_scroll: Cell::new(Vec2d { x: 0.0, y: 0.0 }),
-            pointer_velocity: Cell::new(Vec2d {
-                x: self.scroll_behavior.velocity.x * ctx.scale,
-                y: self.scroll_behavior.velocity.y * ctx.scale,
-            }),
+            pointer_velocity: Cell::new(initial_velocity),
             last_event_time: Cell::new(None),
             last_frame_time: Cell::new(None),
             v_thumb_rect: Cell::new(None),

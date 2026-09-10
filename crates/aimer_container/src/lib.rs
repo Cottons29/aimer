@@ -12,6 +12,7 @@ pub use single_child::resizable::handle::ResizeHandle;
 pub use single_child::resizable::{RawResizable, Resizable};
 pub use single_child::scalable::Scalable;
 pub use single_child::sized_box::SizedBox;
+pub use single_child::spacing::{Margin, Padding};
 pub use single_child::zero_size_box::ZeroSizedBox;
 
 #[doc(no_inline)]

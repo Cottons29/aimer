@@ -6,7 +6,7 @@ use aimer_utils::AnimInstant;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     Element, EventElement, EventResult, LayoutElement, PointerKey, VisitorElement,
-    is_pointer_claimed,
+    claim_pointer, is_pointer_claimed, release_pointer,
 };
 
 use crate::ScrollAxis;
@@ -15,7 +15,7 @@ use crate::scrollable::constants::*;
 use crate::scrollable::overscroll_source::OverscrollSource;
 use crate::scrollable::scroll_frame::apply_scroll_frame;
 
-const DRAG_AXIS_DOMINANCE_RATIO: f32 = 1.2;
+const AXIS_DOMINANCE_RATIO: f32 = 1.2;
 
 /// The overscroll source a pointer gesture belongs to.
 ///
@@ -48,10 +48,10 @@ fn pending_content_drag_wins(
     let dy = current.y - start.y;
     match axis {
         ScrollAxis::Vertical => {
-            dy.abs() > threshold && dy.abs() > dx.abs() * DRAG_AXIS_DOMINANCE_RATIO
+            dy.abs() > threshold && dy.abs() > dx.abs() * AXIS_DOMINANCE_RATIO
         }
         ScrollAxis::Horizontal => {
-            dx.abs() > threshold && dx.abs() > dy.abs() * DRAG_AXIS_DOMINANCE_RATIO
+            dx.abs() > threshold && dx.abs() > dy.abs() * AXIS_DOMINANCE_RATIO
         }
     }
 }
@@ -105,6 +105,26 @@ fn axis_velocity(axis: ScrollAxis, velocity: Vec2d) -> Vec2d {
             x: velocity.x,
             y: 0.0,
         },
+    }
+}
+
+#[inline]
+fn active_axis_changed(axis: ScrollAxis, before: Vec2d, after: Vec2d) -> bool {
+    match axis {
+        ScrollAxis::Vertical => before.y != after.y,
+        ScrollAxis::Horizontal => before.x != after.x,
+    }
+}
+
+/// Whether this scrollable's axis matches the dominant direction of a
+/// diagonal wheel or trackpad frame. A horizontal code block must not consume
+/// the tiny horizontal drift that commonly accompanies a primarily vertical
+/// scroll intended for its ancestor.
+#[inline]
+fn scroll_axis_matches_intent(axis: ScrollAxis, delta: Vec2d) -> bool {
+    match axis {
+        ScrollAxis::Vertical => delta.y.abs() > delta.x.abs() * AXIS_DOMINANCE_RATIO,
+        ScrollAxis::Horizontal => delta.x.abs() > delta.y.abs() * AXIS_DOMINANCE_RATIO,
     }
 }
 
@@ -179,27 +199,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
         let pos = child_dispatch_position(event, cursor);
 
         let mode_before = self.ctrl.drag_mode.get();
-        let pending_content_drag_won = match event {
-            ElementEvent::PointerMove(pointer)
-                if mode_before == DragMode::Pending
-                    && content_drag_allowed(PointerKey::new(pointer.source, pointer.id))
-                    && self
-                        .ctrl
-                        .active_touch_id
-                        .get()
-                        .is_none_or(|active| active == pointer.id) =>
-            {
-                self.ctrl.last_pointer_pos.get().is_some_and(|start| {
-                    pending_content_drag_wins(
-                        self.ctrl.axis,
-                        start,
-                        pointer.pos,
-                        drag_start_threshold(),
-                    )
-                })
-            }
-            _ => false,
-        };
+        let mut pending_content_drag_won = false;
         let mut child_result = EventResult::ignored();
 
         if matches!(event, ElementEvent::PointerUp(_) | ElementEvent::Cancel) {
@@ -312,20 +312,40 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             };
         }
 
-        if pending_content_drag_won && let ElementEvent::PointerMove(pointer) = event {
-            child_result = child_result.merge(
-                self.event_dispatcher.borrow_mut().cancel_pointer(
-                    &self.child,
-                    PointerKey::new(pointer.source, pointer.id),
-                ),
-            );
-        }
-
-        // ── All other events: normal child-first dispatch ──
-        if (mode_before == DragMode::None || mode_before == DragMode::Pending)
-            && !pending_content_drag_won
-        {
+        // ── Pending scrolls are decided after the child gets this move. ──
+        // A nested scrollable may win the same axis-dominant gesture, claim
+        // the pointer, and leave no gesture for this ancestor. If it is at a
+        // hard edge it returns the pointer to us, enabling edge handoff.
+        if mode_before == DragMode::None || mode_before == DragMode::Pending {
             child_result = child_result.merge(dispatch_child_event(self, pos, event));
+            if let ElementEvent::PointerMove(pointer) = event
+                && mode_before == DragMode::Pending
+                && content_drag_allowed(PointerKey::new(pointer.source, pointer.id))
+                && self
+                    .ctrl
+                    .active_touch_id
+                    .get()
+                    .is_none_or(|active| active == pointer.id)
+            {
+                pending_content_drag_won = self.ctrl.last_pointer_pos.get().is_some_and(|start| {
+                    pending_content_drag_wins(
+                        self.ctrl.axis,
+                        start,
+                        pointer.pos,
+                        drag_start_threshold(),
+                    )
+                });
+                if pending_content_drag_won {
+                    let pointer_key = PointerKey::new(pointer.source, pointer.id);
+                    claim_pointer(pointer_key);
+                    child_result = child_result.merge(
+                        self.event_dispatcher.borrow_mut().cancel_pointer(
+                            &self.child,
+                            pointer_key,
+                        ),
+                    );
+                }
+            }
         }
 
         let we_consumed = match event {
@@ -335,18 +355,32 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 phase,
                 is_direct_manipulation,
             } => {
-                if apply_scroll_frame(
+                // A nested scrollable gets first refusal. It may consume a
+                // diagonal frame on its own axis while leaving the cross-axis
+                // component untouched; forwarding the original event after
+                // that would make the ancestor scroll at the same time. A
+                // passive opaque wrapper can also consume Scroll to occlude a
+                // lower stack layer, but it must not hide this ancestor when
+                // no descendant actually moved.
+                if child_result.is_consumed() && child_result.needs_redraw() {
+                    return child_result;
+                }
+                if !scroll_axis_matches_intent(self.ctrl.axis, *delta) {
+                    return child_result;
+                }
+                let moved = apply_scroll_frame(
                     &self.ctrl,
                     *delta,
                     *kind,
                     *phase,
                     *is_direct_manipulation,
-                ) {
+                );
+                if moved {
                     self.ctrl.begin_scroll();
                     self.ctrl.record_input_event();
                     self.ctrl.request_animation_frame();
                 }
-                true
+                moved
             }
             ElementEvent::PointerDown(pointer) => {
                 let p = &pointer.pos;
@@ -503,8 +537,13 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
                         let now = AnimInstant::now();
                         self.ctrl.last_event_time.set(Some(now));
-                        if let Some((raw_velocity, sample_dt)) =
-                            self.ctrl.accumulate_drag_velocity(dx, dy, now)
+                        let velocity_delta = match mode {
+                            DragMode::Content => axis_velocity(self.ctrl.axis, delta),
+                            _ => Vec2d::ZERO,
+                        };
+                        if let Some((raw_velocity, sample_dt)) = self
+                            .ctrl
+                            .accumulate_drag_velocity(velocity_delta.x, velocity_delta.y, now)
                         {
                             let mut new_velocity = match mode {
                                 DragMode::Content => axis_velocity(self.ctrl.axis, raw_velocity),
@@ -539,7 +578,8 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             self.ctrl.pointer_velocity.set(new_velocity);
                         }
 
-                        let mut offset = self.ctrl.scroll_offset.get();
+                        let offset_before = self.ctrl.scroll_offset.get();
+                        let mut offset = offset_before;
 
                         match mode {
                             DragMode::Content => {
@@ -572,6 +612,23 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             offset = self.ctrl.clamp_offset(offset);
                         }
                         self.ctrl.set_scroll_offset(offset);
+                        let moved = active_axis_changed(
+                            self.ctrl.axis,
+                            offset_before,
+                            self.ctrl.scroll_offset.get(),
+                        );
+                        if mode == DragMode::Content && !moved && !pending_content_drag_won {
+                            // The inner scrollable reached a hard edge. Let
+                            // the ancestor inspect this same move instead of
+                            // consuming a gesture that made no progress.
+                            release_pointer(PointerKey::new(pointer.source, pointer.id));
+                            self.ctrl.pointer_velocity.set(Vec2d::ZERO);
+                            self.ctrl.clear_velocity_history();
+                            self.ctrl.drag_mode.set(DragMode::Pending);
+                            self.ctrl.last_pointer_pos.set(Some(*p));
+                            return child_result;
+                        }
+                        claim_pointer(PointerKey::new(pointer.source, pointer.id));
                         self.ctrl.record_input_event();
                     }
                     self.ctrl.last_pointer_pos.set(Some(*p));
@@ -693,7 +750,13 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             _ => false,
         };
 
-        let result = child_result.merge(EventResult::from(we_consumed));
+        let own_result = match event {
+            ElementEvent::Scroll { .. } if we_consumed => {
+                EventResult::consumed().with_redraw()
+            }
+            _ => EventResult::from(we_consumed),
+        };
+        let result = child_result.merge(own_result);
         match event {
             ElementEvent::PointerDown(pointer) if we_consumed => {
                 result.with_pointer_capture(PointerKey::new(pointer.source, pointer.id))

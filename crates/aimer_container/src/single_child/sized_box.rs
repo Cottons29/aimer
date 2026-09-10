@@ -48,8 +48,8 @@ impl SizedBox {
     #[inline]
     pub fn new() -> Self {
         Self {
-            width: Dimension::Px(0.0),
-            height: Dimension::Px(0.0),
+            width: Dimension::Auto,
+            height: Dimension::Auto,
             color: Color::Transparent,
             child: None,
         }
@@ -221,6 +221,12 @@ impl<E: Element> Drawable for RawSizedBox<E> {
             self.color,
             [0.0; 4],
         );
+
+        let mut child_ctx = ctx.clone();
+        child_ctx.parent_size = ResolvedSize { width, height };
+        child_ctx.box_constraint.max_width = width;
+        child_ctx.box_constraint.max_height = height;
+        self.child.draw(&child_ctx);
     }
 }
 
@@ -312,6 +318,125 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.bounds.get()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use super::*;
+    use aimer_widget::base::WindowHandle;
+    use aimer_widget::{Drawable, EventElement, Rebuildable, VisitorElement};
+
+    struct FixedChild;
+
+    impl Drawable for FixedChild {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    struct DrawChild {
+        draws: Rc<Cell<usize>>,
+    }
+
+    impl Drawable for DrawChild {
+        fn draw(&self, _ctx: &BuildContext) {
+            self.draws.set(self.draws.get() + 1);
+        }
+    }
+
+    impl EventElement for DrawChild {}
+    impl Rebuildable for DrawChild {}
+    impl aimer_widget::PortableWidget for DrawChild {}
+
+    impl VisitorElement for DrawChild {
+        fn debug_name(&self) -> &'static str {
+            "DrawChild"
+        }
+    }
+
+    impl LayoutElement for DrawChild {
+        fn size(&self) -> Option<Size> {
+            Some(Size {
+                width: Dimension::Px(24.0),
+                height: Dimension::Px(12.0),
+            })
+        }
+    }
+
+    impl Widget for DrawChild {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            Element::boxed(self)
+        }
+    }
+
+    impl EventElement for FixedChild {}
+    impl Rebuildable for FixedChild {}
+    impl aimer_widget::PortableWidget for FixedChild {}
+
+    impl VisitorElement for FixedChild {
+        fn debug_name(&self) -> &'static str {
+            "FixedChild"
+        }
+    }
+
+    impl LayoutElement for FixedChild {
+        fn size(&self) -> Option<Size> {
+            Some(Size {
+                width: Dimension::Px(24.0),
+                height: Dimension::Px(12.0),
+            })
+        }
+    }
+
+    impl Widget for FixedChild {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            Element::boxed(self)
+        }
+    }
+
+    fn context() -> BuildContext<'static> {
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::Canvas::new(inner)
+        };
+        BuildContext::new(
+            canvas,
+            ResolvedSize::default(),
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        )
+    }
+
+    #[tokio::test]
+    async fn sized_box_without_explicit_dimensions_uses_child_size() {
+        let ctx = context();
+        let element = SizedBox::new().child(FixedChild).to_element(&ctx);
+
+        assert_eq!(
+            element.computed_size(&ctx),
+            ResolvedSize {
+                width: 24.0,
+                height: 12.0,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn sized_box_draws_its_child() {
+        let draws = Rc::new(Cell::new(0));
+        let ctx = context();
+        let element = SizedBox::new()
+            .child(DrawChild { draws: draws.clone() })
+            .to_element(&ctx);
+
+        element.draw(&ctx);
+
+        assert_eq!(draws.get(), 1);
     }
 }
 

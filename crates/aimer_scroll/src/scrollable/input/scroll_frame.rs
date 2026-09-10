@@ -182,18 +182,24 @@ pub(crate) fn apply_scroll_frame(
     }
 
     ctrl.last_event_time.set(Some(AnimInstant::now()));
-    true
+    let offset_after = ctrl.scroll_offset.get();
+    match ctrl.axis {
+        ScrollAxis::Vertical => offset_after.y != offset.y,
+        ScrollAxis::Horizontal => offset_after.x != offset.x,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use aimer_attribute::Vec2d;
-    use aimer_events::element::TouchPhase;
+    use aimer_events::element::{ScrollDeltaKind, TouchPhase};
 
     use super::{
-        OverscrollHoldAction, device_gesture_in_flight, overscroll_hold_action,
+        OverscrollHoldAction, apply_scroll_frame, device_gesture_in_flight, overscroll_hold_action,
         should_hold_overscroll_recovery,
     };
+    use crate::scrollable::controller::ScrollState;
+    use crate::ScrollAxis;
 
     #[test]
     fn only_a_terminating_scroll_phase_ends_the_device_gesture() {
@@ -265,6 +271,48 @@ mod tests {
             overscroll_hold_action(true, true, stretch, Vec2d::ZERO, TouchPhase::Moved),
             OverscrollHoldAction::Release
         );
+    }
+
+    #[test]
+    fn a_non_moving_active_axis_does_not_claim_a_scroll_frame() {
+        let mut ctrl = ScrollState::for_test_at(Vec2d::ZERO);
+        ctrl.scroll_behavior.bouncy = false;
+        ctrl.cached_max_scroll.set(Vec2d { x: 0.0, y: 100.0 });
+
+        assert!(!apply_scroll_frame(
+            &ctrl,
+            Vec2d { x: 20.0, y: 0.0 },
+            ScrollDeltaKind::Pixel,
+            TouchPhase::Moved,
+            false,
+        ));
+        assert_eq!(ctrl.scroll_offset.get(), Vec2d::ZERO);
+
+        ctrl.axis = ScrollAxis::Horizontal;
+        ctrl.cached_max_scroll.set(Vec2d { x: 100.0, y: 0.0 });
+        ctrl.set_scroll_offset(Vec2d { x: -100.0, y: 0.0 });
+        assert!(!apply_scroll_frame(
+            &ctrl,
+            Vec2d { x: -20.0, y: 40.0 },
+            ScrollDeltaKind::Pixel,
+            TouchPhase::Moved,
+            false,
+        ));
+    }
+
+    #[test]
+    fn bouncy_edge_motion_remains_owned_by_the_child() {
+        let ctrl = ScrollState::for_test_at(Vec2d::ZERO);
+        ctrl.cached_viewport.set((100.0, 100.0));
+
+        assert!(apply_scroll_frame(
+            &ctrl,
+            Vec2d { x: 20.0, y: 10.0 },
+            ScrollDeltaKind::Pixel,
+            TouchPhase::Moved,
+            true,
+        ));
+        assert_ne!(ctrl.scroll_offset.get().y, 0.0);
     }
 
     #[test]

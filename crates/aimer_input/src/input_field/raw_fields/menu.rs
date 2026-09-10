@@ -157,6 +157,7 @@ impl RawTextField {
             }
             _ => self.close_menu(),
         }
+        self.sync_selection_to_controller();
         self.cursor.reset_blink();
     }
 
@@ -351,6 +352,10 @@ mod tests {
         assert_eq!(
             field.cursor.selection_range(),
             Some((0, field.controller.grapheme_count()))
+        );
+        assert_eq!(
+            field.controller.selection_graphemes(),
+            (0, field.controller.grapheme_count())
         );
         assert!(field.menu_is_open(), "the menu stays, reshaped");
         assert!(verbs(&field).contains(&FieldAction::Copy));

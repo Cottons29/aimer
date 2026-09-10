@@ -19,7 +19,7 @@ use aimer_widget::portable::{
 
 use crate::callback::VoidCallback;
 use crate::gesture::GestureEvent;
-use crate::gesture::gesture_detector::GestureDetector;
+use crate::gesture::gesture_detector::{GestureDetector, GestureDetectorBehavior};
 use crate::mouse_region::{MouseRegion, PointerState};
 
 /// How much the background is darkened while the button is held.
@@ -459,6 +459,7 @@ impl<W: Widget + 'static> State<Button<W>> for ButtonState<W> {
             .current_state(self.current_state.clone())
             .child(
                 GestureDetector::new()
+                    .behavior(GestureDetectorBehavior::BlockChild)
                     .on_tap(if self.is_disabled {
                         VoidCallback::default()
                     } else {
@@ -548,9 +549,14 @@ mod tests {
     use std::rc::Rc;
 
     use aimer_attribute::size::ResolvedSize;
+    use aimer_events::element::ElementEvent;
+    use aimer_events::pointer::{PointerButton, PointerInfo};
     use aimer_style::BoxDecoration;
     use aimer_widget::base::{Color, WindowHandle};
-    use aimer_widget::{AnyElement, ErrorWidget, Key, PortableWidget, State, StatefulWidget, Widget};
+    use aimer_widget::{
+        dispatch_event, AnyElement, Drawable, Element, ErrorWidget, EventElement, Key,
+        LayoutElement, PortableWidget, Rebuildable, State, StatefulWidget, VisitorElement, Widget,
+    };
 
     use super::{Button, BuildContext};
 
@@ -585,6 +591,42 @@ mod tests {
     }
 
     impl PortableWidget for Probe {}
+
+    struct EventProbe {
+        events: Rc<Cell<usize>>,
+    }
+
+    impl Widget for EventProbe {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            EventProbeElement {
+                events: self.events,
+            }
+            .boxed()
+        }
+    }
+
+    impl PortableWidget for EventProbe {}
+
+    struct EventProbeElement {
+        events: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for EventProbeElement {
+        fn debug_name(&self) -> &'static str {
+            "ButtonEventProbe"
+        }
+    }
+    impl EventElement for EventProbeElement {
+        fn on_event(&self, _event: &ElementEvent) -> aimer_widget::EventResult {
+            self.events.set(self.events.get() + 1);
+            aimer_widget::EventResult::ignored()
+        }
+    }
+    impl LayoutElement for EventProbeElement {}
+    impl Drawable for EventProbeElement {
+        fn draw(&self, _ctx: &BuildContext<'_>) {}
+    }
+    impl Rebuildable for EventProbeElement {}
 
     #[cfg(feature = "portable-guest")]
     struct PortableChild;
@@ -792,6 +834,30 @@ mod tests {
             1,
             "a hover or a press must reuse the child, not rebuild it"
         );
+    }
+
+    #[tokio::test]
+    async fn button_blocks_events_from_its_child_by_default() {
+        let events = Rc::new(Cell::new(0));
+        let state = Button::new()
+            .child(EventProbe {
+                events: events.clone(),
+            })
+            .create_state();
+        let ctx = context();
+        let element = state.build(&ctx).to_element(&ctx);
+
+        let pointer = PointerInfo::mouse(
+            aimer_widget::base::Vec2d { x: 1.0, y: 1.0 },
+            PointerButton::Primary,
+        );
+        let _ = dispatch_event(
+            element.as_ref(),
+            pointer.pos,
+            &ElementEvent::PointerDown(pointer),
+        );
+
+        assert_eq!(events.get(), 0);
     }
 
     /// An asynchronous press handler may keep an [`Rc`] from the element tree

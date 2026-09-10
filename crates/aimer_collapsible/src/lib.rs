@@ -22,9 +22,13 @@ mod tests {
     use super::{CollapsibleList, ListBody, ListHeader};
     use aimer_animation::Curve;
     use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_events::element::ElementEvent;
     use aimer_text::Text;
     use aimer_widget::base::{BuildContext, ResolvedSize, Vec2d, WindowHandle};
-    use aimer_widget::{AnyElement, PortableWidget, Rebuildable, State, StatefulWidget, Widget};
+    use aimer_widget::{
+        broadcast_event, AnyElement, Drawable, Element, EventElement, LayoutElement, PortableWidget,
+        Rebuildable, State, StatefulWidget, VisitorElement, Widget,
+    };
 
     fn context() -> BuildContext<'static> {
         let inner = Box::leak(Box::new(InnerCanvas::new()));
@@ -55,6 +59,42 @@ mod tests {
             "CollapsibleListProbe"
         }
     }
+
+    struct EventProbe {
+        events: Rc<Cell<usize>>,
+    }
+
+    impl PortableWidget for EventProbe {}
+
+    impl Widget for EventProbe {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            EventProbeElement {
+                events: self.events,
+            }
+            .boxed()
+        }
+    }
+
+    struct EventProbeElement {
+        events: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for EventProbeElement {
+        fn debug_name(&self) -> &'static str {
+            "ListHeaderEventProbe"
+        }
+    }
+    impl EventElement for EventProbeElement {
+        fn on_event(&self, _event: &ElementEvent) -> aimer_widget::EventResult {
+            self.events.set(self.events.get() + 1);
+            aimer_widget::EventResult::ignored()
+        }
+    }
+    impl LayoutElement for EventProbeElement {}
+    impl Drawable for EventProbeElement {
+        fn draw(&self, _ctx: &BuildContext<'_>) {}
+    }
+    impl Rebuildable for EventProbeElement {}
 
     #[test]
     fn expanded_is_initial_state_and_live_state_survives_configuration_adoption() {
@@ -108,6 +148,23 @@ mod tests {
         assert_eq!(collapsed_height(120.0, 0.0), 0.0);
         assert_eq!(collapsed_height(120.0, 0.5), 60.0);
         assert_eq!(collapsed_height(120.0, 1.0), 120.0);
+    }
+
+    #[tokio::test]
+    async fn collapsible_list_header_blocks_events_from_its_child_by_default() {
+        let events = Rc::new(Cell::new(0));
+        let ctx = context();
+        let widget = CollapsibleList::new()
+            .expanded(false)
+            .header(ListHeader::new().child(EventProbe {
+                events: events.clone(),
+            }))
+            .body(ListBody::new().child(Text::new("Body")));
+        let element = widget.create_state().build(&ctx).to_element(&ctx);
+
+        let _ = broadcast_event(element.as_ref(), &ElementEvent::FocusGained);
+
+        assert_eq!(events.get(), 0);
     }
 
     #[test]

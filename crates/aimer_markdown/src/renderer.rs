@@ -482,8 +482,7 @@ fn render_block(
                                         .vertical_scroll_bar(None)
                                         .horizontal_scroll_bar(None)
                                         .child(
-                                            Container::new()
-                                                .width(1000)
+                                            SizedBox::new()
                                                 .child(
                                                 SelectionArea::new().child(
                                                     RichText::new(TextSpan::root(spans))

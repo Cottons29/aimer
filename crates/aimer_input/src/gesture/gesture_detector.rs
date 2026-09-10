@@ -15,7 +15,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerEvent;
 use aimer_utils::AnimInstant;
-use aimer_macro::PortableWidget;
+use aimer_macro::{PortableValue, PortableWidget};
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
@@ -31,13 +31,37 @@ use crate::gesture::{
     SwipeCallback,
 };
 
+/// Controls whether a [`GestureDetector`] also exposes its child to event
+/// traversal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_input::gesture::gesture_detector::GestureDetectorBehavior",
+    max_encoded_bytes = 16
+)]
+pub enum GestureDetectorBehavior {
+    /// The child participates in event, focus, and broadcast dispatch.
+    #[portable_value(tag = 0)]
+    PassThrough,
+    /// The child remains laid out and painted but receives no events.
+    #[portable_value(tag = 1)]
+    BlockChild,
+}
+
+impl Default for GestureDetectorBehavior {
+    fn default() -> Self {
+        Self::PassThrough
+    }
+}
+
 /// A transparent widget that recognizes pointer gestures over its child.
 ///
 /// The detector paints nothing and adopts its child's layout; finish
 /// construction with [`GestureDetector::child`] or
 /// [`GestureDetector::dyn_child`]. Scroll events are consumed only when
 /// [`GestureDetector::on_scroll`] is configured, so a detector that does not
-/// handle scrolling lets it reach whatever is below.
+/// handle scrolling lets it reach whatever is below. By default, events also
+/// pass through to the child; use [`GestureDetector::behavior`] with
+/// [`GestureDetectorBehavior::BlockChild`] to prevent all event delivery to it.
 ///
 /// Every handler lives behind one [`Rc`], so rebuilding the widget costs a single
 /// refcount bump however many gestures are configured — which matters when a
@@ -110,6 +134,8 @@ pub struct GestureDetector<W = RequiredChild> {
     on_gesture: GestureStreamCallback,
     #[portable_skip]
     handlers: Rc<GestureHandlers>,
+    #[portable_optional]
+    behavior: GestureDetectorBehavior,
     #[portable_child(discriminator = 0)]
     child: W,
 }
@@ -137,6 +163,7 @@ impl GestureDetector {
             on_scale: ScaleCallback::default(),
             on_gesture: GestureStreamCallback::default(),
             handlers: Rc::new(GestureHandlers::new()),
+            behavior: GestureDetectorBehavior::PassThrough,
             child: RequiredChild,
         }
     }
@@ -218,8 +245,21 @@ impl<W> GestureDetector<W> {
             on_scale: self.on_scale,
             on_gesture: self.on_gesture,
             handlers: self.handlers,
+            behavior: self.behavior,
             child,
         }
+    }
+
+    /// Selects how events are routed between this detector and its child.
+    ///
+    /// [`GestureDetectorBehavior::PassThrough`] is the default. Selecting
+    /// [`GestureDetectorBehavior::BlockChild`] keeps the child in the visual
+    /// and structural tree but removes it from event, focus, and broadcast
+    /// traversal.
+    #[inline]
+    pub fn behavior(mut self, behavior: GestureDetectorBehavior) -> Self {
+        self.behavior = behavior;
+        self
     }
 
     /// Supplies the terminal child and erases the completed detector's concrete
@@ -243,6 +283,7 @@ impl<W: Widget + 'static> Widget for GestureDetector<W> {
             // One refcount bump, whatever the detector was configured with.
             handlers: self.handlers.clone(),
             state: RefCell::new(GestureState::default()),
+            behavior: self.behavior,
         }
         .boxed()
     }
@@ -259,6 +300,7 @@ pub struct RawGestureDetector<E: Element> {
     pub(crate) cached_bounds: CacheBounds,
     pub(crate) window: WindowHandle,
     pub(crate) handlers: Rc<GestureHandlers>,
+    pub(crate) behavior: GestureDetectorBehavior,
     /// Interior mutability because `on_event` takes `&self`.
     pub(crate) state: RefCell<GestureState>,
 }
@@ -414,7 +456,17 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        if self.behavior == GestureDetectorBehavior::PassThrough {
+            visitor(&self.child);
+        }
+    }
+
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(&self.child);
+    }
+
+    fn focus_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.event_children(visitor);
     }
 }
 
@@ -496,7 +548,9 @@ impl<E: Element + 'static> Rebuildable for RawGestureDetector<E> {
 #[cfg(test)]
 mod tests {
     use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
-    use aimer_widget::CaptureRequest;
+    use aimer_widget::{
+        broadcast_event, dispatch_event, dispatch_focused_event, CaptureRequest,
+    };
 
     use super::*;
     use crate::gesture::state::Press;
@@ -513,6 +567,29 @@ mod tests {
     impl aimer_widget::PortableWidget for TestWidget {}
 
     struct TestElement;
+
+    struct RecordingElement {
+        events: Rc<std::cell::Cell<usize>>,
+    }
+
+    impl VisitorElement for RecordingElement {
+        fn debug_name(&self) -> &'static str {
+            "RecordingElement"
+        }
+    }
+
+    impl EventElement for RecordingElement {
+        fn on_event(&self, _event: &ElementEvent) -> EventResult {
+            self.events.set(self.events.get() + 1);
+            EventResult::ignored()
+        }
+    }
+
+    impl LayoutElement for RecordingElement {}
+    impl Drawable for RecordingElement {
+        fn draw(&self, _ctx: &BuildContext<'_>) {}
+    }
+    impl Rebuildable for RecordingElement {}
 
     impl VisitorElement for TestElement {
         fn debug_name(&self) -> &'static str {
@@ -542,6 +619,24 @@ mod tests {
             window: WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0),
             handlers: Rc::new(handlers),
             state: RefCell::new(GestureState::default()),
+            behavior: GestureDetectorBehavior::PassThrough,
+        }
+    }
+
+    fn recording_detector(
+        behavior: GestureDetectorBehavior,
+        events: Rc<std::cell::Cell<usize>>,
+    ) -> RawGestureDetector<RecordingElement> {
+        let cached_bounds = CacheBounds::new();
+        cached_bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+
+        RawGestureDetector {
+            child: RecordingElement { events },
+            cached_bounds,
+            window: WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0),
+            handlers: Rc::new(GestureHandlers::new()),
+            state: RefCell::new(GestureState::default()),
+            behavior,
         }
     }
 
@@ -585,6 +680,58 @@ mod tests {
         assert!(mask.contains(GestureMask::SWIPE));
         assert!(mask.contains(GestureMask::SCALE));
         assert!(detector.handlers.consumes_scroll());
+    }
+
+    #[test]
+    fn child_event_behavior_defaults_to_pass_through_and_can_block() {
+        let pass_through = GestureDetector::new().child(TestWidget);
+        assert_eq!(
+            pass_through.behavior,
+            GestureDetectorBehavior::PassThrough
+        );
+
+        let blocked = GestureDetector::new()
+            .behavior(GestureDetectorBehavior::BlockChild)
+            .child(TestWidget);
+        assert_eq!(blocked.behavior, GestureDetectorBehavior::BlockChild);
+    }
+
+    #[test]
+    fn blocking_child_events_removes_the_child_from_all_event_dispatch_paths() {
+        let events = Rc::new(std::cell::Cell::new(0));
+        let detector = recording_detector(GestureDetectorBehavior::BlockChild, events.clone());
+        let pointer = touch(5.0, 5.0, 7);
+
+        let pointer_result = dispatch_event(
+            &detector,
+            pointer.pos,
+            &ElementEvent::PointerDown(pointer),
+        );
+        let _ = dispatch_focused_event(&detector, &ElementEvent::FocusGained);
+        let _ = broadcast_event(&detector, &ElementEvent::FocusGained);
+
+        assert!(pointer_result.is_consumed());
+        assert_eq!(events.get(), 0);
+
+        let mut structural_children = 0;
+        detector.structural_children(&mut |_| structural_children += 1);
+        assert_eq!(structural_children, 1);
+    }
+
+    #[test]
+    fn pass_through_child_events_reach_the_child_before_the_detector() {
+        let events = Rc::new(std::cell::Cell::new(0));
+        let detector = recording_detector(GestureDetectorBehavior::PassThrough, events.clone());
+        let pointer = touch(5.0, 5.0, 7);
+
+        let result = dispatch_event(
+            &detector,
+            pointer.pos,
+            &ElementEvent::PointerDown(pointer),
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(events.get(), 1);
     }
 
     // Regression for "the Scroll is not able to scroll with mouse wheel or

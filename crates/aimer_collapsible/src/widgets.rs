@@ -18,7 +18,7 @@ use aimer_widget::{
 };
 
 use crate::key_relay::KeyRelay;
-use aimer_input::gesture::gesture_detector::GestureDetector;
+use aimer_input::gesture::gesture_detector::{GestureDetector, GestureDetectorBehavior};
 use aimer_provider::ProviderContext;
 
 const CHEVRON_ICON: &str = include_str!("../icons/chevron-down-svgrepo-com.svg");
@@ -649,7 +649,10 @@ for CollapsibleListState<H, B>
                     chevron(theme, self.chevron_controller.clone()),
                 ]))
             .boxed();
+        // The toggle owns the whole header hit region, so an interactive
+        // descendant cannot intercept its pointer or focus events.
         let header = GestureDetector::new()
+            .behavior(GestureDetectorBehavior::BlockChild)
             .on_tap(move || updater.set_state(|state| state.toggle()))
             .child(header);
         let header = KeyRelay::new()

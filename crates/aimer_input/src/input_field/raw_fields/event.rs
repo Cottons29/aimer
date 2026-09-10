@@ -168,13 +168,22 @@ impl EventElement for RawTextField {
                         let now = self.now();
                         let elapsed = now.duration_since(self.last_click_time.get());
                         let prev_count = self.click_count.get();
-                        let new_count = if elapsed.as_millis() < 500 {
-                            prev_count + 1
+                        let same_position = self.last_click_pos.get().is_some_and(|previous| {
+                            let slop = crate::gesture::tap_slop(info.source);
+                            (pos.x - previous.x).abs() <= slop
+                                && (pos.y - previous.y).abs() <= slop
+                        });
+                        let new_count = if prev_count > 0
+                            && elapsed.as_millis() < 500
+                            && same_position
+                        {
+                            prev_count.saturating_add(1).min(3)
                         } else {
                             1
                         };
                         self.click_count.set(new_count);
                         self.last_click_time.set(now);
+                        self.last_click_pos.set(Some(*pos));
 
                         // Defer cursor placement to draw() where canvas is available
                         self.pending_click.set(Some(*pos));
@@ -317,6 +326,7 @@ impl EventElement for RawTextField {
                             _ => false,
                         };
                         if result {
+                            self.sync_selection_to_controller();
                             self.cursor.reset_blink();
                             return true;
                         }
@@ -399,6 +409,7 @@ impl EventElement for RawTextField {
                         _ => false,
                     };
                     if result {
+                        self.sync_selection_to_controller();
                         self.cursor.reset_blink();
                     }
                     result

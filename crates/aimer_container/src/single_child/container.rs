@@ -365,32 +365,24 @@ impl<T: Element> Drawable for RawContainer<T> {
             self.box_decoration.update_color(color)
         }
 
-        // Draw background filling the *entire* allocated space (including
-        // margins) so that adjacent children in a Column/Row have no visible
-        // gap.  The canvas has NOT been translated by the margin yet, so
-        // painting at (0,0) with the full size covers margin + content area.
-        //
-        // Add a 1-px overlap on the end edges so that the GPU's per-rectangle
-        // anti-aliasing cannot leave a hairline seam between siblings.  The
-        // overlap is invisible because the next sibling's background paints
-        // over it.
-        let bg_w = box_width + m_left + m_right;
-        let bg_h = box_height + m_top + m_bottom;
-        let bg_ctx = BuildContext {
-            parent_size: ResolvedSize {
-                width: bg_w,
-                height: bg_h + 1.0,
-            },
-            ..ctx.clone()
-        };
-        self.box_decoration.draw(&bg_ctx);
-
-        // Now translate by the margin so that child content and clip are
-        // positioned correctly inside the margin inset.
+        // Translate to the decorated box before painting. Margin is layout
+        // space outside the complete decoration; it must not be filled by the
+        // background, border, or outline.
         ctx.canvas.translate(Vec2d {
             x: m_left,
             y: m_top,
         });
+
+        let bg_w = box_width;
+        let bg_h = box_height;
+        let bg_ctx = BuildContext {
+            parent_size: ResolvedSize {
+                width: bg_w,
+                height: bg_h,
+            },
+            ..ctx.clone()
+        };
+        self.box_decoration.draw(&bg_ctx);
 
         let p_left = self.padding.left.value(box_width, scale);
         let p_top = self.padding.top.value(box_height, scale);
@@ -937,6 +929,7 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
+    use aimer_cupid::draw_cmd::DrawCommand;
     use super::*;
     use crate::SizedBox;
     use aimer_widget::base::WindowHandle;
@@ -1021,6 +1014,96 @@ mod tests {
             WindowHandle::headless(Default::default(), 1.0),
             tokio::runtime::Handle::current(),
         )
+    }
+
+    fn recording_context() -> (BuildContext<'static>, &'static aimer_canvas::InnerCanvas) {
+        let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+        let ctx = BuildContext::new(
+            aimer_canvas::Canvas::new(inner),
+            ResolvedSize {
+                width: 200.0,
+                height: 160.0,
+            },
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+        (ctx, inner)
+    }
+
+    #[tokio::test]
+    async fn margin_keeps_outline_and_border_inside_the_decorated_box() {
+        let (mut ctx, inner) = recording_context();
+        ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 200.0,
+            max_height: 160.0,
+        };
+        let border = BorderSlice::new()
+            .style(BorderStyle::Solid)
+            .stroke(4.0);
+        let outline = BorderSlice::new()
+            .style(BorderStyle::Solid)
+            .stroke(6.0);
+
+        let element = Container::new()
+            .margin(LayoutSpacing::all(30))
+            .padding(LayoutSpacing::all(8))
+            .box_decoration(
+                BoxDecoration::new()
+                    .border(BoxBorder::all(border))
+                    .outline(BoxOutline::all(outline)),
+            )
+            .child(crate::ZeroSizedBox)
+            .to_element(&ctx);
+
+        assert_eq!(
+            element.content_size(&ctx),
+            ResolvedSize {
+                width: 116.0,
+                height: 76.0,
+            }
+        );
+        element.draw(&ctx);
+
+        let commands = inner.draw_list();
+        assert!(matches!(commands.commands().first(), Some(DrawCommand::PushTransform { .. })));
+        let margin_transform = commands.commands().get(1).and_then(|command| match command {
+            DrawCommand::SetTransform { matrix } => Some(*matrix),
+            _ => None,
+        });
+        assert_eq!(margin_transform.map(|matrix| matrix.cols[2]), Some([30.0, 30.0, 1.0]));
+
+        let fill = commands.commands().iter().find_map(|command| match command {
+            DrawCommand::FillRect {
+                rect,
+                border_width,
+                outline_width,
+                ..
+            } => Some((*rect, *border_width, *outline_width)),
+            _ => None,
+        });
+        let (fill, border_width, outline_width) =
+            fill.expect("the decorated container should record one fill rectangle");
+        assert_eq!(fill.x, 0.0);
+        assert_eq!(fill.y, 0.0);
+        assert_eq!(fill.width, 140.0);
+        assert_eq!(fill.height, 100.0);
+        assert_eq!(border_width, [4.0; 4]);
+        assert_eq!(outline_width, [6.0; 4]);
+
+        let transforms = commands
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                DrawCommand::SetTransform { matrix } => Some(matrix.cols[2]),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(transforms, vec![[30.0, 30.0, 1.0], [42.0, 42.0, 1.0]]);
     }
 
     /// A decoration owning a shadow list, the field this migration is about.

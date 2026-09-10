@@ -194,6 +194,7 @@ impl Drawable for RawTextField {
                 3 => {
                     self.select_line_at(click_offset);
                     self.click_count.set(0);
+                    self.last_click_pos.set(None);
                 }
                 _ => {
                     // For drag-to-select: set anchor to the click position (not the old cursor)
@@ -204,6 +205,7 @@ impl Drawable for RawTextField {
                     self.cursor.set_offset(click_offset);
                 }
             }
+            self.sync_selection_to_controller();
             self.reveal_caret.set(true);
             self.cursor.reset_blink();
         }
@@ -702,5 +704,94 @@ mod caret_layout_tests {
             "caret centered at {center}, expected the middle of a 600 tall box",
         );
         assert_line_tall(height, line);
+    }
+}
+
+#[cfg(test)]
+mod pointer_selection_tests {
+    use aimer_animation::AnimInstant;
+    use aimer_attribute::Vec2d;
+    use aimer_events::element::ElementEvent;
+    use aimer_events::pointer::{PointerButton, PointerInfo};
+    use aimer_widget::{Drawable, EventElement};
+
+    use super::test_support::{dummy_build_context, focused_single_line_field};
+    use crate::TextEditingController;
+
+    #[test]
+    fn a_left_click_keeps_the_controller_selection_with_the_canvas_caret() {
+        let controller = TextEditingController::with_text("hello");
+        let field = focused_single_line_field(controller.clone());
+        let ctx = dummy_build_context(400.0, 60.0);
+
+        field.draw(&ctx);
+        assert!(field
+            .on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+                Vec2d { x: 4.0, y: 10.0 },
+                PointerButton::Primary,
+            )))
+            .is_consumed());
+        field.draw(&ctx);
+
+        assert_eq!(field.cursor.offset(), 0);
+        assert_eq!(controller.selection_graphemes(), (0, 0));
+    }
+
+    #[test]
+    fn rapid_clicks_at_different_positions_do_not_select_a_word() {
+        let field = focused_single_line_field(crate::TextEditingController::with_text(
+            "hello world",
+        ));
+        field.test_clock.set(Some(AnimInstant::now()));
+        let ctx = dummy_build_context(400.0, 60.0);
+
+        field.draw(&ctx);
+        for x in [4.0, 50.0] {
+            assert!(field
+                .on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+                    Vec2d { x, y: 10.0 },
+                    PointerButton::Primary,
+                )))
+                .is_consumed());
+            field.draw(&ctx);
+            let _ = field.on_event(&ElementEvent::PointerUp(PointerInfo::mouse(
+                Vec2d { x, y: 10.0 },
+                PointerButton::Primary,
+            )));
+        }
+
+        assert_eq!(field.cursor.selection_range(), None);
+    }
+
+    #[test]
+    fn a_context_click_after_a_caret_click_selects_the_word_under_the_pointer() {
+        let field = focused_single_line_field(crate::TextEditingController::with_text(
+            "hello world",
+        ));
+        let ctx = dummy_build_context(400.0, 60.0);
+
+        field.draw(&ctx);
+        let _ = field.on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+            Vec2d { x: 4.0, y: 10.0 },
+            PointerButton::Primary,
+        )));
+        field.draw(&ctx);
+        let _ = field.on_event(&ElementEvent::PointerUp(PointerInfo::mouse(
+            Vec2d { x: 4.0, y: 10.0 },
+            PointerButton::Primary,
+        )));
+
+        assert!(field
+            .on_event(&ElementEvent::PointerDown(PointerInfo::new(
+                Vec2d { x: 50.0, y: 10.0 },
+                aimer_events::pointer::PointerSource::Mouse,
+                0,
+                PointerButton::Secondary,
+            )))
+            .is_consumed());
+        field.draw(&ctx);
+
+        assert_eq!(field.cursor.selection_range(), Some((6, 11)));
+        assert!(field.menu_is_open());
     }
 }

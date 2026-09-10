@@ -1369,7 +1369,7 @@ impl<E: Element> RawScrollableContainer<E> {
 mod tests {
     use std::cell::Cell;
 
-    use aimer_events::element::ElementEvent;
+    use aimer_events::element::{ElementEvent, ScrollDeltaKind, TouchPhase};
     use aimer_events::pointer::{PointerInfo, PointerSource};
     use aimer_widget::{
         AnyElement, CaptureRequest, Drawable, EventElement, EventResult, LayoutElement, PointerKey,
@@ -1438,6 +1438,46 @@ mod tests {
     }
 
     impl Rebuildable for FixedSizeChild {}
+
+    struct ScrollBlockingWrapper {
+        child: AnyElement,
+    }
+
+    impl VisitorElement for ScrollBlockingWrapper {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.child.as_ref());
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "ScrollBlockingWrapper"
+        }
+    }
+
+    impl EventElement for ScrollBlockingWrapper {
+        fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.child.as_ref());
+        }
+
+        fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.child.as_ref());
+        }
+
+        fn on_event(&self, event: &ElementEvent) -> EventResult {
+            matches!(event, ElementEvent::Scroll { .. }).into()
+        }
+    }
+
+    impl LayoutElement for ScrollBlockingWrapper {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some((Vec2d::ZERO, Vec2d { x: 100.0, y: 100.0 }))
+        }
+    }
+
+    impl Drawable for ScrollBlockingWrapper {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for ScrollBlockingWrapper {}
 
     struct CountingChild {
         size: ResolvedSize,
@@ -1795,6 +1835,168 @@ mod tests {
             #[cfg(not(feature = "portable-guest"))]
             paint_cache: Default::default(),
         }
+    }
+
+    #[test]
+    fn nested_scrollables_give_a_horizontal_dominant_frame_to_the_inner_axis() {
+        let inner = sized_scrollable(
+            crate::ScrollAxis::Horizontal,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+        );
+        inner.ctrl.cached_max_scroll.set(Vec2d { x: 100.0, y: 0.0 });
+        inner.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        inner.ctrl.cursor_pos.set(Some(Vec2d { x: 50.0, y: 50.0 }));
+        let inner_ctrl = inner.ctrl.clone();
+
+        let outer = raw_scrollable(inner.boxed());
+        outer.ctrl.cached_max_scroll.set(Vec2d { x: 0.0, y: 100.0 });
+        outer.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        outer.ctrl.cursor_pos.set(Some(Vec2d { x: 50.0, y: 50.0 }));
+
+        let result = outer.on_event(&ElementEvent::Scroll {
+            delta: Vec2d { x: 40.0, y: -20.0 },
+            phase: TouchPhase::Moved,
+            kind: ScrollDeltaKind::Pixel,
+            is_direct_manipulation: false,
+        });
+
+        assert!(result.is_consumed());
+        assert_eq!(inner_ctrl.scroll_offset.get().x, 40.0);
+        assert_eq!(outer.ctrl.scroll_offset.get().y, 0.0);
+    }
+
+    #[test]
+    fn nested_scrollables_ignore_cross_axis_drift_for_a_vertical_dominant_frame() {
+        let inner = sized_scrollable(
+            crate::ScrollAxis::Horizontal,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+        );
+        inner.ctrl.cached_max_scroll.set(Vec2d { x: 100.0, y: 0.0 });
+        inner.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        inner.ctrl.cursor_pos.set(Some(Vec2d { x: 50.0, y: 50.0 }));
+        let inner_ctrl = inner.ctrl.clone();
+
+        let outer = raw_scrollable(inner.boxed());
+        outer.ctrl.cached_max_scroll.set(Vec2d { x: 0.0, y: 100.0 });
+        outer.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        outer.ctrl.cursor_pos.set(Some(Vec2d { x: 50.0, y: 50.0 }));
+
+        let result = outer.on_event(&ElementEvent::Scroll {
+            delta: Vec2d { x: 3.0, y: -40.0 },
+            phase: TouchPhase::Moved,
+            kind: ScrollDeltaKind::Pixel,
+            is_direct_manipulation: false,
+        });
+
+        assert!(result.is_consumed());
+        assert_eq!(inner_ctrl.scroll_offset.get().x, 0.0);
+        assert_eq!(outer.ctrl.scroll_offset.get().y, -40.0);
+    }
+
+    #[test]
+    fn nested_scrollable_hands_a_frame_to_the_parent_at_a_hard_edge() {
+        let mut inner = sized_scrollable(
+            crate::ScrollAxis::Horizontal,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+        );
+        Rc::get_mut(&mut inner.ctrl)
+            .expect("the test state is not shared yet")
+            .scroll_behavior
+            .bouncy = false;
+        inner.ctrl.cached_max_scroll.set(Vec2d { x: 100.0, y: 0.0 });
+        inner.ctrl.set_scroll_offset(Vec2d { x: -100.0, y: 0.0 });
+        inner.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        inner.ctrl.cursor_pos.set(Some(Vec2d { x: 50.0, y: 50.0 }));
+
+        let outer = raw_scrollable(inner.boxed());
+        outer.ctrl.cached_max_scroll.set(Vec2d { x: 0.0, y: 100.0 });
+        outer.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        outer.ctrl.cursor_pos.set(Some(Vec2d { x: 50.0, y: 50.0 }));
+
+        let result = outer.on_event(&ElementEvent::Scroll {
+            delta: Vec2d { x: -20.0, y: -40.0 },
+            phase: TouchPhase::Moved,
+            kind: ScrollDeltaKind::Pixel,
+            is_direct_manipulation: false,
+        });
+
+        assert!(result.is_consumed());
+        assert_eq!(outer.ctrl.scroll_offset.get().y, -40.0);
+    }
+
+    #[test]
+    fn an_opaque_wrapper_does_not_hide_parent_scroll_when_nested_axis_cannot_move() {
+        let inner = sized_scrollable(
+            crate::ScrollAxis::Horizontal,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+        );
+        inner.ctrl.cached_max_scroll.set(Vec2d { x: 100.0, y: 0.0 });
+        inner.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        inner.ctrl.cursor_pos.set(Some(Vec2d { x: 50.0, y: 50.0 }));
+
+        let wrapper = ScrollBlockingWrapper {
+            child: inner.boxed(),
+        };
+        let outer = raw_scrollable(wrapper.boxed());
+        outer.ctrl.cached_max_scroll.set(Vec2d { x: 0.0, y: 100.0 });
+        outer.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        outer.ctrl.cursor_pos.set(Some(Vec2d { x: 50.0, y: 50.0 }));
+
+        let result = outer.on_event(&ElementEvent::Scroll {
+            delta: Vec2d { x: 0.0, y: -40.0 },
+            phase: TouchPhase::Moved,
+            kind: ScrollDeltaKind::Pixel,
+            is_direct_manipulation: false,
+        });
+
+        assert!(result.is_consumed());
+        assert_eq!(outer.ctrl.scroll_offset.get().y, -40.0);
+    }
+
+    #[test]
+    fn nested_pointer_scroll_hands_off_to_the_parent_after_the_child_hits_an_edge() {
+        let mut inner = sized_scrollable(
+            crate::ScrollAxis::Horizontal,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+        );
+        Rc::get_mut(&mut inner.ctrl)
+            .expect("the test state is not shared yet")
+            .scroll_behavior
+            .bouncy = false;
+        inner.ctrl.cached_max_scroll.set(Vec2d { x: 100.0, y: 0.0 });
+        inner.ctrl.set_scroll_offset(Vec2d { x: -80.0, y: 0.0 });
+        inner.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let inner_ctrl = inner.ctrl.clone();
+
+        let outer = raw_scrollable(inner.boxed());
+        outer.ctrl.cached_max_scroll.set(Vec2d { x: 0.0, y: 100.0 });
+        outer.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+
+        let pointer = |x: f32, y: f32| PointerInfo::touch(Vec2d { x, y }, 3);
+        let _ = outer.on_event(&ElementEvent::PointerDown(pointer(50.0, 50.0)));
+        let _ = outer.on_event(&ElementEvent::PointerMove(pointer(30.0, 60.0)));
+        let _ = outer.on_event(&ElementEvent::PointerMove(pointer(10.0, 70.0)));
+        let _ = outer.on_event(&ElementEvent::PointerMove(pointer(10.0, 120.0)));
+        let _ = outer.on_event(&ElementEvent::PointerMove(pointer(10.0, 140.0)));
+
+        assert_eq!(inner_ctrl.scroll_offset.get().x, -100.0);
+        assert_eq!(outer.ctrl.scroll_offset.get().y, 20.0);
+        aimer_widget::release_pointer(PointerKey::new(PointerSource::Touch, 3));
     }
 
     fn drawing_scrollable_with_size(
