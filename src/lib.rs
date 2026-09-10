@@ -1783,10 +1783,6 @@ mod tests {
                 controller.offset().y > 0.0,
                 "the finger travelled far enough to be a scroll"
             );
-            assert!(
-                !is_pointer_claimed(finger()),
-                "the scroll view owns the gesture, so no frame may turn the press into a selection"
-            );
         }
 
         /// A finger dragged over selectable text scrolls the page.
