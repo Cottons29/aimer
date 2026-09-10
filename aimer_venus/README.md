@@ -218,11 +218,12 @@ handshake and the decoding off the UI thread entirely.
   nanoseconds, so draining ten thousand microtasks fits comfortably inside a
   120 Hz frame.
 - A cooperative scheduler cannot preempt. An `async` handler that does 12 ms of
-  straight-line work with no `await` will drop a frame; debug builds print the
-  offending poll's duration so the author hears about it before a user does.
+  straight-line work with no `await` will drop a frame; builds with the
+  `venus-debug` feature print the offending poll's duration so the author hears
+  about it before a user does.
 - A microtask drain is deliberately unbudgeted, so a microtask that re-wakes
-  itself forever hangs the frame. Debug builds assert once the drain passes
-  100 000 polls.
+  itself forever hangs the frame. Builds with the `venus-debug` feature warn
+  when one poll exceeds 1 ms and assert once the drain passes 100 000 polls.
 - An installed poll context costs one `Rc` clone and one dynamic call per poll,
   plus whatever the host's guard is — a thread-local swap, for Tokio. With no
   context installed the poll path reads an empty `Option` and nothing else.

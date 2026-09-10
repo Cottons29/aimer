@@ -970,6 +970,7 @@ pub struct StatefulElement {
 }
 
 impl StatefulElement {
+    #[inline]
     pub fn boxed(self) -> AnyElement {
         Element::boxed(self)
     }

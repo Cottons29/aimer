@@ -74,7 +74,7 @@ pub(crate) fn set_portable_frame_time(frame: u64) {
 /// the scheduler agree on when the frame is over.
 pub const IDLE_SLICE_FLOOR: Duration = Duration::from_micros(250);
 
-/// How long a single microtask may take before a debug build complains.
+/// How long a single microtask may take before a `venus-debug` build complains.
 ///
 /// A microtask is contractually allowed to mutate state, not to do work — it
 /// runs inside the frame's critical path with no budget check in front of it.

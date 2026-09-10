@@ -1,5 +1,5 @@
 use aimer::style::{
-    AnimatedTheme, BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontFamily, FontWeight,
+    AnimatedTheme, BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontWeight,
     Stroke, TextDecoration, TextStyle, ThemeData,
 };
 use aimer::{Color, Colors, MarkdownTheme, SpanStyle, Widget};
@@ -101,8 +101,9 @@ pub fn markdown_theme() -> MarkdownTheme {
     let body = TextStyle::new()
         .font_size(16)
         .color(theme.on_surface_color);
+    let markdown_defaults = MarkdownTheme::default();
 
-    MarkdownTheme::default()
+    markdown_defaults
         .body(body)
         .headings([
             body.font_size(32).font_weight(FontWeight::Bolder),
@@ -113,10 +114,15 @@ pub fn markdown_theme() -> MarkdownTheme {
             body.font_size(16).font_weight(FontWeight::Bolder),
         ])
         .blockquote(body.color(muted_text(&theme)))
-        .code_block(body.font_family(FontFamily::MONOSPACE).font_size(14))
+        .code_block(
+            markdown_defaults
+                .code_block
+                .color(theme.on_surface_color)
+                .font_size(14),
+        )
         .inline_code(
-            SpanStyle::new()
-                .font_family(FontFamily::MONOSPACE)
+            markdown_defaults
+                .inline_code
                 .background_color(recessed_surface(&theme)),
         )
         .link(
@@ -178,9 +184,12 @@ mod tests {
     fn markdown_theme_uses_the_same_semantic_foreground_and_surfaces() {
         let theme = app_theme();
         let markdown = markdown_theme();
+        let defaults = MarkdownTheme::default();
 
         assert_eq!(markdown.body.color, theme.on_surface_color);
         assert_eq!(markdown.code_background, recessed_surface(&theme));
         assert_eq!(markdown.table_cell_background, recessed_surface(&theme));
+        assert_eq!(markdown.code_block.font_family, defaults.code_block.font_family);
+        assert_eq!(markdown.inline_code.font_family, defaults.inline_code.font_family);
     }
 }

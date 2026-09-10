@@ -7,11 +7,17 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::task::Context;
 
+#[cfg(feature = "venus-debug")]
+use std::time::Duration;
+
 use crate::budget::{self, FrameBudget};
 use crate::poll_context::PollContext;
 use crate::task::slab::TaskSlab;
 use crate::task::waker::{Notifier, WakeQueue, waker_for};
 use crate::task::{Phase, ScopeId, TaskId, TaskScope};
+
+#[cfg(feature = "venus-debug")]
+use web_time::Instant;
 
 /// How many microtasks one drain will run before deciding it is looping.
 ///
@@ -20,6 +26,18 @@ use crate::task::{Phase, ScopeId, TaskId, TaskScope};
 /// frame — ten thousand `set_state` microtasks is already pathological — so
 /// reaching it is a bug, and debug builds say so.
 const MICROTASK_DRAIN_LIMIT: usize = 100_000;
+
+#[cfg(feature = "venus-debug")]
+fn slow_microtask_warning(task: TaskId, elapsed: Duration) -> Option<String> {
+    if elapsed <= crate::MICROTASK_BUDGET_WARNING {
+        return None;
+    }
+
+    Some(format!(
+        "aimer_venus: slow microtask {task:?} took {elapsed:?} (threshold {:?})",
+        crate::MICROTASK_BUDGET_WARNING,
+    ))
+}
 
 struct Inner {
     tasks: TaskSlab,
@@ -226,7 +244,7 @@ impl LocalScheduler {
                 break;
             };
 
-            self.poll_task(task);
+            self.poll_task(task, Phase::Microtask);
             polled += 1;
 
             if polled >= MICROTASK_DRAIN_LIMIT {
@@ -255,7 +273,7 @@ impl LocalScheduler {
             let Some(task) = self.take_ready(Phase::Frame) else {
                 break;
             };
-            self.poll_task(task);
+            self.poll_task(task, Phase::Frame);
             polled += 1;
             remaining -= 1;
         }
@@ -282,7 +300,7 @@ impl LocalScheduler {
                     break;
                 };
 
-                self.poll_task(task);
+                self.poll_task(task, Phase::Idle);
                 polled += 1;
             }
 
@@ -350,10 +368,17 @@ impl LocalScheduler {
     /// The future is lent out for the duration, which is what lets a running
     /// task spawn another task, cancel a scope, or drop its own scope without
     /// panicking on a re-entrant borrow.
-    fn poll_task(&self, task: TaskId) {
+    fn poll_task(&self, task: TaskId, phase: Phase) {
         let Some((mut future, waker)) = self.inner.borrow_mut().tasks.lend(task) else {
             return;
         };
+
+        #[cfg(not(feature = "venus-debug"))]
+        let _ = phase;
+
+        #[cfg(feature = "venus-debug")]
+        let started = (phase == Phase::Microtask).then(Instant::now);
+
         let mut context = Context::from_waker(&waker);
 
         // Cloned rather than borrowed across the poll: the task about to run may
@@ -368,6 +393,13 @@ impl LocalScheduler {
                 Some(host) => host.enter(&mut poll_once),
                 None => poll_once(),
             }
+        }
+
+        #[cfg(feature = "venus-debug")]
+        if let Some(started) = started
+            && let Some(warning) = slow_microtask_warning(task, started.elapsed())
+        {
+            eprintln!("{warning}");
         }
 
         let mut inner = self.inner.borrow_mut();
@@ -576,5 +608,23 @@ mod tests {
 
         scheduler.run_microtasks();
         assert!(!scheduler.has_ready_work());
+    }
+
+    #[cfg(feature = "venus-debug")]
+    #[test]
+    fn a_microtask_warning_starts_strictly_above_the_threshold() {
+        let task = TaskId::new(7, 2);
+
+        assert!(
+            super::slow_microtask_warning(task, crate::MICROTASK_BUDGET_WARNING).is_none()
+        );
+
+        let warning = super::slow_microtask_warning(
+            task,
+            crate::MICROTASK_BUDGET_WARNING + Duration::from_nanos(1),
+        )
+        .expect("a poll above the warning threshold");
+        assert!(warning.contains("slow microtask"));
+        assert!(warning.contains("TaskId"));
     }
 }

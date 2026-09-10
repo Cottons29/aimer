@@ -79,8 +79,9 @@ pub enum Phase {
     ///
     /// This is where a resolved future's `set_state` belongs, and it is why the
     /// effect is visible in the *same* frame instead of the next one. A
-    /// microtask may mutate state; it must not do work. Debug builds complain
-    /// when one takes longer than [`crate::MICROTASK_BUDGET_WARNING`].
+    /// microtask may mutate state; it must not do work. Builds with the
+    /// `venus-debug` feature complain when one takes longer than
+    /// [`crate::MICROTASK_BUDGET_WARNING`].
     #[default]
     Microtask,
     /// Runs once per frame, after the microtask drain.

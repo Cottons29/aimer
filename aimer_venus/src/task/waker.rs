@@ -65,6 +65,9 @@ pub(crate) struct WakeQueue {
     shared: SegQueue<TaskId>,
     /// Whether `shared` holds anything, so draining an empty queue never scans.
     has_shared: AtomicBool,
+    /// Whether an off-thread wake has already notified the event loop and has
+    /// not yet been observed by the owner thread.
+    notifier_pending: AtomicBool,
     notifier: OnceLock<Notifier>,
     owner: ThreadId,
 }
@@ -83,6 +86,7 @@ impl WakeQueue {
             },
             shared: SegQueue::new(),
             has_shared: AtomicBool::new(false),
+            notifier_pending: AtomicBool::new(false),
             notifier: OnceLock::new(),
             owner: thread::current().id(),
         })
@@ -111,7 +115,9 @@ impl WakeQueue {
         self.shared.push(id);
         self.has_shared.store(true, Ordering::Release);
 
-        if let Some(notifier) = self.notifier.get() {
+        if let Some(notifier) = self.notifier.get()
+            && !self.notifier_pending.swap(true, Ordering::AcqRel)
+        {
             notifier();
         }
     }
@@ -137,6 +143,12 @@ impl WakeQueue {
                 out.push(id);
             }
         }
+
+        // A worker that races with the final queue scan may see this flag set
+        // and skip its notifier. The owner is still awake here and will check
+        // `has_ready_work` before sleeping; clearing the flag now lets a later
+        // wake notify the loop again if the queue is empty at that check.
+        self.notifier_pending.store(false, Ordering::Release);
     }
 
     /// Whether anything has been woken since the last drain.
@@ -259,5 +271,39 @@ mod tests {
             .expect("the worker to finish");
 
         assert_eq!(pings.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_worker_burst_notifies_once_until_the_queue_is_drained() {
+        use std::sync::atomic::AtomicUsize;
+
+        let queue = WakeQueue::new();
+        let pings = Arc::new(AtomicUsize::new(0));
+        let counted = pings.clone();
+        queue.set_notifier(Box::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        let from_worker = Arc::clone(&queue);
+        thread::spawn(move || {
+            for index in 0..3 {
+                from_worker.wake(id(index));
+            }
+        })
+        .join()
+        .expect("the worker to finish");
+
+        assert_eq!(pings.load(Ordering::SeqCst), 1);
+
+        let mut drained = Vec::new();
+        queue.drain_into(&mut drained);
+        assert_eq!(drained.len(), 3);
+
+        let from_worker = Arc::clone(&queue);
+        thread::spawn(move || from_worker.wake(id(3)))
+            .join()
+            .expect("the worker to finish");
+
+        assert_eq!(pings.load(Ordering::SeqCst), 2);
     }
 }

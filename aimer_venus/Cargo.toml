@@ -10,6 +10,10 @@ readme = "README.md"
 keywords = ["gui", "async", "runtime", "scheduler"]
 categories = ["asynchronous", "gui"]
 
+[features]
+# Adds per-microtask timing diagnostics without burdening the default poll path.
+venus-debug = []
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(aimer_portable_guest)"] }
 

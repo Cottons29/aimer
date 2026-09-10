@@ -72,6 +72,8 @@ winit.workspace = true
 
 [features]
 markdown = []
+# Forward opt-in Venus microtask diagnostics through the umbrella crate.
+venus-debug = ["aimer_venus/venus-debug"]
 provider = []
 svg = []
 apple-core-text = [

@@ -781,7 +781,7 @@ mod tests {
     use aimer_attribute::{BoxConstraint, ResolvedSize};
     use aimer_canvas::{Canvas, InnerCanvas};
     use aimer_cupid::draw_cmd::DrawCommand;
-    use aimer_style::{FontFamily, TextAlign, TextDecorationLine, TextStyle};
+    use aimer_style::{TextAlign, TextDecorationLine, TextStyle};
     use aimer_widget::base::{BuildContext, WindowHandle};
 
     use super::*;
@@ -1130,6 +1130,10 @@ mod tests {
                 .iter()
                 .any(|span| span.link.as_deref() == Some("#footnote-note"))
         );
+        let code_font_family = theme
+            .inline_code
+            .font_family
+            .expect("inline code should select the Markdown code font");
         assert_eq!(
             resolved
                 .iter()
@@ -1137,7 +1141,7 @@ mod tests {
                 .unwrap()
                 .style
                 .font_family,
-            FontFamily::MONOSPACE
+            code_font_family
         );
     }
 

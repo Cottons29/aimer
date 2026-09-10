@@ -1,7 +1,28 @@
-use aimer_assets::{FontFamily, FontWeight};
+use std::sync::OnceLock;
+
+use aimer_assets::{FontFamily, FontRegistration, FontRegistry, FontStyle, FontWeight};
 use aimer_color::prelude::Color;
 use aimer_style::{TextDecoration, TextStyle};
 use aimer_text::SpanStyle;
+
+const CODE_FONT_FAMILY_NAME: &str = "Aimer Markdown JetBrains Mono";
+const CODE_FONT_BYTES: &[u8] =
+    include_bytes!("../JetBrainsMono-2.304/fonts/ttf/JetBrainsMono-Regular.ttf");
+
+fn code_font_family() -> FontFamily {
+    static FAMILY: OnceLock<FontFamily> = OnceLock::new();
+    *FAMILY.get_or_init(|| {
+        FontRegistry::family(CODE_FONT_FAMILY_NAME).unwrap_or_else(|| {
+            FontRegistry::register(FontRegistration {
+                family: CODE_FONT_FAMILY_NAME,
+                bytes: CODE_FONT_BYTES,
+                weight: FontWeight::Normal,
+                style: FontStyle::Normal,
+            })
+            .expect("the embedded Markdown code font should be valid")
+        })
+    })
+}
 
 #[derive(Clone, Copy, Debug)]
 /// Visual styles, colors, and spacing used by [`crate::MarkdownViewer`].
@@ -157,6 +178,7 @@ impl MarkdownTheme {
 impl Default for MarkdownTheme {
     fn default() -> Self {
         let body = TextStyle::new().font_size(16).color(Color::Hex(0x24292F));
+        let code_font = code_font_family();
         Self {
             body,
             headings: [
@@ -168,9 +190,9 @@ impl Default for MarkdownTheme {
                 body.font_size(16).font_weight(FontWeight::Bolder),
             ],
             blockquote: body.color(Color::Hex(0x57606A)),
-            code_block: body.font_family(FontFamily::MONOSPACE).font_size(14),
+            code_block: body.font_family(code_font).font_size(14),
             inline_code: SpanStyle::new()
-                .font_family(FontFamily::MONOSPACE)
+                .font_family(code_font)
                 .background_color(Color::Hex(0xEFF1F3)),
             link: SpanStyle::new()
                 .color(Color::Hex(0x0969DA))
@@ -187,5 +209,25 @@ impl Default for MarkdownTheme {
             number_color: Color::Hex(0x0550AE),
             block_spacing: 8,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MarkdownTheme;
+    use aimer_assets::{FontRegistry, FontStyle, FontWeight};
+
+    #[test]
+    fn default_code_styles_use_the_markdown_code_font() {
+        let theme = MarkdownTheme::default();
+        let family = FontRegistry::family(super::CODE_FONT_FAMILY_NAME)
+            .expect("the Markdown code font should be registered");
+
+        assert_eq!(theme.code_block.font_family, family);
+        assert_eq!(theme.inline_code.font_family, Some(family));
+
+        let face = FontRegistry::resolve(family, FontWeight::Normal, FontStyle::Normal)
+            .expect("the Markdown code font face should be registered");
+        assert_eq!(face.bytes.as_ref(), super::CODE_FONT_BYTES);
     }
 }
