@@ -2,7 +2,7 @@
 
 use std::cell::Cell;
 
-use aimer_widget::base::BuildContext;
+use aimer_widget::base::{BuildContext, ResolvedSize};
 use aimer_widget::{Element, PaintDamageTracker};
 
 /// Samples one animation value without allocating or comparing floating-point
@@ -25,11 +25,72 @@ pub(crate) fn mark_bounded_animation_damage(
     visual_value: f32,
     visual_changed: bool,
 ) {
-    if !visual_value.is_finite() || !child.is_paint_stable() || !child.is_layout_stable() {
+    if !visual_value.is_finite() {
         tracker.mark_full();
     } else {
-        tracker.mark_current_bounds(ctx, child.content_size(ctx), visual_changed);
+        mark_bounded_child_damage(tracker, ctx, child, visual_changed);
     }
+}
+
+/// Marks a live animation whose output is known to remain inside the child's
+/// current layout rectangle. Unlike retained paint stability, this contract
+/// permits the child to rebuild, load asynchronously, or change size between
+/// frames; [`PaintDamageTracker`] unions the old and current rectangles.
+#[inline]
+pub(crate) fn mark_bounded_child_damage(
+    tracker: &PaintDamageTracker,
+    ctx: &BuildContext,
+    child: &dyn Element,
+    visual_changed: bool,
+) {
+    if !child.is_paint_bounded() {
+        tracker.mark_full();
+        return;
+    }
+
+    tracker.mark_current_bounds(ctx, child.content_size(ctx), visual_changed);
+}
+
+/// Marks an [`AnimatedSwitcher`] cross-fade. Both children share the
+/// switcher's local origin, so the maximum width and height cover the union of
+/// their rectangles while preserving the tracker's previous-frame cleanup.
+#[inline]
+pub(crate) fn mark_bounded_crossfade_damage(
+    tracker: &PaintDamageTracker,
+    ctx: &BuildContext,
+    current: &dyn Element,
+    old: Option<&dyn Element>,
+    visual_changed: bool,
+) {
+    if !current.is_paint_bounded()
+        || old.is_some_and(|child| !child.is_paint_bounded())
+    {
+        tracker.mark_full();
+        return;
+    }
+
+    let current_size = current.content_size(ctx);
+    let old_size = old.map(|child| child.content_size(ctx));
+    if !is_valid_size(current_size) || old_size.is_some_and(|size| !is_valid_size(size)) {
+        tracker.mark_full();
+        return;
+    }
+    let bounds = old_size
+        .map(|old_size| ResolvedSize {
+            width: current_size.width.max(old_size.width),
+            height: current_size.height.max(old_size.height),
+        })
+        .unwrap_or(current_size);
+
+    tracker.mark_current_bounds(ctx, bounds, visual_changed);
+}
+
+#[inline]
+fn is_valid_size(size: ResolvedSize) -> bool {
+    size.width.is_finite()
+        && size.height.is_finite()
+        && size.width >= 0.0
+        && size.height >= 0.0
 }
 
 /// Marks an animation whose output is rebuilt or otherwise not bounded by the

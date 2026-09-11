@@ -334,6 +334,11 @@ impl Drawable for StatelessElement {
         self.rebuild_fn.is_none()
             && unsafe { &*self.child.0.get() }.is_paint_stable()
     }
+
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        unsafe { &*self.child.0.get() }.is_paint_bounded()
+    }
 }
 
 impl LayoutElement for StatelessElement {

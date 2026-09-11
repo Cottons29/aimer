@@ -263,8 +263,11 @@ impl Drawable for AnimatedSwitcherElement {
         let out_value = self.out_controller.tick(now);
         let active = self.in_controller.is_animating() || self.out_controller.is_animating();
         let has_old_child = unsafe { (&*self.old_child.get()).is_some() };
-        crate::widgets::damage::mark_dynamic_animation_damage(
+        crate::widgets::damage::mark_bounded_crossfade_damage(
             &self.damage,
+            ctx,
+            self.current_child.as_ref(),
+            unsafe { (&*self.old_child.get()).as_deref() },
             active || has_old_child,
         );
 
@@ -289,6 +292,13 @@ impl Drawable for AnimatedSwitcherElement {
         } else if out_value >= 1.0 {
             unsafe { *self.old_child.get() = None };
         }
+    }
+
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        self.current_child.is_paint_bounded()
+            && unsafe { (&*self.old_child.get()).as_ref() }
+                .map_or(true, |child| child.is_paint_bounded())
     }
 }
 

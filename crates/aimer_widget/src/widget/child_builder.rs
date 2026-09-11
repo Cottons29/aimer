@@ -564,6 +564,13 @@ impl Drawable for RetainedChildElement {
             .unwrap_or(false)
     }
 
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        self.child()
+            .map(Drawable::is_paint_bounded)
+            .unwrap_or(false)
+    }
+
     #[doc(hidden)]
     fn draw_paint_islands(
         &self,

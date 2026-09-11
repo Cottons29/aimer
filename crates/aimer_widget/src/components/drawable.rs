@@ -63,6 +63,26 @@ pub trait Drawable {
         false
     }
 
+    /// Returns whether live drawing stays within the element's current
+    /// [`LayoutElement::content_size`](crate::LayoutElement::content_size)
+    /// rectangle.
+    ///
+    /// This contract is intentionally weaker than [`Self::is_paint_stable`].
+    /// A bounded element may still perform live work, rebuild children, or
+    /// start asynchronous loading; it is only promising that its visual
+    /// output remains inside its current layout bounds. Animation damage
+    /// tracking uses this to invalidate a local rectangle without opting the
+    /// element into retained paint replay.
+    ///
+    /// Implementations must return `false` when painting can extend outside
+    /// the layout rectangle, or when that fact cannot be established
+    /// conservatively.
+    #[doc(hidden)]
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        false
+    }
+
     /// Draws a subtree whose stable prefix and dynamic suffix can be composed
     /// independently by a retained viewport.
     ///
@@ -119,6 +139,11 @@ impl Drawable for Box<dyn Drawable> {
     #[inline]
     fn is_paint_stable(&self) -> bool {
         self.as_ref().is_paint_stable()
+    }
+
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        self.as_ref().is_paint_bounded()
     }
 
     #[inline]

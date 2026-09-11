@@ -409,4 +409,31 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
             }
         }
     }
+
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        let image_is_bounded = match self.fit {
+            // Cover explicitly clips to the image's layout box, and Fill
+            // paints exactly that box.
+            BoxFit::Cover | BoxFit::Fill => true,
+            // These modes fit inside the layout box when the caller does not
+            // enlarge the final painted image.
+            BoxFit::Contain | BoxFit::None | BoxFit::ScaleDown => {
+                self.scale.is_finite() && self.scale >= 0.0 && self.scale <= 1.0
+            }
+            // Width-only and height-only fitting may extend beyond the other
+            // axis of the layout box.
+            BoxFit::FitWidth | BoxFit::FitHeight => false,
+        };
+
+        image_is_bounded
+            && self
+                .loading_element
+                .as_ref()
+                .map_or(true, |element| element.is_paint_bounded())
+            && self
+                .error_element
+                .as_ref()
+                .map_or(true, |element| element.is_paint_bounded())
+    }
 }

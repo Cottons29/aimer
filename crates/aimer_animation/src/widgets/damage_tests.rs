@@ -7,6 +7,7 @@ use aimer_widget::{
     VisitorElement, Widget,
 };
 
+use super::damage::{mark_bounded_child_damage, mark_bounded_crossfade_damage};
 use super::{Animated, AnimatedBuilder, AnimationEffect, FadeTransition, SlideTransition};
 use crate::{AnimationController, Curve};
 
@@ -77,6 +78,10 @@ impl Drawable for StableElement {
     fn is_paint_stable(&self) -> bool {
         true
     }
+
+    fn is_paint_bounded(&self) -> bool {
+        true
+    }
 }
 
 impl EventElement for StableElement {}
@@ -134,6 +139,34 @@ impl Rebuildable for UnknownElement {}
 impl VisitorElement for UnknownElement {
     fn debug_name(&self) -> &'static str {
         "UnknownElement"
+    }
+}
+
+struct VariableBoundedElement {
+    size: std::rc::Rc<std::cell::Cell<ResolvedSize>>,
+}
+
+impl Drawable for VariableBoundedElement {
+    fn draw(&self, _context: &BuildContext) {}
+
+    fn is_paint_bounded(&self) -> bool {
+        true
+    }
+}
+
+impl EventElement for VariableBoundedElement {}
+
+impl LayoutElement for VariableBoundedElement {
+    fn computed_size(&self, _context: &BuildContext) -> ResolvedSize {
+        self.size.get()
+    }
+}
+
+impl Rebuildable for VariableBoundedElement {}
+
+impl VisitorElement for VariableBoundedElement {
+    fn debug_name(&self) -> &'static str {
+        "VariableBoundedElement"
     }
 }
 
@@ -200,6 +233,82 @@ fn opacity_over_unknown_content_forces_full_damage() {
     let damage = draw_frame!(element.as_ref(), &context);
 
     assert!(damage.is_full());
+}
+
+#[test]
+fn bounded_dynamic_child_marks_the_union_of_changed_sizes() {
+    let context = context();
+    let size = std::rc::Rc::new(std::cell::Cell::new(ResolvedSize {
+        width: 10.0,
+        height: 10.0,
+    }));
+    let element = VariableBoundedElement { size: size.clone() };
+    let tracker = PaintDamageTracker::new();
+
+    aimer_widget::begin_paint_frame(FRAME_WIDTH, FRAME_HEIGHT);
+    mark_bounded_child_damage(&tracker, &context, &element, true);
+    let _ = aimer_widget::take_paint_frame_damage(FRAME_WIDTH, FRAME_HEIGHT);
+
+    size.set(ResolvedSize {
+        width: 20.0,
+        height: 14.0,
+    });
+    aimer_widget::begin_paint_frame(FRAME_WIDTH, FRAME_HEIGHT);
+    mark_bounded_child_damage(&tracker, &context, &element, true);
+    let damage = aimer_widget::take_paint_frame_damage(FRAME_WIDTH, FRAME_HEIGHT);
+
+    assert!(!damage.is_full());
+    assert_eq!(damage.regions().len(), 1);
+    assert_eq!(
+        (damage.regions()[0].width, damage.regions()[0].height),
+        (22, 16)
+    );
+}
+
+#[test]
+fn bounded_damage_keeps_unknown_children_on_the_full_frame_fallback() {
+    let context = context();
+    let tracker = PaintDamageTracker::new();
+    let element = UnknownElement;
+
+    aimer_widget::begin_paint_frame(FRAME_WIDTH, FRAME_HEIGHT);
+    mark_bounded_child_damage(&tracker, &context, &element, true);
+    let damage = aimer_widget::take_paint_frame_damage(FRAME_WIDTH, FRAME_HEIGHT);
+
+    assert!(damage.is_full());
+}
+
+#[test]
+fn bounded_crossfade_marks_the_union_of_current_and_outgoing_children() {
+    let context = context();
+    let tracker = PaintDamageTracker::new();
+    let current = VariableBoundedElement {
+        size: std::rc::Rc::new(std::cell::Cell::new(ResolvedSize {
+            width: 20.0,
+            height: 14.0,
+        })),
+    };
+    let old = VariableBoundedElement {
+        size: std::rc::Rc::new(std::cell::Cell::new(ResolvedSize {
+            width: 30.0,
+            height: 10.0,
+        })),
+    };
+
+    aimer_widget::begin_paint_frame(FRAME_WIDTH, FRAME_HEIGHT);
+    mark_bounded_crossfade_damage(&tracker, &context, &current, Some(&old), true);
+    let _ = aimer_widget::take_paint_frame_damage(FRAME_WIDTH, FRAME_HEIGHT);
+
+    aimer_widget::begin_paint_frame(FRAME_WIDTH, FRAME_HEIGHT);
+    mark_bounded_crossfade_damage(&tracker, &context, &current, Some(&old), true);
+    let damage = aimer_widget::take_paint_frame_damage(FRAME_WIDTH, FRAME_HEIGHT);
+
+    assert!(!damage.is_full());
+    assert_eq!(damage.regions().len(), 1);
+    assert_eq!(
+        (damage.regions()[0].width, damage.regions()[0].height),
+        (32, 16)
+    );
 }
 
 #[test]
