@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 pub use crate::scrollable::controller::DragMode;
 use crate::scrollable::controller::ScrollState;
-use crate::scrollable::scroll_bar::ScrollBar;
+use crate::scrollable::scroll_bar::{ScrollBar, ScrollBarPlacement};
 
 #[derive(Clone, Copy, PartialEq)]
 struct ScrollLayoutKey {
@@ -39,6 +39,7 @@ struct ScrollLayoutKey {
     parent_size: ResolvedSize,
     scale_bits: u32,
     axis: crate::ScrollAxis,
+    scroll_bar_placement: ScrollBarPlacement,
     viewport_w: f32,
     viewport_h: f32,
     vertical_bar_width: f32,
@@ -439,6 +440,7 @@ impl<E: Element> RawScrollableContainer<E> {
             parent_size: ctx.parent_size,
             scale_bits: ctx.scale.to_bits(),
             axis: self.ctrl.axis,
+            scroll_bar_placement: self.ctrl.scroll_bar_placement,
             viewport_w: self.viewport_w,
             viewport_h: self.viewport_h,
             vertical_bar_width: self.vertical_bar_width,
@@ -919,18 +921,29 @@ impl<E: Element> RawScrollableContainer<E> {
     /// Resolves both extents this scrollable occupies under `ctx`.
     ///
     /// Returns `((width, inner_width), (height, inner_height))`, where the
-    /// first value of each pair includes the bar reserved on that axis and the
-    /// second is the content viewport that remains. The scroll axis fills the
-    /// space it was given; the cross axis wraps the child when its constraint
-    /// is unbounded — see [`RawScrollableContainer::cross_extent`].
+    /// first value of each pair includes any inline bar reservation and the
+    /// second is the content viewport that remains. Floating bars leave the
+    /// viewport at the full available extent. The scroll axis fills the space
+    /// it was given; the cross axis wraps the child when its constraint is
+    /// unbounded — see [`RawScrollableContainer::cross_extent`].
     #[inline]
     fn resolved_extents(&self, ctx: &BuildContext) -> ((f32, f32), (f32, f32)) {
         let constraint = &ctx.box_constraint;
+        let vertical_bar_extent = if self.ctrl.scroll_bar_placement.reserves_space() {
+            self.vertical_bar_width
+        } else {
+            0.0
+        };
+        let horizontal_bar_extent = if self.ctrl.scroll_bar_placement.reserves_space() {
+            self.horizontal_bar_height
+        } else {
+            0.0
+        };
         match self.ctrl.axis {
             crate::ScrollAxis::Vertical => (
                 Self::cross_extent(
                     || self.content_cross_extent(ctx),
-                    self.vertical_bar_width,
+                    vertical_bar_extent,
                     constraint.min_width,
                     constraint.max_width,
                 ),
@@ -952,7 +965,7 @@ impl<E: Element> RawScrollableContainer<E> {
                 ),
                 Self::cross_extent(
                     || self.content_cross_extent(ctx),
-                    self.horizontal_bar_height,
+                    horizontal_bar_extent,
                     constraint.min_height,
                     constraint.max_height,
                 ),
@@ -1244,15 +1257,19 @@ impl<E: Element> RawScrollableContainer<E> {
         ctx.canvas.save();
 
         // Position the scrollbar at the edge of the viewport
+        let cross_offset = self.ctrl.scroll_bar_placement.cross_offset(
+            if is_vertical { viewport_w } else { viewport_h },
+            track_width,
+        );
         if is_vertical {
             ctx.canvas.translate(Vec2d {
-                x: (viewport_w - track_width).round(),
+                x: cross_offset.round(),
                 y: 0.0,
             });
         } else {
             ctx.canvas.translate(Vec2d {
                 x: 0.0,
-                y: (viewport_h - track_width).round(),
+                y: cross_offset.round(),
             });
         }
 
@@ -1335,7 +1352,7 @@ impl<E: Element> RawScrollableContainer<E> {
         let thumb_x_offset = (track_width - thumb_width) / 2.0;
         let (tx, ty, tw, th) = if is_vertical {
             self.ctrl.v_thumb_rect.set(Some((
-                viewport_w - track_width + thumb_x_offset,
+                cross_offset + thumb_x_offset,
                 thumb_offset,
                 thumb_width,
                 thumb_length,
@@ -1344,7 +1361,7 @@ impl<E: Element> RawScrollableContainer<E> {
         } else {
             self.ctrl.h_thumb_rect.set(Some((
                 thumb_offset,
-                viewport_h - track_width + thumb_x_offset,
+                cross_offset + thumb_x_offset,
                 thumb_length,
                 thumb_width,
             )));
@@ -2407,6 +2424,8 @@ mod tests {
     ) -> RawScrollableContainer<AnyElement> {
         let mut state = ScrollState::for_test_at(Vec2d::default());
         state.axis = axis;
+        // These extent tests explicitly model the legacy reserved-space mode.
+        state.scroll_bar_placement = crate::ScrollBarPlacement::Inline;
 
         RawScrollableContainer {
             child: FixedSizeChild { size: child }.boxed(),
@@ -3020,9 +3039,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_flex_assigned_constraint_shrinks_the_scrollable_viewport() {
+        let mut ctrl = ScrollState::for_test_at(Vec2d::default());
+        ctrl.scroll_bar_placement = crate::ScrollBarPlacement::Inline;
         let mut scrollable = capturing_scrollable(
             Rc::new(Cell::new(0)),
-            Rc::new(ScrollState::for_test_at(Vec2d::default())),
+            Rc::new(ctrl),
         );
         scrollable.viewport_w = 800.0;
         scrollable.viewport_h = 600.0;
@@ -3060,9 +3081,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_retained_scrollable_expands_when_the_parent_constraint_grows() {
+        let mut ctrl = ScrollState::for_test_at(Vec2d::default());
+        ctrl.scroll_bar_placement = crate::ScrollBarPlacement::Inline;
         let mut scrollable = capturing_scrollable(
             Rc::new(Cell::new(0)),
-            Rc::new(ScrollState::for_test_at(Vec2d::default())),
+            Rc::new(ctrl),
         );
         scrollable.viewport_w = 320.0;
         scrollable.viewport_h = 180.0;

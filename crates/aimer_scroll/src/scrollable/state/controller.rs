@@ -9,7 +9,7 @@ use aimer_utils::AnimInstant;
 use aimer_utils::callback::Callback;
 use aimer_widget::Key;
 
-use crate::scrollable::ScrollAxis;
+use crate::scrollable::{ScrollAxis, ScrollBarPlacement};
 use crate::scrollable::constants::*;
 use crate::scrollable::overscroll_source::{OverscrollSource, OverscrollSources};
 use crate::scrollable::scroll_behavior::ScrollBehavior;
@@ -85,6 +85,8 @@ pub struct ScrollState {
     /// until the next input arrives.
     pub(crate) overscroll_source: Cell<OverscrollSource>,
     pub(crate) axis: ScrollAxis,
+    /// Whether the scrollbars overlap the viewport or reserve its edge.
+    pub(crate) scroll_bar_placement: ScrollBarPlacement,
     pub(crate) scroll_offset: Cell<Vec2d>,
     /// Identity used for `PageStorage`-style offset persistence when
     /// `remember_scroll_offset` is enabled.
@@ -1384,9 +1386,9 @@ impl ScrollState {
         track_width: f32,
     ) -> bool {
         if let Some((_tx, y, _tw, h)) = self.v_thumb_rect.get() {
-            // The track occupies the reserved strip immediately after the
-            // content viewport rather than floating over its right edge.
-            let track_left = viewport_w;
+            let track_left = self
+                .scroll_bar_placement
+                .cross_offset(viewport_w, track_width);
             let in_track_x = p.x >= track_left && p.x <= track_left + track_width;
             let in_track_y = p.y >= 0.0 && p.y <= viewport_h;
             let on_thumb = p.y >= y && p.y <= y + h;
@@ -1406,9 +1408,9 @@ impl ScrollState {
         track_width: f32,
     ) -> bool {
         if let Some((x, _ty, w, _th)) = self.h_thumb_rect.get() {
-            // The track occupies the reserved strip immediately after the
-            // content viewport rather than floating over its bottom edge.
-            let track_top = viewport_h;
+            let track_top = self
+                .scroll_bar_placement
+                .cross_offset(viewport_h, track_width);
             let in_track_y = p.y >= track_top && p.y <= track_top + track_width;
             let in_track_x = p.x >= 0.0 && p.x <= viewport_w;
             let on_thumb = p.x >= x && p.x <= x + w;
@@ -1687,6 +1689,7 @@ impl ScrollState {
             overscroll_sources: OverscrollSources::ALL,
             overscroll_source: Cell::new(OverscrollSource::Wheel),
             axis: ScrollAxis::Vertical,
+            scroll_bar_placement: ScrollBarPlacement::Floating,
             scroll_offset: Cell::new(offset),
             storage_key: key!(),
             remember_scroll_offset: false,
@@ -1770,6 +1773,35 @@ mod tests {
         aimer_events::window::restore_thread_redraw_requester(previous);
 
         assert_eq!(requests.get(), 1);
+    }
+
+    #[test]
+    fn scrollbar_track_hit_testing_follows_its_placement() {
+        let mut ctrl = ctrl_with_offset(Vec2d::ZERO);
+        ctrl.cached_viewport.set((320.0, 500.0));
+        ctrl.v_thumb_rect.set(Some((312.0, 100.0, 6.0, 80.0)));
+
+        ctrl.scroll_bar_placement = ScrollBarPlacement::Floating;
+        assert!(ctrl.hit_test_v_track(
+            Vec2d { x: 309.0, y: 300.0 },
+            320.0,
+            500.0,
+            12.0,
+        ));
+
+        ctrl.scroll_bar_placement = ScrollBarPlacement::Inline;
+        assert!(!ctrl.hit_test_v_track(
+            Vec2d { x: 309.0, y: 300.0 },
+            320.0,
+            500.0,
+            12.0,
+        ));
+        assert!(ctrl.hit_test_v_track(
+            Vec2d { x: 321.0, y: 300.0 },
+            320.0,
+            500.0,
+            12.0,
+        ));
     }
 
     // Regression for "moving the cursor pins a core": with per-move redraws

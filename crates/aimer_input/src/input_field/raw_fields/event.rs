@@ -6,6 +6,12 @@ impl VisitorElement for RawTextField {
 
 impl EventElement for RawTextField {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
+        if let Some(selection) = self.selection.borrow().as_ref().cloned()
+            && let Some(result) = selection.intercept(event)
+        {
+            self.sync_cursor_from_area();
+            return result.with_redraw();
+        }
         let active_before = self.mouse_held.get();
         let consumed = (|| {
             if !self.enable
@@ -154,6 +160,15 @@ impl EventElement for RawTextField {
                         // caret: it neither moves the selection it is about to
                         // act on nor starts a drag.
                         if info.button == PointerButton::Secondary {
+                            if let Some(selection) = self.selection.borrow().as_ref().cloned()
+                                && selection.open_context_menu(
+                                    *pos,
+                                    PointerKey::new(info.source, info.id),
+                                )
+                            {
+                                self.sync_cursor_from_area();
+                                return true;
+                            }
                             if self.cursor.selection_range().is_none() {
                                 self.select_word_under(*pos);
                             }
@@ -163,6 +178,15 @@ impl EventElement for RawTextField {
 
                         self.mouse_held.set(Some(PointerKey::new(info.source, info.id)));
                         self.cursor.clear_selection();
+
+                        if let Some(selection) = self.selection.borrow().as_ref().cloned()
+                            && let Some(offset) = selection.offset_at(pos.x, pos.y)
+                        {
+                            selection.begin(
+                                offset,
+                                PointerKey::new(info.source, info.id),
+                            );
+                        }
 
                         // Double/triple-click detection
                         let now = self.now();
@@ -432,7 +456,18 @@ impl EventElement for RawTextField {
                     {
                         self.select_word_under(*pos);
                         self.request_menu(MenuOrigin::Hold);
+                        if let Some(selection) = self.selection.borrow().as_ref().cloned() {
+                            selection.end(pointer);
+                        }
                         self.mouse_held.set(None);
+                        return true;
+                    }
+
+                    if let Some(selection) = self.selection.borrow().as_ref().cloned()
+                        && selection.active_pointer() == Some(pointer)
+                    {
+                        selection.extend_to_position(info.x(), info.y(), pointer);
+                        self.sync_cursor_from_area();
                         return true;
                     }
 
@@ -451,6 +486,12 @@ impl EventElement for RawTextField {
                     if held {
                         self.select_word_under(info.pos);
                         self.request_menu(MenuOrigin::Hold);
+                    }
+                    if let Some(selection) = self.selection.borrow().as_ref().cloned()
+                        && selection.active_pointer() == Some(pointer)
+                    {
+                        selection.end(pointer);
+                        self.sync_cursor_from_area();
                     }
                     if owns_selection_pointer(self.mouse_held.get(), event) {
                         self.mouse_held.set(None);
@@ -490,6 +531,9 @@ impl EventElement for RawTextField {
                         return true;
                     }
                     self.dismiss_menu();
+                    if let Some(selection) = self.selection.borrow().as_ref().cloned() {
+                        selection.cancel();
+                    }
                     self.mouse_held.set(None);
                     true
                 }

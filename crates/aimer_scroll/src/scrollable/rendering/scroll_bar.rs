@@ -15,6 +15,38 @@ use crate::scrollable::constants::{SCROLLBAR_HIDE_DURATION_MS, SCROLLBAR_SHOW_DU
 use crate::scrollable::controller::{DragMode, ScrollState};
 use crate::ScrollAxis;
 
+/// Controls whether a scroll bar overlays the content or occupies layout
+/// space beside it.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, aimer_macro::PortableValue)]
+#[portable_value(
+    id = "aimer.value:aimer_scroll::scrollable::ScrollBarPlacement",
+    max_encoded_bytes = 16,
+)]
+pub enum ScrollBarPlacement {
+    /// Draws the scroll bar over the content at the viewport edge.
+    #[default]
+    #[portable_value(tag = 0)]
+    Floating,
+    /// Reserves the scroll bar's width or height outside the content viewport.
+    #[portable_value(tag = 1)]
+    Inline,
+}
+
+impl ScrollBarPlacement {
+    #[inline]
+    pub(crate) const fn reserves_space(self) -> bool {
+        matches!(self, Self::Inline)
+    }
+
+    #[inline]
+    pub(crate) fn cross_offset(self, viewport_extent: f32, bar_extent: f32) -> f32 {
+        match self {
+            Self::Floating => (viewport_extent - bar_extent.max(0.0)).max(0.0),
+            Self::Inline => viewport_extent,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct ScrollTrack {
     pub width: Dimension,
@@ -240,7 +272,13 @@ pub(crate) fn reserved_viewport(
     width: f32,
     height: f32,
     bar_extent: f32,
+    placement: ScrollBarPlacement,
 ) -> (f32, f32) {
+    let bar_extent = if placement.reserves_space() {
+        bar_extent.max(0.0)
+    } else {
+        0.0
+    };
     match axis {
         ScrollAxis::Vertical => ((width - bar_extent).max(0.0), height),
         ScrollAxis::Horizontal => (width, (height - bar_extent).max(0.0)),
@@ -487,8 +525,17 @@ fn draw_scrollbar(
         scroll_bar.thumb.color.into()
     };
     let thumb_cross_offset = (track_width - thumb_width) / 2.0;
+    let cross_offset = ctrl.scroll_bar_placement.cross_offset(
+        if is_vertical { viewport_w } else { viewport_h },
+        track_width,
+    );
     let (thumb_pos, thumb_size, rect) = if is_vertical {
-        let rect = (viewport_w, thumb_offset, thumb_width, thumb_length);
+        let rect = (
+            cross_offset + thumb_cross_offset,
+            thumb_offset,
+            thumb_width,
+            thumb_length,
+        );
         (
             Vec2d {
                 x: thumb_cross_offset,
@@ -501,7 +548,12 @@ fn draw_scrollbar(
             rect,
         )
     } else {
-        let rect = (thumb_offset, viewport_h, thumb_length, thumb_width);
+        let rect = (
+            thumb_offset,
+            cross_offset + thumb_cross_offset,
+            thumb_length,
+            thumb_width,
+        );
         (
             Vec2d {
                 x: thumb_offset,
@@ -592,7 +644,13 @@ mod tests {
     #[test]
     fn vertical_scrollbar_reserves_width_from_the_content_viewport() {
         assert_eq!(
-            reserved_viewport(ScrollAxis::Vertical, 320.0, 500.0, 12.0),
+            reserved_viewport(
+                ScrollAxis::Vertical,
+                320.0,
+                500.0,
+                12.0,
+                ScrollBarPlacement::Inline,
+            ),
             (308.0, 500.0)
         );
     }
@@ -600,8 +658,38 @@ mod tests {
     #[test]
     fn horizontal_scrollbar_reserves_height_from_the_content_viewport() {
         assert_eq!(
-            reserved_viewport(ScrollAxis::Horizontal, 320.0, 500.0, 12.0),
+            reserved_viewport(
+                ScrollAxis::Horizontal,
+                320.0,
+                500.0,
+                12.0,
+                ScrollBarPlacement::Inline,
+            ),
             (320.0, 488.0)
+        );
+    }
+
+    #[test]
+    fn floating_scrollbars_do_not_reserve_viewport_space() {
+        assert_eq!(
+            reserved_viewport(
+                ScrollAxis::Vertical,
+                320.0,
+                500.0,
+                12.0,
+                ScrollBarPlacement::Floating,
+            ),
+            (320.0, 500.0)
+        );
+        assert_eq!(
+            reserved_viewport(
+                ScrollAxis::Horizontal,
+                320.0,
+                500.0,
+                12.0,
+                ScrollBarPlacement::Floating,
+            ),
+            (320.0, 500.0)
         );
     }
 }

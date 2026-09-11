@@ -547,6 +547,23 @@ impl SelectionSession {
         self.window.request_redraw();
     }
 
+    /// Replaces the selection with a range inside one participant.
+    pub(crate) fn set_local_range(
+        self: &Rc<Self>,
+        slot: &Rc<SelectionSlot>,
+        anchor: usize,
+        focus: usize,
+    ) {
+        self.claim();
+        self.focus();
+        let length = slot.text().len();
+        self.state.borrow_mut().set(PointSelection {
+            anchor: SelectionPoint::new(Rc::clone(slot), anchor.min(length)),
+            focus: SelectionPoint::new(Rc::clone(slot), focus.min(length)),
+        });
+        self.window.request_redraw();
+    }
+
     /// The selected text of every participant in document order, joined by
     /// `\n`.
     ///

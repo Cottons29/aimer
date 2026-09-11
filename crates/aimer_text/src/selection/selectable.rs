@@ -6,7 +6,7 @@ use aimer_attribute::{Bounds, CacheBounds, Vec2d};
 use aimer_widget::base::{BuildContext, Color, WindowHandle};
 
 use crate::selection::session::{SelectionSession, SelectionSlot};
-use crate::selection::{TextHitRegion, text_offset_at};
+use crate::selection::{SelectionRegion, TextHitRegion, text_offset_at};
 
 use aimer_cupid::text_layout::{TextInteractionLayout, TextWritingMode};
 use aimer_cupid::utilities::Mat3;
@@ -92,6 +92,12 @@ impl TextGeometry {
             interaction: RefCell::new(None),
             window,
         }
+    }
+
+    /// Replaces the fallback hit regions supplied by a custom participant.
+    pub(crate) fn set_regions(&self, regions: impl IntoIterator<Item = SelectionRegion>) {
+        *self.regions.borrow_mut() = regions.into_iter().map(TextHitRegion::from).collect();
+        *self.interaction.borrow_mut() = None;
     }
 
     /// Replaces the optional shared Aimer layout used by selection queries.

@@ -166,6 +166,14 @@ fn grapheme_count(text: &str) -> usize {
     unicode_segmentation::UnicodeSegmentation::graphemes(text, true).count()
 }
 
+/// Converts the field's grapheme offset into the byte offset used by the
+/// shared selection session.
+fn grapheme_byte_offset(text: &str, offset: usize) -> usize {
+    unicode_segmentation::UnicodeSegmentation::grapheme_indices(text, true)
+        .nth(offset)
+        .map_or(text.len(), |(byte, _)| byte)
+}
+
 /// Clamps `byte` down to the nearest character boundary of `text`.
 ///
 /// Input methods report composition ranges in bytes; a range that lands inside

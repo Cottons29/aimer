@@ -16,10 +16,10 @@ use aimer_events::pointer::PointerButton;
 use aimer_events::text_editing::TextEditingDelta;
 use aimer_events::window::get_window;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
-use aimer_text::{RawTextWidget, TextSource};
+use aimer_text::{RawTextWidget, SelectionParticipant, TextSource};
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{
-    AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult,
+    AnyElement, ChildBuilder, Drawable, Element, EventDispatchContext, EventElement, EventResult,
     LayoutCache, LayoutElement, FocusNode, PointerKey, Rebuildable, VisitorElement, Widget,
 };
 

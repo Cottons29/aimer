@@ -25,8 +25,8 @@ use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 use crate::paint_isolated::{PaintCache, PaintContract};
 use crate::{
-    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
-    VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventDispatchContext, EventElement, EventResult, LayoutElement,
+    Rebuildable, VisitorElement, Widget,
 };
 
 trait FetchAdd {
@@ -2086,6 +2086,20 @@ impl VisitorElement for StatefulElement {
 impl EventElement for StatefulElement {
     fn on_event(&self, _event: &ElementEvent) -> EventResult {
         EventResult::ignored()
+    }
+
+    fn on_event_with_context(
+        &self,
+        event: &ElementEvent,
+        context: &mut EventDispatchContext<'_, '_>,
+    ) -> EventResult {
+        // The retained child is the real event owner, but a pointer capture
+        // promoted through this state boundary targets the stateful wrapper.
+        // Keep the capture path alive by dispatching into that child with the
+        // current dispatcher context.
+        let child = unsafe { &*self.child.0.get() };
+        let pos = event.get_pointer_pos().unwrap_or_default();
+        context.dispatch_child(child.as_ref(), pos, event)
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {

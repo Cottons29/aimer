@@ -12,7 +12,7 @@ use aimer_focus::FocusNode;
 use crate::base::BuildContext;
 use crate::components::diagnostics::ErrorWidget;
 use crate::components::drawable::Drawable;
-use crate::components::element::{Element, ElementId, VisitorElement};
+use crate::components::element::{Element, ElementId, EventDispatchContext, VisitorElement};
 use crate::components::event_element::{EventElement, EventResult};
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
@@ -477,6 +477,18 @@ impl EventElement for RetainedChildElement {
         self.child()
             .map(|child| child.on_event(event))
             .unwrap_or_default()
+    }
+
+    fn on_event_with_context(
+        &self,
+        event: &ElementEvent,
+        context: &mut EventDispatchContext<'_, '_>,
+    ) -> EventResult {
+        let Some(child) = self.child() else {
+            return EventResult::ignored();
+        };
+        let pos = event.get_pointer_pos().unwrap_or_default();
+        context.dispatch_child(child, pos, event)
     }
 
     /// Offers the retained child's *own* children, not the child itself.

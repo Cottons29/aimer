@@ -312,7 +312,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             }
         }
 
-        // Restore before drawing scrollbars (they are separate in-flow children).
+        // Restore before drawing scrollbars, which are painted separately from
+        // the clipped content whether they overlay it or reserve inline space.
         ctx.canvas.clear_clip();
         ctx.canvas.restore();
 
@@ -328,7 +329,10 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             };
             ctx.canvas.save();
             ctx.canvas.translate(Vec2d {
-                x: viewport_w,
+                x: self
+                    .ctrl
+                    .scroll_bar_placement
+                    .cross_offset(viewport_w, self.vertical_bar_width),
                 y: 0.0,
             });
             vertical_bar.draw(&bar_ctx);
@@ -347,7 +351,10 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             ctx.canvas.save();
             ctx.canvas.translate(Vec2d {
                 x: 0.0,
-                y: viewport_h,
+                y: self
+                    .ctrl
+                    .scroll_bar_placement
+                    .cross_offset(viewport_h, self.horizontal_bar_height),
             });
             horizontal_bar.draw(&bar_ctx);
             ctx.canvas.restore();

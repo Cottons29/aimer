@@ -798,6 +798,12 @@ impl TextFieldState {
     pub fn caret(&self) -> &CaretBlink {
         &self.caret
     }
+
+    /// Returns the highlight color shared with the enclosing selection area.
+    #[inline]
+    pub(crate) fn selection_color(&self) -> Color {
+        self.config.selection_color
+    }
 }
 
 impl State<TextField> for TextFieldState {
@@ -813,7 +819,9 @@ impl State<TextField> for TextFieldState {
     }
 
     fn build(&self, _: &BuildContext) -> impl Widget {
-        self.focusable_field()
+        aimer_text::SelectionArea::without_focus()
+            .selection_color(self.config.selection_color)
+            .child(self.focusable_field())
     }
 }
 
@@ -1575,5 +1583,34 @@ mod focus_tests {
         assert_eq!(controller.text(), "hi");
         assert_eq!((focuses.get(), blurs.get()), (1, 1));
         assert!(!node.has_focus());
+    }
+
+    #[test]
+    fn a_built_text_field_uses_the_shared_selection_area_for_dragging() {
+        let controller = TextEditingController::with_text("hello world");
+        let (element, ctx) = drawn(TextField::new().controller(controller.clone()));
+        let mut dispatcher = EventDispatcher::new();
+        let start = Vec2d { x: 4.0, y: 12.0 };
+        let end = Vec2d { x: 50.0, y: 12.0 };
+        assert!(dispatcher.dispatch(
+            element.as_ref(),
+            start,
+            &ElementEvent::PointerDown(PointerInfo::mouse(start, PointerButton::Primary)),
+        ).is_consumed());
+        element.draw(&ctx);
+        assert!(dispatcher.dispatch(
+            element.as_ref(),
+            end,
+            &ElementEvent::PointerMove(PointerInfo::mouse(end, PointerButton::Primary)),
+        ).is_consumed());
+        element.draw(&ctx);
+        assert!(dispatcher.dispatch(
+            element.as_ref(),
+            end,
+            &ElementEvent::PointerUp(PointerInfo::mouse(end, PointerButton::Primary)),
+        ).is_consumed());
+        element.draw(&ctx);
+
+        assert_eq!(controller.selection_graphemes(), (1, 9));
     }
 }
