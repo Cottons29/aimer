@@ -60,6 +60,7 @@ pub struct FrameRenderMetadata {
 pub struct FramePacket {
     frame: Frame,
     metadata: FrameRenderMetadata,
+    scene: Option<crate::compositor::CompositorScene>,
 }
 
 impl Frame {
@@ -160,20 +161,61 @@ impl FrameRenderMetadata {
     pub fn damage(&self) -> &DamageSet {
         &self.damage
     }
+
+    /// Returns metadata with a renderer-computed damage contract.
+    ///
+    /// Scene diffing uses this at the raster seam to union old and new node
+    /// footprints without mutating the immutable packet supplied by the UI
+    /// thread.
+    #[doc(hidden)]
+    #[inline]
+    pub fn with_damage(&self, damage: DamageSet) -> Self {
+        Self {
+            device_scale_bits: self.device_scale_bits,
+            surface_identity: self.surface_identity,
+            renderer_generation: self.renderer_generation,
+            context_generation: self.context_generation,
+            resource_generation: self.resource_generation,
+            damage,
+        }
+    }
 }
 
 impl FramePacket {
     /// Wraps a frame with explicit renderer metadata.
     #[inline]
     pub fn new(frame: Frame, metadata: FrameRenderMetadata) -> Self {
-        Self { frame, metadata }
+        Self {
+            frame,
+            metadata,
+            scene: None,
+        }
+    }
+
+    /// Wraps a frame, metadata, and immutable compositor scene.
+    #[doc(hidden)]
+    #[inline]
+    pub fn with_scene(
+        frame: Frame,
+        metadata: FrameRenderMetadata,
+        scene: crate::compositor::CompositorScene,
+    ) -> Self {
+        Self {
+            frame,
+            metadata,
+            scene: Some(scene),
+        }
     }
 
     /// Wraps a frame in the compatibility full-repaint policy.
     #[inline]
     pub fn full(frame: Frame) -> Self {
         let metadata = FrameRenderMetadata::full(frame.width, frame.height);
-        Self { frame, metadata }
+        Self {
+            frame,
+            metadata,
+            scene: None,
+        }
     }
 
     /// Borrows the immutable frame payload.
@@ -186,6 +228,12 @@ impl FramePacket {
     #[inline]
     pub fn metadata(&self) -> &FrameRenderMetadata {
         &self.metadata
+    }
+
+    /// Borrows optional compositor metadata attached to this packet.
+    #[inline]
+    pub fn scene(&self) -> Option<&crate::compositor::CompositorScene> {
+        self.scene.as_ref()
     }
 
     /// Consumes the packet and returns its frame payload.
@@ -237,5 +285,17 @@ mod tests {
 
         assert!(packet.metadata().damage().is_full());
         assert_eq!(packet.metadata().damage().target_size(), (12, 8));
+    }
+
+    #[test]
+    fn a_packet_can_carry_an_ordered_compositor_scene() {
+        let scene = crate::compositor::CompositorScene::new(12, 8);
+        let packet = FramePacket::with_scene(
+            Frame::new(DrawList::new(), 12, 8),
+            FrameRenderMetadata::full(12, 8),
+            scene,
+        );
+
+        assert_eq!(packet.scene().map(crate::compositor::CompositorScene::target_size), Some((12, 8)));
     }
 }

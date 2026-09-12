@@ -1,5 +1,5 @@
 /// A 3x3 column-major matrix for 2D transforms.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Mat3 {
     pub cols: [[f32; 3]; 3],
 }

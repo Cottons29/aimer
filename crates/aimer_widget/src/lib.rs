@@ -9,6 +9,7 @@ pub mod layout_cache;
 pub mod page_storage;
 pub mod platform_brightness;
 pub mod pointer_claim;
+pub mod repaint_boundary;
 #[doc(hidden)]
 pub mod portable;
 pub mod reconcile;
@@ -188,6 +189,7 @@ pub use crate::components::element::{broadcast_event, dispatch_event, dispatch_f
 pub use crate::key::Key;
 pub use crate::layout_cache::LayoutCache;
 pub use crate::platform_brightness::{Brightness, platform_brightness, set_platform_brightness};
+pub use crate::repaint_boundary::RepaintBoundary;
 pub use crate::pointer_claim::{
     claim_pointer, claimed_pointer_count, is_pointer_claimed, release_all_pointers,
     release_pointer,

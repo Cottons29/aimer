@@ -1078,8 +1078,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let (render_ctx, mut drawer) = self.split_for_frame(window);
 
         #[cfg(target_arch = "wasm32")]
-        let outcome = render_ctx.render_frame(move |canvas, width, height| {
-            let _ = drawer.draw(canvas, width, height);
+        let outcome = render_ctx.render_frame_packet(move |canvas, width, height| {
+            drawer.draw(canvas, width, height)
         });
         #[cfg(not(target_arch = "wasm32"))]
         let outcome = render_ctx.render_frame_packet(move |canvas, width, height| {

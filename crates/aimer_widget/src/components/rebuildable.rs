@@ -21,6 +21,13 @@ pub trait Rebuildable: VisitorElement {
         false
     }
 
+    /// Returns whether an explicit widget hint should receive compositor
+    /// isolation priority. The hint never bypasses paint-safety checks.
+    #[inline]
+    fn compositor_priority(&self) -> bool {
+        false
+    }
+
     /// Adopts whatever runtime state the element this one replaces was holding.
     ///
     /// Reconciliation pairs children by sibling position, which reaches

@@ -1,4 +1,5 @@
 pub mod custom_pipeline;
+pub mod compositor;
 #[doc(hidden)]
 pub mod damage_region;
 pub mod draw_cmd;
@@ -601,6 +602,84 @@ mod deferred_frame_uploads {
 
         assert_dominant(&second, 2, 2, 0, "undamaged persistent pixels");
         assert_dominant(&second, 10, 10, 2, "repainted damaged pixels");
+    }
+
+    #[test]
+    fn disjoint_damage_regions_are_repainted_without_touching_the_rest() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let mut renderer = Renderer::new(&device, FORMAT);
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("multi-region damage regression target"),
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&Default::default());
+
+        let baseline = solid_frame(Color::red(), None);
+        renderer.render_frame_with_metadata(
+            &device,
+            &queue,
+            &view,
+            SIZE,
+            SIZE,
+            false,
+            &baseline,
+            &FrameRenderMetadata::full(SIZE, SIZE),
+        );
+
+        let second_frame = {
+            let mut frame = solid_frame(Color::red(), None);
+            frame.fill_rect(
+                Rect::new(4.0, 4.0, 8.0, 8.0),
+                Color::blue(),
+                [0.0; 4],
+                [0.0; 4],
+                Color::transparent(),
+            );
+            frame.fill_rect(
+                Rect::new(44.0, 44.0, 8.0, 8.0),
+                Color::green(),
+                [0.0; 4],
+                [0.0; 4],
+                Color::transparent(),
+            );
+            frame
+        };
+        let mut damage = DamageSet::new(SIZE, SIZE);
+        damage.add(DamageRect::new(2, 2, 12, 12));
+        damage.add(DamageRect::new(42, 42, 12, 12));
+        assert_eq!(damage.regions().len(), 2);
+        renderer.render_frame_with_metadata(
+            &device,
+            &queue,
+            &view,
+            SIZE,
+            SIZE,
+            false,
+            &second_frame,
+            &FrameRenderMetadata::new(1.0, 0, 0, 0, 0, damage),
+        );
+
+        let pixels = read_target(&device, &queue, &target);
+        let compositor_stats = renderer.compositor_stats();
+        assert_eq!(compositor_stats.damage_regions, 2);
+        assert_eq!(compositor_stats.composition_passes, 1);
+        assert!(!compositor_stats.full_repaint);
+        assert_dominant(&pixels, 8, 8, 2, "first disjoint damaged region");
+        assert_dominant(&pixels, 48, 48, 1, "second disjoint damaged region");
+        assert_dominant(&pixels, 32, 32, 0, "undamaged pixels between regions");
     }
 
     #[test]

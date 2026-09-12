@@ -23,10 +23,10 @@ const MEASURED: usize = 64;
 
 fn paragraph(index: usize) -> AnyWidget {
     let body = format!(
-        "Paragraph {index}: The retained layer fast path applies only when the whole \
-         scrolling subtree is paint-stable, while a plain container records hit-test \
-         bounds and therefore stays on the ordinary culled draw path. Text shaping is \
-         cached per width, but every visible paragraph is still walked each frame."
+        "Paragraph {index}: The compositor keeps this decorated scrolling row on the live \
+         culled path because its container owns clipping and hit-test bounds. Text shaping is \
+         cached per width, while stable paint islands elsewhere can be retained automatically \
+         or promoted explicitly with RepaintBoundary."
     );
     Container::new()
         .color(if index % 2 == 0 {

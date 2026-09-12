@@ -25,7 +25,7 @@ use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 use crate::paint_isolated::{PaintCache, PaintContract};
 use crate::{
-    AnyElement, Drawable, Element, EventDispatchContext, EventElement, EventResult, LayoutElement,
+    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement,
     Rebuildable, VisitorElement, Widget,
 };
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
@@ -2048,7 +2048,9 @@ impl Drawable for StatefulElement {
                     ctx,
                     child.content_size(ctx),
                     self.rebuild_generation.get(),
-                ) && self.paint_cache.paint_or_replay(ctx, child, key)
+                ) && self
+                    .paint_cache
+                    .paint_or_replay(ctx, child, key, self.compositor_priority())
                 {
                     return;
                 }
@@ -2111,22 +2113,10 @@ impl EventElement for StatefulElement {
         EventResult::ignored()
     }
 
-    fn on_event_with_context(
-        &self,
-        event: &ElementEvent,
-        context: &mut EventDispatchContext<'_, '_>,
-    ) -> EventResult {
-        // The retained child is the real event owner, but a pointer capture
-        // promoted through this state boundary targets the stateful wrapper.
-        // Keep the capture path alive by dispatching into that child with the
-        // current dispatcher context.
-        let child = unsafe { &*self.child.0.get() };
-        let pos = event.get_pointer_pos().unwrap_or_default();
-        context.dispatch_child(child.as_ref(), pos, event)
-    }
-
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        // Safety: single-threaded rendering pipeline
+        // The generated child is the ordinary event child. Stateful elements
+        // are retained wrappers, not forwarding boundaries; routing it again
+        // from `on_event_with_context` would deliver every pointer event twice.
         let child = unsafe { &*self.child.0.get() };
         visitor(child.as_ref());
     }
@@ -2176,6 +2166,10 @@ impl Rebuildable for StatefulElement {
 
     fn is_stateful_element(&self) -> bool {
         true
+    }
+
+    fn compositor_priority(&self) -> bool {
+        self.debug_name.get() == "RepaintBoundary"
     }
 
     fn mark_needs_rebuild(&self) {

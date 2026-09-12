@@ -3,6 +3,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::draw_cmd::{DrawList, RetainedDrawList, RetainedLayerContent, TextureRegistry};
+use crate::compositor::{
+    CompositorScene, SceneNodeDescriptor, SceneNodeGuard, SceneRecorder,
+};
 use crate::font::{FontFamily, FontStyle, FontWeight, TextLanguage};
 use crate::lru_map::LruMap;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
@@ -55,6 +58,7 @@ const METRICS_CACHE_CAPACITY: usize = 4096;
 #[derive(Clone)]
 pub struct CupidCanvas {
     draw_list: Rc<RefCell<DrawList>>,
+    scene_recorder: Rc<RefCell<Option<SceneRecorder>>>,
     texture_registry: Arc<TextureRegistry>,
     rasterizer: Rc<RefCell<GlyphRasterizer>>,
     metrics_cache: Rc<RefCell<LruMap<TextMetricsKey, CachedTextMetrics>>>,
@@ -81,6 +85,7 @@ impl CupidCanvas {
             draw_list: Rc::new(RefCell::new(DrawList::with_texture_registry(
                 texture_registry.clone(),
             ))),
+            scene_recorder: Rc::new(RefCell::new(None)),
             texture_registry,
             rasterizer: Rc::new(RefCell::new(GlyphRasterizer::new())),
             metrics_cache: Rc::new(RefCell::new(LruMap::new(METRICS_CACHE_CAPACITY))),
@@ -105,6 +110,7 @@ impl CupidCanvas {
             draw_list: Rc::new(RefCell::new(DrawList::with_texture_registry(
                 self.texture_registry.clone(),
             ))),
+            scene_recorder: Rc::new(RefCell::new(None)),
             texture_registry: self.texture_registry.clone(),
             rasterizer: self.rasterizer.clone(),
             metrics_cache: self.metrics_cache.clone(),
@@ -118,6 +124,9 @@ impl CupidCanvas {
 
     pub fn begin_frame(&self) {
         self.draw_list.borrow_mut().clear();
+        self.scene_recorder
+            .borrow_mut()
+            .replace(SceneRecorder::new());
         #[cfg(debug_assertions)]
         {
             self.metrics_cache_hits.set(0);
@@ -151,6 +160,44 @@ impl CupidCanvas {
     #[inline]
     pub fn recycle_draw_list(&self, draw_list: DrawList) {
         *self.draw_list.borrow_mut() = draw_list;
+    }
+
+    /// Opens one logical compositor node at the current paint cursor.
+    ///
+    /// The guard is deliberately tied to the DrawList and closes even when a
+    /// widget's paint implementation unwinds. Forked recording canvases do not
+    /// own a frame recorder and return an inactive guard.
+    #[doc(hidden)]
+    #[inline]
+    pub fn begin_scene_node(&self, descriptor: SceneNodeDescriptor) -> SceneNodeGuard {
+        let command_start = self.draw_list.borrow().commands().len();
+        let mut recorder = self.scene_recorder.borrow_mut();
+        let Some(recorder) = recorder.as_mut() else {
+            return SceneNodeGuard::inactive();
+        };
+        let index = recorder.begin_node(descriptor, command_start);
+        SceneNodeGuard::active(self.scene_recorder.clone(), self.draw_list.clone(), index)
+    }
+
+    /// Takes the scene recorded alongside `draw_list`.
+    #[doc(hidden)]
+    pub fn take_scene(
+        &self,
+        draw_list: &DrawList,
+        target_width: u32,
+        target_height: u32,
+        damage: crate::damage_region::DamageSet,
+    ) -> Option<CompositorScene> {
+        let recorder = self.scene_recorder.borrow_mut().take()?;
+        if recorder.is_empty() {
+            return None;
+        }
+        Some(recorder.finish(
+            draw_list,
+            target_width,
+            target_height,
+            damage,
+        ))
     }
 
     /// Replays a local-coordinate retained stream under the canvas's current
@@ -1171,5 +1218,53 @@ mod family_metrics_tests {
                 "line {index} stopped at {width}px of {max_width}px"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod scene_tests {
+    use super::*;
+    use crate::compositor::{SceneNodeDescriptor, SceneNodeId};
+    use crate::damage_region::DamageSet;
+    use crate::utilities::Color;
+
+    #[test]
+    fn scene_guard_captures_canvas_state_at_each_element_scope() {
+        let canvas = CupidCanvas::new();
+        canvas.begin_frame();
+        let root = canvas.begin_scene_node(SceneNodeDescriptor::new(
+            SceneNodeId::from_raw(1),
+            Rect::new(0.0, 0.0, 30.0, 30.0),
+            0,
+        ));
+        canvas.save();
+        canvas.translate(10.0, 20.0);
+        canvas.set_clip(0.0, 0.0, 5.0, 5.0);
+        let child = canvas.begin_scene_node(SceneNodeDescriptor::new(
+            SceneNodeId::from_raw(2),
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            1,
+        ));
+        canvas.fill_rect(0.0, 0.0, 10.0, 10.0, Color::black(), [0.0; 4]);
+        drop(child);
+        canvas.clear_clip();
+        canvas.restore();
+        drop(root);
+
+        let draw_list = canvas.take_draw_list();
+        let scene = canvas
+            .take_scene(&draw_list, 64, 64, DamageSet::full(64, 64))
+            .expect("scene recorder should contain both scopes");
+
+        assert!(scene.is_recorded());
+        assert_eq!(scene.roots(), &[SceneNodeId::from_raw(1)]);
+        let root = scene.node(SceneNodeId::from_raw(1)).unwrap();
+        assert_eq!(root.children(), &[SceneNodeId::from_raw(2)]);
+        let child = scene.node(SceneNodeId::from_raw(2)).unwrap();
+        assert_eq!(child.transform(), Mat3::translate(10.0, 20.0));
+        assert_eq!(
+            child.effective_bounds(),
+            Some(Rect::new(10.0, 20.0, 5.0, 5.0))
+        );
     }
 }
