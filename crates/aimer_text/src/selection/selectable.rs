@@ -77,7 +77,7 @@ pub(crate) struct TextGeometry {
 }
 
 struct InteractionSnapshot {
-    layout: TextInteractionLayout,
+    layout: Rc<TextInteractionLayout>,
     transform: Mat3,
     scale: f32,
 }
@@ -107,6 +107,19 @@ impl TextGeometry {
         transform: Mat3,
         scale: f32,
     ) {
+        self.set_shared_interaction_layout(layout.map(Rc::new), transform, scale);
+    }
+
+    /// Replaces the interaction layout without cloning its immutable geometry.
+    ///
+    /// Prepared paragraphs retain this data alongside their paint geometry, so
+    /// a frame only needs another reference to install it in selection state.
+    pub(crate) fn set_shared_interaction_layout(
+        &self,
+        layout: Option<Rc<TextInteractionLayout>>,
+        transform: Mat3,
+        scale: f32,
+    ) {
         *self.interaction.borrow_mut() = layout
             .filter(|_| transform.inverse_transform_point(0.0, 0.0).is_some())
             .map(|layout| InteractionSnapshot {
@@ -125,7 +138,7 @@ impl TextGeometry {
         let snapshot = self.interaction.borrow();
         let snapshot = snapshot.as_ref()?;
         TextAccessibilitySnapshot::from_layout(
-            snapshot.layout.clone(),
+            (*snapshot.layout).clone(),
             snapshot.transform,
             snapshot.scale,
         )

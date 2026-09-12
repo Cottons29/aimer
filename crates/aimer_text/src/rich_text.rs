@@ -1630,7 +1630,7 @@ impl EventElement for RawRichText {
 
 impl LayoutElement for RawRichText {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.paragraph.prepare(ctx).size
+        self.paragraph.prepare_for_paint(ctx).size
     }
 
     fn invalidate_layout(&self) {
@@ -1659,7 +1659,7 @@ impl Drawable for RawRichText {
         let slot = self.slot();
         let geometry_state = self.geometry();
         slot.stamp();
-        let layout = self.paragraph.prepare(ctx);
+        let layout = self.paragraph.prepare_for_paint(ctx);
         // Selectable text must stay on the live paint path. Besides painting
         // the selection overlay, this keeps its source-bearing text commands
         // in the current draw list instead of hiding them in a retained layer.
@@ -1677,7 +1677,7 @@ impl Drawable for RawRichText {
         );
         self.link_regions.borrow_mut().clear();
         geometry_state.regions.borrow_mut().clear();
-        geometry_state.set_interaction_layout(
+        geometry_state.set_shared_interaction_layout(
             shared_layout.clone(),
             transform,
             ctx.scale,

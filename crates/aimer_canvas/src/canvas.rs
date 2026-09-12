@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use std::sync::Arc;
 
 use aimer_attribute::position::Vec2d;
@@ -986,6 +987,30 @@ impl<'a> AimerCanvas<'a> {
     ) -> TextInteractionLayout {
         CanvasRendering::layout_text_styled(
             self.inner,
+            text,
+            font_size,
+            max_width,
+            font_family,
+            font_style,
+            font_weight,
+        )
+    }
+
+    /// Builds shared source-aware geometry for a styled text run.
+    ///
+    /// The native canvas retains width-independent interaction geometry so
+    /// rich paragraphs can re-wrap without rebuilding every span's clusters.
+    #[allow(clippy::too_many_arguments)]
+    pub fn layout_text_styled_shared(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> Rc<TextInteractionLayout> {
+        self.inner.layout_text_styled_shared(
             text,
             font_size,
             max_width,

@@ -85,7 +85,9 @@ fn open_web_link(_target: Rc<str>) {}
 /// with [`MarkdownViewer::markdown`]. Fenced code blocks display their language
 /// in a header and provide a copy control that writes the complete code source
 /// to the platform clipboard. Unlabelled fences keep the header without showing
-/// a language name.
+/// a language name. The internal viewport follows normal [`Scrollable`]
+/// reconciliation by default; use [`MarkdownViewer::key`] when it needs an
+/// application-defined identity.
 #[derive(Clone, aimer_widget::PortableWidget)]
 #[portable_widget(
     id = "aimer_markdown::MarkdownViewer",
@@ -111,7 +113,7 @@ pub struct MarkdownViewer {
     padding: LayoutSpacing,
     scrollable: bool,
     #[portable_skip]
-    key: Key,
+    key: Option<Key>,
 }
 
 fn materialize_markdown_viewer(
@@ -176,7 +178,7 @@ impl MarkdownViewer {
             typed_custom_blocks: Vec::new(),
             typed_custom_inlines: Vec::new(),
             padding: Default::default(),
-            key: Key::unique(),
+            key: None,
             scrollable: true,
         }
     }
@@ -301,9 +303,14 @@ impl MarkdownViewer {
         self
     }
 
-    /// Add a key for widget
+    /// Adds an explicit identity for the internal scrollable viewport.
+    ///
+    /// Without an explicit key, the viewer uses the scrollable's normal
+    /// call-site identity and preserves its live position across rebuilds.
+    /// An explicit key additionally opts into scroll-offset persistence across
+    /// a full teardown.
     pub fn key(mut self, key: Key) -> Self {
-        self.key = key;
+        self.key = Some(key);
         self
     }
 }
@@ -366,9 +373,14 @@ impl Widget for MarkdownViewer {
         };
 
         if self.scrollable {
-            Scrollable::new()
-                .key(self.key.clone())
-                .axis(ScrollAxis::Vertical)
+            // The viewer is rebuilt when an inherited theme changes. Let the
+            // scrollable keep its call-site identity so those rebuilds retain
+            // the live offset; a unique key would reset it on every theme tick.
+            let mut scrollable = Scrollable::new().axis(ScrollAxis::Vertical);
+            if let Some(key) = self.key {
+                scrollable = scrollable.key(key);
+            }
+            scrollable
                 .child(Container::new().padding(self.padding).child(content))
                 .to_element(ctx)
         } else {
@@ -438,6 +450,17 @@ mod tests {
         let reparsed = cache.parse(Rc::from("First"));
 
         assert!(!Rc::ptr_eq(&first, &reparsed));
+    }
+
+    #[test]
+    fn viewer_does_not_force_a_new_scroll_identity_by_default() {
+        assert!(MarkdownViewer::new().key.is_none());
+    }
+
+    #[test]
+    fn viewer_keeps_an_explicit_scroll_identity() {
+        let key = Key::from("markdown-viewer");
+        assert_eq!(MarkdownViewer::new().key(key.clone()).key, Some(key));
     }
 
     #[test]

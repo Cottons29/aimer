@@ -38,12 +38,74 @@ struct TextMetricsKey {
     /// ideographs the language decides — see
     /// [`CupidCanvas::set_text_language`].
     language: Option<TextLanguage>,
+    font_revision: u64,
+}
+
+#[derive(Hash)]
+struct TextMetricsKeyRef<'a> {
+    text: &'a str,
+    font_size_tenths: u32,
+    max_width_tenths: u32,
+    font_family: FontFamily,
+    font_style: FontStyle,
+    font_weight: u16,
+    language: Option<TextLanguage>,
+    font_revision: u64,
+}
+
+impl TextMetricsKey {
+    #[inline]
+    fn matches(&self, lookup: &TextMetricsKeyRef<'_>) -> bool {
+        self.text == lookup.text
+            && self.font_size_tenths == lookup.font_size_tenths
+            && self.max_width_tenths == lookup.max_width_tenths
+            && self.font_family == lookup.font_family
+            && self.font_style == lookup.font_style
+            && self.font_weight == lookup.font_weight
+            && self.language == lookup.language
+            && self.font_revision == lookup.font_revision
+    }
 }
 
 #[derive(Clone, Debug)]
 struct CachedTextMetrics {
     metrics: TextMetrics,
     line_widths: Vec<f32>,
+}
+
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+struct TextShapeKey {
+    text: String,
+    font_size_bits: u32,
+    font_family: FontFamily,
+    font_style: FontStyle,
+    font_weight: u16,
+    language: Option<TextLanguage>,
+    font_revision: u64,
+}
+
+#[derive(Hash)]
+struct TextShapeKeyRef<'a> {
+    text: &'a str,
+    font_size_bits: u32,
+    font_family: FontFamily,
+    font_style: FontStyle,
+    font_weight: u16,
+    language: Option<TextLanguage>,
+    font_revision: u64,
+}
+
+impl TextShapeKey {
+    #[inline]
+    fn matches(&self, lookup: &TextShapeKeyRef<'_>) -> bool {
+        self.text == lookup.text
+            && self.font_size_bits == lookup.font_size_bits
+            && self.font_family == lookup.font_family
+            && self.font_style == lookup.font_style
+            && self.font_weight == lookup.font_weight
+            && self.language == lookup.language
+            && self.font_revision == lookup.font_revision
+    }
 }
 
 /// How many measured strings the canvas remembers.
@@ -54,6 +116,15 @@ struct CachedTextMetrics {
 /// drop the strings the current frame is built from and turn every newly visible
 /// row into a permanent miss.
 const METRICS_CACHE_CAPACITY: usize = 4096;
+/// Whole-run shaping is much larger than a width measurement, but a few hundred
+/// paragraphs are a normal document-sized working set. Keeping these shaped
+/// runs separate from width-dependent layout lets a resize re-use glyph
+/// advances without retaining every possible wrapping width.
+const SHAPING_CACHE_CAPACITY: usize = 512;
+/// Unwrapped interaction geometry is independent of the paragraph's current
+/// wrapping width. Retaining it separately avoids rebuilding the same source
+/// clusters when a rich paragraph is re-laid out at a new width.
+const UNWRAPPED_LAYOUT_CACHE_CAPACITY: usize = 2048;
 
 #[derive(Clone)]
 pub struct CupidCanvas {
@@ -62,6 +133,9 @@ pub struct CupidCanvas {
     texture_registry: Arc<TextureRegistry>,
     rasterizer: Rc<RefCell<GlyphRasterizer>>,
     metrics_cache: Rc<RefCell<LruMap<TextMetricsKey, CachedTextMetrics>>>,
+    shaping_cache: Rc<RefCell<LruMap<TextShapeKey, Rc<crate::text_layout::ShapedText>>>>,
+    unwrapped_layout_cache:
+        Rc<RefCell<LruMap<TextShapeKey, Rc<crate::text_layout::TextInteractionLayout>>>>,
     /// The language subsequent text is written in — see
     /// [`CupidCanvas::set_text_language`].
     ///
@@ -89,6 +163,10 @@ impl CupidCanvas {
             texture_registry,
             rasterizer: Rc::new(RefCell::new(GlyphRasterizer::new())),
             metrics_cache: Rc::new(RefCell::new(LruMap::new(METRICS_CACHE_CAPACITY))),
+            shaping_cache: Rc::new(RefCell::new(LruMap::new(SHAPING_CACHE_CAPACITY))),
+            unwrapped_layout_cache: Rc::new(RefCell::new(LruMap::new(
+                UNWRAPPED_LAYOUT_CACHE_CAPACITY,
+            ))),
             text_language: Rc::new(Cell::new(None)),
             #[cfg(debug_assertions)]
             metrics_cache_hits: Rc::new(Cell::new(0)),
@@ -114,6 +192,8 @@ impl CupidCanvas {
             texture_registry: self.texture_registry.clone(),
             rasterizer: self.rasterizer.clone(),
             metrics_cache: self.metrics_cache.clone(),
+            shaping_cache: self.shaping_cache.clone(),
+            unwrapped_layout_cache: self.unwrapped_layout_cache.clone(),
             text_language: Rc::new(Cell::new(self.text_language.get())),
             #[cfg(debug_assertions)]
             metrics_cache_hits: self.metrics_cache_hits.clone(),
@@ -250,6 +330,8 @@ impl CupidCanvas {
     pub fn register_font_bytes(&self, bytes: Vec<u8>) -> Option<crate::text_layout::FontId> {
         let font_id = self.rasterizer.borrow_mut().register_font_bytes(bytes)?;
         self.metrics_cache.borrow_mut().clear();
+        self.shaping_cache.borrow_mut().clear();
+        self.unwrapped_layout_cache.borrow_mut().clear();
         Some(font_id)
     }
 
@@ -616,6 +698,25 @@ impl CupidCanvas {
         font_style: FontStyle,
         font_weight: u16,
     ) -> f32 {
+        // Paragraph layout asks for the same unwrapped run width repeatedly
+        // while it partitions spans into lines. Route that query through the
+        // canvas metrics cache so a rebuild reuses the whole-run result rather
+        // than walking every character again. A hard line break is kept on the
+        // rasterizer's historical path because the old width API summed runs,
+        // whereas cached metrics report the widest line.
+        if !text.contains('\n') {
+            return self
+                .measure_text_metrics_styled(
+                    text,
+                    font_size,
+                    0.0,
+                    font_family,
+                    font_style,
+                    font_weight,
+                )
+                .width;
+        }
+
         self.rasterizer.borrow_mut().measure_text_for_family(
             text,
             font_size,
@@ -642,23 +743,139 @@ impl CupidCanvas {
         font_style: FontStyle,
         font_weight: u16,
     ) -> crate::text_layout::TextInteractionLayout {
+        (*self.layout_text_styled_shared(
+            text,
+            font_size,
+            max_width,
+            font_family,
+            font_style,
+            font_weight,
+        ))
+            .clone()
+    }
+
+    /// Returns shared source-aware geometry for a styled text run.
+    ///
+    /// Unwrapped runs (`max_width <= 0`) are cached because their clusters and
+    /// advances do not depend on the containing paragraph's wrapping width.
+    /// Wrapped results remain caller-owned: each width produces different line
+    /// positions and retaining every resize width would turn a cache into a
+    /// growing history of the window drag.
+    #[allow(clippy::too_many_arguments)]
+    pub fn layout_text_styled_shared(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> Rc<crate::text_layout::TextInteractionLayout> {
         let language = self.text_language();
-        let mut rasterizer = self.rasterizer.borrow_mut();
-        let shaped = crate::text_layout::shape_text_styled(
-            &mut rasterizer,
+        let font_revision = crate::font::FontRegistry::revision();
+        let lookup = TextShapeKeyRef {
+            text,
+            font_size_bits: font_size.to_bits(),
+            font_family,
+            font_style,
+            font_weight,
+            language,
+            font_revision,
+        };
+        let is_unwrapped = max_width <= 0.0;
+        if is_unwrapped
+            && let Some(cached) = self
+                .unwrapped_layout_cache
+                .borrow_mut()
+                .get_by(&lookup, TextShapeKey::matches)
+        {
+            return Rc::clone(cached);
+        }
+
+        let shaped = self.shape_text_styled_cached(
             text,
             font_size,
             font_family,
-            FontWeight::Value(u32::from(font_weight)),
             font_style,
+            font_weight,
             language,
         );
-        crate::text_layout::layout_shaped_text_with_interaction(
+        let layout = Rc::new(crate::text_layout::layout_shaped_text_with_interaction(
             &shaped,
             0.0,
             shaped.ascent,
             max_width,
-        )
+        ));
+        if is_unwrapped {
+            let key = TextShapeKey {
+                text: text.to_owned(),
+                font_size_bits: lookup.font_size_bits,
+                font_family: lookup.font_family,
+                font_style: lookup.font_style,
+                font_weight: lookup.font_weight,
+                language: lookup.language,
+                font_revision: lookup.font_revision,
+            };
+            self.unwrapped_layout_cache
+                .borrow_mut()
+                .insert(key, Rc::clone(&layout));
+        }
+        layout
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn shape_text_styled_cached(
+        &self,
+        text: &str,
+        font_size: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+        language: Option<TextLanguage>,
+    ) -> Rc<crate::text_layout::ShapedText> {
+        let lookup = TextShapeKeyRef {
+            text,
+            font_size_bits: font_size.to_bits(),
+            font_family,
+            font_style,
+            font_weight,
+            language,
+            font_revision: crate::font::FontRegistry::revision(),
+        };
+        if let Some(cached) = self
+            .shaping_cache
+            .borrow_mut()
+            .get_by(&lookup, TextShapeKey::matches)
+        {
+            return Rc::clone(cached);
+        }
+
+        let shaped = {
+            let mut rasterizer = self.rasterizer.borrow_mut();
+            crate::text_layout::shape_text_styled(
+                &mut rasterizer,
+                text,
+                font_size,
+                font_family,
+                FontWeight::Value(u32::from(font_weight)),
+                font_style,
+                language,
+            )
+        };
+        let shaped = Rc::new(shaped);
+        let key = TextShapeKey {
+            text: text.to_owned(),
+            font_size_bits: lookup.font_size_bits,
+            font_family: lookup.font_family,
+            font_style: lookup.font_style,
+            font_weight: lookup.font_weight,
+            language: lookup.language,
+            font_revision: lookup.font_revision,
+        };
+        self.shaping_cache
+            .borrow_mut()
+            .insert(key, Rc::clone(&shaped));
+        shaped
     }
 
     pub fn measure_text_metrics(&self, text: &str, font_size: f32, max_width: f32) -> TextMetrics {
@@ -682,16 +899,24 @@ impl CupidCanvas {
         font_weight: u16,
     ) -> TextMetrics {
         let language = self.text_language();
-        let key = TextMetricsKey {
-            text: text.to_string(),
-            font_size_tenths: (font_size * 10.0) as u32,
-            max_width_tenths: (max_width.max(0.0) * 10.0) as u32,
+        let font_size_tenths = (font_size * 10.0) as u32;
+        let max_width_tenths = (max_width.max(0.0) * 10.0) as u32;
+        let font_revision = crate::font::FontRegistry::revision();
+        let lookup = TextMetricsKeyRef {
+            text,
+            font_size_tenths,
+            max_width_tenths,
             font_family,
             font_style,
             font_weight,
             language,
+            font_revision,
         };
-        if let Some(cached) = self.metrics_cache.borrow_mut().get(&key) {
+        if let Some(cached) = self
+            .metrics_cache
+            .borrow_mut()
+            .get_by(&lookup, TextMetricsKey::matches)
+        {
             #[cfg(debug_assertions)]
             self.metrics_cache_hits
                 .set(self.metrics_cache_hits.get().saturating_add(1));
@@ -703,8 +928,8 @@ impl CupidCanvas {
             .set(self.metrics_cache_misses.get().saturating_add(1));
 
         let mut rasterizer = self.rasterizer.borrow_mut();
-        // Measuring character by character would let an ideograph pick a face the
-        // shaping pass rejects, so the run is announced first here too.
+        // Measuring must choose the same faces the shaping pass will, or the
+        // line that gets painted can wrap at a different boundary.
         rasterizer.begin_script_run(text, language);
         let weight = FontWeight::Value(u32::from(font_weight));
         let (ascent, descent, line_gap) =
@@ -778,6 +1003,16 @@ impl CupidCanvas {
             line_count,
         };
 
+        let key = TextMetricsKey {
+            text: text.to_string(),
+            font_size_tenths,
+            max_width_tenths,
+            font_family,
+            font_style,
+            font_weight,
+            language,
+            font_revision,
+        };
         self.metrics_cache.borrow_mut().insert(
             key,
             CachedTextMetrics {
@@ -800,14 +1035,15 @@ impl CupidCanvas {
         font_style: FontStyle,
         font_weight: u16,
     ) -> Vec<f32> {
-        let key = TextMetricsKey {
-            text: text.to_string(),
+        let lookup = TextMetricsKeyRef {
+            text,
             font_size_tenths: (font_size * 10.0) as u32,
             max_width_tenths: (max_width.max(0.0) * 10.0) as u32,
             font_family,
             font_style,
             font_weight,
             language: self.text_language(),
+            font_revision: crate::font::FontRegistry::revision(),
         };
         self.measure_text_metrics_styled(
             text,
@@ -819,7 +1055,7 @@ impl CupidCanvas {
         );
         self.metrics_cache
             .borrow_mut()
-            .get(&key)
+            .get_by(&lookup, TextMetricsKey::matches)
             .map(|cached| cached.line_widths.clone())
             .unwrap_or_default()
     }
@@ -1136,6 +1372,8 @@ impl Default for CupidCanvas {
 
 #[cfg(test)]
 mod family_metrics_tests {
+    use std::rc::Rc;
+
     use super::CupidCanvas;
     use crate::font::{FontFamily, FontStyle, FontWeight};
 
@@ -1174,6 +1412,82 @@ mod family_metrics_tests {
 
         canvas.measure_text_metrics("cached", 16.0, 200.0);
         assert_eq!(canvas.text_cache_stats(), (1, 1));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn unwrapped_width_measurements_reuse_metrics_cache() {
+        let canvas = CupidCanvas::new();
+
+        canvas.measure_text_styled(
+            "cached width",
+            16.0,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+        assert_eq!(canvas.text_cache_stats(), (0, 1));
+
+        canvas.measure_text_styled(
+            "cached width",
+            16.0,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+        assert_eq!(canvas.text_cache_stats(), (1, 1));
+    }
+
+    #[test]
+    fn styled_layout_reuses_shaping_for_a_different_width() {
+        let canvas = CupidCanvas::new();
+        canvas.rasterizer.borrow_mut().reset_shape_call_count();
+
+        let first = canvas.layout_text_styled(
+            "cached paragraph",
+            16.0,
+            200.0,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+        let first_shape_calls = canvas.rasterizer.borrow().shape_call_count();
+
+        let second = canvas.layout_text_styled(
+            "cached paragraph",
+            16.0,
+            120.0,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+
+        assert_eq!(first_shape_calls, 1);
+        assert_eq!(canvas.rasterizer.borrow().shape_call_count(), first_shape_calls);
+        assert_ne!(first.metrics.line_count, second.metrics.line_count);
+    }
+
+    #[test]
+    fn unwrapped_styled_layout_reuses_shared_interaction_geometry() {
+        let canvas = CupidCanvas::new();
+        let first = canvas.layout_text_styled_shared(
+            "cached unwrapped run",
+            16.0,
+            0.0,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+        let second = canvas.layout_text_styled_shared(
+            "cached unwrapped run",
+            16.0,
+            0.0,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            FontWeight::Normal.numeric(),
+        );
+
+        assert!(Rc::ptr_eq(&first, &second));
     }
 
     #[test]
