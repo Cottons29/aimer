@@ -1,5 +1,6 @@
 pub(crate) mod cursor;
 pub(crate) mod handles;
+mod participant;
 pub(crate) mod selectable;
 pub(crate) mod session;
 pub(crate) mod touch_hold;
@@ -13,10 +14,42 @@ use aimer_widget::PointerKey;
 
 use crate::selection::session::SelectionSlot;
 
+pub use participant::SelectionParticipant;
+
+/// One painted text range used by a custom selection participant.
+///
+/// `source_range` uses byte offsets, matching the selection engine's text
+/// snapshots. The bounds are absolute logical window coordinates, so a
+/// participant can live below translated or scrolled elements without teaching
+/// the selection engine about its canvas.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SelectionRegion {
+    source_range: Range<usize>,
+    bounds: Bounds,
+}
+
+impl SelectionRegion {
+    /// Creates a selectable range occupying `bounds`.
+    #[inline]
+    pub const fn new(source_range: Range<usize>, bounds: Bounds) -> Self {
+        Self {
+            source_range,
+            bounds,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TextHitRegion {
     pub source_range: Range<usize>,
     pub bounds: Bounds,
+}
+
+impl From<SelectionRegion> for TextHitRegion {
+    #[inline]
+    fn from(region: SelectionRegion) -> Self {
+        Self::new(region.source_range, region.bounds)
+    }
 }
 
 impl TextHitRegion {

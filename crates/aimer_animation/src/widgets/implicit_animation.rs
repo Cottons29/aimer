@@ -382,8 +382,10 @@ impl<T: Animatable + Clone + PartialEq + 'static> Drawable for ImplicitAnimatedE
             unsafe { *self.child.get() = new_child };
         }
 
-        crate::widgets::damage::mark_dynamic_animation_damage(
+        crate::widgets::damage::mark_bounded_child_damage(
             &self.damage,
+            ctx,
+            unsafe { &*self.child.get() }.as_ref(),
             changed || self.controller.is_animating(),
         );
 
@@ -395,6 +397,11 @@ impl<T: Animatable + Clone + PartialEq + 'static> Drawable for ImplicitAnimatedE
             self.current
                 .with_mut(|current| *current = self.target.clone());
         }
+    }
+
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        unsafe { &*self.child.get() }.is_paint_bounded()
     }
 }
 

@@ -20,11 +20,80 @@ impl LayoutElement for RawTextField {
     }
 }
 
+/// Publishes the field's painted grapheme boxes to the shared selection area.
+///
+/// The editor keeps grapheme offsets for editing, while `SelectionArea` uses
+/// byte ranges so it can join arbitrary text participants. The conversion is
+/// done at this seam and the two models otherwise remain independent.
+fn publish_selection_geometry(
+    field: &RawTextField,
+    canvas: &aimer_canvas::Canvas,
+    geometry: &EditableGeometry,
+    source_text: &str,
+    abs_x: f32,
+    abs_y: f32,
+    pad_left: f32,
+    pad_top: f32,
+    scale: f32,
+    content_width: f32,
+    content_height: f32,
+    font_size: f32,
+    line_height: f32,
+    base_y: f32,
+    scroll_y: f32,
+) {
+    let selection_state = field.selection.borrow();
+    let Some(selection) = selection_state.as_ref() else {
+        return;
+    };
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    let mut regions = Vec::new();
+    for (line_idx, line) in geometry.visual_lines.iter().enumerate() {
+        let line_y = base_y + line_idx as f32 * line_height - scroll_y;
+        if line_y + line_height <= 0.0 || line_y >= content_height {
+            continue;
+        }
+        let text = &geometry.display[line.byte_start..line.byte_end];
+        let line_x = field.align_x(line.width, content_width);
+        let mut x = line_x;
+        for (index, grapheme) in unicode_segmentation::UnicodeSegmentation::graphemes(
+            text, true,
+        )
+        .enumerate()
+        {
+            let width = canvas.measure_text(grapheme, font_size);
+            let start = line.grapheme_start + index;
+            let end = start + 1;
+            regions.push(aimer_text::SelectionRegion::new(
+                grapheme_byte_offset(source_text, start)..grapheme_byte_offset(source_text, end),
+                aimer_attribute::Bounds::new(
+                    (abs_x + pad_left + x) / scale,
+                    (abs_y + pad_top + line_y) / scale,
+                    width.max(0.0) / scale,
+                    line_height / scale,
+                ),
+            ));
+            x += width;
+        }
+    }
+    selection.set_text(Rc::from(source_text));
+    selection.set_geometry(
+        aimer_attribute::Bounds::new(
+            (abs_x + pad_left) / scale,
+            (abs_y + pad_top) / scale,
+            content_width / scale,
+            content_height / scale,
+        ),
+        regions,
+    );
+}
+
 impl Drawable for RawTextField {
     fn draw(&self, ctx: &BuildContext) {
         if self.observed_revision.get() != self.controller.revision() {
             self.sync_cursor_from_controller();
         }
+        self.sync_cursor_from_area();
         let caret_context = self.caret_context();
         caret_context.publish(
             caret_context.geometry(),
@@ -133,8 +202,29 @@ impl Drawable for RawTextField {
 
         let text = self.controller.text();
         let is_empty = text.is_empty();
-
         let font_size = self.scaled_font_size(&self.text_style, scale);
+
+        let geometry = self.editable_geometry(&ctx.canvas, font_size, content_width);
+        let line_height = ctx.canvas.measure_text_metrics("", font_size, 0.0).line_height;
+        let total_height = geometry.visual_lines.len() as f32 * line_height;
+        let base_y = vertical_block_offset(self.text_align, content_height, total_height);
+        publish_selection_geometry(
+            self,
+            &ctx.canvas,
+            &geometry,
+            &text,
+            abs_x,
+            abs_y,
+            pad_left,
+            pad_top,
+            scale,
+            content_width,
+            content_height,
+            font_size,
+            line_height,
+            base_y,
+            self.scroll_y.get(),
+        );
 
         // --- Process pending click (deferred from on_event for canvas access) ---
         if let Some(click_pos) = self.pending_click.take() {
@@ -204,6 +294,30 @@ impl Drawable for RawTextField {
                     }
                     self.cursor.set_offset(click_offset);
                 }
+            }
+            if let Some(selection) = self.selection.borrow().as_ref().cloned()
+                && let Some(pointer) = self.mouse_held.get()
+            {
+                let text = self.controller.text();
+                let (anchor, focus) = self.cursor_selection();
+                if click_count == 1 && selection.active_pointer().is_none() {
+                    selection.begin(grapheme_byte_offset(&text, focus), pointer);
+                } else if click_count != 1 {
+                    selection.begin_range(
+                        grapheme_byte_offset(&text, anchor),
+                        grapheme_byte_offset(&text, focus),
+                        pointer,
+                    );
+                }
+            } else if click_count != 1
+                && let Some(selection) = self.selection.borrow().as_ref().cloned()
+            {
+                let text = self.controller.text();
+                let (anchor, focus) = self.cursor_selection();
+                selection.set_range(
+                    grapheme_byte_offset(&text, anchor),
+                    grapheme_byte_offset(&text, focus),
+                );
             }
             self.sync_selection_to_controller();
             self.reveal_caret.set(true);
@@ -323,6 +437,24 @@ impl Drawable for RawTextField {
 
                 let base_y =
                     vertical_block_offset(self.text_align, content_height, total_text_height);
+
+                publish_selection_geometry(
+                    self,
+                    &ctx.canvas,
+                    &geometry,
+                    &text,
+                    abs_x,
+                    abs_y,
+                    pad_left,
+                    pad_top,
+                    scale,
+                    content_width,
+                    content_height,
+                    font_size,
+                    line_height,
+                    base_y,
+                    scroll,
+                );
 
                 for (line_idx, visual_line) in geometry.visual_lines.iter().enumerate() {
                     let line_y = base_y + line_idx as f32 * line_height - scroll;

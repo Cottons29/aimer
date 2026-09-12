@@ -145,12 +145,6 @@ impl PaintCache {
         self.last_footprint.set(None);
     }
 
-    #[inline]
-    pub(crate) fn clear_for_live_paint(&self) {
-        crate::mark_paint_damage_full();
-        self.clear();
-    }
-
     /// Replays the cache or records the child into a local retained stream.
     ///
     /// `true` means visual commands were emitted into `ctx.canvas`; `false`
@@ -162,12 +156,18 @@ impl PaintCache {
         key: PaintContract,
     ) -> bool {
         if !child.is_paint_stable() || !child.is_layout_stable() {
-            self.clear_for_live_paint();
+            self.clear();
+            if !child.is_paint_bounded() {
+                crate::mark_paint_damage_full();
+            }
             return false;
         }
 
         if !paint_invalidations_are_known() {
-            self.clear_for_live_paint();
+            self.clear();
+            if !child.is_paint_bounded() {
+                crate::mark_paint_damage_full();
+            }
             return false;
         }
 
@@ -187,7 +187,10 @@ impl PaintCache {
         }
 
         let Some(cached) = Self::record(ctx, child, key) else {
-            self.clear_for_live_paint();
+            self.clear();
+            if !child.is_paint_bounded() {
+                crate::mark_paint_damage_full();
+            }
             return false;
         };
         self.cached.borrow_mut().replace(cached);

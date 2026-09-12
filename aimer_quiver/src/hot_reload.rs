@@ -1528,6 +1528,7 @@ fn materialize_scrollable(
 
     Scrollable::new()
         .axis(config.axis)
+        .scroll_bar_placement(config.scroll_bar_placement)
         .vertical_scroll_bar(config.vertical_scroll_bar.then(ScrollBar::default))
         .horizontal_scroll_bar(config.horizontal_scroll_bar.then(ScrollBar::default))
         .child(RetainedElementWidget(child))

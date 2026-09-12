@@ -64,6 +64,8 @@ const DEFAULT_SELECTION_COLOR: Color = Color::Rgba(51, 153, 255, 96);
 #[portable_widget(id = "aimer_text::SelectionArea")]
 pub struct SelectionArea<W = RequiredChild> {
     selection_color: Color,
+    #[portable_skip]
+    focus_selection: bool,
     #[portable_child]
     child: W,
 }
@@ -74,7 +76,22 @@ impl SelectionArea {
     pub fn new() -> Self {
         Self {
             selection_color: DEFAULT_SELECTION_COLOR,
+            focus_selection: true,
             child: RequiredChild,
+        }
+    }
+
+    /// Creates a selection area that leaves keyboard focus to its child.
+    ///
+    /// This is intended for editable widgets such as `TextField` and
+    /// `TextArea`, which already own a focus node for keyboard input. The area
+    /// still provides the shared selection session, handles, and geometry; it
+    /// simply does not add a second focus target around the child.
+    #[inline]
+    pub fn without_focus() -> Self {
+        Self {
+            focus_selection: false,
+            ..Self::new()
         }
     }
 }
@@ -100,6 +117,7 @@ impl<W> SelectionArea<W> {
     pub fn child<C: Widget>(self, child: C) -> SelectionArea<C> {
         SelectionArea {
             selection_color: self.selection_color,
+            focus_selection: self.focus_selection,
             child,
         }
     }
@@ -109,6 +127,7 @@ impl<W> SelectionArea<W> {
     pub fn dyn_child<C: Widget + 'static>(self, child: C) -> aimer_widget::AnyWidget {
         SelectionArea {
             selection_color: self.selection_color,
+            focus_selection: self.focus_selection,
             child,
         }
         .boxed()
@@ -126,7 +145,11 @@ impl<W: Widget + 'static> Widget for SelectionArea<W> {
             self.child.to_element(ctx)
         });
         let region = SelectionAreaElement::new(Rc::clone(&session), child).boxed();
-        focus_target(&session, region)
+        if self.focus_selection {
+            focus_target(&session, region)
+        } else {
+            region
+        }
     }
 
     fn debug_name(&self) -> &'static str {

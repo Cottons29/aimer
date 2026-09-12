@@ -440,7 +440,9 @@ impl State<TextArea> for TextFieldState {
 
     #[inline]
     fn build(&self, _: &BuildContext) -> impl Widget {
-        self.focusable_field()
+        aimer_text::SelectionArea::without_focus()
+            .selection_color(self.selection_color())
+            .child(self.focusable_field())
     }
 }
 
@@ -461,13 +463,17 @@ impl Widget for TextArea {
 
 #[cfg(test)]
 mod tests {
+    use aimer_attribute::Vec2d;
+    use aimer_events::element::ElementEvent;
+    use aimer_events::pointer::{PointerButton, PointerInfo};
     use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
     use aimer_widget::StatefulWidget;
     use aimer_widget::base::{Color, Colors};
-    use aimer_widget::{FocusNode, Key, Widget};
+    use aimer_widget::{AnyElement, Drawable, EventDispatcher, FocusNode, Key, Widget};
 
     use crate::input::{DefaultCaret, TextArea, TextEditingController};
     use crate::input_field::raw_fields::{ExpandDirection, InputType};
+    use crate::input_field::raw_fields::test_support::dummy_build_context;
 
     #[test]
     fn default_text_area_is_unbounded_multiline_without_expansion() {
@@ -543,5 +549,44 @@ mod tests {
         assert!(!config.enable);
         assert!(config.read_only);
         assert_eq!(key, Some(Key::Value("notes".to_owned())));
+    }
+
+    #[test]
+    fn a_built_text_area_uses_the_shared_selection_area_for_dragging() {
+        let controller = TextEditingController::with_text("hello world");
+        let ctx = dummy_build_context(200.0, 80.0);
+        let element: AnyElement = TextArea::new()
+            .controller(controller.clone())
+            .to_element(&ctx);
+        element.draw(&ctx);
+        let mut dispatcher = EventDispatcher::new();
+        let start = Vec2d { x: 4.0, y: 12.0 };
+        let end = Vec2d { x: 50.0, y: 12.0 };
+
+        assert!(dispatcher
+            .dispatch(
+                element.as_ref(),
+                start,
+                &ElementEvent::PointerDown(PointerInfo::mouse(start, PointerButton::Primary)),
+            )
+            .is_consumed());
+        element.draw(&ctx);
+        assert!(dispatcher
+            .dispatch(
+                element.as_ref(),
+                end,
+                &ElementEvent::PointerMove(PointerInfo::mouse(end, PointerButton::Primary)),
+            )
+            .is_consumed());
+        element.draw(&ctx);
+        assert!(dispatcher
+            .dispatch(
+                element.as_ref(),
+                end,
+                &ElementEvent::PointerUp(PointerInfo::mouse(end, PointerButton::Primary)),
+            )
+            .is_consumed());
+
+        assert_eq!(controller.selection_graphemes(), (1, 9));
     }
 }

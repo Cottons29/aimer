@@ -965,6 +965,11 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
     }
 
     #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        self.element.is_paint_bounded()
+    }
+
+    #[inline]
     fn draw_paint_islands(
         &self,
         retained_ctx: &BuildContext,
@@ -1192,6 +1197,11 @@ impl Drawable for AnyElement {
     #[inline]
     fn is_paint_stable(&self) -> bool {
         self.as_ref().is_paint_stable()
+    }
+
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        self.as_ref().is_paint_bounded()
     }
 
     #[inline]

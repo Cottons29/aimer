@@ -278,11 +278,16 @@ impl Widget for RawTextFieldWidget {
             cursor_color,
             ctx,
         );
+        let selection = SelectionParticipant::from_context(
+            ctx,
+            Rc::from(self.config.controller.text()),
+        );
         let field = RawTextField::with_caret_context(
             self.config,
             self.caret,
             self.caret_context,
             self.focus_node,
+            selection,
         );
 
         RawTextFieldHost::new(field, caret).boxed()
@@ -384,6 +389,8 @@ pub(crate) struct RawTextField {
     pub(crate) menu_shape: Cell<Option<ContextMenuShape>>,
     /// Watches a finger for the hold that raises that menu.
     pub touch_hold: TouchHold,
+    /// The shared selection participant installed by the enclosing area.
+    pub(crate) selection: RefCell<Option<SelectionParticipant>>,
     /// A menu asked for by an event and raised by the next frame, once the
     /// deferred click has been resolved into a caret offset.
     pending_menu: Cell<Option<MenuOrigin>>,
@@ -450,6 +457,10 @@ impl Rebuildable for RawTextField {
         self.ime_enabled.set(old.ime_enabled.get());
         self.preedit_cursor.set(old.preedit_cursor.get());
         self.ime_cursor_area.set(old.ime_cursor_area.get());
+        let selection = old.selection.borrow().as_ref().map(|selection| {
+            selection.adopt(Rc::from(self.controller.text()))
+        });
+        *self.selection.borrow_mut() = selection;
 
         // `String` is not `Copy`, so this one field is moved rather than
         // copied. Guard against the double-visit some stateful ancestors
@@ -499,7 +510,7 @@ impl RawTextField {
         focus_node: FocusNode,
     ) -> Self {
         let caret_context = CaretContext::new(caret.clone());
-        Self::with_caret_context(config, caret, caret_context, focus_node)
+        Self::with_caret_context(config, caret, caret_context, focus_node, None)
     }
 
     /// Builds a field using presentation state owned by its mounted widget.
@@ -511,6 +522,7 @@ impl RawTextField {
         caret: CaretBlink,
         caret_context: CaretContext,
         focus_node: FocusNode,
+        selection: Option<SelectionParticipant>,
     ) -> Self {
         let controller_attachment = config
             .controller
@@ -575,6 +587,7 @@ impl RawTextField {
             menu: RefCell::new(None),
             menu_shape: Cell::new(None),
             touch_hold: TouchHold::new(),
+            selection: RefCell::new(selection),
             pending_menu: Cell::new(None),
             menu_origin: Cell::new(None),
             menu_actions: Rc::new(RefCell::new(Vec::new())),
@@ -804,6 +817,7 @@ impl RawTextField {
             .set_selection_anchor((anchor != focus).then_some(anchor));
         self.reveal_caret.set(true);
         self.observed_revision.set(self.controller.revision());
+        self.sync_selection_to_area();
     }
 
     fn sync_cursor_from_controller(&self) {
@@ -830,6 +844,42 @@ impl RawTextField {
         (self.cursor.selection_anchor().unwrap_or(focus), focus)
     }
 
+    /// Mirrors the field cursor into the shared byte-based selection session.
+    fn sync_selection_to_area(&self) {
+        let selection_state = self.selection.borrow();
+        let Some(selection) = selection_state.as_ref() else {
+            return;
+        };
+        if selection.active_pointer().is_some() {
+            return;
+        }
+        let text = self.controller.text();
+        let (anchor, focus) = self.cursor_selection();
+        selection.set_range(
+            grapheme_byte_offset(&text, anchor),
+            grapheme_byte_offset(&text, focus),
+        );
+    }
+
+    /// Mirrors a shared selection handle or cross-widget drag into the field.
+    fn sync_cursor_from_area(&self) {
+        let selection_state = self.selection.borrow();
+        let Some(selection) = selection_state.as_ref() else {
+            return;
+        };
+        let text = self.controller.text();
+        let Some(range) = selection.selected_range() else {
+            return;
+        };
+        let anchor = grapheme_count(&text[..range.start.min(text.len())]);
+        let focus = grapheme_count(&text[..range.end.min(text.len())]);
+        self.cursor.set_selection_anchor((anchor != focus).then_some(anchor));
+        self.cursor.set_offset(focus);
+        self.controller.set_selection_graphemes(anchor, focus);
+        self.observed_revision.set(self.controller.revision());
+        self.reveal_caret.set(true);
+    }
+
     /// Mirrors a canvas-driven cursor or selection change into the retained
     /// editing value and the platform editor.
     ///
@@ -843,6 +893,7 @@ impl RawTextField {
             self.observed_revision.set(self.controller.revision());
             self.sync_platform_text_state();
         }
+        self.sync_selection_to_area();
     }
 
     fn replace_cursor_selection(&self, text: &str, max_length: Option<usize>) -> bool {

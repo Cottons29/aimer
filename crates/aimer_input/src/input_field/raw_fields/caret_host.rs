@@ -124,6 +124,19 @@ impl VisitorElement for RawTextFieldHost {
 }
 
 impl EventElement for RawTextFieldHost {
+    fn on_event_with_context(
+        &self,
+        event: &ElementEvent,
+        context: &mut EventDispatchContext<'_, '_>,
+    ) -> EventResult {
+        // `field` is embedded rather than erased because the host retains the
+        // caret as a sibling. The dispatcher captures this host, so continue
+        // captured pointer events through the same routed context to reach the
+        // embedded editing element.
+        let pos = event.get_pointer_pos().unwrap_or_default();
+        context.dispatch_child(&self.field, pos, event)
+    }
+
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(&self.field);
     }

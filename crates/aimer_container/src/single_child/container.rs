@@ -478,6 +478,15 @@ impl<T: Element> Drawable for RawContainer<T> {
     }
 
     #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        // The child is painted inside the container's inset clip. Shadows and
+        // outlines are the two decoration features that can extend beyond the
+        // container's own layout rectangle.
+        self.box_decoration.box_shadow.is_empty()
+            && self.box_decoration.outline == Default::default()
+    }
+
+    #[inline]
     fn paint(&self, ctx: &BuildContext) {
         // `is_paint_stable` only returns true for this transparent, zero-inset
         // shape, so retaining it does not need the live bounds/clip bookkeeping

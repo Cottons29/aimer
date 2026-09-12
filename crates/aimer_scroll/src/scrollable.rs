@@ -54,6 +54,8 @@ pub struct ScrollPortableConfig {
     pub vertical_scroll_bar: bool,
     /// Whether the horizontal scrollbar is enabled.
     pub horizontal_scroll_bar: bool,
+    /// Whether scrollbars overlay the content or reserve layout space.
+    pub scroll_bar_placement: ScrollBarPlacement,
 }
 
 impl Default for ScrollPortableConfig {
@@ -62,6 +64,7 @@ impl Default for ScrollPortableConfig {
             axis: ScrollAxis::Vertical,
             vertical_scroll_bar: true,
             horizontal_scroll_bar: true,
+            scroll_bar_placement: ScrollBarPlacement::Floating,
         }
     }
 }
@@ -85,8 +88,10 @@ fn resolved_parent_extent(min: f32, max: f32, parent: f32) -> f32 {
 /// and the viewport clips and translates that content according to
 /// [`ScrollBehavior`]. The default axis is vertical, both scroll bars are
 /// enabled, teardown persistence is disabled, and no external
-/// [`ScrollController`] is attached. Call [`Scrollable::key`] to preserve the
-/// offset across a full teardown and later recreation.
+/// [`ScrollController`] is attached. Scrollbars float over the viewport by
+/// default; call [`Scrollable::scroll_bar_placement`] to reserve inline space
+/// instead. Call [`Scrollable::key`] to preserve the offset across a full
+/// teardown and later recreation.
 ///
 /// Attach a child with [`Scrollable::child`] to retain its concrete type, or
 /// with [`Scrollable::box_child`] when branches need a shared erased type.
@@ -124,6 +129,10 @@ pub struct Scrollable<W = RequiredChild> {
     pub key_scroll_strength: f32,
     #[portable_skip]
     pub axis: ScrollAxis,
+    /// Whether enabled scrollbars float over the content or reserve layout
+    /// space beside it. Defaults to [`ScrollBarPlacement::Floating`].
+    #[portable_skip]
+    pub scroll_bar_placement: ScrollBarPlacement,
     #[portable_skip]
     pub vertical_scroll_bar: Option<ScrollBar>,
     #[portable_skip]
@@ -197,6 +206,7 @@ impl Scrollable {
             child: ChildBuilder::required(),
             scroll_behavior: ScrollBehavior::default(),
             axis: ScrollAxis::default(),
+            scroll_bar_placement: ScrollBarPlacement::default(),
             vertical_scroll_bar: Some(ScrollBar::default()),
             horizontal_scroll_bar: Some(ScrollBar::default()),
             key: Key::Value(caller.to_string()).with_location(caller),
@@ -213,8 +223,8 @@ impl Scrollable {
     ///
     /// This is equivalent to [`Scrollable::new`] followed by
     /// [`Scrollable::child`]: it uses the default vertical axis and behavior,
-    /// enables both default scroll bars, does not persist its offset across a
-    /// teardown, and has no external controller.
+    /// enables both default floating scroll bars, does not persist its offset
+    /// across a teardown, and has no external controller.
     #[inline]
     #[track_caller]
     pub fn with_child<W: Widget + 'static>(child: W) -> Scrollable<W> {
@@ -223,6 +233,7 @@ impl Scrollable {
             child: ChildBuilder::from_widget(child),
             scroll_behavior: ScrollBehavior::default(),
             axis: ScrollAxis::default(),
+            scroll_bar_placement: ScrollBarPlacement::default(),
             vertical_scroll_bar: Some(ScrollBar::default()),
             horizontal_scroll_bar: Some(ScrollBar::default()),
             key: Key::Value(caller.to_string()).with_location(caller),
@@ -253,6 +264,15 @@ impl Scrollable {
     pub fn axis(mut self, axis: ScrollAxis) -> Self {
         self.axis = axis;
         self.config.axis = axis;
+        self
+    }
+
+    /// Sets whether enabled scrollbars float over the content or are laid out
+    /// inline beside it.
+    #[inline]
+    pub fn scroll_bar_placement(mut self, placement: ScrollBarPlacement) -> Self {
+        self.scroll_bar_placement = placement;
+        self.config.scroll_bar_placement = placement;
         self
     }
 
@@ -356,6 +376,7 @@ impl Scrollable {
             child: ChildBuilder::from_widget(child),
             scroll_behavior: self.scroll_behavior,
             axis: self.axis,
+            scroll_bar_placement: self.scroll_bar_placement,
             key: self.key,
             remember_scroll_offset: self.remember_scroll_offset,
             controller: self.controller,
@@ -389,6 +410,7 @@ pub struct ScrollableState<W: Widget + 'static> {
     scroll_behavior: ScrollBehavior,
     key_scroll_strength: f32,
     axis: ScrollAxis,
+    scroll_bar_placement: ScrollBarPlacement,
     vertical_scroll_bar: Option<ScrollBar>,
     horizontal_scroll_bar: Option<ScrollBar>,
     key: Key,
@@ -412,6 +434,7 @@ impl<W: Widget + 'static> StatefulWidget for Scrollable<W> {
             child: self.child.clone(),
             scroll_behavior: self.scroll_behavior,
             axis: self.axis,
+            scroll_bar_placement: self.scroll_bar_placement,
             vertical_scroll_bar: self.vertical_scroll_bar.clone(),
             horizontal_scroll_bar: self.horizontal_scroll_bar.clone(),
             key: self.key.clone(),
@@ -487,6 +510,7 @@ impl<W: Widget + 'static> State<Scrollable<W>> for ScrollableState<W> {
         let engine_config_changed =
             !same_scroll_behavior(self.scroll_behavior, new.scroll_behavior)
                 || !same_scroll_axis(self.axis, new.axis)
+                || self.scroll_bar_placement != new.scroll_bar_placement
                 || self.web_overscroll != new.web_overscroll
                 || self.key != new.key
                 || self.remember_scroll_offset != new.remember_scroll_offset
@@ -495,6 +519,7 @@ impl<W: Widget + 'static> State<Scrollable<W>> for ScrollableState<W> {
         self.child = new.child;
         self.scroll_behavior = new.scroll_behavior;
         self.axis = new.axis;
+        self.scroll_bar_placement = new.scroll_bar_placement;
         self.vertical_scroll_bar = new.vertical_scroll_bar;
         self.horizontal_scroll_bar = new.horizontal_scroll_bar;
         self.key = new.key;
@@ -637,6 +662,7 @@ impl<W: Widget + 'static> ScrollableState<W> {
             overscroll_sources,
             overscroll_source: Cell::new(OverscrollSource::Wheel),
             axis: self.axis,
+            scroll_bar_placement: self.scroll_bar_placement,
             cursor_pos: Cell::new(None),
             velocity_history: RefCell::new(VelocityHistory::new()),
             cached_viewport: Cell::new((0.0, 0.0)),
@@ -773,6 +799,7 @@ impl Widget for ScrollableFrame {
             } else {
                 horizontal_bar_height
             },
+            self.ctrl.scroll_bar_placement,
         );
 
         let mut child_ctx = ctx.clone();
@@ -830,8 +857,8 @@ mod tests {
     use aimer_widget::{AnyElement, ErrorWidget, Key, State, StatefulWidget, Widget};
 
     use super::{
-        scroll_storage, BuildContext, OverscrollSource, OverscrollSources, ScrollAxis, Scrollable,
-        resolved_overscroll_sources, resolved_parent_extent,
+        scroll_storage, BuildContext, OverscrollSource, OverscrollSources, ScrollAxis,
+        ScrollBarPlacement, Scrollable, resolved_overscroll_sources, resolved_parent_extent,
     };
 
     fn assert_stateful_widget<W: StatefulWidget>() {}
@@ -854,6 +881,24 @@ mod tests {
     #[test]
     fn two_unbounded_extents_fall_back_to_the_minimum() {
         assert_eq!(resolved_parent_extent(0.0, f32::MAX, f32::MAX), 0.0);
+    }
+
+    #[test]
+    fn scrollable_defaults_to_floating_scroll_bars() {
+        let scrollable = Scrollable::new();
+
+        assert_eq!(scrollable.scroll_bar_placement, ScrollBarPlacement::Floating);
+        assert_eq!(scrollable.config.scroll_bar_placement, ScrollBarPlacement::Floating);
+    }
+
+    #[test]
+    fn inline_scroll_bar_placement_is_retained_by_state() {
+        let state = Scrollable::new()
+            .scroll_bar_placement(ScrollBarPlacement::Inline)
+            .child(ErrorWidget::new("content"))
+            .create_state();
+
+        assert_eq!(state.scroll_bar_placement, ScrollBarPlacement::Inline);
     }
 
     #[tokio::test]
@@ -883,6 +928,38 @@ mod tests {
         });
     }
 
+    #[tokio::test]
+    async fn floating_scrollbars_leave_the_content_viewport_unshrunk() {
+        let mut ctx = context();
+        ctx.parent_size = ResolvedSize {
+            width: 320.0,
+            height: 180.0,
+        };
+        ctx.box_constraint.max_width = 320.0;
+        ctx.box_constraint.max_height = 180.0;
+
+        let floating_width = Rc::new(Cell::new(0.0));
+        Scrollable::new()
+            .child(ConstraintProbe {
+                max_width: floating_width.clone(),
+            })
+            .create_state()
+            .build(&ctx)
+            .to_element(&ctx);
+        assert_eq!(floating_width.get(), 320.0);
+
+        let inline_width = Rc::new(Cell::new(0.0));
+        Scrollable::new()
+            .scroll_bar_placement(ScrollBarPlacement::Inline)
+            .child(ConstraintProbe {
+                max_width: inline_width.clone(),
+            })
+            .create_state()
+            .build(&ctx)
+            .to_element(&ctx);
+        assert_eq!(inline_width.get(), 308.0);
+    }
+
     /// Content that reports how often it was asked for an element.
     struct Probe {
         builds: Rc<Cell<usize>>,
@@ -900,6 +977,23 @@ mod tests {
     }
 
     impl aimer_widget::PortableWidget for Probe {}
+
+    struct ConstraintProbe {
+        max_width: Rc<Cell<f32>>,
+    }
+
+    impl Widget for ConstraintProbe {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            self.max_width.set(ctx.box_constraint.max_width);
+            ErrorWidget::new("constraint probe").to_element(ctx)
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "ConstraintProbe"
+        }
+    }
+
+    impl aimer_widget::PortableWidget for ConstraintProbe {}
 
     fn context() -> BuildContext<'static> {
         let canvas = {
@@ -1015,6 +1109,7 @@ mod tests {
         let current = Scrollable::new().child(ErrorWidget::new("current"));
         let next = Scrollable::new()
             .axis(ScrollAxis::Horizontal)
+            .scroll_bar_placement(ScrollBarPlacement::Inline)
             .vertical_scroll_bar(None)
             .child(ErrorWidget::new("next"));
         let mut state = current.create_state();
@@ -1023,6 +1118,7 @@ mod tests {
         state.adopt_config_from(next_state);
 
         assert!(matches!(state.axis, ScrollAxis::Horizontal));
+        assert_eq!(state.scroll_bar_placement, ScrollBarPlacement::Inline);
         assert!(state.vertical_scroll_bar.is_none());
         assert!(state.refresh_scroll_state.get());
     }

@@ -25,9 +25,11 @@ use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 use crate::paint_isolated::{PaintCache, PaintContract};
 use crate::{
-    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
-    VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventDispatchContext, EventElement, EventResult, LayoutElement,
+    Rebuildable, VisitorElement, Widget,
 };
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+use crate::PaintDamageTracker;
 
 trait FetchAdd {
     fn fetch_add(&self, val: u64) -> u64;
@@ -967,6 +969,8 @@ pub struct StatefulElement {
     failure: Rc<FailureState>,
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
     paint_cache: PaintCache,
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+    paint_damage: PaintDamageTracker,
 }
 
 impl StatefulElement {
@@ -1074,6 +1078,8 @@ impl StatefulElement {
                     failure: live.failure,
                     #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
                     paint_cache: PaintCache::default(),
+                    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+                    paint_damage: PaintDamageTracker::new(),
                 };
                 let updater = element
                     .state_updater()
@@ -1245,6 +1251,8 @@ impl StatefulElement {
             failure,
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
             paint_cache: PaintCache::default(),
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+            paint_damage: PaintDamageTracker::new(),
         };
 
         let element = if KeyedStateScope::is_active() {
@@ -2024,7 +2032,11 @@ impl Drawable for StatefulElement {
                 }
             }
         }
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+        let rebuild_generation = self.rebuild_generation.get();
         self.rebuild_if_dirty(ctx);
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+        let rebuilt = self.rebuild_generation.get() != rebuild_generation;
         // Safety: single-threaded rendering pipeline
         let child = unsafe { &*self.child.0.get() };
 
@@ -2041,7 +2053,13 @@ impl Drawable for StatefulElement {
                     return;
                 }
             }
-            self.paint_cache.clear_for_live_paint();
+            self.paint_cache.clear();
+            if child.is_paint_bounded() {
+                self.paint_damage
+                    .mark_current_bounds(ctx, child.content_size(ctx), rebuilt);
+            } else {
+                self.paint_damage.mark_full();
+            }
         }
 
         child.draw(ctx);
@@ -2060,6 +2078,11 @@ impl Drawable for StatefulElement {
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         let child = unsafe { &*self.child.0.get() };
         child.sync_paint_geometry(ctx);
+    }
+
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        unsafe { &*self.child.0.get() }.is_paint_bounded()
     }
 }
 
@@ -2086,6 +2109,20 @@ impl VisitorElement for StatefulElement {
 impl EventElement for StatefulElement {
     fn on_event(&self, _event: &ElementEvent) -> EventResult {
         EventResult::ignored()
+    }
+
+    fn on_event_with_context(
+        &self,
+        event: &ElementEvent,
+        context: &mut EventDispatchContext<'_, '_>,
+    ) -> EventResult {
+        // The retained child is the real event owner, but a pointer capture
+        // promoted through this state boundary targets the stateful wrapper.
+        // Keep the capture path alive by dispatching into that child with the
+        // current dispatcher context.
+        let child = unsafe { &*self.child.0.get() };
+        let pos = event.get_pointer_pos().unwrap_or_default();
+        context.dispatch_child(child.as_ref(), pos, event)
     }
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
