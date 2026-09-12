@@ -329,7 +329,10 @@ pub(crate) fn paint_or_replay_scene_node(
 
 /// Removes the scene-owned cache for an element that leaves the retained tree.
 pub(crate) fn drop_scene_paint_cache(id: ElementId) {
-    SCENE_PAINT_CACHES.with(|caches| {
+    // Elements can be dropped while another thread-local value is unwinding
+    // during thread teardown. In that case this cache may already be gone;
+    // cleanup is best-effort and must not turn teardown into a panic.
+    let _ = SCENE_PAINT_CACHES.try_with(|caches| {
         caches.borrow_mut().remove(&id.get());
     });
 }

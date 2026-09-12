@@ -930,8 +930,8 @@ mod tests {
         let resolver: ImageResolver = Rc::new(default_image_resolver);
         let theme = MarkdownTheme::default();
         let ctx = layout_context(320.0, 200.0);
-        let paragraph = Document::parse("Use CodeGraph to understand code safely").unwrap();
-        let list = Document::parse("- Use CodeGraph to understand code safely").unwrap();
+        let paragraph = Document::parse("Use CodeGraph to understand code safely now").unwrap();
+        let list = Document::parse("- Use CodeGraph to understand code safely now").unwrap();
 
         let paragraph_size = render_document(&paragraph, &theme, None, &resolver, &[], &[])
             .to_element(&ctx)
