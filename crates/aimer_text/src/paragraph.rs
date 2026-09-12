@@ -102,7 +102,8 @@ pub(crate) struct PreparedLayout {
     pub line_breaks: Vec<PreparedLineBreak>,
     pub line_heights: Vec<f32>,
     pub size: ResolvedSize,
-    pub aimer_interaction: Option<aimer_cupid::text_layout::TextInteractionLayout>,
+    pub aimer_interaction:
+        Option<Rc<aimer_cupid::text_layout::TextInteractionLayout>>,
 }
 
 fn prepare_decorations(
@@ -135,6 +136,7 @@ struct PreparedLayoutKey {
     width_bits: u32,
     scale_bits: u32,
     layout_generation: u64,
+    include_graphemes: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -354,11 +356,32 @@ impl Paragraph {
     /// Returns the layout for the current width and scale, computing it only
     /// when the cached one no longer applies.
     pub fn prepare(&self, ctx: &BuildContext) -> Rc<PreparedLayout> {
+        self.prepare_with_graphemes(ctx, true)
+    }
+
+    /// Returns the layout needed by a paint-only caller.
+    ///
+    /// A single untransformed run already carries source-aware interaction
+    /// geometry from the shared shaper. In that case the per-grapheme fallback
+    /// boxes used by older selection paths would only repeat every width
+    /// measurement. Complex paragraphs only build those boxes when spacing
+    /// changes each grapheme's painted position; ordinary rich spans use the
+    /// clusters already produced by the shared shaper.
+    pub(crate) fn prepare_for_paint(&self, ctx: &BuildContext) -> Rc<PreparedLayout> {
+        self.prepare_with_graphemes(ctx, false)
+    }
+
+    fn prepare_with_graphemes(
+        &self,
+        ctx: &BuildContext,
+        include_graphemes: bool,
+    ) -> Rc<PreparedLayout> {
         let width = self.wrap_width(ctx);
         let key = PreparedLayoutKey {
             width_bits: width.to_bits(),
             scale_bits: ctx.scale.to_bits(),
             layout_generation: layout_invalidation_generation(),
+            include_graphemes,
         };
         if let Some((cached_key, layout)) = self.layout_cache.borrow().as_ref()
             && *cached_key == key
@@ -366,7 +389,7 @@ impl Paragraph {
             return Rc::clone(layout);
         }
 
-        let layout = Rc::new(self.compute_layout(ctx));
+        let layout = Rc::new(self.compute_layout(ctx, include_graphemes));
         *self.layout_cache.borrow_mut() = Some((key, Rc::clone(&layout)));
         layout
     }
@@ -388,7 +411,7 @@ impl Paragraph {
     pub(crate) fn aimer_interaction_layout(
         &self,
         ctx: &BuildContext,
-    ) -> Option<aimer_cupid::text_layout::TextInteractionLayout> {
+    ) -> Option<Rc<aimer_cupid::text_layout::TextInteractionLayout>> {
         let [span] = self.spans.as_slice() else {
             return None;
         };
@@ -404,7 +427,7 @@ impl Paragraph {
             return None;
         }
 
-        Some(ctx.canvas.layout_text_styled(
+        Some(ctx.canvas.layout_text_styled_shared(
             &span.text,
             style.font_size.max(1) as f32 * ctx.scale,
             self.wrap_width(ctx),
@@ -443,7 +466,6 @@ impl Paragraph {
             .collect::<String>();
         let mut clusters = Vec::with_capacity(graphemes.len() + line_breaks.len());
         let mut grapheme_cursor = 0;
-
         for (fragment_index, fragment) in fragments.iter().enumerate() {
             if fragment.text.is_empty() {
                 continue;
@@ -461,7 +483,7 @@ impl Paragraph {
             }
             let fragment_graphemes = &graphemes[grapheme_start..grapheme_cursor];
             let style = self.spans[fragment.span_index].style;
-            let fragment_layout = ctx.canvas.layout_text_styled(
+            let fragment_layout = ctx.canvas.layout_text_styled_shared(
                 &fragment.text,
                 style.font_size.max(1) as f32 * ctx.scale,
                 0.0,
@@ -663,7 +685,7 @@ impl Paragraph {
         }
     }
 
-    fn compute_layout(&self, ctx: &BuildContext) -> PreparedLayout {
+    fn compute_layout(&self, ctx: &BuildContext, include_graphemes: bool) -> PreparedLayout {
         let wrap_width = self.wrap_width(ctx);
         let first_line_indent = (if self
             .text_indent
@@ -782,7 +804,19 @@ impl Paragraph {
             })
             .collect::<Vec<_>>();
         let decorations = prepare_decorations(&fragments, &self.spans, ctx.scale);
-        let (graphemes, paint_runs) = self.measure_graphemes(ctx, &fragments);
+        let aimer_interaction = self.aimer_interaction_layout(ctx);
+        let needs_graphemes = include_graphemes
+            || fragments.iter().any(|fragment| {
+                let style = self.spans[fragment.span_index].style;
+                style.letter_spacing.is_finite()
+                    && style.word_spacing.is_finite()
+                    && (style.letter_spacing != 0.0 || style.word_spacing != 0.0)
+            });
+        let (graphemes, paint_runs) = if needs_graphemes {
+            self.measure_graphemes(ctx, &fragments)
+        } else {
+            (Vec::new(), vec![Vec::new(); fragments.len()])
+        };
         let backgrounds = prepare_background_runs(&fragments, &self.spans);
         let line_breaks = layout
             .line_breaks
@@ -802,8 +836,8 @@ impl Paragraph {
             })
             .collect::<Vec<_>>();
 
-        let aimer_interaction = self.aimer_interaction_layout(ctx).or_else(|| {
-            Some(self.composed_aimer_interaction_layout(
+        let aimer_interaction = aimer_interaction.or_else(|| {
+            Some(Rc::new(self.composed_aimer_interaction_layout(
                 ctx,
                 &fragments,
                 &graphemes,
@@ -815,7 +849,7 @@ impl Paragraph {
                 &line_width,
                 width,
                 height,
-            ))
+            )))
         });
 
         PreparedLayout {
@@ -1895,6 +1929,102 @@ mod tests {
             .unwrap();
         assert_eq!(second_y - first_y, 40.0);
         assert_eq!(interaction.line_index_at_y(first_y + 39.0), Some(0));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn paint_layout_keeps_shared_interaction_without_grapheme_boxes() {
+        use aimer_attribute::{ResolvedSize, Vec2d};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_style::{TextAlign, TextOverflow};
+        use aimer_widget::base::WindowHandle;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        let paragraph = Paragraph::new(
+            vec![ResolvedTextSpan::plain(
+                Rc::from("paint-only paragraph"),
+                TextStyle::new().font_size(16),
+            )],
+            TextAlign::TopLeft,
+            TextOverflow::Wrap,
+        );
+
+        let paint_layout = paragraph.prepare_for_paint(&context);
+
+        assert!(paint_layout.aimer_interaction.is_some());
+        assert!(paint_layout.graphemes.is_empty());
+        assert_eq!(paint_layout.paint_runs.len(), paint_layout.fragments.len());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn paint_layout_skips_graphemes_for_unspaced_rich_spans() {
+        use aimer_attribute::{ResolvedSize, Vec2d};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_style::{FontStyle, FontWeight, TextAlign, TextOverflow};
+        use aimer_widget::base::WindowHandle;
+
+        let inner = InnerCanvas::new();
+        let canvas = Canvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
+        let paragraph = Paragraph::new(
+            vec![
+                ResolvedTextSpan::plain(
+                    Rc::from("plain rich span"),
+                    TextStyle::new().font_size(16),
+                ),
+                ResolvedTextSpan::plain(
+                    Rc::from(" with emphasis"),
+                    TextStyle::new()
+                        .font_size(16)
+                        .font_style(FontStyle::Italic)
+                        .font_weight(FontWeight::Bold),
+                ),
+            ],
+            TextAlign::TopLeft,
+            TextOverflow::Wrap,
+        );
+
+        let paint_layout = paragraph.prepare_for_paint(&context);
+        let interaction = paint_layout
+            .aimer_interaction
+            .as_ref()
+            .expect("rich spans must retain interaction geometry");
+
+        assert!(paint_layout.graphemes.is_empty());
+        assert!(paint_layout.paint_runs.iter().all(Vec::is_empty));
+        assert_eq!(interaction.text, "plain rich span with emphasis");
+        assert!(!interaction.clusters.is_empty());
     }
 
     #[cfg(not(target_arch = "wasm32"))]

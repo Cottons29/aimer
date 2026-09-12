@@ -13,8 +13,10 @@
 //! amortized cost per insertion stays constant — and unlike an intrusive
 //! linked-list LRU it needs no extra allocation per entry and no `unsafe`.
 
-use std::collections::HashMap;
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash, Hasher};
+
+use hashbrown::HashMap;
+use hashbrown::hash_map::RawEntryMut;
 
 /// Fraction of the map dropped by one eviction, as a divisor.
 ///
@@ -77,6 +79,35 @@ impl<K: Eq + Hash, V> LruMap<K, V> {
         let entry = self.entries.get_mut(key)?;
         entry.used = clock;
         Some(&entry.value)
+    }
+
+    /// Borrows a value with a lookup key that does not have to own the stored
+    /// key's data. The matcher is used only after the map's hasher selects a
+    /// bucket, so callers can compare a borrowed view of a composite key
+    /// without allocating a temporary `K` on every hit.
+    #[inline]
+    pub(crate) fn get_by<Q, F>(&mut self, key: &Q, mut is_match: F) -> Option<&V>
+    where
+        Q: Hash + ?Sized,
+        F: FnMut(&K, &Q) -> bool,
+    {
+        let mut hasher = self.entries.hasher().build_hasher();
+        key.hash(&mut hasher);
+        let hash = hasher.finish();
+        self.clock += 1;
+        let clock = self.clock;
+        match self
+            .entries
+            .raw_entry_mut()
+            .from_hash(hash, |stored| is_match(stored, key))
+        {
+            RawEntryMut::Occupied(entry) => {
+                let entry = entry.into_mut();
+                entry.used = clock;
+                Some(&entry.value)
+            }
+            RawEntryMut::Vacant(_) => None,
+        }
     }
 
     /// Stores `value` under `key`, evicting the coldest entries when full.
@@ -181,5 +212,16 @@ mod tests {
 
         assert_eq!(map.len(), 0);
         assert_eq!(map.get(&1), None);
+    }
+
+    #[test]
+    fn borrowed_lookup_matches_an_owned_key_without_allocating_one() {
+        let mut map: LruMap<String, usize> = LruMap::new(8);
+        map.insert("cached".to_owned(), 7);
+
+        assert_eq!(
+            map.get_by("cached", |stored, lookup| stored == lookup),
+            Some(&7)
+        );
     }
 }

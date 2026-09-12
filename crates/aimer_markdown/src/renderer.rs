@@ -9,7 +9,7 @@ use aimer_input::button::Button;
 use aimer_scroll::{ScrollAxis, Scrollable};
 use aimer_style::{
     BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontStyle, FontWeight, LayoutSpacing,
-    TextAlign, TextDecoration, TextDecorationLine, TextStyle,
+    TextAlign, TextDecoration, TextDecorationLine, TextOverflow, TextStyle,
 };
 use aimer_svg::{Svg, SvgDocument, SvgStyle};
 use aimer_text::{RichText, SelectionArea, SpanStyle, Text, TextSpan};
@@ -628,12 +628,46 @@ fn render_inline_flow(
     typed_custom_inlines: &[(crate::InlineRule, TypedCustomInlineBuilder)],
     ctx: Option<&BuildContext>,
 ) -> AnyWidget {
-    let has_image = inlines
-        .iter()
-        .any(|inline| matches!(inline, Inline::Image { .. }));
-    let has_custom_inline = inlines
-        .iter()
-        .any(|inline| matches!(inline, Inline::Custom(_)));
+    let mut plain_text = Some(String::new());
+    let mut has_image = false;
+    let mut has_custom_inline = false;
+    for inline in inlines {
+        match inline {
+            Inline::Text(value) => {
+                if let Some(text) = plain_text.as_mut() {
+                    text.push_str(value);
+                }
+            }
+            Inline::SoftBreak => {
+                if let Some(text) = plain_text.as_mut() {
+                    text.push(' ');
+                }
+            }
+            Inline::HardBreak => {
+                if let Some(text) = plain_text.as_mut() {
+                    text.push('\n');
+                }
+            }
+            Inline::Image { .. } => {
+                has_image = true;
+                plain_text = None;
+            }
+            Inline::Custom(_) => {
+                has_custom_inline = true;
+                plain_text = None;
+            }
+            _ => plain_text = None,
+        }
+    }
+    if let Some(text) = plain_text {
+        // Syntax-free flows can use RawTextWidget, which is safe for retained
+        // paint reuse. Rich syntax still follows the span-based path below.
+        let text = Text::new(text).text_style(style.text_overflow(TextOverflow::Wrap));
+        return match alignment {
+            Some(alignment) => text.text_align(alignment).boxed(),
+            None => text.boxed(),
+        };
+    }
     if !has_image && !has_custom_inline {
         return rich_text_aligned(inlines, style, alignment, theme, link_handler);
     }
@@ -782,6 +816,7 @@ mod tests {
     use aimer_cupid::draw_cmd::DrawCommand;
     use aimer_style::{TextAlign, TextDecorationLine, TextStyle};
     use aimer_widget::base::{BuildContext, WindowHandle};
+    use aimer_widget::VisitorElement;
 
     use super::*;
 
@@ -895,8 +930,8 @@ mod tests {
         let resolver: ImageResolver = Rc::new(default_image_resolver);
         let theme = MarkdownTheme::default();
         let ctx = layout_context(320.0, 200.0);
-        let paragraph = Document::parse("Use CodeGraph to understand code safely").unwrap();
-        let list = Document::parse("- Use CodeGraph to understand code safely").unwrap();
+        let paragraph = Document::parse("Use CodeGraph to understand code safely now").unwrap();
+        let list = Document::parse("- Use CodeGraph to understand code safely now").unwrap();
 
         let paragraph_size = render_document(&paragraph, &theme, None, &resolver, &[], &[])
             .to_element(&ctx)
@@ -1022,6 +1057,59 @@ mod tests {
         assert!(text.contains("rust"));
         eprintln!("{}", text);
         assert!(text.contains("fn main() {}"));
+    }
+
+    #[test]
+    fn plain_markdown_paragraph_uses_plain_text_painting() {
+        let resolver: ImageResolver = Rc::new(default_image_resolver);
+        let document = Document::parse("A plain Markdown paragraph").unwrap();
+        let (ctx, canvas) = layout_context_with_canvas(320.0, 200.0);
+        let element = render_document(
+            &document,
+            &MarkdownTheme::default(),
+            None,
+            &resolver,
+            &[],
+            &[],
+        )
+        .to_element(&ctx);
+
+        element.layout(&ctx);
+        element.draw(&ctx);
+
+        let draw_list = canvas.draw_list();
+        let commands = draw_list.commands();
+        assert!(commands.iter().any(|command| {
+            matches!(
+                command,
+                DrawCommand::DrawText { text, .. }
+                    if text.as_ref() == "A plain Markdown paragraph"
+            )
+        }));
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, DrawCommand::DrawRichText { .. })));
+    }
+
+    #[test]
+    fn formatted_markdown_paragraph_keeps_rich_text_painting() {
+        let resolver: ImageResolver = Rc::new(default_image_resolver);
+        let theme = MarkdownTheme::default();
+        let ctx = layout_context(320.0, 200.0);
+        let element = render_inline_flow(
+            &[Inline::Strong(vec![Inline::Text("Rich Markdown".into())])],
+            theme.body,
+            None,
+            &theme,
+            None,
+            &resolver,
+            &[],
+            &[],
+            None,
+        )
+        .to_element(&ctx);
+
+        assert_eq!(element.debug_name(), "RawRichText");
     }
 
     #[test]

@@ -634,9 +634,14 @@ pub(crate) fn layout_resolved_spans_with_indent(
                 span.style.text_transform,
                 &mut capitalize_next,
             );
+            let rendered_source_ranges = if span.style.text_transform == TextTransform::None {
+                Vec::new()
+            } else {
+                rendered_source_ranges(&transformed, &source_range)
+            };
             unit.push(PendingGrapheme {
                 span_index,
-                rendered_source_ranges: rendered_source_ranges(&transformed, &source_range),
+                rendered_source_ranges,
                 text: transformed,
                 source_range,
             });
@@ -742,8 +747,14 @@ pub(crate) fn ellipsize_first_line(
             .map(|(start, _)| start)
         {
             last.text.truncate(start);
-            last.rendered_source_ranges.pop();
-            last.source_range = source_range_from_rendered(&last.rendered_source_ranges);
+            if last.rendered_source_ranges.is_empty() {
+                if let Some(source_range) = last.source_range.as_mut() {
+                    source_range.end = source_range.start + last.text.len();
+                }
+            } else {
+                last.rendered_source_ranges.pop();
+                last.source_range = source_range_from_rendered(&last.rendered_source_ranges);
+            }
             last.width = adjusted_width(
                 &last.text,
                 &spans[last.span_index].style,
@@ -885,6 +896,20 @@ mod tests {
             layout.fragments[0].rendered_source_ranges,
             vec![0..2, 0..2]
         );
+    }
+
+    #[test]
+    fn untransformed_spans_use_direct_source_offsets() {
+        let layout = layout_resolved_spans(
+            &[ResolvedTextSpan::plain(
+                Rc::from("ordinary rich text"),
+                TextStyle::new(),
+            )],
+            0.0,
+            |text, _| text.len() as f32,
+        );
+
+        assert!(layout.fragments[0].rendered_source_ranges.is_empty());
     }
 
     #[test]

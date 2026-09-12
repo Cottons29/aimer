@@ -156,7 +156,7 @@ impl Drawable for RawSelectableText {
             layout.size.height,
         );
         geometry_state.regions.borrow_mut().clear();
-        geometry_state.set_interaction_layout(
+        geometry_state.set_shared_interaction_layout(
             shared_layout.clone(),
             transform,
             ctx.scale,

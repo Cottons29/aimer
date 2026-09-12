@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_cupid::compositor::{SceneNodeDescriptor, SceneNodeId, SceneRevision};
 use aimer_cupid::damage_region::{DamageRect, DamageSet};
+use aimer_cupid::utilities::Rect;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_focus::{FocusCandidate, FocusCandidates, FocusManager, FocusNode, FocusTrapId};
 use aimer_rubick::ErasedFrom;
@@ -585,6 +587,13 @@ struct ElementNode<E> {
     element: E,
 }
 
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+impl<E> Drop for ElementNode<E> {
+    fn drop(&mut self) {
+        crate::paint_isolated::drop_scene_paint_cache(self.id.get());
+    }
+}
+
 impl<T> Element for T where T: VisitorElement + EventElement + LayoutElement + Rebuildable + Drawable
 {}
 
@@ -781,6 +790,10 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
         self.element.is_carry_state()
     }
 
+    fn compositor_priority(&self) -> bool {
+        self.element.compositor_priority()
+    }
+
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
         self.element.with_rebuild_context(ctx, callback);
     }
@@ -935,6 +948,52 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
             // same pass and must not reset paths relative to a new root.
             self.rebuild_if_dirty(ctx);
         }
+        let priority = self.element.compositor_priority();
+        let stable = self.element.is_paint_stable() && self.element.is_layout_stable();
+        let bounded = self.element.is_paint_bounded();
+        let _scene_node = if (stable && bounded) || priority {
+            let bounds = self.element.content_size(ctx);
+            let descriptor = SceneNodeDescriptor {
+                id: SceneNodeId::from_raw(self.id.get().get()),
+                bounds: Rect::new(0.0, 0.0, bounds.width, bounds.height),
+                order: self.element.layer(),
+                revision: SceneRevision::new(
+                    self.subtree_generation(),
+                    paint_element_was_invalidated(self.id.get())
+                        .then_some(rebuild_invalidation_generation())
+                        .unwrap_or(0),
+                    layout_invalidation_generation(),
+                    ctx.canvas.texture_cache_epoch(),
+                ),
+                cache_eligible: stable && bounded,
+                bounded,
+                priority,
+            };
+            let scene_node = Some(ctx.canvas.begin_scene_node(descriptor));
+            self.element.sync_paint_geometry(ctx);
+
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+            if stable
+                && bounded
+                && let Some(key) = crate::paint_isolated::PaintContract::new(
+                    ctx,
+                    bounds,
+                    self.subtree_generation(),
+                )
+                && crate::paint_isolated::paint_or_replay_scene_node(
+                    self.id.get(),
+                    ctx,
+                    &self.element,
+                    key,
+                    priority,
+                )
+            {
+                return;
+            }
+            scene_node
+        } else {
+            None
+        };
         let before = element_tree_generation();
         self.element.draw(ctx);
         let after = element_tree_generation();
@@ -1087,6 +1146,10 @@ impl Rebuildable for AnyElement {
 
     fn is_carry_state(&self) -> bool {
         self.as_ref().is_carry_state()
+    }
+
+    fn compositor_priority(&self) -> bool {
+        self.as_ref().compositor_priority()
     }
 
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
@@ -1314,6 +1377,10 @@ impl Rebuildable for Box<dyn Element> {
 
     fn is_carry_state(&self) -> bool {
         self.as_ref().is_carry_state()
+    }
+
+    fn compositor_priority(&self) -> bool {
+        self.as_ref().compositor_priority()
     }
 
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {

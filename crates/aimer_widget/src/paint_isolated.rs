@@ -1,12 +1,14 @@
-//! Framework-owned retained paint for stateful visual subtrees.
+//! Framework-owned retained paint for visual scene nodes.
 //!
 //! The module deliberately has a small interface: a caller supplies the live
 //! child, its current paint contract, and a canvas. The implementation owns
 //! cache validation, local recording, compositor-layer selection, and the
 //! direct fallback. Keeping those decisions here prevents every retained
-//! caller from growing a slightly different invalidation policy.
+//! caller from growing a slightly different invalidation policy. Stateful
+//! boundaries and ordinary stable bounded elements share the same owner.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use aimer_attribute::size::ResolvedSize;
@@ -23,6 +25,12 @@ use crate::components::element::{
 };
 use crate::Element;
 use crate::paint_damage::paint_damage_rect;
+
+/// A standalone stable leaf is usually cheaper to replay as commands than to
+/// allocate, rasterize, and composite as a separate GPU texture. Larger paint
+/// islands still become surfaces automatically; explicit boundaries may opt
+/// small islands into a surface when that is known to be worthwhile.
+const AUTO_LAYER_MIN_COMMANDS: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PaintContract {
@@ -154,6 +162,7 @@ impl PaintCache {
         ctx: &BuildContext,
         child: &dyn Element,
         key: PaintContract,
+        prefer_layer: bool,
     ) -> bool {
         if !child.is_paint_stable() || !child.is_layout_stable() {
             self.clear();
@@ -186,7 +195,7 @@ impl PaintCache {
             return true;
         }
 
-        let Some(cached) = Self::record(ctx, child, key) else {
+        let Some(cached) = Self::record(ctx, child, key, prefer_layer) else {
             self.clear();
             if !child.is_paint_bounded() {
                 crate::mark_paint_damage_full();
@@ -232,7 +241,12 @@ impl PaintCache {
                 .all(|element| !paint_element_was_invalidated(*element))
     }
 
-    fn record(ctx: &BuildContext, child: &dyn Element, key: PaintContract) -> Option<CachedPaint> {
+    fn record(
+        ctx: &BuildContext,
+        child: &dyn Element,
+        key: PaintContract,
+        prefer_layer: bool,
+    ) -> Option<CachedPaint> {
         let recording_canvas = ctx.canvas.fork_for_recording();
         let mut recording_ctx = ctx.clone();
         recording_ctx.replace_canvas(Canvas::new(&recording_canvas));
@@ -248,7 +262,10 @@ impl PaintCache {
         let recorded = recording_canvas.take_draw_list();
         let snapshot = recorded.retained_snapshot()?;
         let layer_content = Arc::new(RetainedLayerContent::from_snapshot(snapshot.clone()));
-        let content = if layer_content.is_compositor_safe() && can_use_layer(key) {
+        let content = if layer_content.is_compositor_safe()
+            && can_use_layer(key)
+            && (prefer_layer || snapshot.len() >= AUTO_LAYER_MIN_COMMANDS)
+        {
             CachedContent::Layer(layer_content)
         } else {
             CachedContent::Commands(snapshot)
@@ -277,6 +294,47 @@ impl PaintCache {
             }
         }
     }
+}
+
+thread_local! {
+    /// Scene-owned paint caches for stable erased elements.
+    ///
+    /// `ElementNode` deliberately stays small enough for the existing
+    /// inline/heap representation. The cache therefore lives beside the
+    /// retained scene and is addressed by the element's monotonic identity.
+    /// A dropped element removes its entry through `drop_scene_paint_cache`.
+    static SCENE_PAINT_CACHES: RefCell<HashMap<u64, PaintCache>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Replays or records a stable scene node's visual output.
+///
+/// The scene cache is the paint owner for ordinary stable elements. It calls
+/// the paint-only interface, so a cache hit does not enter widget `draw`,
+/// rebuild descendants, or regenerate their commands. Dynamic or unsafe
+/// elements return `false` and remain on the live path.
+pub(crate) fn paint_or_replay_scene_node(
+    id: ElementId,
+    ctx: &BuildContext,
+    element: &dyn Element,
+    key: PaintContract,
+    prefer_layer: bool,
+) -> bool {
+    SCENE_PAINT_CACHES.with(|caches| {
+        let mut caches = caches.borrow_mut();
+        let cache = caches.entry(id.get()).or_default();
+        cache.paint_or_replay(ctx, element, key, prefer_layer)
+    })
+}
+
+/// Removes the scene-owned cache for an element that leaves the retained tree.
+pub(crate) fn drop_scene_paint_cache(id: ElementId) {
+    // Elements can be dropped while another thread-local value is unwinding
+    // during thread teardown. In that case this cache may already be gone;
+    // cleanup is best-effort and must not turn teardown into a panic.
+    let _ = SCENE_PAINT_CACHES.try_with(|caches| {
+        caches.borrow_mut().remove(&id.get());
+    });
 }
 
 #[inline]

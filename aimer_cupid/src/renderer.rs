@@ -4,11 +4,14 @@ use std::sync::Arc;
 use aimer_utils::debug;
 
 use crate::custom_pipeline::{CustomPipeline, CustomPipelineSlot, RenderContext};
+use crate::compositor::{
+    CompositorScene, CompositorStats, RetainedSceneTree, SceneRenderItem, SceneRenderIter,
+};
 use crate::draw_cmd::{
     DrawCommand, DrawList, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION,
     RetainedLayerContent,
 };
-use crate::damage_region::DamageRect;
+use crate::damage_region::{DamageRect, DamageSet};
 use crate::frame::{FramePacket, FrameRenderMetadata};
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::pipeline_cache;
@@ -539,6 +542,9 @@ pub struct Renderer {
     active_retained_layers: HashSet<u64>,
     retained_layer_candidates: Vec<(u64, u64, u64)>,
     frame_index: u64,
+    compositor_stats: CompositorStats,
+    scene_tree: RetainedSceneTree,
+    scene_history_key: Option<(u64, u64, u64, u64, u32, u32)>,
 }
 
 impl Renderer {
@@ -585,6 +591,9 @@ impl Renderer {
             active_retained_layers: HashSet::new(),
             retained_layer_candidates: Vec::new(),
             frame_index: 0,
+            compositor_stats: CompositorStats::default(),
+            scene_tree: RetainedSceneTree::new(),
+            scene_history_key: None,
         };
 
         debug!(
@@ -633,6 +642,12 @@ impl Renderer {
                 .as_ref()
                 .map_or(0, MultisampleTarget::bytes),
         }
+    }
+
+    /// Returns work counters for the most recently rendered frame.
+    #[inline]
+    pub fn compositor_stats(&self) -> CompositorStats {
+        self.compositor_stats
     }
 
     pub fn clear_svg_resources(&mut self) {
@@ -712,9 +727,20 @@ impl Renderer {
         draw_list: &DrawList,
     ) {
         self.frame_index = self.frame_index.saturating_add(1);
+        self.scene_tree.clear();
+        self.scene_history_key = None;
+        self.compositor_stats = CompositorStats {
+            promoted_surfaces: draw_list
+                .commands()
+                .iter()
+                .filter(|command| matches!(command, DrawCommand::RetainedLayer { .. }))
+                .count(),
+            full_repaint: true,
+            ..CompositorStats::default()
+        };
         self.active_retained_layers.clear();
         self.prepare_retained_layers(device, queue, is_srgb, draw_list);
-        self.render_frame(device, queue, view, None, width, height, is_srgb, draw_list);
+        self.render_frame(device, queue, view, None, width, height, is_srgb, draw_list, None);
         self.reclaim_retained_layers();
     }
 
@@ -730,15 +756,44 @@ impl Renderer {
         is_srgb: bool,
     ) {
         let frame = packet.frame();
-        self.render_frame_with_metadata(
+        self.render_with_metadata(
             device,
             queue,
             view,
+            None,
             frame.width,
             frame.height,
             is_srgb,
             &frame.draw_list,
             packet.metadata(),
+            packet.scene(),
+        );
+    }
+
+    /// Renders a finished frame packet while exposing its swap-chain texture
+    /// to custom pipelines that implement backdrop capture.
+    #[doc(hidden)]
+    pub fn render_packet_with_source_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        source_texture: &wgpu::Texture,
+        packet: &FramePacket,
+        is_srgb: bool,
+    ) {
+        let frame = packet.frame();
+        self.render_with_metadata(
+            device,
+            queue,
+            view,
+            Some(source_texture),
+            frame.width,
+            frame.height,
+            is_srgb,
+            &frame.draw_list,
+            packet.metadata(),
+            packet.scene(),
         );
     }
 
@@ -768,6 +823,7 @@ impl Renderer {
             is_srgb,
             draw_list,
             metadata,
+            None,
         );
     }
 
@@ -791,6 +847,17 @@ impl Renderer {
         draw_list: &DrawList,
     ) {
         self.frame_index = self.frame_index.saturating_add(1);
+        self.scene_tree.clear();
+        self.scene_history_key = None;
+        self.compositor_stats = CompositorStats {
+            promoted_surfaces: draw_list
+                .commands()
+                .iter()
+                .filter(|command| matches!(command, DrawCommand::RetainedLayer { .. }))
+                .count(),
+            full_repaint: true,
+            ..CompositorStats::default()
+        };
         self.active_retained_layers.clear();
         self.prepare_retained_layers(device, queue, is_srgb, draw_list);
         self.render_frame(
@@ -802,6 +869,7 @@ impl Renderer {
             height,
             is_srgb,
             draw_list,
+            None,
         );
         self.reclaim_retained_layers();
     }
@@ -818,8 +886,72 @@ impl Renderer {
         is_srgb: bool,
         draw_list: &DrawList,
         metadata: &FrameRenderMetadata,
+        scene: Option<&CompositorScene>,
     ) {
         self.frame_index = self.frame_index.saturating_add(1);
+        let scene_matches_target = scene.is_some_and(|scene| {
+            scene.target_size() == (width, height)
+                && scene.damage().target_size() == metadata.damage().target_size()
+        });
+        let scene = scene.filter(|_| scene_matches_target);
+        let history_key = (
+            metadata.surface_identity(),
+            metadata.renderer_generation(),
+            metadata.context_generation(),
+            metadata.resource_generation(),
+            width,
+            height,
+        );
+        let (scene_diff, reused_nodes) = if let Some(scene) = scene.filter(|scene| scene.is_recorded()) {
+            if self.scene_history_key != Some(history_key) {
+                self.scene_tree.clear();
+            }
+            let commit = self.scene_tree.commit(scene);
+            let reused_nodes = commit.reused_nodes();
+            (Some(commit.into_diff()), reused_nodes)
+        } else {
+            self.scene_tree.clear();
+            self.scene_history_key = None;
+            (None, 0)
+        };
+        let promoted_surfaces = scene
+            .map(|scene| scene.surfaces().len())
+            .unwrap_or_else(|| {
+                draw_list
+                    .commands()
+                    .iter()
+                    .filter(|command| matches!(command, DrawCommand::RetainedLayer { .. }))
+                    .count()
+            });
+        let mut effective_damage = metadata.damage().clone();
+        if let Some(diff) = &scene_diff {
+            merge_damage(&mut effective_damage, diff.damage());
+        }
+        let effective_metadata = metadata.with_damage(effective_damage);
+        let metadata = &effective_metadata;
+        let scene_changes = scene_diff.as_ref().map_or(0, |diff| diff.changes().len());
+        self.compositor_stats = CompositorStats {
+            promoted_surfaces,
+            damage_regions: metadata.damage().regions().len(),
+            damaged_pixels: damage_area(metadata.damage(), width, height),
+            full_repaint: metadata.damage().is_full(),
+            logical_nodes: scene.map_or(0, |scene| scene.nodes().len()),
+            live_nodes: scene.map_or(0, |scene| {
+                scene
+                    .nodes()
+                    .iter()
+                    .filter(|node| {
+                        matches!(
+                            node.content(),
+                            crate::compositor::SceneContent::Live
+                        )
+                    })
+                    .count()
+            }),
+            reused_nodes,
+            scene_changes,
+            ..CompositorStats::default()
+        };
         self.active_retained_layers.clear();
         self.prepare_retained_layers(device, queue, is_srgb, draw_list);
 
@@ -831,6 +963,7 @@ impl Renderer {
             && metadata.device_scale() > 0.0;
 
         if !persistent_contract {
+            self.compositor_stats.full_repaint = true;
             self.render_frame(
                 device,
                 queue,
@@ -840,6 +973,7 @@ impl Renderer {
                 height,
                 is_srgb,
                 draw_list,
+                scene,
             );
         } else if metadata.damage().is_empty()
             && self.render_reuse_persistent_target(
@@ -850,10 +984,11 @@ impl Renderer {
                 height,
                 metadata,
             ) {
+            self.accept_scene(scene, history_key);
             self.reclaim_retained_layers();
             return;
-        } else if metadata.damage().regions().len() == 1
-            && !metadata.damage().is_full()
+        } else if !metadata.damage().is_full()
+            && !metadata.damage().is_empty()
             && self.render_partial(
                 device,
                 queue,
@@ -863,11 +998,14 @@ impl Renderer {
                 is_srgb,
                 draw_list,
                 metadata,
+                scene,
             )
         {
+            self.accept_scene(scene, history_key);
             self.reclaim_retained_layers();
             return;
         } else {
+            self.compositor_stats.full_repaint = true;
             if !self.render_full_to_persistent_target(
                 device,
                 queue,
@@ -877,6 +1015,7 @@ impl Renderer {
                 is_srgb,
                 draw_list,
                 metadata,
+                scene,
             ) {
                 self.render_frame(
                     device,
@@ -887,10 +1026,26 @@ impl Renderer {
                     height,
                     is_srgb,
                     draw_list,
+                    scene,
                 );
             }
         }
+        self.accept_scene(scene, history_key);
         self.reclaim_retained_layers();
+    }
+
+    fn accept_scene(
+        &mut self,
+        scene: Option<&CompositorScene>,
+        key: (u64, u64, u64, u64, u32, u32),
+    ) {
+        if let Some(scene) = scene.filter(|scene| scene.is_recorded()) {
+            debug_assert_eq!(self.scene_tree.target_size(), Some(scene.target_size()));
+            self.scene_history_key = Some(key);
+        } else {
+            self.scene_tree.clear();
+            self.scene_history_key = None;
+        }
     }
 
     fn target_key(
@@ -965,6 +1120,7 @@ impl Renderer {
         is_srgb: bool,
         draw_list: &DrawList,
         metadata: &FrameRenderMetadata,
+        scene: Option<&CompositorScene>,
     ) -> bool {
         if !has_renderable_dimensions(width, height) {
             return false;
@@ -1001,6 +1157,7 @@ impl Renderer {
             draw_list,
             wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
             None,
+            scene,
         );
         target.mark_valid();
         self.material_frame_target = Some(target);
@@ -1018,13 +1175,14 @@ impl Renderer {
         is_srgb: bool,
         draw_list: &DrawList,
         metadata: &FrameRenderMetadata,
+        scene: Option<&CompositorScene>,
     ) -> bool {
         if metadata.damage().target_size() != (width, height) {
             return false;
         }
-        let Some(damage) = metadata.damage().regions().first().copied() else {
+        if metadata.damage().regions().is_empty() {
             return false;
-        };
+        }
         let key = Self::target_key(width, height, metadata, TargetValidity::Valid);
         let Some(mut target) = self.material_frame_target.take() else {
             return false;
@@ -1040,19 +1198,26 @@ impl Renderer {
             return false;
         }
 
-        self.render_impl(
-            device,
-            queue,
-            target.view(),
-            None,
-            Some((view, &target.composite_bind_group)),
-            width,
-            height,
-            is_srgb,
-            draw_list,
-            wgpu::LoadOp::Load,
-            Some(damage),
-        );
+        let regions = metadata.damage().regions();
+        for (index, damage) in regions.iter().copied().enumerate() {
+            let composite_target = (index + 1 == regions.len())
+                .then_some((view, &target.composite_bind_group));
+            self.render_impl(
+                device,
+                queue,
+                target.view(),
+                None,
+                composite_target,
+                width,
+                height,
+                is_srgb,
+                draw_list,
+                wgpu::LoadOp::Load,
+                Some(damage),
+                scene,
+            );
+        }
+        self.compositor_stats.full_repaint = false;
         target.mark_valid();
         self.material_frame_target = Some(target);
         true
@@ -1069,6 +1234,7 @@ impl Renderer {
         height: u32,
         is_srgb: bool,
         draw_list: &DrawList,
+        scene: Option<&CompositorScene>,
     ) {
         if !has_renderable_dimensions(width, height) {
             return;
@@ -1086,6 +1252,7 @@ impl Renderer {
                 draw_list,
                 wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                 None,
+                scene,
             );
             return;
         }
@@ -1125,6 +1292,7 @@ impl Renderer {
             draw_list,
             wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
             None,
+            scene,
         );
         target.mark_valid();
         self.material_frame_target = Some(target);
@@ -1180,6 +1348,7 @@ impl Renderer {
             if let Some(layer) = self.retained_layers.get_mut(&layer_id) {
                 layer.last_used_frame = self.frame_index;
             }
+            self.compositor_stats.reused_surfaces += 1;
             return true;
         }
 
@@ -1247,7 +1416,9 @@ impl Renderer {
             &layer_draw_list,
             wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
             None,
+            None,
         );
+        self.compositor_stats.rasterized_surfaces += 1;
         true
     }
 
@@ -1292,6 +1463,7 @@ impl Renderer {
         draw_list: &DrawList,
         load: wgpu::LoadOp<wgpu::Color>,
         damage: Option<DamageRect>,
+        scene: Option<&CompositorScene>,
     ) {
         self.transform_stack.clear();
         self.clip_stack.clear();
@@ -1321,8 +1493,42 @@ impl Renderer {
             slot.pipeline.begin_frame();
         }
 
-        for cmd in draw_list.commands() {
-            match cmd {
+        let render_items = damage.map_or_else(
+            || SceneRenderIter::new(draw_list, scene),
+            |damage| SceneRenderIter::new_for_damage(draw_list, scene, damage),
+        );
+        for item in render_items {
+            match item {
+                SceneRenderItem::Surface(surface) => {
+                    self.compositor_stats.composed_surfaces += 1;
+                    let properties = surface.properties();
+                    let (p1x, p1y) = properties
+                        .transform
+                        .transform_point(properties.bounds.x, properties.bounds.y);
+                    let (p2x, p2y) = properties.transform.transform_point(
+                        properties.bounds.x + properties.bounds.width,
+                        properties.bounds.y + properties.bounds.height,
+                    );
+                    if self.retained_layers.contains_key(&surface.id().get()) {
+                        self.resolved.push(ResolvedCmd {
+                            kind: ResolvedKind::Layer {
+                                layer_id: surface.id().get(),
+                                instance: ImageInstance {
+                                    position: [p1x.min(p2x), p1y.min(p2y)],
+                                    size: [(p2x - p1x).abs(), (p2y - p1y).abs()],
+                                    uv_offset: [0.0, 0.0],
+                                    uv_scale: [1.0, 1.0],
+                                    clip_rect: clip_to_array(self.clip_stack.last()),
+                                    clip_border_radius:
+                                        clip_border_radius(self.clip_stack.last()),
+                                    alpha: properties.opacity,
+                                    source_premultiplied: 1.0,
+                                },
+                            },
+                        });
+                    }
+                }
+                SceneRenderItem::Command(cmd) => match cmd {
                 DrawCommand::PushTransform { matrix } => {
                     self.transform_stack.push(current_transform);
                     alpha_state.save();
@@ -1794,6 +2000,7 @@ impl Renderer {
                         });
                     }
                 }
+                },
             }
         }
 
@@ -2151,6 +2358,7 @@ impl Renderer {
         self.image_pipeline.end_frame(queue);
 
         if let Some((destination, bind_group)) = composite_target {
+            self.compositor_stats.composition_passes += 1;
             let mut pass = begin_render_pass(
                 &mut encoder,
                 destination,
@@ -2195,6 +2403,32 @@ fn draw_list_uses_material(draw_list: &DrawList) -> bool {
                 if pipeline_name == MATERIAL_PIPELINE_NAME
         )
     })
+}
+
+fn merge_damage(target: &mut DamageSet, source: &DamageSet) {
+    if target.target_size() != source.target_size() {
+        target.mark_full();
+        return;
+    }
+    if source.is_full() {
+        target.mark_full();
+        return;
+    }
+    for region in source.regions() {
+        target.add(*region);
+    }
+}
+
+#[inline]
+fn damage_area(damage: &crate::damage_region::DamageSet, width: u32, height: u32) -> u64 {
+    if damage.is_full() {
+        return u64::from(width) * u64::from(height);
+    }
+    damage
+        .regions()
+        .iter()
+        .map(|region| u64::from(region.width) * u64::from(region.height))
+        .sum()
 }
 
 #[inline]

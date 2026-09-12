@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use std::sync::Arc;
 
 use aimer_attribute::position::Vec2d;
@@ -10,6 +11,7 @@ pub use aimer_cupid::draw_cmd::{
     RETAINED_LAYER_TILE_SIZE, RetainedDrawList, RetainedLayerContent, RetainedLayerPadding,
     next_retained_layer_id,
 };
+use aimer_cupid::compositor::{CompositorScene, SceneNodeDescriptor, SceneNodeGuard};
 pub use aimer_cupid::font::TextLanguage;
 pub use aimer_cupid::font::{FontFamily, FontStyle};
 pub use aimer_cupid::text_pipeline::text_layout::TextInteractionLayout;
@@ -469,6 +471,27 @@ impl<'a> AimerCanvas<'a> {
     #[inline]
     pub fn replay_retained(&self, retained: &RetainedDrawList) -> bool {
         self.inner.replay_retained(retained)
+    }
+
+    /// Opens one logical compositor node at the current paint cursor.
+    #[doc(hidden)]
+    #[inline]
+    pub fn begin_scene_node(&self, descriptor: SceneNodeDescriptor) -> SceneNodeGuard {
+        self.inner.begin_scene_node(descriptor)
+    }
+
+    /// Takes the logical scene recorded alongside a finished DrawList.
+    #[doc(hidden)]
+    #[inline]
+    pub fn take_scene(
+        &self,
+        draw_list: &aimer_cupid::draw_cmd::DrawList,
+        target_width: u32,
+        target_height: u32,
+        damage: aimer_cupid::damage_region::DamageSet,
+    ) -> Option<CompositorScene> {
+        self.inner
+            .take_scene(draw_list, target_width, target_height, damage)
     }
 
     /// Records a compositor-style retained layer at the current canvas state.
@@ -964,6 +987,30 @@ impl<'a> AimerCanvas<'a> {
     ) -> TextInteractionLayout {
         CanvasRendering::layout_text_styled(
             self.inner,
+            text,
+            font_size,
+            max_width,
+            font_family,
+            font_style,
+            font_weight,
+        )
+    }
+
+    /// Builds shared source-aware geometry for a styled text run.
+    ///
+    /// The native canvas retains width-independent interaction geometry so
+    /// rich paragraphs can re-wrap without rebuilding every span's clusters.
+    #[allow(clippy::too_many_arguments)]
+    pub fn layout_text_styled_shared(
+        &self,
+        text: &str,
+        font_size: f32,
+        max_width: f32,
+        font_family: FontFamily,
+        font_style: FontStyle,
+        font_weight: u16,
+    ) -> Rc<TextInteractionLayout> {
+        self.inner.layout_text_styled_shared(
             text,
             font_size,
             max_width,

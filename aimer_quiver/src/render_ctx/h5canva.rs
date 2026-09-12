@@ -5,7 +5,9 @@ pub mod render_ctx {
 
     use aimer_cupid::AntiAlias;
     use aimer_cupid::canvas::CupidCanvas;
-    use aimer_cupid::frame::Frame;
+    use aimer_cupid::compositor::CompositorScene;
+    use aimer_cupid::damage_region::DamageSet;
+    use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
     use aimer_cupid::gpu_context::GpuContext;
     use aimer_cupid::renderer::Renderer;
     use aimer_utils::info;
@@ -108,8 +110,22 @@ pub mod render_ctx {
             &mut self,
             draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
         ) -> PresentOutcome {
-            match self.build_frame(draw_fn) {
-                Some(frame) => self.present(frame),
+            match self.build_frame_packet(|canvas, width, height| {
+                draw_fn(canvas, width, height);
+                (1.0, DamageSet::full(width, height))
+            }) {
+                Some(packet) => self.present_packet(packet),
+                None => PresentOutcome::Dropped,
+            }
+        }
+
+        /// Records a frame with the widget damage contract and presents it.
+        pub fn render_frame_packet(
+            &mut self,
+            draw_fn: impl FnOnce(&CupidCanvas, u32, u32) -> (f32, DamageSet),
+        ) -> PresentOutcome {
+            match self.build_frame_packet(draw_fn) {
+                Some(packet) => self.present_packet(packet),
                 None => PresentOutcome::Dropped,
             }
         }
@@ -129,6 +145,20 @@ pub mod render_ctx {
             &mut self,
             draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
         ) -> Option<Frame> {
+            self.build_frame_packet(|canvas, width, height| {
+                draw_fn(canvas, width, height);
+                (1.0, DamageSet::full(width, height))
+            })
+            .map(FramePacket::into_frame)
+        }
+
+        /// Records a frame and retains the same damage/scene contract as the
+        /// native renderer. The web backend still presents inline, but it uses
+        /// the same immutable packet shape and safe fallback policy.
+        pub fn build_frame_packet(
+            &mut self,
+            draw_fn: impl FnOnce(&CupidCanvas, u32, u32) -> (f32, DamageSet),
+        ) -> Option<FramePacket> {
             let mut state_ref = self.state.borrow_mut();
             let state = state_ref.as_mut()?;
 
@@ -137,11 +167,41 @@ pub mod render_ctx {
 
             let build = PhaseTimer::start();
             state.canvas.begin_frame();
-            draw_fn(&state.canvas, width, height);
-            let frame = Frame::new(state.canvas.take_draw_list(), width, height);
+            let (scale, damage) = draw_fn(&state.canvas, width, height);
+            let damage = if damage.target_size() == (width, height) {
+                damage
+            } else {
+                DamageSet::full(width, height)
+            };
+            let draw_list = state.canvas.take_draw_list();
+            let frame = Frame::new(draw_list, width, height);
+            let metadata = FrameRenderMetadata::new(
+                scale,
+                0,
+                0,
+                0,
+                0,
+                damage,
+            );
+            let scene = state
+                .canvas
+                .take_scene(
+                    &frame.draw_list,
+                    width,
+                    height,
+                    metadata.damage().clone(),
+                )
+                .unwrap_or_else(|| {
+                    CompositorScene::from_draw_list(
+                        &frame.draw_list,
+                        width,
+                        height,
+                        metadata.damage().clone(),
+                    )
+                });
             build.finish(FramePhase::Build);
 
-            Some(frame)
+            Some(FramePacket::with_scene(frame, metadata, scene))
         }
 
         /// Encode a recorded frame and put it on screen.
@@ -152,18 +212,26 @@ pub mod render_ctx {
         /// acquired and the caller is expected to request another redraw. The
         /// frame's buffer goes back to the canvas either way.
         pub fn present(&mut self, frame: Frame) -> PresentOutcome {
+            let metadata = FrameRenderMetadata::full(frame.width, frame.height);
+            self.present_packet(FramePacket::new(frame, metadata))
+        }
+
+        /// Encodes a packet produced by [`Self::build_frame_packet`].
+        pub fn present_packet(&mut self, packet: FramePacket) -> PresentOutcome {
             let mut state_ref = self.state.borrow_mut();
             let state = match state_ref.as_mut() {
                 Some(state) => state,
                 None => return PresentOutcome::Dropped, // GPU not ready yet
             };
 
-            let presented = Self::encode(state, &frame);
-            state.canvas.recycle_draw_list(frame.into_draw_list());
+            let presented = Self::encode(state, &packet);
+            state
+                .canvas
+                .recycle_draw_list(packet.into_frame().into_draw_list());
             PresentOutcome::from_presented(presented)
         }
 
-        fn encode(state: &mut GpuState, frame: &Frame) -> bool {
+        fn encode(state: &mut GpuState, packet: &FramePacket) -> bool {
             let encode = PhaseTimer::start();
 
             let surface = match state.gpu.begin_frame() {
@@ -174,14 +242,12 @@ pub mod render_ctx {
 
             let view = surface.texture.create_view(&Default::default());
 
-            state.renderer.render(
+            state.renderer.render_packet(
                 &state.gpu.device,
                 &state.gpu.queue,
                 &view,
-                frame.width,
-                frame.height,
+                packet,
                 state.gpu.is_srgb,
-                &frame.draw_list,
             );
             encode.finish(FramePhase::Encode);
 

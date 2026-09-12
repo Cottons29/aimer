@@ -2,6 +2,7 @@
 pub mod render_ctx {
     use aimer_cupid::AntiAlias;
     use aimer_cupid::canvas::CupidCanvas;
+    use aimer_cupid::compositor::CompositorScene;
     use aimer_cupid::damage_region::DamageSet;
     use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
     use aimer_cupid::gpu_context::{GpuContext, render_dimensions};
@@ -106,7 +107,7 @@ pub mod render_ctx {
         }
 
         fn present_packet(&mut self, packet: &FramePacket) -> bool {
-            self.present_inner(packet.frame(), Some(packet.metadata()))
+            self.present_inner(packet.frame(), Some(packet))
         }
     }
 
@@ -114,7 +115,7 @@ pub mod render_ctx {
         fn present_inner(
             &mut self,
             frame: &Frame,
-            metadata: Option<&FrameRenderMetadata>,
+            packet: Option<&FramePacket>,
         ) -> bool {
             let encode = PhaseTimer::start();
 
@@ -134,26 +135,34 @@ pub mod render_ctx {
                 .usage
                 .contains(wgpu::TextureUsages::COPY_SRC)
             {
-                self.renderer.render_with_source_texture(
+                if let Some(packet) = packet {
+                    self.renderer.render_packet_with_source_texture(
+                        &self.gpu.device,
+                        &self.gpu.queue,
+                        &view,
+                        &surface.texture,
+                        packet,
+                        self.gpu.is_srgb,
+                    );
+                } else {
+                    self.renderer.render_with_source_texture(
+                        &self.gpu.device,
+                        &self.gpu.queue,
+                        &view,
+                        &surface.texture,
+                        frame.width,
+                        frame.height,
+                        self.gpu.is_srgb,
+                        &frame.draw_list,
+                    );
+                }
+            } else if let Some(packet) = packet {
+                self.renderer.render_packet(
                     &self.gpu.device,
                     &self.gpu.queue,
                     &view,
-                    &surface.texture,
-                    frame.width,
-                    frame.height,
+                    packet,
                     self.gpu.is_srgb,
-                    &frame.draw_list,
-                );
-            } else if let Some(metadata) = metadata {
-                self.renderer.render_frame_with_metadata(
-                    &self.gpu.device,
-                    &self.gpu.queue,
-                    &view,
-                    frame.width,
-                    frame.height,
-                    self.gpu.is_srgb,
-                    &frame.draw_list,
-                    metadata,
                 );
             } else {
                 self.renderer.render(
@@ -339,8 +348,11 @@ pub mod render_ctx {
         /// [`build_frame`]: WgpuApi::build_frame
         /// [`present`]: WgpuApi::present
         pub fn render_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> PresentOutcome {
-            match self.build_frame(draw_fn) {
-                Some(frame) => self.present(frame),
+            match self.build_frame_packet(|canvas, width, height| {
+                draw_fn(canvas, width, height);
+                (1.0, DamageSet::full(width, height))
+            }) {
+                Some(packet) => self.present_packet(packet),
                 None => PresentOutcome::Dropped,
             }
         }
@@ -407,7 +419,8 @@ pub mod render_ctx {
             } else {
                 DamageSet::full(width, height)
             };
-            let frame = Frame::new(canvas.take_draw_list(), width, height);
+            let draw_list = canvas.take_draw_list();
+            let frame = Frame::new(draw_list, width, height);
             let metadata = FrameRenderMetadata::new(
                 scale,
                 self.surface_identity,
@@ -416,9 +429,24 @@ pub mod render_ctx {
                 self.resource_generation,
                 damage,
             );
+            let scene = canvas
+                .take_scene(
+                    &frame.draw_list,
+                    width,
+                    height,
+                    metadata.damage().clone(),
+                )
+                .unwrap_or_else(|| {
+                    CompositorScene::from_draw_list(
+                        &frame.draw_list,
+                        width,
+                        height,
+                        metadata.damage().clone(),
+                    )
+                });
             build.finish(FramePhase::Build);
 
-            Some(FramePacket::new(frame, metadata))
+            Some(FramePacket::with_scene(frame, metadata, scene))
         }
 
         /// Put a recorded frame on screen, or hand it to the raster thread.

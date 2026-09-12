@@ -6,7 +6,7 @@ use aimer_utils::AnimInstant;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     Element, EventElement, EventResult, LayoutElement, PointerKey, VisitorElement,
-    claim_pointer, is_pointer_claimed, release_pointer,
+    is_pointer_claimed,
 };
 
 use crate::ScrollAxis;
@@ -321,6 +321,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             if let ElementEvent::PointerMove(pointer) = event
                 && mode_before == DragMode::Pending
                 && content_drag_allowed(PointerKey::new(pointer.source, pointer.id))
+                && !(child_result.is_consumed() && child_result.needs_redraw())
                 && self
                     .ctrl
                     .active_touch_id
@@ -337,7 +338,6 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 });
                 if pending_content_drag_won {
                     let pointer_key = PointerKey::new(pointer.source, pointer.id);
-                    claim_pointer(pointer_key);
                     child_result = child_result.merge(
                         self.event_dispatcher.borrow_mut().cancel_pointer(
                             &self.child,
@@ -621,14 +621,12 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                             // The inner scrollable reached a hard edge. Let
                             // the ancestor inspect this same move instead of
                             // consuming a gesture that made no progress.
-                            release_pointer(PointerKey::new(pointer.source, pointer.id));
                             self.ctrl.pointer_velocity.set(Vec2d::ZERO);
                             self.ctrl.clear_velocity_history();
                             self.ctrl.drag_mode.set(DragMode::Pending);
                             self.ctrl.last_pointer_pos.set(Some(*p));
                             return child_result;
                         }
-                        claim_pointer(PointerKey::new(pointer.source, pointer.id));
                         self.ctrl.record_input_event();
                     }
                     self.ctrl.last_pointer_pos.set(Some(*p));
