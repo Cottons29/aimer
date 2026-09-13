@@ -950,7 +950,6 @@ pub struct StatefulElement {
     // #[cfg(debug_assertions)]
     debug_name: Cell<&'static str>,
     pub key: Option<crate::key::Key>,
-    pub bounds: Cell<Option<(Vec2d, Vec2d)>>,
     /// This element's own state cell, type-erased, so a reconciling element can
     /// hand it to the live element's `adopt_config_fn` for a config refresh.
     state_any: SyncStateAny,
@@ -1069,7 +1068,6 @@ impl StatefulElement {
                     state_revision: RefCell::new(live.state_revision),
                     debug_name: Cell::new(debug_name),
                     key,
-                    bounds: Cell::new(None),
                     state_any: SyncStateAny(UnsafeCell::new(live.state_any)),
                     state_sender: SyncStateAny(UnsafeCell::new(live.state_sender)),
                     state_storage: RefCell::new(live.state_storage),
@@ -1242,7 +1240,6 @@ impl StatefulElement {
             state_revision: RefCell::new(state_revision),
             debug_name: Cell::new(debug_name),
             key,
-            bounds: Cell::new(None),
             state_any: SyncStateAny(UnsafeCell::new(state_any)),
             state_sender: SyncStateAny(UnsafeCell::new(state_sender)),
             state_storage: RefCell::new(state_storage),
@@ -1763,7 +1760,7 @@ impl StatefulElement {
             // println!("adopt_state_from casting raw ptr");
             *self.rebuild_fn.0.get() = (*old.rebuild_fn.0.get()).clone();
         }
-        // Inherit name so inspector and future reconciliation still match.
+        // Inherit the name so future reconciliation still matches.
         self.debug_name.set(old.debug_name.get());
 
         // Adopt the OLD element's dirty flag so the *live* element
@@ -1999,39 +1996,6 @@ fn register_keyed_subtree(element: &dyn Element) {
 
 impl Drawable for StatefulElement {
     fn draw(&self, ctx: &BuildContext) {
-        #[cfg(debug_assertions)]
-        {
-            if crate::inspector_overlay::is_enabled() {
-                let (start_x, start_y) = ctx.canvas.get_transform_translation();
-                let size = self.content_size(ctx);
-                let end_x = start_x + size.width;
-                let end_y = start_y + size.height;
-
-                let scale = ctx.scale;
-                let l_start = Vec2d {
-                    x: start_x / scale,
-                    y: start_y / scale,
-                };
-                let l_end = Vec2d {
-                    x: end_x / scale,
-                    y: end_y / scale,
-                };
-                self.bounds.set(Some((l_start, l_end)));
-
-                let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x
-                    && cp.x <= l_end.x
-                    && cp.y >= l_start.y
-                    && cp.y <= l_end.y
-                {
-                    crate::inspector_overlay::set_hovered_widget((
-                        self.debug_name.get(),
-                        l_start,
-                        l_end,
-                    ));
-                }
-            }
-        }
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
         let rebuild_generation = self.rebuild_generation.get();
         self.rebuild_if_dirty(ctx);
@@ -2042,18 +2006,16 @@ impl Drawable for StatefulElement {
 
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
         {
-            if !crate::inspector_overlay::is_enabled() {
-                child.sync_paint_geometry(ctx);
-                if let Some(key) = PaintContract::new(
-                    ctx,
-                    child.content_size(ctx),
-                    self.rebuild_generation.get(),
-                ) && self
-                    .paint_cache
-                    .paint_or_replay(ctx, child, key, self.compositor_priority())
-                {
-                    return;
-                }
+            child.sync_paint_geometry(ctx);
+            if let Some(key) = PaintContract::new(
+                ctx,
+                child.content_size(ctx),
+                self.rebuild_generation.get(),
+            ) && self
+                .paint_cache
+                .paint_or_replay(ctx, child, key, self.compositor_priority())
+            {
+                return;
             }
             self.paint_cache.clear();
             if child.is_paint_bounded() {
@@ -2148,9 +2110,6 @@ impl LayoutElement for StatefulElement {
         unsafe { &*self.child.0.get() }.invalidate_layout();
     }
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        if self.bounds.get().is_some() {
-            return self.bounds.get();
-        }
         unsafe { &*self.child.0.get() }.pos_start_end()
     }
 }

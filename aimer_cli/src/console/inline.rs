@@ -11,7 +11,6 @@ use std::io::{self, IsTerminal, Write, stdout};
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant, SystemTime};
 
-use aimer_inspector::InspectorServer;
 use anyhow::Context;
 use arboard::Clipboard;
 use colored::Colorize;
@@ -22,6 +21,7 @@ use tokio::runtime::Runtime;
 use crate::commands::run::Device;
 use crate::session::{LogStream, SessionCommand, SessionHandle};
 use crate::console::hotkeys::{ConsoleAction, ConsolePane, map_key_event};
+use crate::console::inspector::InspectorServer;
 use crate::console::stage::{StageBook, StageId, StageKind, StageProgress, StageStatus};
 use crate::console::state::{AppState, RunnerEvent, Status, strip_ansi};
 use crate::console::input;

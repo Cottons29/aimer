@@ -10,7 +10,7 @@ use crate::flex::layout_transition::{
 use crate::flex::{BoxAlignment, FlexDirection, JustifyContent, OverflowBehavior};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_attribute::{BoxConstraint, CacheBounds, Dimension};
+use aimer_attribute::{BoxConstraint, Dimension};
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
 use aimer_animation::layout::LayoutGeometry;
@@ -237,7 +237,6 @@ impl<W: Widget + 'static> Widget for Flex<W> {
             item_extent: None,
             overflow_behavior: self.overflow,
             debug_name: "Flex",
-            cache_bound: CacheBounds::new(),
         }
         .boxed()
     }
@@ -274,7 +273,6 @@ pub struct RawFlex {
     pub(crate) item_extent: Option<Dimension>,
     pub(crate) overflow_behavior: OverflowBehavior,
     pub(crate) debug_name: &'static str,
-    pub(crate) cache_bound: CacheBounds,
 }
 
 impl RawFlex {
@@ -299,7 +297,6 @@ impl RawFlex {
             item_extent: None,
             overflow_behavior: Default::default(),
             debug_name,
-            cache_bound: CacheBounds::new(),
         }
     }
 
@@ -1012,31 +1009,6 @@ impl Drawable for RawFlex {
 
         ctx.canvas.save();
 
-        #[cfg(debug_assertions)]
-        {
-            if aimer_widget::inspector_overlay::is_enabled() {
-                let parent_pos: Vec2d = ctx.canvas.get_transform_translation().into();
-
-                self.cache_bound.save(
-                    ctx.scale,
-                    parent_pos.x,
-                    parent_pos.y,
-                    ctx.box_constraint.max_width,
-                    ctx.box_constraint.max_height,
-                );
-
-                let cp = ctx.cursor_pos;
-                if self.cache_bound.is_inside(cp.x, cp.y) {
-                    let (l_start, l_end) = self.cache_bound.pos_start_end().unwrap();
-                    aimer_widget::inspector_overlay::set_hovered_widget((
-                        self.debug_name,
-                        l_start,
-                        l_end,
-                    ));
-                }
-            }
-        }
-
         // Apply clipping for overflow hidden
         self.overflow_behavior.apply_overflow_behave(ctx);
 
@@ -1512,7 +1484,4 @@ impl LayoutElement for RawFlex {
         self.children.visit(&mut |child| child.invalidate_layout());
     }
 
-    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.cache_bound.pos_start_end()
-    }
 }

@@ -1,5 +1,6 @@
 pub mod input;
 pub mod hotkeys;
+pub mod inspector;
 pub mod inline;
 pub mod log_history;
 pub mod state;
@@ -20,7 +21,7 @@ use crate::commands::run::utilities::{LogStyling, get_project_root};
 use crate::targets::Targets;
 use crate::tui::RawModeGuard;
 use crate::session::{LogStream, SessionCommand, SessionHandle, SessionStatus};
-use aimer_inspector::InspectorServer;
+use self::inspector::InspectorServer;
 use aimer_utils::AnimInstant;
 use anyhow::Context;
 use arboard::Clipboard;

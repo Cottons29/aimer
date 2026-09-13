@@ -1,4 +1,3 @@
-use aimer_inspector::{InspectorState, render_tree_lines_with_ids};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -6,6 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::console::state::VisualRow;
+use crate::console::inspector::{InspectorState, render_tree_lines_with_ids};
 use crate::console::{AppState, ConsoleType, PaneView, Selection, Status};
 
 fn calc_scroll(

@@ -1,7 +1,5 @@
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 use std::cell::Cell;
-#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-use std::net::IpAddr;
 #[cfg(feature = "wasm-hot-reload")]
 use std::net::SocketAddr;
 #[cfg(feature = "wasm-hot-reload")]
@@ -14,8 +12,6 @@ use aimer_cupid::AntiAlias;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use aimer_events::text_editing::NativeTextRange;
 use aimer_events::text_editing::TextEditingDelta;
-#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-use aimer_inspector::InspectorAppHandle;
 use aimer_modal::ModalHost;
 use aimer_utils::info;
 use aimer_venus::Venus;
@@ -649,14 +645,6 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 startup_resources: Vec::new(),
                 #[cfg(not(target_arch = "wasm32"))]
                 async_runtime,
-                #[cfg(debug_assertions)]
-                inspector: None,
-                #[cfg(debug_assertions)]
-                inspector_change: Cell::new(false),
-                #[cfg(debug_assertions)]
-                inspector_prev_enabled: Cell::new(false),
-                #[cfg(debug_assertions)]
-                inspector_redraw_frames: Cell::new(0),
                 active_touch_id: None,
                 venus,
                 file_drag: crate::handler::file_drag::FileDrag::new(),
@@ -906,12 +894,53 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         self.app.active_root().map(|root| root.debug_name())
     }
 
-    /// Captures the laid-out active tree for development diagnostics.
-    #[cfg(feature = "wasm-hot-reload")]
-    pub fn active_tree_snapshot(&self) -> Option<aimer_inspector::WidgetNode> {
+    #[cfg(all(test, feature = "wasm-hot-reload"))]
+    pub(crate) fn active_element_bounds(
+        &self,
+        name: &str,
+    ) -> Option<(aimer_attribute::position::Vec2d, aimer_attribute::position::Vec2d)> {
+        fn find(
+            element: &dyn aimer_widget::Element,
+            name: &str,
+        ) -> Option<(
+            aimer_attribute::position::Vec2d,
+            aimer_attribute::position::Vec2d,
+        )> {
+            if element.debug_name() == name {
+                return element.pos_start_end();
+            }
+            let mut bounds = None;
+            element.event_children(&mut |child| {
+                if bounds.is_none() {
+                    bounds = find(child, name);
+                }
+            });
+            bounds
+        }
+
         self.app
             .active_root()
-            .map(|root| aimer_inspector::InspectorServer::snapshot_tree(root))
+            .and_then(|root| find(root.as_ref(), name))
+    }
+
+    #[cfg(all(test, feature = "wasm-hot-reload"))]
+    pub(crate) fn active_contains_element(&self, name: &str) -> bool {
+        fn contains(element: &dyn aimer_widget::Element, name: &str) -> bool {
+            if element.debug_name() == name {
+                return true;
+            }
+            let mut found = false;
+            element.event_children(&mut |child| {
+                if !found {
+                    found = contains(child, name);
+                }
+            });
+            found
+        }
+
+        self.app
+            .active_root()
+            .is_some_and(|root| contains(root.as_ref(), name))
     }
 
     /// The UI-thread runtime this application's frames are scheduled by.
@@ -1185,12 +1214,6 @@ fn start_event_loop(
     // synchronous `request_redraw()` issued from inside the draw cycle.
     aimer_events::window::set_redraw_requester(request_frame_ready);
 
-    const DEFAULT_INSPECTOR_PORT: &str = env!("DEFAULT_INSPECTOR_PORT");
-    const DEFAULT_INSPECTOR_ADDRESS: &str = env!("DEFAULT_INSPECTOR_ADDRESS");
-
-    info!("DEFAULT_INSPECTOR_PORT : {}", DEFAULT_INSPECTOR_PORT);
-    info!("DEFAULT_INSPECTOR_ADDRESS : {}", DEFAULT_INSPECTOR_ADDRESS);
-
     event_loop.set_control_flow(ControlFlow::Wait);
 
     aimer_utils::debug!("Creating async runtime...");
@@ -1234,15 +1257,6 @@ fn start_event_loop(
         async_runtime.handle().clone(),
     ));
 
-    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-    let inspector = InspectorAppHandle::connect(
-        async_runtime.handle(),
-        DEFAULT_INSPECTOR_ADDRESS.parse::<IpAddr>().unwrap(),
-        DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap(),
-    );
-    #[cfg(all(debug_assertions, target_arch = "wasm32"))]
-    let inspector = aimer_inspector::start(DEFAULT_INSPECTOR_PORT.parse::<u16>().unwrap());
-
     info!("Creating App instance...");
     let mut app = AimerApplicationHandler {
         window: None,
@@ -1266,14 +1280,6 @@ fn start_event_loop(
         startup_resources: Vec::new(),
         #[cfg(not(target_arch = "wasm32"))]
         async_runtime,
-        #[cfg(debug_assertions)]
-        inspector: Some(inspector),
-        #[cfg(debug_assertions)]
-        inspector_change: Cell::new(false),
-        #[cfg(debug_assertions)]
-        inspector_prev_enabled: Cell::new(false),
-        #[cfg(debug_assertions)]
-        inspector_redraw_frames: Cell::new(0),
         active_touch_id: None,
         venus,
         file_drag: crate::handler::file_drag::FileDrag::new(),
@@ -2452,13 +2458,13 @@ mod tests {
     #[test]
     fn app_window_configuration_is_retained_when_child_is_attached() {
         let app = AimerApp::new()
-            .window(WindowAttr::new().title("Inspector").inner_size(900, 600))
+            .window(WindowAttr::new().title("Configured Window").inner_size(900, 600))
             .child(RecordingWidget {
                 builds: Arc::new(AtomicUsize::new(0)),
                 cancels: Arc::new(AtomicUsize::new(0)),
             });
 
-        assert_eq!(app.window_attr.title, "Inspector");
+        assert_eq!(app.window_attr.title, "Configured Window");
         assert_eq!(app.window_attr.inner_size, (900, 600));
     }
 

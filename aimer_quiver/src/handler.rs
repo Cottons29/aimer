@@ -27,13 +27,10 @@ use crate::window_attr::WindowAttr;
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_inspector::InspectorOverlay;
 use aimer_venus::Venus;
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{AnyElement, EventDispatcher, EventResult, Widget, begin_event_frame};
 use std::any::Any;
-#[cfg(debug_assertions)]
-use std::cell::Cell;
 use std::rc::Rc;
 #[cfg(feature = "wasm-hot-reload")]
 use aimer_anteros::{
@@ -234,34 +231,6 @@ impl<G: ReloadGuest, E> HeadlessReloadHost<G, AnyElement, E> {
     }
 }
 
-/// Walk the snapshot tree and find a node matching the hovered widget by name
-/// and bounds.
-#[cfg(debug_assertions)]
-fn find_hovered_node(
-    node: &aimer_inspector::WidgetNode,
-    name: &str,
-    start: Vec2d,
-    end: Vec2d,
-) -> Option<u64> {
-    const EPS: f32 = 1.0;
-    let w = end.x - start.x;
-    let h = end.y - start.y;
-    if node.name == name
-        && (node.x - start.x).abs() < EPS
-        && (node.y - start.y).abs() < EPS
-        && (node.width - w).abs() < EPS
-        && (node.height - h).abs() < EPS
-    {
-        return Some(node.id);
-    }
-    for child in &node.children {
-        if let Some(id) = find_hovered_node(child, name, start, end) {
-            return Some(id);
-        }
-    }
-    None
-}
-
 pub struct AimerApplicationHandler<W: Widget + 'static> {
     /// The window this application draws into and asks for frames.
     ///
@@ -305,16 +274,6 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub venus: Rc<Venus>,
     #[cfg(not(target_arch = "wasm32"))]
     pub async_runtime: Runtime,
-    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-    pub inspector: Option<aimer_inspector::InspectorAppHandle>,
-    #[cfg(all(debug_assertions, target_arch = "wasm32"))]
-    pub inspector: Option<aimer_inspector::InspectorHandle>,
-    #[cfg(debug_assertions)]
-    pub inspector_change: Cell<bool>,
-    #[cfg(debug_assertions)]
-    pub inspector_prev_enabled: Cell<bool>,
-    #[cfg(debug_assertions)]
-    pub inspector_redraw_frames: Cell<u8>,
     /// The batch of files being dragged over the window, so the drag can be
     /// re-reported for every position it is found at rather than only for the
     /// one it came in at.
@@ -422,8 +381,6 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             self.request_animation_frame();
         }
 
-        #[cfg(debug_assertions)]
-        self.poll_inspector_frames();
 
         // Animation ticks first, so the values the tree is about to be built
         // from are this frame's; then every resolved effect, drained to
@@ -492,27 +449,6 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
         if self.venus.has_ready_work() {
             self.request_animation_frame();
-        }
-    }
-
-    /// Keeps the inspector overlay repainting for a few frames after it is
-    /// switched on or off, so the change is not left half-drawn on an idle
-    /// application.
-    #[cfg(debug_assertions)]
-    pub(crate) fn poll_inspector_frames(&self) {
-        let current = self.inspector_enabled();
-        let prev = self.inspector_prev_enabled.get();
-        if current != prev {
-            self.inspector_prev_enabled.set(current);
-            self.inspector_change.set(true);
-            self.inspector_redraw_frames.set(5);
-        }
-        let frames = self.inspector_redraw_frames.get();
-        if frames > 0 {
-            self.inspector_redraw_frames.set(frames - 1);
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
         }
     }
 
@@ -619,8 +555,6 @@ pub(crate) struct FrameDrawer<'a, W: Widget + 'static> {
     cursor_pos: Vec2d,
     #[cfg(not(target_arch = "wasm32"))]
     async_handle: tokio::runtime::Handle,
-    #[cfg(debug_assertions)]
-    inspector_enabled: bool,
 }
 
 impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
@@ -703,29 +637,10 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                     root.layout(&build_ctx);
                 }
 
-                #[cfg(debug_assertions)]
-                aimer_widget::inspector_overlay::clear_hovered_widget();
-
                 build_ctx.canvas.save();
                 aimer_widget::record_root_draw_call();
                 root.draw(&build_ctx);
                 build_ctx.canvas.restore();
-
-                #[cfg(debug_assertions)]
-                if self.inspector_enabled {
-                    aimer_widget::mark_paint_damage_full();
-                    // Save and restore canvas state to ensure the inspector overlay
-                    // always renders at the top layer above all widgets,
-                    // unaffected by any residual transforms.
-                    build_ctx.canvas.save();
-                    InspectorOverlay::draw(
-                        root.as_ref(),
-                        &build_ctx.canvas,
-                        self.cursor_pos,
-                        build_ctx.scale,
-                    );
-                    build_ctx.canvas.restore();
-                }
             }
         }
 
@@ -955,18 +870,10 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
                 window.request_redraw();
             }
         }
-        #[cfg(debug_assertions)]
-        self.poll_inspector_frames();
     }
 }
 #[allow(dead_code)]
 impl<W: Widget + 'static> AimerApplicationHandler<W> {
-    #[cfg(debug_assertions)]
-    pub(crate) fn inspector_enabled(&self) -> bool {
-        self.inspector
-            .as_ref()
-            .is_some_and(|inspector| inspector.is_enabled())
-    }
     /// Splits the handler into the renderer that owns the frame and a drawer
     /// for the widget tree that goes into it.
     ///
@@ -980,8 +887,6 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         &mut self,
         window: WindowHandle,
     ) -> (&mut AimerRenderContext, FrameDrawer<'_, W>) {
-        #[cfg(debug_assertions)]
-        let inspector_enabled = self.inspector_enabled();
         let scale = self.window_scale as f32;
         let cursor_pos = self.cursor_pos;
         let Self {
@@ -1009,8 +914,6 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 cursor_pos,
                 #[cfg(not(target_arch = "wasm32"))]
                 async_handle,
-                #[cfg(debug_assertions)]
-                inspector_enabled,
             },
         )
     }
@@ -1019,36 +922,6 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     #[inline]
     pub(crate) fn frame_drawer(&mut self, window: WindowHandle) -> FrameDrawer<'_, W> {
         self.split_for_frame(window).1
-    }
-
-    #[cfg(debug_assertions)]
-    fn broadcast_inspector_snapshot(&self) {
-        if let Some(inspector) = self
-            .inspector
-            .as_ref()
-            .filter(|inspector| inspector.is_enabled())
-        {
-            let snapshot = self.active_root().map(|root| {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    aimer_inspector::InspectorServer::snapshot_tree(root)
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    aimer_inspector::snapshot_tree(root.as_ref())
-                }
-            });
-
-            let hovered_id = aimer_widget::inspector_overlay::hovered_widget()
-                .and_then(|(name, start, end)| {
-                    snapshot
-                        .as_ref()
-                        .and_then(|s| find_hovered_node(s, name, start, end))
-                });
-
-            inspector.broadcast_tree(snapshot);
-            inspector.broadcast_hovered(hovered_id);
-        }
     }
 
     #[allow(unused)]
@@ -1100,9 +973,6 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             begin_event_frame();
             return;
         }
-
-        #[cfg(debug_assertions)]
-        self.broadcast_inspector_snapshot();
 
         self.end_frame();
     }

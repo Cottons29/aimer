@@ -153,7 +153,6 @@ members = [
     "crates/aimer_events",
     "crates/aimer_focus",
     "crates/aimer_router",
-    "crates/aimer_inspector",
     "crates/aimer_assets",
     "crates/aimer_style",
     "crates/aimer_text",
@@ -211,7 +210,6 @@ aimer_events = { path = "crates/aimer_events" }
 aimer_focus = { path = "crates/aimer_focus" }
 aimer_text = { path = "crates/aimer_text" }
 aimer_router = { path = "crates/aimer_router" }
-aimer_inspector = { path = "crates/aimer_inspector" }
 aimer_assets = { path = "crates/aimer_assets" }
 aimer_style = { path = "crates/aimer_style" }
 aimer_std = { path = "crates/aimer_std" }
@@ -253,6 +251,7 @@ hashbrown = "0.17.1"
 crossbeam = "0.8.4"
 tokio = "1.52.3"
 futures-util = "0.3.31"
+tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
 once_cell = "1.21.4"
 smallvec = { version = "1.13.2", features = ["const_new"] }
 url = "2.5.8"

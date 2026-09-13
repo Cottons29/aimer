@@ -28,4 +28,5 @@ js-sys.workspace = true
 web-sys = { workspace = true, features = ["Response", "Window"] }
 
 [dev-dependencies]
+aimer_canvas.workspace = true
 tempfile.workspace = true

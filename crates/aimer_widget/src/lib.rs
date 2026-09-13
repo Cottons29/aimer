@@ -88,46 +88,6 @@ pub type AnyElement = aimer_rubick::Rubick<dyn Element, 1>;
 /// ```
 pub type AnyWidget = aimer_rubick::Rubick<dyn DynWidget, 8>;
 
-// #[cfg(debug_assertions)]
-pub mod inspector_overlay {
-    use std::cell::Cell;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    pub static INSPECTOR_ENABLED: AtomicBool = AtomicBool::new(false);
-
-    /// The widget currently under the inspector cursor.
-    pub type HoveredWidget = (&'static str, crate::base::Vec2d, crate::base::Vec2d);
-
-    // Hover collection and overlay painting happen on the window's UI/render
-    // thread. Keeping this state thread-local avoids a process-wide lock and
-    // keeps the hot per-element write allocation-free.
-    thread_local! {
-        static HOVERED_WIDGET: Cell<Option<HoveredWidget>> = const { Cell::new(None) };
-    }
-
-    /// Publishes the widget currently under the inspector cursor.
-    pub fn set_hovered_widget(widget: HoveredWidget) {
-        HOVERED_WIDGET.with(|hovered| hovered.set(Some(widget)));
-    }
-
-    /// Clears the widget currently under the inspector cursor for this UI thread.
-    pub fn clear_hovered_widget() {
-        HOVERED_WIDGET.with(|hovered| hovered.set(None));
-    }
-
-    /// Returns the widget currently under the inspector cursor for this UI thread.
-    pub fn hovered_widget() -> Option<HoveredWidget> {
-        HOVERED_WIDGET.with(Cell::get)
-    }
-
-    pub fn is_enabled() -> bool {
-        INSPECTOR_ENABLED.load(Ordering::Relaxed)
-    }
-    pub fn set_enabled(v: bool) {
-        INSPECTOR_ENABLED.store(v, Ordering::Relaxed);
-    }
-}
-
 pub use crate::components::diagnostics::{
     ErrorElement, ErrorWidget, OverflowEdges, OverflowIndicator, detect_overflow,
     paint_overflow_indicator,

@@ -481,8 +481,6 @@ impl<E: Element> RawScrollableContainer<E> {
         // the lifecycle half that a retained paint stream must not absorb.
         self.child.rebuild_if_dirty(child_ctx);
         let stable = self.child.is_paint_stable();
-        #[cfg(debug_assertions)]
-        let stable = stable && !aimer_widget::inspector_overlay::is_enabled();
         if !stable {
             if self.draw_child_with_dynamic_islands(ctx, child_ctx, content_size) {
                 return;

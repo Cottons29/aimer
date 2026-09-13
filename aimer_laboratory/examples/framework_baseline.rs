@@ -31,7 +31,7 @@ use aimer::{
     HeadlessOptions, LayoutElement, Positioned, Rebuildable, Scrollable, SizedBox, Stack, Vec2d,
     VisitorElement, Widget, OverflowBehavior,
 };
-use aimer::animation::{AnimatedBuilder, AnimationController, Curve};
+use aimer::animation::{AnimatedBuilder, AnimatedPaint, AnimationController, Curve};
 
 const ROUNDS: usize = 7;
 const WARMUP_FRAMES: usize = 8;
@@ -178,6 +178,28 @@ fn animated_probe() -> AnyWidget {
         SizedBox::new().width(1.0).height(1.0)
     })
     .boxed()
+}
+
+/// A retained paint wrapper around one stable child. The controller and
+/// closure are sampled during draw, but the child element is never rebuilt.
+fn retained_paint_probe() -> AnyWidget {
+    let controller = AnimationController::with_millis(1_000, Curve::Linear);
+    controller.forward_from_first_tick();
+    AnimatedPaint::new(
+        controller,
+        SizedBox::new().width(1.0).height(1.0),
+    )
+    .effect(|ctx, value| ctx.canvas.set_alpha(value))
+    .bounded()
+    .boxed()
+}
+
+fn retained_paint_column(count: usize) -> AnyWidget {
+    let controller = AnimationController::with_millis(1_000, Curve::Linear);
+    controller.forward_from_first_tick();
+    AnimatedPaint::new(controller, stable_column(count))
+        .effect(|ctx, value| ctx.canvas.set_alpha(value))
+        .boxed()
 }
 
 fn stable_column(count: usize) -> AnyWidget {
@@ -739,6 +761,7 @@ fn main() {
 
     println!("\nanimation workloads");
     measure_cached_frames("animation framework shell", animated_probe);
+    measure_cached_frames("retained paint framework shell", retained_paint_probe);
     for count in [256, 2_048] {
         measure_cached_frames(
             &format!("animated column: {count} rows"),
@@ -747,6 +770,10 @@ fn main() {
         measure_cached_frames(
             &format!("stable column + animation: {count} rows"),
             move || stable_column_with_animation(count),
+        );
+        measure_cached_frames(
+            &format!("retained paint column: {count} rows"),
+            move || retained_paint_column(count),
         );
     }
 

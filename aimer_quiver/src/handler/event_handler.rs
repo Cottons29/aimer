@@ -293,11 +293,7 @@ impl WindowEventHandler {
         {
             if app.active_root().is_some() {
                 let mut result = app.dispatch_element_event(pos, &event);
-                #[cfg(debug_assertions)]
-                let inspector_handled = app.inspector_enabled();
-                #[cfg(not(debug_assertions))]
-                let inspector_handled = false;
-                if !result.is_consumed() && !inspector_handled {
+                if !result.is_consumed() {
                     // Broadcast PointerUp/Cancel alongside PointerDown so that
                     // elements with an active drag (e.g. scrollable fling) receive
                     // the release event even when the finger lifts outside their
@@ -425,11 +421,7 @@ impl WindowEventHandler {
         #[allow(clippy::collapsible_if)]
         if app.active_root().is_some() {
             let mut result = app.dispatch_element_event(c, &event);
-            #[cfg(debug_assertions)]
-            let inspector_handled = app.inspector_enabled();
-            #[cfg(not(debug_assertions))]
-            let inspector_handled = false;
-            if !result.is_consumed() && !inspector_handled {
+            if !result.is_consumed() {
                 if matches!(&event, ElementEvent::PointerDown(_))
                     && let Some(root) = app.active_root()
                 {
@@ -479,11 +471,7 @@ impl WindowEventHandler {
                 };
                 if app.active_root().is_some() {
                     let result = app.dispatch_element_event(app.cursor_pos, &ev);
-                    let mut handled = result.is_consumed();
-                    #[cfg(debug_assertions)]
-                    if app.inspector_enabled() {
-                        handled = true;
-                    }
+                    let handled = result.is_consumed();
                     if let Some(window) = &app.window
                         && Self::should_redraw(result, handled)
                     {
@@ -552,11 +540,7 @@ impl WindowEventHandler {
             };
             if app.active_root().is_some() {
                 let result = app.dispatch_element_event(app.cursor_pos, &ev);
-                let mut handled = result.is_consumed();
-                #[cfg(debug_assertions)]
-                if app.inspector_enabled() {
-                    handled = true;
-                }
+                let handled = result.is_consumed();
                 if let Some(window) = &app.window
                     && Self::should_redraw(result, handled)
                 {
@@ -598,11 +582,7 @@ impl WindowEventHandler {
             },
         };
         let result = app.dispatch_element_event(app.cursor_pos, &event);
-        let mut handled = result.is_consumed();
-        #[cfg(debug_assertions)]
-        if app.inspector_enabled() {
-            handled = true;
-        }
+        let handled = result.is_consumed();
         if let Some(window) = &app.window
             && Self::should_redraw(result, handled)
         {

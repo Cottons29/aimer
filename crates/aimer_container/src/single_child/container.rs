@@ -306,12 +306,11 @@ impl<T: Element> Drawable for RawContainer<T> {
         let draw_width = (computed.width - m_left_v - m_right_v).max(0.0);
         let draw_height = (computed.height - m_top_v - m_bottom_v).max(0.0);
 
-        // Record the on-screen (logical) bounds every frame — not just when the
-        // debug inspector is on. `dispatch_event` uses `pos_start_end` to decide
-        // whether an event lands on this element; without live bounds an opaque
-        // container could never occlude an event at a specific position (see
-        // `on_event`). Bounds start after the margin translate and span the
-        // actually-drawn size (`draw_width`/`draw_height`).
+        // Record the on-screen (logical) bounds every frame. `dispatch_event`
+        // uses `pos_start_end` to decide whether an event lands on this element;
+        // without live bounds an opaque container could never occlude an event
+        // at a specific position (see `on_event`). Bounds start after the margin
+        // translate and span the actually-drawn size (`draw_width`/`draw_height`).
         {
             let (start_x, start_y) = ctx.canvas.get_transform_translation();
             let l_start = Vec2d {
@@ -323,39 +322,6 @@ impl<T: Element> Drawable for RawContainer<T> {
                 y: (start_y + m_top + draw_height) / scale,
             };
             self.bounds.set(Some((l_start, l_end)));
-        }
-
-        #[cfg(debug_assertions)]
-        {
-            if aimer_widget::inspector_overlay::is_enabled() {
-                let (start_x, start_y) = ctx.canvas.get_transform_translation();
-                let end_x = start_x + m_left + box_width;
-                let end_y = start_y + m_top + box_height;
-
-                let scale = ctx.scale;
-                let l_start = Vec2d {
-                    x: (start_x + m_left) / scale,
-                    y: (start_y + m_top) / scale,
-                };
-                let l_end = Vec2d {
-                    x: end_x / scale,
-                    y: end_y / scale,
-                };
-                self.bounds.set(Some((l_start, l_end)));
-
-                let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x
-                    && cp.x <= l_end.x
-                    && cp.y >= l_start.y
-                    && cp.y <= l_end.y
-                {
-                    aimer_widget::inspector_overlay::set_hovered_widget((
-                        self.debug_name,
-                        l_start,
-                        l_end,
-                    ));
-                }
-            }
         }
 
         if let Some(color) = self.color

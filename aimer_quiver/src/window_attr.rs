@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn window_attributes_can_be_configured_with_aimer_methods() {
         let attributes = WindowAttr::new()
-            .title("Inspector")
+            .title("Configured Window")
             .inner_size(900, 600)
             .min_inner_size(480, 320)
             .max_inner_size(1920, 1080)
@@ -159,7 +159,7 @@ mod tests {
             .visible(false)
             .maximized(true);
 
-        assert_eq!(attributes.title, "Inspector");
+        assert_eq!(attributes.title, "Configured Window");
         assert_eq!(attributes.inner_size, (900, 600));
         assert_eq!(attributes.min_inner_size, Some((480, 320)));
         assert_eq!(attributes.max_inner_size, Some((1920, 1080)));

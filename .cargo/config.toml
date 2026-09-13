@@ -1,8 +1,3 @@
-[build]
-
-[env]
-DEFAULT_INSPECTOR_PORT = "2992"
-DEFAULT_INSPECTOR_ADDRESS = "127.0.0.1"
 #
 #[target.wasm32-unknown-unknown]
 #rustflags = [

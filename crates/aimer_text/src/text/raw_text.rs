@@ -1,8 +1,6 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-#[cfg(debug_assertions)]
-use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::*;
@@ -273,33 +271,6 @@ impl RawTextWidget {
 impl Drawable for RawTextWidget {
     fn draw(&self, ctx: &BuildContext) {
         // println!("Drawing text widget : {:?}", self.text);
-        #[cfg(debug_assertions)]
-        {
-            if inspector_overlay::is_enabled() {
-                let (start_x, start_y) = ctx.canvas.get_transform_translation();
-                let size = self.content_size(ctx);
-                let end_x = start_x + size.width;
-                let end_y = start_y + size.height;
-
-                let scale = ctx.scale;
-                let l_start = Vec2d {
-                    x: start_x / scale,
-                    y: start_y / scale,
-                };
-                let l_end = Vec2d {
-                    x: end_x / scale,
-                    y: end_y / scale,
-                };
-                let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x
-                    && cp.x <= l_end.x
-                    && cp.y >= l_start.y
-                    && cp.y <= l_end.y
-                {
-                    inspector_overlay::set_hovered_widget((self.debug_name(), l_start, l_end));
-                }
-            }
-        }
         self.paint(ctx);
     }
 

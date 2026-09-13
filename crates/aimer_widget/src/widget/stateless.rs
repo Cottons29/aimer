@@ -21,11 +21,12 @@ pub trait StatelessWidget {
     fn build(&self, ctx: &BuildContext) -> impl Widget;
 }
 
-/// Wraps any [`Widget`] and attaches a static name used by the inspector
-/// overlay. Used by `#[derive(WidgetConstructor)]` to provide inspector
-/// support. It does not change layout, drawing, events, or child identity. If
-/// the produced element already reports the requested name, no extra wrapper
-/// is created.
+/// Wraps any [`Widget`] and attaches a static debug name.
+///
+/// Used by `#[derive(WidgetConstructor)]` to preserve the source widget's
+/// identity in the retained tree. It does not change layout, drawing, events,
+/// or child identity. If the produced element already reports the requested
+/// name, no extra wrapper is created.
 #[derive(aimer_macro::PortableWidget)]
 #[portable_widget(
     manual_lowering,
@@ -40,10 +41,10 @@ pub struct NamedWidget {
 
 /// Materializes the portable form of [`NamedWidget`] as its child.
 ///
-/// The inspector name is a native-only static string and is intentionally not
-/// part of the portable schema. Returning the already materialized child keeps
-/// layout, events, and reconciliation behavior bounded and transparent rather
-/// than inventing a name that could be wrong for the source wrapper.
+/// The debug name is intentionally not part of the portable schema. Returning
+/// the already materialized child keeps layout, events, and reconciliation
+/// behavior bounded and transparent rather than inventing a name that could be
+/// wrong for the source wrapper.
 fn materialize_named_widget(
     _document: &crate::portable::__anteros::WidgetDocumentView<'_>,
     _node: crate::portable::__anteros::WidgetNodeView<'_>,
@@ -64,7 +65,7 @@ fn materialize_named_widget(
 }
 
 impl NamedWidget {
-    /// Wraps an already type-erased widget with a static inspector name.
+    /// Wraps an already type-erased widget with a static debug name.
     ///
     /// The wrapper forwards dirty rebuilding to its child but cannot recreate
     /// the source widget itself because it stores no build closure.
@@ -79,9 +80,9 @@ impl Widget for NamedWidget {
         if child.debug_name() == self.name {
             return child;
         }
-        // A `NamedWidget` only wraps an already-built element for the inspector;
-        // it has no build closure of its own, so it is not self-rebuildable —
-        // it still forwards rebuild/dirty marking to its child.
+        // A `NamedWidget` only wraps an already-built element; it has no build
+        // closure of its own, so it is not self-rebuildable — it still forwards
+        // rebuild/dirty marking to its child.
         StatelessElement::wrapper(child, None, self.name).boxed()
     }
 
@@ -139,7 +140,6 @@ pub struct StatelessElement {
     rebuild_invalidation_generation: Cell<u64>,
     pub key: Option<crate::key::Key>,
     pub debug_name: &'static str,
-    pub bounds: Cell<Option<(Vec2d, Vec2d)>>,
 }
 
 impl StatelessElement {
@@ -169,7 +169,6 @@ impl StatelessElement {
             rebuild_invalidation_generation: Cell::new(u64::MAX),
             key,
             debug_name,
-            bounds: Cell::new(None),
         }
     }
 
@@ -192,7 +191,6 @@ impl StatelessElement {
             rebuild_invalidation_generation: Cell::new(u64::MAX),
             key,
             debug_name,
-            bounds: Cell::new(None),
         }
     }
 
@@ -212,7 +210,6 @@ impl StatelessElement {
             rebuild_invalidation_generation: Cell::new(u64::MAX),
             key,
             debug_name,
-            bounds: Cell::new(None),
         }
     }
 
@@ -273,39 +270,6 @@ impl StatelessElement {
 
 impl Drawable for StatelessElement {
     fn draw(&self, ctx: &BuildContext) {
-        #[cfg(debug_assertions)]
-        {
-            if crate::inspector_overlay::is_enabled() {
-                let (start_x, start_y) = ctx.canvas.get_transform_translation();
-                let size = self.content_size(ctx);
-                let end_x = start_x + size.width;
-                let end_y = start_y + size.height;
-
-                let scale = ctx.scale;
-                let l_start = Vec2d {
-                    x: start_x / scale,
-                    y: start_y / scale,
-                };
-                let l_end = Vec2d {
-                    x: end_x / scale,
-                    y: end_y / scale,
-                };
-                self.bounds.set(Some((l_start, l_end)));
-
-                let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x
-                    && cp.x <= l_end.x
-                    && cp.y >= l_start.y
-                    && cp.y <= l_end.y
-                {
-                    crate::inspector_overlay::set_hovered_widget((
-                        self.debug_name,
-                        l_start,
-                        l_end,
-                    ));
-                }
-            }
-        }
         self.rebuild_if_dirty(ctx);
         // Safety: single-threaded rendering pipeline.
         let child = unsafe { &*self.child.0.get() };
@@ -369,9 +333,6 @@ impl LayoutElement for StatelessElement {
         unsafe { &*self.child.0.get() }.get_size_from_child()
     }
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        if self.bounds.get().is_some() {
-            return self.bounds.get();
-        }
         unsafe { &*self.child.0.get() }.pos_start_end()
     }
 }
@@ -979,7 +940,7 @@ mod tests {
             PortableLimits::new(8, 16, 64, 128, 1_024),
         )
         .unwrap();
-        let root = NamedWidget::new(crate::ErrorWidget::new("child").boxed(), "InspectorName")
+        let root = NamedWidget::new(crate::ErrorWidget::new("child").boxed(), "NamedWidgetName")
             .to_portable_node(
                 &mut context,
                 SourceFingerprint::new(StableId128::from_bytes([1; 16])),

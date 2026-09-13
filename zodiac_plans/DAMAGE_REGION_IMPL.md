@@ -313,8 +313,8 @@ effect would make cached paint stale for interaction geometry.
 
 - [x] Add the internal `Drawable::paint` and `Drawable::sync_paint_geometry` seams. Retained recording now uses
   `paint`, while normal `draw` remains the lifecycle/rebuild entry point.
-- [x] Separate `RawContainer` hit-test bounds, inspector bookkeeping, and child geometry synchronization from its visual
-  paint path. `RawContainer` remains conservatively non-stable until a complete adopter-specific proof exists.
+- [x] Separate `RawContainer` hit-test bounds and child geometry synchronization from its visual paint path.
+  `RawContainer` remains conservatively non-stable until a complete adopter-specific proof exists.
 - [x] Keep `RawFlex` non-stable because its normal draw maintains layout/window/reconciliation and hit-test state. Its
   stable paint-island callback now synchronizes geometry live and records through `paint`.
 - [x] Add focused coverage for stable replay, unstable fallback, invalidated child, changed clip/transform/resource

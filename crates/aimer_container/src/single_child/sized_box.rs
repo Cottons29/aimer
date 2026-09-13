@@ -132,7 +132,6 @@ impl<W: Widget + 'static> Widget for SizedBox<W> {
             color: self.color,
             cache: LayoutCache::new(),
             debug_name: "SizedBox",
-            bounds: std::cell::Cell::new(None),
         }
         .boxed()
     }
@@ -173,7 +172,6 @@ pub struct RawSizedBox<E: Element> {
     pub(crate) child: E,
     pub(crate) cache: LayoutCache,
     pub(crate) debug_name: &'static str,
-    pub(crate) bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
 }
 
 impl<E: Element> Drawable for RawSizedBox<E> {
@@ -181,39 +179,6 @@ impl<E: Element> Drawable for RawSizedBox<E> {
         let size = self.computed_size(ctx);
         let width = size.width;
         let height = size.height;
-
-        #[cfg(debug_assertions)]
-        {
-            if aimer_widget::inspector_overlay::is_enabled() {
-                let (start_x, start_y) = ctx.canvas.get_transform_translation();
-                let end_x = start_x + width;
-                let end_y = start_y + height;
-
-                let scale = ctx.scale;
-                let l_start = Vec2d {
-                    x: start_x / scale,
-                    y: start_y / scale,
-                };
-                let l_end = Vec2d {
-                    x: end_x / scale,
-                    y: end_y / scale,
-                };
-                self.bounds.set(Some((l_start, l_end)));
-
-                let cp = ctx.cursor_pos;
-                if cp.x >= l_start.x
-                    && cp.x <= l_end.x
-                    && cp.y >= l_start.y
-                    && cp.y <= l_end.y
-                {
-                    aimer_widget::inspector_overlay::set_hovered_widget((
-                        self.debug_name,
-                        l_start,
-                        l_end,
-                    ));
-                }
-            }
-        }
 
         ctx.canvas.fill_color_rect(
             Vec2d { x: 0.0, y: 0.0 },
@@ -316,9 +281,6 @@ impl<E: Element> LayoutElement for RawSizedBox<E> {
         self.child.invalidate_layout();
     }
 
-    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bounds.get()
-    }
 }
 
 #[cfg(test)]

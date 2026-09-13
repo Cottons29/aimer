@@ -483,15 +483,18 @@ mod tests {
                     cleanup_warnings: 0,
                 }
             ));
-            let tree = app.active_tree_snapshot().unwrap();
-            let button = find_widget(&tree, "Container").expect("button container must be laid out");
-            assert!(button.width > 0.0 && button.height > 0.0, "{tree:#?}");
+            let (button_start, button_end) = app
+                .active_element_bounds("Container")
+                .expect("button container must be laid out");
+            let button_width = button_end.x - button_start.x;
+            let button_height = button_end.y - button_start.y;
+            assert!(button_width > 0.0 && button_height > 0.0, "{button_start:?}..{button_end:?}");
             let device_id = DeviceId::dummy();
             app.send_window_event(WindowEvent::CursorMoved {
                 device_id,
                 position: PhysicalPosition::new(
-                    f64::from(button.x + button.width / 2.0),
-                    f64::from(button.y + button.height / 2.0),
+                    f64::from((button_start.x + button_end.x) / 2.0),
+                    f64::from((button_start.y + button_end.y) / 2.0),
                 ),
             });
             app.send_window_event(WindowEvent::MouseInput {
@@ -651,10 +654,10 @@ mod tests {
                 }
             ));
             assert_eq!(app.live_reload_generation(), None);
-            let tree = app
-                .active_tree_snapshot()
-                .expect("the native fallback tree must remain visible");
-            assert!(find_widget(&tree, "RawTextWidget").is_some(), "{tree:#?}");
+            assert!(
+                app.active_contains_element("RawTextWidget"),
+                "the native fallback tree must remain visible"
+            );
             let diagnostic = app
                 .live_reload_diagnostic()
                 .expect("a first-generation rejection must leave a host diagnostic");
@@ -701,15 +704,18 @@ mod tests {
             });
             assert_eq!(app.live_reload_generation(), Some(GenerationId::new(1)));
 
-            let tree = app.active_tree_snapshot().unwrap();
-            let button = find_widget(&tree, "Container").expect("fixture button container must be laid out");
-            assert!(button.width > 0.0 && button.height > 0.0, "{tree:#?}");
+            let (button_start, button_end) = app
+                .active_element_bounds("Container")
+                .expect("fixture button container must be laid out");
+            let button_width = button_end.x - button_start.x;
+            let button_height = button_end.y - button_start.y;
+            assert!(button_width > 0.0 && button_height > 0.0, "{button_start:?}..{button_end:?}");
             let device_id = DeviceId::dummy();
             app.send_window_event(WindowEvent::CursorMoved {
                 device_id,
                 position: PhysicalPosition::new(
-                    f64::from(button.x + button.width / 2.0),
-                    f64::from(button.y + button.height / 2.0),
+                    f64::from((button_start.x + button_end.x) / 2.0),
+                    f64::from((button_start.y + button_end.y) / 2.0),
                 ),
             });
             app.send_window_event(WindowEvent::MouseInput {
@@ -777,7 +783,7 @@ mod tests {
                 }
                 assert_eq!(app.live_reload_generation(), Some(GenerationId::new(1)));
                 assert_eq!(active_counter_from_app(&mut app), 1);
-                assert!(app.active_tree_snapshot().is_some());
+                assert!(app.active_root_name().is_some());
             }
         }
 
@@ -787,18 +793,6 @@ mod tests {
                 assert!(Instant::now() < deadline, "live listener did not wake the app");
                 thread::yield_now();
             }
-        }
-
-        fn find_widget<'a>(
-            node: &'a aimer_inspector::WidgetNode,
-            name: &str,
-        ) -> Option<&'a aimer_inspector::WidgetNode> {
-            if node.name == name {
-                return Some(node);
-            }
-            node.children
-                .iter()
-                .find_map(|child| find_widget(child, name))
         }
 
         #[test]

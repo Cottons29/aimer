@@ -14,10 +14,11 @@ name = "aimer"
 path = "src/main.rs"
 
 [dependencies]
-aimer_inspector.workspace = true
 aimer_reload_protocol.workspace = true
 aimer_utils.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+futures-util.workspace = true
+tokio-tungstenite.workspace = true
 dirs.workspace = true
 uuid.workspace = true
 rmcp.workspace = true

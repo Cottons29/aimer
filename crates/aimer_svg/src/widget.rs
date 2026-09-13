@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use aimer_attribute::{Bounds, CacheBounds, Dimension, ResolvedSize};
 use aimer_cupid::svg::{
-    SvgFillRule, SvgGeometry, SvgNode, SvgNodeId, SvgNodeStyleOverride, SvgPathCommand, SvgScene,
-    SvgTransform, SvgViewport,
+    SvgAspectMode, SvgFillRule, SvgFitPolicy, SvgGeometry, SvgNode, SvgNodeId,
+    SvgNodeStyleOverride, SvgPathCommand, SvgScene, SvgTransform, SvgViewport,
 };
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{PointerInfo, PointerSource};
@@ -97,6 +97,8 @@ pub struct Svg {
     pressed_styles: Vec<StyleRule>,
     #[portable_skip]
     callbacks: Vec<CallbackRule>,
+    #[portable_skip]
+    paint_bounded: bool,
 }
 
 impl Svg {
@@ -115,6 +117,7 @@ impl Svg {
             hover_styles: Vec::new(),
             pressed_styles: Vec::new(),
             callbacks: Vec::new(),
+            paint_bounded: false,
         }
     }
 
@@ -133,6 +136,18 @@ impl Svg {
     /// preserve the intrinsic aspect ratio.
     pub fn height(mut self, height: impl Into<Dimension>) -> Self {
         self.height = Some(height.into());
+        self
+    }
+
+    /// Declares that this SVG stays inside its layout rectangle while painted.
+    ///
+    /// This enables local animation damage and retained paint replay. Use it
+    /// only for assets whose paths, strokes, filters, and style transforms do
+    /// not intentionally overflow the widget bounds. The default remains
+    /// conservative because SVG overflow is not clipped automatically.
+    #[inline]
+    pub fn bounded(mut self) -> Self {
+        self.paint_bounded = true;
         self
     }
 
@@ -290,17 +305,23 @@ fn materialize_portable_svg(
 
 impl Widget for Svg {
     fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+        let paint_bounded = self.paint_bounded
+            || (document_paint_is_bounded(&self.document)
+                && style_rules_are_bounded(&self.styles)
+                && style_rules_are_bounded(&self.hover_styles)
+                && style_rules_are_bounded(&self.pressed_styles));
         RawSvg {
-            document: self.document.clone(),
+            document: self.document,
             width: self.width,
             height: self.height,
-            styles: self.styles.clone(),
-            hover_styles: self.hover_styles.clone(),
-            pressed_styles: self.pressed_styles.clone(),
-            callbacks: self.callbacks.clone(),
+            styles: self.styles,
+            hover_styles: self.hover_styles,
+            pressed_styles: self.pressed_styles,
+            callbacks: self.callbacks,
             bounds: CacheBounds::new(),
             hovered: Cell::new(None),
             interaction: RefCell::new(SvgInteraction::default()),
+            paint_bounded,
         }
         .boxed()
     }
@@ -601,6 +622,7 @@ impl RawSvgAsset {
                     hover_styles: self.hover_styles.clone(),
                     pressed_styles: self.pressed_styles.clone(),
                     callbacks: self.callbacks.clone(),
+                    paint_bounded: false,
                 };
                 // Rendering and element-tree access are single-threaded. The
                 // background task only publishes an owned immutable state through
@@ -717,6 +739,130 @@ pub struct RawSvg {
     bounds: CacheBounds,
     hovered: Cell<Option<SvgNodeId>>,
     interaction: RefCell<SvgInteraction>,
+    paint_bounded: bool,
+}
+
+fn style_rules_are_bounded(rules: &[StyleRule]) -> bool {
+    rules.iter().all(|rule| rule.style.transform.is_none())
+}
+
+/// Checks the static SVG scene once, at element construction, so a bounded
+/// animation can invalidate only the transformed widget box. Bézier control
+/// points conservatively bound their curves; stroke padding covers caps, joins,
+/// and miter expansion. A document that cannot be proven inside its viewport
+/// stays on the full-damage/live-paint path.
+fn document_paint_is_bounded(document: &SvgDocument) -> bool {
+    if matches!(
+        document.fit_policy(),
+        SvgFitPolicy::PreserveAspectRatio(preserve) if preserve.mode == SvgAspectMode::Slice
+    ) {
+        // A slice fit can map an in-viewport path outside the destination when
+        // both widget dimensions are supplied. The widget currently captures
+        // the ancestor clip, not an implicit SVG-destination clip, so keep the
+        // conservative live path for this policy.
+        return false;
+    }
+
+    let scene = document.scene();
+    let Ok(compensation) = document.fit_compensation(scene.viewport.width, scene.viewport.height)
+    else {
+        return false;
+    };
+    let viewport = scene.viewport;
+    let epsilon = f32::EPSILON * viewport.width.max(viewport.height).max(1.0) * 16.0;
+
+    for node in scene
+        .nodes
+        .iter()
+        .filter(|node| node.visible && node.opacity > 0.0 && node.geometry.is_some())
+    {
+        let Some(geometry) = scene.geometry(node) else {
+            return false;
+        };
+        let transform = compensation.mul(node.transform);
+        if !transform.is_finite() {
+            return false;
+        }
+        let transform_scale = transform
+            .sx
+            .hypot(transform.ky)
+            .hypot(transform.kx.hypot(transform.sy));
+        if !transform_scale.is_finite() {
+            return false;
+        }
+        let stroke_padding = node
+            .stroke
+            .as_ref()
+            .map(|stroke| {
+                stroke.width.abs()
+                    * stroke.miter_limit.abs().max(1.0)
+                    * 0.5
+                    * transform_scale
+            })
+            .unwrap_or(0.0);
+        if !stroke_padding.is_finite() {
+            return false;
+        }
+
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+        let mut has_point = false;
+        let mut include = |x: f32, y: f32| {
+            let (x, y) = transform.transform_point(x, y);
+            if !x.is_finite() || !y.is_finite() {
+                return false;
+            }
+            has_point = true;
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+            true
+        };
+
+        for command in geometry.commands.iter() {
+            let valid = match *command {
+                SvgPathCommand::MoveTo { x, y } | SvgPathCommand::LineTo { x, y } => {
+                    include(x, y)
+                }
+                SvgPathCommand::QuadraticTo {
+                    control_x,
+                    control_y,
+                    x,
+                    y,
+                } => include(control_x, control_y) && include(x, y),
+                SvgPathCommand::CubicTo {
+                    control1_x,
+                    control1_y,
+                    control2_x,
+                    control2_y,
+                    x,
+                    y,
+                } => {
+                    include(control1_x, control1_y)
+                        && include(control2_x, control2_y)
+                        && include(x, y)
+                }
+                SvgPathCommand::Close => true,
+            };
+            if !valid {
+                return false;
+            }
+        }
+
+        if has_point
+            && (min_x - stroke_padding < -epsilon
+                || min_y - stroke_padding < -epsilon
+                || max_x + stroke_padding > viewport.width + epsilon
+                || max_y + stroke_padding > viewport.height + epsilon)
+        {
+            return false;
+        }
+    }
+
+    true
 }
 
 impl RawSvg {
@@ -824,6 +970,23 @@ impl RawSvg {
             rule.callback.execute(hit.clone());
         }
     }
+
+    #[inline]
+    fn save_bounds(&self, ctx: &BuildContext, size: ResolvedSize) {
+        let (x, y) = ctx.canvas.get_transform_translation();
+        self.bounds.save(ctx.scale, x, y, size.width, size.height);
+    }
+
+    #[inline]
+    fn paint_svg(&self, ctx: &BuildContext, size: ResolvedSize) {
+        let overrides = self.overrides_for_size(size.width, size.height);
+        ctx.canvas.draw_svg(
+            self.document.scene().clone(),
+            (0.0, 0.0).into(),
+            size,
+            overrides.into(),
+        );
+    }
 }
 
 impl VisitorElement for RawSvg {
@@ -835,14 +998,17 @@ impl VisitorElement for RawSvg {
 impl Rebuildable for RawSvg {}
 
 impl LayoutElement for RawSvg {
+    fn is_layout_stable(&self) -> bool {
+        true
+    }
+
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.resolved_size(ctx)
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
         let size = self.resolved_size(ctx);
-        let (x, y) = ctx.canvas.get_transform_translation();
-        self.bounds.save(ctx.scale, x, y, size.width, size.height);
+        self.save_bounds(ctx, size);
         size
     }
 
@@ -854,15 +1020,24 @@ impl LayoutElement for RawSvg {
 impl Drawable for RawSvg {
     fn draw(&self, ctx: &BuildContext) {
         let size = self.resolved_size(ctx);
-        let (x, y) = ctx.canvas.get_transform_translation();
-        self.bounds.save(ctx.scale, x, y, size.width, size.height);
-        let overrides = self.overrides_for_size(size.width, size.height);
-        ctx.canvas.draw_svg(
-            self.document.scene().clone(),
-            (0.0, 0.0).into(),
-            size,
-            overrides.into(),
-        );
+        self.save_bounds(ctx, size);
+        self.paint_svg(ctx, size);
+    }
+
+    fn paint(&self, ctx: &BuildContext) {
+        self.paint_svg(ctx, self.resolved_size(ctx));
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.save_bounds(ctx, self.resolved_size(ctx));
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        self.hover_styles.is_empty() && self.pressed_styles.is_empty()
+    }
+
+    fn is_paint_bounded(&self) -> bool {
+        self.paint_bounded
     }
 }
 
@@ -1269,11 +1444,49 @@ fn point_segment_distance(point: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f3
 mod tests {
     use std::cell::{Cell, RefCell, UnsafeCell};
     use std::sync::Arc;
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::sync::OnceLock;
 
-    use aimer_widget::{Element, Rebuildable};
+    #[cfg(not(target_arch = "wasm32"))]
+    use aimer_attribute::{BoxConstraint, Vec2d};
+    #[cfg(not(target_arch = "wasm32"))]
+    use aimer_widget::base::{BuildContext, ResolvedSize, WindowHandle};
+    use aimer_widget::{Element, Rebuildable, Widget};
 
-    use super::{RawSvgAsset, SvgAssetPhase};
-    use crate::{SvgLoader, SvgLoadState, SvgSource};
+    use super::{RawSvgAsset, Svg, SvgAssetPhase};
+    use crate::{SvgDocument, SvgLoader, SvgLoadState, SvgSource};
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn context() -> BuildContext<'static> {
+        let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("SVG widget test runtime should build")
+        });
+        let _guard = runtime.enter();
+        let mut context = BuildContext::new(
+            aimer_canvas::Canvas::new(inner),
+            ResolvedSize {
+                width: 32.0,
+                height: 32.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+        context.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 32.0,
+            max_height: 32.0,
+        };
+        context
+    }
 
     fn asset(loader: SvgLoader) -> RawSvgAsset {
         RawSvgAsset {
@@ -1316,5 +1529,46 @@ mod tests {
             new.loader.borrow().state(),
             SvgLoadState::Ready(_)
         ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn static_svg_advertises_retained_bounded_paint() {
+        let document = SvgDocument::from_svg(
+            br#"<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h32v32H0z"/></svg>"#,
+        )
+        .unwrap();
+        let context = context();
+        let element = Svg::new(document).to_element(&context);
+
+        assert!(element.is_layout_stable());
+        assert!(element.is_paint_stable());
+        assert!(element.is_paint_bounded());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn svg_with_geometry_outside_the_viewport_stays_on_the_live_path() {
+        let document = SvgDocument::from_svg(
+            br#"<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg"><path d="M-1 0h2v2H-1z"/></svg>"#,
+        )
+        .unwrap();
+        let context = context();
+        let element = Svg::new(document).to_element(&context);
+
+        assert!(!element.is_paint_bounded());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn explicitly_bounded_svg_opts_into_local_damage_contract() {
+        let document = SvgDocument::from_svg(
+            br#"<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg"><path d="M-1 0h2v2H-1z"/></svg>"#,
+        )
+        .unwrap();
+        let context = context();
+        let element = Svg::new(document).bounded().to_element(&context);
+
+        assert!(element.is_paint_bounded());
     }
 }

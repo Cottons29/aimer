@@ -1,4 +1,3 @@
-use aimer_attribute::CacheBounds;
 use aimer_macro::PortableWidget;
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
@@ -225,7 +224,6 @@ impl<W: Widget + 'static> Widget for Column<W> {
             layout: Default::default(),
             item_extent: None,
             debug_name: "Column",
-            cache_bound: CacheBounds::new(),
         }
         .boxed()
     }
@@ -450,7 +448,6 @@ impl<W: Widget + 'static> Widget for Row<W> {
             layout: Default::default(),
             item_extent: None,
             debug_name: "Row",
-            cache_bound: CacheBounds::new(),
         }
         .boxed()
     }

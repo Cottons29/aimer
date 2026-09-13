@@ -22,7 +22,7 @@ and exit gates.
 | Application boundary     | One platform-neutral application core MUST compile through separate native-AOT and WASM adapters.                                                                                   | The two runtimes must execute the same application behavior rather than maintain separate applications.                                                |
 | First usable milestone   | The first milestone MUST include declarative UI, callbacks, complete versioned guest state, asynchronous/resource cleanup, transactional replacement, and rollback.                 | An UI-only prototype would not provide dependable application hot reload.                                                                              |
 | Platform scope           | The milestone MUST cover iOS device and Simulator, Android, macOS, Windows, and Linux.                                                                                              | Hot reload is an Aimer development feature, not an iOS-only subsystem.                                                                                 |
-| Module transport         | The debug app MUST listen on a dedicated authenticated binary reload channel, and the CLI MUST discover and connect to it.                                                          | Module transfer and replacement status require independent framing, security, and evolution from inspector diagnostics.                                |
+| Module transport         | The debug app MUST listen on a dedicated authenticated binary reload channel, and the CLI MUST discover and connect to it.                                                          | Module transfer and replacement status require independent framing, security, and evolution from CLI diagnostics.                                    |
 | Runtime implementation   | Aimer MUST integrate an ecosystem interpreter and MUST NOT implement WebAssembly parsing or execution.                                                                              | WebAssembly validation and execution are security-critical, specification-heavy responsibilities.                                                      |
 | Third-party capabilities | External Aimer SDKs MUST expose one portable API with generated WASM proxy and native host dispatch, identified by a stable package namespace, ABI major, and contract fingerprint. | SDK authors should implement native behavior once without maintaining a second guest implementation or relying on unstable compiler/source identities. |
 | Unstable CLI gate        | Hot reload MUST be requested with `aimer +nightly run -Z wasm-hot-reload`.                                                                                                           | Experimental runtime work must remain explicit and cannot alter ordinary native `aimer run` behavior.                                                   |
@@ -232,13 +232,11 @@ points; they do not imply that runtime code already exists.
 - The hot-reload workflow needs a guest compilation path, change coalescing, connection management, module push, and
   structured status without weakening existing native AOT commands.
 
-### Inspector precedent and separation
+### CLI diagnostics and reload separation
 
-- `crates/aimer_inspector/src/server.rs` and `crates/aimer_inspector/src/client.rs` demonstrate a development connection
-  between the CLI and a running app.
-- The inspector protocol is JSON-oriented diagnostics and currently assumes connection behavior that does not solve all
-  physical-device routing cases.
-- Hot reload MUST use a separate binary protocol and lifecycle. Inspector availability or failure MUST NOT control
+- The CLI keeps its inspector console and transport in `aimer_cli/src/console/inspector.rs`; the framework has no
+  inspector client, tree walk, or overlay.
+- Hot reload MUST use its own binary protocol and lifecycle. CLI diagnostic availability or failure MUST NOT control
   module replacement.
 - Shared low-level framing utilities MAY be extracted later only if the dependency direction stays acyclic and the
   protocols remain independently versioned.
@@ -1339,7 +1337,7 @@ complete decoding and validation.
 
 The reload protocol is a development-only, bidirectional, framed binary protocol. The debug application is the listener;
 the CLI discovers it, authenticates, uploads modules, and receives progress and final replacement results. The protocol
-is separate from `aimer_inspector` and does not carry widget-inspection traffic.
+is separate from the CLI inspector transport and does not carry widget-inspection traffic.
 
 ### Transport contract
 
@@ -1472,11 +1470,12 @@ Protocol statuses never claim commit before `aimer_quiver` installs the coherent
 upload does not cancel a candidate automatically; the runtime completes or rejects it and stores a bounded terminal
 result for reconnect by the same authenticated session.
 
-### Separation from inspector
+### Separation from CLI diagnostics
 
-- Reload and inspector have independent ports, authentication, protocol versions, state machines, and failure handling.
-- Reload MUST work when inspector support is disabled or disconnected.
-- Inspector commands MUST NOT mutate reload generations or transfer modules.
+- Reload and the CLI inspector have independent ports, authentication, protocol versions, state machines, and failure
+  handling.
+- Reload MUST work when CLI inspector support is disabled or disconnected.
+- CLI inspector commands MUST NOT mutate reload generations or transfer modules.
 - Low-level bounded byte readers or cryptographic helpers MAY be shared only in a dependency-neutral utility crate;
   message enums and session lifecycle remain separate.
 
@@ -1817,8 +1816,8 @@ aimer_reload_protocol <- aimer_reload_server <- aimer_quiver
 aimer_reload_protocol <- aimer_cli
 ```
 
-`aimer_inspector` remains outside these arrows. Workspace feature checks MUST prevent enabling the reload server without
-`aimer_anteros` and debug hot-reload host integration, while native AOT builds select neither.
+The CLI inspector transport remains outside these arrows. Workspace feature checks MUST prevent enabling the reload
+server without `aimer_anteros` and debug hot-reload host integration, while native AOT builds select neither.
 
 ## 20. TDD implementation roadmap
 
@@ -2236,7 +2235,7 @@ the tested commit seam until that integration is completed.
   gaps/duplicates, bad tags, expiry, rate limiting, reconnect key separation, and secret redaction.
 - Transfer tests for chunk boundaries, out-of-order/overlap, length/digest mismatch, interruption cleanup, cancellation,
   duplicate terminal requests, terminal-result recovery, and staging limits.
-- Separation tests proving inspector disconnect/failure has no effect on reload.
+- Separation tests proving CLI diagnostic disconnect/failure has no effect on reload.
 
 **Implement:**
 
@@ -2408,7 +2407,7 @@ ABI package, public received-module-to-staged-snapshot host seam, and live Quive
 implemented. `LiveReloadHost` owns the authenticated listener and bounded command/callback handoffs; `AimerApp` starts
 it only when explicitly configured under the debug-only feature. Complete modules wake the real application loop,
 prepare on the application thread, and atomically install at `FrameDrawer` before rebuild/layout/draw begins. Input,
-user events, rendering, and inspector snapshots all resolve the same active interpreted root after the first commit.
+user events and rendering all resolve the same active interpreted root after the first commit.
 Callback closures enqueue only stable IDs; the active `Generation` supplies and validates trusted callback metadata,
 then returned Widget IR reconciles into the same generation. The application-path integration test covers initial
 install, a physical pointer callback, state-preserving generation replacement, malformed-module rollback, terminal

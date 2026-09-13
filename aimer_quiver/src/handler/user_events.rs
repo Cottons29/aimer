@@ -25,11 +25,7 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
                     modifiers: Default::default(),
                 };
                 let result = app.dispatch_element_event(app.cursor_pos, &ev);
-                let mut handled = result.is_consumed();
-                #[cfg(debug_assertions)]
-                if app.inspector_enabled() {
-                    handled = true;
-                }
+                let handled = result.is_consumed();
                 if let Some(window) = &app.window
                     && (handled || result.needs_redraw())
                 {
@@ -79,11 +75,7 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
             if app.active_root().is_some() {
                 let ev = shortcut.to_event();
                 let result = app.dispatch_element_event(app.cursor_pos, &ev);
-                let mut handled = result.is_consumed();
-                #[cfg(debug_assertions)]
-                if app.inspector_enabled() {
-                    handled = true;
-                }
+                let handled = result.is_consumed();
                 if let Some(window) = &app.window
                     && (handled || result.needs_redraw())
                 {

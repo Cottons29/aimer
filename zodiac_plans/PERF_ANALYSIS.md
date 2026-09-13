@@ -61,8 +61,6 @@
 
  ### 5. Debug-build bookkeeping (if you measure in debug, this is the blackhole)
 
- - broadcast_inspector_snapshot serializes the whole tree every frame when the inspector is enabled
-   (handler.rs:~940); InspectorOverlay::draw adds a per-frame hover walk.
  - record_paint_element inserts into a thread-local HashSet per drawn element per frame when paint tracking is
    active (scroll content draws — raw_scroll.rs:154), ungated in release.
  - ElementNode::draw → record_draw_traversal, REBUILD_PATH RefCell Vec push per visited node per frame.
@@ -99,7 +97,7 @@ are not inferred from unit-test timings.
 | 2. Generation and focus invalidation | **Confirmed for ordinary unstable roots; mitigated for stable roots** |
 | 3. Captured-path resolution and per-element path allocation | **Allocation claim disproven; sibling-scan claim confirmed** |
 | 4. Nested dispatch boundaries | **Dispatch mechanism confirmed; exact multiplied cost is workload-dependent** |
-| 5. Debug/paint bookkeeping | **Partially confirmed; inspector-hover statement is stale** |
+| 5. Debug/paint bookkeeping | **Partially confirmed** |
 | 6. Minor costs | **Mixed: three confirmed, one disproven** |
 
 ### 1. Routed pointer walk
@@ -218,9 +216,6 @@ needed to assign a numeric multiplier.
 
 The following parts are confirmed:
 
-- `broadcast_inspector_snapshot` is debug-only and, when enabled, snapshots the
-  active tree at the end of a frame
-  ([`handler.rs:965-991`](../aimer_quiver/src/handler.rs#L965)).
 - `record_draw_traversal` is compiled only for debug or `frame-stats`, and
   increments once per drawn `ElementNode`
   ([`element.rs:202-218`](../crates/aimer_widget/src/components/element.rs#L202)
@@ -238,13 +233,10 @@ The following parts are confirmed:
   and
   [`element.rs:462-475`](../crates/aimer_widget/src/components/element.rs#L462)).
 
-The old “InspectorOverlay::draw adds a per-frame hover walk” statement is
-stale. The overlay reads the cached thread-local hover record and paints the
-rectangle directly ([`overlay.rs:7-17`](../crates/aimer_inspector/src/overlay.rs#L7));
-the debug-only recursive lookup is instead `find_hovered_node` after the tree
-snapshot ([`handler.rs:237-263`](../aimer_quiver/src/handler.rs#L237)). Existing
-Instruments data in `PERFORMANCE_REPORT.md` supports `ElementNode::draw` as a
-scroll hot path, but it does not isolate the bookkeeping counters as the cause.
+The former framework inspector snapshot and overlay paths are no longer part of
+the implementation. Existing Instruments data in `PERFORMANCE_REPORT.md`
+supports `ElementNode::draw` as a scroll hot path, but it does not isolate the
+remaining bookkeeping counters as the cause.
 
 ### 6. Minor costs
 
@@ -304,7 +296,6 @@ the cited line anchors remain valid with at most a few lines of drift:
 | flex / stack / grid position-aware hit tests | 1292 / 464 / 714 | 1292 / 464 / 714 ✓ |
 | `MouseRegion` `dispatch_child` forwarding | mouse_region.rs:287-291 | :288 ✓ |
 | default `structural_children` O(k²) union | event_element.rs:301 | :301 ✓ |
-| `broadcast_inspector_snapshot` debug gate | handler.rs:965-991 | :966 ✓ |
 
 Re-run verification, all green:
 
@@ -318,10 +309,9 @@ Re-run verification, all green:
 Conclusion of the second pass: findings 2 and 3 stand as written; finding 1
 stands for *uncaptured* events with the painted-candidate walk (the "whole
 tree" wording remains disproven); finding 4's mechanism is confirmed with the
-multiplier left workload-dependent; finding 5's inspector-hover claim stays
-stale; finding 6 is unchanged. No new measurements were taken, so the CPU
-impact estimates remain hypotheses until an Instruments or frame-stats run on
-the release build.
+multiplier left workload-dependent; finding 6 is unchanged. No new measurements
+were taken, so the CPU impact estimates remain hypotheses until an Instruments
+or frame-stats run on the release build.
 
 ### Optimization Path
 
@@ -587,8 +577,7 @@ Run the showcase under `--release` with `frame-stats` and compare against a
 `debug` run before optimizing further: `record_paint_element` inserts per drawn
 element while scroll paint-tracking is active
 ([`raw_scroll.rs:837-846`](../crates/aimer_scroll/src/scrollable/core/raw_scroll.rs#L837)),
-and the inspector snapshot runs per frame when enabled
-([`handler.rs:965-991`](../crates/aimer_quiver/src/handler.rs#L965)).
+and the removed framework inspector path is no longer part of the comparison.
 
 - **Acceptance:** the frame-stats report names the top draw-phase costs with
   the debug bookkeeping present and absent.

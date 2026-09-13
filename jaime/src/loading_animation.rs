@@ -36,6 +36,7 @@ pub fn loading_animation_example() -> impl Widget {
     let controller = loading_controller();
     let icon =
         Svg::new(loading_icon_document().expect("the bundled loading icon SVG should be valid"))
+            .bounded()
             .width(Dimension::Px(LOADING_ICON_SIZE))
             .height(Dimension::Px(LOADING_ICON_SIZE));
 
@@ -69,6 +70,9 @@ pub fn start_loading_animation_example() {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::sync::OnceLock;
+
     use super::*;
 
     #[test]
@@ -82,5 +86,46 @@ mod tests {
 
         assert!(controller.repeat());
         assert!(controller.is_animating());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn bundled_loading_svg_is_retained_and_bounded() {
+        let inner = Box::leak(Box::new(aimer::canvas::InnerCanvas::new()));
+        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("loading animation test runtime should build")
+        });
+        let _guard = runtime.enter();
+        let mut context = aimer::BuildContext::new(
+            aimer::canvas::Canvas::new(inner),
+            aimer::ResolvedSize {
+                width: LOADING_ICON_SIZE,
+                height: LOADING_ICON_SIZE,
+            },
+            1.0,
+            aimer::Vec2d::default(),
+            aimer::Vec2d::default(),
+            aimer_widget::base::WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+        context.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: LOADING_ICON_SIZE,
+            max_height: LOADING_ICON_SIZE,
+        };
+        let element = Svg::new(loading_icon_document().unwrap())
+            .bounded()
+            .width(Dimension::Px(LOADING_ICON_SIZE))
+            .height(Dimension::Px(LOADING_ICON_SIZE))
+            .to_element(&context);
+
+        assert!(element.is_layout_stable());
+        assert!(element.is_paint_stable());
+        assert!(element.is_paint_bounded());
     }
 }

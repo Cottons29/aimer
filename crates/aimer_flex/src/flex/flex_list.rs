@@ -34,7 +34,7 @@
 
 use std::rc::Rc;
 
-use aimer_attribute::{CacheBounds, Dimension};
+use aimer_attribute::Dimension;
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyElement, Element, Key, Widget};
@@ -420,7 +420,6 @@ where
             layout: Default::default(),
             item_extent: self.item_extent,
             debug_name: debug_name_of(self.direction),
-            cache_bound: CacheBounds::new(),
         }
         .boxed()
     }

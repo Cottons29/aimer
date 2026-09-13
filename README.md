@@ -86,7 +86,6 @@ cd my_aimer && aimer run
     - [x] shell completion
     - [x] project scaffolding
     - [x] auto restart app
-    - [ ] widget inspector `⛔️ Very Unstable`
 - [x] Core widget system
     - [x] `StatefulWidget` / `State` pattern
     - [x] `Element` tree and `BuildContext`
