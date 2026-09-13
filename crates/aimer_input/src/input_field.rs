@@ -1316,7 +1316,8 @@ mod focus_tests {
     use aimer_events::pointer::{PointerButton, PointerInfo};
     use aimer_style::LayoutSpacing;
     use aimer_widget::{
-        AnyElement, Drawable, Element, EventDispatcher, FocusNode, Focusable, VisitorElement,
+        AnyElement, Drawable, Element, EventDispatcher, FocusNode, Focusable, Rebuildable,
+        StatefulElement, VisitorElement,
     };
 
     use super::*;
@@ -1458,6 +1459,54 @@ mod focus_tests {
         assert_eq!(context.offset(), 0);
         assert_eq!(context.geometry().x, 4.0);
         assert!(context.geometry().height > 0.0);
+    }
+
+    #[test]
+    fn appending_text_before_a_rebuild_keeps_the_caret_at_the_new_end() {
+        let controller = TextEditingController::with_text("prefix");
+        let node = FocusNode::new();
+        let append_position = Vec2d { x: 190.0, y: 12.0 };
+        let context = Rc::new(std::cell::RefCell::new(None));
+        let captured = Rc::clone(&context);
+        let widget = TextField::new()
+            .controller(controller.clone())
+            .focus_node(node.clone())
+            .caret(move |caret_context| {
+                *captured.borrow_mut() = Some(caret_context.clone());
+                DefaultCaret::new(caret_context, Colors::default())
+            });
+        let build_context = dummy_build_context(FIELD_WIDTH, FIELD_HEIGHT);
+        let (element, updater) = StatefulElement::new_with_name(
+            widget,
+            &build_context,
+            "TextField",
+            None,
+        );
+        let element = element.boxed();
+        element.draw(&build_context);
+        let mut dispatcher = EventDispatcher::new();
+
+        press(&mut dispatcher, &element, append_position);
+        let _ = dispatcher.dispatch(
+            element.as_ref(),
+            append_position,
+            &ElementEvent::TextInput {
+                text: "S".to_owned(),
+                action: KeyAction::Pressed,
+                modifiers: Modifiers::default(),
+            },
+        );
+        updater.set_state(|_| {});
+        element.rebuild_if_dirty(&build_context);
+        element.draw(&build_context);
+
+        let context = context
+            .borrow()
+            .as_ref()
+            .expect("the caret builder must receive a context")
+            .clone();
+        assert_eq!(controller.selection_graphemes(), (7, 7));
+        assert_eq!(context.offset(), 7);
     }
 
     #[test]

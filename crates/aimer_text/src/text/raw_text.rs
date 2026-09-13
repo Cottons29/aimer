@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::rc::Rc;
 
 #[cfg(debug_assertions)]
 use aimer_attribute::position::Vec2d;
@@ -68,6 +69,43 @@ impl RawTextWidget {
             self.text_style.font_size as f32
         };
         base * scale
+    }
+
+    /// Returns the source-aware interaction layout used by this text widget.
+    ///
+    /// The returned geometry is produced by the same styled shaper and
+    /// paragraph layout that paints the widget. Callers that place carets or
+    /// resolve pointer offsets can therefore retain cluster boundaries,
+    /// fallback-font advances, wrapping, and paragraph style adjustments
+    /// without measuring a second approximation of the text.
+    pub fn interaction_layout(
+        &self,
+        ctx: &BuildContext,
+    ) -> Rc<aimer_cupid::text_layout::TextInteractionLayout> {
+        if self.uses_paragraph_layout() {
+            return self.with_paragraph(|paragraph| {
+                paragraph
+                    .prepare(ctx)
+                    .aimer_interaction
+                    .clone()
+                    .expect("a prepared paragraph always has interaction geometry")
+            });
+        }
+
+        let max_width = matches!(
+            self.text_style.text_overflow,
+            TextOverflow::Wrap | TextOverflow::Ellipsis
+        )
+        .then_some(ctx.parent_size.width)
+        .unwrap_or(0.0);
+        Rc::new(ctx.canvas.layout_text_styled(
+            &self.text,
+            self.font_size(ctx.scale),
+            max_width,
+            self.text_style.font_family,
+            self.text_style.font_style,
+            self.text_style.font_weight.numeric(),
+        ))
     }
 
     fn uses_paragraph_layout(&self) -> bool {
@@ -274,10 +312,7 @@ impl Drawable for RawTextWidget {
         let font_size = self.font_size(ctx.scale);
         let width = ctx.parent_size.width;
         let height = ctx.parent_size.height;
-        let max_width = if matches!(
-            self.text_style.text_overflow,
-            TextOverflow::Clip | TextOverflow::Wrap
-        ) {
+        let max_width = if self.text_style.text_overflow == TextOverflow::Wrap {
             width
         } else {
             0.0
@@ -333,7 +368,7 @@ impl Drawable for RawTextWidget {
                     color,
                     width,
                     height,
-                    TextOverflowMode::Wrap,
+                    TextOverflowMode::Clip,
                     horizontal_align,
                     self.text_style.font_family,
                     self.text_style.font_style,

@@ -82,6 +82,26 @@ impl SelectionParticipant {
         self.slot.stamp();
     }
 
+    /// Records source-aware shaped geometry for selection hit-testing.
+    ///
+    /// The layout must use the same source byte offsets as the text passed to
+    /// [`Self::set_text`]. `transform` maps its local coordinates into the
+    /// device-space canvas used by the last paint, and `scale` converts that
+    /// device space to the logical coordinates used by pointer events.
+    pub fn set_interaction_geometry(
+        &self,
+        bounds: Bounds,
+        layout: Rc<aimer_cupid::text_layout::TextInteractionLayout>,
+        transform: aimer_cupid::utilities::Mat3,
+        scale: f32,
+    ) {
+        self.geometry.bounds.set_bounds(bounds);
+        self.geometry.regions.borrow_mut().clear();
+        self.geometry
+            .set_shared_interaction_layout(Some(layout), transform, scale);
+        self.slot.stamp();
+    }
+
     /// Returns the selected byte range belonging to this participant.
     #[inline]
     pub fn selected_range(&self) -> Option<Range<usize>> {

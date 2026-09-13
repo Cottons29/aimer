@@ -145,6 +145,25 @@ impl RawTextField {
     /// reports inside `preedit`: an empty range is the composition caret, while
     /// a non-empty one marks the clause being edited and is underlined twice as
     /// thick so long Japanese or Korean compositions show which part is active.
+    fn preedit_layout(
+        &self,
+        content_ctx: &BuildContext,
+        preedit: &str,
+    ) -> Rc<aimer_cupid::text_layout::TextInteractionLayout> {
+        let mut style = self.field_text_style();
+        style.text_overflow = TextOverflow::Clip;
+        let widget = self.build_text_widget(preedit, &style, TextAlign::TopLeft);
+        widget.interaction_layout(content_ctx)
+    }
+
+    /// Measures the provisional text with the exact shaper used to paint it.
+    fn preedit_width(&self, content_ctx: &BuildContext, preedit: &str) -> f32 {
+        let (preedit, _) = presentation_preedit(self.input_type, preedit, None);
+        self.preedit_layout(content_ctx, preedit.as_ref())
+            .metrics
+            .width
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn draw_preedit(
         &self,
@@ -154,19 +173,22 @@ impl RawTextField {
         top: f32,
         height: f32,
         content_ctx: &BuildContext,
-        font_size: f32,
+        _font_size: f32,
         scale: f32,
     ) {
         let (preedit, cursor) = presentation_preedit(self.input_type, preedit, cursor);
         let preedit = preedit.as_ref();
         let canvas = &content_ctx.canvas;
-        let width = canvas.measure_text(preedit, font_size);
+        let layout = self.preedit_layout(content_ctx, preedit);
+        let width = layout.metrics.width;
+        let mut style = self.field_text_style();
+        style.text_overflow = TextOverflow::Clip;
 
         canvas.save();
         canvas.translate((origin_x, top).into());
         let mut preedit_ctx = content_ctx.clone();
         preedit_ctx.parent_size = ResolvedSize { width, height };
-        let preedit_widget = self.build_text_widget(preedit, &self.text_style, self.text_align);
+        let preedit_widget = self.build_text_widget(preedit, &style, TextAlign::TopLeft);
         preedit_widget.draw(&preedit_ctx);
         canvas.restore();
 
@@ -187,23 +209,27 @@ impl RawTextField {
         };
         let start = floor_char_boundary(preedit, start);
         let end = floor_char_boundary(preedit, end.max(start));
-        let start_x = origin_x + canvas.measure_text(&preedit[..start], font_size);
 
         if end > start {
-            let end_x = origin_x + canvas.measure_text(&preedit[..end], font_size);
-            canvas.fill_color_rect(
-                (start_x, underline_y - scale).into(),
-                ResolvedSize {
-                    width: end_x - start_x,
-                    height: 2.0 * scale,
-                },
-                color,
-                [0.0; 4],
-            );
+            for rect in layout.selection_rects(start..end) {
+                canvas.fill_color_rect(
+                    (origin_x + rect.x, underline_y - scale).into(),
+                    ResolvedSize {
+                        width: rect.width,
+                        height: 2.0 * scale,
+                    },
+                    color,
+                    [0.0; 4],
+                );
+            }
         } else {
             // The caret inside a composition is the field's caret, sized on
             // the same line the composition is drawn on. The retained caret
             // widget paints it after this preedit has been drawn.
+            let start_x = origin_x
+                + layout
+                    .caret_geometry(start)
+                    .map_or(width, |caret| caret.x);
             let (caret_top, caret_height) = caret_band(top, height);
             self.publish_composition_caret(
                 start_x,

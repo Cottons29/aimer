@@ -6,6 +6,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use aimer_animation::AnimInstant;
 use aimer_attribute::CacheBounds;
 use aimer_attribute::position::Vec2d;
@@ -15,7 +17,7 @@ use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_events::pointer::PointerButton;
 use aimer_events::text_editing::TextEditingDelta;
 use aimer_events::window::get_window;
-use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
+use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextOverflow, TextStyle};
 use aimer_text::{RawTextWidget, SelectionParticipant, TextSource};
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{
@@ -28,8 +30,8 @@ use crate::input_field::caret::{
 };
 use crate::input_field::context_menu::{FieldAction, HoldOutcome, TouchHold};
 use crate::editable_text::{
-    ControllerAttachment, EditableGeometry, EditableGeometryCache, EditableGeometryKey,
-    adapt_native_delta,
+    ControllerAttachment, DisplayText, EditableGeometry, EditableGeometryCache,
+    EditableGeometryKey, adapt_native_delta,
     vertical_target, wrap_visual_lines,
 };
 use crate::{TextEditingController, TextEditingValue};

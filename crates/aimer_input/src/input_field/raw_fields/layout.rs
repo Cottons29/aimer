@@ -20,11 +20,13 @@ impl LayoutElement for RawTextField {
     }
 }
 
-/// Publishes the field's painted grapheme boxes to the shared selection area.
+/// Publishes the same source-aware layout used to paint the field to the
+/// shared selection session.
 ///
-/// The editor keeps grapheme offsets for editing, while `SelectionArea` uses
-/// byte ranges so it can join arbitrary text participants. The conversion is
-/// done at this seam and the two models otherwise remain independent.
+/// Ordinary fields can install the immutable interaction layout directly. A
+/// secure field or an active preedit changes the displayed source text, so it
+/// uses regions derived from the canonical clusters and maps each region back
+/// to the controller's byte range.
 fn publish_selection_geometry(
     field: &RawTextField,
     canvas: &aimer_canvas::Canvas,
@@ -37,55 +39,107 @@ fn publish_selection_geometry(
     scale: f32,
     content_width: f32,
     content_height: f32,
-    font_size: f32,
-    line_height: f32,
+    scroll_x: f32,
     base_y: f32,
     scroll_y: f32,
 ) {
-    let selection_state = field.selection.borrow();
-    let Some(selection) = selection_state.as_ref() else {
+    let selection = field.selection.borrow().as_ref().cloned();
+    let Some(selection) = selection else {
         return;
     };
-    let scale = if scale > 0.0 { scale } else { 1.0 };
-    let mut regions = Vec::new();
-    for (line_idx, line) in geometry.visual_lines.iter().enumerate() {
-        let line_y = base_y + line_idx as f32 * line_height - scroll_y;
-        if line_y + line_height <= 0.0 || line_y >= content_height {
-            continue;
-        }
-        let text = &geometry.display[line.byte_start..line.byte_end];
-        let line_x = field.align_x(line.width, content_width);
-        let mut x = line_x;
-        for (index, grapheme) in unicode_segmentation::UnicodeSegmentation::graphemes(
-            text, true,
-        )
-        .enumerate()
-        {
-            let width = canvas.measure_text(grapheme, font_size);
-            let start = line.grapheme_start + index;
-            let end = start + 1;
-            regions.push(aimer_text::SelectionRegion::new(
-                grapheme_byte_offset(source_text, start)..grapheme_byte_offset(source_text, end),
-                aimer_attribute::Bounds::new(
-                    (abs_x + pad_left + x) / scale,
-                    (abs_y + pad_top + line_y) / scale,
-                    width.max(0.0) / scale,
-                    line_height / scale,
-                ),
-            ));
-            x += width;
-        }
-    }
-    selection.set_text(Rc::from(source_text));
-    selection.set_geometry(
-        aimer_attribute::Bounds::new(
-            (abs_x + pad_left) / scale,
-            (abs_y + pad_top) / scale,
-            content_width / scale,
-            content_height / scale,
-        ),
-        regions,
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    let bounds = aimer_attribute::Bounds::new(
+        (abs_x + pad_left) / scale,
+        (abs_y + pad_top) / scale,
+        content_width / scale,
+        content_height / scale,
     );
+    selection.set_text(Rc::from(source_text));
+
+    let Some(layout) = geometry.interaction.as_ref() else {
+        selection.set_geometry(bounds, std::iter::empty());
+        return;
+    };
+
+    // The transform is captured in the same canvas state used by the text
+    // widget below. This keeps selection handles and hit testing correct when
+    // a field is nested below a translated or scaled ancestor.
+    canvas.save();
+    canvas.translate((-scroll_x, base_y - scroll_y).into());
+    let transform = canvas.get_transform();
+    canvas.restore();
+
+    if geometry.display.as_ref() == source_text && layout.text == source_text {
+        selection.set_interaction_geometry(
+            bounds,
+            Rc::clone(layout),
+            transform,
+            scale,
+        );
+        return;
+    }
+
+    let mut regions = Vec::new();
+    for cluster in &layout.clusters {
+        let Some(source_range) = geometry.source_range_for_display_bytes(&cluster.text_range)
+        else {
+            continue;
+        };
+        let left = cluster.start_x.min(cluster.end_x);
+        let right = cluster.start_x.max(cluster.end_x);
+        let is_hard_break = layout
+            .text
+            .get(cluster.text_range.clone())
+            .is_some_and(|text| text == "\n" || text == "\r\n");
+        let width = if is_hard_break {
+            1.0
+        } else {
+            (right - left).max(0.0)
+        };
+        regions.push(aimer_text::SelectionRegion::new(
+            source_range,
+            transformed_bounds(&transform, left, cluster.y, width, cluster.height, scale),
+        ));
+    }
+    selection.set_geometry(bounds, regions);
+}
+
+fn transformed_bounds(
+    transform: &aimer_cupid::utilities::Mat3,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    scale: f32,
+) -> aimer_attribute::Bounds {
+    let points = [
+        transform.transform_point(x, y),
+        transform.transform_point(x + width, y),
+        transform.transform_point(x, y + height),
+        transform.transform_point(x + width, y + height),
+    ];
+    let (min_x, max_x) = points
+        .iter()
+        .map(|point| point.0)
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), value| {
+            (min.min(value), max.max(value))
+        });
+    let (min_y, max_y) = points
+        .iter()
+        .map(|point| point.1)
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), value| {
+            (min.min(value), max.max(value))
+        });
+    aimer_attribute::Bounds::new(
+        min_x / scale,
+        min_y / scale,
+        (max_x - min_x) / scale,
+        (max_y - min_y) / scale,
+    )
 }
 
 impl Drawable for RawTextField {
@@ -204,78 +258,42 @@ impl Drawable for RawTextField {
         let is_empty = text.is_empty();
         let font_size = self.scaled_font_size(&self.text_style, scale);
 
-        let geometry = self.editable_geometry(&ctx.canvas, font_size, content_width);
-        let line_height = ctx.canvas.measure_text_metrics("", font_size, 0.0).line_height;
+        let geometry = self.editable_geometry(ctx, content_width);
+        let line_height = geometry
+            .interaction
+            .as_ref()
+            .map(|layout| layout.metrics.line_height)
+            .filter(|height| height.is_finite() && *height > 0.0)
+            .unwrap_or_else(|| {
+                let style = self.field_text_style();
+                ctx.canvas
+                    .measure_text_metrics_styled(
+                        "",
+                        font_size,
+                        0.0,
+                        style.font_family,
+                        style.font_style,
+                        style.font_weight.numeric(),
+                    )
+                    .line_height
+            });
         let total_height = geometry.visual_lines.len() as f32 * line_height;
         let base_y = vertical_block_offset(self.text_align, content_height, total_height);
-        publish_selection_geometry(
-            self,
-            &ctx.canvas,
-            &geometry,
-            &text,
-            abs_x,
-            abs_y,
-            pad_left,
-            pad_top,
-            scale,
-            content_width,
-            content_height,
-            font_size,
-            line_height,
-            base_y,
-            self.scroll_y.get(),
-        );
+        let is_multiline = self.max_lines != Some(1);
 
         // --- Process pending click (deferred from on_event for canvas access) ---
         if let Some(click_pos) = self.pending_click.take() {
-            let geometry = self.editable_geometry(&ctx.canvas, font_size, content_width);
-            let display_for_measure = geometry.display.as_ref();
-            let click_canvas_x = click_pos.x * scale;
-            let (hit_text, hit_start, hit_end, text_x, scroll_x) = if self.max_lines != Some(1) {
-                let metrics = ctx.canvas.measure_text_metrics("", font_size, 0.0);
-                let line_height = metrics.line_height;
-                let total_height = geometry.visual_lines.len() as f32 * line_height;
-                let base_y = vertical_block_offset(self.text_align, content_height, total_height);
-                let click_canvas_y = click_pos.y * scale;
-                let hit_y = click_canvas_y - abs_y - pad_top + self.scroll_y.get() - base_y;
-                let line_index = if line_height > 0.0 {
-                    (hit_y.max(0.0) / line_height) as usize
+            let click_x = click_pos.x * scale - abs_x - pad_left
+                + if is_multiline { 0.0 } else { self.scroll_x.get() };
+            let click_y = click_pos.y * scale - abs_y - pad_top - base_y
+                + if is_multiline {
+                    self.scroll_y.get()
                 } else {
-                    0
-                }
-                .min(geometry.visual_lines.len().saturating_sub(1));
-                let line = &geometry.visual_lines[line_index];
-                (
-                    &display_for_measure[line.byte_start..line.byte_end],
-                    line.grapheme_start,
-                    line.grapheme_end,
-                    self.align_x(line.width, content_width),
-                    0.0,
-                )
-            } else {
-                (
-                    display_for_measure,
-                    0,
-                    grapheme_count(display_for_measure),
-                    self.align_x(geometry.text_width, content_width),
-                    self.scroll_x.get(),
-                )
-            };
-            let rel_x = click_canvas_x - abs_x - pad_left - text_x + scroll_x;
-            let mut click_offset = hit_end;
-            let mut acc_width = 0.0f32;
-            for (index, grapheme) in unicode_segmentation::UnicodeSegmentation::graphemes(
-                hit_text, true,
-            )
-            .enumerate()
-            {
-                let grapheme_width = ctx.canvas.measure_text(grapheme, font_size);
-                if rel_x <= acc_width + grapheme_width / 2.0 {
-                    click_offset = hit_start + index;
-                    break;
-                }
-                acc_width += grapheme_width;
-            }
+                    0.0
+                };
+            let click_offset = geometry
+                .hit_test(click_x, click_y)
+                .unwrap_or_else(|| geometry.display.graphemes(true).count());
 
             // Apply double/triple-click selection
             let click_count = self.click_count.get();
@@ -346,11 +364,28 @@ impl Drawable for RawTextField {
         let content_origin = (abs_x + pad_left, abs_y + pad_top);
 
         if is_empty {
+            self.scroll_x.set(0.0);
             if self.max_lines != Some(1) {
                 self.scroll_y.set(0.0);
                 self.scroll_y_extent.set(0.0);
                 self.reveal_caret.set(false);
             }
+            publish_selection_geometry(
+                self,
+                &ctx.canvas,
+                &geometry,
+                &text,
+                abs_x,
+                abs_y,
+                pad_left,
+                pad_top,
+                scale,
+                content_width,
+                content_height,
+                0.0,
+                base_y,
+                0.0,
+            );
             // --- Draw prompt (visible when field is empty and not composing) ---
             if self.placeholder_visible() {
                 if !self.prompt.is_empty() {
@@ -366,9 +401,11 @@ impl Drawable for RawTextField {
 
             // --- Draw cursor / composition when field is empty but focused ---
             if self.is_focused() {
-                let cursor_x = self.align_x(0.0, content_width);
-                let line_height = ctx.canvas.measure_text_metrics("", font_size, 0.0).line_height;
-                let line_y = vertical_block_offset(self.text_align, content_height, line_height);
+                let caret = geometry
+                    .caret_geometry(self.cursor.offset())
+                    .expect("an empty interaction layout always has a caret");
+                let cursor_x = caret.x;
+                let line_y = base_y + caret.y;
                 let (cursor_top, cursor_height) = caret_band(line_y, line_height);
 
                 self.publish_ime_caret(
@@ -397,32 +434,22 @@ impl Drawable for RawTextField {
             }
         } else {
             // --- Draw text ---
-            let geometry = self.editable_geometry(&ctx.canvas, font_size, content_width);
             let display = geometry.display.as_ref();
 
             let is_multiline = self.max_lines != Some(1);
 
             if is_multiline {
                 // --- Multi-line rendering ---
-                let line_metrics = ctx.canvas.measure_text_metrics("", font_size, 0.0);
-                let line_height = line_metrics.line_height;
-                let total_text_height = geometry.visual_lines.len() as f32 * line_height;
+                let line_count = geometry.visual_lines.len().max(1);
+                let total_text_height = line_count as f32 * line_height;
                 let scroll_extent = vertical_scroll_extent(
-                    geometry.visual_lines.len(),
+                    line_count,
                     line_height,
                     content_height,
                 );
                 self.scroll_y_extent.set(scroll_extent);
 
-                let cursor_offset = self.cursor.offset();
-                let cursor_line = geometry
-                    .visual_lines
-                    .iter()
-                    .rposition(|line| {
-                        cursor_offset >= line.grapheme_start
-                            && cursor_offset <= line.grapheme_end
-                    })
-                    .unwrap_or_else(|| geometry.visual_lines.len().saturating_sub(1));
+                let cursor_line = geometry.line_for_offset(self.cursor.offset());
                 let mut scroll = self.scroll_y.get().min(scroll_extent);
                 if self.reveal_caret.replace(false) {
                     scroll = scroll_to_reveal_line(
@@ -450,171 +477,151 @@ impl Drawable for RawTextField {
                     scale,
                     content_width,
                     content_height,
-                    font_size,
-                    line_height,
+                    0.0,
                     base_y,
                     scroll,
                 );
 
-                for (line_idx, visual_line) in geometry.visual_lines.iter().enumerate() {
-                    let line_y = base_y + line_idx as f32 * line_height - scroll;
-                    if line_y + line_height <= 0.0 || line_y >= content_height {
-                        continue;
-                    }
-                    let line = &display[visual_line.byte_start..visual_line.byte_end];
-                    let line_x = self.align_x(visual_line.width, content_width);
-
-                    // Draw selection highlight for this line
-                    if let Some((sel_start, sel_end)) = self.cursor.selection_range() {
-                        let line_start = visual_line.grapheme_start;
-                        let line_end = visual_line.grapheme_end;
-
-                        if sel_start < line_end && sel_end > line_start {
-                            let local_start = sel_start.max(line_start) - line_start;
-                            let local_end = sel_end.min(line_end) - line_start;
-                            let hl_x = line_x
-                                + self.text_width_to_offset(
-                                    line,
-                                    local_start,
-                                    &ctx.canvas,
-                                    font_size,
-                                );
-                            let hl_end_x = line_x
-                                + self.text_width_to_offset(
-                                    line,
-                                    local_end,
-                                    &ctx.canvas,
-                                    font_size,
-                                );
-
-                            ctx.canvas.fill_color_rect(
-                                (hl_x, line_y).into(),
-                                ResolvedSize {
-                                    width: hl_end_x - hl_x,
-                                    height: line_height,
-                                },
-                                self.selection_color,
-                                [0.0; 4],
-                            );
+                if let Some((sel_start, sel_end)) = self.cursor.selection_range() {
+                    for rect in geometry.selection_rects(sel_start, sel_end) {
+                        let rect_y = base_y + rect.y - scroll;
+                        if rect_y + rect.height <= 0.0 || rect_y >= content_height {
+                            continue;
                         }
+                        ctx.canvas.fill_color_rect(
+                            (rect.x, rect_y).into(),
+                            ResolvedSize {
+                                width: rect.width,
+                                height: rect.height,
+                            },
+                            self.selection_color,
+                            [0.0; 4],
+                        );
                     }
+                }
 
-                    // Draw line text
-                    ctx.canvas.save();
-                    ctx.canvas.translate((0.0, line_y).into());
-                    let mut line_ctx = content_ctx.clone();
-                    line_ctx.parent_size = ResolvedSize {
-                        width: content_width,
-                        height: line_height,
-                    };
-                    let line_widget =
-                        self.build_text_widget(line, &self.text_style, self.text_align);
-                    line_widget.draw(&line_ctx);
-                    ctx.canvas.restore();
+                // Paint the complete source string with the same shaped
+                // paragraph that produced `geometry`. Per-line slices lose
+                // ligature and bidi context, which is exactly how a caret can
+                // drift away from the glyph it belongs to.
+                let style = self.field_text_style();
+                ctx.canvas.save();
+                ctx.canvas.translate((0.0, base_y - scroll).into());
+                let text_widget = self.build_text_widget(
+                    display,
+                    &style,
+                    self.horizontal_text_align(),
+                );
+                text_widget.draw(&content_ctx);
+                ctx.canvas.restore();
 
-                    // Draw cursor / composition if on this line
-                    if self.is_focused() && line_idx == cursor_line {
-                            let local_off = cursor_offset - visual_line.grapheme_start;
-                            let cursor_x = line_x
-                                + self.text_width_to_offset(
-                                    line,
-                                    local_off,
-                                    &ctx.canvas,
-                                    font_size,
-                                );
-                            let (cursor_top, cursor_height) = caret_band(line_y, line_height);
+                // Draw cursor / composition from the same canonical caret.
+                if self.is_focused() {
+                    let caret = geometry
+                        .caret_geometry(self.cursor.offset())
+                        .expect("a non-empty interaction layout has a caret");
+                    let cursor_x = caret.x;
+                    let line_y = base_y + caret.y - scroll;
+                    let (cursor_top, cursor_height) = caret_band(line_y, line_height);
 
-                            self.publish_ime_caret(
+                    self.publish_ime_caret(
+                        cursor_x,
+                        cursor_top,
+                        cursor_height,
+                        content_origin,
+                        scale,
+                    );
+                    self.publish_caret(
+                        cursor_x,
+                        cursor_top,
+                        1.5 * scale,
+                        cursor_height,
+                        scale,
+                    );
+
+                    // The composition replaces the caret: drawing both would
+                    // blink an insertion bar over the first composing glyph.
+                    if self.is_composing() {
+                        self.with_preedit(|preedit| {
+                            self.draw_preedit(
+                                preedit,
+                                self.preedit_cursor.get(),
                                 cursor_x,
-                                cursor_top,
-                                cursor_height,
-                                content_origin,
+                                line_y,
+                                line_height,
+                                &content_ctx,
+                                font_size,
                                 scale,
                             );
-                            self.publish_caret(
-                                cursor_x,
-                                cursor_top,
-                                1.5 * scale,
-                                cursor_height,
-                                scale,
-                            );
-
-                            // The composition replaces the caret: drawing both
-                            // would blink an insertion bar over the first
-                            // composing glyph.
-                            if self.is_composing() {
-                                self.with_preedit(|preedit| {
-                                    self.draw_preedit(
-                                        preedit,
-                                        self.preedit_cursor.get(),
-                                        cursor_x,
-                                        line_y,
-                                        line_height,
-                                        &content_ctx,
-                                        font_size,
-                                        scale,
-                                    );
-                                });
-                            }
+                        });
                     }
                 }
             } else {
                 // --- Single-line rendering (with horizontal scroll) ---
-                let text_width = geometry.text_width;
-                let text_x = self.align_x(text_width, content_width);
-
-                // The one line this field holds occupies the same band a
-                // multiline field gives its first line: the text is drawn as a
-                // block of one line height, aligned inside the content area.
-                // Selection and caret follow that band rather than the box,
-                // which is as tall as whatever the parent handed the field.
-                let line_height = ctx.canvas.measure_text_metrics("", font_size, 0.0).line_height;
-                let line_y = vertical_block_offset(self.text_align, content_height, line_height);
-
-                // Ensure cursor is visible
-                self.ensure_cursor_visible(content_width, &ctx.canvas, font_size, &geometry);
+                let composition_width = self.with_preedit(|preedit| {
+                    self.preedit_width(&content_ctx, preedit)
+                });
+                self.ensure_cursor_visible(content_width, &geometry, composition_width);
                 let scroll = self.scroll_x.get();
+                let base_y = vertical_block_offset(self.text_align, content_height, line_height);
 
-                // Draw text — RawTextWidget handles alignment via text_align + parent_size.
-                // Apply scroll by translating the canvas so the visible portion aligns.
+                publish_selection_geometry(
+                    self,
+                    &ctx.canvas,
+                    &geometry,
+                    &text,
+                    abs_x,
+                    abs_y,
+                    pad_left,
+                    pad_top,
+                    scale,
+                    content_width,
+                    content_height,
+                    scroll,
+                    base_y,
+                    0.0,
+                );
+
+                if let Some((sel_start, sel_end)) = self.cursor.selection_range() {
+                    for rect in geometry.selection_rects(sel_start, sel_end) {
+                        let rect_x = rect.x - scroll;
+                        let rect_y = base_y + rect.y;
+                        if rect_x + rect.width <= 0.0
+                            || rect_x >= content_width
+                            || rect_y + rect.height <= 0.0
+                            || rect_y >= content_height
+                        {
+                            continue;
+                        }
+                        ctx.canvas.fill_color_rect(
+                            (rect_x, rect_y).into(),
+                            ResolvedSize {
+                                width: rect.width,
+                                height: rect.height,
+                            },
+                            self.selection_color,
+                            [0.0; 4],
+                        );
+                    }
+                }
+
+                let style = self.field_text_style();
                 ctx.canvas.save();
-                ctx.canvas.translate((-scroll, 0.0).into());
-                let text_widget =
-                    self.build_text_widget(display, &self.text_style, self.text_align);
+                ctx.canvas.translate((-scroll, base_y).into());
+                let text_widget = self.build_text_widget(
+                    display,
+                    &style,
+                    self.horizontal_text_align(),
+                );
                 text_widget.draw(&content_ctx);
                 ctx.canvas.restore();
 
-                // --- Draw selection highlight ---
-                if let Some((sel_start, sel_end)) = self.cursor.selection_range()
-                    && sel_start != sel_end
-                {
-                    let highlight_x = text_x - scroll
-                        + geometry.prefix_width(sel_start, |prefix| {
-                            ctx.canvas.measure_text(prefix, font_size)
-                        });
-                    let highlight_end_x = text_x - scroll
-                        + geometry.prefix_width(sel_end, |prefix| {
-                            ctx.canvas.measure_text(prefix, font_size)
-                        });
-                    let highlight_width = highlight_end_x - highlight_x;
-
-                    ctx.canvas.fill_color_rect(
-                        (highlight_x, line_y).into(),
-                        ResolvedSize {
-                            width: highlight_width,
-                            height: line_height,
-                        },
-                        self.selection_color,
-                        [0.0; 4],
-                    );
-                }
-
-                // --- Draw cursor / IME composition ---
                 if self.is_focused() {
-                    let cursor_x = text_x - scroll
-                        + geometry.prefix_width(self.cursor.offset(), |prefix| {
-                            ctx.canvas.measure_text(prefix, font_size)
-                        });
+                    let caret = geometry
+                        .caret_geometry(self.cursor.offset())
+                        .expect("a non-empty interaction layout has a caret");
+                    let cursor_x = caret.x - scroll;
+                    let line_y = base_y + caret.y;
                     let (cursor_top, cursor_height) = caret_band(line_y, line_height);
 
                     self.publish_ime_caret(
@@ -626,8 +633,6 @@ impl Drawable for RawTextField {
                     );
                     self.publish_caret(cursor_x, cursor_top, 1.5 * scale, cursor_height, scale);
 
-                    // The composition replaces the caret: drawing both would
-                    // blink an insertion bar over the first composing glyph.
                     if self.is_composing() {
                         self.with_preedit(|preedit| {
                             self.draw_preedit(
@@ -718,7 +723,7 @@ mod caret_layout_tests {
     //! field is routinely handed the whole remaining height of a column, and a
     //! caret spanning that box is nowhere near its text.
 
-    use aimer_style::TextAlign;
+    use aimer_style::{TextAlign, TextStyle};
     use aimer_widget::Drawable;
 
     use super::test_support::{
@@ -836,6 +841,48 @@ mod caret_layout_tests {
             "caret centered at {center}, expected the middle of a 600 tall box",
         );
         assert_line_tall(height, line);
+    }
+
+    #[test]
+    fn a_caret_includes_the_text_style_letter_spacing() {
+        let mut field = focused_single_line_field(TextFieldController::with_initial("ab"));
+        field.text_style = TextStyle::default().letter_spacing(8.0);
+        field.cursor.set_offset(1);
+        let ctx = dummy_build_context(400.0, 60.0);
+        let font_size = field.scaled_font_size(&field.text_style, ctx.scale);
+        let expected = 4.0 + ctx.canvas.measure_text("a", font_size) + 8.0;
+
+        field.draw(&ctx);
+
+        let caret = field
+            .ime_cursor_area
+            .get()
+            .expect("a focused field publishes its caret");
+        assert!(
+            (caret.x - expected).abs() <= 0.01,
+            "caret is at {}, expected shaped position {}",
+            caret.x,
+            expected,
+        );
+    }
+
+    #[test]
+    fn a_caret_after_a_trailing_newline_moves_to_the_new_line() {
+        let field = focused_multiline_field(TextFieldController::with_initial("hello\n"), 3);
+        let ctx = dummy_build_context(400.0, 200.0);
+        let line = line_height(&field, &ctx);
+
+        field.draw(&ctx);
+
+        let caret = field
+            .ime_cursor_area
+            .get()
+            .expect("a focused field publishes its caret");
+        assert!(
+            caret.y > 4.0 + line,
+            "caret after a trailing newline is at {}, expected the second line",
+            caret.y,
+        );
     }
 }
 

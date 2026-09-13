@@ -850,10 +850,11 @@ impl RawTextField {
         let Some(selection) = selection_state.as_ref() else {
             return;
         };
+        let text = self.controller.text();
+        selection.set_text(Rc::from(text.as_str()));
         if selection.active_pointer().is_some() {
             return;
         }
-        let text = self.controller.text();
         let (anchor, focus) = self.cursor_selection();
         selection.set_range(
             grapheme_byte_offset(&text, anchor),
@@ -1022,32 +1023,6 @@ impl RawTextField {
     }
 
 
-    /// Measure text width up to a given grapheme offset.
-    fn text_width_to_offset(
-        &self,
-        text: &str,
-        offset: usize,
-        canvas: &aimer_canvas::Canvas,
-        font_size: f32,
-    ) -> f32 {
-        let prefix: String = unicode_segmentation::UnicodeSegmentation::graphemes(text, true)
-            .take(offset)
-            .collect();
-        canvas.measure_text(&prefix, font_size)
-    }
-
-    fn align_x(&self, text_width: f32, content_width: f32) -> f32 {
-        match self.text_align {
-            TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => 0.0,
-            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
-                (content_width - text_width) / 2.0
-            }
-            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => {
-                content_width - text_width
-            }
-        }
-    }
-
     fn build_text_widget(
         &'_ self,
         text: &str,
@@ -1128,76 +1103,177 @@ impl RawTextField {
     fn ensure_cursor_visible(
         &self,
         content_width: f32,
-        canvas: &aimer_canvas::Canvas,
-        font_size: f32,
         geometry: &EditableGeometry,
+        composition_width: f32,
     ) {
-        let cursor_x = geometry.prefix_width(self.cursor.offset(), |prefix| {
-            canvas.measure_text(prefix, font_size)
-        });
-        let composition_end = cursor_x
-            + self.with_preedit(|preedit| {
-                if preedit.is_empty() {
-                    0.0
-                } else {
-                    canvas.measure_text(preedit, font_size)
-                }
-            });
-        let scroll = self.scroll_x.get();
+        let cursor_x = geometry
+            .caret_geometry(self.cursor.offset())
+            .map_or(0.0, |caret| caret.x);
+        let composition_end = cursor_x + composition_width.max(0.0);
+        let max_scroll = (geometry.text_width.max(composition_end) - content_width).max(0.0);
+        let scroll = self.scroll_x.get().min(max_scroll);
+        self.scroll_x.set(scroll);
 
         if cursor_x < scroll {
-            self.scroll_x.set(cursor_x.max(0.0));
+            self.scroll_x.set(cursor_x.max(0.0).min(max_scroll));
         } else if composition_end > scroll + content_width {
-            self.scroll_x.set((composition_end - content_width).max(0.0));
+            self.scroll_x
+                .set((composition_end - content_width).max(0.0).min(max_scroll));
+        }
+    }
+
+    /// Builds the text presented to the renderer and preserves its source
+    /// range for every displayed grapheme.
+    ///
+    /// An obscured field shows one bullet per grapheme cluster, so a family
+    /// emoji hides behind a single dot and the bullets stay in step with the
+    /// cursor offsets used for hit testing and caret placement. An active IME
+    /// preedit is omitted from the committed presentation, so the mapping also
+    /// skips that source range rather than shifting all following offsets.
+    fn display_text_with_sources(&self) -> DisplayText {
+        let value = self.controller.value();
+        let source = value.text();
+        let mut display = String::with_capacity(source.len());
+        let mut source_ranges = Vec::new();
+        let obscure = self.input_type.is_obscured();
+        let append = |display: &mut String,
+                      source_ranges: &mut Vec<std::ops::Range<usize>>,
+                      segment: &str,
+                      source_start: usize| {
+            for (offset, grapheme) in segment.grapheme_indices(true) {
+                if obscure {
+                    display.push('\u{2022}');
+                } else {
+                    display.push_str(grapheme);
+                }
+                source_ranges.push(
+                    source_start + offset..source_start + offset + grapheme.len(),
+                );
+            }
+        };
+
+        if let Some(composing) = value.composing() {
+            append(
+                &mut display,
+                &mut source_ranges,
+                &source[..composing.start()],
+                0,
+            );
+            append(
+                &mut display,
+                &mut source_ranges,
+                &source[composing.end()..],
+                composing.end(),
+            );
+        } else {
+            append(&mut display, &mut source_ranges, source, 0);
+        }
+
+        DisplayText {
+            display: Arc::from(display),
+            source_ranges,
         }
     }
 
     /// The text as it is drawn.
-    ///
-    /// An obscured field shows one bullet per grapheme cluster, so a family
-    /// emoji hides behind a single dot and the bullets stay in step with the
-    /// cursor offsets used for hit testing and caret placement.
+    #[inline]
     fn display_text(&self) -> String {
-        let value = self.controller.value();
-        let committed = if let Some(composing) = value.composing() {
-            let mut text = String::with_capacity(
-                value.text().len() - (composing.end() - composing.start()),
-            );
-            text.push_str(&value.text()[..composing.start()]);
-            text.push_str(&value.text()[composing.end()..]);
-            text
+        self.display_text_with_sources().display.as_ref().to_owned()
+    }
+
+    /// Selects the field's effective wrapping behavior. A text area owns line
+    /// wrapping regardless of the general text style's default overflow mode;
+    /// a single-line field keeps one unwrapped line and clips it through the
+    /// field viewport.
+    #[inline]
+    fn wraps_text(&self) -> bool {
+        self.max_lines != Some(1)
+    }
+
+    /// Makes the text style used by the committed field painter. Alignment is
+    /// supplied separately as a horizontal-only value so vertical placement
+    /// remains under the field's scroll/reveal logic.
+    #[inline]
+    fn field_text_style(&self) -> TextStyle {
+        let mut style = self.text_style;
+        style.text_overflow = if self.wraps_text() {
+            TextOverflow::Wrap
         } else {
-            value.text().to_owned()
+            TextOverflow::Clip
         };
-        if self.input_type.is_obscured() {
-            "\u{2022}".repeat(grapheme_count(&committed))
-        } else {
-            committed
+        style
+    }
+
+    /// Returns the horizontal part of the configured field alignment.
+    #[inline]
+    fn horizontal_text_align(&self) -> TextAlign {
+        match self.text_align {
+            TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => TextAlign::TopLeft,
+            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
+                TextAlign::TopCenter
+            }
+            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => {
+                TextAlign::TopRight
+            }
         }
     }
 
     fn editable_geometry(
         &self,
-        canvas: &aimer_canvas::Canvas,
-        font_size: f32,
+        ctx: &BuildContext,
         content_width: f32,
     ) -> Rc<EditableGeometry> {
-        self.geometry_cache.resolve(
+        let font_size = self.scaled_font_size(&self.text_style, ctx.scale);
+        let style = self.field_text_style();
+        let display = self.display_text_with_sources();
+        let language = self.controller.input_language();
+        let wrap = self.wraps_text();
+        let outer_language = ctx.canvas.text_language();
+        ctx.canvas.set_text_language(language);
+        let geometry = self.geometry_cache.resolve(
             EditableGeometryKey {
                 revision: self.controller.revision(),
                 font_size_bits: font_size.to_bits(),
                 width_bits: content_width.to_bits(),
                 obscure: self.input_type.is_obscured(),
+                wrap,
+                font_family: style.font_family,
+                font_style: style.font_style,
+                font_weight: style.font_weight.numeric(),
+                text_transform: style.text_transform,
+                letter_spacing_bits: style.letter_spacing.to_bits(),
+                word_spacing_bits: style.word_spacing.to_bits(),
+                language,
             },
             || {
-                let display: Arc<str> = Arc::from(self.display_text());
-                let text_width = canvas.measure_text(&display, font_size);
-                let visual_lines = wrap_visual_lines(&display, content_width, |grapheme| {
-                    canvas.measure_text(grapheme, font_size)
-                });
-                EditableGeometry::new(display, text_width, visual_lines)
+                let mut layout_ctx = ctx.clone();
+                layout_ctx.parent_size = ResolvedSize {
+                    width: content_width,
+                    height: ctx.parent_size.height,
+                };
+                layout_ctx.box_constraint = aimer_attribute::BoxConstraint {
+                    min_width: 0.0,
+                    min_height: 0.0,
+                    max_width: content_width,
+                    max_height: ctx.box_constraint.max_height,
+                };
+                let text_widget = self.build_text_widget(
+                    display.display.as_ref(),
+                    &style,
+                    TextAlign::TopLeft,
+                );
+                let interaction = text_widget.interaction_layout(&layout_ctx);
+                EditableGeometry::from_interaction(
+                    display.display,
+                    display.source_ranges,
+                    (*interaction).clone(),
+                    content_width,
+                    self.horizontal_text_align(),
+                )
             },
-        )
+        );
+        ctx.canvas.set_text_language(outer_language);
+        geometry
     }
 
     /// Count the number of lines in the text (newlines + 1).
