@@ -163,8 +163,9 @@ impl PaintCache {
         child: &dyn Element,
         key: PaintContract,
         prefer_layer: bool,
+        paint_stable: bool,
     ) -> bool {
-        if !child.is_paint_stable() || !child.is_layout_stable() {
+        if !paint_stable || !child.is_layout_stable() {
             self.clear();
             if !child.is_paint_bounded() {
                 crate::mark_paint_damage_full();
@@ -319,11 +320,12 @@ pub(crate) fn paint_or_replay_scene_node(
     element: &dyn Element,
     key: PaintContract,
     prefer_layer: bool,
+    paint_stable: bool,
 ) -> bool {
     SCENE_PAINT_CACHES.with(|caches| {
         let mut caches = caches.borrow_mut();
         let cache = caches.entry(id.get()).or_default();
-        cache.paint_or_replay(ctx, element, key, prefer_layer)
+        cache.paint_or_replay(ctx, element, key, prefer_layer, paint_stable)
     })
 }
 

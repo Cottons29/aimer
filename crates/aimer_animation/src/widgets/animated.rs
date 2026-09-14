@@ -6,8 +6,9 @@ use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
 use aimer_widget::base::*;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, PaintDamageTracker,
-    Rebuildable, RequiredChild, VisitorElement, Widget,
+    AnyElement, CompositorAnimationDecision, CompositorAnimationFrame, CompositorTransform,
+    Drawable, Element, EventElement, EventResult, LayoutElement, PaintDamageTracker, Rebuildable,
+    RequiredChild, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -87,6 +88,76 @@ impl AnimationEffect {
                 Self::lerp(from, to, t).is_finite()
             }
         }
+    }
+
+    #[inline]
+    fn compositor_frame(
+        self,
+        ctx: &BuildContext,
+        progress: f32,
+        active: bool,
+        clip: Option<ResolvedSize>,
+    ) -> CompositorAnimationFrame {
+        let mut valid = self.sampled_value_is_finite(progress);
+        let mut opacity = None;
+        let transform = match self {
+            Self::Opacity { from, to } => {
+                opacity = Some(Self::lerp(from, to, progress));
+                CompositorTransform::Identity
+            }
+            Self::Scale { from, to } => {
+                let scale = Self::lerp(from, to, progress);
+                let cx = ctx.box_constraint.max_width / 2.0;
+                let cy = ctx.box_constraint.max_height / 2.0;
+                valid &= cx.is_finite() && cy.is_finite();
+                CompositorTransform::Scale {
+                    sx: scale,
+                    sy: scale,
+                    origin_x: cx,
+                    origin_y: cy,
+                }
+            }
+            Self::Translate {
+                from_x,
+                from_y,
+                to_x,
+                to_y,
+            } => CompositorTransform::Translate {
+                x: Self::lerp(from_x, to_x, progress),
+                y: Self::lerp(from_y, to_y, progress),
+            },
+            Self::Rotate { from, to } => {
+                let radians = Self::lerp(from, to, progress);
+                let cx = ctx.box_constraint.max_width / 2.0;
+                let cy = ctx.box_constraint.max_height / 2.0;
+                valid &= cx.is_finite() && cy.is_finite();
+                CompositorTransform::Rotate {
+                    radians,
+                    origin_x: cx,
+                    origin_y: cy,
+                }
+            }
+            Self::SlideX { from, to } => {
+                let offset = Self::lerp(from, to, progress);
+                let x = ctx.box_constraint.max_width * offset;
+                valid &= x.is_finite();
+                CompositorTransform::Translate { x, y: 0.0 }
+            }
+            Self::SlideY { from, to } => {
+                let offset = Self::lerp(from, to, progress);
+                let y = ctx.box_constraint.max_height * offset;
+                valid &= y.is_finite();
+                CompositorTransform::Translate { x: 0.0, y }
+            }
+        };
+        valid &= clip.is_none_or(|size| {
+            size.width.is_finite()
+                && size.height.is_finite()
+                && size.width >= 0.0
+                && size.height >= 0.0
+        });
+
+        CompositorAnimationFrame::new(progress, transform, opacity, clip, active, valid)
     }
 }
 
@@ -189,101 +260,99 @@ unsafe impl Sync for AnimatedElement {}
 
 impl Drawable for AnimatedElement {
     fn draw(&self, ctx: &BuildContext) {
+        self.draw_frame(ctx, self.sample_frame(ctx));
+    }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        self.child.paint(ctx);
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.child.sync_paint_geometry(ctx);
+    }
+
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        self.child.is_paint_bounded()
+    }
+
+    #[inline]
+    fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
+        if !self.child.is_paint_stable()
+            || !self.child.is_layout_stable()
+            || !self.child.is_paint_bounded()
+        {
+            return CompositorAnimationDecision::None;
+        }
+
+        let frame = self.sample_frame(ctx);
+        if frame.valid {
+            CompositorAnimationDecision::Compositor(frame)
+        } else {
+            CompositorAnimationDecision::Live(frame)
+        }
+    }
+
+    #[inline]
+    fn draw_with_compositor_animation(
+        &self,
+        ctx: &BuildContext,
+        frame: CompositorAnimationFrame,
+    ) {
+        self.draw_frame(ctx, frame);
+    }
+
+    #[inline]
+    fn update_compositor_animation_damage(
+        &self,
+        ctx: &BuildContext,
+        frame: CompositorAnimationFrame,
+    ) {
+        self.update_damage(ctx, frame);
+    }
+}
+
+impl AnimatedElement {
+    #[inline]
+    fn sample_frame(&self, ctx: &BuildContext) -> CompositorAnimationFrame {
         let now = AnimInstant::now();
-        let curved_value = {
-            let v = self.controller.tick(now);
-            self.animating.set(self.controller.is_animating());
-            v
-        };
+        let progress = self.controller.tick(now);
+        let active = self.controller.is_animating();
+        self.animating.set(active);
+        self.effect
+            .compositor_frame(ctx, progress, active, Some(self.child.computed_size(ctx)))
+    }
 
-        ctx.canvas.save();
-
-        // Clip to the widget's bounds so content outside (e.g. sliding in) is hidden
-        self.clip_to_bounds(ctx);
-
-        self.apply_effect(ctx, curved_value);
-        let visual_changed = crate::widgets::damage::sample_changed(&self.last_value, curved_value);
-        if self.effect.sampled_value_is_finite(curved_value) {
+    #[inline]
+    fn update_damage(&self, ctx: &BuildContext, frame: CompositorAnimationFrame) {
+        if frame.valid {
+            let visual_changed =
+                crate::widgets::damage::sample_changed(&self.last_value, frame.progress);
             crate::widgets::damage::mark_bounded_animation_damage(
                 &self.damage,
                 ctx,
                 self.child.as_ref(),
-                curved_value,
+                frame.progress,
                 visual_changed,
             );
         } else {
             self.damage.mark_full();
         }
-        self.child.draw(ctx);
+    }
 
-        ctx.canvas.clear_clip();
+    #[inline]
+    fn draw_frame(&self, ctx: &BuildContext, frame: CompositorAnimationFrame) {
+        ctx.canvas.save();
+        frame.apply(ctx);
+        self.update_damage(ctx, frame);
+        self.child.draw(ctx);
+        frame.clear(ctx);
         ctx.canvas.restore();
 
-        // Request another frame if still animating
-        if self.animating.get() {
-            request_animation_frame()
-        }
-    }
-}
-
-impl AnimatedElement {
-    /// Clip drawing to the child's computed size so that content
-    /// outside (e.g. a child sliding in from off-screen) stays hidden.
-    fn clip_to_bounds(&self, ctx: &BuildContext) {
-        let child_size = self.child.computed_size(ctx);
-        let w = child_size.width;
-        let h = child_size.height;
-        ctx.canvas.set_clip(
-            (0.0, 0.0).into(),
-            ResolvedSize {
-                width: w,
-                height: h,
-            },
-        );
-    }
-
-    fn apply_effect(&self, ctx: &BuildContext, t: f32) {
-        match self.effect {
-            AnimationEffect::Opacity { from, to } => {
-                let alpha = AnimationEffect::lerp(from, to, t);
-                ctx.canvas.set_alpha(alpha);
-            }
-            AnimationEffect::Scale { from, to } => {
-                let scale = AnimationEffect::lerp(from, to, t);
-                let cx = ctx.box_constraint.max_width / 2.0;
-                let cy = ctx.box_constraint.max_height / 2.0;
-                ctx.canvas.translate((cx, cy).into());
-                ctx.canvas.scale(scale, scale);
-                ctx.canvas.translate((-cx, -cy).into());
-            }
-            AnimationEffect::Translate {
-                from_x,
-                from_y,
-                to_x,
-                to_y,
-            } => {
-                let dx = AnimationEffect::lerp(from_x, to_x, t);
-                let dy = AnimationEffect::lerp(from_y, to_y, t);
-                ctx.canvas.translate((dx, dy).into());
-            }
-            AnimationEffect::Rotate { from, to } => {
-                let angle = AnimationEffect::lerp(from, to, t);
-                let cx = ctx.box_constraint.max_width / 2.0;
-                let cy = ctx.box_constraint.max_height / 2.0;
-                ctx.canvas.translate((cx, cy).into());
-                ctx.canvas.rotate(angle);
-                ctx.canvas.translate((-cx, -cy).into());
-            }
-            AnimationEffect::SlideX { from, to } => {
-                let offset = AnimationEffect::lerp(from, to, t);
-                let dx = ctx.box_constraint.max_width * offset;
-                ctx.canvas.translate((dx, 0.0).into());
-            }
-            AnimationEffect::SlideY { from, to } => {
-                let offset = AnimationEffect::lerp(from, to, t);
-                let dy = ctx.box_constraint.max_height * offset;
-                ctx.canvas.translate((0.0, dy).into());
-            }
+        if frame.active {
+            request_animation_frame();
         }
     }
 }
@@ -333,5 +402,10 @@ impl LayoutElement for AnimatedElement {
 
     fn invalidate_layout(&self) {
         self.child.invalidate_layout();
+    }
+
+    #[inline]
+    fn is_layout_stable(&self) -> bool {
+        self.child.is_layout_stable()
     }
 }

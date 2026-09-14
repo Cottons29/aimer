@@ -92,7 +92,10 @@ pub use crate::components::diagnostics::{
     ErrorElement, ErrorWidget, OverflowEdges, OverflowIndicator, detect_overflow,
     paint_overflow_indicator,
 };
-pub use crate::components::drawable::Drawable;
+#[doc(hidden)]
+pub use crate::components::drawable::{
+    CompositorAnimationDecision, CompositorAnimationFrame, CompositorTransform, Drawable,
+};
 pub use crate::components::element::{
     Element, ElementId, ElementPath, EventDispatchContext, EventDispatcher, begin_event_frame,
     begin_paint_frame, element_tree_generation, layout_invalidation_generation,

@@ -246,6 +246,7 @@ pub(crate) struct RawTextFieldWidget {
     caret_context: CaretContext,
     caret_slot: Rc<CaretSlot>,
     focus_node: FocusNode,
+    caret_scope: Option<ScopeId>,
 }
 
 impl RawTextFieldWidget {
@@ -258,6 +259,7 @@ impl RawTextFieldWidget {
         caret_context: CaretContext,
         caret_slot: Rc<CaretSlot>,
         focus_node: FocusNode,
+        caret_scope: Option<ScopeId>,
     ) -> Self {
         Self {
             config,
@@ -265,6 +267,7 @@ impl RawTextFieldWidget {
             caret_context,
             caret_slot,
             focus_node,
+            caret_scope,
         }
     }
 }
@@ -288,6 +291,7 @@ impl Widget for RawTextFieldWidget {
             self.caret_context,
             self.focus_node,
             selection,
+            self.caret_scope,
         );
 
         RawTextFieldHost::new(field, caret).boxed()
@@ -377,6 +381,8 @@ pub(crate) struct RawTextField {
     pub padding: LayoutSpacing,
     /// Shared presentation state consumed by the retained caret child.
     pub(crate) caret_context: CaretContext,
+    /// Scope used to wake the next native caret visibility transition.
+    pub(crate) caret_scope: Option<ScopeId>,
     /// Physical canvas offset from the field origin to its text content.
     pub(crate) caret_origin: Cell<(f32, f32)>,
     /// The open clipboard menu, or `None` while none is showing.
@@ -510,7 +516,7 @@ impl RawTextField {
         focus_node: FocusNode,
     ) -> Self {
         let caret_context = CaretContext::new(caret.clone());
-        Self::with_caret_context(config, caret, caret_context, focus_node, None)
+        Self::with_caret_context(config, caret, caret_context, focus_node, None, None)
     }
 
     /// Builds a field using presentation state owned by its mounted widget.
@@ -523,6 +529,7 @@ impl RawTextField {
         caret_context: CaretContext,
         focus_node: FocusNode,
         selection: Option<SelectionParticipant>,
+        caret_scope: Option<ScopeId>,
     ) -> Self {
         let controller_attachment = config
             .controller
@@ -583,6 +590,7 @@ impl RawTextField {
             ime_cursor_area: Cell::new(None),
             padding: config.padding,
             caret_context,
+            caret_scope,
             caret_origin: Cell::new((0.0, 0.0)),
             menu: RefCell::new(None),
             menu_shape: Cell::new(None),
@@ -692,6 +700,7 @@ impl RawTextField {
             self.enable_platform_ime();
             return;
         }
+        self.cursor.blink().cancel_scheduled_toggle();
         if was_focused {
             self.clear_preedit();
         }

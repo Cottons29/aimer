@@ -10,6 +10,8 @@ use aimer_cupid::compositor::{SceneNodeDescriptor, SceneNodeId, SceneRevision};
 use aimer_cupid::damage_region::{DamageRect, DamageSet};
 use aimer_cupid::utilities::Rect;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+use aimer_events::window::request_animation_frame;
 use aimer_focus::{FocusCandidate, FocusCandidates, FocusManager, FocusNode, FocusTrapId};
 use aimer_rubick::ErasedFrom;
 use smallvec::SmallVec;
@@ -23,6 +25,7 @@ use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 pub(crate) use crate::components::visitor_element::VisitorElement;
 use crate::pointer_claim;
+use crate::components::drawable::{CompositorAnimationDecision, CompositorAnimationFrame};
 use crate::{AnyElement, Drawable, Key};
 
 type EventChildren<'a> = SmallVec<[&'a dyn Element; 32]>;
@@ -87,6 +90,8 @@ thread_local! {
     static DRAW_TRAVERSAL_COUNT: Cell<u64> = const { Cell::new(0) };
     #[cfg(any(debug_assertions, feature = "frame-stats"))]
     static ROUTED_EVENT_VISIT_COUNT: Cell<u64> = const { Cell::new(0) };
+    #[cfg(test)]
+    static HOVER_MEMBERSHIP_CHECK_COUNT: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Starts a new event-dispatch frame on the current UI thread.
@@ -295,6 +300,22 @@ fn record_routed_event_visit() {
     crate::frame_work_stats::record_hit_test_visit();
     #[cfg(any(debug_assertions, feature = "frame-stats"))]
     ROUTED_EVENT_VISIT_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+}
+
+#[inline]
+fn record_hover_membership_check() {
+    #[cfg(test)]
+    HOVER_MEMBERSHIP_CHECK_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+}
+
+#[cfg(test)]
+fn reset_hover_membership_check_count() {
+    HOVER_MEMBERSHIP_CHECK_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn take_hover_membership_check_count() -> u64 {
+    HOVER_MEMBERSHIP_CHECK_COUNT.with(Cell::get)
 }
 
 #[cfg(any(debug_assertions, feature = "frame-stats"))]
@@ -585,6 +606,88 @@ impl Drop for RebuildDescendGuard {
 struct ElementNode<E> {
     id: Cell<ElementId>,
     element: E,
+}
+
+impl<E: Element + 'static> ElementNode<E> {
+    #[inline]
+    fn draw_live(&self, ctx: &BuildContext, frame: Option<CompositorAnimationFrame>) {
+        let before = element_tree_generation();
+        if let Some(frame) = frame {
+            self.element.draw_with_compositor_animation(ctx, frame);
+        } else {
+            self.element.draw(ctx);
+        }
+        let after = element_tree_generation();
+        if after != before {
+            self.set_subtree_generation(after);
+        }
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+    fn draw_compositor_animation(&self, ctx: &BuildContext, frame: CompositorAnimationFrame) {
+        let bounds = self.element.content_size(ctx);
+        let priority = self.element.compositor_priority();
+        let descriptor = SceneNodeDescriptor {
+            id: SceneNodeId::from_raw(self.id.get().get()),
+            bounds: Rect::new(0.0, 0.0, bounds.width, bounds.height),
+            order: self.element.layer(),
+            revision: SceneRevision::new(
+                self.subtree_generation(),
+                paint_element_was_invalidated(self.id.get())
+                    .then_some(rebuild_invalidation_generation())
+                    .unwrap_or(0),
+                layout_invalidation_generation(),
+                ctx.canvas.texture_cache_epoch(),
+            ),
+            // The provider has proved that its static paint is safe to retain;
+            // the animation itself is represented by the scene state captured
+            // after `frame.apply` below.
+            cache_eligible: true,
+            bounded: true,
+            priority,
+        };
+
+        ctx.canvas.save();
+        frame.apply(ctx);
+        let scene_node = ctx.canvas.begin_scene_node(descriptor);
+        self.element.sync_paint_geometry(ctx);
+
+        let retained = if let Some(key) = crate::paint_isolated::PaintContract::new(
+            ctx,
+            bounds,
+            self.subtree_generation(),
+        ) {
+            crate::paint_isolated::paint_or_replay_scene_node(
+                self.id.get(),
+                ctx,
+                &self.element,
+                key,
+                priority,
+                true,
+            )
+        } else {
+            false
+        };
+
+        if retained {
+            self.element.update_compositor_animation_damage(ctx, frame);
+        }
+
+        drop(scene_node);
+        frame.clear(ctx);
+        ctx.canvas.restore();
+
+        if retained {
+            if frame.active {
+                request_animation_frame();
+            }
+        } else {
+            // The retained recorder can reject a command stream or be
+            // invalidated by an unknown paint source. Replay the same sample
+            // on the live path so the controller is not ticked twice.
+            self.draw_live(ctx, Some(frame));
+        }
+    }
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
@@ -951,6 +1054,22 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
         let priority = self.element.compositor_priority();
         let stable = self.element.is_paint_stable() && self.element.is_layout_stable();
         let bounded = self.element.is_paint_bounded();
+
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+        if !stable && bounded {
+            match self.element.compositor_animation(ctx) {
+                CompositorAnimationDecision::Compositor(frame) => {
+                    self.draw_compositor_animation(ctx, frame);
+                    return;
+                }
+                CompositorAnimationDecision::Live(frame) => {
+                    self.draw_live(ctx, Some(frame));
+                    return;
+                }
+                CompositorAnimationDecision::None => {}
+            }
+        }
+
         let _scene_node = if (stable && bounded) || priority {
             let bounds = self.element.content_size(ctx);
             let descriptor = SceneNodeDescriptor {
@@ -986,6 +1105,7 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
                     &self.element,
                     key,
                     priority,
+                    stable,
                 )
             {
                 return;
@@ -994,12 +1114,7 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
         } else {
             None
         };
-        let before = element_tree_generation();
-        self.element.draw(ctx);
-        let after = element_tree_generation();
-        if after != before {
-            self.set_subtree_generation(after);
-        }
+        self.draw_live(ctx, None);
     }
 
     #[inline]
@@ -1026,6 +1141,30 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
     #[inline]
     fn is_paint_bounded(&self) -> bool {
         self.element.is_paint_bounded()
+    }
+
+    #[inline]
+    fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
+        self.element.compositor_animation(ctx)
+    }
+
+    #[inline]
+    fn draw_with_compositor_animation(
+        &self,
+        ctx: &BuildContext,
+        frame: CompositorAnimationFrame,
+    ) {
+        self.element.draw_with_compositor_animation(ctx, frame);
+    }
+
+    #[inline]
+    fn update_compositor_animation_damage(
+        &self,
+        ctx: &BuildContext,
+        frame: CompositorAnimationFrame,
+    ) {
+        self.element
+            .update_compositor_animation_damage(ctx, frame);
     }
 
     #[inline]
@@ -1268,6 +1407,30 @@ impl Drawable for AnyElement {
     }
 
     #[inline]
+    fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
+        self.as_ref().compositor_animation(ctx)
+    }
+
+    #[inline]
+    fn draw_with_compositor_animation(
+        &self,
+        ctx: &BuildContext,
+        frame: CompositorAnimationFrame,
+    ) {
+        self.as_ref().draw_with_compositor_animation(ctx, frame)
+    }
+
+    #[inline]
+    fn update_compositor_animation_damage(
+        &self,
+        ctx: &BuildContext,
+        frame: CompositorAnimationFrame,
+    ) {
+        self.as_ref()
+            .update_compositor_animation_damage(ctx, frame)
+    }
+
+    #[inline]
     fn draw_paint_islands(
         &self,
         retained_ctx: &BuildContext,
@@ -1491,6 +1654,35 @@ impl Drawable for Box<dyn Element> {
     #[inline]
     fn is_paint_stable(&self) -> bool {
         self.as_ref().is_paint_stable()
+    }
+
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        self.as_ref().is_paint_bounded()
+    }
+
+    #[inline]
+    fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
+        self.as_ref().compositor_animation(ctx)
+    }
+
+    #[inline]
+    fn draw_with_compositor_animation(
+        &self,
+        ctx: &BuildContext,
+        frame: CompositorAnimationFrame,
+    ) {
+        self.as_ref().draw_with_compositor_animation(ctx, frame)
+    }
+
+    #[inline]
+    fn update_compositor_animation_damage(
+        &self,
+        ctx: &BuildContext,
+        frame: CompositorAnimationFrame,
+    ) {
+        self.as_ref()
+            .update_compositor_animation_damage(ctx, frame)
     }
 
     #[inline]
@@ -1965,6 +2157,8 @@ pub struct EventDispatcher {
     hit_chain_cache: Option<CachedHitChain>,
     hit_chain_recorder: Option<HitChainRecorder>,
     hover_chains: HashMap<PointerKey, HoverHitChain>,
+    hover_membership_marks: Vec<u32>,
+    hover_membership_epoch: u32,
     focus_scope: Option<ElementId>,
     focus: FocusManager<ElementId>,
     focus_candidates: FocusCandidates<ElementId>,
@@ -1992,6 +2186,8 @@ impl EventDispatcher {
             hit_chain_cache: None,
             hit_chain_recorder: None,
             hover_chains: HashMap::new(),
+            hover_membership_marks: Vec::new(),
+            hover_membership_epoch: 0,
             focus_scope: None,
             focus: FocusManager::new(),
             focus_candidates: FocusCandidates::new(),
@@ -2119,12 +2315,9 @@ impl EventDispatcher {
         });
         let exit = ElementEvent::PointerExited(pointer.source, pointer.id);
         if let Some(previous) = previous {
+            let current_mark = self.mark_hover_membership(&current.elements);
             for previous_element in previous.elements.iter().rev() {
-                if current
-                    .elements
-                    .iter()
-                    .any(|current_element| current_element == previous_element)
-                {
+                if self.is_current_hover_element(*previous_element, current_mark) {
                     continue;
                 }
 
@@ -2136,6 +2329,47 @@ impl EventDispatcher {
         }
         self.hover_chains.insert(pointer, current);
         outcome
+    }
+
+    /// Marks the current hover chain in reusable path-indexed scratch storage.
+    ///
+    /// Every element that can appear in a routed hover chain is present in the
+    /// structural path index. A mark epoch avoids clearing the whole vector on
+    /// every pointer move, and the vector itself retains capacity across moves
+    /// and tree generations.
+    #[inline]
+    fn mark_hover_membership(&mut self, elements: &[ElementId]) -> u32 {
+        if self.hover_membership_marks.len() < self.path_links.len() {
+            self.hover_membership_marks.resize(self.path_links.len(), 0);
+        }
+
+        let next_epoch = self.hover_membership_epoch.wrapping_add(1);
+        if next_epoch == 0 {
+            self.hover_membership_marks.fill(0);
+            self.hover_membership_epoch = 1;
+        } else {
+            self.hover_membership_epoch = next_epoch;
+        }
+        let mark = self.hover_membership_epoch;
+
+        for &element in elements {
+            let Some(path_index) = self.path_indices.get(&element).copied() else {
+                continue;
+            };
+            if let Some(slot) = self.hover_membership_marks.get_mut(path_index) {
+                *slot = mark;
+            }
+        }
+        mark
+    }
+
+    #[inline]
+    fn is_current_hover_element(&self, element: ElementId, mark: u32) -> bool {
+        record_hover_membership_check();
+        let Some(path_index) = self.path_indices.get(&element).copied() else {
+            return false;
+        };
+        self.hover_membership_marks.get(path_index).copied() == Some(mark)
     }
 
     fn dispatch_cached_hit_chain(
@@ -4168,6 +4402,46 @@ mod tests {
         assert_eq!(first_visits, 2);
         assert_eq!(second_visits, first_visits);
         assert_eq!(leaf_events.get(), 2);
+    }
+
+    #[test]
+    fn overlapping_hover_chain_membership_is_linear() {
+        const CHILD_COUNT: usize = 64;
+        let bounds = (Vec2d::default(), Vec2d { x: 100.0, y: 100.0 });
+        let hovered: Vec<_> = (0..CHILD_COUNT).map(|_| Rc::new(Cell::new(false))).collect();
+        let children = hovered
+            .iter()
+            .map(|hovered| {
+                HoverProbe {
+                    bounds,
+                    hovered: hovered.clone(),
+                }
+                .boxed()
+            })
+            .collect();
+        let root = HoverProbeRoot { bounds, children }.boxed();
+        let mut dispatcher = EventDispatcher::new();
+        let first = Vec2d { x: 10.0, y: 10.0 };
+        let second = Vec2d { x: 20.0, y: 20.0 };
+
+        reset_hover_membership_check_count();
+        for pos in [first, second] {
+            let _ = dispatcher.dispatch(
+                root.as_ref(),
+                pos,
+                &ElementEvent::PointerMove(PointerInfo::mouse(
+                    pos,
+                    PointerButton::Primary,
+                )),
+            );
+        }
+
+        assert!(hovered.iter().all(|hovered| hovered.get()));
+        let checks = take_hover_membership_check_count();
+        assert!(
+            checks <= (CHILD_COUNT as u64 + 1) * 2,
+            "hover membership checks must remain linear, observed {checks}"
+        );
     }
 
     #[test]

@@ -31,7 +31,9 @@ use aimer::{
     HeadlessOptions, LayoutElement, Positioned, Rebuildable, Scrollable, SizedBox, Stack, Vec2d,
     VisitorElement, Widget, OverflowBehavior,
 };
-use aimer::animation::{AnimatedBuilder, AnimatedPaint, AnimationController, Curve};
+use aimer::animation::{
+    Animated, AnimatedBuilder, AnimatedPaint, AnimationController, AnimationEffect, Curve,
+};
 
 const ROUNDS: usize = 7;
 const WARMUP_FRAMES: usize = 8;
@@ -200,6 +202,30 @@ fn retained_paint_column(count: usize) -> AnyWidget {
     AnimatedPaint::new(controller, stable_column(count))
         .effect(|ctx, value| ctx.canvas.set_alpha(value))
         .boxed()
+}
+
+/// A fixed visual animation whose stable child can be retained while opacity
+/// is updated in the compositor scene.
+fn compositor_animation_probe() -> AnyWidget {
+    let controller = AnimationController::with_millis(1_000, Curve::Linear);
+    controller.forward_from_first_tick();
+    Animated::new(
+        controller,
+        AnimationEffect::Opacity { from: 0.0, to: 1.0 },
+        SizedBox::new().width(1.0).height(1.0),
+    )
+    .boxed()
+}
+
+fn compositor_animation_column(count: usize) -> AnyWidget {
+    let controller = AnimationController::with_millis(1_000, Curve::Linear);
+    controller.forward_from_first_tick();
+    Animated::new(
+        controller,
+        AnimationEffect::Opacity { from: 0.0, to: 1.0 },
+        stable_column(count),
+    )
+    .boxed()
 }
 
 fn stable_column(count: usize) -> AnyWidget {
@@ -762,6 +788,7 @@ fn main() {
     println!("\nanimation workloads");
     measure_cached_frames("animation framework shell", animated_probe);
     measure_cached_frames("retained paint framework shell", retained_paint_probe);
+    measure_cached_frames("compositor animation framework shell", compositor_animation_probe);
     for count in [256, 2_048] {
         measure_cached_frames(
             &format!("animated column: {count} rows"),
@@ -774,6 +801,10 @@ fn main() {
         measure_cached_frames(
             &format!("retained paint column: {count} rows"),
             move || retained_paint_column(count),
+        );
+        measure_cached_frames(
+            &format!("compositor animation column: {count} rows"),
+            move || compositor_animation_column(count),
         );
     }
 

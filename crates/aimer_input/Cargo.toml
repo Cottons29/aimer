@@ -33,7 +33,7 @@ aimer_ctxmenu.workspace = true
 winit.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
+tokio = {workspace = true, features = ["rt-multi-thread", "macros", "time"]}
 
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

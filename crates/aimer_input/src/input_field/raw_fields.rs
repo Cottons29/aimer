@@ -19,6 +19,7 @@ use aimer_events::text_editing::TextEditingDelta;
 use aimer_events::window::get_window;
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextOverflow, TextStyle};
 use aimer_text::{RawTextWidget, SelectionParticipant, TextSource};
+use aimer_venus::ScopeId;
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{
     AnyElement, ChildBuilder, Drawable, Element, EventDispatchContext, EventElement, EventResult,

@@ -148,6 +148,21 @@ impl Drawable for RawTextField {
             self.sync_cursor_from_controller();
         }
         self.sync_cursor_from_area();
+        if self.is_focused() {
+            self.cursor.blink().tick(self.now());
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(scope) = self.caret_scope {
+                self.cursor.blink().schedule_next_toggle(scope);
+            }
+            #[cfg(target_arch = "wasm32")]
+            aimer_events::window::request_animation_frame();
+            #[cfg(not(target_arch = "wasm32"))]
+            if self.caret_scope.is_none() {
+                // Isolated/raw fields without an installed Venus runtime retain
+                // the frame-driven path used by their direct callers.
+                aimer_events::window::request_animation_frame();
+            }
+        }
         let caret_context = self.caret_context();
         caret_context.publish(
             caret_context.geometry(),
@@ -658,15 +673,6 @@ impl Drawable for RawTextField {
         ctx.canvas.set_text_language(None);
         ctx.canvas.restore(); // outer save
 
-        // Drive the caret from the frame clock: advance the shared blink
-        // timeline owned by the field state and keep the frame loop awake while
-        // this field holds focus. Detached sleeping threads used to schedule the
-        // next toggle, which drifted with thread wake-up latency and restarted
-        // whenever the element was rebuilt.
-        if self.is_focused() {
-            self.cursor.blink().tick(AnimInstant::now());
-            aimer_events::window::request_animation_frame();
-        }
     }
 }
 

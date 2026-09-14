@@ -4,6 +4,142 @@ use aimer_attribute::size::ResolvedSize;
 use crate::base::BuildContext;
 use crate::components::element::Element;
 
+/// A transform that can be applied without changing retained paint commands.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CompositorTransform {
+    /// Leaves the current transform unchanged.
+    Identity,
+    /// Translates the retained content by `(x, y)`.
+    Translate { x: f32, y: f32 },
+    /// Scales around `(origin_x, origin_y)`.
+    Scale {
+        sx: f32,
+        sy: f32,
+        origin_x: f32,
+        origin_y: f32,
+    },
+    /// Rotates around `(origin_x, origin_y)` in radians.
+    Rotate {
+        radians: f32,
+        origin_x: f32,
+        origin_y: f32,
+    },
+}
+
+/// One sampled frame of a compositor-safe animation.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CompositorAnimationFrame {
+    /// The sampled controller value used for damage tracking.
+    pub progress: f32,
+    /// The transform to apply to the retained paint.
+    pub transform: CompositorTransform,
+    /// An opacity override, when the animation changes opacity.
+    pub opacity: Option<f32>,
+    /// A local rectangular clip, when the animation requires one.
+    pub clip: Option<ResolvedSize>,
+    /// Whether another frame must be requested after this one.
+    pub active: bool,
+    /// Whether all compositor properties are finite and safe to apply.
+    pub valid: bool,
+}
+
+impl CompositorAnimationFrame {
+    /// Creates a sampled compositor frame.
+    #[inline]
+    #[doc(hidden)]
+    pub const fn new(
+        progress: f32,
+        transform: CompositorTransform,
+        opacity: Option<f32>,
+        clip: Option<ResolvedSize>,
+        active: bool,
+        valid: bool,
+    ) -> Self {
+        Self {
+            progress,
+            transform,
+            opacity,
+            clip,
+            active,
+            valid,
+        }
+    }
+
+    /// Applies this frame to the current canvas state.
+    #[inline]
+    #[doc(hidden)]
+    pub fn apply(self, ctx: &BuildContext) {
+        if !self.valid {
+            return;
+        }
+
+        if let Some(size) = self.clip {
+            ctx.canvas.set_clip((0.0, 0.0).into(), size);
+        }
+
+        match self.transform {
+            CompositorTransform::Identity => {}
+            CompositorTransform::Translate { x, y } => {
+                ctx.canvas.translate((x, y).into());
+            }
+            CompositorTransform::Scale {
+                sx,
+                sy,
+                origin_x,
+                origin_y,
+            } => {
+                ctx.canvas.translate((origin_x, origin_y).into());
+                ctx.canvas.scale(sx, sy);
+                ctx.canvas.translate((-origin_x, -origin_y).into());
+            }
+            CompositorTransform::Rotate {
+                radians,
+                origin_x,
+                origin_y,
+            } => {
+                ctx.canvas.translate((origin_x, origin_y).into());
+                ctx.canvas.rotate(radians);
+                ctx.canvas.translate((-origin_x, -origin_y).into());
+            }
+        }
+
+        if let Some(opacity) = self.opacity {
+            ctx.canvas.set_alpha(opacity);
+        }
+    }
+
+    /// Removes the clip and opacity state installed by [`Self::apply`].
+    #[inline]
+    #[doc(hidden)]
+    pub fn clear(self, ctx: &BuildContext) {
+        if !self.valid {
+            return;
+        }
+        if self.clip.is_some() {
+            ctx.canvas.clear_clip();
+        }
+        if self.opacity.is_some() {
+            ctx.canvas.restore_alpha();
+        }
+    }
+}
+
+/// Describes whether a drawable can move its current animation to the
+/// compositor while retaining its static paint commands.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CompositorAnimationDecision {
+    /// This drawable has no compositor animation provider.
+    None,
+    /// The sampled frame must be drawn live, but the provider already sampled
+    /// it and can avoid ticking its controller a second time.
+    Live(CompositorAnimationFrame),
+    /// The sampled frame may use the retained paint path.
+    Compositor(CompositorAnimationFrame),
+}
+
 pub trait Drawable {
     fn draw(&self, ctx: &BuildContext);
 
@@ -114,6 +250,35 @@ pub trait Drawable {
     ) -> bool {
         false
     }
+
+    /// Samples the compositor animation for the current frame.
+    #[doc(hidden)]
+    #[inline]
+    fn compositor_animation(&self, _ctx: &BuildContext) -> CompositorAnimationDecision {
+        CompositorAnimationDecision::None
+    }
+
+    /// Draws a sampled animation on the live path without ticking it again.
+    #[doc(hidden)]
+    #[inline]
+    fn draw_with_compositor_animation(
+        &self,
+        ctx: &BuildContext,
+        _frame: CompositorAnimationFrame,
+    ) {
+        self.draw(ctx);
+    }
+
+    /// Updates damage bookkeeping after a retained compositor frame was
+    /// replayed.
+    #[doc(hidden)]
+    #[inline]
+    fn update_compositor_animation_damage(
+        &self,
+        _ctx: &BuildContext,
+        _frame: CompositorAnimationFrame,
+    ) {
+    }
 }
 
 impl Drawable for Box<dyn Drawable> {
@@ -170,5 +335,29 @@ impl Drawable for Box<dyn Drawable> {
             draw_stable,
             draw_dynamic,
         )
+    }
+
+    #[inline]
+    fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
+        self.as_ref().compositor_animation(ctx)
+    }
+
+    #[inline]
+    fn draw_with_compositor_animation(
+        &self,
+        ctx: &BuildContext,
+        frame: CompositorAnimationFrame,
+    ) {
+        self.as_ref().draw_with_compositor_animation(ctx, frame);
+    }
+
+    #[inline]
+    fn update_compositor_animation_damage(
+        &self,
+        ctx: &BuildContext,
+        frame: CompositorAnimationFrame,
+    ) {
+        self.as_ref()
+            .update_compositor_animation_damage(ctx, frame);
     }
 }

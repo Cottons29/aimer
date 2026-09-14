@@ -472,12 +472,13 @@ mod controller {
 }
 pub mod raw_fields;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::panic::Location;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use aimer_macro::PortableWidget;
+use aimer_venus::{ScopeId, TaskScope, Venus};
 use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextStyle};
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{
@@ -699,9 +700,8 @@ fn validate_portable_text_field(
 /// The state owns the caret blink timeline, so the caret keeps its rhythm when
 /// the field is rebuilt with a new configuration — a rebuild replaces the
 /// configuration through [`State::adopt_config_from`] and leaves the timeline
-/// untouched. The timeline itself is advanced by the frame clock while the field
-/// holds focus, which is what makes the blink interval independent of thread
-/// wake-up latency.
+/// untouched. On native targets, the mounted state owns the scope of the delayed
+/// wake that advances the timeline only at a visibility transition.
 #[doc(hidden)]
 pub struct TextFieldState {
     config: RawFieldConfig,
@@ -710,6 +710,8 @@ pub struct TextFieldState {
     caret_context: CaretContext,
     /// Retains the caret element while the raw field widget is rebuilt.
     caret_slot: Rc<CaretSlot>,
+    /// Owns delayed native caret wakes for the mounted field.
+    caret_scope: RefCell<Option<TaskScope>>,
     focus_node: FocusNode,
     provided_focus_node: bool,
     updater: StateUpdater<Self>,
@@ -751,7 +753,20 @@ impl TextFieldState {
             self.caret_context.clone(),
             self.caret_slot.clone(),
             self.focus_node.clone(),
+            self.caret_scope_id(),
         )
+    }
+
+    /// Lazily creates the scope after the state is mounted in the app runtime.
+    #[inline]
+    fn caret_scope_id(&self) -> Option<ScopeId> {
+        let mut scope = self.caret_scope.borrow_mut();
+        if scope.is_none() {
+            if let Some(venus) = Venus::current() {
+                scope.replace(venus.scope());
+            }
+        }
+        scope.as_ref().map(TaskScope::id)
     }
 
     /// Reads how the field takes part in focus off its configuration.
@@ -918,6 +933,7 @@ impl TextField {
             caret_context: CaretContext::new(caret.clone()),
             caret_slot: Rc::new(CaretSlot::new()),
             caret,
+            caret_scope: RefCell::new(None),
             focus_node: self.focus_node.clone().unwrap_or_default(),
             provided_focus_node: self.focus_node.is_some(),
             updater: StateUpdater::empty(),

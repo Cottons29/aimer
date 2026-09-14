@@ -238,10 +238,12 @@ impl Rebuildable for DefaultCaretElement {}
 /// the caret visibility from it. Because the phase lives in the state, a
 /// rebuild no longer restarts the blink.
 ///
-/// The timeline advances only when [`CaretBlink::tick`] is called with the
-/// current frame time. The caret is opaque during the first half of the period
-/// and hidden during the second half, which yields a `period / 2` on-off
-/// rhythm driven by the frame clock rather than by a sleeping thread.
+/// The timeline advances when [`CaretBlink::tick`] is called with the current
+/// frame time. On native targets, a mounted field schedules the next frame only
+/// at a visibility transition; browser builds keep their frame-driven fallback.
+/// The caret is opaque during the first half of the period and hidden during the
+/// second half, which yields a `period / 2` on-off rhythm without repainting the
+/// field between transitions.
 ///
 /// # Examples
 ///
@@ -260,9 +262,16 @@ impl Rebuildable for DefaultCaretElement {}
 /// blink.tick(start + CaretBlink::DEFAULT_PERIOD / 2);
 /// assert!(!blink.is_visible());
 /// ```
+#[derive(Debug, Default)]
+struct CaretWakeState {
+    generation: Cell<u64>,
+    scheduled: Cell<bool>,
+}
+
 #[derive(Clone, Debug)]
 pub struct CaretBlink {
     controller: AnimationController,
+    wake: Rc<CaretWakeState>,
 }
 
 impl CaretBlink {
@@ -290,7 +299,10 @@ impl CaretBlink {
         let controller = AnimationController::new(period, Curve::Linear);
         controller.set_repeat(true);
         controller.forward_from_first_tick();
-        Self { controller }
+        Self {
+            controller,
+            wake: Rc::new(CaretWakeState::default()),
+        }
     }
 
     /// Returns the duration of one full on-off cycle.
@@ -317,12 +329,51 @@ impl CaretBlink {
         was_visible != self.is_visible()
     }
 
+    /// Schedules the next visibility transition on the mounted field's scope.
+    ///
+    /// At most one timer is armed for a blink handle. The timer only requests a
+    /// frame; the next draw remains responsible for advancing the timeline and
+    /// painting the new state. A missing Venus runtime leaves the handle
+    /// unarmed so isolated raw-field users can retain their frame-driven path.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn schedule_next_toggle(&self, scope: aimer_venus::ScopeId) {
+        let delay = Duration::from_nanos(
+            (self.period().as_nanos() / 2).min(u64::MAX as u128) as u64,
+        );
+        if delay.is_zero() || self.wake.scheduled.replace(true) {
+            return;
+        }
+
+        let generation = self.wake.generation.get();
+        let wake = Rc::clone(&self.wake);
+        let Some(venus) = aimer_venus::Venus::current() else {
+            self.wake.scheduled.set(false);
+            return;
+        };
+        venus.spawn_in(scope, async move {
+            tokio::time::sleep(delay).await;
+            if wake.generation.get() == generation {
+                wake.scheduled.set(false);
+                aimer_events::window::request_animation_frame();
+            }
+        });
+    }
+
+    /// Invalidates a pending native wake, if any.
+    pub(crate) fn cancel_scheduled_toggle(&self) {
+        self.wake
+            .generation
+            .set(self.wake.generation.get().wrapping_add(1));
+        self.wake.scheduled.set(false);
+    }
+
     /// Restarts the timeline at the beginning of its visible half.
     ///
     /// Editing, moving the caret, or clicking into the field calls this so the
     /// caret stays solid while the user is busy, exactly like a native field.
     /// The new period begins at the next [`CaretBlink::tick`].
     pub fn reset(&self) {
+        self.cancel_scheduled_toggle();
         self.controller.reset();
         self.controller.forward_from_first_tick();
     }
@@ -459,5 +510,58 @@ mod tests {
 
         let context = CaretContext::new(CaretBlink::new());
         assert_widget(DefaultCaret::new(context, aimer_widget::base::Colors::default()));
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod native_scheduling_tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::time::Duration;
+
+    use aimer_animation::AnimInstant;
+    use aimer_venus::{PollContext, Venus};
+    use tokio::runtime::{Handle, Runtime};
+
+    use super::CaretBlink;
+
+    struct TokioPollContext(Handle);
+
+    impl PollContext for TokioPollContext {
+        fn enter(&self, poll: &mut dyn FnMut()) {
+            let _guard = self.0.enter();
+            poll();
+        }
+    }
+
+    #[test]
+    fn schedules_one_redraw_at_the_next_visibility_transition() {
+        let runtime = Runtime::new().expect("a timer runtime");
+        let venus = Venus::new();
+        venus.set_poll_context(TokioPollContext(runtime.handle().clone()));
+        venus.install();
+        let scope = venus.scope();
+
+        let redraws = Rc::new(Cell::new(0));
+        let counted = redraws.clone();
+        let previous = aimer_events::window::set_thread_redraw_requester(move || {
+            counted.set(counted.get() + 1);
+        });
+
+        let blink = CaretBlink::with_period(Duration::from_millis(4));
+        blink.tick(AnimInstant::now());
+        blink.schedule_next_toggle(scope.id());
+        blink.schedule_next_toggle(scope.id());
+
+        venus.run_microtasks();
+        assert_eq!(redraws.get(), 0);
+
+        std::thread::sleep(Duration::from_millis(12));
+        venus.run_microtasks();
+        assert_eq!(redraws.get(), 1);
+
+        scope.cancel();
+        aimer_events::window::restore_thread_redraw_requester(previous);
+        Venus::uninstall();
     }
 }

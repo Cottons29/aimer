@@ -2013,7 +2013,13 @@ impl Drawable for StatefulElement {
                 self.rebuild_generation.get(),
             ) && self
                 .paint_cache
-                .paint_or_replay(ctx, child, key, self.compositor_priority())
+                .paint_or_replay(
+                    ctx,
+                    child,
+                    key,
+                    self.compositor_priority(),
+                    child.is_paint_stable(),
+                )
             {
                 return;
             }
