@@ -369,10 +369,17 @@ impl RawTextButton {
         }
     }
 
-    fn set_hovered(&self, hovered: bool) {
-        if self.hovered.replace(hovered) != hovered {
+    fn set_hovered(&self, hovered: bool) -> bool {
+        let changed = self.hovered.replace(hovered) != hovered;
+        if changed {
+            // A hover transition changes glyph metrics and may add or remove
+            // decoration lines. TextButton is a live, unbounded leaf rather
+            // than a retained paint owner, so its event-time redraw request
+            // must also invalidate the compositor target.
+            aimer_widget::mark_paint_damage_full();
             request_animation_frame();
         }
+        changed
     }
 }
 
@@ -386,22 +393,30 @@ impl EventElement for RawTextButton {
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         match event {
             ElementEvent::PointerMove(info) if info.source == PointerSource::Mouse => {
-                self.set_hovered(
+                let changed = self.set_hovered(
                     self.bounds.is_inside(info.x(), info.y()) && !self.widget.disabled,
                 );
-                false
+                if changed {
+                    EventResult::redraw()
+                } else {
+                    EventResult::ignored()
+                }
             }
             ElementEvent::PointerExited(PointerSource::Mouse, _) => {
-                self.set_hovered(false);
+                let changed = self.set_hovered(false);
                 self.interaction.borrow_mut().cancel();
-                false
+                if changed {
+                    EventResult::redraw()
+                } else {
+                    EventResult::ignored()
+                }
             }
             ElementEvent::PointerDown(info) => {
                 let inside = self.bounds.is_inside(info.x(), info.y());
                 self.interaction
                     .borrow_mut()
                     .pointer_down(inside, self.widget.disabled);
-                inside && !self.widget.disabled
+                EventResult::from(inside && !self.widget.disabled)
             }
             ElementEvent::PointerUp(info) => {
                 let action = self.interaction.borrow_mut().pointer_up(
@@ -410,18 +425,17 @@ impl EventElement for RawTextButton {
                 );
                 if action == ButtonAction::Press {
                     self.press();
-                    true
+                    EventResult::consumed()
                 } else {
-                    false
+                    EventResult::ignored()
                 }
             }
             ElementEvent::Cancel => {
                 self.interaction.borrow_mut().cancel();
-                false
+                EventResult::ignored()
             }
-            _ => false,
+            _ => EventResult::ignored(),
         }
-        .into()
     }
 }
 
@@ -441,8 +455,17 @@ impl Drawable for RawTextButton {
     fn draw(&self, ctx: &BuildContext) {
         let (text, text_ctx, size, line_widths, line_height) = self.text_layout(ctx);
         self.save_bounds(ctx, size, &line_widths, line_height);
-        if !self.widget.disabled {
-            self.set_hovered(self.bounds.is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y));
+        let hover_changed = !self.widget.disabled
+            && self.set_hovered(self.bounds.is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y));
+        if hover_changed {
+            // The first layout above is needed to establish the transformed
+            // hit bounds. Re-resolve the text after syncing hover so a cursor
+            // that is already over a link is painted with its hover style in
+            // this frame instead of waiting for a second repaint.
+            let (text, text_ctx, size, line_widths, line_height) = self.text_layout(ctx);
+            self.save_bounds(ctx, size, &line_widths, line_height);
+            text.draw(&text_ctx);
+            return;
         }
         text.draw(&text_ctx);
     }
@@ -618,7 +641,8 @@ mod tests {
             .build()
             .unwrap();
         let _guard = runtime.enter();
-        let (ctx, canvas) = context_with_canvas(45.0);
+        let (mut ctx, canvas) = context_with_canvas(45.0);
+        ctx.cursor_pos = Vec2d { x: -1.0, y: -1.0 };
         let button = raw_button(
             TextButton::new("MMMM i").style(
                 TextStyle::default()
@@ -641,6 +665,53 @@ mod tests {
         assert_eq!(decorations.len(), 2);
         assert!(decorations[1].y > decorations[0].y);
         assert!(decorations[1].width < decorations[0].width);
+    }
+
+    #[test]
+    fn text_button_draws_hover_style_when_cursor_is_already_over_the_label() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let (mut ctx, canvas) = context_with_canvas(300.0);
+        ctx.cursor_pos = Vec2d { x: 1.0, y: 1.0 };
+        let button = raw_button(
+            TextButton::new("Open").hover_style(
+                TextStyle::default().text_decoration(TextDecoration::Underline),
+            ),
+        );
+
+        button.draw(&ctx);
+
+        assert!(canvas.draw_list().commands().iter().any(|command| {
+            matches!(command, DrawCommand::DrawTextDecoration { .. })
+        }));
+    }
+
+    #[test]
+    fn text_button_hover_transition_requests_a_redraw() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let ctx = context(300.0);
+        let button = raw_button(TextButton::new("Open"));
+        button.layout(&ctx);
+
+        aimer_widget::begin_paint_frame(300, 100);
+        assert!(aimer_widget::take_paint_frame_damage(300, 100).is_full());
+        aimer_widget::begin_paint_frame(300, 100);
+        assert!(aimer_widget::take_paint_frame_damage(300, 100).is_empty());
+
+        let result = button.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
+            Vec2d { x: 1.0, y: 1.0 },
+            PointerButton::Primary,
+        )));
+
+        assert!(result.needs_redraw());
+        assert!(!result.is_consumed());
+        aimer_widget::begin_paint_frame(300, 100);
+        assert!(aimer_widget::take_paint_frame_damage(300, 100).is_full());
     }
 
     #[cfg(feature = "portable-guest")]

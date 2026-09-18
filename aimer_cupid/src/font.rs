@@ -9,6 +9,9 @@
 //! retains the selected family where it has glyphs and uses its existing
 //! Unicode fallback chain only for missing glyphs.
 //!
+//! Browser wasm targets use Cupid's checked-in generic faces because the
+//! browser does not expose a readable system font file to the renderer.
+//!
 //! On Apple without `apple-core-text`, the portable path intentionally relies
 //! on application-registered faces or the opt-in `bundled-fonts` feature rather
 //! than system fallback. Apple system files can contain private `hvgl` outline
@@ -150,8 +153,9 @@ impl Default for FontFamily {
 /// Returns the optional built-in monospace face.
 ///
 /// This returns the checked-in face only when the `bundled-fonts` feature is
-/// enabled. Without that feature it returns an empty slice, and generic text
-/// rendering uses host fonts or application-registered faces instead.
+/// enabled. Without that feature it returns an empty slice on every target;
+/// the wasm renderer keeps a separate internal copy because browsers do not
+/// expose readable system font files.
 #[doc(hidden)]
 pub const fn bundled_monospace_bytes() -> &'static [u8] {
     #[cfg(feature = "bundled-fonts")]

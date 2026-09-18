@@ -57,6 +57,12 @@ impl ScrollState {
         self.scroll_offset.set(offset);
         if changed {
             aimer_widget::record_scroll_offset_update();
+            #[cfg(target_arch = "wasm32")]
+            // Scrolling changes the transform of an arbitrary child subtree.
+            // Its old and new footprints are not available until that subtree
+            // is painted, so a browser frame must not preserve a partial
+            // compositor target across this event.
+            aimer_widget::mark_paint_damage_full();
         }
     }
 

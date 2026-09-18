@@ -82,8 +82,9 @@ apple-core-text = [
     "aimer_canvas/apple-core-text",
     "aimer_text/apple-core-text",
 ]
-# Opt into the checked-in Google Sans, JetBrains Mono, and CJK faces. By
-# default Cupid resolves host fonts and keeps these assets out of app binaries.
+# Opt into the checked-in Google Sans, JetBrains Mono, and CJK faces on native
+# targets. wasm already embeds its generic Latin/monospace faces because a
+# browser cannot provide Cupid with readable system font files.
 bundled-fonts = [
     "aimer_cupid/bundled-fonts",
     "aimer_assets/bundled-fonts",

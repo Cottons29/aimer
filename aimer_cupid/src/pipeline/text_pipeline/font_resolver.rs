@@ -348,7 +348,7 @@ impl FontRecord {
         }
     }
 
-    #[cfg(any(feature = "bundled-fonts", test))]
+    #[cfg(any(feature = "bundled-fonts", target_arch = "wasm32", test))]
     pub(crate) fn from_static_bytes(id: FontId, bytes: &'static [u8]) -> Option<Self> {
         let bytes: Arc<[u8]> = Arc::from(bytes);
         let is_color = face_metadata(FontData::Shared(bytes.clone()), 0)?;

@@ -33,6 +33,11 @@ fn visible_travel(previous: Option<Vec2d>, offset: Vec2d) -> Vec2d {
     }
 }
 
+#[inline]
+const fn retained_scroll_paint_supported(is_wasm: bool) -> bool {
+    !is_wasm
+}
+
 impl<E: Element> Drawable for RawScrollableContainer<E> {
     fn draw(&self, ctx: &BuildContext) {
         // println!("Scrollable drawing child: {})", self.child.debug_name() );
@@ -296,7 +301,14 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // still updates its physics and bounds without walking its content.
         if ctx.is_rect_visible(0.0, 0.0, viewport_w, viewport_h) {
             #[cfg(not(feature = "portable-guest"))]
-            self.draw_child_with_retained_paint(ctx, &child_ctx, content_size);
+            if retained_scroll_paint_supported(cfg!(target_arch = "wasm32")) {
+                self.draw_child_with_retained_paint(ctx, &child_ctx, content_size);
+            } else {
+                // Browser backends still have an unstable nested render-target
+                // path for retained scroll paint. Live replay keeps SVG and text
+                // in the main frame's compositor state until that path is safe.
+                self.child.draw(&child_ctx);
+            }
             #[cfg(feature = "portable-guest")]
             self.child.draw(&child_ctx);
 
@@ -398,5 +410,11 @@ mod tests {
         assert_eq!(snapped.y, -21.0);
         assert_eq!(snapped.x.fract(), 0.0);
         assert_eq!(snapped.y.fract(), 0.0);
+    }
+
+    #[test]
+    fn browser_scroll_paint_uses_the_live_path() {
+        assert!(!retained_scroll_paint_supported(true));
+        assert!(retained_scroll_paint_supported(false));
     }
 }

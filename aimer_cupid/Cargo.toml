@@ -6,8 +6,10 @@ description = "A rendering engine that optimized for the ui framework"
 
 [features]
 default = ["apple-core-text"]
-# Keep the checked-in fonts out of downstream binaries unless an application
-# explicitly opts into deterministic bundled font rendering.
+# Keep optional checked-in fallback faces out of native downstream binaries
+# unless an application explicitly opts into deterministic bundled rendering.
+# wasm always carries the generic Latin/monospace faces because browsers do not
+# expose readable system font files to Cupid.
 bundled-fonts = []
 # The production profile owns standard-font parsing, shaping, fallback-aware
 # resolution, and rasterization. The optional Apple-private backend is kept

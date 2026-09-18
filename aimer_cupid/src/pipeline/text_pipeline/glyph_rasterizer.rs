@@ -23,13 +23,15 @@ use crate::text_pipeline::system_fallback::{
     SYSTEM_FALLBACK_ID_BASE, ScriptRequirement, WEIGHT_MATCH_TOLERANCE, fallback_by_id,
     fallback_glyph_for_codepoint, script_probes,
 };
-#[cfg(not(any(feature = "bundled-fonts", test)))]
+#[cfg(not(any(feature = "bundled-fonts", target_arch = "wasm32", test)))]
 use crate::text_pipeline::system_fallback::{system_monospace_font, system_primary_font};
 use crate::text_pipeline::unicode_script::Script;
 
-/// The bundled primary face is compiled only for the opt-in deterministic
-/// profile and for this module's unit tests.
-#[cfg(any(feature = "bundled-fonts", test))]
+/// The bundled primary face is compiled for the opt-in deterministic profile,
+/// wasm targets, and this module's unit tests. Browsers do not expose a
+/// readable system font file to the wasm fallback path, so the generic face
+/// must be available locally there.
+#[cfg(any(feature = "bundled-fonts", target_arch = "wasm32", test))]
 const PRIMARY_FONT: &[u8] = include_bytes!("../../../fonts/GoogleSans-Regular.ttf");
 const MONOSPACE_FONT_ID: FontId = 0x7fff_fffe;
 /// Stable id reserved for the self-rasterized CJK fallback.
@@ -250,7 +252,7 @@ impl GlyphKey {
 // Aimer owns the parsed face, outline, and coverage caches. No compatibility
 // scaling context is needed here.
 
-#[cfg(any(feature = "bundled-fonts", test))]
+#[cfg(any(feature = "bundled-fonts", target_arch = "wasm32", test))]
 fn monospace_font_record() -> Option<FontRecord> {
     static MONOSPACE_FONT_RECORD: OnceLock<Option<FontRecord>> = OnceLock::new();
     MONOSPACE_FONT_RECORD
@@ -263,12 +265,12 @@ fn monospace_font_record() -> Option<FontRecord> {
         .clone()
 }
 
-#[cfg(not(any(feature = "bundled-fonts", test)))]
+#[cfg(not(any(feature = "bundled-fonts", target_arch = "wasm32", test)))]
 fn monospace_font_record() -> Option<FontRecord> {
     system_monospace_font(MONOSPACE_FONT_ID)
 }
 
-#[cfg(any(feature = "bundled-fonts", test))]
+#[cfg(any(feature = "bundled-fonts", target_arch = "wasm32", test))]
 fn primary_font_record() -> FontRecord {
     static PRIMARY_FONT_RECORD: OnceLock<Option<FontRecord>> = OnceLock::new();
     PRIMARY_FONT_RECORD
@@ -277,7 +279,7 @@ fn primary_font_record() -> FontRecord {
         .expect("failed to load primary font")
 }
 
-#[cfg(not(any(feature = "bundled-fonts", test)))]
+#[cfg(not(any(feature = "bundled-fonts", target_arch = "wasm32", test)))]
 fn primary_font_record() -> FontRecord {
     system_primary_font().unwrap_or_else(|| FontRecord::unavailable(0))
 }

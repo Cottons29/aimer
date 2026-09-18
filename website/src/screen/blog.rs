@@ -288,7 +288,7 @@ mod tests {
     fn archive_text_uses_muted_theme_color_and_links_use_theme_foreground() {
         let theme = ThemeData::dark();
         let (heading_style, date_style) = archive_text_styles(&theme);
-        let (link_style, _) = blog_link_styles(&theme, true);
+        let (link_style, hover_style) = blog_link_styles(&theme, true);
 
         assert_eq!(heading_style.color, theme.on_background_color);
         assert_eq!(
@@ -296,6 +296,10 @@ mod tests {
             theme.on_background_color.with_opacity(120)
         );
         assert_eq!(link_style.color, theme.on_background_color);
+        assert!(hover_style
+            .text_decoration
+            .line
+            .contains(TextDecorationLine::UNDERLINE));
     }
 
     #[test]

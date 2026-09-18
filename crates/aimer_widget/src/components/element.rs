@@ -81,6 +81,10 @@ thread_local! {
     /// single-threaded; the finished [`DamageSet`] is copied into the frame
     /// packet before presentation moves to another thread.
     static FRAME_PAINT_DAMAGE: RefCell<Option<DamageSet>> = const { RefCell::new(None) };
+    /// A platform event can invalidate paint before the next frame opens its
+    /// damage collector. Keep that request until [`begin_paint_frame`] consumes
+    /// it instead of silently dropping the invalidation.
+    static PENDING_PAINT_DAMAGE_FULL: Cell<bool> = const { Cell::new(false) };
     static FRAME_PAINT_TARGET: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
     /// One identity set per retained recording operation. A stack keeps a
     /// nested scroll's recording isolated from the tile currently being
@@ -110,7 +114,9 @@ pub fn begin_event_frame() {
 /// Starts collecting damage for one device-sized frame target.
 ///
 /// The first frame for a target is conservatively full. Subsequent frames can
-/// remain empty when every retained paint owner replays unchanged content.
+/// remain empty when every retained paint owner replays unchanged content;
+/// invalidation requested between frames is carried into the next collection
+/// interval.
 #[doc(hidden)]
 pub fn begin_paint_frame(width: u32, height: u32) {
     let target_changed = FRAME_PAINT_TARGET.with(|target| {
@@ -118,9 +124,10 @@ pub fn begin_paint_frame(width: u32, height: u32) {
         target.set(Some((width, height)));
         changed
     });
+    let pending_full = PENDING_PAINT_DAMAGE_FULL.with(|pending| pending.replace(false));
     FRAME_PAINT_DAMAGE.with(|damage| {
         let mut next = DamageSet::new(width, height);
-        if target_changed {
+        if target_changed || pending_full {
             next.mark_full();
         }
         *damage.borrow_mut() = Some(next);
@@ -146,11 +153,16 @@ pub fn mark_paint_damage(rectangle: DamageRect) {
 }
 
 /// Forces the current frame to repaint its complete target.
+///
+/// When called between frame collections, the request is retained for the next
+/// call to [`begin_paint_frame`].
 #[doc(hidden)]
 pub fn mark_paint_damage_full() {
     FRAME_PAINT_DAMAGE.with(|damage| {
         if let Some(damage) = damage.borrow_mut().as_mut() {
             damage.mark_full();
+        } else {
+            PENDING_PAINT_DAMAGE_FULL.with(|pending| pending.set(true));
         }
     });
 }
@@ -3557,6 +3569,17 @@ mod tests {
 
         begin_paint_frame(38, 23);
         assert!(take_paint_frame_damage(38, 23).is_full());
+    }
+
+    #[test]
+    fn full_damage_requested_between_frames_is_applied_to_the_next_frame() {
+        begin_paint_frame(41, 29);
+        assert!(take_paint_frame_damage(41, 29).is_full());
+
+        mark_paint_damage_full();
+        begin_paint_frame(41, 29);
+
+        assert!(take_paint_frame_damage(41, 29).is_full());
     }
 
     struct StructuralTraversalElement {
