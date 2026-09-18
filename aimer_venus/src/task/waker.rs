@@ -51,7 +51,9 @@ unsafe impl Sync for UiWakes {}
 ///
 /// - **Same-thread wakes** — the overwhelming majority — go into `local`, a
 ///   plain unsynchronized buffer, because the producer and the consumer are
-///   provably the same thread.
+///   provably the same thread. On WebAssembly they also notify the host: a
+///   browser promise can complete on the UI thread while the web event loop is
+///   parked in `ControlFlow::Wait`.
 /// - **Cross-thread wakes** — a worker finishing an offload — enter the
 ///   lock-free queue and nudge the parked event loop through the notifier.
 ///
@@ -65,19 +67,25 @@ pub(crate) struct WakeQueue {
     shared: SegQueue<TaskId>,
     /// Whether `shared` holds anything, so draining an empty queue never scans.
     has_shared: AtomicBool,
-    /// Whether an off-thread wake has already notified the event loop and has
-    /// not yet been observed by the owner thread.
+    /// Whether a wake has already notified the event loop and has not yet been
+    /// observed by the owner thread.
     notifier_pending: AtomicBool,
     notifier: OnceLock<Notifier>,
     owner: ThreadId,
 }
 
+#[inline]
+fn should_notify_notifier(browser: bool, same_thread: bool) -> bool {
+    browser || !same_thread
+}
+
 impl WakeQueue {
     /// Creates a queue owned by the calling thread.
     ///
-    /// The calling thread is remembered as the UI thread: wakes originating
-    /// there never touch the notifier, because a loop that is running cannot
-    /// also be asleep.
+    /// The calling thread is remembered as the UI thread. Native wakes
+    /// originating there never touch the notifier because a running loop
+    /// cannot also be asleep; browser callbacks are the exception because the
+    /// web loop can be parked while JavaScript resumes a future.
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             local: UiWakes {
@@ -97,28 +105,30 @@ impl WakeQueue {
         let _ = self.notifier.set(notifier);
     }
 
-    /// Publishes a wake for `id`, nudging the event loop if the wake came from
-    /// another thread.
+    /// Publishes a wake for `id`, nudging the event loop when the platform
+    /// requires it.
     ///
-    /// A wake from the UI thread takes the lock-free fast path: the loop is
-    /// demonstrably awake and the queue's consumer is this very thread, so
-    /// neither the queue nor the notifier has anything to add.
+    /// A wake from the UI thread takes the local fast path. Native loops are
+    /// demonstrably awake in that case; on WebAssembly the notifier still
+    /// wakes the parked browser loop.
     pub(crate) fn wake(&self, id: TaskId) {
-        if thread::current().id() == self.owner {
+        let same_thread = thread::current().id() == self.owner;
+        if same_thread {
             // SAFETY: this branch runs only on the owner thread, the sole
             // thread allowed to touch `local` — see [`UiWakes`].
             unsafe { (*self.local.pending.get()).push(id) };
             self.local.has_pending.set(true);
-            return;
+        } else {
+            self.shared.push(id);
+            self.has_shared.store(true, Ordering::Release);
         }
 
-        self.shared.push(id);
-        self.has_shared.store(true, Ordering::Release);
-
-        if let Some(notifier) = self.notifier.get()
-            && !self.notifier_pending.swap(true, Ordering::AcqRel)
-        {
-            notifier();
+        if should_notify_notifier(cfg!(target_arch = "wasm32"), same_thread) {
+            if let Some(notifier) = self.notifier.get()
+                && !self.notifier_pending.swap(true, Ordering::AcqRel)
+            {
+                notifier();
+            }
         }
     }
 
@@ -209,6 +219,14 @@ mod tests {
 
         assert!(drained.is_empty());
         assert!(!queue.has_pending());
+    }
+
+    #[test]
+    fn browser_wakes_notify_even_when_they_arrive_on_the_owner_thread() {
+        assert!(should_notify_notifier(true, true));
+        assert!(should_notify_notifier(true, false));
+        assert!(!should_notify_notifier(false, true));
+        assert!(should_notify_notifier(false, false));
     }
 
     #[test]

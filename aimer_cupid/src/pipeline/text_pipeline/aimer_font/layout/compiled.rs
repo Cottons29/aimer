@@ -302,7 +302,10 @@ fn parse_ligature(subtable: &[u8]) -> Result<LigaturePlan, SfntError> {
                 checked_add(ligature_offset, 2)?,
                 GSUB_TAG,
             )?);
-            if component_count < 2 {
+            // Some variable fonts contain one-component ligature records as
+            // a compact single-glyph substitution. Treat those as valid
+            // replacement rules; zero components is still malformed.
+            if component_count == 0 {
                 return Err(malformed(GSUB_TAG));
             }
             ensure(
@@ -629,6 +632,9 @@ impl CompiledSubtable {
             let cluster = glyphs[index].cluster;
             glyphs[index] = LayoutGlyph::from_glyph_id(ligature_glyph, cluster, advance);
             glyphs.drain(index + 1..index + component_count);
+            if component_count == 1 {
+                index += 1;
+            }
         }
         Ok(Some(()))
     }
@@ -745,5 +751,29 @@ impl CompiledSubtable {
             return Ok(None);
         };
         Ok(Some((base_x - mark_x, base_y - mark_y)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_component_ligature_replacement_advances_the_cursor() {
+        let plan = CompiledSubtable::Ligature(LigaturePlan {
+            coverage: CoveragePlan::Format1(vec![10]),
+            sets: vec![vec![LigatureRule {
+                glyph_id: 20,
+                components: Vec::new(),
+            }]],
+        });
+        let mut glyphs = vec![LayoutGlyph::from_glyph_id(10, 0, 500)];
+        let advances = vec![500; 21];
+
+        plan.apply_ligature(&advances, &mut glyphs, &Gdef { glyph_class: None }, 0)
+            .expect("the one-component replacement should be executable");
+
+        assert_eq!(glyphs.len(), 1);
+        assert_eq!(glyphs[0].glyph_id, 20);
     }
 }

@@ -224,15 +224,38 @@ impl WindowHandle {
             Self::Native(window) => window.request_redraw(),
             #[cfg(aimer_portable_guest)]
             Self::Native(_) => {},
-            Self::Headless(state) => {
-                if state.redraw_requested.swap(true, Ordering::AcqRel) {
-                    state.coalesced_redraw_count.fetch_add(1, Ordering::Relaxed);
-                } else {
-                    state.redraw_request_count.fetch_add(1, Ordering::Relaxed);
-                }
-            }
+            Self::Headless(state) => Self::request_headless_redraw(state),
             #[cfg(feature = "portable-guest")]
             Self::Portable(_) => {}
+        }
+    }
+
+    /// Request the next frame through the platform's frame scheduler.
+    ///
+    /// This is the appropriate request for asynchronous work, such as a
+    /// completed future or image decode. Native applications may route it
+    /// through an event-loop proxy, while the web target routes it through
+    /// the browser frame callback. [`Self::request_redraw`] remains the
+    /// direct redraw operation used by event-loop handling code.
+    pub fn request_animation_frame(&self) {
+        crate::frame_work_stats::record_redraw_request();
+        match self {
+            #[cfg(not(aimer_portable_guest))]
+            Self::Native(_) => aimer_events::window::request_animation_frame(),
+            #[cfg(aimer_portable_guest)]
+            Self::Native(_) => {},
+            Self::Headless(state) => Self::request_headless_redraw(state),
+            #[cfg(feature = "portable-guest")]
+            Self::Portable(_) => {}
+        }
+    }
+
+    #[inline]
+    fn request_headless_redraw(state: &HeadlessWindowState) {
+        if state.redraw_requested.swap(true, Ordering::AcqRel) {
+            state.coalesced_redraw_count.fetch_add(1, Ordering::Relaxed);
+        } else {
+            state.redraw_request_count.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -761,6 +784,19 @@ mod tests {
             window.headless_redraw_request_counts(),
             Some((2, 2, 1))
         );
+    }
+
+    #[test]
+    fn animation_frame_requests_are_recorded_for_headless_windows() {
+        let window = WindowHandle::headless(Default::default(), 1.0);
+
+        window.request_animation_frame();
+
+        assert_eq!(
+            window.headless_redraw_request_counts(),
+            Some((1, 0, 0))
+        );
+        assert!(window.take_redraw_request());
     }
 
     #[cfg(not(target_arch = "wasm32"))]

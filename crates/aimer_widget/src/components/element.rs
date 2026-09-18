@@ -1769,6 +1769,11 @@ pub fn rebuild_invalidation_generation() -> u64 {
 pub(crate) fn advance_rebuild_invalidation_generation() {
     invalidate_dirty_paths();
     advance_tracked_rebuild_invalidation_generation();
+    // Async and portable-state producers do not have an element-owned dirty
+    // path to record. Retained paint therefore cannot identify a smaller
+    // footprint safely; invalidate it conservatively and repaint the target.
+    mark_paint_invalidations_unknown();
+    mark_paint_damage_full();
 }
 
 #[inline]
@@ -3577,6 +3582,17 @@ mod tests {
         assert!(take_paint_frame_damage(41, 29).is_full());
 
         mark_paint_damage_full();
+        begin_paint_frame(41, 29);
+
+        assert!(take_paint_frame_damage(41, 29).is_full());
+    }
+
+    #[test]
+    fn untracked_rebuild_invalidations_force_full_damage() {
+        begin_paint_frame(41, 29);
+        let _ = take_paint_frame_damage(41, 29);
+
+        advance_rebuild_invalidation_generation();
         begin_paint_frame(41, 29);
 
         assert!(take_paint_frame_damage(41, 29).is_full());

@@ -3797,8 +3797,8 @@ mod tests {
                 .map(|glyph| glyph.key.glyph_id)
                 .collect::<Vec<_>>(),
             vec![
-                3663, 3949, 3663, 3890, 3938, 1866, 3654, 3937, 3655, 3654, 3708, 3744,
-                3632,
+                3620, 3906, 3620, 3847, 3895, 1866, 3611, 3894, 3612, 3611, 3665, 3701,
+                3589,
             ]
         );
 
@@ -3826,7 +3826,7 @@ mod tests {
         assert!(visible_pixels > 1_000, "Khmer showcase must contain visible ink");
         assert_eq!(
             checksum,
-            12_772_598_079_995_261_919,
+            11_027_706_440_622_539_205,
             "update the Khmer raster golden after an intentional change"
         );
     }

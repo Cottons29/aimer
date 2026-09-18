@@ -198,10 +198,12 @@ impl LocalScheduler {
 
     /// Installs the callback that wakes a parked event loop.
     ///
-    /// Only wakes raised off the UI thread call it — a worker finishing while
-    /// the loop sleeps. Wakes raised on the UI thread never do: the loop is
-    /// demonstrably awake, and pinging it per `await` would be a cost on the
-    /// hottest path there is.
+    /// On native platforms, only wakes raised off the UI thread call it — a
+    /// worker finishing while the loop sleeps. Wakes raised on the UI thread
+    /// never do: the loop is demonstrably awake, and pinging it per `await`
+    /// would be a cost on the hottest path there is. WebAssembly is the
+    /// exception: a JavaScript promise may resume a same-thread task while
+    /// the browser event loop is parked, so those wakes notify too.
     #[inline]
     pub fn set_notifier(&self, notifier: impl Fn() + Send + Sync + 'static) {
         self.wakes.set_notifier(Box::new(notifier) as Notifier);

@@ -28,6 +28,12 @@ pub(crate) struct GlyphOutline {
     pub(crate) bounds: [i16; 4],
     pub(crate) points: Vec<OutlinePoint>,
     pub(crate) contours: Vec<ContourRange>,
+    /// Point ranges for the top-level components of a composite glyph.
+    ///
+    /// Composite variation deltas address component origins rather than the
+    /// flattened outline points, so the ranges are retained after parsing to
+    /// let the variation layer translate each component as one unit.
+    pub(crate) component_ranges: Vec<ContourRange>,
     pub(crate) is_composite: bool,
 }
 
@@ -53,7 +59,7 @@ impl<'a> SfntFace<'a> {
             return Err(malformed_loca());
         };
         let metrics = outline_metrics(self)?;
-        self.outline_with_tables(glyf, loca, metrics, glyph_id)
+        self.outline_with_tables(glyf, loca, metrics, glyph_id, None)
     }
 
     /// Extracts a TrueType outline while reusing already-validated metrics.
@@ -68,7 +74,7 @@ impl<'a> SfntFace<'a> {
         let Some(loca) = self.table(*b"loca") else {
             return Err(malformed_loca());
         };
-        self.outline_with_tables(glyf, loca, metrics, glyph_id)
+        self.outline_with_tables(glyf, loca, metrics, glyph_id, None)
     }
 
     /// Extracts a TrueType outline and applies the requested `wght` instance
@@ -89,18 +95,22 @@ impl<'a> SfntFace<'a> {
     }
 
     /// Extracts a TrueType outline and applies a complete normalized variation
-    /// instance to its simple-glyph points.
+    /// instance to the glyph and all of its composite components.
     pub(crate) fn outline_with_metrics_at_coordinates(
         &self,
         glyph_id: u16,
         metrics: FontMetrics,
         coordinates: &[f32],
     ) -> Result<Option<GlyphOutline>, SfntError> {
-        let Some(mut outline) = self.outline_with_metrics(glyph_id, metrics)? else {
+        let Some(glyf) = self.table(*b"glyf") else {
             return Ok(None);
         };
-        super::variation::apply_gvar_at_coordinates(self, glyph_id, coordinates, &mut outline)?;
-        Ok(Some(outline))
+        let Some(loca) = self.table(*b"loca") else {
+            return Err(malformed_loca());
+        };
+        let variation = (!coordinates.iter().all(|coordinate| coordinate.abs() < f32::EPSILON))
+            .then_some(coordinates);
+        self.outline_with_tables(glyf, loca, metrics, glyph_id, variation)
     }
 
     fn outline_with_tables(
@@ -109,6 +119,7 @@ impl<'a> SfntFace<'a> {
         loca: &[u8],
         metrics: FontMetrics,
         glyph_id: u16,
+        coordinates: Option<&[f32]>,
     ) -> Result<Option<GlyphOutline>, SfntError> {
         if glyph_id >= metrics.num_glyphs {
             return Ok(None);
@@ -125,12 +136,14 @@ impl<'a> SfntFace<'a> {
             .map_err(|error| *error)?;
         let mut active = Vec::with_capacity(MAX_COMPOSITE_DEPTH.min(4));
         parse_glyph(
+            self,
             glyf,
             offsets,
             metrics,
             glyph_id,
             0,
             &mut active,
+            coordinates,
         )
         .map(Some)
     }
@@ -180,12 +193,14 @@ fn outline_metrics(face: &SfntFace<'_>) -> Result<FontMetrics, SfntError> {
 }
 
 fn parse_glyph(
+    face: &SfntFace<'_>,
     glyf: &[u8],
     offsets: &[usize],
     metrics: FontMetrics,
     glyph_id: u16,
     depth: usize,
     active: &mut Vec<u16>,
+    coordinates: Option<&[f32]>,
 ) -> Result<GlyphOutline, SfntError> {
     if depth >= MAX_COMPOSITE_DEPTH {
         return Err(SfntError::OutlineRecursionLimit);
@@ -194,18 +209,44 @@ fn parse_glyph(
         return Err(SfntError::CompositeCycle(glyph_id));
     }
     active.push(glyph_id);
-    let result = parse_glyph_inner(glyf, offsets, metrics, glyph_id, depth, active);
+    let outline = parse_glyph_inner(
+        face,
+        glyf,
+        offsets,
+        metrics,
+        glyph_id,
+        depth,
+        active,
+        coordinates,
+    );
+    let result = outline.and_then(|mut outline| {
+        if let Some(coordinates) = coordinates {
+            let bounds_updated = super::variation::apply_gvar_at_coordinates(
+                face,
+                glyph_id,
+                coordinates,
+                &mut outline,
+            )?;
+            if outline.is_composite && !bounds_updated {
+                // A parent may have no gvar data even when a child varies.
+                super::variation::update_bounds(&mut outline);
+            }
+        }
+        Ok(outline)
+    });
     active.pop();
     result
 }
 
 fn parse_glyph_inner(
+    face: &SfntFace<'_>,
     glyf: &[u8],
     offsets: &[usize],
     metrics: FontMetrics,
     glyph_id: u16,
     depth: usize,
     active: &mut Vec<u16>,
+    coordinates: Option<&[f32]>,
 ) -> Result<GlyphOutline, SfntError> {
     let Some((start, end)) = glyph_range(offsets, glyf.len(), metrics, glyph_id)? else {
         return Err(malformed_glyf());
@@ -215,6 +256,7 @@ fn parse_glyph_inner(
             bounds: [0; 4],
             points: Vec::new(),
             contours: Vec::new(),
+            component_ranges: Vec::new(),
             is_composite: false,
         });
     }
@@ -233,7 +275,17 @@ fn parse_glyph_inner(
     if contour_count >= 0 {
         return parse_simple_glyph(glyph, contour_count as usize, bounds);
     }
-    parse_composite_glyph(glyf, offsets, metrics, glyph, bounds, depth, active)
+    parse_composite_glyph(
+        face,
+        glyf,
+        offsets,
+        metrics,
+        glyph,
+        bounds,
+        depth,
+        active,
+        coordinates,
+    )
 }
 
 fn glyph_range(
@@ -315,6 +367,7 @@ fn parse_simple_glyph(
             bounds,
             points: Vec::new(),
             contours: Vec::new(),
+            component_ranges: Vec::new(),
             is_composite: false,
         });
     }
@@ -388,6 +441,7 @@ fn parse_simple_glyph(
         bounds,
         points,
         contours,
+        component_ranges: Vec::new(),
         is_composite: false,
     })
 }
@@ -430,6 +484,7 @@ fn decode_axis_into(
 }
 
 fn parse_composite_glyph(
+    face: &SfntFace<'_>,
     glyf: &[u8],
     offsets: &[usize],
     metrics: FontMetrics,
@@ -437,11 +492,13 @@ fn parse_composite_glyph(
     bounds: [i16; 4],
     depth: usize,
     active: &mut Vec<u16>,
+    coordinates: Option<&[f32]>,
 ) -> Result<GlyphOutline, SfntError> {
     let reader = Reader::new(glyph);
     let mut cursor = 10;
     let mut points = Vec::new();
     let mut contours = Vec::new();
+    let mut component_ranges = Vec::new();
     let mut point_count = 0_usize;
     let mut components = 0;
     let mut has_more = true;
@@ -508,13 +565,17 @@ fn parse_composite_glyph(
             (dx, dy) = (a * dx + c * dy, b * dx + d * dy);
         }
 
+        // Vary the child's points before this component's transform; the
+        // parent's gvar delta moves the assembled component afterward.
         let component = parse_glyph(
+            face,
             glyf,
             offsets,
             metrics,
             component_id,
             depth + 1,
             active,
+            coordinates,
         )?;
         let component_points = component.points.len();
         point_count = checked_add(point_count, component_points)?;
@@ -522,6 +583,10 @@ fn parse_composite_glyph(
             return Err(malformed_glyf());
         }
         let component_start = points.len();
+        component_ranges.push(ContourRange {
+            start: component_start,
+            end: checked_add(component_start, component_points)?,
+        });
         points.reserve(component_points);
         for point in component.points {
             points.push(OutlinePoint {
@@ -551,6 +616,7 @@ fn parse_composite_glyph(
         bounds,
         points,
         contours,
+        component_ranges,
         is_composite: true,
     })
 }

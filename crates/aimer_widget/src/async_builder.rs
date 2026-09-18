@@ -590,7 +590,7 @@ where
                 return;
             };
             runtime.complete(result);
-            window.request_redraw();
+            window.request_animation_frame();
         });
     }
 }

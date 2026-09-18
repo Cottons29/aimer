@@ -2477,7 +2477,7 @@ fn apply_ligature_substitution(
                 ligature_offset + 2,
                 GSUB_TAG,
             )?);
-            if component_count < 2 {
+            if component_count == 0 {
                 return Err(malformed(GSUB_TAG));
             }
             ensure(
@@ -2524,6 +2524,9 @@ fn apply_ligature_substitution(
         let cluster = glyphs[index].cluster;
         glyphs[index] = LayoutGlyph::from_glyph_id(ligature_glyph, cluster, advance);
         glyphs.drain(index + 1..index + component_count);
+        if component_count == 1 {
+            index += 1;
+        }
     }
 
     Ok(())
@@ -2587,7 +2590,7 @@ fn apply_ligature_substitution_at(
             checked_add(ligature_offset, 2)?,
             GSUB_TAG,
         )?);
-        if component_count < 2 {
+        if component_count == 0 {
             return Err(malformed(GSUB_TAG));
         }
         ensure(

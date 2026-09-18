@@ -32,7 +32,8 @@ use crate::text_pipeline::unicode_script::Script;
 /// readable system font file to the wasm fallback path, so the generic face
 /// must be available locally there.
 #[cfg(any(feature = "bundled-fonts", target_arch = "wasm32", test))]
-const PRIMARY_FONT: &[u8] = include_bytes!("../../../fonts/GoogleSans-Regular.ttf");
+const PRIMARY_FONT: &[u8] =
+    include_bytes!("../../../fonts/GoogleSans-VariableFont_GRAD,opsz,wght.ttf");
 const MONOSPACE_FONT_ID: FontId = 0x7fff_fffe;
 /// Stable id reserved for the self-rasterized CJK fallback.
 ///
@@ -4319,15 +4320,15 @@ mod tests {
         );
     }
 
-    // A face carrying one design cannot answer a bold style on its own, so the
-    // synthetic stroke stays: that is the only bold the primary face has.
+    // A static family carrying one design cannot answer a bold style on its own,
+    // so the synthetic stroke stays: that is the only bold the family has.
     #[test]
-    fn a_regular_cut_still_asks_for_the_synthetic_stroke_when_bold() {
+    fn a_static_cut_still_asks_for_the_synthetic_stroke_when_bold() {
         let mut rasterizer = GlyphRasterizer::new();
         let key = rasterizer.glyph_key_for_family_codepoint(
             'A',
             20.0,
-            FontFamily::SANS_SERIF,
+            FontFamily::MONOSPACE,
             FontWeight::Bold,
             FontStyle::Normal,
         );
@@ -4339,6 +4340,67 @@ mod tests {
             "this test needs a regular primary face, got a face designed at {design}"
         );
         assert!(rasterizer.glyph_needs_synthetic_bold(key, FontWeight::Bold.numeric()));
+    }
+
+    #[test]
+    fn bundled_primary_font_selects_requested_weight_variations() {
+        let mut rasterizer = GlyphRasterizer::primary_only();
+        let primary_id = rasterizer.primary_font_id();
+
+        assert!(
+            rasterizer.face_has_weight_variations(primary_id),
+            "the bundled primary face must expose a readable wght axis"
+        );
+        rasterizer.ensure_aimer_font_cached(primary_id);
+        let layout_result = rasterizer
+            .aimer_font_cache
+            .get(&primary_id)
+            .and_then(|state| state.as_ref())
+            .expect("the bundled primary face should be parsed")
+            .prewarm_layout();
+        assert!(
+            layout_result.is_ok(),
+            "the bundled primary face layout should parse: {layout_result:?}"
+        );
+
+        for weight in [FontWeight::Normal, FontWeight::Bold, FontWeight::Bolder] {
+            let key = rasterizer.glyph_key_for_family_codepoint(
+                'A',
+                20.0,
+                FontFamily::SANS_SERIF,
+                weight,
+                FontStyle::Normal,
+            );
+            assert_eq!(key.font_id, primary_id);
+            assert_eq!(key.weight, weight.numeric());
+            assert!(!rasterizer.glyph_needs_synthetic_bold(key, weight.numeric()));
+        }
+
+        let regular_t_key = rasterizer.glyph_key_for_family_codepoint(
+            't',
+            20.0,
+            FontFamily::SANS_SERIF,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        let regular_t = rasterizer.rasterize_key(regular_t_key, 20.0).bitmap.clone();
+        let heavy_t_key = rasterizer.glyph_key_for_family_codepoint(
+            't',
+            20.0,
+            FontFamily::SANS_SERIF,
+            FontWeight::Bolder,
+            FontStyle::Normal,
+        );
+        let heavy_t = rasterizer.rasterize_key(heavy_t_key, 20.0).bitmap.clone();
+        assert_ne!(
+            regular_t, heavy_t,
+            "the composite t must rasterize its requested variable weight"
+        );
+        let ink = |bitmap: &[u8]| bitmap.iter().map(|pixel| u64::from(*pixel)).sum::<u64>();
+        assert!(
+            ink(&heavy_t) > ink(&regular_t),
+            "the heavy t must deposit more ink than the regular t"
+        );
     }
 
     // Below the threshold nothing is emphasized, so no glyph may be drawn
@@ -4475,11 +4537,10 @@ mod tests {
         rasterizer.end_script_run();
     }
 
-    // Faces Cupid rasterizes itself render one design regardless of the
-    // requested weight — the weight already chose the face — so their keys
-    // stay on the single neutral value and one bitmap serves every style.
+    // The bundled primary face is variable, so the glyph key must preserve
+    // the requested OpenType weight for both shaping and rasterization.
     #[test]
-    fn a_decodable_face_is_always_keyed_at_the_normal_weight() {
+    fn a_variable_primary_face_is_keyed_at_the_requested_weight() {
         let mut rasterizer = GlyphRasterizer::new();
         let key = rasterizer.glyph_key_for_family_codepoint(
             'A',
@@ -4488,7 +4549,8 @@ mod tests {
             FontWeight::Bold,
             FontStyle::Normal,
         );
-        assert_eq!(key.weight, NORMAL_GLYPH_WEIGHT);
+        assert_eq!(key.weight, FontWeight::Bold.numeric());
+        assert!(!rasterizer.glyph_needs_synthetic_bold(key, FontWeight::Bold.numeric()));
     }
 
     #[test]

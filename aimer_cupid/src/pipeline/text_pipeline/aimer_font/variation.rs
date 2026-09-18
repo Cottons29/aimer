@@ -4,7 +4,7 @@
 //! Their default instance is not required to be regular; the checked-in Noto
 //! Sans JP face, for example, defaults to `wght=100`. Reading only `glyf`
 //! therefore produces visibly thin CJK text even when the surrounding run is
-//! regular. This module reads the `wght` axis, applies `gvar` deltas to simple
+//! regular. This module reads the `wght` axis, applies `gvar` deltas to
 //! outlines before they reach the rasterizer, and evaluates checked HVAR/VVAR
 //! metric stores for the same selected instance.
 
@@ -866,7 +866,7 @@ fn parse_gvar(table: &[u8], expected_axis_count: usize) -> Result<GvarInfo, Sfnt
     })
 }
 
-/// Applies the `wght` instance to a simple TrueType outline.
+/// Applies the `wght` instance to a TrueType outline.
 pub(crate) fn apply_gvar(
     face: &SfntFace<'_>,
     glyph_id: u16,
@@ -880,53 +880,51 @@ pub(crate) fn apply_gvar(
         &coordinates[..coordinate_count],
         outline,
     )
+    .map(|_| ())
 }
 
-/// Applies a complete normalized variation instance to a simple TrueType
-/// outline. Coordinates are ordered according to `fvar` and use F2DOT14
-/// precision, as produced by [`SfntFace::normalized_variation_coordinates`].
+/// Applies a complete normalized variation instance to a TrueType outline,
+/// including component-origin deltas for composite glyphs. Coordinates are
+/// ordered according to `fvar` and use F2DOT14 precision, as produced by
+/// [`SfntFace::normalized_variation_coordinates`].
+/// Returns whether this glyph's own variation data recomputed its bounds.
 pub(crate) fn apply_gvar_at_coordinates(
     face: &SfntFace<'_>,
     glyph_id: u16,
     coordinates: &[f32],
     outline: &mut GlyphOutline,
-) -> Result<(), SfntError> {
+) -> Result<bool, SfntError> {
     let Some(info) = face.variation_info()? else {
-        return Ok(());
+        return Ok(false);
     };
     let Some(gvar) = info.gvar.as_ref() else {
-        return Ok(());
+        return Ok(false);
     };
-    // Component variation data is indexed by component points, while the
-    // portable outline reader exposes flattened component contours. Applying
-    // those deltas to the flattened points would corrupt composite glyphs, so
-    // leave them at the font's default instance until component variation is
-    // implemented.
-    if outline.is_composite {
-        return Ok(());
-    }
-
     if coordinates.iter().all(|coordinate| coordinate.abs() < f32::EPSILON) {
-        return Ok(());
+        return Ok(false);
     }
 
     let glyph_index = usize::from(glyph_id);
     let Some(start_offset) = gvar.glyph_offsets.get(glyph_index).copied() else {
-        return Ok(());
+        return Ok(false);
     };
     let Some(end_offset) = gvar.glyph_offsets.get(glyph_index + 1).copied() else {
-        return Ok(());
+        return Ok(false);
     };
     let start = checked_add(gvar.data_offset, start_offset)?;
     let end = checked_add(gvar.data_offset, end_offset)?;
     let table = face.table(*b"gvar").ok_or_else(|| malformed(GVAR_TAG))?;
     let data = table.get(start..end).ok_or_else(|| malformed(GVAR_TAG))?;
     if data.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
 
     let mut deltas = Vec::new();
-    let point_count = outline.points.len();
+    let point_count = if outline.is_composite {
+        outline.component_ranges.len()
+    } else {
+        outline.points.len()
+    };
     if point_count > usize::from(u16::MAX) - 4 {
         return Err(malformed(GVAR_TAG));
     }
@@ -942,14 +940,23 @@ pub(crate) fn apply_gvar_at_coordinates(
     )?;
 
     if deltas.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
-    for (point, delta) in outline.points.iter_mut().zip(deltas) {
-        point.x += delta.x;
-        point.y += delta.y;
+    if outline.is_composite {
+        for (component, delta) in outline.component_ranges.iter().zip(deltas) {
+            for point in &mut outline.points[component.start..component.end] {
+                point.x += delta.x;
+                point.y += delta.y;
+            }
+        }
+    } else {
+        for (point, delta) in outline.points.iter_mut().zip(deltas) {
+            point.x += delta.x;
+            point.y += delta.y;
+        }
     }
     update_bounds(outline);
-    Ok(())
+    Ok(true)
 }
 
 fn decode_glyph_variations(
@@ -1074,7 +1081,9 @@ fn decode_glyph_variations(
                         present[point_index] = true;
                     }
                 }
-                interpolate_iup(outline, &mut tuple_deltas, &present);
+                if !outline.is_composite {
+                    interpolate_iup(outline, &mut tuple_deltas, &present);
+                }
             }
             None => {
                 for point_index in 0..outline_point_count {
@@ -1338,7 +1347,7 @@ fn interpolate_axis(value: f32, first: f32, second: f32, first_delta: f32, secon
     }
 }
 
-fn update_bounds(outline: &mut GlyphOutline) {
+pub(super) fn update_bounds(outline: &mut GlyphOutline) {
     let mut bounds = [
         f32::INFINITY,
         f32::INFINITY,
@@ -1516,5 +1525,62 @@ mod tests {
             .expect("你 should have a regular outline");
 
         assert_ne!(default.points, regular.points);
+    }
+
+    #[test]
+    fn applies_the_heavy_weight_to_the_google_sans_t_outline() {
+        let bytes = include_bytes!("../../../../fonts/GoogleSans-VariableFont_GRAD,opsz,wght.ttf");
+        let face = SfntFace::from_bytes(bytes, 0).expect("Google Sans should parse");
+        let metrics = face.metrics().expect("metrics should parse");
+        let glyph_id = face
+            .glyph_index('t' as u32)
+            .expect("cmap should parse")
+            .expect("Google Sans should cover t");
+        let regular = face
+            .outline_with_metrics_at_weight(glyph_id, metrics, 400)
+            .expect("regular outline should parse")
+            .expect("t should have an outline");
+        let heavy = face
+            .outline_with_metrics_at_weight(glyph_id, metrics, 900)
+            .expect("heavy outline should parse")
+            .expect("t should have a heavy outline");
+
+        assert_ne!(regular.points, heavy.points);
+    }
+
+    #[test]
+    fn composite_google_sans_t_uses_varied_child_shapes() {
+        let bytes = include_bytes!("../../../../fonts/GoogleSans-VariableFont_GRAD,opsz,wght.ttf");
+        let face = SfntFace::from_bytes(bytes, 0).expect("Google Sans should parse");
+        let metrics = face.metrics().expect("metrics should parse");
+        let glyph_id = face
+            .glyph_index('t' as u32)
+            .expect("cmap should parse")
+            .expect("Google Sans should cover t");
+        let heavy = face
+            .outline_with_metrics_at_weight(glyph_id, metrics, 900)
+            .expect("heavy outline should parse")
+            .expect("t should have a heavy outline");
+
+        // The fixture's t is built from these three unscaled glyphs. A
+        // composite gvar delta may move a component, but must not leave its
+        // internal shape at the default weight.
+        let components = [7490, 2350, 7492];
+        assert_eq!(heavy.component_ranges.len(), components.len());
+        for (range, glyph_id) in heavy.component_ranges.iter().zip(components) {
+            let child = face
+                .outline_with_metrics_at_weight(glyph_id, metrics, 900)
+                .expect("heavy component should parse")
+                .expect("component should have an outline");
+            let points = &heavy.points[range.start..range.end];
+            assert_eq!(points.len(), child.points.len());
+            let origin = points[0];
+            let child_origin = child.points[0];
+            for (point, child_point) in points.iter().zip(&child.points) {
+                assert!((point.x - origin.x - (child_point.x - child_origin.x)).abs() < 0.01);
+                assert!((point.y - origin.y - (child_point.y - child_origin.y)).abs() < 0.01);
+                assert_eq!(point.on_curve, child_point.on_curve);
+            }
+        }
     }
 }

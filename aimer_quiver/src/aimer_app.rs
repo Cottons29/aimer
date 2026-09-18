@@ -99,6 +99,16 @@ fn complete_frame_ready_request(pending: &AtomicBool) {
     pending.store(false, Ordering::Release);
 }
 
+#[cfg(any(test, target_arch = "wasm32"))]
+fn request_direct_frame(pending: &AtomicBool, request_redraw: impl FnOnce()) -> bool {
+    if !try_begin_frame_ready_request(pending) {
+        return false;
+    }
+    complete_frame_ready_request(pending);
+    request_redraw();
+    true
+}
+
 fn try_begin_callback_ready_request(pending: &AtomicBool) -> bool {
     pending
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -118,15 +128,25 @@ pub(crate) fn callback_ready_delivered() {
     complete_callback_ready_request(&CALLBACK_READY_PENDING);
 }
 
-/// Asks the event loop for the frame that continues whatever is unfinished.
+/// Asks the platform for the frame that continues whatever is unfinished.
 ///
-/// The request goes through the loop as a `FrameReady` user event rather than
-/// straight to the window, because iOS coalesces a synchronous
-/// `request_redraw()` issued from inside the draw cycle, and because that is
-/// the one path a thread that is *not* the UI thread may take — which is what
-/// makes this usable both as the widget tree's frame requester and as the
-/// runtime's notifier when a worker finishes while the loop is parked.
+/// Native platforms route the request through a `FrameReady` user event: iOS
+/// coalesces a synchronous `request_redraw()` issued from inside the draw
+/// cycle, and a worker finishing while the loop is parked needs an event-loop
+/// wake. The browser is different: JavaScript promise callbacks run on the
+/// event-loop owner thread while winit may be parked in `Wait`, so WebAssembly
+/// requests the canvas redraw directly.
 fn request_frame_ready() {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(window) = aimer_events::window::get_window() {
+        // Browser promise completions and animation ticks already run on the
+        // JavaScript thread. Wake the canvas directly instead of sending a
+        // user event through winit: the web loop may be parked in Wait even
+        // though this callback is executing on its owner thread.
+        let _ = request_direct_frame(&FRAME_READY_PENDING, || window.request_redraw());
+        return;
+    }
+
     if !try_begin_frame_ready_request(&FRAME_READY_PENDING) {
         crate::frame_stats::record_frame_request_coalesced();
         return;
@@ -1344,6 +1364,22 @@ mod tests {
         complete_frame_ready_request(&pending);
 
         assert!(try_begin_frame_ready_request(&pending));
+    }
+
+    #[test]
+    fn direct_frame_wakes_release_the_pending_slot_after_requesting_redraw() {
+        let pending = AtomicBool::new(false);
+        let redraws = AtomicUsize::new(0);
+
+        assert!(request_direct_frame(&pending, || {
+            redraws.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert!(request_direct_frame(&pending, || {
+            redraws.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        assert_eq!(redraws.load(Ordering::SeqCst), 2);
+        assert!(!pending.load(Ordering::Acquire));
     }
 
     #[test]

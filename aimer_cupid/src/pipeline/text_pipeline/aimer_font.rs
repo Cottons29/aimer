@@ -3808,6 +3808,13 @@ pub(crate) mod tests {
         let contour = outline.contours[0];
         assert_eq!((outline.points[contour.start].x, outline.points[contour.start].y), (10.0, 20.0));
         assert_eq!((outline.points[contour.start + 1].x, outline.points[contour.start + 1].y), (110.0, 20.0));
+
+        let metrics = face.metrics().expect("metrics should parse");
+        let with_coordinates = face
+            .outline_with_metrics_at_coordinates(1, metrics, &[1.0])
+            .expect("static composite should parse")
+            .expect("composite glyph should have an outline");
+        assert_eq!(outline.points, with_coordinates.points);
     }
 
     #[test]
@@ -3995,6 +4002,11 @@ pub(crate) mod tests {
         let face = SfntFace::from_bytes(&bytes, 0).expect("directory should still parse");
 
         assert!(matches!(face.outline(1), Err(SfntError::CompositeCycle(1))));
+        let metrics = face.metrics().expect("metrics should parse");
+        assert!(matches!(
+            face.outline_with_metrics_at_coordinates(1, metrics, &[1.0]),
+            Err(SfntError::CompositeCycle(1))
+        ));
     }
 
     #[test]

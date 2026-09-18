@@ -537,7 +537,7 @@ impl ImageSource {
                             path: path_buf,
                             state,
                         });
-                        window.request_redraw();
+                        window.request_animation_frame();
                     });
                 }
 
@@ -562,7 +562,7 @@ impl ImageSource {
                             path: path_buf,
                             state,
                         });
-                        window.request_redraw();
+                        window.request_animation_frame();
                     });
                 }
 
@@ -650,7 +650,7 @@ impl ImageSource {
                         key: task_key,
                         state,
                     });
-                    window.request_redraw();
+                    window.request_animation_frame();
                 });
                 ImageResult::Loading
             }
@@ -786,7 +786,7 @@ impl ImageSource {
                             url: task_url,
                             state,
                         });
-                        window.request_redraw();
+                        window.request_animation_frame();
                     });
                 }
 
@@ -809,7 +809,7 @@ impl ImageSource {
                             url: url_owned,
                             state,
                         });
-                        window.request_redraw();
+                        window.request_animation_frame();
                     });
                 }
 
@@ -825,7 +825,7 @@ impl ImageSource {
             url: url.to_string(),
             state,
         });
-        window.request_redraw();
+        window.request_animation_frame();
         Ok(())
     }
 

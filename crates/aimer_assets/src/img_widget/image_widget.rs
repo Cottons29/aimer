@@ -14,6 +14,69 @@ use crate::ImageResult::Success;
 use crate::img_widget::source::ImageSource;
 use crate::{ImageProvider, ImageResult};
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ImagePaintGeometry {
+    pos: Vec2d,
+    size: ResolvedSize,
+    use_cover: bool,
+}
+
+fn image_paint_geometry(
+    target: ResolvedSize,
+    intrinsic: Option<(u32, u32)>,
+    fit: BoxFit,
+    scale_factor: f32,
+) -> Option<ImagePaintGeometry> {
+    let (iw, ih) = intrinsic?;
+    if iw == 0 || ih == 0 {
+        return None;
+    }
+
+    let target_w = target.width.max(0.0);
+    let target_h = target.height.max(0.0);
+    let iw = iw as f32;
+    let ih = ih as f32;
+    let scale_x = target_w / iw;
+    let scale_y = target_h / ih;
+    let (final_w, final_h, use_cover) = match fit {
+        BoxFit::Contain | BoxFit::ScaleDown | BoxFit::None => {
+            let mut scale = scale_x.min(scale_y);
+            if let BoxFit::ScaleDown = fit {
+                scale = scale.min(1.0);
+            }
+            (iw * scale * scale_factor, ih * scale * scale_factor, false)
+        }
+        BoxFit::FitWidth => {
+            let final_w = target_w * scale_factor;
+            (final_w, final_w * (ih / iw), false)
+        }
+        BoxFit::FitHeight => {
+            let final_h = target_h * scale_factor;
+            (final_h * (iw / ih), final_h, false)
+        }
+        BoxFit::Cover => {
+            let scale = scale_x.max(scale_y);
+            (iw * scale * scale_factor, ih * scale * scale_factor, true)
+        }
+        BoxFit::Fill => {
+            let scale = scale_x.min(scale_y);
+            (iw * scale * scale_factor, ih * scale * scale_factor, false)
+        }
+    };
+
+    Some(ImagePaintGeometry {
+        pos: Vec2d {
+            x: (target_w - final_w) * 0.5,
+            y: (target_h - final_h) * 0.5,
+        },
+        size: ResolvedSize {
+            width: final_w,
+            height: final_h,
+        },
+        use_cover,
+    })
+}
+
 /// Displays an image read from a file-system path.
 ///
 /// The file is loaded and decoded asynchronously and cached by path. While it
@@ -218,108 +281,26 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
         match image_result {
             Success(id) => {
                 if self.keep_aspect_ratio {
-                    if let Some((iw, ih)) = ctx.canvas.get_image_size(id) {
-                        let iw = iw as f32;
-                        let ih = ih as f32;
-                        if iw > 0.0 && ih > 0.0 {
-                            let target_w = size.width.max(0.0);
-                            let target_h = size.height.max(0.0);
-                            let mut draw_pos = Vec2d { x: 0.0, y: 0.0 };
-                            #[allow(unused_assignments)]
-                            let mut draw_size = size;
+                    let Some(geometry) = image_paint_geometry(
+                        size,
+                        ctx.canvas.get_image_size(id),
+                        self.fit,
+                        self.scale,
+                    ) else {
+                        // A preserving fit cannot safely paint until the
+                        // renderer exposes the source dimensions. Filling the
+                        // layout box here makes a wide or tall image visibly
+                        // jump to the wrong aspect ratio for one frame.
+                        return;
+                    };
 
-                            let scale_x = if iw > 0.0 { target_w / iw } else { 1.0 };
-                            let scale_y = if ih > 0.0 { target_h / ih } else { 1.0 };
-                            let (final_w, final_h, center, use_cover) = match self.fit {
-                                BoxFit::Contain | BoxFit::ScaleDown | BoxFit::None => {
-                                    // Scale down if necessary (ScaleDown), otherwise contain.
-                                    let mut scale = scale_x.min(scale_y);
-                                    if let BoxFit::ScaleDown = self.fit {
-                                        scale = scale.min(1.0);
-                                    }
-                                    let w = iw * scale * self.scale;
-                                    let h = ih * scale * self.scale;
-                                    (w, h, true, false)
-                                }
-                                BoxFit::FitWidth => {
-                                    let w = target_w * self.scale;
-                                    let h = if iw > 0.0 {
-                                        w * (ih / iw)
-                                    } else {
-                                        target_h * self.scale
-                                    };
-                                    (w, h, true, false)
-                                }
-                                BoxFit::FitHeight => {
-                                    let h = target_h * self.scale;
-                                    let w = if ih > 0.0 {
-                                        h * (iw / ih)
-                                    } else {
-                                        target_w * self.scale
-                                    };
-                                    (w, h, true, false)
-                                }
-                                BoxFit::Cover => {
-                                    let scale = scale_x.max(scale_y);
-                                    let w = iw * scale * self.scale;
-                                    let h = ih * scale * self.scale;
-                                    (w, h, true, true)
-                                }
-                                BoxFit::Fill => {
-                                    // With keep_aspect_ratio=true, prefer Contain semantics to
-                                    // avoid distortion
-                                    let scale = scale_x.min(scale_y);
-                                    let w = iw * scale * self.scale;
-                                    let h = ih * scale * self.scale;
-                                    (w, h, true, false)
-                                }
-                            };
-
-                            // Center if requested
-                            if center {
-                                draw_pos.x = (target_w - final_w) * 0.5;
-                                draw_pos.y = (target_h - final_h) * 0.5;
-                            }
-                            draw_size = ResolvedSize {
-                                width: final_w,
-                                height: final_h,
-                            };
-
-                            if use_cover {
-                                // Clip to target box to emulate cover cropping
-                                ctx.canvas.set_clip(Vec2d { x: 0.0, y: 0.0 }, size);
-                                ctx.canvas.draw_image(id, draw_pos, draw_size);
-                                ctx.canvas.clear_clip();
-                            } else {
-                                ctx.canvas.draw_image(id, draw_pos, draw_size);
-                            }
-                        } else {
-                            // Fallback: invalid intrinsic size
-                            let final_w = size.width * self.scale;
-                            let final_h = size.height * self.scale;
-                            let draw_pos = Vec2d {
-                                x: (size.width - final_w) * 0.5,
-                                y: (size.height - final_h) * 0.5,
-                            };
-                            let draw_size = ResolvedSize {
-                                width: final_w,
-                                height: final_h,
-                            };
-                            ctx.canvas.draw_image(id, draw_pos, draw_size)
-                        }
+                    if geometry.use_cover {
+                        // Clip to target box to emulate cover cropping.
+                        ctx.canvas.set_clip(Vec2d { x: 0.0, y: 0.0 }, size);
+                        ctx.canvas.draw_image(id, geometry.pos, geometry.size);
+                        ctx.canvas.clear_clip();
                     } else {
-                        // Fallback when intrinsic size is unknown
-                        let final_w = size.width * self.scale;
-                        let final_h = size.height * self.scale;
-                        let draw_pos = Vec2d {
-                            x: (size.width - final_w) * 0.5,
-                            y: (size.height - final_h) * 0.5,
-                        };
-                        let draw_size = ResolvedSize {
-                            width: final_w,
-                            height: final_h,
-                        };
-                        ctx.canvas.draw_image(id, draw_pos, draw_size)
+                        ctx.canvas.draw_image(id, geometry.pos, geometry.size);
                     }
                 } else {
                     // Not preserving aspect ratio: fill allocated box
@@ -405,5 +386,46 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                 .error_element
                 .as_ref()
                 .map_or(true, |element| element.is_paint_bounded())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aspect_preserving_geometry_waits_for_intrinsic_dimensions() {
+        let target = ResolvedSize {
+            width: 1_000.0,
+            height: 450.0,
+        };
+
+        assert_eq!(
+            image_paint_geometry(target, None, BoxFit::Contain, 1.0),
+            None,
+            "missing image metadata must not turn the layout box into a stretched image"
+        );
+    }
+
+    #[test]
+    fn aspect_preserving_geometry_contains_a_wide_image() {
+        let target = ResolvedSize {
+            width: 1_000.0,
+            height: 450.0,
+        };
+
+        let geometry = image_paint_geometry(
+            target,
+            Some((2_170, 1_516)),
+            BoxFit::Contain,
+            1.0,
+        )
+        .expect("known image metadata produces paint geometry");
+
+        assert!((geometry.pos.x - 177.9353).abs() < 0.01);
+        assert!(geometry.pos.y.abs() < 0.01);
+        assert!((geometry.size.width - 644.1293).abs() < 0.01);
+        assert!((geometry.size.height - 450.0).abs() < 0.01);
+        assert!(!geometry.use_cover);
     }
 }

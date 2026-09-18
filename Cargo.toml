@@ -277,7 +277,7 @@ synoptic = "2.2.9"
 
 
 # Macros Dependencies
-
+# f033ef1403b4dbd276d95c26ff05b51d758d7b14 | https://github.com/dtolnay/syn.git
 syn = { version = "2.0.118", features = ["full", "visit", "visit-mut"] }
 proc-macro2 = { version = "1.0.106", features = ["span-locations"] }
 quote = "1.0.46"
