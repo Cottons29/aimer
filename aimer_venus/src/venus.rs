@@ -292,12 +292,13 @@ impl Venus {
         built
     }
 
-    /// Runs `work` on a worker thread, resolving on the UI thread.
+    /// Runs potentially blocking `work` on a worker thread, resolving on the UI thread.
     ///
     /// The escape hatch a frame budget makes necessary: work with no loop to
-    /// slice — a decode, a parse, a blocking read — cannot cooperate, so it
-    /// leaves the thread entirely. The awaiting task keeps its non-`Send`
-    /// captures, because only the closure and the result cross the boundary.
+    /// slice — a decode, a parse, a blocking read — cannot cooperate with the
+    /// frame scheduler, so it leaves the UI thread entirely. The awaiting task
+    /// keeps its non-`Send` captures, because only the closure and the result
+    /// cross the boundary.
     ///
     /// # Examples
     ///
@@ -313,7 +314,9 @@ impl Venus {
     /// let runtime = venus.clone();
     /// let mutated = state.clone();
     /// venus.spawn(async move {
-    ///     let parsed = runtime.offload(|| "41".parse::<i32>().unwrap_or_default()).await;
+    ///     let parsed = runtime
+    ///         .spawn_blocking(|| "41".parse::<i32>().unwrap_or_default())
+    ///         .await;
     ///     // Still on the UI thread, still holding the `Rc`.
     ///     mutated.set(parsed + 1);
     /// });
@@ -325,12 +328,23 @@ impl Venus {
     /// ```
     #[cfg(not(target_arch = "wasm32"))]
     #[inline]
+    pub fn spawn_blocking<T, F>(&self, work: F) -> Offloaded<T>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        self.pool.spawn_blocking(work)
+    }
+
+    /// Compatibility alias for [`Self::spawn_blocking`].
+    #[cfg(not(target_arch = "wasm32"))]
+    #[inline]
     pub fn offload<T, F>(&self, work: F) -> Offloaded<T>
     where
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,
     {
-        self.pool.offload(work)
+        self.spawn_blocking(work)
     }
 
     /// The worker pool, for code that wants to size or inspect it.

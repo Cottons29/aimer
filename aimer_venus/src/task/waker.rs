@@ -1,10 +1,9 @@
 use std::cell::{Cell, UnsafeCell};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Wake, Waker};
 use std::thread::{self, ThreadId};
-
-use crossbeam::queue::SegQueue;
 
 use crate::task::TaskId;
 
@@ -55,7 +54,7 @@ unsafe impl Sync for UiWakes {}
 ///   browser promise can complete on the UI thread while the web event loop is
 ///   parked in `ControlFlow::Wait`.
 /// - **Cross-thread wakes** — a worker finishing an offload — enter the
-///   lock-free queue and nudge the parked event loop through the notifier.
+///   standard channel and nudge the parked event loop through the notifier.
 ///
 /// The queue is read by the scheduler at the start of every phase, and the two
 /// flags mean the overwhelmingly common "nothing was woken" answer costs one
@@ -64,8 +63,12 @@ pub(crate) struct WakeQueue {
     /// Wakes raised on the UI thread itself; unsynchronized by design.
     local: UiWakes,
     /// Wakes raised on any other thread.
-    shared: SegQueue<TaskId>,
-    /// Whether `shared` holds anything, so draining an empty queue never scans.
+    shared: Sender<TaskId>,
+    /// Only the owner thread drains this receiver; the mutex makes the queue
+    /// safe to share through the wakers held by other threads.
+    shared_receiver: Mutex<Receiver<TaskId>>,
+    /// Whether the shared channel holds anything, so draining an empty queue
+    /// never takes its receiver lock.
     has_shared: AtomicBool,
     /// Whether a wake has already notified the event loop and has not yet been
     /// observed by the owner thread.
@@ -87,12 +90,14 @@ impl WakeQueue {
     /// cannot also be asleep; browser callbacks are the exception because the
     /// web loop can be parked while JavaScript resumes a future.
     pub(crate) fn new() -> Arc<Self> {
+        let (shared, shared_receiver) = mpsc::channel();
         Arc::new(Self {
             local: UiWakes {
                 pending: UnsafeCell::new(Vec::new()),
                 has_pending: Cell::new(false),
             },
-            shared: SegQueue::new(),
+            shared,
+            shared_receiver: Mutex::new(shared_receiver),
             has_shared: AtomicBool::new(false),
             notifier_pending: AtomicBool::new(false),
             notifier: OnceLock::new(),
@@ -119,7 +124,7 @@ impl WakeQueue {
             unsafe { (*self.local.pending.get()).push(id) };
             self.local.has_pending.set(true);
         } else {
-            self.shared.push(id);
+            let _ = self.shared.send(id);
             self.has_shared.store(true, Ordering::Release);
         }
 
@@ -149,7 +154,11 @@ impl WakeQueue {
         }
 
         while self.has_shared.swap(false, Ordering::AcqRel) {
-            while let Some(id) = self.shared.pop() {
+            let receiver = self
+                .shared_receiver
+                .lock()
+                .expect("the wake receiver must not be poisoned");
+            while let Ok(id) = receiver.try_recv() {
                 out.push(id);
             }
         }

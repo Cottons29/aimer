@@ -127,23 +127,41 @@ impl TextureRegistry {
         self.cache_epoch.fetch_add(1, Ordering::AcqRel);
     }
 
-    fn record_size(&self, texture_id: TextureId, width: u32, height: u32) -> u64 {
-        let serial = self
-            .next_serial
-            .fetch_add(1, Ordering::Relaxed)
-            .wrapping_add(1);
-        let became_available = {
+    fn record_size(
+        &self,
+        texture_id: TextureId,
+        width: u32,
+        height: u32,
+        force_new_serial: bool,
+    ) -> u64 {
+        let (became_available, serial) = {
             let mut textures = self.textures.lock().unwrap();
             match textures.get_mut(&texture_id) {
+                Some(texture)
+                    if !force_new_serial
+                        && texture.available
+                        && texture.width == width
+                        && texture.height == height =>
+                {
+                    return texture.serial;
+                }
                 Some(texture) => {
+                    let serial = self
+                        .next_serial
+                        .fetch_add(1, Ordering::Relaxed)
+                        .wrapping_add(1);
                     let became_available = !texture.available;
                     texture.width = width;
                     texture.height = height;
                     texture.serial = serial;
                     texture.available = true;
-                    became_available
+                    (became_available, serial)
                 }
                 None => {
+                    let serial = self
+                        .next_serial
+                        .fetch_add(1, Ordering::Relaxed)
+                        .wrapping_add(1);
                     textures.insert(
                         texture_id,
                         RegistryTexture {
@@ -153,7 +171,7 @@ impl TextureRegistry {
                             available: true,
                         },
                     );
-                    false
+                    (false, serial)
                 }
             }
         };
@@ -1214,12 +1232,14 @@ impl DrawList {
             }
             hasher.finish() as u32
         };
-        // Record size always so future frames can query it, even if we already queued
-        // the load.
-        self.set_texture_size(texture_id, width, height);
         if self.has_queued_image(texture_id) {
             return texture_id;
         }
+        // A content-stable ID can be uploaded again after the renderer evicts
+        // its GPU texture. Publish a new serial even when the registry still
+        // reports the old dimensions as available, so an older submitted
+        // frame cannot invalidate this upload after the fact.
+        self.set_texture_size_internal(texture_id, width, height, true);
         // The ID is content-stable, but the upload payload is still a mutable
         // cache value. Retained paint must be retired when an image with the
         // same dimensions is uploaded again.
@@ -1240,7 +1260,10 @@ impl DrawList {
         width: u32,
         height: u32,
     ) {
-        self.set_texture_size(texture_id, width, height);
+        // Explicit IDs can carry a new payload without changing dimensions;
+        // publish a new serial so an eviction from an older submitted frame
+        // cannot invalidate this upload.
+        self.set_texture_size_internal(texture_id, width, height, true);
         // Explicit IDs are commonly used for dynamic image sources; changing
         // their bytes must invalidate any retained draw stream that references
         // the ID even when the intrinsic dimensions stay the same.
@@ -1254,10 +1277,28 @@ impl DrawList {
     }
 
     pub fn set_texture_size(&mut self, texture_id: TextureId, width: u32, height: u32) {
+        self.set_texture_size_internal(texture_id, width, height, false);
+    }
+
+    fn set_texture_size_internal(
+        &mut self,
+        texture_id: TextureId,
+        width: u32,
+        height: u32,
+        force_new_serial: bool,
+    ) {
+        let registry_needs_update = match self.texture_registry.texture_state(texture_id) {
+            Some((registry_width, registry_height, _, available)) => {
+                !available || registry_width != width || registry_height != height
+            }
+            None => true,
+        };
         let update_registry = if let Some(metadata) = self.texture_sizes.get_mut(&texture_id) {
-            let update_registry = metadata.width != width
+            let update_registry = force_new_serial
+                || metadata.width != width
                 || metadata.height != height
-                || !metadata.available.swap(true, Ordering::AcqRel);
+                || !metadata.available.swap(true, Ordering::AcqRel)
+                || registry_needs_update;
             metadata.width = width;
             metadata.height = height;
             update_registry
@@ -1269,9 +1310,12 @@ impl DrawList {
             true
         };
         if update_registry {
-            let registry_serial = self
-                .texture_registry
-                .record_size(texture_id, width, height);
+            let registry_serial = self.texture_registry.record_size(
+                texture_id,
+                width,
+                height,
+                force_new_serial,
+            );
             if let Some(metadata) = self.texture_sizes.get_mut(&texture_id) {
                 metadata.registry_serial = registry_serial;
             }
@@ -1412,18 +1456,21 @@ impl DrawList {
 
     pub fn get_texture_size(&self, texture_id: TextureId) -> Option<(u32, u32)> {
         match self.texture_sizes.get(&texture_id) {
-            Some(metadata) => {
-                if metadata.available.load(Ordering::Acquire) {
-                    Some((metadata.width, metadata.height))
-                } else {
-                    self.texture_registry
-                        .texture_state(texture_id)
-                        .filter(|(_, _, serial, available)| {
-                            *serial > metadata.registry_serial && *available
-                        })
-                        .map(|(width, height, _, _)| (width, height))
+            Some(metadata) => match self.texture_registry.texture_state(texture_id) {
+                // The shared registry is authoritative once it has observed
+                // this list's metadata (or a newer replacement). A recycled
+                // draw list can retain `available = true` locally after the
+                // renderer evicts the texture from the submitted list.
+                Some((width, height, serial, available))
+                    if serial >= metadata.registry_serial =>
+                {
+                    available.then_some((width, height))
                 }
-            }
+                Some(_) | None => metadata
+                    .available
+                    .load(Ordering::Acquire)
+                    .then_some((metadata.width, metadata.height)),
+            },
             None => self
                 .texture_registry
                 .texture_state(texture_id)
@@ -1444,9 +1491,8 @@ impl DrawList {
     pub(crate) fn is_texture_available(&self, texture_id: TextureId) -> bool {
         match self.texture_sizes.get(&texture_id) {
             Some(metadata) => match self.texture_registry.texture_state(texture_id) {
-                Some((_, _, serial, available)) if serial > metadata.registry_serial => available,
-                Some(_) => metadata.available.load(Ordering::Acquire),
-                None => false,
+                Some((_, _, serial, available)) if serial >= metadata.registry_serial => available,
+                Some(_) | None => metadata.available.load(Ordering::Acquire),
             },
             None => self
                 .texture_registry
@@ -1454,17 +1500,29 @@ impl DrawList {
         }
     }
 
-    /// Marks a renderer-evicted texture without taking ownership of the draw
-    /// list's command buffer. The metadata stays in place so a source provider
-    /// can recognize the stale ID and reload its source on demand.
+    /// Returns the shared registry serial for a texture, if the ID has been
+    /// published by a draw list.
     #[inline]
-    pub(crate) fn mark_texture_evicted(&self, texture_id: TextureId) {
+    pub(crate) fn texture_registry_serial(&self, texture_id: TextureId) -> Option<u64> {
+        self.texture_registry
+            .texture_state(texture_id)
+            .map(|(_, _, serial, _)| serial)
+    }
+
+    /// Marks a renderer-evicted texture without taking ownership of the draw
+    /// list's command buffer. The serial is captured when the renderer selects
+    /// the eviction, so a newer upload published by another in-flight frame
+    /// cannot be invalidated by an older removal. This also works when the
+    /// current draw list has no local metadata for the evicted ID.
+    #[inline]
+    pub(crate) fn mark_texture_evicted(&self, texture_id: TextureId, serial: u64) {
         if let Some(metadata) = self.texture_sizes.get(&texture_id)
-            && metadata.available.swap(false, Ordering::AcqRel)
+            && metadata.registry_serial == serial
         {
-            self.texture_registry
-                .mark_evicted_if_current(texture_id, metadata.registry_serial);
+            metadata.available.store(false, Ordering::Release);
         }
+        self.texture_registry
+            .mark_evicted_if_current(texture_id, serial);
     }
 
     #[inline]
@@ -1703,9 +1761,11 @@ mod memory_tests {
         let mut list = DrawList::new();
 
         let first = list.load_image(&data, 1, 1);
+        let first_epoch = list.texture_cache_epoch();
         let second = list.load_image(&data, 1, 1);
 
         assert_eq!(first, second);
+        assert_eq!(list.texture_cache_epoch(), first_epoch);
         assert_eq!(
             list.commands()
                 .iter()
@@ -1748,8 +1808,11 @@ mod memory_tests {
         let mut list = DrawList::new();
         list.set_texture_size(42, 640, 480);
         let initial_epoch = list.texture_cache_epoch();
+        let serial = list
+            .texture_registry_serial(42)
+            .expect("the texture must be registered");
 
-        list.mark_texture_evicted(42);
+        list.mark_texture_evicted(42, serial);
 
         assert!(!list.is_texture_available(42));
         assert_eq!(list.get_texture_size(42), None);
@@ -1769,14 +1832,80 @@ mod memory_tests {
         let replacement = DrawList::with_texture_registry(registry);
 
         submitted.set_texture_size(7, 320, 200);
+        let serial = submitted
+            .texture_registry_serial(7)
+            .expect("the texture must be registered");
 
         assert!(replacement.is_texture_available(7));
         assert_eq!(replacement.get_texture_size(7), Some((320, 200)));
 
-        submitted.mark_texture_evicted(7);
+        submitted.mark_texture_evicted(7, serial);
 
         assert!(!replacement.is_texture_available(7));
         assert_eq!(replacement.get_texture_size(7), None);
+    }
+
+    #[test]
+    fn an_eviction_from_a_draw_list_without_local_metadata_updates_the_registry() {
+        let registry = Arc::new(TextureRegistry::default());
+        let mut uploaded = DrawList::with_texture_registry(registry.clone());
+        let observer = DrawList::with_texture_registry(registry);
+
+        uploaded.set_texture_size(7, 320, 200);
+        let serial = uploaded
+            .texture_registry_serial(7)
+            .expect("the texture must be registered");
+
+        observer.mark_texture_evicted(7, serial);
+
+        assert!(!uploaded.is_texture_available(7));
+        assert_eq!(uploaded.get_texture_size(7), None);
+        assert!(!observer.is_texture_available(7));
+        assert_eq!(observer.get_texture_size(7), None);
+    }
+
+    #[test]
+    fn a_reused_draw_list_does_not_treat_evicted_texture_metadata_as_available() {
+        let registry = Arc::new(TextureRegistry::default());
+        let mut submitted = DrawList::with_texture_registry(registry.clone());
+        let mut replacement = DrawList::with_texture_registry(registry.clone());
+
+        submitted.set_texture_size(7, 320, 200);
+        let (_, _, serial, _) = registry
+            .texture_state(7)
+            .expect("the uploaded texture must be registered");
+        replacement.texture_sizes.insert(
+            7,
+            TextureMetadata::new(320, 200, serial),
+        );
+
+        submitted.mark_texture_evicted(7, serial);
+
+        assert!(!replacement.is_texture_available(7));
+        assert_eq!(replacement.get_texture_size(7), None);
+    }
+
+    #[test]
+    fn re_registering_an_available_texture_does_not_hide_an_in_flight_eviction() {
+        let registry = Arc::new(TextureRegistry::default());
+        let mut submitted = DrawList::with_texture_registry(registry.clone());
+        let mut replacement = DrawList::with_texture_registry(registry);
+
+        submitted.set_texture_size(7, 320, 200);
+        replacement.set_texture_size(7, 320, 200);
+        let serial = submitted
+            .texture_registry_serial(7)
+            .expect("the texture must be registered");
+
+        submitted.mark_texture_evicted(7, serial);
+
+        assert!(!replacement.is_texture_available(7));
+        assert_eq!(replacement.get_texture_size(7), None);
+
+        replacement.set_texture_size(7, 320, 200);
+
+        assert!(replacement.is_texture_available(7));
+        assert_eq!(replacement.get_texture_size(7), Some((320, 200)));
     }
 
     #[test]
@@ -1786,8 +1915,11 @@ mod memory_tests {
         let mut replacement = DrawList::with_texture_registry(registry);
 
         submitted.set_texture_size(7, 320, 200);
-        replacement.set_texture_size(7, 320, 200);
-        submitted.mark_texture_evicted(7);
+        let serial = submitted
+            .texture_registry_serial(7)
+            .expect("the texture must be registered");
+        replacement.load_image_with_id(7, &[1, 2, 3, 4], 320, 200);
+        submitted.mark_texture_evicted(7, serial);
 
         assert!(replacement.is_texture_available(7));
         assert_eq!(replacement.get_texture_size(7), Some((320, 200)));
@@ -1795,6 +1927,29 @@ mod memory_tests {
         // already published its replacement metadata.
         assert!(submitted.is_texture_available(7));
         assert_eq!(submitted.get_texture_size(7), Some((320, 200)));
+    }
+
+    #[test]
+    fn an_older_eviction_cannot_hide_a_newer_hashed_reload() {
+        let registry = Arc::new(TextureRegistry::default());
+        let data = [1, 2, 3, 4];
+        let mut submitted = DrawList::with_texture_registry(registry.clone());
+        let mut replacement = DrawList::with_texture_registry(registry);
+
+        let texture_id = submitted.load_image(&data, 320, 200);
+        let serial = submitted
+            .texture_registry_serial(texture_id)
+            .expect("the texture must be registered");
+        assert_eq!(replacement.load_image(&data, 320, 200), texture_id);
+
+        submitted.mark_texture_evicted(texture_id, serial);
+
+        assert!(replacement.is_texture_available(texture_id));
+        assert_eq!(replacement.get_texture_size(texture_id), Some((320, 200)));
+        // The submitted list may be recycled after the newer frame has
+        // already published its replacement metadata.
+        assert!(submitted.is_texture_available(texture_id));
+        assert_eq!(submitted.get_texture_size(texture_id), Some((320, 200)));
     }
 
     #[test]

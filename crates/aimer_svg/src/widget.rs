@@ -549,11 +549,21 @@ impl Widget for SvgAsset {
         let window = ctx.window.clone();
 
         #[cfg(not(target_arch = "wasm32"))]
-        ctx.async_handle.spawn(async move {
-            let _ = updates.send(SvgLoadState::Loading);
-            let _ = updates.send(load_source(&source).await);
-            window.request_redraw();
-        });
+        match aimer_venus::Venus::current() {
+            Some(venus) => {
+                venus.spawn(async move {
+                    let _ = updates.send(SvgLoadState::Loading);
+                    let _ = updates.send(load_source(&source).await);
+                    window.request_redraw();
+                });
+            }
+            None => {
+                let _ = updates.send(SvgLoadState::Error(Arc::from(
+                    "Venus runtime is unavailable",
+                )));
+                window.request_redraw();
+            }
+        }
 
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move {
@@ -1510,9 +1520,11 @@ mod tests {
     // the async load every frame.
     #[tokio::test]
     async fn rebuild_carries_the_loaded_loader() {
+        let venus = aimer_venus::Venus::new();
+        venus.install();
         let source = br#"<svg width="2" height="2" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#;
 
-        let mut loaded = SvgLoader::new(SvgSource::Memory(Arc::from(source.as_slice())));
+        let loaded = SvgLoader::new(SvgSource::Memory(Arc::from(source.as_slice())));
         loaded.load().await;
         let old = asset(loaded);
 
@@ -1529,6 +1541,7 @@ mod tests {
             new.loader.borrow().state(),
             SvgLoadState::Ready(_)
         ));
+        aimer_venus::Venus::uninstall();
     }
 
     #[cfg(not(target_arch = "wasm32"))]

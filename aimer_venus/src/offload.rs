@@ -1,12 +1,11 @@
 //! The one place work leaves the UI thread.
 
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
-use std::thread::{self, JoinHandle, Thread};
+use std::thread::{self, JoinHandle};
 
-use crossbeam::channel::{Receiver, Sender, bounded, unbounded};
 use futures_util::task::AtomicWaker;
 
 /// One unit of work queued for a worker thread.
@@ -14,19 +13,20 @@ type Job = Box<dyn FnOnce() + Send>;
 
 /// The rendezvous between a worker thread and the awaiting UI-thread task.
 struct Rendezvous<T> {
-    result: Receiver<T>,
-    completion: Sender<T>,
+    completion: SyncSender<T>,
     waker: AtomicWaker,
 }
 
 impl<T> Rendezvous<T> {
-    fn new() -> Arc<Self> {
-        let (completion, result) = bounded(1);
-        Arc::new(Self {
+    fn new() -> (Arc<Self>, Receiver<T>) {
+        let (completion, result) = mpsc::sync_channel(1);
+        (
+            Arc::new(Self {
+                completion,
+                waker: AtomicWaker::new(),
+            }),
             result,
-            completion,
-            waker: AtomicWaker::new(),
-        })
+        )
     }
 
     /// Publishes `value` and wakes the awaiting task.
@@ -44,9 +44,10 @@ impl<T> Rendezvous<T> {
 /// phase the task belongs to — so the result is applied to state at a defined
 /// point in the frame rather than "eventually".
 ///
-/// See [`Venus::offload`](crate::Venus::offload).
+/// See [`Venus::spawn_blocking`](crate::Venus::spawn_blocking).
 #[must_use = "offloaded work is only observed by awaiting it"]
 pub struct Offloaded<T> {
+    result: Receiver<T>,
     rendezvous: Arc<Rendezvous<T>>,
 }
 
@@ -54,72 +55,24 @@ impl<T> Future for Offloaded<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Ok(value) = self.rendezvous.result.try_recv() {
+        if let Ok(value) = self.result.try_recv() {
             return Poll::Ready(value);
         }
 
         self.rendezvous.waker.register(cx.waker());
-        if let Ok(value) = self.rendezvous.result.try_recv() {
+        if let Ok(value) = self.result.try_recv() {
             return Poll::Ready(value);
         }
         Poll::Pending
     }
 }
 
-/// One worker's slice of the pool's shared state.
-struct WorkerSlot {
-    /// This worker's own job queue. The owner and thieves consume it through
-    /// Crossbeam's lock-free receiver operations.
-    jobs: Receiver<Job>,
-    sender: Sender<Job>,
-    /// Raised by the worker when a full scan of every queue found nothing,
-    /// lowered when it picks work up again.
-    ///
-    /// The handshake that makes the flag reliable: the worker raises it
-    /// *before* its final scan, and the submitter reads it *after* pushing a
-    /// job — both through `SeqCst` and the queue's atomics — so any job is either
-    /// seen by that final scan or its submitter sees the raised flag and rings
-    /// the alarm.
-    idle: AtomicBool,
-    /// The wake token: `true` means the worker owes the queues another scan.
-    token: AtomicBool,
-    /// The worker's parking handle, installed once at worker start.
-    thread: OnceLock<Thread>,
-}
-
-impl WorkerSlot {
-    fn new() -> Self {
-        let (sender, jobs) = unbounded();
-        Self {
-            jobs,
-            sender,
-            idle: AtomicBool::new(false),
-            token: AtomicBool::new(false),
-            thread: OnceLock::new(),
-        }
-    }
-
-    /// Hands the worker a wake token and unparks it.
-    fn ring(&self) {
-        self.token.store(true, Ordering::SeqCst);
-        if let Some(thread) = self.thread.get() {
-            thread.unpark();
-        }
-    }
-
-    /// Blocks until a wake token arrives, then consumes it.
-    fn wait_for_ring(&self) {
-        while !self.token.swap(false, Ordering::SeqCst) {
-            thread::park();
-        }
-    }
-}
-
-/// The state a pool shares with its workers.
-struct PoolShared {
-    slots: Box<[WorkerSlot]>,
-    shutdown: AtomicBool,
-}
+/// The receiver shared by all workers.
+///
+/// Standard-library channels have one receiver, so workers take turns waiting
+/// for the next job through this mutex. The lock is released before a job runs,
+/// which lets every available worker pull from the queue independently.
+type SharedJobs = Arc<Mutex<Receiver<Job>>>;
 
 /// A small pool of threads for work that cannot be sliced.
 ///
@@ -134,12 +87,9 @@ struct PoolShared {
 ///
 /// # Dispatch
 ///
-/// Every worker owns its own queue; a submitted job goes to an idle worker's
-/// queue when one exists, and round-robin across the busy ones otherwise. A
-/// worker whose own queue runs dry steals from its siblings before parking, so
-/// a job queued behind a slow one is picked up by whichever worker frees up
-/// first — no single lock serializes dispatch, and no worker sleeps while work
-/// is stranded elsewhere.
+/// Every worker receives from one shared queue. A worker releases the receiver
+/// lock before running a job, so a blocked job does not prevent another worker
+/// from taking the next queued job.
 ///
 /// # Panics
 ///
@@ -148,10 +98,9 @@ struct PoolShared {
 /// not panic in offloaded work; the release profile aborts the process on panic
 /// in any case.
 pub struct OffloadPool {
-    shared: Arc<PoolShared>,
-    /// Where the next job lands when every worker is busy, so a burst spreads
-    /// across the queues instead of piling onto one.
-    cursor: AtomicUsize,
+    /// The sender is taken during drop so workers observe channel disconnection
+    /// after all accepted jobs have been received.
+    sender: Option<Sender<Job>>,
     workers: Vec<JoinHandle<()>>,
 }
 
@@ -159,24 +108,21 @@ impl OffloadPool {
     /// Spawns a pool of `threads` workers, at least one.
     pub fn new(threads: usize) -> Self {
         let threads = threads.max(1);
-        let shared = Arc::new(PoolShared {
-            slots: (0..threads).map(|_| WorkerSlot::new()).collect(),
-            shutdown: AtomicBool::new(false),
-        });
+        let (sender, receiver) = mpsc::channel();
+        let receiver: SharedJobs = Arc::new(Mutex::new(receiver));
 
         let workers = (0..threads)
             .map(|index| {
-                let shared = Arc::clone(&shared);
+                let receiver = Arc::clone(&receiver);
                 thread::Builder::new()
                     .name(format!("aimer-venus-offload-{index}"))
-                    .spawn(move || worker(&shared, index))
+                    .spawn(move || worker(receiver))
                     .expect("an offload worker thread")
             })
             .collect();
 
         Self {
-            shared,
-            cursor: AtomicUsize::new(0),
+            sender: Some(sender),
             workers,
         }
     }
@@ -193,45 +139,33 @@ impl OffloadPool {
     }
 
     /// Runs `work` on a worker thread, resolving on the UI thread.
+    pub fn spawn_blocking<T, F>(&self, work: F) -> Offloaded<T>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        let (rendezvous, result) = Rendezvous::new();
+        let completion = Arc::clone(&rendezvous);
+
+        self.submit(Box::new(move || completion.complete(work())));
+        Offloaded { result, rendezvous }
+    }
+
+    /// Compatibility alias for [`Self::spawn_blocking`].
+    #[inline]
     pub fn offload<T, F>(&self, work: F) -> Offloaded<T>
     where
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,
     {
-        let rendezvous = Rendezvous::new();
-        let completion = Arc::clone(&rendezvous);
-
-        self.submit(Box::new(move || completion.complete(work())));
-        Offloaded { rendezvous }
+        self.spawn_blocking(work)
     }
 
     /// Queues `job` and makes sure a worker will get to it.
     fn submit(&self, job: Job) {
-        let slots = &self.shared.slots;
-
-        // An idle worker's own queue is the best home for the job; when every
-        // worker is busy, round-robin spreads the burst across their queues.
-        let target = Self::idle_worker(slots)
-            .unwrap_or_else(|| self.cursor.fetch_add(1, Ordering::Relaxed) % slots.len());
-        let _ = slots[target].sender.send(job);
-
-        // Re-read the flags *after* the push — see [`WorkerSlot::idle`]. Any
-        // idle worker will do when the target itself is not: it steals.
-        let sleeper = if slots[target].idle.load(Ordering::SeqCst) {
-            Some(target)
-        } else {
-            Self::idle_worker(slots)
-        };
-        if let Some(index) = sleeper {
-            slots[index].ring();
+        if let Some(sender) = self.sender.as_ref() {
+            let _ = sender.send(job);
         }
-    }
-
-    /// The first worker currently advertising an empty scan, if any.
-    fn idle_worker(slots: &[WorkerSlot]) -> Option<usize> {
-        slots
-            .iter()
-            .position(|slot| slot.idle.load(Ordering::SeqCst))
     }
 
     /// How many worker threads the pool owns.
@@ -251,69 +185,31 @@ impl Default for OffloadPool {
 impl Drop for OffloadPool {
     /// Closes the pool and joins the workers.
     ///
-    /// A worker only exits once every queue is empty, so a job the pool
+    /// Workers only exit once the shared queue is empty, so a job the pool
     /// accepted still runs; and joining means an application shutting down does
     /// not race a worker that is halfway through writing into a rendezvous.
     fn drop(&mut self) {
-        self.shared.shutdown.store(true, Ordering::SeqCst);
-        for slot in self.shared.slots.iter() {
-            slot.ring();
-        }
+        drop(self.sender.take());
         for worker in self.workers.drain(..) {
             let _ = worker.join();
         }
     }
 }
 
-fn worker(shared: &PoolShared, me: usize) {
-    let slot = &shared.slots[me];
-    let _ = slot.thread.set(thread::current());
+fn worker(receiver: SharedJobs) {
     loop {
-        if let Some(job) = claim(shared, me) {
-            job();
-            continue;
-        }
+        let job = {
+            let receiver = receiver
+                .lock()
+                .expect("the offload job receiver must not be poisoned");
+            receiver.recv()
+        };
 
-        // Nothing anywhere on a first pass. Raise the idle flag *before*
-        // scanning once more: a job pushed before the raise is caught by this
-        // scan, and one pushed after it sees the flag and rings the alarm — so
-        // the worker never sleeps through a submission.
-        slot.idle.store(true, Ordering::SeqCst);
-        if let Some(job) = claim(shared, me) {
-            slot.idle.store(false, Ordering::SeqCst);
-            job();
-            continue;
-        }
-
-        // The shutdown check sits behind the empty scan on purpose: a pool
-        // being dropped drains before it dies.
-        if shared.shutdown.load(Ordering::SeqCst) {
-            return;
-        }
-
-        slot.wait_for_ring();
-        slot.idle.store(false, Ordering::SeqCst);
-    }
-}
-
-/// Takes one job: the front of this worker's own queue, or failing that, the
-/// front of a sibling's — a worker with time on its hands steals rather than
-/// letting work sit behind a busy peer.
-fn claim(shared: &PoolShared, me: usize) -> Option<Job> {
-    let slots = &shared.slots;
-    if let Ok(job) = slots[me].jobs.try_recv() {
-        return Some(job);
-    }
-
-    // Victims are scanned starting past `me`, so no single queue is every
-    // thief's first stop.
-    for offset in 1..slots.len() {
-        let victim = (me + offset) % slots.len();
-        if let Ok(job) = slots[victim].jobs.try_recv() {
-            return Some(job);
+        match job {
+            Ok(job) => job(),
+            Err(_) => return,
         }
     }
-    None
 }
 
 #[cfg(test)]
@@ -346,47 +242,45 @@ mod tests {
     }
 
     // The dispatch property the pool must never lose: work queued while a
-    // worker is stuck belongs to the *pool*, not to that worker. Every worker
-    // is first wedged on a gate, a batch of quick jobs is queued behind them,
-    // and then a single worker is released — that one worker must be able to
-    // reach and finish every quick job, wherever it was queued.
-    // #[test]
-    // fn a_blocked_worker_does_not_strand_the_jobs_queued_behind_it() {
-    //     let pool = OffloadPool::new(2);
-    //     let occupied = Arc::new(AtomicUsize::new(0));
-    //
-    //     let gates: Vec<mpsc::Sender<()>> = (0..pool.thread_count())
-    //         .map(|_| {
-    //             let (open, gate) = mpsc::channel::<()>();
-    //             let counted = occupied.clone();
-    //             // The result is observed through the counter, not awaited.
-    //             drop(pool.offload(move || {
-    //                 counted.fetch_add(1, Ordering::SeqCst);
-    //                 let _ = gate.recv();
-    //             }));
-    //             open
-    //         })
-    //         .collect();
-    //     wait_until("every worker to pick up its blocker", || {
-    //         occupied.load(Ordering::SeqCst) == 2
-    //     });
-    //
-    //     let done = Arc::new(AtomicUsize::new(0));
-    //     for _ in 0..8 {
-    //         let counted = done.clone();
-    //         drop(pool.offload(move || {
-    //             counted.fetch_add(1, Ordering::SeqCst);
-    //         }));
-    //     }
-    //
-    //     // One worker comes back; the other stays wedged the whole time.
-    //     gates[0].send(()).expect("the blocked worker to be alive");
-    //     wait_until("the free worker to finish every queued job", || {
-    //         done.load(Ordering::SeqCst) == 8
-    //     });
-    //
-    //     gates[1].send(()).expect("the blocked worker to be alive");
-    // }
+    // worker is stuck belongs to the pool, so a free worker can still reach
+    // every queued job.
+    #[test]
+    fn a_blocked_worker_does_not_strand_the_jobs_queued_behind_it() {
+        let pool = OffloadPool::new(2);
+        let occupied = Arc::new(AtomicUsize::new(0));
+
+        let gates: Vec<mpsc::Sender<()>> = (0..pool.thread_count())
+            .map(|_| {
+                let (open, gate) = mpsc::channel::<()>();
+                let counted = occupied.clone();
+                // The result is observed through the counter, not awaited.
+                drop(pool.offload(move || {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    let _ = gate.recv();
+                }));
+                open
+            })
+            .collect();
+        wait_until("every worker to pick up its blocker", || {
+            occupied.load(Ordering::SeqCst) == 2
+        });
+
+        let done = Arc::new(AtomicUsize::new(0));
+        for _ in 0..8 {
+            let counted = done.clone();
+            drop(pool.offload(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }));
+        }
+
+        // One worker comes back; the other stays wedged the whole time.
+        gates[0].send(()).expect("the blocked worker to be alive");
+        wait_until("the free worker to finish every queued job", || {
+            done.load(Ordering::SeqCst) == 8
+        });
+
+        gates[1].send(()).expect("the blocked worker to be alive");
+    }
 
     // Dropping the pool joins the workers, and joining means draining: a job
     // the pool accepted is a job that runs, even when the drop arrives while

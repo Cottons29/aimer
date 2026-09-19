@@ -2381,16 +2381,19 @@ impl Renderer {
                 !self.textures_to_remove.contains(id)
                     && !draw_list.has_live_texture_reference(*id)
             })
+            .map(|id| (id, draw_list.texture_registry_serial(id)))
             .collect::<Vec<_>>();
         self.textures_to_remove
-            .extend(auto_evictions.iter().copied());
+            .extend(auto_evictions.iter().map(|(id, _)| *id));
 
         queue.submit(std::iter::once(encoder.finish()));
         for texture_id in self.textures_to_remove.drain(..) {
             self.image_pipeline.remove_texture(texture_id);
         }
-        for texture_id in auto_evictions {
-            draw_list.mark_texture_evicted(texture_id);
+        for (texture_id, serial) in auto_evictions {
+            if let Some(serial) = serial {
+                draw_list.mark_texture_evicted(texture_id, serial);
+            }
         }
     }
 }

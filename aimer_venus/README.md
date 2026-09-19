@@ -15,8 +15,8 @@ optimises something else entirely:
 | Concern         | Server runtime      | Venus                              |
 |-----------------|---------------------|------------------------------------|
 | Unit of time    | none, run ASAP      | the frame (16.6 / 8.3 ms)          |
-| Thread model    | work-stealing pool  | one UI thread + optional offload   |
-| `Send` bound    | required            | only at the `offload` boundary     |
+| Thread model    | work-stealing pool  | one UI thread + optional `spawn_blocking` |
+| `Send` bound    | required            | only at the `spawn_blocking` boundary   |
 | Wake → run      | µs, unordered      | before *this* frame's build phase  |
 | Backpressure    | queue depth         | frame budget, deadline-aware       |
 | Cancellation    | rare                | constant, tied to the element tree |
@@ -50,7 +50,7 @@ input ──▶ frame tasks ──▶ microtasks ──▶ build / layout / pain
 | `Frame`     | once per frame             | animation ticks, after-layout callbacks    |
 | `Idle`      | while the frame has room   | image decode, glyph raster, prefetch       |
 
-Everything unsliceable goes to `Venus::offload`, the single place `Send` is
+Everything unsliceable goes to `Venus::spawn_blocking`, the single place `Send` is
 required — and where it is genuinely true.
 
 ## Using it
@@ -85,7 +85,7 @@ let state = Rc::new(Cell::new(0));
 let runtime = venus.clone();
 let mutated = state.clone();
 venus.spawn(async move {
-    let bytes = runtime.offload(|| vec![0_u8; 1024]).await;
+    let bytes = runtime.spawn_blocking(|| vec![0_u8; 1024]).await;
     // Still on the UI thread, still holding the `Rc`.
     mutated.set(bytes.len());
 });

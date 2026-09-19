@@ -13,13 +13,16 @@ aimer_attribute.workspace = true
 aimer_events.workspace = true
 aimer_utils.workspace = true
 aimer_widget.workspace = true
+aimer_venus.workspace = true
 crossbeam.workspace = true
 thiserror.workspace = true
 usvg.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { workspace = true, features = ["rt"] }
-reqwest.workspace = true
+ureq.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+openssl = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures.workspace = true
@@ -30,3 +33,4 @@ web-sys = { workspace = true, features = ["Response", "Window"] }
 [dev-dependencies]
 aimer_canvas.workspace = true
 tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

@@ -198,8 +198,8 @@ pub struct RawImageWidget<P: ImageProvider> {
     pub error_element: Option<AnyElement>,
     pub cached_id: UnsafeCell<Option<ImageResult>>,
     /// Last renderer image-cache generation observed by this retained widget.
-    /// A changed generation triggers one exact availability check, keeping
-    /// ordinary image draws free of synchronization or cache probing.
+    /// A changed generation makes the provider revalidate its cached image ID
+    /// before the widget records another draw command.
     pub cached_texture_epoch: Cell<u64>,
     pub scale: f32,
 }
@@ -234,15 +234,32 @@ impl<P: ImageProvider> LayoutElement for RawImageWidget<P> {
     }
 }
 
+impl<P: ImageProvider> RawImageWidget<P> {
+    fn cache_result(&self, result: ImageResult, ctx: &BuildContext) -> ImageResult {
+        let was_loading = unsafe {
+            matches!(&*self.cached_id.get(), Some(ImageResult::Loading))
+        };
+        if was_loading && result != ImageResult::Loading {
+            // An async provider can finish after an AnimatedSwitcher has
+            // stopped animating. Requesting a frame alone is insufficient in
+            // that case because retained paint may have no damage to replay.
+            aimer_widget::mark_paint_damage_full();
+        }
+        unsafe { *self.cached_id.get() = Some(result.clone()) };
+        self.cached_texture_epoch
+            .set(ctx.canvas.texture_cache_epoch());
+        result
+    }
+}
+
 impl<P: ImageProvider> Drawable for RawImageWidget<P> {
     fn draw(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
         let image_result = if let Some(result) = unsafe { &*self.cached_id.get() } {
             let cache_invalidated = match result {
-                Success(id) => {
+                Success(_) => {
                     let epoch = ctx.canvas.texture_cache_epoch();
-                    let invalidated = epoch != self.cached_texture_epoch.get()
-                        && !ctx.canvas.is_texture_available(*id);
+                    let invalidated = epoch != self.cached_texture_epoch.get();
                     self.cached_texture_epoch.set(epoch);
                     invalidated
                 }
@@ -251,31 +268,16 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
             if cache_invalidated {
                 unsafe { *self.cached_id.get() = None };
                 let r = self.source.get_image(ctx);
-                if r != ImageResult::Loading {
-                    unsafe { *self.cached_id.get() = Some(r.clone()) };
-                    self.cached_texture_epoch
-                        .set(ctx.canvas.texture_cache_epoch());
-                }
-                r
+                self.cache_result(r, ctx)
             } else if result == &ImageResult::Loading {
                 let r = self.source.get_image(ctx);
-                if r != ImageResult::Loading {
-                    unsafe { *self.cached_id.get() = Some(r.clone()) };
-                    self.cached_texture_epoch
-                        .set(ctx.canvas.texture_cache_epoch());
-                }
-                r
+                self.cache_result(r, ctx)
             } else {
                 result.clone()
             }
         } else {
             let result = self.source.get_image(ctx);
-            if result != ImageResult::Loading {
-                unsafe { *self.cached_id.get() = Some(result.clone()) };
-                self.cached_texture_epoch
-                    .set(ctx.canvas.texture_cache_epoch());
-            }
-            result
+            self.cache_result(result, ctx)
         };
 
         match image_result {
@@ -391,7 +393,97 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use super::*;
+
+    #[derive(Clone, Debug)]
+    struct LoadingThenError {
+        calls: Rc<Cell<usize>>,
+    }
+
+    impl ImageProvider for LoadingThenError {
+        fn get_image(&self, _ctx: &BuildContext) -> ImageResult {
+            let call = self.calls.get();
+            self.calls.set(call + 1);
+            if call == 0 {
+                ImageResult::Loading
+            } else {
+                ImageResult::Error("ready".to_owned())
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct CountingSuccess {
+        calls: Rc<Cell<usize>>,
+    }
+
+    impl ImageProvider for CountingSuccess {
+        fn get_image(&self, ctx: &BuildContext) -> ImageResult {
+            let call = self.calls.get();
+            self.calls.set(call + 1);
+            ctx.canvas.set_texture_size(7, 1, 1);
+            ImageResult::Success(7)
+        }
+    }
+
+    fn context() -> BuildContext<'static> {
+        use aimer_attribute::{BoxConstraint, Vec2d};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_widget::base::WindowHandle;
+
+        static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> =
+            std::sync::OnceLock::new();
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("image widget test runtime should build")
+        });
+        let _guard = runtime.enter();
+        let inner = Box::leak(Box::new(InnerCanvas::new()));
+        let mut context = BuildContext::new(
+            Canvas::new(inner),
+            ResolvedSize {
+                width: 32.0,
+                height: 32.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+        context.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 32.0,
+            max_height: 32.0,
+        };
+        context
+    }
+
+    fn image_with_source<P: ImageProvider>(source: P) -> RawImageWidget<P> {
+        RawImageWidget {
+            source,
+            size: Size::new(Dimension::Px(16.0), Dimension::Px(16.0)),
+            cache: LayoutCache::new(),
+            fit: BoxFit::Fill,
+            keep_aspect_ratio: false,
+            original_size: Cell::new(None),
+            loading_element: None,
+            error_element: None,
+            cached_id: UnsafeCell::new(None),
+            cached_texture_epoch: Cell::new(0),
+            scale: 1.0,
+        }
+    }
+
+    fn loading_then_error_image(calls: Rc<Cell<usize>>) -> RawImageWidget<LoadingThenError> {
+        image_with_source(LoadingThenError { calls })
+    }
 
     #[test]
     fn aspect_preserving_geometry_waits_for_intrinsic_dimensions() {
@@ -427,5 +519,50 @@ mod tests {
         assert!((geometry.size.width - 644.1293).abs() < 0.01);
         assert!((geometry.size.height - 450.0).abs() < 0.01);
         assert!(!geometry.use_cover);
+    }
+
+    #[test]
+    fn async_image_completion_invalidates_paint_after_loading_frame() {
+        let ctx = context();
+        let image = loading_then_error_image(Rc::new(Cell::new(0)));
+
+        aimer_widget::begin_paint_frame(32, 32);
+        image.draw(&ctx);
+        let _ = aimer_widget::take_paint_frame_damage(32, 32);
+
+        aimer_widget::begin_paint_frame(32, 32);
+        image.draw(&ctx);
+        let damage = aimer_widget::take_paint_frame_damage(32, 32);
+
+        assert!(
+            damage.is_full(),
+            "a loading image becoming drawable must invalidate its retained paint"
+        );
+    }
+
+    #[test]
+    fn image_provider_is_revalidated_after_another_texture_changes() {
+        let ctx = context();
+        let calls = Rc::new(Cell::new(0));
+        let image = image_with_source(CountingSuccess {
+            calls: Rc::clone(&calls),
+        });
+
+        aimer_widget::begin_paint_frame(32, 32);
+        image.draw(&ctx);
+        let _ = aimer_widget::take_paint_frame_damage(32, 32);
+        assert_eq!(calls.get(), 1);
+
+        let _ = ctx.canvas.load_image(&[1, 2, 3, 4], 1, 1);
+
+        aimer_widget::begin_paint_frame(32, 32);
+        image.draw(&ctx);
+        let _ = aimer_widget::take_paint_frame_damage(32, 32);
+
+        assert_eq!(
+            calls.get(),
+            2,
+            "a retained success must be revalidated after the renderer cache changes"
+        );
     }
 }

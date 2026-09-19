@@ -10,7 +10,7 @@ use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
     PaintDamageTracker, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
-    VisitorElement, Widget,
+    StatelessElement, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -92,6 +92,8 @@ impl<T: Widget + 'static> AnimatedSwitcher<T> {
     }
 
     /// Sets the child identity used to decide whether a transition is needed.
+    /// The identity is also attached to the rendered child slot, which keeps
+    /// the incoming and outgoing children distinct while both are present.
     /// This is useful when the child widget itself does not expose a key.
     #[inline]
     #[track_caller]
@@ -123,6 +125,7 @@ impl<T: Widget + 'static> StatefulWidget for AnimatedSwitcher<T> {
         AnimatedSwitcherState {
             current_child: self.child.clone(),
             old_child: None,
+            old_child_key: None,
             child_key: self.transition_key.clone().or_else(|| self.child.key()),
             duration: self.duration,
             curve: self.curve,
@@ -169,6 +172,7 @@ impl<T: Widget + 'static> aimer_widget::PortableWidget for AnimatedSwitcher<T> {
 pub struct AnimatedSwitcherState<T: Widget + 'static> {
     current_child: ChildBuilder,
     old_child: Option<ChildBuilder>,
+    old_child_key: Option<Key>,
     child_key: Option<Key>,
     duration: Duration,
     curve: Curve,
@@ -195,6 +199,7 @@ impl<T: Widget + 'static> State<AnimatedSwitcher<T>> for AnimatedSwitcherState<T
 
         if self.child_key != new.child_key {
             self.old_child = Some(self.current_child.clone());
+            self.old_child_key = self.child_key.clone();
             self.current_child = new.current_child;
             self.child_key = new.child_key;
             self.in_controller.reset();
@@ -210,8 +215,14 @@ impl<T: Widget + 'static> State<AnimatedSwitcher<T>> for AnimatedSwitcherState<T
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         AnimatedSwitcherFrame {
             current_child: self.current_child.clone(),
+            current_child_key: self.child_key.clone(),
             old_child: if self.out_controller.is_animating() {
                 self.old_child.clone()
+            } else {
+                None
+            },
+            old_child_key: if self.out_controller.is_animating() {
+                self.old_child_key.clone()
             } else {
                 None
             },
@@ -223,21 +234,49 @@ impl<T: Widget + 'static> State<AnimatedSwitcher<T>> for AnimatedSwitcherState<T
 
 struct AnimatedSwitcherFrame {
     current_child: ChildBuilder,
+    current_child_key: Option<Key>,
     old_child: Option<ChildBuilder>,
+    old_child_key: Option<Key>,
     in_controller: AnimationController,
     out_controller: AnimationController,
 }
 
 impl Widget for AnimatedSwitcherFrame {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let Self {
+            current_child,
+            current_child_key,
+            old_child,
+            old_child_key,
+            in_controller,
+            out_controller,
+        } = self;
+
         AnimatedSwitcherElement {
-            current_child: self.current_child.build(ctx),
-            old_child: UnsafeCell::new(self.old_child.as_ref().map(|child| child.build(ctx))),
-            in_controller: self.in_controller.clone(),
-            out_controller: self.out_controller.clone(),
+            current_child: keyed_child_element(current_child, current_child_key, ctx),
+            old_child: UnsafeCell::new(old_child.map(|child| {
+                keyed_child_element(child, old_child_key, ctx)
+            })),
+            in_controller,
+            out_controller,
             damage: PaintDamageTracker::new(),
         }
         .boxed()
+    }
+}
+
+fn keyed_child_element(
+    child: ChildBuilder,
+    key: Option<Key>,
+    ctx: &BuildContext,
+) -> AnyElement {
+    let child = child.build(ctx);
+    // The switcher's current and outgoing children are siblings during a
+    // transition. Give those slots the same identity used by the transition
+    // controller so reconciliation cannot match them positionally.
+    match key {
+        Some(key) => StatelessElement::wrapper(child, Some(key), "AnimatedSwitcherChild").boxed(),
+        None => child,
     }
 }
 
@@ -610,6 +649,45 @@ mod tests {
                     "frame {frame} must reuse those children, not rebuild them"
                 );
             }
+        }
+
+        #[tokio::test]
+        async fn transition_children_keep_their_child_identity_when_both_are_present() {
+            test_frame_requester::install();
+            test_frame_requester::reset();
+            let ctx = context();
+
+            let mut current = AnimatedSwitcher::new(
+                Duration::from_millis(100),
+                Curve::Linear,
+                ErrorWidget::new("home"),
+            )
+            .child_key("home")
+            .create_state();
+            current.adopt_config_from(
+                AnimatedSwitcher::new(
+                    Duration::from_millis(100),
+                    Curve::Linear,
+                    ErrorWidget::new("docs"),
+                )
+                .child_key("docs")
+                .create_state(),
+            );
+
+            let tree = current.build(&ctx).to_element(&ctx);
+            let mut child_keys = Vec::new();
+            tree.visit_children(&mut |child| {
+                child_keys.push(child.reconciliation_key().cloned());
+            });
+
+            assert_eq!(
+                child_keys,
+                vec![
+                    Some(Key::Value("docs".to_owned())),
+                    Some(Key::Value("home".to_owned()))
+                ],
+                "incoming and outgoing children must remain distinguishable during a cross-fade"
+            );
         }
 
         #[tokio::test]

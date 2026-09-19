@@ -18,6 +18,7 @@ aimer_style.workspace = true
 aimer_macro.workspace = true
 aimer_cupid.workspace = true
 aimer_svg.workspace = true
+aimer_venus.workspace = true
 crossbeam.workspace = true
 
 ######
@@ -32,11 +33,13 @@ openssl = { workspace = true }
 aimer_events.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
-reqwest = { workspace = true }
+ureq.workspace = true
 
 [target.wasm32-unknown-unknown.dependencies]
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 wasm-bindgen.workspace = true
 web-sys = { workspace = true, features = [ "Response", "Window", "Blob", "ImageBitmap", "ImageBitmapOptions", "ResizeQuality", "RequestInit", "Headers", "OffscreenCanvas", "OffscreenCanvasRenderingContext2d", "ImageData" ] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt"] }

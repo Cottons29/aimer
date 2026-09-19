@@ -243,7 +243,9 @@ mod runtime_spec {
         let venus_for_task = venus.clone();
         let mutated = state.clone();
         venus.spawn(async move {
-            let sum = venus_for_task.offload(|| (1..=10).sum::<u32>()).await;
+            let sum = venus_for_task
+                .spawn_blocking(|| (1..=10).sum::<u32>())
+                .await;
             mutated.set(sum);
         });
 
@@ -252,6 +254,32 @@ mod runtime_spec {
         }
 
         assert_eq!(state.get(), 55);
+    }
+
+    /// Blocking work runs on a pool worker instead of the UI thread.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn spawn_blocking_runs_work_off_the_ui_thread() {
+        use std::thread;
+
+        let venus = Venus::new();
+        let ui_thread = thread::current().id();
+        let ran_off_thread = Rc::new(Cell::new(false));
+
+        let venus_for_task = venus.clone();
+        let observed = ran_off_thread.clone();
+        venus.spawn(async move {
+            let worker_thread = venus_for_task
+                .spawn_blocking(|| thread::current().id())
+                .await;
+            observed.set(worker_thread != ui_thread);
+        });
+
+        while venus.task_count() > 0 {
+            venus.run_microtasks();
+        }
+
+        assert!(ran_off_thread.get());
     }
 
     /// A worker finishing while the event loop sleeps has to be able to wake it.

@@ -2,12 +2,14 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::Hash;
 #[cfg(not(target_arch = "wasm32"))]
-use std::error::Error;
+use std::io::Read;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use aimer_utils::error;
 use aimer_widget::base::{BuildContext, WindowHandle};
+#[cfg(not(target_arch = "wasm32"))]
+use aimer_venus::Venus;
 use crossbeam::channel::{Receiver, Sender, TryRecvError, unbounded};
 use once_cell::sync::Lazy;
 
@@ -373,6 +375,31 @@ fn send_cache_update(update: ImageCacheUpdate) {
         error!("Image cache update channel is disconnected");
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+fn schedule_native_image_load<F, U>(work: F, update: U, window: WindowHandle) -> bool
+where
+    F: FnOnce() -> ImageCacheState + Send + 'static,
+    U: FnOnce(ImageCacheState) -> ImageCacheUpdate + Send + 'static,
+{
+    let Some(venus) = Venus::current() else {
+        return false;
+    };
+    let worker_runtime = venus.clone();
+
+    venus.spawn(async move {
+        let state = worker_runtime.spawn_blocking(work).await;
+        send_cache_update(update(state));
+        window.request_animation_frame();
+    });
+    true
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn venus_unavailable() -> String {
+    "Venus runtime is unavailable".to_owned()
+}
+
 #[allow(dead_code)]
 const BROWSER_IMAGE_MAX_DIMENSION: u32 = 2048;
 #[allow(dead_code)]
@@ -516,10 +543,13 @@ impl ImageSource {
                 // milliseconds.
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let path_buf = path.clone();
+                    let task_path = path.clone();
+                    let update_path = path.clone();
+                    let error_path = path.clone();
                     let window = ctx.window.clone();
-                    ctx.async_handle.spawn_blocking(move || {
-                        let state = match image::open(&path_buf) {
+                    let error_window = window.clone();
+                    if !schedule_native_image_load(
+                        move || match image::open(&task_path) {
                             Ok(image) => {
                                 let rgba = image.to_rgba8();
                                 let (width, height) = (rgba.width(), rgba.height());
@@ -532,13 +562,21 @@ impl ImageSource {
                                 )
                             }
                             Err(_) => ImageCacheState::Error("Failed to load image".into()),
-                        };
-                        send_cache_update(ImageCacheUpdate::File {
-                            path: path_buf,
+                        },
+                        move |state| ImageCacheUpdate::File {
+                            path: update_path,
                             state,
+                        },
+                        window,
+                    ) {
+                        let error = venus_unavailable();
+                        send_cache_update(ImageCacheUpdate::File {
+                            path: error_path,
+                            state: ImageCacheState::Error(error.clone()),
                         });
-                        window.request_animation_frame();
-                    });
+                        error_window.request_animation_frame();
+                        return ImageResult::Error(error);
+                    }
                 }
 
                 // wasm: fetch and decode asynchronously via the browser's
@@ -577,9 +615,10 @@ impl ImageSource {
 
     /// Load a bundled asset by its registered key.
     ///
-    /// On native targets the bytes are read synchronously from the platform's
-    /// asset store (Android `AssetManager`, or the app bundle / project dir on
-    /// desktop & iOS/macOS), decoded, uploaded to the GPU and cached by key.
+    /// On native targets the bytes are read from the platform's asset store
+    /// (Android `AssetManager`, or the app bundle / project dir on desktop &
+    /// iOS/macOS), decoded off the UI thread, uploaded to the GPU and cached by
+    /// key.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load_asset_image(ctx: &BuildContext, key: &str) -> ImageResult {
         let key_owned = key.to_string();
@@ -624,10 +663,13 @@ impl ImageSource {
             CacheLookup::StartLoad => {
                 // Cache miss: read + decode the asset off the render thread so
                 // scrolling it into view does not block the frame.
-                let task_key = key_owned;
+                let task_key = key_owned.clone();
+                let update_key = key_owned.clone();
+                let error_key = key_owned;
                 let window = ctx.window.clone();
-                ctx.async_handle.spawn_blocking(move || {
-                    let state = match Self::load_asset_bytes(&task_key) {
+                let error_window = window.clone();
+                if !schedule_native_image_load(
+                    move || match Self::load_asset_bytes(&task_key) {
                         Ok(bytes) => match image::load_from_memory(&bytes) {
                             Ok(image) => {
                                 let rgba = image.to_rgba8();
@@ -645,13 +687,21 @@ impl ImageSource {
                             )),
                         },
                         Err(error) => ImageCacheState::Error(error),
-                    };
-                    send_cache_update(ImageCacheUpdate::Asset {
-                        key: task_key,
+                    },
+                    move |state| ImageCacheUpdate::Asset {
+                        key: update_key,
                         state,
+                    },
+                    window,
+                ) {
+                    let error = venus_unavailable();
+                    send_cache_update(ImageCacheUpdate::Asset {
+                        key: error_key,
+                        state: ImageCacheState::Error(error.clone()),
                     });
-                    window.request_animation_frame();
-                });
+                    error_window.request_animation_frame();
+                    return ImageResult::Error(error);
+                }
                 ImageResult::Loading
             }
         }
@@ -771,23 +821,32 @@ impl ImageSource {
 
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let task_url = url_owned;
-                    ctx.async_handle.spawn(async move {
-                        let state = match Self::fetch_full_image_with_headers(&task_url, &headers)
-                            .await
-                        {
+                    let task_url = url_owned.clone();
+                    let update_url = url_owned.clone();
+                    let error_url = url_owned;
+                    let error_window = window.clone();
+                    if !schedule_native_image_load(
+                        move || match Self::fetch_full_image_with_headers(&task_url, &headers) {
                             Ok(state) => state,
                             Err(error) => {
                                 error!("Error to fetch network image : {}", error);
                                 ImageCacheState::Error(error)
                             }
-                        };
-                        send_cache_update(ImageCacheUpdate::Network {
-                            url: task_url,
+                        },
+                        move |state| ImageCacheUpdate::Network {
+                            url: update_url,
                             state,
+                        },
+                        window,
+                    ) {
+                        let error = venus_unavailable();
+                        send_cache_update(ImageCacheUpdate::Network {
+                            url: error_url,
+                            state: ImageCacheState::Error(error.clone()),
                         });
-                        window.request_animation_frame();
-                    });
+                        error_window.request_animation_frame();
+                        return ImageResult::Error(error);
+                    }
                 }
 
                 #[cfg(target_arch = "wasm32")]
@@ -818,6 +877,7 @@ impl ImageSource {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
     #[allow(dead_code)]
     async fn fetch_full_image(url: &str, window: WindowHandle) -> Result<(), String> {
         let state = Self::fetch_full_image_with_headers(url, &HashMap::new()).await?;
@@ -983,52 +1043,34 @@ impl ImageSource {
         Ok((rgba, upload_width, upload_height, w, h))
     }
 
-    #[cfg(target_os = "android")]
-    fn create_client() -> Result<reqwest::Client, String> {
-        reqwest::Client::builder()
-            .user_agent("aimer/0.1.0")
-            .use_native_tls()
-            // .tls_built_in_root_certs(true)
-            .build()
-            .map_err(|e| format!("Failed to create client: {}", e))
-    }
-
-    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
-    fn create_client() -> Result<reqwest::Client, String> {
-        reqwest::Client::builder()
-            .user_agent("aimer/0.1.0")
-            .use_native_tls()
-            .build()
-            .map_err(|e| format!("Failed to create client: {}", e))
-    }
-
     #[cfg(not(target_arch = "wasm32"))]
-    async fn fetch_full_image_with_headers(
+    fn fetch_full_image_with_headers(
         url: &str,
         headers: &HashMap<String, String>,
     ) -> Result<ImageCacheState, String> {
-        let client = Self::create_client()?;
-
-        let mut request_builder = client.get(url);
+        let mut request_builder = ureq::get(url).header("User-Agent", "aimer/0.1.0");
         for (key, value) in headers {
             request_builder = request_builder.header(key, value);
         }
 
-        let response = request_builder.send().await.map_err(|e| {
-            format!("Network Error: {:?},  Source: {:?}", e, e.source())
-            // format!("Failed to fetch image:
-            // {}", e)
-        })?;
+        let mut response = match request_builder.call() {
+            Ok(response) => response,
+            Err(ureq::Error::StatusCode(status)) => {
+                return Err(format!("HTTP error: {status}"));
+            }
+            Err(error) => return Err(format!("Network Error: {error}")),
+        };
 
         if !response.status().is_success() {
             return Err(format!("HTTP error: {}", response.status()));
         }
 
-        let all_bytes = response
-            .bytes()
-            .await
-            .map_err(|_| "Failed to download bytes")?
-            .to_vec();
+        let mut all_bytes = Vec::new();
+        response
+            .body_mut()
+            .as_reader()
+            .read_to_end(&mut all_bytes)
+            .map_err(|error| format!("Failed to download bytes: {error}"))?;
 
         match image::load_from_memory(&all_bytes) {
             Ok(image) => {
@@ -1063,6 +1105,122 @@ mod tests {
         DECODED_CACHE_IDLE_ACCESSES, constrained_browser_image_size, drain_cache_updates,
         image_mime_type, prune_decoded_cache, send_cache_update,
     };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn context() -> aimer_widget::base::BuildContext<'static> {
+        use aimer_attribute::{BoxConstraint, Vec2d};
+        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_widget::base::{BuildContext, ResolvedSize, WindowHandle};
+
+        static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> =
+            std::sync::OnceLock::new();
+        let runtime = RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("asset test runtime should build")
+        });
+        let _guard = runtime.enter();
+        let inner = Box::leak(Box::new(InnerCanvas::new()));
+        let mut context = BuildContext::new(
+            Canvas::new(inner),
+            ResolvedSize {
+                width: 32.0,
+                height: 32.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+        context.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 32.0,
+            max_height: 32.0,
+        };
+        context
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_network_load_reports_missing_venus_without_starting_work() {
+        use aimer_venus::Venus;
+        let context = context();
+
+        Venus::uninstall();
+        let url = "http://127.0.0.1:9/aimer-assets-no-venus.png";
+        let result = super::ImageSource::load_network_image(&context, url);
+
+        assert!(matches!(
+            result,
+            crate::ImageResult::Error(error) if error.contains("Venus runtime is unavailable")
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_network_load_uses_ureq_and_forwards_headers() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        use aimer_venus::Venus;
+        use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
+
+        let mut image_bytes = std::io::Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([255, 0, 0, 255])))
+            .write_to(&mut image_bytes, ImageFormat::Png)
+            .unwrap();
+        let image_bytes = image_bytes.into_inner();
+        let request_bytes = Arc::new(Mutex::new(Vec::new()));
+        let request_copy = request_bytes.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let length = stream.read(&mut request).unwrap();
+            request_copy.lock().unwrap().extend_from_slice(&request[..length]);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                image_bytes.len()
+            )
+            .unwrap();
+            stream.write_all(&image_bytes).unwrap();
+        });
+
+        let context = context();
+        let venus = Venus::new();
+        venus.install();
+        let url = format!("http://{address}/image.png");
+        let mut headers = HashMap::new();
+        headers.insert("X-Aimer-Test".to_owned(), "venus".to_owned());
+        let mut result = super::ImageSource::load_network_image_with_headers(
+            &context, &url, &headers,
+        );
+        for _ in 0..500 {
+            if matches!(result, crate::ImageResult::Success(_)) {
+                break;
+            }
+            venus.run_microtasks();
+            result = super::ImageSource::load_network_image_with_headers(
+                &context, &url, &headers,
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        Venus::uninstall();
+        server.join().unwrap();
+
+        assert!(matches!(result, crate::ImageResult::Success(_)));
+        let request = request_bytes.lock().unwrap();
+        assert!(request
+            .windows(b"X-Aimer-Test: venus".len())
+            .any(|window| window.eq_ignore_ascii_case(b"X-Aimer-Test: venus")));
+    }
 
     #[test]
     fn detects_browser_supported_image_mime_types() {

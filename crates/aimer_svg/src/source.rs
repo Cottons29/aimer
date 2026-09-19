@@ -1,7 +1,11 @@
 use std::cell::RefCell;
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[cfg(not(target_arch = "wasm32"))]
+use aimer_venus::Venus;
 use crossbeam::channel::{Receiver, Sender, unbounded};
 
 use crate::SvgDocument;
@@ -73,6 +77,11 @@ impl SvgLoader {
         self.state.borrow().clone()
     }
 
+    /// Loads and parses the source, publishing the resulting state.
+    ///
+    /// Native file, asset, network, and parsing work is dispatched through the
+    /// Venus runtime. If no Venus runtime is installed on the calling thread,
+    /// the load returns an error instead of blocking that thread.
     pub async fn load(&self) -> SvgLoadState {
         let _ = self.updates_tx.send(SvgLoadState::Loading);
         let state = load_source(&self.source).await;
@@ -91,8 +100,24 @@ impl SvgLoader {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn load_source(source: &SvgSource) -> SvgLoadState {
-    match load_bytes(source).await {
+    let Some(venus) = Venus::current() else {
+        return venus_unavailable();
+    };
+    let source = source.clone();
+    venus
+        .spawn_blocking(move || load_source_blocking(&source))
+        .await
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn load_source(source: &SvgSource) -> SvgLoadState {
+    load_document(load_bytes(source).await)
+}
+
+fn load_document(bytes: Result<Vec<u8>, String>) -> SvgLoadState {
+    match bytes {
         Ok(bytes) => match SvgDocument::from_svg(bytes) {
             Ok(document) => SvgLoadState::Ready(document),
             Err(error) => SvgLoadState::Error(Arc::from(error.to_string())),
@@ -102,26 +127,42 @@ pub(crate) async fn load_source(source: &SvgSource) -> SvgLoadState {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn load_bytes(source: &SvgSource) -> Result<Vec<u8>, String> {
+fn venus_unavailable() -> SvgLoadState {
+    SvgLoadState::Error(Arc::from("Venus runtime is unavailable"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_source_blocking(source: &SvgSource) -> SvgLoadState {
+    load_document(load_bytes(source))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_bytes(source: &SvgSource) -> Result<Vec<u8>, String> {
     match source {
         SvgSource::Memory(bytes) => Ok(bytes.to_vec()),
         SvgSource::Asset(key) => load_asset_bytes(key),
         SvgSource::File(path) => std::fs::read(path).map_err(|error| error.to_string()),
         SvgSource::Network(url) => {
-            let response = reqwest::get(url.as_ref())
-                .await
-                .map_err(|error| error.to_string())?;
+            let mut response = match ureq::get(url.as_ref()).call() {
+                Ok(response) => response,
+                Err(ureq::Error::StatusCode(status)) => {
+                    return Err(format!("SVG request failed with status {status}"));
+                }
+                Err(error) => return Err(error.to_string()),
+            };
             if !response.status().is_success() {
                 return Err(format!(
                     "SVG request failed with status {}",
                     response.status()
                 ));
             }
+            let mut bytes = Vec::new();
             response
-                .bytes()
-                .await
-                .map(|bytes| bytes.to_vec())
-                .map_err(|error| error.to_string())
+                .body_mut()
+                .as_reader()
+                .read_to_end(&mut bytes)
+                .map_err(|error| error.to_string())?;
+            Ok(bytes)
         }
     }
 }
@@ -227,6 +268,8 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn memory_source_transitions_from_loading_to_ready() {
+        let venus = aimer_venus::Venus::new();
+        venus.install();
         use super::*;
         let loader = SvgLoader::new(SvgSource::Memory(Arc::from(
             br#"<svg width="2" height="3" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#
@@ -241,6 +284,7 @@ mod tests {
         };
         assert_eq!(document.scene().viewport.width, 2.0);
         assert!(matches!(loader.state(), SvgLoadState::Ready(_)));
+        aimer_venus::Venus::uninstall();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -248,6 +292,8 @@ mod tests {
     async fn asset_source_loads_valid_svg_and_reports_missing_or_malformed_assets() {
         use std::sync::Arc;
 
+        let venus = aimer_venus::Venus::new();
+        venus.install();
         use super::*;
 
         let directory = tempfile::tempdir().unwrap();
@@ -280,6 +326,140 @@ mod tests {
             malformed_path.to_string_lossy().as_ref(),
         )));
         assert!(matches!(malformed.load().await, SvgLoadState::Error(_)));
+        aimer_venus::Venus::uninstall();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn native_file_load_reports_missing_venus_instead_of_blocking() {
+        use aimer_venus::Venus;
+        use super::*;
+
+        Venus::uninstall();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("native.svg");
+        std::fs::write(
+            &path,
+            br#"<svg width="2" height="2" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#,
+        )
+        .unwrap();
+
+        let state = SvgLoader::new(SvgSource::File(path)).load().await;
+
+        assert!(matches!(
+            state,
+            SvgLoadState::Error(error) if error.contains("Venus runtime is unavailable")
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn native_network_source_loads_through_ureq() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use super::*;
+
+        let body = br#"<svg width="11" height="13" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = std::io::Read::read(&mut stream, &mut request);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                std::str::from_utf8(body).unwrap()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+
+        let venus = aimer_venus::Venus::new();
+        venus.install();
+        let state = SvgLoader::new(SvgSource::Network(Arc::from(format!(
+            "http://{address}/icon.svg"
+        ))))
+        .load()
+        .await;
+        aimer_venus::Venus::uninstall();
+        server.join().unwrap();
+
+        let SvgLoadState::Ready(document) = state else {
+            panic!("network SVG should load");
+        };
+        assert_eq!(document.scene().viewport.width, 11.0);
+        assert_eq!(document.scene().viewport.height, 13.0);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn native_network_source_reports_http_status_errors() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use super::*;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let response =
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+
+        let venus = aimer_venus::Venus::new();
+        venus.install();
+        let state = SvgLoader::new(SvgSource::Network(Arc::from(format!(
+            "http://{address}/missing.svg"
+        ))))
+        .load()
+        .await;
+        aimer_venus::Venus::uninstall();
+        server.join().unwrap();
+
+        assert!(matches!(
+            state,
+            SvgLoadState::Error(error) if error.contains("SVG request failed with status 404")
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn native_network_source_reads_bodies_larger_than_ureq_convenience_limit() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use super::*;
+
+        let body = vec![b' '; 10 * 1024 * 1024 + 1];
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let body_length = body.len();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {body_length}\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            stream.write_all(&body).unwrap();
+        });
+
+        let venus = aimer_venus::Venus::new();
+        venus.install();
+        let state = SvgLoader::new(SvgSource::Network(Arc::from(format!(
+            "http://{address}/large.svg"
+        ))))
+        .load()
+        .await;
+        aimer_venus::Venus::uninstall();
+        server.join().unwrap();
+
+        assert!(matches!(
+            state,
+            SvgLoadState::Error(error) if error.contains("SVG resource limit exceeded")
+        ));
     }
 
     #[test]
