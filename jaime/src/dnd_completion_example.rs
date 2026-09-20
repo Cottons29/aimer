@@ -29,7 +29,7 @@ pub fn dnd_completion_example() -> impl Widget {
         .child(|state: DragTargetState| {
             let cards = ITEMS
                 .iter()
-                .map(|(label, id)| draggable_card(*label, *id, state.is_hovered))
+                .map(|(label, id)| draggable_card(label, *id, state.is_hovered))
                 .collect::<Vec<_>>();
             Container::new()
                 .padding(LayoutSpacing::all(Spacing::Px(10)))

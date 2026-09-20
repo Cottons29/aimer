@@ -1,4 +1,12 @@
 //! Shared conservative damage tracking for animated and retained paint.
+//!
+//! Damage tracking and retained paint are separate contracts, and only the
+//! first one is target-independent. An owner that paints its child live owes
+//! the frame its footprint on every target, or a damage-driven renderer reuses
+//! the previous target and the new paint is recorded but never presented. The
+//! cache that replays recorded content is a native optimization instead, and is
+//! only compiled where the renderer can consume it — so the gates that remove
+//! that cache must leave this module and its callers in place.
 
 use std::cell::Cell;
 

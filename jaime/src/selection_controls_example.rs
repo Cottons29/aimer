@@ -276,8 +276,7 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
             reset_updater.set_state(|state| {
                 *state = SelectionControlsExampleState {
                     updater: state
-                        .updater
-                        .clone(),
+                        .updater,
                     ..SelectionControlsExampleState::initial()
                 }
             });
