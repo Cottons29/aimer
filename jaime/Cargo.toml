@@ -20,7 +20,6 @@ uuid = { version = "1.22.0", features = ["js", "v4"] }
 reqwest.workspace = true
 
 [dev-dependencies]
-aimer_cli = { path = "../aimer_cli" }
 aimer_attribute.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }

@@ -31,5 +31,4 @@ muda = "0.19.3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
-aimer_cli = { path = "../aimer_cli" }
 tempfile.workspace = true
