@@ -855,11 +855,22 @@ mod tests {
     use aimer_attribute::size::ResolvedSize;
     use aimer_widget::base::WindowHandle;
     use aimer_widget::{AnyElement, ErrorWidget, Key, State, StatefulWidget, Widget};
-
+    use crate::controller::ScrollState;
+    use crate::ScrollableState;
     use super::{
         scroll_storage, BuildContext, OverscrollSource, OverscrollSources, ScrollAxis,
         ScrollBarPlacement, Scrollable, resolved_overscroll_sources, resolved_parent_extent,
     };
+
+
+    #[test]
+    fn i_want_to_know_size_of_it() {
+        // eprintln!("size of ScrollableFrame: {}", size_of::<ScrollableFrame>());
+        eprintln!("size of Scrollable: {}", size_of::<Scrollable>());
+        // eprintln!("size of ScrollableFrame::State: {}", size_of::<ScrollableFrame::State>());
+        eprintln!("Size of ScrollState: {}", size_of::<ScrollState>());
+
+    }
 
     fn assert_stateful_widget<W: StatefulWidget>() {}
 

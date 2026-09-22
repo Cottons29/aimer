@@ -617,9 +617,9 @@ impl State<ExampleShowcase> for ExampleShowcaseState {
                                 .width(Dimension::Px(1.0))
                                 .color(theme::divider(&app_theme))
                                 .boxed(),
-                            Expanded::new()
-                                .child(content(self.selected, app_theme))
-                                .boxed(),
+                            // Expanded::new()
+                            //     .child(content(self.selected, app_theme))
+                            //     .boxed(),
                         ]),
                     )
                     .boxed(),
@@ -1146,5 +1146,164 @@ mod tests {
         let mut app = AimerApp::start_headless(ExampleShowcase::new());
 
         app.pump_frames(2);
+    }
+
+    #[test]
+    fn profile_sidebar_scroll_frames() {
+        use std::time::Instant;
+
+        use aimer::HeadlessOptions;
+        use aimer::quiver::frame_stats::{
+            frame_breakdown, frame_content_stats, reset_frame_breakdown, reset_frame_content_stats,
+        };
+        use aimer::quiver::winit::dpi::{PhysicalPosition, PhysicalSize};
+        use aimer::quiver::winit::event::{DeviceId, MouseScrollDelta, TouchPhase, WindowEvent};
+
+        let mut app = AimerApp::start_headless_with(
+            theme::provide(ExampleShowcase::new().boxed()),
+            HeadlessOptions {
+                size: PhysicalSize::new(2560, 1600),
+                scale_factor: 2.0,
+            },
+        );
+        let device = DeviceId::dummy();
+        app.pump_frames(8);
+
+        // Park the cursor inside the sidebar so wheel events target it.
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id: device,
+            position: PhysicalPosition::new(120.0, 400.0),
+        });
+        app.pump_frames(2);
+
+        // Idle frames: no new input, just re-drawing an unchanged tree.
+        reset_frame_breakdown();
+        reset_frame_content_stats();
+        let idle_start = Instant::now();
+        for _ in 0..30 {
+            app.render_frame();
+        }
+        let idle_us = idle_start.elapsed().as_secs_f64() * 1e6 / 30.0;
+        let idle_content = frame_content_stats();
+
+        // Trackpad-style scroll frames with the cursor hovering the sidebar.
+        reset_frame_breakdown();
+        reset_frame_content_stats();
+        let mut times = Vec::new();
+        for _ in 0..30000 {
+            app.send_window_event(WindowEvent::MouseWheel {
+                device_id: device,
+                delta: MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -24.0)),
+                phase: TouchPhase::Moved,
+            });
+            // Keep the sidebar oscillating so every frame scrolls.
+            if times.len() % 100 == 99 {
+                for _ in 0..50 {
+                    app.send_window_event(WindowEvent::MouseWheel {
+                        device_id: device,
+                        delta: MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 48.0)),
+                        phase: TouchPhase::Moved,
+                    });
+                    app.render_frame();
+                }
+            }
+            let start = Instant::now();
+            app.render_frame();
+            times.push(start.elapsed().as_secs_f64() * 1e6);
+            if times.len() >= 60 && std::env::var("PROFILE_ONCE").is_ok() {
+                break;
+            }
+        }
+        times.sort_by(f64::total_cmp);
+        let scroll_content = frame_content_stats();
+        let scroll_breakdown = frame_breakdown();
+
+        // Same scroll, but the cursor sits over the right pane: no hover
+        // churn inside the scrolling content.
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id: device,
+            position: PhysicalPosition::new(900.0, 400.0),
+        });
+        app.pump_frames(2);
+        reset_frame_breakdown();
+        reset_frame_content_stats();
+        let mut away_times = Vec::new();
+        for _ in 0..60 {
+            app.send_window_event(WindowEvent::CursorMoved {
+                device_id: device,
+                position: PhysicalPosition::new(120.0, 400.0),
+            });
+            app.send_window_event(WindowEvent::MouseWheel {
+                device_id: device,
+                delta: MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -24.0)),
+                phase: TouchPhase::Moved,
+            });
+            app.send_window_event(WindowEvent::CursorMoved {
+                device_id: device,
+                position: PhysicalPosition::new(900.0, 400.0),
+            });
+            let start = Instant::now();
+            app.render_frame();
+            away_times.push(start.elapsed().as_secs_f64() * 1e6);
+        }
+        away_times.sort_by(f64::total_cmp);
+        let away_content = frame_content_stats();
+
+        eprintln!("=== idle frame: {idle_us:.0} us");
+        eprintln!(
+            "=== idle per frame: nodes={:.0} cmds={:.0} retained={:.0} text_cmds={:.0} text_miss={:.1} layout_calls={:.0} paint_calls={:.0} rebuild_visits={:.0} rebuilds(S={:.1},L={:.1})",
+            idle_content.average_drawn_nodes(),
+            idle_content.average_draw_commands(),
+            idle_content.average_retained_layers(),
+            idle_content.average_text_commands(),
+            idle_content.average_text_cache_misses(),
+            idle_content.layout_calls as f64 / idle_content.frames.max(1) as f64,
+            idle_content.paint_calls as f64 / idle_content.frames.max(1) as f64,
+            idle_content.rebuild_visits as f64 / idle_content.frames.max(1) as f64,
+            idle_content.stateful_builds as f64 / idle_content.frames.max(1) as f64,
+            idle_content.stateless_builds as f64 / idle_content.frames.max(1) as f64,
+        );
+        eprintln!(
+            "=== scroll frame: p50={:.0} us  p95={:.0} us  max={:.0} us",
+            times[times.len() / 2],
+            times[(times.len() as f64 * 0.95) as usize - 1],
+            times[times.len() - 1],
+        );
+        eprintln!(
+            "=== scroll build phase avg: {:.0} us (encode {:.0} us, present {:.0} us)",
+            scroll_breakdown.build.average().as_secs_f64() * 1e6,
+            scroll_breakdown.encode.average().as_secs_f64() * 1e6,
+            scroll_breakdown.present.average().as_secs_f64() * 1e6,
+        );
+        eprintln!(
+            "=== scroll per frame: nodes={:.0} cmds={:.0} retained={:.0} text_cmds={:.0} text_miss={:.1} layout_calls={:.0} paint_calls={:.0} rebuild_visits={:.0} rebuilds(S={:.1},L={:.1})",
+            scroll_content.average_drawn_nodes(),
+            scroll_content.average_draw_commands(),
+            scroll_content.average_retained_layers(),
+            scroll_content.average_text_commands(),
+            scroll_content.average_text_cache_misses(),
+            scroll_content.layout_calls as f64 / scroll_content.frames.max(1) as f64,
+            scroll_content.paint_calls as f64 / scroll_content.frames.max(1) as f64,
+            scroll_content.rebuild_visits as f64 / scroll_content.frames.max(1) as f64,
+            scroll_content.stateful_builds as f64 / scroll_content.frames.max(1) as f64,
+            scroll_content.stateless_builds as f64 / scroll_content.frames.max(1) as f64,
+        );
+        eprintln!(
+            "=== scroll (cursor away) frame: p50={:.0} us  p95={:.0} us",
+            away_times[away_times.len() / 2],
+            away_times[(away_times.len() as f64 * 0.95) as usize - 1],
+        );
+        eprintln!(
+            "=== scroll (cursor away) per frame: nodes={:.0} cmds={:.0} retained={:.0} text_cmds={:.0} text_miss={:.1} paint_calls={:.0} rebuild_visits={:.0} rebuilds(S={:.1},L={:.1})",
+            away_content.average_drawn_nodes(),
+            away_content.average_draw_commands(),
+            away_content.average_retained_layers(),
+            away_content.average_text_commands(),
+            away_content.average_text_cache_misses(),
+            away_content.paint_calls as f64 / away_content.frames.max(1) as f64,
+            away_content.rebuild_visits as f64 / away_content.frames.max(1) as f64,
+            away_content.stateful_builds as f64 / away_content.frames.max(1) as f64,
+            away_content.stateless_builds as f64 / away_content.frames.max(1) as f64,
+        );
     }
 }

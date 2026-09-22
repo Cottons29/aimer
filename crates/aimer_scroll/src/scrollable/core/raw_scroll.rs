@@ -375,6 +375,53 @@ impl ScrollPaintCache {
     }
 }
 
+#[cfg(not(feature = "portable-guest"))]
+pub(crate) mod scroll_prof {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub static FRAMES: Cell<u64> = const { Cell::new(0) };
+        pub static PROLOGUE_US: Cell<u64> = const { Cell::new(0) };
+        pub static CONTENT_US: Cell<u64> = const { Cell::new(0) };
+        pub static BRANCH_SNAPSHOT_REPLAY: Cell<u64> = const { Cell::new(0) };
+        pub static BRANCH_SNAPSHOT_RECORD: Cell<u64> = const { Cell::new(0) };
+        pub static BRANCH_ISLANDS_OK: Cell<u64> = const { Cell::new(0) };
+        pub static BRANCH_ISLANDS_FAIL_LIVE: Cell<u64> = const { Cell::new(0) };
+        pub static BRANCH_UNSTABLE_LIVE: Cell<u64> = const { Cell::new(0) };
+        pub static BRANCH_TILES: Cell<u64> = const { Cell::new(0) };
+    }
+
+    #[inline]
+    pub fn bump(counter: &'static std::thread::LocalKey<Cell<u64>>) {
+        counter.with(|c| c.set(c.get() + 1));
+    }
+
+    #[inline]
+    pub fn add_us(counter: &'static std::thread::LocalKey<Cell<u64>>, us: u64) {
+        counter.with(|c| c.set(c.get() + us));
+    }
+
+    pub fn maybe_report() {
+        let frames = FRAMES.with(Cell::get);
+        if frames % 120 != 0 || frames == 0 {
+            return;
+        }
+        let get = |c: &'static std::thread::LocalKey<Cell<u64>>| c.with(Cell::get);
+        eprintln!(
+            "[scroll-prof] frames={} prologue={}us content={}us | snap_replay={} snap_record={} islands_ok={} islands_fail_live={} unstable_live={} tiles={}",
+            frames,
+            get(&PROLOGUE_US) / frames,
+            get(&CONTENT_US) / frames,
+            get(&BRANCH_SNAPSHOT_REPLAY),
+            get(&BRANCH_SNAPSHOT_RECORD),
+            get(&BRANCH_ISLANDS_OK),
+            get(&BRANCH_ISLANDS_FAIL_LIVE),
+            get(&BRANCH_UNSTABLE_LIVE),
+            get(&BRANCH_TILES),
+        );
+    }
+}
+
 pub struct RawScrollableContainer<E: Element> {
     pub(crate) child: E,
     /// The live scroll engine. Held behind an `Rc` so an app-supplied
