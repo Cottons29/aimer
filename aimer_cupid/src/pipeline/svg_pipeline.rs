@@ -482,6 +482,175 @@ impl SvgPipeline {
     }
 }
 
+// ── Backend-agnostic generic path (pluggable-backend-exp) ─────────────────
+//
+// When `pluggable-backend-exp` is enabled, the pipeline can be constructed and
+// driven through the [`GpuBackend`] trait using `WgpuBackend`.
+
+#[cfg(feature = "pluggable-backend-exp")]
+impl SvgPipeline {
+    /// Create the pipeline through the [`GpuBackend`] trait via
+    /// [`WgpuBackend`](crate::backend::wgpu::WgpuBackend).
+    ///
+    /// Equivalent to [`SvgPipeline::new`] but routes all GPU operations through
+    /// the backend trait instead of calling wgpu directly.
+    pub fn new_generic(
+        backend: &crate::backend::wgpu::WgpuBackend,
+        format: wgpu::TextureFormat,
+        antialiasing: crate::AntiAlias,
+    ) -> Self {
+        use crate::backend::*;
+
+        let shader = backend.create_shader_module(
+            Self::shader_source().as_bytes(),
+            "svg shader",
+        );
+
+        let layout = backend.create_pipeline_layout(&[]);
+
+        // Convert SvgVertex (Float32x2) attributes.
+        let vertex_attribs: Vec<VertexAttribute> = SvgVertex::ATTRIBUTES
+            .iter()
+            .map(|a| VertexAttribute {
+                format: svg_wgpu_vertex_format_to_backend(a.format),
+                offset: a.offset,
+                shader_location: a.shader_location,
+            })
+            .collect();
+
+        let vertex_buf = VertexBufferLayout {
+            array_stride: size_of::<SvgVertex>() as u64,
+            step_mode: VertexStepMode::Vertex,
+            attributes: &vertex_attribs,
+        };
+
+        // Convert SvgInstance (Float32x4, Unorm8x4) attributes.
+        let instance_attribs: Vec<VertexAttribute> = SvgInstance::ATTRIBUTES
+            .iter()
+            .map(|a| VertexAttribute {
+                format: svg_wgpu_vertex_format_to_backend(a.format),
+                offset: a.offset,
+                shader_location: a.shader_location,
+            })
+            .collect();
+
+        let instance_buf = VertexBufferLayout {
+            array_stride: size_of::<SvgInstance>() as u64,
+            step_mode: VertexStepMode::Instance,
+            attributes: &instance_attribs,
+        };
+
+        let buffers = [Some(vertex_buf), Some(instance_buf)];
+
+        let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("svg pipeline".to_string()),
+            layout: Some(&layout),
+            vertex: VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &buffers,
+            },
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: ColorWriteMask::ALL,
+                })],
+            }),
+            primitive: PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: crate::pipeline::multisample_state_generic(antialiasing),
+        });
+
+        let instance_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("svg instance buffer".to_string()),
+            size: (Self::INITIAL_INSTANCE_CAPACITY * size_of::<SvgInstance>()) as u64,
+            usage: vec![BufferUsage::Vertex, BufferUsage::CopyDst],
+        });
+
+        Self {
+            pipeline,
+            geometry_cache: SvgGeometryCache::new(Self::MAX_CPU_MESH_BYTES, Self::MAX_CPU_MESHES),
+            gpu_meshes: HashMap::new(),
+            prepared_draws: Vec::new(),
+            item_ranges: Vec::new(),
+            instances: Vec::new(),
+            instance_buffer,
+            instance_policy: InstanceBufferPolicy::new(Self::INITIAL_INSTANCE_CAPACITY),
+            upload: FrameUpload::new(),
+            gpu_mesh_bytes: 0,
+            usage_clock: 0,
+            max_gpu_mesh_bytes: Self::MAX_GPU_MESH_BYTES,
+            max_gpu_meshes: Self::MAX_GPU_MESHES,
+        }
+    }
+
+    /// Equivalent to [`SvgPipeline::prepare`] but routes GPU operations through
+    /// the [`GpuBackend`] trait.
+    ///
+    /// Mesh vertex/index buffer creation still uses the concrete wgpu device
+    /// extracted from the backend (since `WgpuBackend::Buffer == wgpu::Buffer`);
+    /// the instance-buffer creation and instance-data upload go through the
+    /// backend trait methods.
+    pub fn prepare_generic(
+        &mut self,
+        backend: &crate::backend::wgpu::WgpuBackend,
+        items: &[SvgRenderItem],
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+    ) {
+        use crate::backend::GpuBackend;
+        self.usage_clock = self.usage_clock.wrapping_add(1);
+        self.prepared_draws.clear();
+        self.item_ranges.clear();
+        self.instances.clear();
+        let mut frame_meshes = HashSet::new();
+        for item in items {
+            let range_start = self.prepared_draws.len();
+            if item.opacity > 0.0
+                && item.destination.width > 0.0
+                && item.destination.height > 0.0
+            {
+                self.prepare_item(backend.device(), item, width, height, is_srgb, &mut frame_meshes);
+            }
+            self.item_ranges
+                .push(range_start..self.prepared_draws.len());
+        }
+
+        let old_capacity = self.instance_policy.capacity();
+        self.instance_policy.record_usage(self.instances.len());
+        if old_capacity != self.instance_policy.capacity() {
+            self.instance_buffer = backend.create_buffer(&crate::backend::BufferDescriptor {
+                label: Some("svg instance buffer (resized)".to_string()),
+                size: (self.instance_policy.capacity() * size_of::<SvgInstance>()) as u64,
+                usage: vec![
+                    crate::backend::BufferUsage::Vertex,
+                    crate::backend::BufferUsage::CopyDst,
+                ],
+            });
+            self.upload.invalidate();
+        }
+        self.upload
+            .upload_generic(backend, &self.instance_buffer, &self.instances);
+        self.evict_gpu_meshes(&frame_meshes);
+    }
+}
+
+/// Convert a wgpu vertex format to the backend-agnostic equivalent for the
+/// formats used by [`SvgVertex`] and [`SvgInstance`].
+#[cfg(feature = "pluggable-backend-exp")]
+fn svg_wgpu_vertex_format_to_backend(f: wgpu::VertexFormat) -> crate::backend::VertexFormat {
+    match f {
+        wgpu::VertexFormat::Float32x2 => crate::backend::VertexFormat::Float32x2,
+        wgpu::VertexFormat::Float32x4 => crate::backend::VertexFormat::Float32x4,
+        wgpu::VertexFormat::Unorm8x4 => crate::backend::VertexFormat::Unorm8x4,
+        _ => unreachable!("svg pipeline only uses Float32x2, Float32x4, Unorm8x4"),
+    }
+}
+
 fn create_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("svg instance buffer"),

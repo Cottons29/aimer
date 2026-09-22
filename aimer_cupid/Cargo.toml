@@ -19,6 +19,13 @@ apple-core-text = [
     "dep:objc2-core-text",
     "dep:objc2-core-graphics",
 ]
+# Experimental: make the renderer generic over a GpuBackend trait.
+# When this flag is enabled the concrete wgpu-only path is replaced by
+# RendererImpl<B: GpuBackend> with WgpuBackend as the default.
+pluggable-backend-exp = []
+# Experimental: native Metal backend via objc2-metal.
+# Implies pluggable-backend-exp. Only compiles on macOS/iOS.
+metal = ["pluggable-backend-exp"]
 [[bin]]
 path = "src/bin.rs"
 name = "cupid"

@@ -1,3 +1,5 @@
+#[cfg(feature = "pluggable-backend-exp")]
+pub mod backend;
 pub mod custom_pipeline;
 pub mod compositor;
 #[doc(hidden)]
@@ -22,6 +24,22 @@ pub mod wasm_fonts;
 pub use pipeline::{AntiAlias, image_pipeline, material, rect_pipeline, svg_pipeline, text_pipeline};
 
 pub use crate::text_pipeline::{glyph_atlas, glyph_rasterizer, text_layout};
+
+// ── Experimental pluggable-backend public surface ──────────────────────────
+//
+// When `pluggable-backend-exp` is enabled the crate exposes the backend trait
+// layer and the WgpuBackend adapter so consumers can construct a
+// backend-driven [`renderer::Renderer`] via `Renderer::new_generic`. A fully
+// generic `RendererImpl<B: GpuBackend>` (and generic pipeline structs) remains
+// a follow-up; this surface is the usable WgpuBackend path that closes step 2.
+#[cfg(feature = "pluggable-backend-exp")]
+pub use backend::{GpuBackend, GpuLimits, GpuRenderPass};
+#[cfg(feature = "pluggable-backend-exp")]
+pub use backend::wgpu::WgpuBackend;
+#[cfg(feature = "pluggable-backend-exp")]
+pub use custom_pipeline::{CustomPipelineGeneric, RenderContextGeneric};
+#[cfg(feature = "pluggable-backend-exp")]
+pub use gpu_context::GpuDevice;
 
 /// Hidden cargo-fuzz entry point for the checked font reader.
 #[doc(hidden)]
@@ -1145,3 +1163,1147 @@ mod scrolled_text_culling {
         );
     }
 }
+
+// ── Generic WgpuBackend path tests ──────────────────────────────────────
+//
+// When `pluggable-backend-exp` is enabled, these tests exercise the
+// backend-driven generic rendering path through `WgpuBackend`, proving that
+// `RectPipeline::new_generic`, `begin_frame_generic`, and
+// `end_frame_generic` produce correct pixels.
+
+#[cfg(all(test, feature = "pluggable-backend-exp"))]
+mod generic_backend_tests {
+    use aimer_utils::SyncFuture;
+
+    const SIZE: u32 = 64;
+    const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+    fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::default();
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .block()
+            .ok()?;
+        adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("cupid generic-backend device"),
+                ..Default::default()
+            })
+            .block()
+            .ok()
+    }
+
+    fn read_target(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::Texture,
+    ) -> Vec<u8> {
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("generic-backend readback"),
+            size: (SIZE * SIZE * 4) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: target,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(SIZE * 4),
+                    rows_per_image: Some(SIZE),
+                },
+            },
+            wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit(Some(encoder.finish()));
+
+        let slice = readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |result| {
+            result.expect("the readback buffer to map");
+        });
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("the device to finish the readback");
+        let pixels = slice
+            .get_mapped_range()
+            .expect("the mapped readback range")
+            .to_vec();
+        readback.unmap();
+        pixels
+    }
+
+    fn pixel(data: &[u8], x: u32, y: u32) -> [u8; 4] {
+        let stride = SIZE as usize * 4;
+        let offset = y as usize * stride + x as usize * 4;
+        [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]
+    }
+
+    fn red_rect_instance() -> crate::rect_pipeline::RectInstance {
+        crate::rect_pipeline::RectInstance {
+            position: [0.0, 0.0],
+            size: [SIZE as f32, SIZE as f32],
+            color: crate::utilities::Rgba8::new(255, 0, 0, 255),
+            border_radius: [0.0; 4],
+            border_width: [0.0; 4],
+            border_color: crate::utilities::Rgba8::TRANSPARENT,
+            outline_width: [0.0; 4],
+            outline_color: crate::utilities::Rgba8::TRANSPARENT,
+            // Shader contract: width < 0 disables clipping. width == 0 fully
+            // clips (alpha 0). The renderer uses [-1 width] via clip_to_array.
+            clip_rect: [0.0, 0.0, -1.0, 0.0],
+            clip_border_radius: [0.0; 4],
+            shadow_params: [0.0; 4],
+            shadow_color: crate::utilities::Rgba8::TRANSPARENT,
+            shadow_flags: [0.0; 4],
+        }
+    }
+
+    /// Control: concrete RectPipeline with the same lifecycle the renderer uses
+    /// (begin_frame → push → pass/flush → end_frame → submit).
+    #[test]
+    fn concrete_rect_path_control_renders_red() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        let mut rect = crate::rect_pipeline::RectPipeline::new(
+            &device,
+            FORMAT,
+            None,
+            crate::AntiAlias::Analytic,
+        );
+
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("concrete rect control target"),
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_view = target.create_view(&Default::default());
+
+        // Exact renderer lifecycle.
+        rect.begin_frame(&device, &queue, 1, SIZE, SIZE, false);
+        rect.push(red_rect_instance());
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("concrete rect control pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            rect.flush(&mut pass);
+        }
+        rect.end_frame(&queue);
+        queue.submit(Some(encoder.finish()));
+
+        let pixels = read_target(&device, &queue, &target);
+        let sample = pixel(&pixels, SIZE / 2, SIZE / 2);
+        assert_eq!(
+            sample,
+            [255, 0, 0, 255],
+            "concrete control path: center must be red, got {sample:?}"
+        );
+    }
+
+    #[test]
+    fn generic_rect_path_renders_through_wgpu_backend() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        use crate::backend::{GpuBackend, wgpu::WgpuBackend};
+
+        let backend = WgpuBackend::new(device, queue);
+
+        // Create rect pipeline through the generic (backend-driven) path.
+        let mut rect = crate::rect_pipeline::RectPipeline::new_generic(
+            &backend,
+            FORMAT,
+            crate::AntiAlias::Analytic,
+        );
+
+        // Create an offscreen render target.
+        let target = backend.create_texture(&crate::backend::TextureDescriptor {
+            label: Some("generic rect test target".to_string()),
+            size: (SIZE, SIZE, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::backend::TextureDimension::D2,
+            format: FORMAT,
+            usage: vec![
+                crate::backend::TextureUsage::RenderAttachment,
+                crate::backend::TextureUsage::CopySrc,
+            ],
+        });
+        let target_view =
+            backend.create_texture_view(&target, "generic rect test target view");
+
+        // Exact renderer lifecycle via generic methods:
+        // begin_frame → push → pass/flush → end_frame → submit.
+        rect.begin_frame_generic(&backend, 1, SIZE, SIZE, false);
+        rect.push(red_rect_instance());
+
+        let mut encoder =
+            backend.create_command_encoder("generic rect test encoder");
+        {
+            let mut pass = backend.begin_render_pass(
+                &mut encoder,
+                &crate::backend::RenderPassDescriptor {
+                    label: Some("generic rect test pass".to_string()),
+                    color_attachments: &[crate::backend::RenderPassColorAttachment {
+                        view: &target_view,
+                        resolve_target: None,
+                        ops: crate::backend::Operations {
+                            load: crate::backend::LoadOp::Clear([0.0, 0.0, 0.0, 1.0]),
+                            store: crate::backend::StoreOp::Store,
+                        },
+                    }],
+                    depth_stencil_attachment: None,
+                },
+            );
+
+            // Concrete flush is valid because
+            // WgpuBackend::RenderPass == wgpu::RenderPass.
+            rect.flush(&mut pass);
+        }
+
+        rect.end_frame_generic(&backend);
+        backend.submit(encoder);
+
+        let pixels = read_target(backend.device(), backend.queue(), &target);
+        let sample = pixel(&pixels, SIZE / 2, SIZE / 2);
+        assert_eq!(
+            sample,
+            [255, 0, 0, 255],
+            "generic rect path: center must be red, got {sample:?}"
+        );
+    }
+
+    /// Exercise FrameCompositePipeline::new_generic + create_bind_group_generic
+    /// by compositing a solid-red source texture into a black dest and reading
+    /// back the center pixel.
+    #[test]
+    fn generic_frame_composite_path_copies_source() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        use crate::backend::{GpuBackend, wgpu::WgpuBackend};
+
+        let backend = WgpuBackend::new(device, queue);
+
+        let composite = crate::pipeline::frame_composite::FrameCompositePipeline::new_generic(
+            &backend,
+            FORMAT,
+        );
+
+        // Source: solid red, readable as a texture binding + filled via write_texture.
+        let source = backend.create_texture(&crate::backend::TextureDescriptor {
+            label: Some("generic composite source".to_string()),
+            size: (SIZE, SIZE, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::backend::TextureDimension::D2,
+            format: FORMAT,
+            usage: vec![
+                crate::backend::TextureUsage::TextureBinding,
+                crate::backend::TextureUsage::CopyDst,
+            ],
+        });
+        let source_view = backend.create_texture_view(&source, "generic composite source view");
+        let red_pixel = [255u8, 0, 0, 255];
+        let mut red_bytes = vec![0u8; (SIZE * SIZE * 4) as usize];
+        for chunk in red_bytes.chunks_exact_mut(4) {
+            chunk.copy_from_slice(&red_pixel);
+        }
+        backend.write_texture(&crate::backend::WriteTextureDescriptor {
+            texture: &source,
+            mip_level: 0,
+            origin: crate::backend::Origin3d { x: 0, y: 0, z: 0 },
+            aspect: crate::backend::TextureAspect::All,
+            data: &red_bytes,
+            buffer_layout: crate::backend::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(SIZE * 4),
+                rows_per_image: Some(SIZE),
+            },
+            extent: crate::backend::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+        });
+
+        let dest = backend.create_texture(&crate::backend::TextureDescriptor {
+            label: Some("generic composite dest".to_string()),
+            size: (SIZE, SIZE, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::backend::TextureDimension::D2,
+            format: FORMAT,
+            usage: vec![
+                crate::backend::TextureUsage::RenderAttachment,
+                crate::backend::TextureUsage::CopySrc,
+            ],
+        });
+        let dest_view = backend.create_texture_view(&dest, "generic composite dest view");
+
+        let bind_group = composite.create_bind_group_generic(&backend, &source_view);
+
+        let mut encoder = backend.create_command_encoder("generic composite encoder");
+        {
+            let mut pass = backend.begin_render_pass(
+                &mut encoder,
+                &crate::backend::RenderPassDescriptor {
+                    label: Some("generic composite pass".to_string()),
+                    color_attachments: &[crate::backend::RenderPassColorAttachment {
+                        view: &dest_view,
+                        resolve_target: None,
+                        ops: crate::backend::Operations {
+                            load: crate::backend::LoadOp::Clear([0.0, 0.0, 0.0, 1.0]),
+                            store: crate::backend::StoreOp::Store,
+                        },
+                    }],
+                    depth_stencil_attachment: None,
+                },
+            );
+            // Concrete render is valid: WgpuBackend::RenderPass == wgpu::RenderPass.
+            composite.render(&mut pass, &bind_group);
+        }
+        backend.submit(encoder);
+
+        let pixels = read_target(backend.device(), backend.queue(), &dest);
+        let sample = pixel(&pixels, SIZE / 2, SIZE / 2);
+        assert_eq!(
+            sample,
+            [255, 0, 0, 255],
+            "generic frame composite path: center must be red, got {sample:?}"
+        );
+    }
+
+    /// Control: concrete ImagePipeline with the same lifecycle the renderer
+    /// uses (begin_frame → upload_image → pass/draw_batch → end_frame → submit).
+    #[test]
+    fn concrete_image_path_control_renders_red() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        let mut image_pipeline = crate::pipeline::image_pipeline::ImagePipeline::new(
+            &device,
+            FORMAT,
+            None,
+            crate::AntiAlias::Analytic,
+        );
+
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("concrete image control target"),
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_view = target.create_view(&Default::default());
+
+        // Upload a solid-red 2x2 texture.
+        let red = [255u8, 0, 0, 255];
+        let mut tex_data = Vec::with_capacity(2 * 2 * 4);
+        for _ in 0..4 {
+            tex_data.extend_from_slice(&red);
+        }
+        let tex_id = image_pipeline.upload_image(&device, &queue, 2, 2, &tex_data);
+        assert!(image_pipeline.has_texture(tex_id));
+
+        // Exact renderer lifecycle.
+        image_pipeline.begin_frame(&device, &queue, 1, SIZE, SIZE, false);
+
+        let instance = crate::pipeline::image_pipeline::ImageInstance {
+            position: [0.0, 0.0],
+            size: [SIZE as f32, SIZE as f32],
+            uv_offset: [0.0, 0.0],
+            uv_scale: [1.0, 1.0],
+            clip_rect: [0.0, 0.0, -1.0, 0.0],
+            clip_border_radius: [0.0; 4],
+            alpha: 1.0,
+            source_premultiplied: 0.0,
+        };
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("concrete image control pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            image_pipeline.draw_batch(&device, &queue, &mut pass, tex_id, &[instance]);
+        }
+        image_pipeline.end_frame(&queue);
+        queue.submit(Some(encoder.finish()));
+
+        let pixels = read_target(&device, &queue, &target);
+        let sample = pixel(&pixels, SIZE / 2, SIZE / 2);
+        assert_eq!(
+            sample,
+            [255, 0, 0, 255],
+            "concrete image control path: center must be red, got {sample:?}"
+        );
+    }
+
+    /// Exercise ImagePipeline::new_generic + upload_image_generic +
+    /// begin_frame_generic + end_frame_generic by uploading a texture through
+    /// the backend and rendering it.
+    #[test]
+    fn generic_image_path_renders_uploaded_texture() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        use crate::backend::{GpuBackend, wgpu::WgpuBackend};
+
+        let backend = WgpuBackend::new(device, queue);
+
+        // Create image pipeline through the generic (backend-driven) path.
+        let mut image_pipeline =
+            crate::pipeline::image_pipeline::ImagePipeline::new_generic(
+                &backend,
+                FORMAT,
+                crate::AntiAlias::Analytic,
+            );
+
+        // Upload a solid-red 2x2 texture through the generic path.
+        let red = [255u8, 0, 0, 255];
+        let mut tex_data = Vec::with_capacity(2 * 2 * 4);
+        for _ in 0..4 {
+            tex_data.extend_from_slice(&red);
+        }
+        let tex_id =
+            image_pipeline.upload_image_generic(&backend, 2, 2, &tex_data);
+        assert!(image_pipeline.has_texture(tex_id));
+        assert_eq!(image_pipeline.texture_count(), 1);
+        // 2x2 RGBA8 = 16 bytes.
+        assert_eq!(image_pipeline.texture_bytes(), 16);
+
+        // Create an offscreen render target.
+        let target = backend.create_texture(&crate::backend::TextureDescriptor {
+            label: Some("generic image test target".to_string()),
+            size: (SIZE, SIZE, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::backend::TextureDimension::D2,
+            format: FORMAT,
+            usage: vec![
+                crate::backend::TextureUsage::RenderAttachment,
+                crate::backend::TextureUsage::CopySrc,
+            ],
+        });
+        let target_view =
+            backend.create_texture_view(&target, "generic image test target view");
+
+        // Exact renderer lifecycle via generic methods.
+        image_pipeline.begin_frame_generic(&backend, 1, SIZE, SIZE, false);
+
+        let instance = crate::pipeline::image_pipeline::ImageInstance {
+            position: [0.0, 0.0],
+            size: [SIZE as f32, SIZE as f32],
+            uv_offset: [0.0, 0.0],
+            uv_scale: [1.0, 1.0],
+            clip_rect: [0.0, 0.0, -1.0, 0.0],
+            clip_border_radius: [0.0; 4],
+            alpha: 1.0,
+            source_premultiplied: 0.0,
+        };
+
+        let mut encoder =
+            backend.create_command_encoder("generic image test encoder");
+        {
+            let mut pass = backend.begin_render_pass(
+                &mut encoder,
+                &crate::backend::RenderPassDescriptor {
+                    label: Some("generic image test pass".to_string()),
+                    color_attachments: &[crate::backend::RenderPassColorAttachment {
+                        view: &target_view,
+                        resolve_target: None,
+                        ops: crate::backend::Operations {
+                            load: crate::backend::LoadOp::Clear([0.0, 0.0, 0.0, 1.0]),
+                            store: crate::backend::StoreOp::Store,
+                        },
+                    }],
+                    depth_stencil_attachment: None,
+                },
+            );
+            // Concrete draw_batch is valid because
+            // WgpuBackend::RenderPass == wgpu::RenderPass.
+            image_pipeline.draw_batch(
+                backend.device(),
+                backend.queue(),
+                &mut pass,
+                tex_id,
+                &[instance],
+            );
+        }
+
+        image_pipeline.end_frame_generic(&backend);
+        backend.submit(encoder);
+
+        let pixels = read_target(backend.device(), backend.queue(), &target);
+        let sample = pixel(&pixels, SIZE / 2, SIZE / 2);
+        assert_eq!(
+            sample,
+            [255, 0, 0, 255],
+            "generic image path: center must be red, got {sample:?}"
+        );
+    }
+
+    /// Exercise ImagePipeline::upload_if_absent_generic returns false when
+    /// the texture already exists.
+    #[test]
+    fn generic_image_upload_if_absent_skips_existing() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        use crate::backend::{GpuBackend, wgpu::WgpuBackend};
+
+        let backend = WgpuBackend::new(device, queue);
+        let mut image_pipeline =
+            crate::pipeline::image_pipeline::ImagePipeline::new_generic(
+                &backend,
+                FORMAT,
+                crate::AntiAlias::Analytic,
+            );
+
+        let red = [255u8, 0, 0, 255];
+        let tex_data = vec![red.to_vec(), red.to_vec(), red.to_vec(), red.to_vec()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        // First upload succeeds.
+        assert!(image_pipeline.upload_if_absent_generic(&backend, 42, 2, 2, &tex_data));
+        assert_eq!(image_pipeline.texture_count(), 1);
+
+        // Second upload with same ID returns false.
+        assert!(!image_pipeline.upload_if_absent_generic(&backend, 42, 2, 2, &tex_data));
+        assert_eq!(image_pipeline.texture_count(), 1);
+    }
+
+    /// Exercise ImagePipeline::create_external_bind_group_generic.
+    #[test]
+    fn generic_image_external_bind_group_creates() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        use crate::backend::{GpuBackend, wgpu::WgpuBackend};
+
+        let backend = WgpuBackend::new(device, queue);
+        let image_pipeline =
+            crate::pipeline::image_pipeline::ImagePipeline::new_generic(
+                &backend,
+                FORMAT,
+                crate::AntiAlias::Analytic,
+            );
+
+        // Create a placeholder texture and view.
+        let tex = backend.create_texture(&crate::backend::TextureDescriptor {
+            label: Some("generic external-bind-group tex".to_string()),
+            size: (2, 2, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::backend::TextureDimension::D2,
+            format: FORMAT,
+            usage: vec![crate::backend::TextureUsage::TextureBinding],
+        });
+        let view = backend.create_texture_view(&tex, "external view");
+
+        let bg = image_pipeline.create_external_bind_group_generic(&backend, &view);
+        // If we got here without panicking, the bind group was created
+        // successfully.  Assert the type is a wgpu::BindGroup.
+        let _: &wgpu::BindGroup = &bg;
+    }
+
+    // ── SvgPipeline ─────────────────────────────────────────────────────
+
+    /// Control: concrete SvgPipeline with a filled-red rectangle scene,
+    /// rendered through the standard (non-generic) path.
+    #[test]
+    fn concrete_svg_path_control_renders_filled_rect() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        use std::sync::Arc;
+
+        let mut svg_pipeline = crate::svg_pipeline::SvgPipeline::new(
+            &device,
+            FORMAT,
+            None,
+            crate::AntiAlias::Analytic,
+        );
+
+        let scene = Arc::new(crate::svg::SvgScene {
+            viewport: crate::svg::SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            nodes: Arc::new([crate::svg::SvgNode {
+                node_id: crate::svg::SvgNodeId(0),
+                svg_id: None,
+                classes: Arc::new([]),
+                element: crate::svg::SvgElementKind::Path,
+                parent: None,
+                children: Arc::new([]),
+                transform: crate::svg::SvgTransform::default(),
+                opacity: 1.0,
+                geometry: Some(0),
+                fill: Some(crate::svg::SvgFill {
+                    color: crate::svg::SvgColor::rgba8(255, 0, 0, 255),
+                    rule: crate::svg::SvgFillRule::NonZero,
+                }),
+                stroke: None,
+                paint_order: crate::svg::SvgPaintOrder::FillAndStroke,
+                visible: true,
+            }]),
+            geometries: Arc::new([crate::svg::SvgGeometry {
+                commands: Arc::new([
+                    crate::svg::SvgPathCommand::MoveTo { x: 0.0, y: 0.0 },
+                    crate::svg::SvgPathCommand::LineTo { x: 10.0, y: 0.0 },
+                    crate::svg::SvgPathCommand::LineTo { x: 10.0, y: 10.0 },
+                    crate::svg::SvgPathCommand::LineTo { x: 0.0, y: 10.0 },
+                    crate::svg::SvgPathCommand::Close,
+                ]),
+            }]),
+        });
+
+        let item = crate::renderer::SvgRenderItem {
+            scene,
+            destination: crate::utilities::Rect {
+                x: 0.0,
+                y: 0.0,
+                width: SIZE as f32,
+                height: SIZE as f32,
+            },
+            overrides: Arc::new([]),
+            world_transform: crate::utilities::Mat3::identity(),
+            clip_rect: [0.0, 0.0, -1.0, 0.0],
+            clip_border_radius: [0.0; 4],
+            opacity: 1.0,
+        };
+
+        svg_pipeline.prepare(&device, &queue, &[item], SIZE, SIZE, false);
+
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("concrete svg control target"),
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_view = target.create_view(&Default::default());
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("concrete svg control pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            svg_pipeline.draw_item(&mut pass, 0);
+        }
+        queue.submit(Some(encoder.finish()));
+
+        let pixels = read_target(&device, &queue, &target);
+        let sample = pixel(&pixels, SIZE / 2, SIZE / 2);
+        assert_eq!(
+            sample,
+            [255, 0, 0, 255],
+            "concrete svg control path: center must be red, got {sample:?}"
+        );
+    }
+
+    /// Exercise SvgPipeline::new_generic + prepare_generic by rendering a
+    /// filled-red rectangle SVG scene through the WgpuBackend-driven path.
+    #[test]
+    fn generic_svg_path_renders_filled_rect() {
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        use crate::backend::{GpuBackend, wgpu::WgpuBackend};
+        use std::sync::Arc;
+
+        let backend = WgpuBackend::new(device, queue);
+
+        let mut svg_pipeline = crate::svg_pipeline::SvgPipeline::new_generic(
+            &backend,
+            FORMAT,
+            crate::AntiAlias::Analytic,
+        );
+
+        let scene = Arc::new(crate::svg::SvgScene {
+            viewport: crate::svg::SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            nodes: Arc::new([crate::svg::SvgNode {
+                node_id: crate::svg::SvgNodeId(0),
+                svg_id: None,
+                classes: Arc::new([]),
+                element: crate::svg::SvgElementKind::Path,
+                parent: None,
+                children: Arc::new([]),
+                transform: crate::svg::SvgTransform::default(),
+                opacity: 1.0,
+                geometry: Some(0),
+                fill: Some(crate::svg::SvgFill {
+                    color: crate::svg::SvgColor::rgba8(255, 0, 0, 255),
+                    rule: crate::svg::SvgFillRule::NonZero,
+                }),
+                stroke: None,
+                paint_order: crate::svg::SvgPaintOrder::FillAndStroke,
+                visible: true,
+            }]),
+            geometries: Arc::new([crate::svg::SvgGeometry {
+                commands: Arc::new([
+                    crate::svg::SvgPathCommand::MoveTo { x: 0.0, y: 0.0 },
+                    crate::svg::SvgPathCommand::LineTo { x: 10.0, y: 0.0 },
+                    crate::svg::SvgPathCommand::LineTo { x: 10.0, y: 10.0 },
+                    crate::svg::SvgPathCommand::LineTo { x: 0.0, y: 10.0 },
+                    crate::svg::SvgPathCommand::Close,
+                ]),
+            }]),
+        });
+
+        let item = crate::renderer::SvgRenderItem {
+            scene,
+            destination: crate::utilities::Rect {
+                x: 0.0,
+                y: 0.0,
+                width: SIZE as f32,
+                height: SIZE as f32,
+            },
+            overrides: Arc::new([]),
+            world_transform: crate::utilities::Mat3::identity(),
+            clip_rect: [0.0, 0.0, -1.0, 0.0],
+            clip_border_radius: [0.0; 4],
+            opacity: 1.0,
+        };
+
+        svg_pipeline.prepare_generic(&backend, &[item], SIZE, SIZE, false);
+
+        let target = backend.create_texture(&crate::backend::TextureDescriptor {
+            label: Some("generic svg test target".to_string()),
+            size: (SIZE, SIZE, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::backend::TextureDimension::D2,
+            format: FORMAT,
+            usage: vec![
+                crate::backend::TextureUsage::RenderAttachment,
+                crate::backend::TextureUsage::CopySrc,
+            ],
+        });
+        let target_view =
+            backend.create_texture_view(&target, "generic svg test target view");
+
+        let mut encoder =
+            backend.create_command_encoder("generic svg encoder");
+        {
+            let mut pass = backend.begin_render_pass(
+                &mut encoder,
+                &crate::backend::RenderPassDescriptor {
+                    label: Some("generic svg pass".to_string()),
+                    color_attachments: &[crate::backend::RenderPassColorAttachment {
+                        view: &target_view,
+                        resolve_target: None,
+                        ops: crate::backend::Operations {
+                            load: crate::backend::LoadOp::Clear([0.0, 0.0, 0.0, 1.0]),
+                            store: crate::backend::StoreOp::Store,
+                        },
+                    }],
+                    depth_stencil_attachment: None,
+                },
+            );
+            // Concrete draw_item is valid because
+            // WgpuBackend::RenderPass == wgpu::RenderPass.
+            svg_pipeline.draw_item(&mut pass, 0);
+        }
+        backend.submit(encoder);
+
+        let pixels = read_target(backend.device(), backend.queue(), &target);
+        let sample = pixel(&pixels, SIZE / 2, SIZE / 2);
+        assert_eq!(
+            sample,
+            [255, 0, 0, 255],
+            "generic svg path: center must be red, got {sample:?}"
+        );
+    }
+
+    // ── MaterialPipeline ─────────────────────────────────────────────
+
+    /// Control: concrete MaterialPipeline (Glass) through the standard (non-generic) path.
+    /// Verifies that a Glass material with neutral backdrop produces non-clear pixels
+    /// (shader runs correctly).
+    #[test]
+    fn concrete_material_glass_renders_non_clear() {
+        use std::any::Any;
+        use crate::custom_pipeline::{CustomPipeline, RenderContext};
+        use crate::pipeline::material::{MaterialKind, MaterialPipeline, MaterialRequest};
+
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        let mut mat_pipeline =
+            MaterialPipeline::new(&device, FORMAT, None::<&wgpu::PipelineCache>, crate::AntiAlias::Analytic);
+
+        // Push a Glass request via the trait API (requests field is private).
+        let request = MaterialRequest::new(
+            MaterialKind::Glass,
+            [0.0, 0.0, SIZE as f32, SIZE as f32],
+        );
+        mat_pipeline.begin_frame();
+        mat_pipeline.prepare_command(&request as &(dyn Any + Send));
+
+        let ctx = RenderContext {
+            device: &device,
+            queue: &queue,
+            width: SIZE,
+            height: SIZE,
+            is_srgb: false,
+            format: FORMAT,
+            sample_count: 1,
+            source_texture: None,
+        };
+        mat_pipeline.prepare(&ctx);
+
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("concrete material control target"),
+            size: wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_view = target.create_view(&Default::default());
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("concrete material control pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            mat_pipeline.render_command(Some(0), &mut pass);
+        }
+        queue.submit(Some(encoder.finish()));
+
+        let pixels = read_target(&device, &queue, &target);
+        let sample = pixel(&pixels, SIZE / 2, SIZE / 2);
+        assert_ne!(
+            sample,
+            [0, 0, 0, 255],
+            "concrete material control: center should not be clear, got {sample:?}"
+        );
+    }
+
+    /// Exercise MaterialPipeline::new_generic + prepare_generic by rendering a
+    /// Glass material through the WgpuBackend-driven path.  Uses the concrete
+    /// render_command (valid because WgpuBackend::RenderPass == wgpu::RenderPass).
+    #[test]
+    fn generic_material_glass_renders_non_clear() {
+        use std::any::Any;
+        use crate::backend::{GpuBackend, wgpu::WgpuBackend};
+        use crate::custom_pipeline::CustomPipeline;
+        use crate::pipeline::material::{MaterialKind, MaterialPipeline, MaterialRequest};
+
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        let backend = WgpuBackend::new(device, queue);
+
+        let mut mat_pipeline =
+            MaterialPipeline::new_generic(&backend, FORMAT, crate::AntiAlias::Analytic);
+
+        // Push a Glass request via the trait API (requests field is private).
+        let request = MaterialRequest::new(
+            MaterialKind::Glass,
+            [0.0, 0.0, SIZE as f32, SIZE as f32],
+        );
+        mat_pipeline.begin_frame();
+        mat_pipeline.prepare_command(&request as &(dyn Any + Send));
+
+        let ctx = crate::custom_pipeline::RenderContextGeneric {
+            backend: &backend,
+            width: SIZE,
+            height: SIZE,
+            is_srgb: false,
+            format: FORMAT,
+            sample_count: 1,
+            source_texture: None,
+        };
+        mat_pipeline.prepare_generic(&ctx);
+
+        let target = backend.create_texture(&crate::backend::TextureDescriptor {
+            label: Some("generic material test target".to_string()),
+            size: (SIZE, SIZE, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::backend::TextureDimension::D2,
+            format: FORMAT,
+            usage: vec![
+                crate::backend::TextureUsage::RenderAttachment,
+                crate::backend::TextureUsage::CopySrc,
+            ],
+        });
+        let target_view = backend.create_texture_view(&target, "generic material test target view");
+
+        let mut encoder = backend.create_command_encoder("generic material encoder");
+        {
+            let mut pass = backend.begin_render_pass(
+                &mut encoder,
+                &crate::backend::RenderPassDescriptor {
+                    label: Some("generic material pass".to_string()),
+                    color_attachments: &[crate::backend::RenderPassColorAttachment {
+                        view: &target_view,
+                        resolve_target: None,
+                        ops: crate::backend::Operations {
+                            load: crate::backend::LoadOp::Clear([0.0, 0.0, 0.0, 1.0]),
+                            store: crate::backend::StoreOp::Store,
+                        },
+                    }],
+                    depth_stencil_attachment: None,
+                },
+            );
+            // Concrete render_command is valid because
+            // WgpuBackend::RenderPass == wgpu::RenderPass.
+            mat_pipeline.render_command(Some(0), &mut pass);
+        }
+        backend.submit(encoder);
+
+        let pixels = read_target(backend.device(), backend.queue(), &target);
+        let sample = pixel(&pixels, SIZE / 2, SIZE / 2);
+        assert_ne!(
+            sample,
+            [0, 0, 0, 255],
+            "generic material path: center should not be clear, got {sample:?}"
+        );
+    }
+
+    // ── Renderer / GpuContext public surface ───────────────────────────────
+
+    /// End-to-end: `GpuDevice` → `WgpuBackend` → `Renderer::new_generic` →
+    /// `render` a solid red fill-rect → CPU readback. Proves the crate-level
+    /// wiring (public exports + renderer generic constructors) is usable and
+    /// produces correct pixels through the backend-driven pipeline path.
+    #[test]
+    fn generic_renderer_new_generic_renders_fill_rect() {
+        use crate::draw_cmd::DrawList;
+        use crate::gpu_context::GpuDevice;
+        use crate::renderer::Renderer;
+        use crate::utilities::{Color, Rect};
+        use crate::WgpuBackend;
+
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        // Public headless device pair → backend adapter → generic renderer.
+        let gpu_device = GpuDevice::new(device, queue);
+        let backend: WgpuBackend = gpu_device.backend();
+        let mut renderer = Renderer::new_generic(&backend, FORMAT);
+
+        assert_eq!(renderer.surface_format(), FORMAT);
+
+        let mut draw = DrawList::new();
+        draw.fill_rect(
+            Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32),
+            Color::red(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+
+        let target = backend.device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("generic renderer e2e target"),
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&Default::default());
+
+        // Concrete render is valid: WgpuBackend associated types == wgpu types.
+        renderer.render(
+            backend.device(),
+            backend.queue(),
+            &view,
+            SIZE,
+            SIZE,
+            false,
+            &draw,
+        );
+
+        let pixels = read_target(backend.device(), backend.queue(), &target);
+        let sample = pixel(&pixels, SIZE / 2, SIZE / 2);
+        assert_eq!(
+            sample,
+            [255, 0, 0, 255],
+            "generic Renderer::new_generic path: center should be opaque red, got {sample:?}"
+        );
+    }
+
+    /// Confirms the public re-exports (`WgpuBackend`, `GpuBackend`, `GpuDevice`,
+    /// `GpuLimits`) compile and that `GpuDevice::backend` yields a usable
+    /// backend whose limits are reachable through the trait surface.
+    #[test]
+    fn generic_public_exports_gpu_device_backend_roundtrip() {
+        use crate::backend::GpuBackend;
+        use crate::gpu_context::GpuDevice;
+        use crate::{GpuLimits, WgpuBackend};
+
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        let gpu_device = GpuDevice::new(device, queue);
+        let backend: WgpuBackend = gpu_device.backend();
+
+        // Limits must be reachable through the trait surface and the public
+        // `GpuLimits` re-export.
+        let limits: GpuLimits = backend.limits();
+        assert!(
+            limits.max_texture_dimension_2d >= 64,
+            "expected a usable max texture dimension, got {}",
+            limits.max_texture_dimension_2d
+        );
+
+        // GpuDevice still owns live device/queue handles after backend().
+        let _ = gpu_device.device();
+        let _ = gpu_device.queue();
+        let _ = backend.device();
+        let _ = backend.queue();
+    }
+}
+

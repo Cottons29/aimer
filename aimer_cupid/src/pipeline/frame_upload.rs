@@ -107,6 +107,26 @@ impl<T: Pod> FrameUpload<T> {
     }
 }
 
+#[cfg(feature = "pluggable-backend-exp")]
+impl<T: Pod> FrameUpload<T> {
+    /// Backend-agnostic upload that writes `current` into `buffer` via
+    /// the given backend. Skips the write when the buffer already holds
+    /// the same bytes.
+    pub(crate) fn upload_generic<B: crate::backend::GpuBackend>(
+        &mut self,
+        backend: &B,
+        buffer: &B::Buffer,
+        current: &[T],
+    ) -> bool {
+        if current.is_empty() || !self.needs_upload(current) {
+            return false;
+        }
+        backend.write_buffer(buffer, 0, bytemuck::cast_slice(current));
+        self.mark_uploaded(current);
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::hint::black_box;

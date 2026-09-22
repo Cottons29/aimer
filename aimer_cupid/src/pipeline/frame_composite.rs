@@ -100,6 +100,89 @@ impl FrameCompositePipeline {
     }
 }
 
+// ── Backend-agnostic generic path ──────────────────────────────────────────
+//
+// When `pluggable-backend-exp` is enabled, the pipeline can be constructed and
+// driven through the [`GpuBackend`] trait instead of calling wgpu directly.
+#[cfg(feature = "pluggable-backend-exp")]
+impl FrameCompositePipeline {
+    /// Constructor for the frame composite pipeline using the WgpuBackend
+    /// adapter.
+    ///
+    /// Equivalent to [`FrameCompositePipeline::new`] but routes all GPU
+    /// operations through the backend trait.
+    pub(crate) fn new_generic(
+        backend: &crate::backend::wgpu::WgpuBackend,
+        format: wgpu::TextureFormat,
+    ) -> Self {
+        use crate::backend::*;
+
+        let shader = backend.create_shader_module(
+            include_str!("./frame_composite.wgsl").as_bytes(),
+            "frame composite shader",
+        );
+
+        let bind_group_layout = backend.create_bind_group_layout(&[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: vec![ShaderStage::Fragment],
+            ty: BindingType::Texture {
+                multisampled: false,
+                view_dimension: TextureViewDimension::D2,
+                sample_type: TextureSampleType::Float { filterable: false },
+            },
+            count: None,
+        }]);
+
+        let pipeline_layout = backend.create_pipeline_layout(&[&bind_group_layout]);
+
+        let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("frame composite pipeline".to_string()),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[],
+            },
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: ColorWriteMask::ALL,
+                })],
+            }),
+            primitive: PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+        });
+
+        Self {
+            pipeline,
+            bind_group_layout,
+        }
+    }
+
+    /// Bind-group creation using the WgpuBackend adapter.
+    ///
+    /// Equivalent to [`FrameCompositePipeline::create_bind_group`] but
+    /// creates the bind group through the backend trait.
+    pub(crate) fn create_bind_group_generic(
+        &self,
+        backend: &crate::backend::wgpu::WgpuBackend,
+        source: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        use crate::backend::GpuBackend;
+        backend.create_bind_group(
+            &self.bind_group_layout,
+            &[crate::backend::BindGroupEntry {
+                binding: 0,
+                resource: crate::backend::BindingResource::TextureView(source),
+            }],
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

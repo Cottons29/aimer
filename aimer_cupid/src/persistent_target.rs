@@ -1,5 +1,8 @@
 use wgpu::{Device, Texture, TextureFormat, TextureView};
 
+#[cfg(feature = "pluggable-backend-exp")]
+use crate::backend::GpuBackend;
+
 /// Whether the pixels currently stored in a persistent target may be reused.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TargetValidity {
@@ -169,6 +172,116 @@ impl Default for PersistentTarget {
             texture: None,
             view: None,
         }
+    }
+}
+
+// ── Generic version behind the experimental flag ──────────────────────
+
+#[cfg(feature = "pluggable-backend-exp")]
+pub(crate) struct PersistentTargetGeneric<B: GpuBackend> {
+    state: PersistentTargetState,
+    format: Option<B::TextureFormat>,
+    texture: Option<B::Texture>,
+    view: Option<B::TextureView>,
+}
+
+#[cfg(feature = "pluggable-backend-exp")]
+impl<B: GpuBackend> Default for PersistentTargetGeneric<B> {
+    fn default() -> Self {
+        Self {
+            state: PersistentTargetState::default(),
+            format: None,
+            texture: None,
+            view: None,
+        }
+    }
+}
+
+#[cfg(feature = "pluggable-backend-exp")]
+impl<B: GpuBackend> PersistentTargetGeneric<B> {
+    /// Ensures that a target allocation exists for `key` and `format`.
+    #[inline]
+    pub(crate) fn ensure(
+        &mut self,
+        backend: &B,
+        format: B::TextureFormat,
+        key: PersistentTargetKey,
+    ) -> TargetEnsureResult {
+        if key.width == 0 || key.height == 0 {
+            return TargetEnsureResult::Unavailable;
+        }
+
+        let resource_matches = self.texture.is_some()
+            && self.format == Some(format)
+            && self.state.same_resource(key);
+        if resource_matches {
+            return if self.state.can_reuse_contents(key) {
+                TargetEnsureResult::ReusedValid
+            } else {
+                TargetEnsureResult::ReusedInvalid
+            };
+        }
+
+        let had_target = self.texture.is_some();
+        let texture = backend.create_texture(&crate::backend::TextureDescriptor {
+            label: Some("aimer persistent color target".into()),
+            size: (key.width, key.height, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: crate::backend::TextureDimension::D2,
+            format,
+            usage: vec![
+                crate::backend::TextureUsage::RenderAttachment,
+                crate::backend::TextureUsage::CopySrc,
+                crate::backend::TextureUsage::TextureBinding,
+            ],
+        });
+        let view = backend.create_texture_view(&texture, "persistent target view");
+        self.texture = Some(texture);
+        self.view = Some(view);
+        self.format = Some(format);
+        self.state = PersistentTargetState::initialized(key.with_validity(TargetValidity::Invalid));
+        if had_target {
+            TargetEnsureResult::Recreated
+        } else {
+            TargetEnsureResult::Created
+        }
+    }
+
+    /// Marks the current target pixels complete and eligible for reuse.
+    #[inline]
+    pub(crate) fn mark_valid(&mut self) {
+        self.state.mark_valid();
+    }
+
+    /// Marks the target contents unknown while retaining its allocation.
+    #[inline]
+    pub(crate) fn invalidate(&mut self) {
+        self.state.invalidate();
+    }
+
+    /// Drops GPU resources after context loss or renderer teardown.
+    #[inline]
+    pub(crate) fn discard(&mut self) {
+        self.state = PersistentTargetState::default();
+        self.format = None;
+        self.view = None;
+        self.texture = None;
+    }
+
+    #[inline]
+    pub(crate) fn state(&self) -> PersistentTargetState {
+        self.state
+    }
+
+    #[inline]
+    pub(crate) fn view(&self) -> Option<&B::TextureView> {
+        self.view.as_ref()
+    }
+
+    #[inline]
+    pub(crate) fn texture(&self) -> Option<&B::Texture> {
+        self.texture.as_ref()
     }
 }
 

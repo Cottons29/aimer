@@ -523,6 +523,350 @@ impl CustomPipeline for MaterialPipeline {
     }
 }
 
+// ── Backend-agnostic generic path (pluggable-backend-exp) ───────────────────
+//
+// When `pluggable-backend-exp` is enabled, the pipeline can be constructed and
+// driven through the [`GpuBackend`] trait using `WgpuBackend`.
+
+#[cfg(feature = "pluggable-backend-exp")]
+impl MaterialPipeline {
+    /// Create the pipeline through the [`GpuBackend`] trait via
+    /// [`WgpuBackend`](crate::backend::wgpu::WgpuBackend).
+    ///
+    /// Equivalent to [`MaterialPipeline::new`] but routes all GPU resource
+    /// creation through the backend trait instead of calling wgpu directly.
+    pub fn new_generic(
+        backend: &crate::backend::wgpu::WgpuBackend,
+        format: wgpu::TextureFormat,
+        antialiasing: crate::AntiAlias,
+    ) -> Self {
+        use crate::backend::*;
+
+        let shader = backend.create_shader_module(
+            MaterialShader::source().as_bytes(),
+            "material shader",
+        );
+
+        let bind_group_layout = backend.create_bind_group_layout(&[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: vec![ShaderStage::Vertex, ShaderStage::Fragment],
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: vec![ShaderStage::Fragment],
+                ty: BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: TextureViewDimension::D2,
+                    sample_type: TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: vec![ShaderStage::Fragment],
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+        ]);
+
+        let backdrop_texture = backend.create_texture(&TextureDescriptor {
+            label: Some("material neutral backdrop".to_string()),
+            size: (1, 1, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: ::wgpu::TextureFormat::Rgba8Unorm,
+            usage: vec![TextureUsage::TextureBinding, TextureUsage::CopyDst],
+        });
+        let backdrop_view =
+            backend.create_texture_view(&backdrop_texture, "material neutral backdrop view");
+        let backdrop_sampler = backend.create_sampler(&SamplerDescriptor {
+            label: Some("material backdrop sampler".to_string()),
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            address_mode_w: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mipmap_filter: FilterMode::Nearest,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: f32::MAX,
+            compare: None,
+            max_anisotropy: 1,
+        });
+
+        let uniform_stride = aligned_uniform_stride_generic(backend);
+        let uniform_capacity = INITIAL_REQUEST_CAPACITY;
+        let uniform_buffer =
+            create_uniform_buffer_generic(backend, uniform_stride, uniform_capacity);
+        let bind_group = create_bind_group_generic(
+            backend,
+            &bind_group_layout,
+            &uniform_buffer,
+            uniform_stride,
+            &backdrop_view,
+            &backdrop_sampler,
+        );
+
+        let pipeline_layout = backend.create_pipeline_layout(&[&bind_group_layout]);
+        let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("material pipeline".to_string()),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[],
+            },
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: ColorWriteMask::ALL,
+                })],
+            }),
+            primitive: PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: crate::pipeline::multisample_state_generic(antialiasing),
+        });
+
+        Self {
+            pipeline,
+            bind_group_layout,
+            bind_group,
+            uniform_buffer,
+            uniform_stride,
+            uniform_capacity,
+            backdrop_texture,
+            _backdrop_view: backdrop_view,
+            backdrop_sampler,
+            backdrop_width: 1,
+            backdrop_height: 1,
+            backdrop_format: ::wgpu::TextureFormat::Rgba8Unorm,
+            backdrop_available: false,
+            requests: Vec::with_capacity(INITIAL_REQUEST_CAPACITY),
+            backdrop_regions: Vec::with_capacity(INITIAL_REQUEST_CAPACITY),
+            upload: Vec::new(),
+        }
+    }
+
+    /// Backend-driven equivalent of [`ensure_backdrop_texture`].
+    fn ensure_backdrop_texture_generic(
+        &mut self,
+        backend: &crate::backend::wgpu::WgpuBackend,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        available: bool,
+    ) {
+        use crate::backend::*;
+
+        let (width, height, format) = if available {
+            (width.max(1), height.max(1), format)
+        } else {
+            (1, 1, ::wgpu::TextureFormat::Rgba8Unorm)
+        };
+        if self.backdrop_width == width
+            && self.backdrop_height == height
+            && self.backdrop_format == format
+        {
+            return;
+        }
+
+        let texture = backend.create_texture(&TextureDescriptor {
+            label: Some(if available {
+                "material captured backdrop"
+            } else {
+                "material neutral backdrop"
+            }.to_string()),
+            size: (width, height, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format,
+            usage: vec![TextureUsage::TextureBinding, TextureUsage::CopyDst],
+        });
+        let view = backend.create_texture_view(&texture, "material backdrop view");
+        self.bind_group = create_bind_group_generic(
+            backend,
+            &self.bind_group_layout,
+            &self.uniform_buffer,
+            self.uniform_stride,
+            &view,
+            &self.backdrop_sampler,
+        );
+        self.backdrop_texture = texture;
+        self._backdrop_view = view;
+        self.backdrop_width = width;
+        self.backdrop_height = height;
+        self.backdrop_format = format;
+    }
+
+    /// Backend-driven equivalent of [`ensure_uniform_capacity`].
+    fn ensure_uniform_capacity_generic(
+        &mut self,
+        backend: &crate::backend::wgpu::WgpuBackend,
+        required: usize,
+    ) {
+        if required <= self.uniform_capacity {
+            return;
+        }
+        let capacity = required
+            .next_power_of_two()
+            .min(MAX_REQUESTS_PER_FRAME);
+        self.uniform_capacity = capacity;
+        self.uniform_buffer =
+            create_uniform_buffer_generic(backend, self.uniform_stride, capacity);
+        self.bind_group = create_bind_group_generic(
+            backend,
+            &self.bind_group_layout,
+            &self.uniform_buffer,
+            self.uniform_stride,
+            &self._backdrop_view,
+            &self.backdrop_sampler,
+        );
+    }
+
+    /// Equivalent to [`CustomPipeline::prepare`] but routes GPU operations
+    /// through the [`GpuBackend`] trait.
+    pub fn prepare_generic(
+        &mut self,
+        ctx: &crate::custom_pipeline::RenderContextGeneric<
+            '_,
+            crate::backend::wgpu::WgpuBackend,
+        >,
+    ) {
+        use crate::backend::GpuBackend;
+
+        if self.requests.is_empty() {
+            return;
+        }
+        self.backdrop_regions
+            .extend(self.requests.iter().copied().map(|request| {
+                ctx.source_texture
+                    .and_then(|_| backdrop_region(request, ctx.width, ctx.height))
+            }));
+        self.backdrop_available = self.backdrop_regions.iter().any(Option::is_some);
+        let backdrop_width = self
+            .backdrop_regions
+            .iter()
+            .flatten()
+            .map(|region| region.width)
+            .max()
+            .unwrap_or(1);
+        let backdrop_height = self
+            .backdrop_regions
+            .iter()
+            .flatten()
+            .map(|region| region.height)
+            .max()
+            .unwrap_or(1);
+        self.ensure_backdrop_texture_generic(
+            ctx.backend,
+            ctx.format,
+            backdrop_width,
+            backdrop_height,
+            self.backdrop_available,
+        );
+        self.ensure_uniform_capacity_generic(ctx.backend, self.requests.len());
+
+        let stride = self.uniform_stride as usize;
+        self.upload
+            .resize(stride.saturating_mul(self.requests.len()), 0);
+        for (index, request) in self.requests.iter().copied().enumerate() {
+            let uniform = MaterialUniform::from_request(
+                request,
+                ctx.width,
+                ctx.height,
+                ctx.is_srgb,
+                self.backdrop_regions[index],
+            );
+            let start = index * stride;
+            let end = start + size_of::<MaterialUniform>();
+            self.upload[start..end]
+                .copy_from_slice(bytemuck::bytes_of(&uniform));
+        }
+        ctx.backend
+            .write_buffer(&self.uniform_buffer, 0, &self.upload);
+
+        if !self.backdrop_available {
+            ctx.backend.write_texture(
+                &crate::backend::WriteTextureDescriptor {
+                    texture: &self.backdrop_texture,
+                    mip_level: 0,
+                    origin: crate::backend::Origin3d::ZERO,
+                    aspect: crate::backend::TextureAspect::All,
+                    data: &[18, 28, 44, 255],
+                    buffer_layout: crate::backend::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4),
+                        rows_per_image: Some(1),
+                    },
+                    extent: crate::backend::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                },
+            );
+        }
+    }
+
+    /// Backend-driven equivalent of [`CustomPipeline::capture_backdrop_command`].
+    ///
+    /// Routes the texture-to-texture copy through the backend trait so it stays
+    /// compatible with the generic path.
+    pub fn capture_backdrop_command_generic(
+        &self,
+        command_index: Option<usize>,
+        backend: &crate::backend::wgpu::WgpuBackend,
+        encoder: &mut <crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::CommandEncoder,
+        source_texture: &<crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::Texture,
+        _width: u32,
+        _height: u32,
+    ) {
+        use crate::backend::{GpuBackend, TexelCopyTextureInfo, Extent3d, Origin3d, TextureAspect};
+        let Some(region) = command_index
+            .and_then(|index| self.backdrop_regions.get(index))
+            .copied()
+            .flatten()
+        else {
+            return;
+        };
+        backend.copy_texture_to_texture(
+            encoder,
+            &TexelCopyTextureInfo {
+                texture: source_texture,
+                mip_level: 0,
+                origin: Origin3d {
+                    x: region.x,
+                    y: region.y,
+                    z: 0,
+                },
+                aspect: TextureAspect::All,
+            },
+            &TexelCopyTextureInfo {
+                texture: &self.backdrop_texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            Extent3d {
+                width: region.width,
+                height: region.height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+}
+
 fn aligned_uniform_stride(device: &wgpu::Device) -> u64 {
     let alignment = u64::from(device.limits().min_uniform_buffer_offset_alignment.max(1));
     let size = size_of::<MaterialUniform>() as u64;
@@ -633,6 +977,60 @@ fn create_bind_group(
             },
         ],
     })
+}
+
+// ── Generic helper functions (pluggable-backend-exp) ────────────────────────
+
+#[cfg(feature = "pluggable-backend-exp")]
+fn aligned_uniform_stride_generic(backend: &crate::backend::wgpu::WgpuBackend) -> u64 {
+    use crate::backend::GpuBackend;
+    let alignment =
+        u64::from(backend.limits().min_uniform_buffer_offset_alignment.max(1));
+    let size = size_of::<MaterialUniform>() as u64;
+    size.div_ceil(alignment) * alignment
+}
+
+#[cfg(feature = "pluggable-backend-exp")]
+fn create_uniform_buffer_generic(
+    backend: &crate::backend::wgpu::WgpuBackend,
+    stride: u64,
+    capacity: usize,
+) -> wgpu::Buffer {
+    use crate::backend::*;
+    backend.create_buffer(&BufferDescriptor {
+        label: Some("material uniform buffer".to_string()),
+        size: stride * capacity as u64,
+        usage: vec![BufferUsage::Uniform, BufferUsage::CopyDst],
+    })
+}
+
+#[cfg(feature = "pluggable-backend-exp")]
+fn create_bind_group_generic(
+    backend: &crate::backend::wgpu::WgpuBackend,
+    layout: &<crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::BindGroupLayout,
+    uniform_buffer: &<crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::Buffer,
+    uniform_stride: u64,
+    backdrop_view: &<crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::TextureView,
+    backdrop_sampler: &<crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::Sampler,
+) -> <crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::BindGroup {
+    use crate::backend::*;
+    backend.create_bind_group(
+        layout,
+        &[
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::BufferRange(uniform_buffer, 0, uniform_stride),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::TextureView(backdrop_view),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: BindingResource::Sampler(backdrop_sampler),
+            },
+        ],
+    )
 }
 
 #[cfg(test)]

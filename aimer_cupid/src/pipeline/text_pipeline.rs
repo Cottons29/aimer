@@ -2741,6 +2741,387 @@ impl TextPipelineV2 {
     }
 }
 
+// ── Backend-agnostic generic path (pluggable-backend-exp) ─────────────────
+//
+// When `pluggable-backend-exp` is enabled, the pipeline can be constructed
+// and driven through the [`GpuBackend`] trait using
+// [`WgpuBackend`](crate::backend::wgpu::WgpuBackend) instead of calling wgpu
+// directly. The struct fields stay concrete wgpu types (they already match
+// `<WgpuBackend as GpuBackend>::*`), so `render_request` /
+// `render_decoration_range` (which already take `&mut wgpu::RenderPass<'_>`)
+// work unchanged against `WgpuBackend::RenderPass`.
+#[cfg(feature = "pluggable-backend-exp")]
+impl TextPipelineV2 {
+    /// Create the pipeline through the [`GpuBackend`] trait via
+    /// [`WgpuBackend`](crate::backend::wgpu::WgpuBackend).
+    ///
+    /// Equivalent to [`TextPipelineV2::new`] but routes all GPU resource
+    /// creation (shader modules, atlases, sampler, buffers, bind groups, and
+    /// render pipelines) through the backend trait instead of calling wgpu
+    /// directly.
+    pub fn new_generic(
+        backend: &crate::backend::wgpu::WgpuBackend,
+        format: wgpu::TextureFormat,
+        antialiasing: crate::AntiAlias,
+    ) -> Self {
+        use crate::backend::*;
+
+        warm_fallbacks_in_background();
+
+        let rasterizer = GlyphRasterizer::new();
+        let atlas = GlyphAtlas::new_generic(backend);
+        let color_atlas = ColorGlyphAtlas::new_generic(backend);
+
+        let shader = backend.create_shader_module(
+            include_str!("./shaders/text.wgsl").as_bytes(),
+            "text shader",
+        );
+        let color_shader = backend.create_shader_module(
+            include_str!("./shaders/text_color.wgsl").as_bytes(),
+            "text color shader",
+        );
+        let decoration_shader = backend.create_shader_module(
+            include_str!("./shaders/text_decoration.wgsl").as_bytes(),
+            "text decoration shader",
+        );
+
+        let sampler = backend.create_sampler(&SamplerDescriptor {
+            label: Some("text atlas sampler".to_string()),
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            address_mode_w: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mipmap_filter: FilterMode::Nearest,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: f32::MAX,
+            compare: None,
+            max_anisotropy: 1,
+        });
+
+        let viewport_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("text viewport uniform".to_string()),
+            size: 16,
+            usage: vec![BufferUsage::Uniform, BufferUsage::CopyDst],
+        });
+
+        let bind_group_layout = backend.create_bind_group_layout(&[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: vec![ShaderStage::Vertex, ShaderStage::Fragment],
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: vec![ShaderStage::Fragment],
+                ty: BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: TextureViewDimension::D2,
+                    sample_type: TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: vec![ShaderStage::Fragment],
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+        ]);
+
+        let bind_group = Self::create_bind_group_generic(
+            backend,
+            &bind_group_layout,
+            &viewport_buffer,
+            &atlas.view,
+            &sampler,
+        );
+        let color_bind_group = Self::create_bind_group_generic(
+            backend,
+            &bind_group_layout,
+            &viewport_buffer,
+            &color_atlas.view,
+            &sampler,
+        );
+
+        let pipeline_layout = backend.create_pipeline_layout(&[&bind_group_layout]);
+
+        let glyph_attribs: Vec<VertexAttribute> = GlyphInstance::ATTRIBS
+            .iter()
+            .map(|a| VertexAttribute {
+                format: text_wgpu_vertex_format_to_backend(a.format),
+                offset: a.offset,
+                shader_location: a.shader_location,
+            })
+            .collect();
+        let glyph_buffers = [Some(VertexBufferLayout {
+            array_stride: size_of::<GlyphInstance>() as u64,
+            step_mode: VertexStepMode::Instance,
+            attributes: &glyph_attribs,
+        })];
+
+        let decoration_attribs: Vec<VertexAttribute> = DecorationInstance::ATTRIBS
+            .iter()
+            .map(|a| VertexAttribute {
+                format: text_wgpu_vertex_format_to_backend(a.format),
+                offset: a.offset,
+                shader_location: a.shader_location,
+            })
+            .collect();
+        let decoration_buffers = [Some(VertexBufferLayout {
+            array_stride: size_of::<DecorationInstance>() as u64,
+            step_mode: VertexStepMode::Instance,
+            attributes: &decoration_attribs,
+        })];
+
+        let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("text pipeline v2".to_string()),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &glyph_buffers,
+            },
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: ColorWriteMask::ALL,
+                })],
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: crate::pipeline::multisample_state_generic(antialiasing),
+        });
+
+        let color_pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("text color pipeline".to_string()),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: &color_shader,
+                entry_point: "vs_main",
+                buffers: &glyph_buffers,
+            },
+            fragment: Some(FragmentState {
+                module: &color_shader,
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: ColorWriteMask::ALL,
+                })],
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: crate::pipeline::multisample_state_generic(antialiasing),
+        });
+
+        let decoration_pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("text decoration pipeline".to_string()),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: &decoration_shader,
+                entry_point: "vs_main",
+                buffers: &decoration_buffers,
+            },
+            fragment: Some(FragmentState {
+                module: &decoration_shader,
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: ColorWriteMask::ALL,
+                })],
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: crate::pipeline::multisample_state_generic(antialiasing),
+        });
+
+        let instance_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("text instance buffer".to_string()),
+            size: (Self::INITIAL_CAPACITY * size_of::<GlyphInstance>()) as u64,
+            usage: vec![BufferUsage::Vertex, BufferUsage::CopyDst],
+        });
+
+        let color_instance_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("text color instance buffer".to_string()),
+            size: (Self::INITIAL_CAPACITY * size_of::<GlyphInstance>()) as u64,
+            usage: vec![BufferUsage::Vertex, BufferUsage::CopyDst],
+        });
+
+        let decoration_instance_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("text decoration instance buffer".to_string()),
+            size: (Self::INITIAL_CAPACITY * size_of::<DecorationInstance>()) as u64,
+            usage: vec![BufferUsage::Vertex, BufferUsage::CopyDst],
+        });
+
+        Self {
+            rasterizer,
+            executor: BatchExecutor::new(),
+            postponed_preparation: false,
+            atlas,
+            color_atlas,
+            pipeline,
+            color_pipeline,
+            viewport_buffer,
+            bind_group_layout,
+            bind_group,
+            color_bind_group,
+            sampler,
+            instance_buffer,
+            instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
+            instances: Vec::new(),
+            instance_upload: FrameUpload::new(),
+            color_instance_buffer,
+            color_instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
+            color_instances: Vec::new(),
+            color_instance_upload: FrameUpload::new(),
+            decoration_pipeline,
+            decoration_instance_buffer,
+            decoration_instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
+            decoration_instances: Vec::new(),
+            decoration_instance_upload: FrameUpload::new(),
+            atlas_generation: 0,
+            color_atlas_generation: 0,
+            last_viewport: (0, 0),
+            last_prepared_surface: (0, 0),
+            layout_cache: LayoutCache::new(Self::LAYOUT_CACHE_CAPACITY),
+            shaping_cache: HashMap::new(),
+            paint_cache: TextPaintCache::default(),
+            request_ranges: Vec::new(),
+            visible_span_ranges: Vec::new(),
+            visible_span_keys: Vec::new(),
+            alpha_glyph_descriptors: Vec::new(),
+            color_glyph_descriptors: Vec::new(),
+            planned_alpha_descriptors: Vec::new(),
+            planned_color_descriptors: Vec::new(),
+            seen_glyphs: HashSet::new(),
+            planned_alpha_atlas_generation: 0,
+            planned_color_atlas_generation: 0,
+            frame_generation: 0,
+            prepared_frame_generation: 0,
+            prepared_frame: None,
+        }
+    }
+
+    /// Backend-driven equivalent of the private `create_bind_group` helper.
+    fn create_bind_group_generic(
+        backend: &crate::backend::wgpu::WgpuBackend,
+        layout: &wgpu::BindGroupLayout,
+        viewport_buffer: &wgpu::Buffer,
+        atlas_view: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
+        use crate::backend::{BindGroupEntry, BindingResource, GpuBackend};
+        backend.create_bind_group(
+            layout,
+            &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::Buffer(viewport_buffer),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(atlas_view),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::Sampler(sampler),
+                },
+            ],
+        )
+    }
+
+    /// Backend-driven equivalent of [`TextPipelineV2::flush_atlas`].
+    ///
+    /// Uploads any pending atlas changes and rebuilds the bind groups if
+    /// either atlas texture was reallocated (generation changed).
+    pub fn flush_atlas_generic(&mut self, backend: &crate::backend::wgpu::WgpuBackend) {
+        self.atlas.upload_generic(backend);
+        self.color_atlas.upload_generic(backend);
+
+        let atlas_gen = self.atlas.generation();
+        if atlas_gen != self.atlas_generation {
+            self.atlas_generation = atlas_gen;
+            self.bind_group = Self::create_bind_group_generic(
+                backend,
+                &self.bind_group_layout,
+                &self.viewport_buffer,
+                &self.atlas.view,
+                &self.sampler,
+            );
+        }
+
+        let color_gen = self.color_atlas.generation();
+        if color_gen != self.color_atlas_generation {
+            self.color_atlas_generation = color_gen;
+            self.color_bind_group = Self::create_bind_group_generic(
+                backend,
+                &self.bind_group_layout,
+                &self.viewport_buffer,
+                &self.color_atlas.view,
+                &self.sampler,
+            );
+        }
+    }
+
+    /// Backend-driven viewport-uniform write.
+    ///
+    /// Writes `[width, height, is_srgb, 0.0]` to the viewport buffer through
+    /// [`GpuBackend::write_buffer`], skipping the write when the viewport
+    /// size is unchanged since the last call (mirrors the `last_viewport`
+    /// gate inside the concrete [`TextPipelineV2::prepare_inner`]).
+    pub fn write_viewport_generic(
+        &mut self,
+        backend: &crate::backend::wgpu::WgpuBackend,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+    ) {
+        use crate::backend::GpuBackend;
+        if self.last_viewport == (width, height) {
+            return;
+        }
+        self.last_viewport = (width, height);
+        let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
+        backend.write_buffer(
+            &self.viewport_buffer,
+            0,
+            bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
+        );
+    }
+}
+
+/// Converts the [`wgpu::VertexFormat`] values used by [`GlyphInstance`] and
+/// [`DecorationInstance`] to their backend-agnostic equivalents.
+#[cfg(feature = "pluggable-backend-exp")]
+fn text_wgpu_vertex_format_to_backend(f: wgpu::VertexFormat) -> crate::backend::VertexFormat {
+    match f {
+        wgpu::VertexFormat::Float32 => crate::backend::VertexFormat::Float32,
+        wgpu::VertexFormat::Float32x2 => crate::backend::VertexFormat::Float32x2,
+        wgpu::VertexFormat::Float32x4 => crate::backend::VertexFormat::Float32x4,
+        wgpu::VertexFormat::Unorm8x4 => crate::backend::VertexFormat::Unorm8x4,
+        other => panic!("unsupported text vertex format for generic backend: {other:?}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -3117,6 +3498,191 @@ mod tests {
         assert_eq!(
             DecorationInstance::ATTRIBS[2].offset,
             std::mem::offset_of!(DecorationInstance, color) as u64
+        );
+    }
+
+    // ── Generic backend path (pluggable-backend-exp) ───────────────────────
+    //
+    // Exercises `TextPipelineV2::new_generic`, `GlyphAtlas::get_or_insert_generic`
+    // / `flush_atlas_generic` (atlas insertion + upload through the backend
+    // trait), and `write_viewport_generic` (viewport uniform write through the
+    // backend trait), then renders the resulting instance through the same
+    // `render_request` the concrete path uses (valid because
+    // `WgpuBackend::RenderPass == wgpu::RenderPass`) and reads back a pixel to
+    // prove the whole chain actually ran on the GPU. Lives here (rather than in
+    // `lib.rs`'s `generic_backend_tests`) because it needs direct access to
+    // private fields (`atlas`, `instances`, `request_ranges`, …) to bypass the
+    // full CPU text-shaping pipeline, which is out of scope for this pass.
+    #[cfg(feature = "pluggable-backend-exp")]
+    #[test]
+    fn generic_text_pipeline_renders_opaque_glyph_quad() {
+        use aimer_utils::SyncFuture;
+        use crate::backend::GpuBackend;
+        use crate::backend::wgpu::WgpuBackend;
+        use crate::text_pipeline::glyph_rasterizer::GlyphKey;
+
+        const SIZE: u32 = 64;
+        const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+        let gpu = (|| {
+            let instance = wgpu::Instance::default();
+            let adapter = instance
+                .request_adapter(&wgpu::RequestAdapterOptions::default())
+                .block()
+                .ok()?;
+            adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("cupid text generic-backend device"),
+                    ..Default::default()
+                })
+                .block()
+                .ok()
+        })();
+        let Some((device, queue)) = gpu else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        let backend = WgpuBackend { device, queue };
+
+        let mut pipeline =
+            super::TextPipelineV2::new_generic(&backend, FORMAT, crate::AntiAlias::Analytic);
+
+        // Insert a fully opaque 8×8 alpha glyph into the atlas and flush it to
+        // the GPU texture through the backend-driven upload path.
+        let key = GlyphKey::new(1, 1, 16.0);
+        let bitmap = vec![255u8; 8 * 8];
+        let region = pipeline
+            .atlas
+            .get_or_insert_generic(&backend, key, 8, 8, &bitmap);
+        pipeline.flush_atlas_generic(&backend);
+        pipeline.write_viewport_generic(&backend, SIZE, SIZE, false);
+
+        let uv_rect = region.uvs(pipeline.atlas.width, pipeline.atlas.height);
+        let instance = GlyphInstance {
+            position: [0.0, 0.0],
+            size: [SIZE as f32, SIZE as f32],
+            uv_rect,
+            color: Rgba8::new(255, 0, 0, 255),
+            // width < 0 disables clipping.
+            clip_rect: [0.0, 0.0, -1.0, 0.0],
+            clip_border_radius: [0.0; 4],
+            skew: 0.0,
+            coverage_exponent: 1.0,
+            _pad: [0.0; 2],
+        };
+        pipeline.instances.push(instance);
+        pipeline.request_ranges.push(super::TextRequestRange {
+            alpha_start: 0,
+            alpha_end: 1,
+            color_start: 0,
+            color_end: 0,
+        });
+        backend.write_buffer(
+            &pipeline.instance_buffer,
+            0,
+            bytemuck::cast_slice(&pipeline.instances),
+        );
+
+        let target = backend.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("text generic test target"),
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = backend
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("text generic test pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pipeline.render_request(&mut pass, 0);
+        }
+        backend.queue.submit(Some(encoder.finish()));
+
+        let readback = backend.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("text generic test readback"),
+            size: (SIZE * SIZE * 4) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut copy_encoder = backend
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        copy_encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &target,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(SIZE * 4),
+                    rows_per_image: Some(SIZE),
+                },
+            },
+            wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+        backend.queue.submit(Some(copy_encoder.finish()));
+
+        let slice = readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |result| {
+            result.expect("the readback buffer to map");
+        });
+        backend
+            .device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("the device to finish the readback");
+        let pixels = slice
+            .get_mapped_range()
+            .expect("the mapped readback range")
+            .to_vec();
+        readback.unmap();
+
+        let stride = SIZE as usize * 4;
+        let (cx, cy) = (SIZE as usize / 2, SIZE as usize / 2);
+        let offset = cy * stride + cx * 4;
+        let pixel = [
+            pixels[offset],
+            pixels[offset + 1],
+            pixels[offset + 2],
+            pixels[offset + 3],
+        ];
+        assert_eq!(
+            pixel,
+            [255, 0, 0, 255],
+            "expected the generic backend path to render an opaque red glyph quad, got {pixel:?}"
         );
     }
 }

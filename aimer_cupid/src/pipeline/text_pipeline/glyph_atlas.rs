@@ -885,6 +885,523 @@ impl ColorGlyphAtlas {
     }
 }
 
+// ── Backend-agnostic generic path (pluggable-backend-exp) ─────────────────
+//
+// When `pluggable-backend-exp` is enabled, both atlases can be constructed
+// and driven through the [`GpuBackend`] trait using
+// [`WgpuBackend`](crate::backend::wgpu::WgpuBackend) instead of calling wgpu
+// directly. The struct fields stay concrete wgpu types (they already match
+// `<WgpuBackend as GpuBackend>::*`), so only the resource-creation and upload
+// call sites change.
+
+/// Backend-driven equivalent of [`upload_pending`]. Shared by
+/// [`GlyphAtlas::upload_generic`] and [`ColorGlyphAtlas::upload_generic`].
+#[cfg(feature = "pluggable-backend-exp")]
+fn upload_pending_generic(
+    backend: &crate::backend::wgpu::WgpuBackend,
+    texture: &wgpu::Texture,
+    pending: &mut Vec<PendingGlyph>,
+    staging_buffer: &mut Option<wgpu::Buffer>,
+    staging_capacity: &mut usize,
+    staging_data: &mut Vec<u8>,
+    staging_copies: &mut Vec<StagedGlyph>,
+    bytes_per_pixel: usize,
+    label: &'static str,
+) {
+    use crate::backend::{
+        BufferDescriptor, BufferUsage, Extent3d, GpuBackend, Origin3d, TexelCopyBufferInfo,
+        TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect, WriteTextureDescriptor,
+    };
+
+    if pending.is_empty() {
+        return;
+    }
+
+    let packed_bytes = pending
+        .iter()
+        .map(|glyph| glyph.width as usize * glyph.height as usize * bytes_per_pixel)
+        .sum::<usize>();
+    let aligned_bytes = pending
+        .iter()
+        .map(|glyph| {
+            aligned_upload_row_bytes(glyph.width as usize * bytes_per_pixel)
+                * glyph.height as usize
+        })
+        .sum::<usize>();
+    if aligned_bytes > packed_bytes.saturating_mul(4) {
+        let mut groups: Vec<PackedUploadGroup> = Vec::new();
+        for (index, glyph) in pending.iter().enumerate() {
+            if glyph.width == 0 || glyph.height == 0 {
+                continue;
+            }
+            let right = glyph.x + glyph.width;
+            if let Some(group) = groups.last_mut()
+                && group.y == glyph.y
+                && group.end == index
+            {
+                group.end += 1;
+                group.width = right - group.min_x;
+                group.height = group.height.max(glyph.height);
+            } else {
+                groups.push(PackedUploadGroup {
+                    start: index,
+                    end: index + 1,
+                    y: glyph.y,
+                    min_x: glyph.x,
+                    width: glyph.width,
+                    height: glyph.height,
+                });
+            }
+        }
+
+        for group in groups {
+            let row_bytes = group.width as usize * bytes_per_pixel;
+            staging_data.resize(row_bytes * group.height as usize, 0);
+            staging_data.fill(0);
+            for glyph in &pending[group.start..group.end] {
+                if glyph.width == 0 || glyph.height == 0 {
+                    continue;
+                }
+                let source_row_bytes = glyph.width as usize * bytes_per_pixel;
+                let x_offset = (glyph.x - group.min_x) as usize * bytes_per_pixel;
+                for row in 0..glyph.height as usize {
+                    let source_start = row * source_row_bytes;
+                    let target_start = row * row_bytes + x_offset;
+                    staging_data[target_start..target_start + source_row_bytes]
+                        .copy_from_slice(&glyph.data[source_start..source_start + source_row_bytes]);
+                }
+            }
+            backend.write_texture(&WriteTextureDescriptor {
+                texture,
+                mip_level: 0,
+                origin: Origin3d {
+                    x: group.min_x,
+                    y: group.y,
+                    z: 0,
+                },
+                aspect: TextureAspect::All,
+                data: staging_data,
+                buffer_layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row_bytes as u32),
+                    rows_per_image: Some(group.height),
+                },
+                extent: Extent3d {
+                    width: group.width,
+                    height: group.height,
+                    depth_or_array_layers: 1,
+                },
+            });
+        }
+        pending.clear();
+        return;
+    }
+
+    let pending_batch = std::mem::take(pending);
+    staging_data.clear();
+    staging_copies.clear();
+    staging_copies.reserve(pending_batch.len());
+
+    for glyph in pending_batch.iter() {
+        if glyph.width == 0 || glyph.height == 0 {
+            continue;
+        }
+        let row_bytes = glyph.width as usize * bytes_per_pixel;
+        let bytes_per_row = aligned_upload_row_bytes(row_bytes);
+        let offset = staging_data.len();
+        let glyph_bytes = bytes_per_row * glyph.height as usize;
+        staging_data.resize(offset + glyph_bytes, 0);
+        for row in 0..glyph.height as usize {
+            let source_start = row * row_bytes;
+            let source_end = source_start + row_bytes;
+            let target_start = offset + row * bytes_per_row;
+            staging_data[target_start..target_start + row_bytes]
+                .copy_from_slice(&glyph.data[source_start..source_end]);
+        }
+        staging_copies.push(StagedGlyph {
+            x: glyph.x,
+            y: glyph.y,
+            width: glyph.width,
+            height: glyph.height,
+            offset: offset as u64,
+            bytes_per_row: bytes_per_row as u32,
+        });
+    }
+
+    if staging_data.is_empty() {
+        let mut pending_batch = pending_batch;
+        pending_batch.clear();
+        *pending = pending_batch;
+        return;
+    }
+
+    if *staging_capacity < staging_data.len() {
+        let capacity = staging_data.len().next_power_of_two();
+        *staging_buffer = Some(backend.create_buffer(&BufferDescriptor {
+            label: Some(label.to_string()),
+            size: capacity as u64,
+            usage: vec![BufferUsage::CopySrc, BufferUsage::CopyDst],
+        }));
+        *staging_capacity = capacity;
+    }
+
+    let buffer = staging_buffer
+        .as_ref()
+        .expect("staging buffer is allocated for non-empty atlas data");
+    backend.write_buffer(buffer, 0, staging_data);
+
+    let mut encoder = backend.create_command_encoder(label);
+    for copy in staging_copies.iter().copied() {
+        backend.copy_buffer_to_texture(
+            &mut encoder,
+            &TexelCopyBufferInfo {
+                buffer,
+                layout: TexelCopyBufferLayout {
+                    offset: copy.offset,
+                    bytes_per_row: Some(copy.bytes_per_row),
+                    rows_per_image: Some(copy.height),
+                },
+            },
+            &TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: Origin3d {
+                    x: copy.x,
+                    y: copy.y,
+                    z: 0,
+                },
+                aspect: TextureAspect::All,
+            },
+            Extent3d {
+                width: copy.width,
+                height: copy.height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    backend.submit(encoder);
+
+    let mut pending_batch = pending_batch;
+    pending_batch.clear();
+    *pending = pending_batch;
+}
+
+#[cfg(feature = "pluggable-backend-exp")]
+impl GlyphAtlas {
+    /// Create the atlas through the [`GpuBackend`] trait via
+    /// [`WgpuBackend`](crate::backend::wgpu::WgpuBackend).
+    ///
+    /// Equivalent to [`GlyphAtlas::new`] but routes texture creation through
+    /// the backend trait instead of calling wgpu directly.
+    pub fn new_generic(backend: &crate::backend::wgpu::WgpuBackend) -> Self {
+        let width = Self::INITIAL_SIZE;
+        let height = Self::INITIAL_SIZE;
+        let (texture, view) = Self::create_texture_generic(backend, width, height);
+        Self {
+            texture,
+            view,
+            width,
+            height,
+            packer: ShelfPacker::new(width, height),
+            cache: HashMap::new(),
+            pending: Vec::new(),
+            staging_buffer: None,
+            staging_capacity: 0,
+            staging_data: Vec::new(),
+            staging_copies: Vec::new(),
+            generation: 0,
+        }
+    }
+
+    fn create_texture_generic(
+        backend: &crate::backend::wgpu::WgpuBackend,
+        width: u32,
+        height: u32,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        use crate::backend::{GpuBackend, TextureDescriptor, TextureDimension, TextureUsage};
+        let texture = backend.create_texture(&TextureDescriptor {
+            label: Some("glyph atlas".to_string()),
+            size: (width, height, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: vec![
+                TextureUsage::TextureBinding,
+                TextureUsage::CopyDst,
+                TextureUsage::CopySrc,
+            ],
+        });
+        let view = backend.create_texture_view(&texture, "glyph atlas view");
+        (texture, view)
+    }
+
+    /// Backend-driven equivalent of [`GlyphAtlas::get_or_insert`].
+    pub fn get_or_insert_generic(
+        &mut self,
+        backend: &crate::backend::wgpu::WgpuBackend,
+        key: GlyphKey,
+        glyph_w: u32,
+        glyph_h: u32,
+        bitmap: &[u8],
+    ) -> AtlasRegion {
+        if let Some(region) = self.cache.get(&key) {
+            return *region;
+        }
+
+        let pos = self.packer.allocate(glyph_w, glyph_h);
+        let (x, y) = match pos {
+            Some(p) => p,
+            None => {
+                self.grow_generic(backend);
+                self.packer
+                    .allocate(glyph_w, glyph_h)
+                    .expect("glyph too large for atlas even after grow")
+            }
+        };
+
+        self.pending.push(PendingGlyph {
+            x,
+            y,
+            width: glyph_w,
+            height: glyph_h,
+            data: bitmap.to_vec(),
+        });
+
+        let region = AtlasRegion {
+            x,
+            y,
+            width: glyph_w,
+            height: glyph_h,
+        };
+        self.cache.insert(key, region);
+        region
+    }
+
+    /// Backend-driven equivalent of [`GlyphAtlas::upload`].
+    pub fn upload_generic(&mut self, backend: &crate::backend::wgpu::WgpuBackend) {
+        upload_pending_generic(
+            backend,
+            &self.texture,
+            &mut self.pending,
+            &mut self.staging_buffer,
+            &mut self.staging_capacity,
+            &mut self.staging_data,
+            &mut self.staging_copies,
+            1,
+            "glyph atlas upload",
+        );
+    }
+
+    /// Backend-driven equivalent of [`GlyphAtlas::grow`].
+    fn grow_generic(&mut self, backend: &crate::backend::wgpu::WgpuBackend) {
+        use crate::backend::{Extent3d, GpuBackend, Origin3d, TexelCopyTextureInfo, TextureAspect};
+
+        if self.width >= Self::MAX_SIZE {
+            self.cache.clear();
+            self.pending.clear();
+            self.packer = ShelfPacker::new(self.width, self.height);
+            self.generation += 1;
+            return;
+        }
+
+        let old_w = self.width;
+        let old_h = self.height;
+        let new_w = self.width * 2;
+        let new_h = self.height * 2;
+        let (texture, view) = Self::create_texture_generic(backend, new_w, new_h);
+
+        let mut encoder = backend.create_command_encoder("glyph atlas grow");
+        backend.copy_texture_to_texture(
+            &mut encoder,
+            &TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            &TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            Extent3d {
+                width: old_w,
+                height: old_h,
+                depth_or_array_layers: 1,
+            },
+        );
+        backend.submit(encoder);
+
+        self.texture = texture;
+        self.view = view;
+        self.packer = ShelfPacker::new(new_w, new_h);
+        self.packer.start_fresh_shelf_at(old_h);
+        self.width = new_w;
+        self.height = new_h;
+        self.generation += 1;
+    }
+}
+
+#[cfg(feature = "pluggable-backend-exp")]
+impl ColorGlyphAtlas {
+    /// Create the atlas through the [`GpuBackend`] trait via
+    /// [`WgpuBackend`](crate::backend::wgpu::WgpuBackend).
+    ///
+    /// Equivalent to [`ColorGlyphAtlas::new`] but routes texture creation
+    /// through the backend trait instead of calling wgpu directly.
+    pub fn new_generic(backend: &crate::backend::wgpu::WgpuBackend) -> Self {
+        let width = Self::INITIAL_SIZE;
+        let height = Self::INITIAL_SIZE;
+        let (texture, view) = Self::create_texture_generic(backend, width, height);
+        Self {
+            texture,
+            view,
+            width,
+            height,
+            packer: ShelfPacker::new(width, height),
+            cache: HashMap::new(),
+            pending: Vec::new(),
+            staging_buffer: None,
+            staging_capacity: 0,
+            staging_data: Vec::new(),
+            staging_copies: Vec::new(),
+            generation: 0,
+        }
+    }
+
+    fn create_texture_generic(
+        backend: &crate::backend::wgpu::WgpuBackend,
+        width: u32,
+        height: u32,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        use crate::backend::{GpuBackend, TextureDescriptor, TextureDimension, TextureUsage};
+        let texture = backend.create_texture(&TextureDescriptor {
+            label: Some("color glyph atlas".to_string()),
+            size: (width, height, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: vec![
+                TextureUsage::TextureBinding,
+                TextureUsage::CopyDst,
+                TextureUsage::CopySrc,
+            ],
+        });
+        let view = backend.create_texture_view(&texture, "color glyph atlas view");
+        (texture, view)
+    }
+
+    /// Backend-driven equivalent of [`ColorGlyphAtlas::get_or_insert`].
+    pub fn get_or_insert_generic(
+        &mut self,
+        backend: &crate::backend::wgpu::WgpuBackend,
+        key: GlyphKey,
+        glyph_w: u32,
+        glyph_h: u32,
+        bitmap: &[u8],
+    ) -> AtlasRegion {
+        if let Some(region) = self.cache.get(&key) {
+            return *region;
+        }
+
+        let pos = self.packer.allocate(glyph_w, glyph_h);
+        let (x, y) = match pos {
+            Some(p) => p,
+            None => {
+                self.grow_generic(backend);
+                self.packer
+                    .allocate(glyph_w, glyph_h)
+                    .expect("color glyph too large for atlas even after grow")
+            }
+        };
+
+        self.pending.push(PendingGlyph {
+            x,
+            y,
+            width: glyph_w,
+            height: glyph_h,
+            data: bitmap.to_vec(),
+        });
+
+        let region = AtlasRegion {
+            x,
+            y,
+            width: glyph_w,
+            height: glyph_h,
+        };
+        self.cache.insert(key, region);
+        region
+    }
+
+    /// Backend-driven equivalent of [`ColorGlyphAtlas::upload`].
+    pub fn upload_generic(&mut self, backend: &crate::backend::wgpu::WgpuBackend) {
+        upload_pending_generic(
+            backend,
+            &self.texture,
+            &mut self.pending,
+            &mut self.staging_buffer,
+            &mut self.staging_capacity,
+            &mut self.staging_data,
+            &mut self.staging_copies,
+            Self::BYTES_PER_PIXEL as usize,
+            "color glyph atlas upload",
+        );
+    }
+
+    /// Backend-driven equivalent of [`ColorGlyphAtlas::grow`].
+    fn grow_generic(&mut self, backend: &crate::backend::wgpu::WgpuBackend) {
+        use crate::backend::{Extent3d, GpuBackend, Origin3d, TexelCopyTextureInfo, TextureAspect};
+
+        if self.width >= Self::MAX_SIZE {
+            self.cache.clear();
+            self.pending.clear();
+            self.packer = ShelfPacker::new(self.width, self.height);
+            self.generation += 1;
+            return;
+        }
+
+        let old_w = self.width;
+        let old_h = self.height;
+        let new_w = self.width * 2;
+        let new_h = self.height * 2;
+        let (texture, view) = Self::create_texture_generic(backend, new_w, new_h);
+
+        let mut encoder = backend.create_command_encoder("color glyph atlas grow");
+        backend.copy_texture_to_texture(
+            &mut encoder,
+            &TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            &TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            Extent3d {
+                width: old_w,
+                height: old_h,
+                depth_or_array_layers: 1,
+            },
+        );
+        backend.submit(encoder);
+
+        self.texture = texture;
+        self.view = view;
+        self.packer = ShelfPacker::new(new_w, new_h);
+        self.packer.start_fresh_shelf_at(old_h);
+        self.width = new_w;
+        self.height = new_h;
+        self.generation += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -603,6 +603,99 @@ impl Renderer {
         renderer
     }
 
+    /// Creates a renderer through the experimental [`crate::backend::GpuBackend`]
+    /// path, using [`crate::backend::wgpu::WgpuBackend`] as the concrete backend.
+    ///
+    /// Equivalent to [`Renderer::new`] but constructs every built-in pipeline
+    /// (`Rect`, `Text`, `Image`, `Svg`, `Material`, `FrameComposite`) via their
+    /// `*_generic` constructors so resource creation routes through the backend
+    /// trait instead of calling wgpu directly.
+    ///
+    /// Available only when the `pluggable-backend-exp` feature is enabled. The
+    /// resulting [`Renderer`] is otherwise identical to one built with
+    /// [`Renderer::new`] and can be driven with the same `render*` methods
+    /// because `WgpuBackend`'s associated types map 1:1 onto wgpu types.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "pluggable-backend-exp")]
+    /// # {
+    /// use aimer_cupid::backend::wgpu::WgpuBackend;
+    /// use aimer_cupid::renderer::Renderer;
+    ///
+    /// # let device: wgpu::Device = unimplemented!();
+    /// # let queue: wgpu::Queue = unimplemented!();
+    /// let backend = WgpuBackend::new(device, queue);
+    /// let renderer = Renderer::new_generic(&backend, wgpu::TextureFormat::Bgra8UnormSrgb);
+    /// # let _ = renderer;
+    /// # }
+    /// ```
+    #[cfg(feature = "pluggable-backend-exp")]
+    pub fn new_generic(
+        backend: &crate::backend::wgpu::WgpuBackend,
+        format: wgpu::TextureFormat,
+    ) -> Self {
+        Self::with_antialiasing_generic(backend, format, crate::AntiAlias::default())
+    }
+
+    /// Backend-driven counterpart of [`Renderer::with_antialiasing`].
+    ///
+    /// Constructs every built-in pipeline through the [`crate::backend::GpuBackend`]
+    /// trait. Pipeline-cache loading is skipped on this path (the experimental
+    /// backend surface does not yet expose cache handles); functionally equivalent
+    /// to passing `None` for the cache in the concrete constructors.
+    #[cfg(feature = "pluggable-backend-exp")]
+    pub fn with_antialiasing_generic(
+        backend: &crate::backend::wgpu::WgpuBackend,
+        format: wgpu::TextureFormat,
+        antialiasing: crate::AntiAlias,
+    ) -> Self {
+        let start = aimer_utils::AnimInstant::now();
+
+        let material_pipeline =
+            MaterialPipeline::new_generic(backend, format, antialiasing);
+        let frame_composite_pipeline =
+            FrameCompositePipeline::new_generic(backend, format);
+
+        let renderer = Self {
+            rect_pipeline: RectPipeline::new_generic(backend, format, antialiasing),
+            text_pipeline: TextPipelineV2::new_generic(backend, format, antialiasing),
+            image_pipeline: ImagePipeline::new_generic(backend, format, antialiasing),
+            svg_pipeline: SvgPipeline::new_generic(backend, format, antialiasing),
+            // The experimental backend trait does not yet expose pipeline-cache
+            // handles; leave empty (same as `cache: None` on the concrete path).
+            pipeline_cache: None,
+            custom_pipelines: vec![CustomPipelineSlot::new(material_pipeline)],
+            surface_format: format,
+            transform_stack: Vec::new(),
+            clip_stack: Vec::new(),
+            text_requests: Vec::new(),
+            decoration_requests: Vec::new(),
+            svg_items: Vec::new(),
+            resolved: Vec::new(),
+            deferred_outlines: Vec::new(),
+            textures_to_remove: Vec::new(),
+            multisample_target: None,
+            material_frame_target: None,
+            frame_composite_pipeline,
+            antialiasing,
+            retained_layers: HashMap::new(),
+            active_retained_layers: HashSet::new(),
+            retained_layer_candidates: Vec::new(),
+            frame_index: 0,
+            compositor_stats: CompositorStats::default(),
+            scene_tree: RetainedSceneTree::new(),
+            scene_history_key: None,
+        };
+
+        debug!(
+            "Renderer (generic/WgpuBackend) initialization ready {}ms",
+            start.elapsed().as_millis()
+        );
+        renderer
+    }
+
     /// Register a user-defined custom pipeline.
     /// The pipeline will participate in the render loop whenever
     /// `DrawCommand::Custom` commands target it by name.
