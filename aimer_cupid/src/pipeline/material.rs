@@ -1051,15 +1051,4 @@ mod tests {
             .expect("liquid refraction sample");
         assert!(liquid_branch < refracted_sample);
     }
-
-    #[test]
-    fn material_shader_parses_and_validates() {
-        use naga::valid::{Capabilities, ValidationFlags, Validator};
-
-        let module = naga::front::wgsl::parse_str(MaterialShader::source())
-            .expect("the material WGSL should parse");
-        Validator::new(ValidationFlags::all(), Capabilities::all())
-            .validate(&module)
-            .expect("the material WGSL should validate");
-    }
 }

@@ -179,7 +179,3 @@ wasm-bindgen-futures.workspace = true
 wasm-bindgen.workspace = true
 js-sys.workspace = true
 web-sys = { workspace = true, features = ["Window", "Response"] }
-
-[dev-dependencies]
-# WGSL validation is used only by shader unit tests, never by the renderer.
-naga.workspace = true

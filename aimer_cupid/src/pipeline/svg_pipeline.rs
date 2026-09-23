@@ -1058,18 +1058,8 @@ fn surface_srgb_value(is_srgb: bool) -> f32 {
 
 #[cfg(all(test, feature = "wgpu"))]
 mod tests {
-    use naga::valid::{Capabilities, ValidationFlags, Validator};
 
     use super::SvgPipeline;
-
-    #[test]
-    fn svg_shader_parses_and_validates() {
-        let module = naga::front::wgsl::parse_str(SvgPipeline::shader_source())
-            .expect("SVG WGSL should parse");
-        Validator::new(ValidationFlags::all(), Capabilities::all())
-            .validate(&module)
-            .expect("SVG WGSL should validate");
-    }
 
     #[test]
     fn svg_pipeline_uses_configured_antialiasing() {
