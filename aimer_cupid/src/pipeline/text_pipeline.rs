@@ -59,11 +59,14 @@ use crate::text_pipeline::paint_cache::{
 };
 use crate::text_pipeline::preparation_batch::{BatchExecutor, IndexedJob, PreparationBatch};
 use crate::text_pipeline::text_layout::{
-    ShapedText, layout_shaped_text_result,
-    layout_shaped_text_result_with_bounds, line_alignment_offsets, positioned_line_widths,
-    prepare_shaped_text_with_writing_mode, shape_text_styled,
+    ShapedText, layout_shaped_text_result_with_bounds, line_alignment_offsets,
+    positioned_line_widths, prepare_shaped_text_with_writing_mode,
 };
 use crate::utilities::Rgba8;
+
+#[cfg(feature = "wgpu")]
+use crate::text_pipeline::text_layout::{layout_shaped_text_result, shape_text_styled};
+#[cfg(feature = "wgpu")]
 use crate::text_pipeline::text_layout::TextInteractionLayout;
 
 /// Per-instance data for one glyph quad.
@@ -252,6 +255,7 @@ fn normalize_pixel_uv_rect(pixel_rect: [f32; 4], atlas_width: u32, atlas_height:
 }
 
 impl GlyphInstance {
+    #[cfg(feature = "wgpu")]
     const ATTRIBS: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
@@ -263,6 +267,7 @@ impl GlyphInstance {
         7 => Float32,
     ];
 
+    #[cfg(feature = "wgpu")]
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: size_of::<GlyphInstance>() as wgpu::BufferAddress,
@@ -270,6 +275,18 @@ impl GlyphInstance {
             attributes: &Self::ATTRIBS,
         }
     }
+
+    #[cfg(feature = "pluggable-backend-exp")]
+    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 8] = [
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, position) as u64, shader_location: 0 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, size) as u64, shader_location: 1 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, uv_rect) as u64, shader_location: 2 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, color) as u64, shader_location: 3 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 4 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 5 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32, offset: std::mem::offset_of!(Self, skew) as u64, shader_location: 6 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32, offset: std::mem::offset_of!(Self, coverage_exponent) as u64, shader_location: 7 },
+    ];
 }
 
 /// Per-instance data for one decoration line quad (underline/overline/strike).
@@ -290,6 +307,7 @@ struct DecorationInstance {
 }
 
 impl DecorationInstance {
+    #[cfg(feature = "wgpu")]
     const ATTRIBS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
@@ -299,6 +317,7 @@ impl DecorationInstance {
         5 => Float32x4,
     ];
 
+    #[cfg(feature = "wgpu")]
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: size_of::<DecorationInstance>() as wgpu::BufferAddress,
@@ -306,6 +325,16 @@ impl DecorationInstance {
             attributes: &Self::ATTRIBS,
         }
     }
+
+    #[cfg(feature = "pluggable-backend-exp")]
+    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 6] = [
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, position) as u64, shader_location: 0 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, size) as u64, shader_location: 1 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, color) as u64, shader_location: 2 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 3 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 4 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, params) as u64, shader_location: 5 },
+    ];
 }
 
 /// A single styled decoration line to render, in final screen-space geometry.
@@ -674,6 +703,56 @@ pub struct TextPreparationProfile {
     pub color_glyphs: usize,
 }
 
+#[cfg(feature = "pluggable-backend-exp")]
+pub struct TextPipelineV2<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
+    rasterizer: GlyphRasterizer,
+    executor: BatchExecutor,
+    postponed_preparation: bool,
+    atlas: GlyphAtlas<B>,
+    color_atlas: ColorGlyphAtlas<B>,
+    pipeline: B::RenderPipeline,
+    color_pipeline: B::RenderPipeline,
+    viewport_buffer: B::Buffer,
+    bind_group_layout: B::BindGroupLayout,
+    bind_group: B::BindGroup,
+    color_bind_group: B::BindGroup,
+    sampler: B::Sampler,
+    instance_buffer: B::Buffer,
+    instance_policy: InstanceBufferPolicy,
+    instances: Vec<GlyphInstance>,
+    instance_upload: FrameUpload<GlyphInstance>,
+    color_instance_buffer: B::Buffer,
+    color_instance_policy: InstanceBufferPolicy,
+    color_instances: Vec<GlyphInstance>,
+    color_instance_upload: FrameUpload<GlyphInstance>,
+    decoration_pipeline: B::RenderPipeline,
+    decoration_instance_buffer: B::Buffer,
+    decoration_instance_policy: InstanceBufferPolicy,
+    decoration_instances: Vec<DecorationInstance>,
+    decoration_instance_upload: FrameUpload<DecorationInstance>,
+    atlas_generation: u64,
+    color_atlas_generation: u64,
+    last_viewport: (u32, u32),
+    last_prepared_surface: (u32, u32),
+    layout_cache: LayoutCache,
+    shaping_cache: HashMap<ShapingCacheKey, Arc<ShapedText>>,
+    paint_cache: TextPaintCache,
+    request_ranges: Vec<TextRequestRange>,
+    visible_span_ranges: Vec<Range<usize>>,
+    visible_span_keys: Vec<SpanLayoutKeys>,
+    alpha_glyph_descriptors: Vec<(GlyphKey, u32, u32)>,
+    color_glyph_descriptors: Vec<(GlyphKey, u32, u32)>,
+    planned_alpha_descriptors: Vec<(GlyphKey, u32, u32)>,
+    planned_color_descriptors: Vec<(GlyphKey, u32, u32)>,
+    seen_glyphs: HashSet<GlyphKey>,
+    planned_alpha_atlas_generation: u64,
+    planned_color_atlas_generation: u64,
+    frame_generation: u64,
+    prepared_frame_generation: u64,
+    prepared_frame: Option<PreparedFrameCache>,
+}
+
+#[cfg(not(feature = "pluggable-backend-exp"))]
 pub struct TextPipelineV2 {
     rasterizer: GlyphRasterizer,
     executor: BatchExecutor,
@@ -772,16 +851,20 @@ pub struct TextPipelineV2 {
     prepared_frame: Option<PreparedFrameCache>,
 }
 
+#[cfg(feature = "wgpu")]
 impl TextPipelineV2 {
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     const INITIAL_CAPACITY: usize = 64;
     /// Soft upper bound on the number of cached positioned-glyph layouts.
     /// The cache is kept persistent across frames/screens; once it outgrows
     /// this bound, entries no recent frame read are evicted at the start of
     /// the next frame (see [`LayoutCache`]), so shaping/layout work is reused
     /// instead of being thrown away on every screen transition.
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     const LAYOUT_CACHE_CAPACITY: usize = 4096;
     /// Absolute upper bound on the number of cached shaped strings. Shaped
     /// results are width-independent and tiny, so this can be generous.
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     const SHAPING_CACHE_CAPACITY: usize = 4096;
 
     pub fn new(
@@ -2751,7 +2834,13 @@ impl TextPipelineV2 {
 // `render_decoration_range` (which already take `&mut wgpu::RenderPass<'_>`)
 // work unchanged against `WgpuBackend::RenderPass`.
 #[cfg(feature = "pluggable-backend-exp")]
-impl TextPipelineV2 {
+mod generic_prepare;
+
+#[cfg(feature = "pluggable-backend-exp")]
+impl<B: crate::backend::GpuBackend> TextPipelineV2<B> {
+    const INITIAL_CAPACITY: usize = 64;
+    const LAYOUT_CACHE_CAPACITY: usize = 4096;
+    const SHAPING_CACHE_CAPACITY: usize = 4096;
     /// Create the pipeline through the [`GpuBackend`] trait via
     /// [`WgpuBackend`](crate::backend::wgpu::WgpuBackend).
     ///
@@ -2760,8 +2849,8 @@ impl TextPipelineV2 {
     /// render pipelines) through the backend trait instead of calling wgpu
     /// directly.
     pub fn new_generic(
-        backend: &crate::backend::wgpu::WgpuBackend,
-        format: wgpu::TextureFormat,
+        backend: &B,
+        format: B::TextureFormat,
         antialiasing: crate::AntiAlias,
     ) -> Self {
         use crate::backend::*;
@@ -2773,15 +2862,15 @@ impl TextPipelineV2 {
         let color_atlas = ColorGlyphAtlas::new_generic(backend);
 
         let shader = backend.create_shader_module(
-            include_str!("./shaders/text.wgsl").as_bytes(),
+            backend.builtin_shader_source(BuiltinShader::Text),
             "text shader",
         );
         let color_shader = backend.create_shader_module(
-            include_str!("./shaders/text_color.wgsl").as_bytes(),
+            backend.builtin_shader_source(BuiltinShader::TextColor),
             "text color shader",
         );
         let decoration_shader = backend.create_shader_module(
-            include_str!("./shaders/text_decoration.wgsl").as_bytes(),
+            backend.builtin_shader_source(BuiltinShader::TextDecoration),
             "text decoration shader",
         );
 
@@ -2851,32 +2940,16 @@ impl TextPipelineV2 {
 
         let pipeline_layout = backend.create_pipeline_layout(&[&bind_group_layout]);
 
-        let glyph_attribs: Vec<VertexAttribute> = GlyphInstance::ATTRIBS
-            .iter()
-            .map(|a| VertexAttribute {
-                format: text_wgpu_vertex_format_to_backend(a.format),
-                offset: a.offset,
-                shader_location: a.shader_location,
-            })
-            .collect();
         let glyph_buffers = [Some(VertexBufferLayout {
             array_stride: size_of::<GlyphInstance>() as u64,
             step_mode: VertexStepMode::Instance,
-            attributes: &glyph_attribs,
+            attributes: &GlyphInstance::GENERIC_ATTRIBUTES,
         })];
 
-        let decoration_attribs: Vec<VertexAttribute> = DecorationInstance::ATTRIBS
-            .iter()
-            .map(|a| VertexAttribute {
-                format: text_wgpu_vertex_format_to_backend(a.format),
-                offset: a.offset,
-                shader_location: a.shader_location,
-            })
-            .collect();
         let decoration_buffers = [Some(VertexBufferLayout {
             array_stride: size_of::<DecorationInstance>() as u64,
             step_mode: VertexStepMode::Instance,
-            attributes: &decoration_attribs,
+            attributes: &DecorationInstance::GENERIC_ATTRIBUTES,
         })];
 
         let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
@@ -3023,12 +3096,12 @@ impl TextPipelineV2 {
 
     /// Backend-driven equivalent of the private `create_bind_group` helper.
     fn create_bind_group_generic(
-        backend: &crate::backend::wgpu::WgpuBackend,
-        layout: &wgpu::BindGroupLayout,
-        viewport_buffer: &wgpu::Buffer,
-        atlas_view: &wgpu::TextureView,
-        sampler: &wgpu::Sampler,
-    ) -> wgpu::BindGroup {
+        backend: &B,
+        layout: &B::BindGroupLayout,
+        viewport_buffer: &B::Buffer,
+        atlas_view: &B::TextureView,
+        sampler: &B::Sampler,
+    ) -> B::BindGroup {
         use crate::backend::{BindGroupEntry, BindingResource, GpuBackend};
         backend.create_bind_group(
             layout,
@@ -3053,7 +3126,7 @@ impl TextPipelineV2 {
     ///
     /// Uploads any pending atlas changes and rebuilds the bind groups if
     /// either atlas texture was reallocated (generation changed).
-    pub fn flush_atlas_generic(&mut self, backend: &crate::backend::wgpu::WgpuBackend) {
+    pub fn flush_atlas_generic(&mut self, backend: &B) {
         self.atlas.upload_generic(backend);
         self.color_atlas.upload_generic(backend);
 
@@ -3090,7 +3163,7 @@ impl TextPipelineV2 {
     /// gate inside the concrete [`TextPipelineV2::prepare_inner`]).
     pub fn write_viewport_generic(
         &mut self,
-        backend: &crate::backend::wgpu::WgpuBackend,
+        backend: &B,
         width: u32,
         height: u32,
         is_srgb: bool,
@@ -3107,22 +3180,53 @@ impl TextPipelineV2 {
             bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
         );
     }
-}
 
-/// Converts the [`wgpu::VertexFormat`] values used by [`GlyphInstance`] and
-/// [`DecorationInstance`] to their backend-agnostic equivalents.
-#[cfg(feature = "pluggable-backend-exp")]
-fn text_wgpu_vertex_format_to_backend(f: wgpu::VertexFormat) -> crate::backend::VertexFormat {
-    match f {
-        wgpu::VertexFormat::Float32 => crate::backend::VertexFormat::Float32,
-        wgpu::VertexFormat::Float32x2 => crate::backend::VertexFormat::Float32x2,
-        wgpu::VertexFormat::Float32x4 => crate::backend::VertexFormat::Float32x4,
-        wgpu::VertexFormat::Unorm8x4 => crate::backend::VertexFormat::Unorm8x4,
-        other => panic!("unsupported text vertex format for generic backend: {other:?}"),
+    pub fn render_request_generic<'a>(
+        &'a self,
+        pass: &mut B::RenderPass<'a>,
+        index: usize,
+    ) where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::GpuRenderPass;
+        let Some(range) = self.request_ranges.get(index) else {
+            return;
+        };
+        if range.alpha_end > range.alpha_start {
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_vertex_buffer(0, &self.instance_buffer, 0);
+            pass.draw(0..6, range.alpha_start..range.alpha_end);
+        }
+        if range.color_end > range.color_start {
+            pass.set_pipeline(&self.color_pipeline);
+            pass.set_bind_group(0, &self.color_bind_group, &[]);
+            pass.set_vertex_buffer(0, &self.color_instance_buffer, 0);
+            pass.draw(0..6, range.color_start..range.color_end);
+        }
+    }
+
+    pub(crate) fn render_decoration_range_generic<'a>(
+        &'a self,
+        pass: &mut B::RenderPass<'a>,
+        start: usize,
+        end: usize,
+    ) where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::GpuRenderPass;
+        let end = end.min(self.decoration_instances.len());
+        if start >= end {
+            return;
+        }
+        pass.set_pipeline(&self.decoration_pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_vertex_buffer(0, &self.decoration_instance_buffer, 0);
+        pass.draw(0..6, start as u32..end as u32);
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "wgpu"))]
 mod tests {
     use std::sync::Arc;
 

@@ -1,16 +1,42 @@
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "wgpu"))]
 mod h5canva;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "wgpu"))]
 pub use h5canva::render_ctx::H5CanvasApi;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "wgpu"))]
 mod wgpu_ctx;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "wgpu"))]
 pub use wgpu_ctx::render_ctx::WgpuApi;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "metal", target_os = "macos"))]
+mod metal_ctx;
+#[cfg(all(not(target_arch = "wasm32"), feature = "metal", target_os = "macos"))]
+pub use metal_ctx::render_ctx::MetalApi;
+
+#[cfg(all(feature = "metal", not(target_os = "macos")))]
+compile_error!("aimer_quiver's native `metal` renderer currently supports macOS only");
+
+#[cfg(all(feature = "metal", feature = "raster-thread"))]
+compile_error!("aimer_quiver's `metal` renderer does not support `raster-thread` yet");
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(feature = "wgpu", feature = "metal"))
+))]
+compile_error!("enable either aimer_quiver's `wgpu` or `metal` renderer feature");
+
+#[cfg(all(target_arch = "wasm32", not(feature = "wgpu")))]
+compile_error!("aimer_quiver's wasm renderer requires the `wgpu` feature");
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "metal"))]
+pub type AimerRenderContext = MetalApi;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "wgpu",
+    not(feature = "metal")
+))]
 pub type AimerRenderContext = WgpuApi;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "wgpu"))]
 pub type AimerRenderContext = H5CanvasApi;
 
 /// What happened to a frame the renderer was handed.

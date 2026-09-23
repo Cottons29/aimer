@@ -121,6 +121,14 @@ impl WindowEventHandler {
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 Self::update_scale_factor(&mut app.window_scale, scale_factor);
+                #[cfg(all(target_os = "macos", feature = "metal"))]
+                if app.render_ctx.is_ready()
+                    && let Some(window) = app.native_window()
+                {
+                    // Keep CAMetalLayer's contents scale current even when the
+                    // physical drawable size did not change with the display.
+                    app.render_ctx.resize(window.inner_size());
+                }
                 app.sync_headless_metrics(None);
                 if let Some(root) = app.active_root() {
                     root.invalidate_layout();

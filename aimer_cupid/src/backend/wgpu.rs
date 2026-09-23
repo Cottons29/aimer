@@ -106,6 +106,14 @@ impl GpuBackend for WgpuBackend {
     type CommandEncoder = ::wgpu::CommandEncoder;
     type TextureFormat = ::wgpu::TextureFormat;
 
+    fn r8_unorm_format() -> Self::TextureFormat {
+        ::wgpu::TextureFormat::R8Unorm
+    }
+
+    fn rgba8_unorm_format() -> Self::TextureFormat {
+        ::wgpu::TextureFormat::Rgba8Unorm
+    }
+
     type RenderPass<'a> = ::wgpu::RenderPass<'a>;
 
     // ── Resource creation ───────────────────────────────────────────────
@@ -515,6 +523,65 @@ impl GpuBackend for WgpuBackend {
     }
 
     // ── Submission ──────────────────────────────────────────────────────
+
+    fn copy_texture_to_buffer(
+        &self,
+        encoder: &mut Self::CommandEncoder,
+        src: &TexelCopyTextureInfo<Self>,
+        dst: &TexelCopyBufferInfo<Self>,
+        extent: Extent3d,
+    ) {
+        encoder.copy_texture_to_buffer(
+            ::wgpu::TexelCopyTextureInfo {
+                texture: src.texture,
+                mip_level: src.mip_level,
+                origin: ::wgpu::Origin3d {
+                    x: src.origin.x,
+                    y: src.origin.y,
+                    z: src.origin.z,
+                },
+                aspect: match src.aspect {
+                    TextureAspect::All => ::wgpu::TextureAspect::All,
+                    TextureAspect::DepthOnly => ::wgpu::TextureAspect::DepthOnly,
+                    TextureAspect::StencilOnly => ::wgpu::TextureAspect::StencilOnly,
+                },
+            },
+            ::wgpu::TexelCopyBufferInfo {
+                buffer: dst.buffer,
+                layout: ::wgpu::TexelCopyBufferLayout {
+                    offset: dst.layout.offset,
+                    bytes_per_row: dst.layout.bytes_per_row,
+                    rows_per_image: dst.layout.rows_per_image,
+                },
+            },
+            ::wgpu::Extent3d {
+                width: extent.width,
+                height: extent.height,
+                depth_or_array_layers: extent.depth_or_array_layers,
+            },
+        );
+    }
+
+    fn read_buffer(&self, buffer: &Self::Buffer, size: u64) -> Vec<u8> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let slice = buffer.slice(0..size);
+        slice.map_async(::wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        self.device
+            .poll(::wgpu::PollType::wait_indefinitely())
+            .expect("wgpu device to finish the readback map");
+        receiver
+            .recv()
+            .expect("map callback to run during poll")
+            .expect("readback buffer to map for reading");
+        let bytes = slice
+            .get_mapped_range()
+            .expect("mapped readback range")
+            .to_vec();
+        buffer.unmap();
+        bytes
+    }
 
     fn submit(&self, encoder: Self::CommandEncoder) {
         self.queue.submit([encoder.finish()]);

@@ -3,11 +3,21 @@
 /// Material frames use this final pass when the presentation surface cannot be
 /// copied. The pass is deliberately sample-free and uniform-free: one texture
 /// load per output pixel keeps the compatibility path predictable and cheap.
+#[cfg(feature = "pluggable-backend-exp")]
+pub(crate) struct FrameCompositePipeline<
+    B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend,
+> {
+    pipeline: B::RenderPipeline,
+    bind_group_layout: B::BindGroupLayout,
+}
+
+#[cfg(all(feature = "wgpu", not(feature = "pluggable-backend-exp")))]
 pub(crate) struct FrameCompositePipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
 }
 
+#[cfg(feature = "wgpu")]
 impl FrameCompositePipeline {
     pub(crate) fn new(
         device: &wgpu::Device,
@@ -105,20 +115,16 @@ impl FrameCompositePipeline {
 // When `pluggable-backend-exp` is enabled, the pipeline can be constructed and
 // driven through the [`GpuBackend`] trait instead of calling wgpu directly.
 #[cfg(feature = "pluggable-backend-exp")]
-impl FrameCompositePipeline {
-    /// Constructor for the frame composite pipeline using the WgpuBackend
-    /// adapter.
-    ///
-    /// Equivalent to [`FrameCompositePipeline::new`] but routes all GPU
-    /// operations through the backend trait.
+impl<B: crate::backend::GpuBackend> FrameCompositePipeline<B> {
+    /// Creates the frame composite pipeline using the selected backend.
     pub(crate) fn new_generic(
-        backend: &crate::backend::wgpu::WgpuBackend,
-        format: wgpu::TextureFormat,
+        backend: &B,
+        format: B::TextureFormat,
     ) -> Self {
         use crate::backend::*;
 
         let shader = backend.create_shader_module(
-            include_str!("./frame_composite.wgsl").as_bytes(),
+            backend.builtin_shader_source(BuiltinShader::FrameComposite),
             "frame composite shader",
         );
 
@@ -163,15 +169,11 @@ impl FrameCompositePipeline {
         }
     }
 
-    /// Bind-group creation using the WgpuBackend adapter.
-    ///
-    /// Equivalent to [`FrameCompositePipeline::create_bind_group`] but
-    /// creates the bind group through the backend trait.
     pub(crate) fn create_bind_group_generic(
         &self,
-        backend: &crate::backend::wgpu::WgpuBackend,
-        source: &wgpu::TextureView,
-    ) -> wgpu::BindGroup {
+        backend: &B,
+        source: &B::TextureView,
+    ) -> B::BindGroup {
         use crate::backend::GpuBackend;
         backend.create_bind_group(
             &self.bind_group_layout,
@@ -180,6 +182,20 @@ impl FrameCompositePipeline {
                 resource: crate::backend::BindingResource::TextureView(source),
             }],
         )
+    }
+
+    pub(crate) fn render_generic<'a>(
+        &'a self,
+        pass: &mut B::RenderPass<'a>,
+        bind_group: &'a B::BindGroup,
+    )
+    where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::GpuRenderPass;
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.draw(0..6, 0..1);
     }
 }
 

@@ -1,33 +1,52 @@
+#[cfg(feature = "wgpu")]
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+#[cfg(feature = "pluggable-backend-exp")]
+mod generic_renderer;
+#[cfg(feature = "pluggable-backend-exp")]
+pub use generic_renderer::RendererImpl;
+
+#[cfg(feature = "wgpu")]
 use aimer_utils::debug;
 
+#[cfg(feature = "wgpu")]
 use crate::custom_pipeline::{CustomPipeline, CustomPipelineSlot, RenderContext};
+#[cfg(feature = "wgpu")]
 use crate::compositor::{
     CompositorScene, CompositorStats, RetainedSceneTree, SceneRenderItem, SceneRenderIter,
 };
+#[cfg(feature = "wgpu")]
 use crate::draw_cmd::{
     DrawCommand, DrawList, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION,
     RetainedLayerContent,
 };
+#[cfg(feature = "wgpu")]
 use crate::damage_region::{DamageRect, DamageSet};
+#[cfg(feature = "wgpu")]
 use crate::frame::{FramePacket, FrameRenderMetadata};
+#[cfg(feature = "wgpu")]
 use crate::image_pipeline::{ImageInstance, ImagePipeline};
+#[cfg(feature = "wgpu")]
 use crate::pipeline_cache;
+#[cfg(feature = "wgpu")]
 use crate::pipeline::frame_composite::FrameCompositePipeline;
-use crate::pipeline::material::{
-    MaterialClip, MaterialPipeline, MaterialRequest, MATERIAL_PIPELINE_NAME,
-};
-use crate::rect_pipeline::{RectInstance, RectPipeline};
+#[cfg(feature = "wgpu")]
+use crate::pipeline::material::{MaterialPipeline, MATERIAL_PIPELINE_NAME};
+use crate::pipeline::material::{MaterialClip, MaterialRequest};
+#[cfg(feature = "wgpu")]
+use crate::rect_pipeline::RectPipeline;
+use crate::rect_pipeline::RectInstance;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
+#[cfg(feature = "wgpu")]
 use crate::svg_pipeline::SvgPipeline;
-use crate::text_pipeline::{
-    RichTextSpan, TextDecorationDraw, TextDrawRequest, TextPipelineV2, TextShadowRequest,
-};
-use crate::persistent_target::{
-    PersistentTarget, PersistentTargetKey, TargetEnsureResult, TargetValidity,
-};
+#[cfg(feature = "wgpu")]
+use crate::text_pipeline::{RichTextSpan, TextDecorationDraw, TextDrawRequest, TextPipelineV2};
+use crate::text_pipeline::TextShadowRequest;
+#[cfg(feature = "wgpu")]
+use crate::persistent_target::PersistentTarget;
+#[cfg(feature = "wgpu")]
+use crate::persistent_target::{PersistentTargetKey, TargetEnsureResult, TargetValidity};
 use crate::utilities::{Color, Mat3, Rect};
 use crate::utilities::Rgba8;
 
@@ -261,14 +280,37 @@ fn build_fill_rect_instances(
     (main_instance, outline_instance)
 }
 
+#[cfg(feature = "wgpu")]
 fn has_renderable_dimensions(width: u32, height: u32) -> bool {
     width > 0 && height > 0
 }
 
+fn retained_layer_dimensions(rect: Rect, max_dimension: u32) -> Option<(u32, u32)> {
+    if !rect.width.is_finite()
+        || !rect.height.is_finite()
+        || rect.width <= 0.0
+        || rect.height <= 0.0
+        || max_dimension == 0
+    {
+        return None;
+    }
+
+    let width = rect.width.ceil().max(1.0) as u64;
+    let height = rect.height.ceil().max(1.0) as u64;
+    let bytes = width.checked_mul(height)?.checked_mul(4)?;
+    let max_dimension = max_dimension.min(crate::draw_cmd::RETAINED_LAYER_MAX_DIMENSION);
+    (width <= u64::from(max_dimension)
+        && height <= u64::from(max_dimension)
+        && bytes <= crate::draw_cmd::RETAINED_LAYER_MAX_BYTES)
+        .then_some((width as u32, height as u32))
+}
+
+#[cfg(feature = "wgpu")]
 struct ResolvedCmd {
     kind: ResolvedKind,
 }
 
+#[cfg(feature = "wgpu")]
 enum ResolvedKind {
     Rect(RectInstance),
     Image {
@@ -294,6 +336,7 @@ enum ResolvedKind {
     },
 }
 
+#[cfg(feature = "wgpu")]
 #[inline]
 fn push_decoration_range(resolved: &mut Vec<ResolvedCmd>, index: usize) {
     let extended = resolved.last_mut().is_some_and(|resolved| {
@@ -344,6 +387,10 @@ fn resolve_svg_item(
         opacity,
     }
 }
+
+#[cfg(feature = "wgpu")]
+mod wgpu_renderer {
+use super::*;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RendererMemoryStats {
@@ -2919,3 +2966,7 @@ mod tests {
         assert!(checksum.is_finite());
     }
 }
+}
+
+#[cfg(feature = "wgpu")]
+pub use wgpu_renderer::{Renderer, RendererMemoryStats};

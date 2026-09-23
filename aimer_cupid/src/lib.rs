@@ -7,6 +7,7 @@ pub mod damage_region;
 pub mod draw_cmd;
 pub mod font;
 pub mod frame;
+#[cfg(feature = "wgpu")]
 pub mod gpu_context;
 mod persistent_target;
 pub mod utilities;
@@ -14,6 +15,7 @@ pub mod utilities;
 pub mod canvas;
 mod lru_map;
 mod pipeline;
+#[cfg(feature = "wgpu")]
 pub mod pipeline_cache;
 pub mod renderer;
 pub mod shape;
@@ -27,19 +29,20 @@ pub use crate::text_pipeline::{glyph_atlas, glyph_rasterizer, text_layout};
 
 // ── Experimental pluggable-backend public surface ──────────────────────────
 //
-// When `pluggable-backend-exp` is enabled the crate exposes the backend trait
-// layer and the WgpuBackend adapter so consumers can construct a
-// backend-driven [`renderer::Renderer`] via `Renderer::new_generic`. A fully
-// generic `RendererImpl<B: GpuBackend>` (and generic pipeline structs) remains
-// a follow-up; this surface is the usable WgpuBackend path that closes step 2.
+// When `pluggable-backend-exp` is enabled the crate exposes backend-generic
+// pipelines and [`RendererImpl`], plus adapters for the enabled backends. The
+// WGPU compatibility renderer is available only with the `wgpu` feature while
+// its compositor and scene APIs are ported incrementally.
 #[cfg(feature = "pluggable-backend-exp")]
 pub use backend::{GpuBackend, GpuLimits, GpuRenderPass};
-#[cfg(feature = "pluggable-backend-exp")]
+#[cfg(all(feature = "pluggable-backend-exp", feature = "wgpu"))]
 pub use backend::wgpu::WgpuBackend;
 #[cfg(feature = "pluggable-backend-exp")]
 pub use custom_pipeline::{CustomPipelineGeneric, RenderContextGeneric};
-#[cfg(feature = "pluggable-backend-exp")]
+#[cfg(all(feature = "pluggable-backend-exp", feature = "wgpu"))]
 pub use gpu_context::GpuDevice;
+#[cfg(feature = "pluggable-backend-exp")]
+pub use renderer::RendererImpl;
 
 /// Hidden cargo-fuzz entry point for the checked font reader.
 #[doc(hidden)]
@@ -53,7 +56,7 @@ pub fn fuzz_aimer_font_outlines(data: &[u8]) {
     crate::pipeline::text_pipeline::aimer_font::fuzz_outlines(data);
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "wgpu"))]
 mod deferred_frame_uploads {
     //! Pixel-level regression guard for Cupid's per-frame instance uploads.
     //!
@@ -722,7 +725,7 @@ mod deferred_frame_uploads {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "wgpu"))]
 mod resized_text_preparation {
     //! Regression guard for text preparation during a live window resize.
     //!
@@ -986,7 +989,7 @@ mod resized_text_preparation {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "wgpu"))]
 mod scrolled_text_culling {
     //! Regression guard for request-level text culling.
     //!
@@ -1171,7 +1174,7 @@ mod scrolled_text_culling {
 // `RectPipeline::new_generic`, `begin_frame_generic`, and
 // `end_frame_generic` produce correct pixels.
 
-#[cfg(all(test, feature = "pluggable-backend-exp"))]
+#[cfg(all(test, feature = "pluggable-backend-exp", feature = "wgpu"))]
 mod generic_backend_tests {
     use aimer_utils::SyncFuture;
 
@@ -2209,10 +2212,10 @@ mod generic_backend_tests {
     /// wiring (public exports + renderer generic constructors) is usable and
     /// produces correct pixels through the backend-driven pipeline path.
     #[test]
-    fn generic_renderer_new_generic_renders_fill_rect() {
+    fn generic_renderer_with_wgpu_backend_renders_fill_rect() {
         use crate::draw_cmd::DrawList;
         use crate::gpu_context::GpuDevice;
-        use crate::renderer::Renderer;
+        use crate::renderer::RendererImpl;
         use crate::utilities::{Color, Rect};
         use crate::WgpuBackend;
 
@@ -2224,7 +2227,7 @@ mod generic_backend_tests {
         // Public headless device pair → backend adapter → generic renderer.
         let gpu_device = GpuDevice::new(device, queue);
         let backend: WgpuBackend = gpu_device.backend();
-        let mut renderer = Renderer::new_generic(&backend, FORMAT);
+        let mut renderer = RendererImpl::<WgpuBackend>::new(&backend, FORMAT);
 
         assert_eq!(renderer.surface_format(), FORMAT);
 
@@ -2253,10 +2256,8 @@ mod generic_backend_tests {
         });
         let view = target.create_view(&Default::default());
 
-        // Concrete render is valid: WgpuBackend associated types == wgpu types.
         renderer.render(
-            backend.device(),
-            backend.queue(),
+            &backend,
             &view,
             SIZE,
             SIZE,
@@ -2270,6 +2271,66 @@ mod generic_backend_tests {
             sample,
             [255, 0, 0, 255],
             "generic Renderer::new_generic path: center should be opaque red, got {sample:?}"
+        );
+    }
+
+    /// Exercises image upload/drawing and the generic text preparation path
+    /// through the integrated renderer.
+    #[test]
+    fn generic_renderer_with_wgpu_backend_renders_image_and_text() {
+        use crate::draw_cmd::DrawList;
+        use crate::gpu_context::GpuDevice;
+        use crate::renderer::RendererImpl;
+        use crate::utilities::{Color, Rect, Vec2d};
+        use crate::WgpuBackend;
+        use std::sync::Arc;
+
+        let Some((device, queue)) = gpu() else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+        let backend = GpuDevice::new(device, queue).backend();
+        let mut renderer = RendererImpl::<WgpuBackend>::new(&backend, FORMAT);
+
+        let mut draw = DrawList::new();
+        let blue = [0, 0, 255, 255];
+        let texture_id = draw.load_image(&[blue; 4].concat(), 2, 2);
+        draw.draw_image(Rect::new(0.0, 0.0, 24.0, 24.0), texture_id);
+        draw.draw_text(
+            Vec2d::new(32.0, 24.0),
+            Arc::from("A"),
+            18.0,
+            Color::white(),
+            400,
+        );
+
+        let target = backend.device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("generic renderer image and text target"),
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&Default::default());
+        renderer.render(&backend, &view, SIZE, SIZE, false, &draw);
+
+        let pixels = read_target(backend.device(), backend.queue(), &target);
+        assert_eq!(pixel(&pixels, 12, 12), [0, 0, 255, 255]);
+        assert!(
+            (32..SIZE).any(|x| {
+                (16..48).any(|y| {
+                    let [red, green, blue, alpha] = pixel(&pixels, x, y);
+                    alpha > 0 && red > 0 && green > 0 && blue > 0
+                })
+            }),
+            "generic text path should draw antialiased white glyph pixels"
         );
     }
 
@@ -2306,4 +2367,3 @@ mod generic_backend_tests {
         let _ = backend.queue();
     }
 }
-

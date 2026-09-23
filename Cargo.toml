@@ -72,6 +72,8 @@ wgpu.workspace = true
 winit.workspace = true
 
 [features]
+default = ["wgpu"]
+wgpu = ["aimer_quiver/wgpu"]
 markdown = []
 # Forward opt-in Venus microtask diagnostics through the umbrella crate.
 venus-debug = ["aimer_venus/venus-debug"]
@@ -96,6 +98,9 @@ force-scalar = ["aimer_flex/force-scalar"]
 raster-thread = ["aimer_quiver/raster-thread"]
 # Collect the per-frame build / encode / present breakdown.
 frame-stats = ["aimer_quiver/frame-stats"]
+# Present the native Quiver window through Cupid's direct Metal backend.
+# Combine with `--no-default-features` to omit the default WGPU backend.
+metal = ["aimer_quiver/metal"]
 # Compile ordinary widgets through the hidden portable guest conversion path.
 # Generated shadow applications enable this feature; native applications do not.
 portable-guest = [
@@ -187,10 +192,10 @@ members = [
 ]
 
 [workspace.dependencies]
-aimer_cupid = { path = "aimer_cupid" }
+aimer_cupid = { path = "aimer_cupid", default-features = false, features = ["apple-core-text"] }
 aimer_rubick = { path = "aimer_rubick" }
 aimer_venus = { path = "aimer_venus" }
-aimer_quiver = { path = "aimer_quiver" }
+aimer_quiver = { path = "aimer_quiver", default-features = false }
 aimer_canvas = { path = "crates/aimer_canvas" }
 aimer_animation = { path = "crates/aimer_animation" }
 aimer_input = { path = "crates/aimer_input" }
@@ -310,11 +315,17 @@ ndk-context = "0.1.1"
 objc = { version = "0.2.7" }
 muda = "0.19.3"
 objc2-ui-kit = "0.3.2"
-objc2-app-kit = "0.3.2"
+objc2-app-kit = { version = "0.3.2", default-features = false }
 objc2 = "0.6.4"
 objc2-core-text = { version = "0.3.2", default-features = false }
 objc2-core-foundation = { version = "0.3.2", default-features = false }
 objc2-core-graphics = { version = "0.3.2", default-features = false }
+objc2-foundation = { version = "0.3.2", default-features = false }
+# Cupid's native Metal backend. Default features are off because they drag in
+# dispatch2 and every MTL4* module; member crates opt into the specific
+# MTL* submodules they need, mirroring wgpu-hal's own selection.
+objc2-metal = { version = "0.3.2", default-features = false }
+objc2-quartz-core = { version = "0.3.2", default-features = false }
 
 # Aimer cli dependencies
 

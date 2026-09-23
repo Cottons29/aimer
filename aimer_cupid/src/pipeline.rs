@@ -42,6 +42,7 @@ impl AntiAlias {
     }
 }
 
+#[cfg(feature = "wgpu")]
 pub(crate) fn multisample_state(antialiasing: AntiAlias) -> wgpu::MultisampleState {
     wgpu::MultisampleState {
         count: antialiasing.sample_count(),

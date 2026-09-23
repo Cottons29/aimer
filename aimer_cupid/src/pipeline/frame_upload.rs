@@ -92,6 +92,7 @@ impl<T: Pod> FrameUpload<T> {
     ///
     /// An empty frame never writes: no draw was recorded against the buffer,
     /// so its contents are irrelevant.
+    #[cfg(feature = "wgpu")]
     pub(crate) fn upload(
         &mut self,
         queue: &wgpu::Queue,

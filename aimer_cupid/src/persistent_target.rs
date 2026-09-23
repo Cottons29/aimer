@@ -1,3 +1,4 @@
+#[cfg(feature = "wgpu")]
 use wgpu::{Device, Texture, TextureFormat, TextureView};
 
 #[cfg(feature = "pluggable-backend-exp")]
@@ -157,6 +158,7 @@ impl PersistentTargetState {
 }
 
 /// A renderer-owned color target that survives between frames.
+#[cfg(feature = "wgpu")]
 pub(crate) struct PersistentTarget {
     state: PersistentTargetState,
     format: Option<TextureFormat>,
@@ -164,6 +166,7 @@ pub(crate) struct PersistentTarget {
     view: Option<TextureView>,
 }
 
+#[cfg(feature = "wgpu")]
 impl Default for PersistentTarget {
     fn default() -> Self {
         Self {
@@ -285,6 +288,7 @@ impl<B: GpuBackend> PersistentTargetGeneric<B> {
     }
 }
 
+#[cfg(feature = "wgpu")]
 impl PersistentTarget {
     /// Ensures that a target allocation exists for `key` and `format`.
     #[inline]
@@ -418,6 +422,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "wgpu")]
     fn an_empty_target_is_unknown_and_can_be_discarded() {
         let mut target = PersistentTarget::default();
 

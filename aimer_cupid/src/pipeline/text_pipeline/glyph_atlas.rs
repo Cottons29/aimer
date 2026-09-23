@@ -189,6 +189,7 @@ fn aligned_upload_row_bytes(row_bytes: usize) -> usize {
 /// submission. `copy_buffer_to_texture` requires 256-byte row alignment, so
 /// each small glyph is copied into an aligned row slice before the GPU copies
 /// it to its already-packed atlas rectangle.
+#[cfg(feature = "wgpu")]
 fn upload_pending(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -390,6 +391,23 @@ fn upload_pending(
     *pending = pending_batch;
 }
 
+#[cfg(feature = "pluggable-backend-exp")]
+pub struct GlyphAtlas<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
+    pub texture: B::Texture,
+    pub view: B::TextureView,
+    pub width: u32,
+    pub height: u32,
+    packer: ShelfPacker,
+    cache: HashMap<GlyphKey, AtlasRegion>,
+    pending: Vec<PendingGlyph>,
+    staging_buffer: Option<B::Buffer>,
+    staging_capacity: usize,
+    staging_data: Vec<u8>,
+    staging_copies: Vec<StagedGlyph>,
+    generation: u64,
+}
+
+#[cfg(not(feature = "pluggable-backend-exp"))]
 pub struct GlyphAtlas {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -412,12 +430,15 @@ pub struct GlyphAtlas {
     generation: u64,
 }
 
+#[cfg(feature = "wgpu")]
 impl GlyphAtlas {
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     const INITIAL_SIZE: u32 = 512;
     /// Hard cap on atlas dimensions. Instead of doubling without bound (which
     /// could reach 4096² = 16 MB of GPU memory), once the atlas reaches this
     /// size a full overflow evicts every cached glyph and repacks from scratch
     /// rather than growing further.
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     const MAX_SIZE: u32 = 2048;
 
     pub fn new(device: &wgpu::Device) -> Self {
@@ -474,10 +495,12 @@ impl GlyphAtlas {
 
     /// Returns the current atlas generation (incremented when the texture or
     /// glyph-to-region layout is recreated).
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     pub fn memory_bytes(&self) -> u64 {
         self.width as u64 * self.height as u64
     }
@@ -656,6 +679,23 @@ impl GlyphAtlas {
 /// Emoji, etc.). The shape and behavior are intentionally near-identical: a
 /// shelf packer, lazy re-upload of a dirty rectangle, and 2× growth on
 /// overflow. Only the per-pixel size and texture format differ.
+#[cfg(feature = "pluggable-backend-exp")]
+pub struct ColorGlyphAtlas<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
+    pub texture: B::Texture,
+    pub view: B::TextureView,
+    pub width: u32,
+    pub height: u32,
+    packer: ShelfPacker,
+    cache: HashMap<GlyphKey, AtlasRegion>,
+    pending: Vec<PendingGlyph>,
+    staging_buffer: Option<B::Buffer>,
+    staging_capacity: usize,
+    staging_data: Vec<u8>,
+    staging_copies: Vec<StagedGlyph>,
+    generation: u64,
+}
+
+#[cfg(not(feature = "pluggable-backend-exp"))]
 pub struct ColorGlyphAtlas {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -676,11 +716,15 @@ pub struct ColorGlyphAtlas {
     generation: u64,
 }
 
+#[cfg(feature = "wgpu")]
 impl ColorGlyphAtlas {
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     const INITIAL_SIZE: u32 = 512;
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     const BYTES_PER_PIXEL: u32 = 4;
     /// Hard cap on atlas dimensions (see [`GlyphAtlas::MAX_SIZE`]). Caps the
     /// RGBA8 color atlas at `MAX_SIZE² * 4` bytes of GPU memory.
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     const MAX_SIZE: u32 = 2048;
 
     pub fn new(device: &wgpu::Device) -> Self {
@@ -733,12 +777,14 @@ impl ColorGlyphAtlas {
         self.cache.get(key).copied()
     }
 
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     /// Returns the current atlas generation (incremented when the texture or
     /// glyph-to-region layout is recreated).
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     pub fn memory_bytes(&self) -> u64 {
         self.width as u64 * self.height as u64 * Self::BYTES_PER_PIXEL as u64
     }
@@ -897,11 +943,11 @@ impl ColorGlyphAtlas {
 /// Backend-driven equivalent of [`upload_pending`]. Shared by
 /// [`GlyphAtlas::upload_generic`] and [`ColorGlyphAtlas::upload_generic`].
 #[cfg(feature = "pluggable-backend-exp")]
-fn upload_pending_generic(
-    backend: &crate::backend::wgpu::WgpuBackend,
-    texture: &wgpu::Texture,
+fn upload_pending_generic<B: crate::backend::GpuBackend>(
+    backend: &B,
+    texture: &B::Texture,
     pending: &mut Vec<PendingGlyph>,
-    staging_buffer: &mut Option<wgpu::Buffer>,
+    staging_buffer: &mut Option<B::Buffer>,
     staging_capacity: &mut usize,
     staging_data: &mut Vec<u8>,
     staging_copies: &mut Vec<StagedGlyph>,
@@ -1087,13 +1133,53 @@ fn upload_pending_generic(
 }
 
 #[cfg(feature = "pluggable-backend-exp")]
-impl GlyphAtlas {
+impl<B: crate::backend::GpuBackend> GlyphAtlas<B> {
+    const INITIAL_SIZE: u32 = 512;
+    const MAX_SIZE: u32 = 2048;
+
+    #[inline]
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn memory_bytes(&self) -> u64 {
+        self.width as u64 * self.height as u64
+    }
+
+    /// Looks up a cached glyph region on a backend-generic atlas.
+    #[inline]
+    pub fn get_generic(&self, key: &GlyphKey) -> Option<AtlasRegion> {
+        self.cache.get(key).copied()
+    }
+
+    pub(super) fn plan_batch_generic(&self, glyphs: &[(GlyphKey, u32, u32)]) -> BatchCapacityPlan {
+        let missing = glyphs
+            .iter()
+            .filter(|(key, _, _)| !self.cache.contains_key(key))
+            .map(|(_, width, height)| (*width, *height))
+            .collect::<Vec<_>>();
+        let all = glyphs
+            .iter()
+            .map(|(_, width, height)| (*width, *height))
+            .collect::<Vec<_>>();
+        plan_batch(&self.packer, Self::MAX_SIZE, &missing, &all)
+    }
+
+    pub(super) fn apply_batch_plan_generic(&mut self, plan: BatchCapacityPlan) {
+        if plan == BatchCapacityPlan::Reset {
+            self.cache.clear();
+            self.pending.clear();
+            self.packer = ShelfPacker::new(self.width, self.height);
+            self.generation += 1;
+        }
+    }
+
     /// Create the atlas through the [`GpuBackend`] trait via
     /// [`WgpuBackend`](crate::backend::wgpu::WgpuBackend).
     ///
     /// Equivalent to [`GlyphAtlas::new`] but routes texture creation through
     /// the backend trait instead of calling wgpu directly.
-    pub fn new_generic(backend: &crate::backend::wgpu::WgpuBackend) -> Self {
+    pub fn new_generic(backend: &B) -> Self {
         let width = Self::INITIAL_SIZE;
         let height = Self::INITIAL_SIZE;
         let (texture, view) = Self::create_texture_generic(backend, width, height);
@@ -1114,10 +1200,10 @@ impl GlyphAtlas {
     }
 
     fn create_texture_generic(
-        backend: &crate::backend::wgpu::WgpuBackend,
+        backend: &B,
         width: u32,
         height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
+    ) -> (B::Texture, B::TextureView) {
         use crate::backend::{GpuBackend, TextureDescriptor, TextureDimension, TextureUsage};
         let texture = backend.create_texture(&TextureDescriptor {
             label: Some("glyph atlas".to_string()),
@@ -1125,7 +1211,7 @@ impl GlyphAtlas {
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
+            format: B::r8_unorm_format(),
             usage: vec![
                 TextureUsage::TextureBinding,
                 TextureUsage::CopyDst,
@@ -1139,7 +1225,7 @@ impl GlyphAtlas {
     /// Backend-driven equivalent of [`GlyphAtlas::get_or_insert`].
     pub fn get_or_insert_generic(
         &mut self,
-        backend: &crate::backend::wgpu::WgpuBackend,
+        backend: &B,
         key: GlyphKey,
         glyph_w: u32,
         glyph_h: u32,
@@ -1179,7 +1265,7 @@ impl GlyphAtlas {
     }
 
     /// Backend-driven equivalent of [`GlyphAtlas::upload`].
-    pub fn upload_generic(&mut self, backend: &crate::backend::wgpu::WgpuBackend) {
+    pub fn upload_generic(&mut self, backend: &B) {
         upload_pending_generic(
             backend,
             &self.texture,
@@ -1194,7 +1280,7 @@ impl GlyphAtlas {
     }
 
     /// Backend-driven equivalent of [`GlyphAtlas::grow`].
-    fn grow_generic(&mut self, backend: &crate::backend::wgpu::WgpuBackend) {
+    fn grow_generic(&mut self, backend: &B) {
         use crate::backend::{Extent3d, GpuBackend, Origin3d, TexelCopyTextureInfo, TextureAspect};
 
         if self.width >= Self::MAX_SIZE {
@@ -1245,13 +1331,54 @@ impl GlyphAtlas {
 }
 
 #[cfg(feature = "pluggable-backend-exp")]
-impl ColorGlyphAtlas {
+impl<B: crate::backend::GpuBackend> ColorGlyphAtlas<B> {
+    const INITIAL_SIZE: u32 = 512;
+    const BYTES_PER_PIXEL: u32 = 4;
+    const MAX_SIZE: u32 = 2048;
+
+    #[inline]
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn memory_bytes(&self) -> u64 {
+        self.width as u64 * self.height as u64 * Self::BYTES_PER_PIXEL as u64
+    }
+
+    /// Looks up a cached glyph region on a backend-generic color atlas.
+    #[inline]
+    pub fn get_generic(&self, key: &GlyphKey) -> Option<AtlasRegion> {
+        self.cache.get(key).copied()
+    }
+
+    pub(super) fn plan_batch_generic(&self, glyphs: &[(GlyphKey, u32, u32)]) -> BatchCapacityPlan {
+        let missing = glyphs
+            .iter()
+            .filter(|(key, _, _)| !self.cache.contains_key(key))
+            .map(|(_, width, height)| (*width, *height))
+            .collect::<Vec<_>>();
+        let all = glyphs
+            .iter()
+            .map(|(_, width, height)| (*width, *height))
+            .collect::<Vec<_>>();
+        plan_batch(&self.packer, Self::MAX_SIZE, &missing, &all)
+    }
+
+    pub(super) fn apply_batch_plan_generic(&mut self, plan: BatchCapacityPlan) {
+        if plan == BatchCapacityPlan::Reset {
+            self.cache.clear();
+            self.pending.clear();
+            self.packer = ShelfPacker::new(self.width, self.height);
+            self.generation += 1;
+        }
+    }
+
     /// Create the atlas through the [`GpuBackend`] trait via
     /// [`WgpuBackend`](crate::backend::wgpu::WgpuBackend).
     ///
     /// Equivalent to [`ColorGlyphAtlas::new`] but routes texture creation
     /// through the backend trait instead of calling wgpu directly.
-    pub fn new_generic(backend: &crate::backend::wgpu::WgpuBackend) -> Self {
+    pub fn new_generic(backend: &B) -> Self {
         let width = Self::INITIAL_SIZE;
         let height = Self::INITIAL_SIZE;
         let (texture, view) = Self::create_texture_generic(backend, width, height);
@@ -1272,10 +1399,10 @@ impl ColorGlyphAtlas {
     }
 
     fn create_texture_generic(
-        backend: &crate::backend::wgpu::WgpuBackend,
+        backend: &B,
         width: u32,
         height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
+    ) -> (B::Texture, B::TextureView) {
         use crate::backend::{GpuBackend, TextureDescriptor, TextureDimension, TextureUsage};
         let texture = backend.create_texture(&TextureDescriptor {
             label: Some("color glyph atlas".to_string()),
@@ -1283,7 +1410,7 @@ impl ColorGlyphAtlas {
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: B::rgba8_unorm_format(),
             usage: vec![
                 TextureUsage::TextureBinding,
                 TextureUsage::CopyDst,
@@ -1297,7 +1424,7 @@ impl ColorGlyphAtlas {
     /// Backend-driven equivalent of [`ColorGlyphAtlas::get_or_insert`].
     pub fn get_or_insert_generic(
         &mut self,
-        backend: &crate::backend::wgpu::WgpuBackend,
+        backend: &B,
         key: GlyphKey,
         glyph_w: u32,
         glyph_h: u32,
@@ -1337,7 +1464,7 @@ impl ColorGlyphAtlas {
     }
 
     /// Backend-driven equivalent of [`ColorGlyphAtlas::upload`].
-    pub fn upload_generic(&mut self, backend: &crate::backend::wgpu::WgpuBackend) {
+    pub fn upload_generic(&mut self, backend: &B) {
         upload_pending_generic(
             backend,
             &self.texture,
@@ -1352,7 +1479,7 @@ impl ColorGlyphAtlas {
     }
 
     /// Backend-driven equivalent of [`ColorGlyphAtlas::grow`].
-    fn grow_generic(&mut self, backend: &crate::backend::wgpu::WgpuBackend) {
+    fn grow_generic(&mut self, backend: &B) {
         use crate::backend::{Extent3d, GpuBackend, Origin3d, TexelCopyTextureInfo, TextureAspect};
 
         if self.width >= Self::MAX_SIZE {
@@ -1402,7 +1529,7 @@ impl ColorGlyphAtlas {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "wgpu"))]
 mod tests {
     use super::*;
 

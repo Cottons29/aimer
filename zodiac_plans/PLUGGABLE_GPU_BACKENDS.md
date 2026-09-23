@@ -21,20 +21,21 @@ Make `aimer_cupid`'s GPU backend **pluggable** behind an experimental feature fl
 - `backend/` module with `GpuBackend` trait and associated type hierarchy (behind `pluggable-backend-exp`)
 - `WgpuBackend` adapter implementing the trait for all wgpu operations (behind `pluggable-backend-exp`)
 - `MetalBackend` adapter implementing the trait via `objc2-metal` (behind `metal` feature)
-- Generic `RendererImpl<B: GpuBackend>` with `Renderer` type alias for backward compat
+- Generic `RendererImpl<B: GpuBackend>` alongside the existing `Renderer` compatibility API
 - All 6 pipelines generic over `B`: `RectPipeline`, `ImagePipeline`, `TextPipelineV2`, `SvgPipeline`, `FrameCompositePipeline`, `MaterialPipeline`
-- `CustomPipeline` trait generic over `B`
+- Backend-generic `CustomPipelineGeneric<B>` alongside the existing `CustomPipeline` API
 - `PersistentTarget`, `FrameUpload` generic over `B`
 - `RenderContext` generic over `B`
 - MSL shaders for rect pipeline as Metal proof-of-concept
-- `GpuContext` split: wgpu-specific version (default) vs backend-agnostic surface management
+- `GpuContext` keeps its wgpu surface management and exposes a `WgpuBackend` adapter
 
 **Out of Scope:**
-- Removing wgpu as a dependency (wgpu remains the default, always available)
+- Removing WGPU support; WGPU remains the default backend, and Metal-only builds
+  can disable its dependency with `--no-default-features --features metal`
 - WASM/WebGPU Metal backend
 - Vulkan, DirectX, or OpenGL backends
 - Runtime backend switching (compile-time selection only)
-- Full MSL port of all shaders (only rect pipeline as POC; remaining WGSL shaders ported later)
+- Runtime translation of arbitrary custom shaders; custom pipelines must provide source in the selected backend's language
 - Performance optimization of the Metal path
 
 ### Non-Functional Requirements
@@ -47,7 +48,9 @@ Make `aimer_cupid`'s GPU backend **pluggable** behind an experimental feature fl
 
 ### Current Implementation
 
-The entire rendering pipeline is hard-wired to wgpu types (`wgpu::Device`, `wgpu::Queue`, `wgpu::RenderPass`, etc.) across **15+ source files** (~12,330 lines). There is no abstraction layer between the pipelines and the GPU API:
+The original compatibility renderer remains tied to wgpu across **15+ source files** (~12,330 lines), while the feature-gated `RendererImpl<B>` now drives all six built-in pipelines through `GpuBackend`. `WgpuBackend` preserves the generic WGPU path; `MetalBackend` supports the built-in pipeline set through checked-in MSL. The generic renderer has not replaced the compatibility renderer's scene/damage processing, compositor statistics, pipeline cache, and multisampling APIs.
+
+The WGPU-specific compatibility path still directly uses:
 
 - `gpu_context.rs` (384 lines) — wraps `wgpu::Device`, `wgpu::Queue`, `wgpu::Surface`
 - `renderer.rs` (2,828 lines) — orchestration, takes `&wgpu::Device`, `&wgpu::Queue`, `&wgpu::TextureView`
@@ -57,21 +60,21 @@ The entire rendering pipeline is hard-wired to wgpu types (`wgpu::Device`, `wgpu
 - `frame_upload.rs` — `wgpu::Buffer` upload dedup
 - 10 WGSL shader files consumed by wgpu pipeline creation
 
-Consumers (`aimer_quiver/src/render_ctx/wgpu_ctx.rs`, `bin.rs`, tests in `lib.rs`) pass wgpu types directly.
+Consumers on the compatibility path (`aimer_quiver/src/render_ctx/wgpu_ctx.rs`, `bin.rs`, and existing `Renderer` users) continue to pass wgpu types directly.
 
 ### Key Decisions
 
 **Decision 1: Full device abstraction (user-approved)**
 The `GpuBackend` trait abstracts **every GPU operation** — resource creation, data upload, command encoding, render pass ops, and submission. This gives the cleanest seam and maximum leverage for future backends.
 
-**Decision 2: All-at-once migration behind feature flag (user-approved)**
-The entire `Renderer` + all pipelines become generic in one change, gated by `pluggable-backend-exp`. Backward-compatible type aliases prevent consumer breakage.
+**Decision 2: Add a generic rendering path behind the feature flag**
+The six GPU pipelines and `RendererImpl<B>` use `GpuBackend` when `pluggable-backend-exp` is enabled. The existing `Renderer` remains available while its scene, damage, compositor, and pipeline-cache APIs are migrated; this avoids replacing its public API before the generic implementation covers those capabilities.
 
 **Decision 3: Generic (compile-time) dispatch via type parameter**
 `RendererImpl<B: GpuBackend = WgpuBackend>` with a default type parameter. No `Box<dyn>` overhead — the concrete backend is known at compile time.
 
 **Decision 4: Parallel wgpu-only path when flag is off**
-When `pluggable-backend-exp` is disabled, the code compiles to the current wgpu-only path (unchanged). This avoids regressions and keeps the experimental feature clearly scoped.
+When `pluggable-backend-exp` is disabled, the default feature set compiles to the current WGPU-only path (unchanged). With the experimental feature enabled, callers can select WGPU or Metal at compile time.
 
 **Decision 5: Separate surface/context creation per backend**
 `GpuContext` is split: a wgpu-specific path (current code, used when flag is off) and a backend-generic path (when flag is on) that works with `WgpuBackend` or `MetalBackend`.
@@ -86,7 +89,9 @@ aimer_cupid/src/
 │   ├── mod.rs              # GpuBackend trait + associated type traits
 │   ├── wgpu.rs             # WgpuBackend impl (behind pluggable-backend-exp)
 │   └── metal.rs            # MetalBackend impl (behind cfg(feature = "metal"))
-├── renderer.rs              # RendererImpl<B: GpuBackend = WgpuBackend>
+├── renderer.rs              # Existing WGPU renderer and feature-gated generic export
+├── renderer/
+│   └── generic_renderer.rs  # RendererImpl<B: GpuBackend = WgpuBackend>
 ├── pipeline/
 │   ├── rect_pipeline.rs     # RectPipeline<B: GpuBackend>
 │   ├── image_pipeline.rs    # ImagePipeline<B: GpuBackend>
@@ -165,17 +170,9 @@ pub trait GpuBackend: Sized + 'static {
 }
 ```
 
-#### Renderer Type Aliases
+#### Renderer Compatibility Boundary
 
-```rust
-// When feature is OFF — exact current code, no change
-#[cfg(not(feature = "pluggable-backend-exp"))]
-pub type Renderer = RendererImpl<backend::wgpu::WgpuBackend>;
-
-// When feature is ON — generic with default
-#[cfg(feature = "pluggable-backend-exp")]
-pub type Renderer<B = backend::wgpu::WgpuBackend> = RendererImpl<B>;
-```
+With `pluggable-backend-exp`, `RendererImpl<B = WgpuBackend>` is exported as the new compile-time generic renderer. The existing `Renderer` remains the WGPU compatibility implementation, including its scene/damage processing, compositor statistics, pipeline cache, and multisampling APIs. Once those capabilities move to `RendererImpl`, `Renderer` can converge on a backward-compatible alias without dropping functionality.
 
 #### Feature Flag Wiring
 
@@ -184,9 +181,17 @@ pub type Renderer<B = backend::wgpu::WgpuBackend> = RendererImpl<B>;
 # aimer_cupid/Cargo.toml
 
 [features]
-default = ["apple-core-text"]
-pluggable-backend-exp = ["dep:wgpu"]  # Requires wgpu for WgpuBackend adapter
-metal = ["pluggable-backend-exp", "dep:objc2-metal"]
+default = ["apple-core-text", "wgpu"]
+wgpu = ["dep:wgpu", "dep:winit"]
+pluggable-backend-exp = []
+metal = [
+    "pluggable-backend-exp",
+    "apple-core-text",
+    "dep:objc2-metal",
+    "dep:objc2-foundation",
+    "dep:objc2",
+    "dep:objc2-quartz-core",
+]
 
 [dependencies]
 wgpu = { workspace = true, optional = true }   # ← becomes optional
@@ -349,7 +354,7 @@ graph TD
 |------|--------|------------|
 | Lifetime complexity of `RenderPass` borrowing | Trait design may require GATs | Use lifetime on `GpuBackend::RenderPass<'a>`; wgpu already uses this pattern |
 | Dual path maintenance (flag on/off) | Two code paths to maintain | Keep non-flag path minimal — only used until `pluggable-backend-exp` stabilizes |
-| Metal backend completeness | Only rect pipeline initially | Clearly document as experimental POC; remaining pipelines ported incrementally |
+| Metal shader parity | Native sources can drift from WGSL | Keep paired MSL sources and Metal pixel coverage for built-in pipelines; custom pipelines provide their own backend-specific source |
 | Pipeline cache trait abstraction | Backend-specific | Only expose cache operations that exist in both backends; fallback for Metal |
 | `CustomPipeline` downstream breakage | API signature changes | Provide `CustomPipeline<WgpuBackend>` type alias for existing users |
 
@@ -363,7 +368,7 @@ All validation is behind feature flags. The existing test suite runs unchanged w
 
 1. **Default path (no flags)** — all existing tests pass identically to current code
 2. **`pluggable-backend-exp` enabled, default WgpuBackend** — all existing tests pass through the generic path (pixel-level regression tests in `deferred_frame_uploads`, `resized_text_preparation`, `scrolled_text_culling`)
-3. **`metal` enabled on macOS** — Metal backend initializes and renders a rect correctly
+3. **`metal` enabled on macOS** — Metal initializes all built-in pipelines and renders image, text, decoration, SVG, material, and rectangle content correctly
 
 ### Test Changes
 
@@ -373,7 +378,8 @@ All validation is behind feature flags. The existing test suite runs unchanged w
 
 ### Edge Cases
 
-- `pluggable-backend-exp` without wgpu as a dependency (wgpu feature must be required)
+- Metal-only builds without `wgpu` or `winit` in the normal dependency graph
+- `pluggable-backend-exp` with neither `wgpu` nor `metal` (compile error, as intended)
 - Metal backend on non-macOS platforms (compile error, as intended)
 - Pipeline cache — `WgpuBackend` preserves it, `MetalBackend` returns `None`
 
@@ -403,82 +409,53 @@ The `backend/` module is created with the `GpuBackend` trait and all associated 
 
 This stage has no functional changes — the existing wgpu-only path is completely unchanged.
 
-### * Step 2: Port Renderer and all pipelines to generic backend
-The `Renderer` struct and all 6 pipelines become generic over `B: GpuBackend`, gated behind `pluggable-backend-exp`. Backward-compatible type aliases keep consumers working.
+### ✓ Step 2: Generic pipelines and renderer
+The `pluggable-backend-exp` path now has backend-generic versions of all six built-in pipelines and an offscreen `RendererImpl<B: GpuBackend>`. The existing concrete `Renderer` remains available as the compatibility API.
 
-- Modify `RectPipeline<B: GpuBackend>` in `rect_pipeline.rs`:
-  - Replace all `wgpu::*` types with `B::*` associated types
-  - `new()` takes `&B` instead of `&wgpu::Device`, and backend-agnostic descriptor structs
-  - `begin_frame()` takes `&B` instead of device+queue
-  - `flush()` takes `&mut B::RenderPass<'_>` instead of `&mut wgpu::RenderPass`
-  - `flush_clear()` same pattern
+- Added backend-generic construction, preparation, upload, and rendering for `RectPipeline`, `ImagePipeline`, `TextPipelineV2`, `SvgPipeline`, `FrameCompositePipeline`, and `MaterialPipeline`.
+- Added generic glyph-atlas operations and a backend-neutral text preparation path.
+- Added `RendererImpl<B>` with antialiasing configuration, custom-pipeline registration, draw-list rendering, material backdrop handling, and retained-layer targets.
+- Added `CustomPipelineGeneric<B>`, `RenderContextGeneric<B>`, and `PersistentTargetGeneric<B>`. `FrameUpload` remains backend-neutral because it only tracks CPU-side upload deduplication state.
+- Added `GpuContext::backend()` and `GpuDevice` helpers to construct `WgpuBackend`; exported the experimental backend and renderer APIs conditionally.
+- Added Wgpu pixel tests for generic rect rendering and image/text rendering.
+- Kept the non-feature path compiling unchanged.
 
-- Modify `ImagePipeline<B: GpuBackend>` in `image_pipeline.rs`:
-  - Same pattern: wgpu types → `B::*`
-  - `upload_image()` uses `B::write_texture()` instead of `queue.write_texture()`
+**Compatibility boundary:** the generic renderer is exposed as `RendererImpl<B>` alongside the existing `renderer::Renderer`. The latter still owns WGPU-specific scene/damage processing, compositor statistics, pipeline-cache, and multisampling APIs, so replacing it with a type alias now would drop those capabilities for feature-enabled callers. The alias convergence remains follow-up work after those APIs are ported.
 
-- Modify `TextPipelineV2<B: GpuBackend>` in `text_pipeline.rs`:
-  - Same wgpu→B::* replacement
-  - `GlyphAtlas` becomes generic over B internally
+Validation completed: `cargo check -p aimer_cupid --lib` and `cargo check -p aimer_cupid --features pluggable-backend-exp --lib` both pass. The focused generic Wgpu rect and image/text pixel tests pass.
 
-- Modify `SvgPipeline<B: GpuBackend>` in `svg_pipeline.rs` — same pattern
+### ✓ Step 3: Metal backend and rectangle proof of concept
+Implemented `MetalBackend` behind the Apple-only `metal` feature, with the generic renderer's rectangle path as the first supported pipeline.
 
-- Modify `FrameCompositePipeline<B: GpuBackend>` in `frame_composite.rs` — same pattern
+- Added Metal resource, command-buffer, render-pass, copy, readback, and pipeline operations. Bind groups map through a checked manual argument-index scheme.
+- Added `MetalSurface` and `MetalSurfaceFrame` around `CAMetalLayer`: layers receive the backend device and format, frames expose the drawable texture/view, and presentation is queued after earlier work on the same command queue.
+- Added the MSL rectangle shader and a `GpuBackend::rect_shader_source()` hook so `RectPipeline` selects WGSL or MSL through the backend.
+- Added `RendererImpl::new_rect_only()` for staged backend bring-up or rectangle-only callers. The regular constructor initializes all six pipelines for WGPU and Metal.
+- Added Apple-target-only `objc2-metal` and `objc2-quartz-core` dependencies. Enabling `metal` on other targets produces a compile-time error.
+- Added renderer-level and low-level Metal pixel tests, including normalized vertex-color coverage.
 
-- Modify `MaterialPipeline<B: GpuBackend>` in `material/render.rs` — same pattern
+Validation: `cargo check -p aimer_cupid --features metal --lib` and the no-feature `cargo check -p aimer_cupid --lib` pass on this Darwin host. All three focused Metal pixel tests pass here, including the generic renderer rectangle test, two-band readback/orientation coverage, and normalized vertex-color coverage. The WGPU generic-renderer rect and image/text pixel regressions also pass.
 
-- Modify `RendererImpl<B: GpuBackend>` in `renderer.rs`:
-  - All wgpu types → `B::*`
-  - `new()` takes `&B` and `B::TextureFormat`
-  - `render()`, `render_impl()` use backend-agnostic descriptors
-  - Provide `pub type Renderer = RendererImpl<WgpuBackend>` for backward compat
-  - The non-flag path (`#[cfg(not(feature = "pluggable-backend-exp"))]`) keeps the current concrete type alias
+### ✓ Step 4: MSL ports for all built-in pipelines
+All built-in shader modules now resolve to backend-specific source. WGPU keeps using the existing WGSL; Metal compiles matching MSL for image, monochrome text, color glyphs, text decorations, SVG, frame compositing, and materials, alongside the rectangle shader port from Step 3.
 
-- Modify `CustomPipeline<B>` trait in `custom_pipeline.rs`:
-  - `render()` takes `&mut B::RenderPass<'_>`
-  - `capture_backdrop()` takes `&mut B::CommandEncoder`
-  - `RenderContext<B>` uses `B::*` types
-  - Provide backward-compat `type alias` for existing consumers
+- Added `BuiltinShader` source selection to `GpuBackend`; the default maps to the existing WGSL assets and `MetalBackend` maps to checked-in MSL sources.
+- Added shared MSL helpers for image/SVG color conversion and text clipping/color conversion.
+- Preserved each pipeline's existing entry-point names, vertex locations, bind-group indices, premultiplied-alpha behavior, clipping, and color-space branches.
+- Added a Metal test that constructs `RendererImpl::new()` to compile and create every built-in Metal pipeline.
+- Added a Metal end-to-end pixel test covering image sampling, glyph text, text decorations, SVG rendering, the material shader, and the frame-composite pass.
 
-- Modify `PersistentTarget<B>` in `persistent_target.rs` — `B::Texture`, `B::TextureView`
+Validation: `cargo test -p aimer_cupid --features metal` passes (567 library tests, 3 binary tests, 1 integration test, and 6 doctests; 5 library tests and 4 doctests are ignored). This includes all five Metal backend tests and the generic WGPU renderer tests. `cargo check -p aimer_cupid --lib`, `cargo check -p aimer_cupid --features metal --lib`, and `git diff --check` also pass on this Darwin host.
 
-- Modify `frame_upload.rs` — `FrameUpload<B>` or use backend-agnostic upload tracking
+### ✓ Step 5: WGPU-free Metal feature build
+The `metal` feature now builds Cupid without pulling WGPU or winit into its normal dependency graph. WGPU remains enabled by default; callers choose Metal-only with `--no-default-features --features metal`.
 
-- Modify `gpu_context.rs`:
-  - When `pluggable-backend-exp` is on, provide `WgpuBackend`-based context as a new path
-  - Keep the existing wgpu-specific path when flag is off
+- Made `wgpu` and `winit` optional behind the `wgpu` feature, which remains part of the default feature set.
+- Gated the WGPU compatibility renderer, context, pipeline cache, legacy custom-pipeline API, and WGPU-specific pipeline code behind `wgpu`.
+- Set generic pipeline and renderer type defaults to WGPU when enabled and Metal when WGPU is disabled.
+- Restricted Cupid's example binary to the `wgpu` feature; the generic Metal library remains buildable without it.
+- Added a separate `cupid-metal` demo behind `metal-demo`. It creates a Winit window, attaches a `CAMetalLayer`, and draws through `RendererImpl<MetalBackend>` without enabling WGPU. The Metal and WGPU binaries share the same scene recorder for multilingual text, shaping samples, font weights, and color glyphs.
 
-- Update `aimer_cupid/src/lib.rs` — conditional re-exports for `Renderer`, `CustomPipeline`, `GpuBackend`, etc.
+Run the Metal demo with `cargo run -p aimer_cupid --no-default-features --features metal-demo --bin cupid-metal`.
 
-- Existing tests in `lib.rs` gain a second variant behind `#[cfg(feature = "pluggable-backend-exp")]` that exercises the generic `Renderer` path through `WgpuBackend`
-
-- The non-flag path (default) remains identical and compiles unchanged.
-
-###   Step 3: Metal backend implementation
-Implement `MetalBackend` behind the `metal` feature flag, with rect pipeline rendering as proof of concept.
-
-- Create `aimer_cupid/src/backend/metal.rs`:
-  - `MetalBackend` struct holding `metal::Device`, `metal::CommandQueue`, format info
-  - `impl GpuBackend for MetalBackend`:
-    - `create_shader_module()` — compile MSL via `device.new_library_with_source()`
-    - `create_buffer()` — `device.new_buffer()`
-    - `create_bind_group_layout()` — map to Metal argument buffer or manual binding
-    - `create_render_pipeline()` — `device.new_render_pipeline_state()` with `MTLRenderPipelineDescriptor`
-    - `create_command_encoder()` — `queue.new_command_buffer()`
-    - `begin_render_pass()` — `cmd_buffer.new_render_command_encoder()`
-    - `submit()` — `cmd_buffer.commit()` + `waitUntilCompleted`
-  - Surface management: `CAMetalLayer` integration for getting drawables
-
-- Add MSL shader for rect pipeline:
-  - Create `pipeline/shaders/rect.metal` — MSL equivalent of `rect.wgsl`
-  - Both shaders coexist; `RectPipeline` selects the right one based on backend type
-  - The shader covers: vertex transform, SDF rounded-rect, shadows, borders, clipping
-
-- Update `Cargo.toml`:
-  - `metal = ["pluggable-backend-exp", "dep:objc2-metal"]` or `metal-rs`
-  - Add `objc2-metal` dependency behind the feature flag
-  - The `metal` feature implies `pluggable-backend-exp`
-
-- Add integration test: `#[cfg(all(feature = "metal", target_os = "macos"))]` that creates a `MetalBackend`, initializes a `RendererImpl<MetalBackend>`, renders a single rect, and validates pixels via CPU readback
-
-- The Metal backends `create_render_pipeline` for the rect pipeline creates the PSO with the MSL shader, vertex descriptor matching `RectInstance::ATTRIBS`, and appropriate blend state
+Validation on this Darwin host: `cargo check -p aimer_cupid --no-default-features --features metal` passes, and `cargo check -p aimer_cupid --no-default-features --features metal --tests` compiles the test targets without running them. `cargo build -p aimer_cupid --no-default-features --features metal-demo --bin cupid-metal` links the native demo executable. Its normal dependency graph contains no `wgpu`. Default and `pluggable-backend-exp` library checks pass, as does `git diff --check`.

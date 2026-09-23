@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use bytemuck::{Pod, Zeroable};
+#[cfg(feature = "wgpu")]
 use wgpu::ShaderSource;
 
 use super::frame_upload::FrameUpload;
@@ -91,6 +92,7 @@ const fn image_mip_level_count() -> u32 {
     1
 }
 
+#[cfg(feature = "wgpu")]
 fn upload_rgba8(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
@@ -184,6 +186,7 @@ pub struct ImageInstance {
 }
 
 impl ImageInstance {
+    #[cfg(feature = "wgpu")]
     const ATTRIBS: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
@@ -195,6 +198,7 @@ impl ImageInstance {
         7 => Float32,
     ];
 
+    #[cfg(feature = "wgpu")]
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: size_of::<ImageInstance>() as wgpu::BufferAddress,
@@ -202,12 +206,39 @@ impl ImageInstance {
             attributes: &Self::ATTRIBS,
         }
     }
+
+    #[cfg(feature = "pluggable-backend-exp")]
+    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 8] = [
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, position) as u64, shader_location: 0 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, size) as u64, shader_location: 1 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, uv_offset) as u64, shader_location: 2 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, uv_scale) as u64, shader_location: 3 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 4 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 5 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32, offset: std::mem::offset_of!(Self, alpha) as u64, shader_location: 6 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32, offset: std::mem::offset_of!(Self, source_premultiplied) as u64, shader_location: 7 },
+    ];
 }
 
+#[cfg(feature = "pluggable-backend-exp")]
+struct TextureEntry<B: crate::backend::GpuBackend> {
+    bind_group: B::BindGroup,
+    #[allow(dead_code)]
+    texture: B::Texture,
+    width: u32,
+    height: u32,
+    bytes: u64,
+    last_used_frame: u64,
+    evictable: bool,
+}
+
+#[cfg(not(feature = "pluggable-backend-exp"))]
 struct TextureEntry {
     bind_group: wgpu::BindGroup,
     #[allow(dead_code)]
     texture: wgpu::Texture,
+    width: u32,
+    height: u32,
     bytes: u64,
     last_used_frame: u64,
     /// Explicitly addressed textures are owned by the caller and cannot be
@@ -248,6 +279,25 @@ fn select_texture_evictions(
     evictions
 }
 
+#[cfg(feature = "pluggable-backend-exp")]
+pub struct ImagePipeline<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
+    pipeline: B::RenderPipeline,
+    viewport_buffer: B::Buffer,
+    viewport_bind_group: B::BindGroup,
+    texture_bind_group_layout: B::BindGroupLayout,
+    sampler: B::Sampler,
+    textures: HashMap<TextureId, TextureEntry<B>>,
+    next_id: TextureId,
+    instance_buffer: B::Buffer,
+    instance_policy: InstanceBufferPolicy,
+    frame_instance_offset: usize,
+    frame_instances: Vec<ImageInstance>,
+    upload: FrameUpload<ImageInstance>,
+    last_viewport: Option<(u32, u32, bool)>,
+    frame_index: u64,
+}
+
+#[cfg(not(feature = "pluggable-backend-exp"))]
 pub struct ImagePipeline {
     pipeline: wgpu::RenderPipeline,
     viewport_buffer: wgpu::Buffer,
@@ -279,9 +329,12 @@ pub struct ImagePipeline {
     frame_index: u64,
 }
 
+#[cfg(feature = "wgpu")]
 impl ImagePipeline {
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     const INITIAL_CAPACITY: usize = 64;
 
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     #[inline]
     const fn get_source() -> &'static str {
         #[cfg(target_os = "android")]
@@ -450,10 +503,6 @@ impl ImagePipeline {
         id
     }
 
-    pub fn has_texture(&self, id: TextureId) -> bool {
-        self.textures.contains_key(&id)
-    }
-
     /// Upload RGBA8 image data only if the texture ID does not already exist.
     /// Returns `true` if a new texture was uploaded, `false` if it already
     /// existed. Uses a single HashMap lookup instead of `has_texture` +
@@ -514,6 +563,8 @@ impl ImagePipeline {
                 vacant.insert(TextureEntry {
                     bind_group,
                     texture,
+                    width,
+                    height,
                     bytes: width as u64 * height as u64 * 4,
                     last_used_frame: self.frame_index,
                     evictable: true,
@@ -577,6 +628,47 @@ impl ImagePipeline {
         data: &[u8],
     ) {
         self.upload_image_with_id_internal(device, queue, id, width, height, data, false);
+    }
+
+    #[cfg(not(feature = "pluggable-backend-exp"))]
+    pub fn remove_texture(&mut self, id: TextureId) -> bool {
+        self.textures.remove(&id).is_some()
+    }
+
+    #[cfg(not(feature = "pluggable-backend-exp"))]
+    pub fn texture_count(&self) -> usize {
+        self.textures.len()
+    }
+
+    #[cfg(not(feature = "pluggable-backend-exp"))]
+    pub fn texture_bytes(&self) -> u64 {
+        self.textures.values().map(|entry| entry.bytes).sum()
+    }
+
+    #[cfg(not(feature = "pluggable-backend-exp"))]
+    pub(crate) fn eviction_candidates(&self) -> Vec<TextureId> {
+        let entries = self
+            .textures
+            .iter()
+            .map(|(&id, entry)| TextureCacheEntryInfo {
+                id,
+                bytes: entry.bytes,
+                last_used_frame: entry.last_used_frame,
+                evictable: entry.evictable,
+            })
+            .collect();
+        select_texture_evictions(
+            self.frame_index,
+            IMAGE_TEXTURE_CACHE_BUDGET_BYTES,
+            IMAGE_TEXTURE_IDLE_FRAMES,
+            self.texture_bytes(),
+            entries,
+        )
+    }
+
+    #[cfg(not(feature = "pluggable-backend-exp"))]
+    pub fn instance_buffer_bytes(&self) -> u64 {
+        (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64
     }
 
     fn upload_image_with_id_internal(
@@ -643,15 +735,13 @@ impl ImagePipeline {
             TextureEntry {
                 bind_group,
                 texture,
+                width,
+                height,
                 bytes: width as u64 * height as u64 * 4,
                 last_used_frame: self.frame_index,
                 evictable,
             },
         );
-    }
-
-    pub fn remove_texture(&mut self, id: TextureId) -> bool {
-        self.textures.remove(&id).is_some()
     }
 
     /// Creates an image bind group for a renderer-owned texture view.
@@ -682,44 +772,12 @@ impl ImagePipeline {
         })
     }
 
-    pub fn texture_count(&self) -> usize {
-        self.textures.len()
-    }
-
-    pub fn texture_bytes(&self) -> u64 {
-        self.textures.values().map(|entry| entry.bytes).sum()
-    }
-
     /// Selects old, reconstructible textures for deferred removal.
     ///
     /// Current-frame textures are protected so a large cache cannot evict an
     /// image while its render pass is still being assembled. Older textures
     /// are reclaimed after a grace period, and the same candidates are used to
     /// bring the cache back under its byte budget.
-    pub(crate) fn eviction_candidates(&self) -> Vec<TextureId> {
-        let entries = self
-            .textures
-            .iter()
-            .map(|(&id, entry)| TextureCacheEntryInfo {
-                id,
-                bytes: entry.bytes,
-                last_used_frame: entry.last_used_frame,
-                evictable: entry.evictable,
-            })
-            .collect();
-        select_texture_evictions(
-            self.frame_index,
-            IMAGE_TEXTURE_CACHE_BUDGET_BYTES,
-            IMAGE_TEXTURE_IDLE_FRAMES,
-            self.texture_bytes(),
-            entries,
-        )
-    }
-
-    pub fn instance_buffer_bytes(&self) -> u64 {
-        (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64
-    }
-
     /// Draw a batch of instances with the same texture_id.
     ///
     /// Nothing is uploaded here: the batch is appended to the frame's CPU-side
@@ -832,20 +890,83 @@ impl ImagePipeline {
 // available backend (`WgpuBackend`) every associated type maps to its wgpu
 // counterpart.
 #[cfg(feature = "pluggable-backend-exp")]
-impl ImagePipeline {
+impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
+    const INITIAL_CAPACITY: usize = 64;
+
+    #[inline]
+    const fn get_source() -> &'static str {
+        #[cfg(target_os = "android")]
+        {
+            concat!(
+                include_str!("./shaders/android_color.wgsl"),
+                include_str!("./shaders/image.wgsl")
+            )
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            concat!(
+                include_str!("./shaders/color.wgsl"),
+                include_str!("./shaders/image.wgsl")
+            )
+        }
+    }
+
+    #[inline]
+    pub fn has_texture(&self, id: TextureId) -> bool {
+        self.textures.contains_key(&id)
+    }
+
+    #[inline]
+    pub fn remove_texture(&mut self, id: TextureId) -> bool {
+        self.textures.remove(&id).is_some()
+    }
+
+    #[inline]
+    pub fn texture_count(&self) -> usize {
+        self.textures.len()
+    }
+
+    pub fn texture_bytes(&self) -> u64 {
+        self.textures.values().map(|entry| entry.bytes).sum()
+    }
+
+    pub(crate) fn eviction_candidates(&self) -> Vec<TextureId> {
+        let entries = self
+            .textures
+            .iter()
+            .map(|(&id, entry)| TextureCacheEntryInfo {
+                id,
+                bytes: entry.bytes,
+                last_used_frame: entry.last_used_frame,
+                evictable: entry.evictable,
+            })
+            .collect();
+        select_texture_evictions(
+            self.frame_index,
+            IMAGE_TEXTURE_CACHE_BUDGET_BYTES,
+            IMAGE_TEXTURE_IDLE_FRAMES,
+            self.texture_bytes(),
+            entries,
+        )
+    }
+
+    pub fn instance_buffer_bytes(&self) -> u64 {
+        (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64
+    }
+
     /// Constructor for the image pipeline using the WgpuBackend adapter.
     ///
     /// Equivalent to [`ImagePipeline::new`] but routes all GPU operations
     /// through the backend trait instead of calling wgpu directly.
     pub fn new_generic(
-        backend: &crate::backend::wgpu::WgpuBackend,
-        format: wgpu::TextureFormat,
+        backend: &B,
+        format: B::TextureFormat,
         antialiasing: crate::AntiAlias,
     ) -> Self {
         use crate::backend::*;
 
         let shader = backend.create_shader_module(
-            Self::get_source().as_bytes(),
+            backend.builtin_shader_source(BuiltinShader::Image),
             "image shader",
         );
 
@@ -898,20 +1019,10 @@ impl ImagePipeline {
             &texture_bind_group_layout,
         ]);
 
-        // Convert compile-time vertex attributes to backend-agnostic entries.
-        let vertex_attribs: Vec<VertexAttribute> = ImageInstance::ATTRIBS
-            .iter()
-            .map(|a| VertexAttribute {
-                format: img_wgpu_vertex_format_to_backend(a.format),
-                offset: a.offset,
-                shader_location: a.shader_location,
-            })
-            .collect();
-
         let vertex_buffers = [Some(VertexBufferLayout {
             array_stride: size_of::<ImageInstance>() as u64,
             step_mode: VertexStepMode::Instance,
-            attributes: &vertex_attribs,
+            attributes: &ImageInstance::GENERIC_ATTRIBUTES,
         })];
 
         let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
@@ -980,7 +1091,7 @@ impl ImagePipeline {
     /// operations through the backend trait.
     pub fn begin_frame_generic(
         &mut self,
-        backend: &crate::backend::wgpu::WgpuBackend,
+        backend: &B,
         total_instances: usize,
         width: u32,
         height: u32,
@@ -1024,7 +1135,7 @@ impl ImagePipeline {
     /// operations through the backend trait.
     pub fn upload_image_generic(
         &mut self,
-        backend: &crate::backend::wgpu::WgpuBackend,
+        backend: &B,
         width: u32,
         height: u32,
         data: &[u8],
@@ -1041,7 +1152,7 @@ impl ImagePipeline {
     /// operations through the backend trait.
     pub fn upload_if_absent_generic(
         &mut self,
-        backend: &crate::backend::wgpu::WgpuBackend,
+        backend: &B,
         id: TextureId,
         width: u32,
         height: u32,
@@ -1064,7 +1175,7 @@ impl ImagePipeline {
                     mip_level_count: image_mip_level_count(),
                     sample_count: 1,
                     dimension: crate::backend::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    format: B::rgba8_unorm_format(),
                     usage: vec![
                         crate::backend::TextureUsage::TextureBinding,
                         crate::backend::TextureUsage::CopyDst,
@@ -1090,6 +1201,8 @@ impl ImagePipeline {
                 vacant.insert(TextureEntry {
                     bind_group,
                     texture,
+                    width,
+                    height,
                     bytes: width as u64 * height as u64 * 4,
                     last_used_frame: self.frame_index,
                     evictable: true,
@@ -1105,7 +1218,7 @@ impl ImagePipeline {
     /// GPU operations through the backend trait.
     pub fn upload_image_with_id_generic(
         &mut self,
-        backend: &crate::backend::wgpu::WgpuBackend,
+        backend: &B,
         id: TextureId,
         width: u32,
         height: u32,
@@ -1117,7 +1230,7 @@ impl ImagePipeline {
     /// Internal upload helper using the WgpuBackend adapter.
     fn upload_image_with_id_internal_generic(
         &mut self,
-        backend: &crate::backend::wgpu::WgpuBackend,
+        backend: &B,
         id: TextureId,
         width: u32,
         height: u32,
@@ -1133,8 +1246,7 @@ impl ImagePipeline {
         );
         // In-place update if the texture exists and dimensions match.
         if let Some(entry) = self.textures.get_mut(&id) {
-            let size = entry.texture.size();
-            if size.width == width && size.height == height {
+            if entry.width == width && entry.height == height {
                 upload_rgba8_generic(backend, &entry.texture, width, height, data.as_ref());
                 entry.last_used_frame = self.frame_index;
                 entry.evictable = evictable;
@@ -1148,7 +1260,7 @@ impl ImagePipeline {
             mip_level_count: image_mip_level_count(),
             sample_count: 1,
             dimension: crate::backend::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: B::rgba8_unorm_format(),
             usage: vec![
                 crate::backend::TextureUsage::TextureBinding,
                 crate::backend::TextureUsage::CopyDst,
@@ -1176,6 +1288,8 @@ impl ImagePipeline {
             TextureEntry {
                 bind_group,
                 texture,
+                width,
+                height,
                 bytes: width as u64 * height as u64 * 4,
                 last_used_frame: self.frame_index,
                 evictable,
@@ -1190,9 +1304,9 @@ impl ImagePipeline {
     /// bind-group creation through the backend trait.
     pub fn create_external_bind_group_generic(
         &self,
-        backend: &crate::backend::wgpu::WgpuBackend,
-        view: &wgpu::TextureView,
-    ) -> wgpu::BindGroup {
+        backend: &B,
+        view: &B::TextureView,
+    ) -> B::BindGroup {
         use crate::backend::GpuBackend;
         backend.create_bind_group(
             &self.texture_bind_group_layout,
@@ -1209,22 +1323,91 @@ impl ImagePipeline {
         )
     }
 
-    /// Frame end using the WgpuBackend adapter.
-    ///
-    /// Equivalent to [`ImagePipeline::end_frame`] but uploads instance data
-    /// through the backend's write_buffer.
-    pub fn end_frame_generic(&mut self, backend: &crate::backend::wgpu::WgpuBackend) {
+    /// Uploads frame instance data through the selected backend.
+    pub fn end_frame_generic(&mut self, backend: &B) {
         use crate::backend::GpuBackend;
         self.upload
             .upload_generic(backend, &self.instance_buffer, &self.frame_instances);
+    }
+
+    pub fn draw_batch_generic<'a>(
+        &mut self,
+        backend: &B,
+        pass: &mut B::RenderPass<'a>,
+        texture_id: TextureId,
+        instances: &[ImageInstance],
+    ) where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        let Some(bind_group) = self.textures.get_mut(&texture_id).map(|entry| {
+            entry.last_used_frame = self.frame_index;
+            entry.bind_group.clone()
+        }) else {
+            return;
+        };
+        self.draw_batch_with_bind_group_generic(backend, pass, &bind_group, instances);
+    }
+
+    pub(crate) fn draw_external_batch_generic<'a>(
+        &mut self,
+        backend: &B,
+        pass: &mut B::RenderPass<'a>,
+        bind_group: &B::BindGroup,
+        instances: &[ImageInstance],
+    ) where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        self.draw_batch_with_bind_group_generic(backend, pass, bind_group, instances);
+    }
+
+    fn draw_batch_with_bind_group_generic<'a>(
+        &mut self,
+        backend: &B,
+        pass: &mut B::RenderPass<'a>,
+        bind_group: &B::BindGroup,
+        instances: &[ImageInstance],
+    ) where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::{BufferDescriptor, BufferUsage, GpuBackend, GpuRenderPass};
+        if instances.is_empty() {
+            return;
+        }
+
+        let end = self.frame_instance_offset + instances.len();
+        if end > self.instance_policy.capacity() {
+            if !self.frame_instances.is_empty() {
+                backend.write_buffer(
+                    &self.instance_buffer,
+                    0,
+                    bytemuck::cast_slice(&self.frame_instances),
+                );
+            }
+            self.instance_policy.grow_to_fit(end);
+            self.instance_buffer = backend.create_buffer(&BufferDescriptor {
+                label: Some("image instance buffer (resized)".to_string()),
+                size: (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64,
+                usage: vec![BufferUsage::Vertex, BufferUsage::CopyDst],
+            });
+            self.upload.invalidate();
+        }
+
+        let byte_offset = (self.frame_instance_offset * size_of::<ImageInstance>()) as u64;
+        self.frame_instances.extend_from_slice(instances);
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.viewport_bind_group, &[]);
+        pass.set_bind_group(1, bind_group, &[]);
+        pass.set_vertex_buffer(0, &self.instance_buffer, byte_offset);
+        pass.draw(0..6, 0..instances.len() as u32);
+        self.frame_instance_offset = end;
     }
 }
 
 /// Backend-agnostic RGBA8 texture upload via the GpuBackend trait.
 #[cfg(feature = "pluggable-backend-exp")]
-fn upload_rgba8_generic(
-    backend: &crate::backend::wgpu::WgpuBackend,
-    texture: &wgpu::Texture,
+fn upload_rgba8_generic<B: crate::backend::GpuBackend>(
+    backend: &B,
+    texture: &B::Texture,
     width: u32,
     height: u32,
     data: &[u8],
@@ -1251,17 +1434,7 @@ fn upload_rgba8_generic(
 
 /// Helper: convert a wgpu vertex format to the backend-agnostic equivalent
 /// for formats used by ImageInstance.
-#[cfg(feature = "pluggable-backend-exp")]
-fn img_wgpu_vertex_format_to_backend(f: wgpu::VertexFormat) -> crate::backend::VertexFormat {
-    match f {
-        wgpu::VertexFormat::Float32x2 => crate::backend::VertexFormat::Float32x2,
-        wgpu::VertexFormat::Float32x4 => crate::backend::VertexFormat::Float32x4,
-        wgpu::VertexFormat::Float32 => crate::backend::VertexFormat::Float32,
-        _ => unreachable!("image pipeline only uses Float32x2, Float32x4, Float32"),
-    }
-}
-
-#[cfg(test)]
+#[cfg(all(test, feature = "wgpu"))]
 mod tests {
     use std::hint::black_box;
     use std::time::Instant;

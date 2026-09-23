@@ -1,13 +1,20 @@
-use std::{any::Any, mem::size_of, num::NonZeroU64};
+use std::{any::Any, mem::size_of};
+
+#[cfg(feature = "wgpu")]
+use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
 
+#[cfg(feature = "wgpu")]
 use crate::custom_pipeline::{CustomPipeline, RenderContext};
 
 use super::{
-    MaterialKind, MaterialRequest, MaterialShader, MaterialStagePlan, MaterialRenderPath,
-    MAX_INTERMEDIATE_DIMENSION, MAX_INTERMEDIATE_PIXELS, MATERIAL_PIPELINE_NAME, plan_material,
+    MaterialKind, MaterialRequest, MaterialRenderPath, MAX_INTERMEDIATE_DIMENSION,
+    MAX_INTERMEDIATE_PIXELS, MATERIAL_PIPELINE_NAME, plan_material,
 };
+
+#[cfg(feature = "wgpu")]
+use super::{MaterialShader, MaterialStagePlan};
 
 const INITIAL_REQUEST_CAPACITY: usize = 16;
 const MAX_REQUESTS_PER_FRAME: usize = 512;
@@ -119,6 +126,28 @@ impl MaterialUniform {
 /// or Liquid refraction. This works for both analytic and multisampled
 /// rendering. An unsupported or over-budget request keeps a small neutral
 /// texture bound and retains the analytic surface treatment.
+#[cfg(feature = "pluggable-backend-exp")]
+pub struct MaterialPipeline<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
+    pipeline: B::RenderPipeline,
+    bind_group_layout: B::BindGroupLayout,
+    bind_group: B::BindGroup,
+    uniform_buffer: B::Buffer,
+    uniform_stride: u64,
+    uniform_capacity: usize,
+    backdrop_texture: B::Texture,
+    _backdrop_view: B::TextureView,
+    backdrop_sampler: B::Sampler,
+    backdrop_width: u32,
+    backdrop_height: u32,
+    backdrop_format: B::TextureFormat,
+    backdrop_available: bool,
+    requests: Vec<MaterialRequest>,
+    backdrop_regions: Vec<Option<BackdropRegion>>,
+    upload: Vec<u8>,
+}
+
+#[cfg(not(feature = "pluggable-backend-exp"))]
+#[cfg(feature = "wgpu")]
 pub struct MaterialPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -138,6 +167,7 @@ pub struct MaterialPipeline {
     upload: Vec<u8>,
 }
 
+#[cfg(feature = "wgpu")]
 impl MaterialPipeline {
     /// Creates the material pipeline using the renderer's target format and
     /// antialiasing sample count.
@@ -359,6 +389,7 @@ impl MaterialPipeline {
     }
 }
 
+#[cfg(feature = "wgpu")]
 impl CustomPipeline for MaterialPipeline {
     fn name(&self) -> &str {
         MATERIAL_PIPELINE_NAME
@@ -529,21 +560,21 @@ impl CustomPipeline for MaterialPipeline {
 // driven through the [`GpuBackend`] trait using `WgpuBackend`.
 
 #[cfg(feature = "pluggable-backend-exp")]
-impl MaterialPipeline {
+impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
     /// Create the pipeline through the [`GpuBackend`] trait via
     /// [`WgpuBackend`](crate::backend::wgpu::WgpuBackend).
     ///
     /// Equivalent to [`MaterialPipeline::new`] but routes all GPU resource
     /// creation through the backend trait instead of calling wgpu directly.
     pub fn new_generic(
-        backend: &crate::backend::wgpu::WgpuBackend,
-        format: wgpu::TextureFormat,
+        backend: &B,
+        format: B::TextureFormat,
         antialiasing: crate::AntiAlias,
     ) -> Self {
         use crate::backend::*;
 
         let shader = backend.create_shader_module(
-            MaterialShader::source().as_bytes(),
+            backend.builtin_shader_source(BuiltinShader::Material),
             "material shader",
         );
 
@@ -582,7 +613,7 @@ impl MaterialPipeline {
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
-            format: ::wgpu::TextureFormat::Rgba8Unorm,
+            format: B::rgba8_unorm_format(),
             usage: vec![TextureUsage::TextureBinding, TextureUsage::CopyDst],
         });
         let backdrop_view =
@@ -649,7 +680,7 @@ impl MaterialPipeline {
             backdrop_sampler,
             backdrop_width: 1,
             backdrop_height: 1,
-            backdrop_format: ::wgpu::TextureFormat::Rgba8Unorm,
+            backdrop_format: B::rgba8_unorm_format(),
             backdrop_available: false,
             requests: Vec::with_capacity(INITIAL_REQUEST_CAPACITY),
             backdrop_regions: Vec::with_capacity(INITIAL_REQUEST_CAPACITY),
@@ -660,8 +691,8 @@ impl MaterialPipeline {
     /// Backend-driven equivalent of [`ensure_backdrop_texture`].
     fn ensure_backdrop_texture_generic(
         &mut self,
-        backend: &crate::backend::wgpu::WgpuBackend,
-        format: wgpu::TextureFormat,
+        backend: &B,
+        format: B::TextureFormat,
         width: u32,
         height: u32,
         available: bool,
@@ -671,7 +702,7 @@ impl MaterialPipeline {
         let (width, height, format) = if available {
             (width.max(1), height.max(1), format)
         } else {
-            (1, 1, ::wgpu::TextureFormat::Rgba8Unorm)
+            (1, 1, B::rgba8_unorm_format())
         };
         if self.backdrop_width == width
             && self.backdrop_height == height
@@ -712,7 +743,7 @@ impl MaterialPipeline {
     /// Backend-driven equivalent of [`ensure_uniform_capacity`].
     fn ensure_uniform_capacity_generic(
         &mut self,
-        backend: &crate::backend::wgpu::WgpuBackend,
+        backend: &B,
         required: usize,
     ) {
         if required <= self.uniform_capacity {
@@ -738,10 +769,7 @@ impl MaterialPipeline {
     /// through the [`GpuBackend`] trait.
     pub fn prepare_generic(
         &mut self,
-        ctx: &crate::custom_pipeline::RenderContextGeneric<
-            '_,
-            crate::backend::wgpu::WgpuBackend,
-        >,
+        ctx: &crate::custom_pipeline::RenderContextGeneric<'_, B>,
     ) {
         use crate::backend::GpuBackend;
 
@@ -826,9 +854,9 @@ impl MaterialPipeline {
     pub fn capture_backdrop_command_generic(
         &self,
         command_index: Option<usize>,
-        backend: &crate::backend::wgpu::WgpuBackend,
-        encoder: &mut <crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::CommandEncoder,
-        source_texture: &<crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::Texture,
+        backend: &B,
+        encoder: &mut B::CommandEncoder,
+        source_texture: &B::Texture,
         _width: u32,
         _height: u32,
     ) {
@@ -865,8 +893,109 @@ impl MaterialPipeline {
             },
         );
     }
+
+    fn request_from_payload_generic(data: &(dyn Any + Send)) -> Option<MaterialRequest> {
+        data.downcast_ref::<MaterialRequest>()
+            .copied()
+            .or_else(|| {
+                data.downcast_ref::<Vec<u8>>()
+                    .and_then(|bytes| MaterialRequest::decode(bytes).ok())
+            })
+    }
+
+    fn render_command_generic<'pass>(
+        &'pass self,
+        command_index: Option<usize>,
+        pass: &mut B::RenderPass<'pass>,
+    ) where
+        B::RenderPass<'pass>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::GpuRenderPass;
+        let Some(index) = command_index.filter(|index| *index < self.requests.len()) else {
+            return;
+        };
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(
+            0,
+            &self.bind_group,
+            &[(index as u32).saturating_mul(self.uniform_stride as u32)],
+        );
+        pass.draw(0..6, 0..1);
+    }
 }
 
+#[cfg(feature = "pluggable-backend-exp")]
+impl<B: crate::backend::GpuBackend> crate::custom_pipeline::CustomPipelineGeneric<B>
+    for MaterialPipeline<B>
+{
+    fn name(&self) -> &str {
+        MATERIAL_PIPELINE_NAME
+    }
+
+    fn prepare(&mut self, ctx: &crate::custom_pipeline::RenderContextGeneric<'_, B>) {
+        self.prepare_generic(ctx);
+    }
+
+    fn begin_frame(&mut self) {
+        self.requests.clear();
+        self.backdrop_regions.clear();
+        self.upload.clear();
+    }
+
+    fn prepare_command(&mut self, data: &(dyn Any + Send)) -> Option<usize> {
+        let request = Self::request_from_payload_generic(data)?;
+        if plan_material(request, Default::default()).path != MaterialRenderPath::Gpu
+            || self.requests.len() >= MAX_REQUESTS_PER_FRAME
+        {
+            return None;
+        }
+        let index = self.requests.len();
+        self.requests.push(request);
+        Some(index)
+    }
+
+    fn render<'pass>(&'pass self, _pass: &mut B::RenderPass<'pass>) {}
+
+    fn render_command<'pass>(
+        &'pass self,
+        command_index: Option<usize>,
+        pass: &mut B::RenderPass<'pass>,
+    ) {
+        self.render_command_generic(command_index, pass);
+    }
+
+    fn needs_backdrop(&self, command_index: Option<usize>) -> bool {
+        self.backdrop_available
+            && command_index.is_some_and(|index| {
+                self.backdrop_regions.get(index).is_some_and(Option::is_some)
+            })
+    }
+
+    fn capture_backdrop_command(
+        &self,
+        command_index: Option<usize>,
+        backend: &B,
+        encoder: &mut B::CommandEncoder,
+        source_texture: &B::Texture,
+        width: u32,
+        height: u32,
+    ) {
+        self.capture_backdrop_command_generic(
+            command_index,
+            backend,
+            encoder,
+            source_texture,
+            width,
+            height,
+        );
+    }
+
+    fn has_work(&self) -> bool {
+        !self.requests.is_empty()
+    }
+}
+
+#[cfg(feature = "wgpu")]
 fn aligned_uniform_stride(device: &wgpu::Device) -> u64 {
     let alignment = u64::from(device.limits().min_uniform_buffer_offset_alignment.max(1));
     let size = size_of::<MaterialUniform>() as u64;
@@ -935,6 +1064,7 @@ fn backdrop_region(
     })
 }
 
+#[cfg(feature = "wgpu")]
 fn create_uniform_buffer(device: &wgpu::Device, stride: u64, capacity: usize) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("material uniform buffer"),
@@ -944,6 +1074,7 @@ fn create_uniform_buffer(device: &wgpu::Device, stride: u64, capacity: usize) ->
     })
 }
 
+#[cfg(feature = "wgpu")]
 fn create_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -982,7 +1113,7 @@ fn create_bind_group(
 // ── Generic helper functions (pluggable-backend-exp) ────────────────────────
 
 #[cfg(feature = "pluggable-backend-exp")]
-fn aligned_uniform_stride_generic(backend: &crate::backend::wgpu::WgpuBackend) -> u64 {
+fn aligned_uniform_stride_generic<B: crate::backend::GpuBackend>(backend: &B) -> u64 {
     use crate::backend::GpuBackend;
     let alignment =
         u64::from(backend.limits().min_uniform_buffer_offset_alignment.max(1));
@@ -991,11 +1122,12 @@ fn aligned_uniform_stride_generic(backend: &crate::backend::wgpu::WgpuBackend) -
 }
 
 #[cfg(feature = "pluggable-backend-exp")]
-fn create_uniform_buffer_generic(
-    backend: &crate::backend::wgpu::WgpuBackend,
+fn create_uniform_buffer_generic<B: crate::backend::GpuBackend>(
+    backend: &B,
     stride: u64,
     capacity: usize,
-) -> wgpu::Buffer {
+) -> B::Buffer {
+    use crate::backend::GpuBackend;
     use crate::backend::*;
     backend.create_buffer(&BufferDescriptor {
         label: Some("material uniform buffer".to_string()),
@@ -1005,14 +1137,17 @@ fn create_uniform_buffer_generic(
 }
 
 #[cfg(feature = "pluggable-backend-exp")]
-fn create_bind_group_generic(
-    backend: &crate::backend::wgpu::WgpuBackend,
-    layout: &<crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::BindGroupLayout,
-    uniform_buffer: &<crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::Buffer,
+fn create_bind_group_generic<B: crate::backend::GpuBackend>(
+    backend: &B,
+    layout: &B::BindGroupLayout,
+    uniform_buffer: &B::Buffer,
     uniform_stride: u64,
-    backdrop_view: &<crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::TextureView,
-    backdrop_sampler: &<crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::Sampler,
-) -> <crate::backend::wgpu::WgpuBackend as crate::backend::GpuBackend>::BindGroup {
+    backdrop_view: &B::TextureView,
+    backdrop_sampler: &B::Sampler,
+) -> B::BindGroup
+where
+    B: crate::backend::GpuBackend,
+{
     use crate::backend::*;
     backend.create_bind_group(
         layout,

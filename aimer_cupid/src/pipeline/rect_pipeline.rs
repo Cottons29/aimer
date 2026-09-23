@@ -34,6 +34,7 @@ pub struct RectInstance {
 }
 
 impl RectInstance {
+    #[cfg(feature = "wgpu")]
     const ATTRIBS: [wgpu::VertexAttribute; 13] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
@@ -50,6 +51,7 @@ impl RectInstance {
         12 => Float32x4,
     ];
 
+    #[cfg(feature = "wgpu")]
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: size_of::<RectInstance>() as wgpu::BufferAddress,
@@ -57,8 +59,40 @@ impl RectInstance {
             attributes: &Self::ATTRIBS,
         }
     }
+
+    #[cfg(feature = "pluggable-backend-exp")]
+    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 13] = [
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, position) as u64, shader_location: 0 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, size) as u64, shader_location: 1 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, color) as u64, shader_location: 2 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, border_radius) as u64, shader_location: 3 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, border_width) as u64, shader_location: 4 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, border_color) as u64, shader_location: 5 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, outline_width) as u64, shader_location: 6 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, outline_color) as u64, shader_location: 7 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 8 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 9 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, shadow_params) as u64, shader_location: 10 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, shadow_color) as u64, shader_location: 11 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, shadow_flags) as u64, shader_location: 12 },
+    ];
 }
 
+#[cfg(feature = "pluggable-backend-exp")]
+pub struct RectPipeline<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
+    pipeline: B::RenderPipeline,
+    clear_pipeline: B::RenderPipeline,
+    viewport_buffer: B::Buffer,
+    viewport_bind_group: B::BindGroup,
+    instance_buffer: B::Buffer,
+    instance_policy: InstanceBufferPolicy,
+    instances: Vec<RectInstance>,
+    frame_instance_offset: usize,
+    upload: FrameUpload<RectInstance>,
+    last_viewport: Option<(u32, u32, bool)>,
+}
+
+#[cfg(not(feature = "pluggable-backend-exp"))]
 pub struct RectPipeline {
     pipeline: wgpu::RenderPipeline,
     clear_pipeline: wgpu::RenderPipeline,
@@ -88,7 +122,9 @@ pub struct RectPipeline {
     last_viewport: Option<(u32, u32, bool)>,
 }
 
+#[cfg(feature = "wgpu")]
 impl RectPipeline {
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     const INITIAL_CAPACITY: usize = 256;
 
     pub fn new(
@@ -222,13 +258,14 @@ impl RectPipeline {
         }
     }
 
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     pub fn push(&mut self, instance: RectInstance) {
         self.instances.push(instance);
     }
 
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     pub fn clear(&mut self) {
         self.instances.clear();
-        // A fresh frame starts writing at the beginning of the instance buffer.
         self.frame_instance_offset = 0;
     }
 
@@ -283,6 +320,7 @@ impl RectPipeline {
         self.clear();
     }
 
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     pub fn instance_buffer_bytes(&self) -> u64 {
         (self.instance_policy.capacity() * size_of::<RectInstance>()) as u64
     }
@@ -360,24 +398,34 @@ impl RectPipeline {
 // available backend (`WgpuBackend`) every associated type maps to its wgpu
 // counterpart.
 #[cfg(feature = "pluggable-backend-exp")]
-impl RectPipeline {
-    /// Constructor for the rect pipeline using the WgpuBackend adapter.
-    ///
-    /// Equivalent to [`RectPipeline::new`] but routes all GPU operations
-    /// through the backend trait instead of calling wgpu directly. The struct
-    /// fields remain concrete wgpu types (which match
-    /// `<WgpuBackend as GpuBackend>::*`).
+impl<B: crate::backend::GpuBackend> RectPipeline<B> {
+    const INITIAL_CAPACITY: usize = 256;
+
+    #[inline]
+    pub fn push(&mut self, instance: RectInstance) {
+        self.instances.push(instance);
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.instances.clear();
+        self.frame_instance_offset = 0;
+    }
+
+    #[inline]
+    pub fn instance_buffer_bytes(&self) -> u64 {
+        (self.instance_policy.capacity() * size_of::<RectInstance>()) as u64
+    }
+
+    /// Creates a rect pipeline through the selected backend.
     pub fn new_generic(
-        backend: &crate::backend::wgpu::WgpuBackend,
-        format: wgpu::TextureFormat,
+        backend: &B,
+        format: B::TextureFormat,
         antialiasing: crate::AntiAlias,
     ) -> Self {
         use crate::backend::*;
 
-        let shader = backend.create_shader_module(
-            include_str!("./shaders/rect.wgsl").as_bytes(),
-            "rect shader",
-        );
+        let shader = backend.create_shader_module(backend.rect_shader_source(), "rect shader");
 
         let viewport_buffer = backend.create_buffer(&BufferDescriptor {
             label: Some("rect viewport uniform".to_string()),
@@ -406,21 +454,10 @@ impl RectPipeline {
 
         let pipeline_layout = backend.create_pipeline_layout(&[&bind_group_layout]);
 
-        // Convert the compile-time vertex attributes (generated by the wgpu
-        // vertex_attr_array! macro) to backend-agnostic VertexAttribute entries.
-        let vertex_attribs: Vec<VertexAttribute> = RectInstance::ATTRIBS
-            .iter()
-            .map(|a| VertexAttribute {
-                format: wgpu_vertex_format_to_backend(a.format),
-                offset: a.offset,
-                shader_location: a.shader_location,
-            })
-            .collect();
-
         let vertex_buffers = [Some(VertexBufferLayout {
             array_stride: size_of::<RectInstance>() as u64,
             step_mode: VertexStepMode::Instance,
-            attributes: &vertex_attribs,
+            attributes: &RectInstance::GENERIC_ATTRIBUTES,
         })];
 
         let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
@@ -487,13 +524,10 @@ impl RectPipeline {
         }
     }
 
-    /// Frame start using the WgpuBackend adapter.
-    ///
-    /// Equivalent to [`RectPipeline::begin_frame`] but routes all GPU
-    /// operations through the backend trait.
+    /// Starts a frame using the selected backend.
     pub fn begin_frame_generic(
         &mut self,
-        backend: &crate::backend::wgpu::WgpuBackend,
+        backend: &B,
         total_rects: usize,
         width: u32,
         height: u32,
@@ -537,29 +571,54 @@ impl RectPipeline {
         self.clear();
     }
 
-    /// Frame end using the WgpuBackend adapter.
-    ///
-    /// Equivalent to [`RectPipeline::end_frame`] but uploads instance data
-    /// through the backend's write_buffer.
-    pub fn end_frame_generic(&mut self, backend: &crate::backend::wgpu::WgpuBackend) {
+    /// Uploads pending instance data through the selected backend.
+    pub fn end_frame_generic(&mut self, backend: &B) {
         use crate::backend::GpuBackend;
         self.upload
             .upload_generic(backend, &self.instance_buffer, &self.instances);
     }
-}
 
-/// Helper: convert a wgpu vertex format to the backend-agnostic equivalent.
-#[cfg(feature = "pluggable-backend-exp")]
-fn wgpu_vertex_format_to_backend(f: wgpu::VertexFormat) -> crate::backend::VertexFormat {
-    match f {
-        wgpu::VertexFormat::Float32x2 => crate::backend::VertexFormat::Float32x2,
-        wgpu::VertexFormat::Float32x4 => crate::backend::VertexFormat::Float32x4,
-        wgpu::VertexFormat::Unorm8x4 => crate::backend::VertexFormat::Unorm8x4,
-        _ => unreachable!("rect pipeline only uses Float32x2, Float32x4, Unorm8x4"),
+    /// Records the pending rectangle batch through the backend render pass.
+    pub fn flush_generic<'a>(&mut self, pass: &mut B::RenderPass<'a>)
+    where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::GpuRenderPass;
+        let pending = self.instances.len() - self.frame_instance_offset;
+        if pending == 0 {
+            return;
+        }
+        debug_assert!(self.instances.len() <= self.instance_policy.capacity());
+        let byte_offset = (self.frame_instance_offset * size_of::<RectInstance>()) as u64;
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.viewport_bind_group, &[]);
+        pass.set_vertex_buffer(0, &self.instance_buffer, byte_offset);
+        pass.draw(0..6, 0..pending as u32);
+        self.frame_instance_offset = self.instances.len();
+    }
+
+    /// Clears the pending damaged rectangle using replacement blending.
+    pub fn flush_clear_generic<'a>(&mut self, pass: &mut B::RenderPass<'a>)
+    where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::GpuRenderPass;
+        let pending = self.instances.len() - self.frame_instance_offset;
+        if pending == 0 {
+            return;
+        }
+        debug_assert!(self.instances.len() <= self.instance_policy.capacity());
+        let byte_offset = (self.frame_instance_offset * size_of::<RectInstance>()) as u64;
+        pass.set_pipeline(&self.clear_pipeline);
+        pass.set_bind_group(0, &self.viewport_bind_group, &[]);
+        pass.set_vertex_buffer(0, &self.instance_buffer, byte_offset);
+        pass.draw(0..6, 0..pending as u32);
+        self.frame_instance_offset = self.instances.len();
     }
 }
 
-#[cfg(test)]
+/// Helper: convert a wgpu vertex format to the backend-agnostic equivalent.
+#[cfg(all(test, feature = "wgpu"))]
 mod tests {
     use super::RectInstance;
 

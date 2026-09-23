@@ -5,7 +5,10 @@ edition = "2024"
 description = "A rendering engine that optimized for the ui framework"
 
 [features]
-default = ["apple-core-text"]
+default = ["apple-core-text", "wgpu"]
+# Keep the compatibility renderer and the WGPU adapter optional so the
+# experimental generic renderer can be built with a native backend alone.
+wgpu = ["dep:wgpu", "dep:winit"]
 # Keep optional checked-in fallback faces out of native downstream binaries
 # unless an application explicitly opts into deterministic bundled rendering.
 # wasm always carries the generic Latin/monospace faces because browsers do not
@@ -19,16 +22,35 @@ apple-core-text = [
     "dep:objc2-core-text",
     "dep:objc2-core-graphics",
 ]
-# Experimental: make the renderer generic over a GpuBackend trait.
-# When this flag is enabled the concrete wgpu-only path is replaced by
-# RendererImpl<B: GpuBackend> with WgpuBackend as the default.
+# Experimental: expose the GpuBackend trait path and `RendererImpl<B>`, which
+# can be built with either the WGPU or native Metal backend.
 pluggable-backend-exp = []
 # Experimental: native Metal backend via objc2-metal.
-# Implies pluggable-backend-exp. Only compiles on macOS/iOS.
-metal = ["pluggable-backend-exp"]
+# Implies pluggable-backend-exp. Only compiles on macOS/iOS, because the
+# objc2-metal dependency below is declared in an Apple target table.
+metal = [
+    "pluggable-backend-exp",
+    "apple-core-text",
+    "dep:objc2-metal",
+    "dep:objc2-foundation",
+    "dep:objc2",
+    "dep:objc2-quartz-core",
+]
+metal-demo = [
+    "metal",
+    "dep:winit",
+    "dep:raw-window-handle",
+    "dep:objc2-app-kit",
+]
 [[bin]]
 path = "src/bin.rs"
 name = "cupid"
+required-features = ["wgpu"]
+
+[[bin]]
+path = "src/bin_metal.rs"
+name = "cupid-metal"
+required-features = ["metal-demo"]
 
 [dependencies]
 aimer_utils = { workspace = true, features = ["time-cost"] }
@@ -38,8 +60,8 @@ aimer_shape.workspace = true
 
 
 #############
-wgpu.workspace = true
-winit = { version = "0.30.12", default-features = false, features = [
+wgpu = { workspace = true, optional = true }
+winit = { version = "0.30.12", default-features = false, optional = true, features = [
     "android-native-activity",
     "rwh_06",
     "wayland",
@@ -47,6 +69,7 @@ winit = { version = "0.30.12", default-features = false, features = [
     "wayland-dlopen",
     "x11",
 ] }
+raw-window-handle = { workspace = true, optional = true }
 bytemuck.workspace = true
 unicode-bidi.workspace = true
 unicode-linebreak.workspace = true
@@ -97,6 +120,60 @@ objc2-core-graphics = { workspace = true, optional = true, features = [
     "CGContext",
     "CGFont",
     "CGImage",
+] }
+objc2 = { workspace = true, optional = true }
+objc2-app-kit = { workspace = true, optional = true, features = [
+    "std",
+    "NSResponder",
+    "NSView",
+    "objc2-quartz-core",
+] }
+# NSString for shader source and labels, NSError for the fallible Metal
+# constructors, NSRange/NSValue for region and clear-color plumbing.
+objc2-foundation = { workspace = true, optional = true, features = [
+    "std",
+    "NSError",
+    "NSObject",
+    "NSRange",
+    "NSString",
+    "NSValue",
+] }
+objc2-quartz-core = { workspace = true, optional = true, features = [
+    "std",
+    "CALayer",
+    "CAMetalLayer",
+    "objc2-core-foundation",
+    "objc2-metal",
+] }
+# The native Metal backend. Each MTL* feature turns on one generated submodule,
+# so the list is exactly the surface `backend/metal.rs` touches. `bitflags` is
+# required for the MTLResourceOptions / MTLTextureUsage / MTLUsagePageRange
+# newtype operators.
+objc2-metal = { workspace = true, optional = true, features = [
+    "std",
+    "bitflags",
+    "block2",
+    "MTLAllocation",
+    "MTLArgument",
+    "MTLBlitCommandEncoder",
+    "MTLBuffer",
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",
+    "MTLCommandQueue",
+    "MTLDepthStencil",
+    "MTLDevice",
+    "MTLDrawable",
+    "MTLLibrary",
+    "MTLPipeline",
+    "MTLPixelFormat",
+    "MTLRenderCommandEncoder",
+    "MTLRenderPass",
+    "MTLRenderPipeline",
+    "MTLResource",
+    "MTLSampler",
+    "MTLTexture",
+    "MTLTypes",
+    "MTLVertexDescriptor",
 ] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

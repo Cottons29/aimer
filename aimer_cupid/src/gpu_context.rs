@@ -362,7 +362,7 @@ impl<'w> GpuContext<'w> {
     /// Builds a [`crate::backend::wgpu::WgpuBackend`] over this context's
     /// device and queue.
     ///
-    /// Use with [`crate::renderer::Renderer::new_generic`] when the
+    /// Use with [`crate::renderer::RendererImpl::new`] when the
     /// `pluggable-backend-exp` feature is enabled. `Device`/`Queue` are
     /// reference-counted, so cloning them into the backend is cheap and does
     /// not invalidate the context.

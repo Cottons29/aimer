@@ -1,3 +1,4 @@
+#[cfg(any(feature = "wgpu", feature = "pluggable-backend-exp"))]
 use std::any::Any;
 
 #[cfg(feature = "pluggable-backend-exp")]
@@ -5,6 +6,7 @@ use crate::backend::GpuBackend;
 
 /// Context passed to custom pipelines during rendering (non-flag path).
 /// Provides access to GPU resources and the current frame's viewport info.
+#[cfg(feature = "wgpu")]
 pub struct RenderContext<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
@@ -44,14 +46,14 @@ pub struct RenderContextGeneric<'a, B: GpuBackend> {
 /// pipeline it holds has to be `Send`. On `wasm32` the WebGPU backend's
 /// resources are `Rc`-based and therefore never `Send`, and the renderer never
 /// leaves the thread that created it, so the bound is dropped there.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "wgpu", not(target_arch = "wasm32")))]
 pub trait MaybeSend: Send {}
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "wgpu", not(target_arch = "wasm32")))]
 impl<T: Send> MaybeSend for T {}
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(feature = "wgpu", target_arch = "wasm32"))]
 pub trait MaybeSend {}
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(feature = "wgpu", target_arch = "wasm32"))]
 impl<T> MaybeSend for T {}
 
 /// Trait for user-defined render pipelines that can be plugged into the main
@@ -94,6 +96,7 @@ impl<T> MaybeSend for T {}
 ///     }
 /// }
 /// ```
+#[cfg(feature = "wgpu")]
 pub trait CustomPipeline: MaybeSend + 'static {
     /// A unique name identifying this pipeline (used for debug labels and
     /// lookup).
@@ -183,7 +186,7 @@ pub trait CustomPipeline: MaybeSend + 'static {
 /// Backend-agnostic custom pipeline trait used when `pluggable-backend-exp` is
 /// enabled.
 #[cfg(feature = "pluggable-backend-exp")]
-pub trait CustomPipelineGeneric<B: GpuBackend>: MaybeSend + 'static {
+pub trait CustomPipelineGeneric<B: GpuBackend>: 'static {
     /// A unique name identifying this pipeline.
     fn name(&self) -> &str;
 
@@ -218,6 +221,7 @@ pub trait CustomPipelineGeneric<B: GpuBackend>: MaybeSend + 'static {
     /// Copies the current frame into the pipeline's backdrop texture.
     fn capture_backdrop(
         &self,
+        _backend: &B,
         _encoder: &mut B::CommandEncoder,
         _source_texture: &B::Texture,
         _width: u32,
@@ -229,12 +233,13 @@ pub trait CustomPipelineGeneric<B: GpuBackend>: MaybeSend + 'static {
     fn capture_backdrop_command(
         &self,
         _command_index: Option<usize>,
+        backend: &B,
         encoder: &mut B::CommandEncoder,
         source_texture: &B::Texture,
         width: u32,
         height: u32,
     ) {
-        self.capture_backdrop(encoder, source_texture, width, height);
+        self.capture_backdrop(backend, encoder, source_texture, width, height);
     }
 
     /// Whether this pipeline has any work to do this frame.
@@ -244,10 +249,12 @@ pub trait CustomPipelineGeneric<B: GpuBackend>: MaybeSend + 'static {
 }
 
 /// Wrapper that holds a custom pipeline instance.
+#[cfg(feature = "wgpu")]
 pub(crate) struct CustomPipelineSlot {
     pub pipeline: Box<dyn CustomPipeline>,
 }
 
+#[cfg(feature = "wgpu")]
 impl CustomPipelineSlot {
     pub fn new(pipeline: impl CustomPipeline) -> Self {
         let pipeline = Box::new(pipeline);

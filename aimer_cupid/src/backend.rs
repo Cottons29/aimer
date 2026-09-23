@@ -17,14 +17,39 @@
 //! |--------|---------|
 //! | [`self`] | `GpuBackend` trait, `GpuRenderPass` trait, shared descriptors |
 //! | [`wgpu`] | `WgpuBackend` — delegates every operation to the `wgpu` crate |
-//! | `metal` | `MetalBackend` — native Metal via `objc2-metal` (future) |
+//! | `metal` | `MetalBackend` — native Metal via `objc2-metal` |
 
 use std::num::NonZeroU32;
 use std::ops::Range;
 
 // Re-export the wgpu adapter when the feature is active.
-#[cfg(feature = "pluggable-backend-exp")]
+#[cfg(feature = "wgpu")]
 pub mod wgpu;
+
+// The native Metal adapter is available only where its target dependencies
+// exist. A separate compile error below gives a direct diagnostic elsewhere.
+#[cfg(all(feature = "metal", any(target_os = "macos", target_os = "ios")))]
+pub mod metal;
+
+/// Backend selected by the active feature set for public generic type defaults.
+#[cfg(feature = "wgpu")]
+pub type DefaultGpuBackend = wgpu::WgpuBackend;
+
+/// Metal is the default backend when WGPU has explicitly been disabled.
+#[cfg(all(not(feature = "wgpu"), feature = "metal"))]
+pub type DefaultGpuBackend = metal::MetalBackend;
+
+#[cfg(all(
+    feature = "metal",
+    not(any(target_os = "macos", target_os = "ios"))
+))]
+compile_error!("the `metal` feature is only supported on macOS and iOS");
+
+#[cfg(all(
+    feature = "pluggable-backend-exp",
+    not(any(feature = "wgpu", feature = "metal"))
+))]
+compile_error!("enable either the `wgpu` or `metal` feature with `pluggable-backend-exp`");
 
 // ──────────────────────────────────────────────
 //  Descriptor types shared by all backends
@@ -659,6 +684,29 @@ pub struct WriteTextureDescriptor<'a, B: GpuBackend> {
     pub extent: Extent3d,
 }
 
+// ── Errors ────────────────────────────────────────────────────────────────
+
+/// A backend operation that the driver rejected.
+///
+/// Only pipeline and shader creation can currently fail portably: a native API
+/// compiles shading source when it builds a pipeline, so a source-level error
+/// surfaces there rather than at module creation.
+#[derive(Debug, Clone)]
+pub struct BackendError {
+    /// The operation that failed, for diagnostics.
+    pub operation: &'static str,
+    /// The backend's own description of the failure.
+    pub message: String,
+}
+
+impl std::fmt::Display for BackendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} failed: {}", self.operation, self.message)
+    }
+}
+
+impl std::error::Error for BackendError {}
+
 // ── GpuRenderPass trait ───────────────────────────────────────────────────
 
 /// Operations that can be encoded into a render pass.
@@ -677,6 +725,62 @@ pub trait GpuRenderPass<B: GpuBackend> {
 
 // ── GpuBackend trait ──────────────────────────────────────────────────────
 
+/// Identifies a built-in shader module used by Cupid's generic pipelines.
+///
+/// The generic WGPU path resolves these to the repository's WGSL sources;
+/// native-language backends can provide matching shader modules.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BuiltinShader {
+    Image,
+    Text,
+    TextColor,
+    TextDecoration,
+    Svg,
+    FrameComposite,
+    Material,
+}
+
+impl BuiltinShader {
+    fn wgsl_source(self) -> &'static [u8] {
+        match self {
+            #[cfg(target_os = "android")]
+            Self::Image => concat!(
+                include_str!("pipeline/shaders/android_color.wgsl"),
+                include_str!("pipeline/shaders/image.wgsl")
+            )
+            .as_bytes(),
+            #[cfg(not(target_os = "android"))]
+            Self::Image => concat!(
+                include_str!("pipeline/shaders/color.wgsl"),
+                include_str!("pipeline/shaders/image.wgsl")
+            )
+            .as_bytes(),
+            Self::Text => include_str!("pipeline/shaders/text.wgsl").as_bytes(),
+            Self::TextColor => include_str!("pipeline/shaders/text_color.wgsl").as_bytes(),
+            Self::TextDecoration => {
+                include_str!("pipeline/shaders/text_decoration.wgsl").as_bytes()
+            }
+            #[cfg(target_os = "android")]
+            Self::Svg => concat!(
+                include_str!("pipeline/shaders/android_color.wgsl"),
+                include_str!("pipeline/shaders/svg.wgsl")
+            )
+            .as_bytes(),
+            #[cfg(not(target_os = "android"))]
+            Self::Svg => concat!(
+                include_str!("pipeline/shaders/color.wgsl"),
+                include_str!("pipeline/shaders/svg.wgsl")
+            )
+            .as_bytes(),
+            Self::FrameComposite => include_str!("pipeline/frame_composite.wgsl").as_bytes(),
+            Self::Material => {
+                include_str!("pipeline/material/shaders/material.wgsl").as_bytes()
+            }
+        }
+    }
+}
+
 /// A pluggable GPU backend.
 ///
 /// Implementations own the device handle, a command queue, and produce all GPU
@@ -690,13 +794,13 @@ pub trait GpuBackend: Sized + 'static {
     /// A GPU buffer (vertex, index, uniform, staging, …).
     type Buffer;
     /// A GPU texture (color target, image, …).
-    type Texture;
+    type Texture: Clone;
     /// A view into a GPU texture.
-    type TextureView;
+    type TextureView: Clone;
     /// A bind group layout describing the set of bound resources.
     type BindGroupLayout;
     /// A concrete bind group.
-    type BindGroup;
+    type BindGroup: Clone;
     /// A pipeline layout describing bind group layouts.
     type PipelineLayout;
     /// A fully compiled render pipeline state object.
@@ -710,6 +814,12 @@ pub trait GpuBackend: Sized + 'static {
     /// The native texture format type (must be cheaply copyable and comparable).
     type TextureFormat: Copy + Eq + Send + Sync;
 
+    /// Format used for single-channel glyph coverage atlases.
+    fn r8_unorm_format() -> Self::TextureFormat;
+
+    /// Format used for portable RGBA8 images and neutral fallback textures.
+    fn rgba8_unorm_format() -> Self::TextureFormat;
+
     /// The backend's render-pass type, parameterized by the encoder lifetime.
     type RenderPass<'a>: GpuRenderPass<Self>
     where
@@ -717,8 +827,44 @@ pub trait GpuBackend: Sized + 'static {
 
     // ── Resource creation ───────────────────────────────────────────────
 
-    /// Compile a shader module from SPIR-V / WGSL / MSL source bytes.
+    /// Shader source for the built-in rectangle pipeline.
+    ///
+    /// Most backends use the WGSL implementation. Backends with a native
+    /// shader language can override this hook while preserving the pipeline's
+    /// entry-point names and vertex layout.
+    #[doc(hidden)]
+    fn rect_shader_source(&self) -> &'static [u8] {
+        include_str!("pipeline/shaders/rect.wgsl").as_bytes()
+    }
+
+    /// Returns the selected backend's source for one built-in shader module.
+    #[doc(hidden)]
+    fn builtin_shader_source(&self, shader: BuiltinShader) -> &'static [u8] {
+        shader.wgsl_source()
+    }
+
+    /// Compile a shader module from an opaque source blob.
+    ///
+    /// The bytes are interpreted in whatever language is native to the backend:
+    /// WGSL for [`WgpuBackend`](wgpu::WgpuBackend), MSL for a Metal backend. A
+    /// pipeline that is expected to run on more than one backend must therefore
+    /// supply source matching the backend it is built against; the blob is not
+    /// translated between them.
     fn create_shader_module(&self, source: &[u8], label: &str) -> Self::ShaderModule;
+
+    /// Fallible counterpart of [`GpuBackend::create_shader_module`].
+    ///
+    /// Backends that compile source eagerly report syntax and target errors
+    /// here instead of only being able to panic. The default never fails, so a
+    /// backend whose module creation cannot reject its input does not
+    /// implement this.
+    fn try_create_shader_module(
+        &self,
+        source: &[u8],
+        label: &str,
+    ) -> Result<Self::ShaderModule, BackendError> {
+        Ok(self.create_shader_module(source, label))
+    }
 
     /// Create a GPU buffer.
     fn create_buffer(&self, desc: &BufferDescriptor) -> Self::Buffer;
@@ -753,6 +899,20 @@ pub trait GpuBackend: Sized + 'static {
         &self,
         desc: &RenderPipelineDescriptor<Self>,
     ) -> Self::RenderPipeline;
+
+    /// Fallible counterpart of [`GpuBackend::create_render_pipeline`].
+    ///
+    /// Backends that compile shading source while building a pipeline surface
+    /// shader errors here, which is why the diagnostic is worth carrying: the
+    /// infallible form has to panic to report one. The default implementation
+    /// never fails, so a backend whose pipeline creation cannot error does not
+    /// implement this.
+    fn try_create_render_pipeline(
+        &self,
+        desc: &RenderPipelineDescriptor<Self>,
+    ) -> Result<Self::RenderPipeline, BackendError> {
+        Ok(self.create_render_pipeline(desc))
+    }
 
     // ── Data upload ─────────────────────────────────────────────────────
 
@@ -799,6 +959,31 @@ pub trait GpuBackend: Sized + 'static {
         dst: &TexelCopyTextureInfo<Self>,
         extent: Extent3d,
     );
+
+    /// Copy a texture sub-region into a buffer.
+    ///
+    /// Together with [`GpuBackend::read_buffer` this is how a caller inspects
+    /// rendered pixels, so the destination buffer must have been created with
+    /// [`BufferUsage::CopyDst`] and [`BufferUsage::MapRead`], and its
+    /// `bytes_per_row` must satisfy the backend's row alignment.
+    fn copy_texture_to_buffer(
+        &self,
+        encoder: &mut Self::CommandEncoder,
+        src: &TexelCopyTextureInfo<Self>,
+        dst: &TexelCopyBufferInfo<Self>,
+        extent: Extent3d,
+    );
+
+    // ── CPU readback ────────────────────────────────────────────────────
+
+    /// Block until `buffer` is CPU-readable and return its first `size` bytes.
+    ///
+    /// This submits nothing and encodes nothing: the copy that filled `buffer`
+    /// must already have been submitted via [`GpuBackend::submit`]. It exists
+    /// so that pixel-level checks go through the backend abstraction instead of
+    /// reaching for a concrete device, which means every backend pays the same
+    /// synchronous stall and this is therefore unsuitable for a frame loop.
+    fn read_buffer(&self, buffer: &Self::Buffer, size: u64) -> Vec<u8>;
 
     // ── Submission ──────────────────────────────────────────────────────
 

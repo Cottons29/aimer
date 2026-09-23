@@ -3,7 +3,7 @@ use std::rc::Rc;
 use aimer_assets::{AssetImage, NetworkImage};
 use aimer_color::prelude::Color;
 use aimer_container::{Container, SizedBox, ZeroSizedBox};
-use aimer_flex::{BoxAlignment, Column, Expanded, Row};
+use aimer_flex::{BoxAlignment, Column, Expanded, OverflowBehavior, Row};
 use aimer_grid::{Grid, GridItem, GridTrack};
 use aimer_input::button::Button;
 use aimer_scroll::{ScrollAxis, Scrollable};
@@ -735,6 +735,7 @@ fn render_inline_flow(
     if has_custom_inline && !has_image {
         Row::new()
             .vertical_alignment(BoxAlignment::Start)
+            .overflow(OverflowBehavior::Wrap)
             .children(children)
             .boxed()
     } else {
@@ -755,20 +756,21 @@ fn rich_text_for_inline_flow(
     has_custom_inline: bool,
 ) -> AnyWidget {
     if has_custom_inline {
-        rich_text_aligned_unwrapped(inlines, style, alignment, theme, link_handler)
+        rich_text_aligned_wrappable(inlines, style, alignment, theme, link_handler)
     } else {
         rich_text_aligned(inlines, style, alignment, theme, link_handler)
     }
 }
 
-fn rich_text_aligned_unwrapped(
+fn rich_text_aligned_wrappable(
     inlines: &[Inline],
     style: TextStyle,
     alignment: Option<TextAlign>,
     theme: &MarkdownTheme,
     link_handler: Option<&LinkHandler>,
 ) -> AnyWidget {
-    let rich = RichText::new(inline_spans(inlines, theme)).text_style(style);
+    let rich = RichText::new(inline_spans(inlines, theme))
+        .text_style(style.text_overflow(TextOverflow::Wrap));
     let rich = match alignment {
         Some(alignment) => rich.text_align(alignment),
         None => rich,
@@ -1110,6 +1112,57 @@ mod tests {
         .to_element(&ctx);
 
         assert_eq!(element.debug_name(), "RawRichText");
+    }
+
+    #[test]
+    fn custom_inline_widgets_wrap_with_their_surrounding_text() {
+        use crate::{CustomInlineData, InlineRule, InlineSyntax};
+
+        let rule = InlineRule::new(
+            "button",
+            InlineSyntax::Paired {
+                opening: "{{button:",
+                closing: "}}",
+            },
+        );
+        let document = Document::parse_with_rules(
+            "This sentence is deliberately long before {{button:continue}} and after it.",
+            &[],
+            std::slice::from_ref(&rule),
+        )
+        .unwrap();
+        let Block::Paragraph(inlines) = &document.blocks[0] else {
+            panic!("expected a paragraph with inline content");
+        };
+        let custom_inlines = vec![(
+            rule,
+            Rc::new(|data: &CustomInlineData| {
+                assert_eq!(data.label, "continue");
+                SizedBox::new().width(72).height(24).boxed()
+            }) as CustomInlineBuilder,
+        )];
+        let resolver: ImageResolver = Rc::new(default_image_resolver);
+        let theme = MarkdownTheme::default();
+        let ctx = layout_context(180.0, 160.0);
+        let element = render_inline_flow(
+            inlines,
+            theme.body,
+            None,
+            &theme,
+            None,
+            &resolver,
+            &custom_inlines,
+            &[],
+            None,
+        )
+        .to_element(&ctx);
+
+        let size = element.computed_size(&ctx);
+        assert!(size.width <= ctx.parent_size.width);
+        assert!(
+            size.height > 24.0,
+            "the text and custom widget stayed on one clipped row: {size:?}"
+        );
     }
 
     #[test]

@@ -6,7 +6,18 @@ resolver = "3"
 
 
 [features]
-default = []
+default = ["wgpu"]
+# Present native frames through Cupid's WGPU surface renderer.
+wgpu = ["dep:wgpu", "aimer_cupid/wgpu", "aimer_cupid/apple-core-text"]
+# Present native macOS frames through Cupid's direct Metal surface renderer.
+# Select with `--no-default-features --features metal` for a WGPU-free Quiver.
+metal = [
+    "aimer_cupid/metal",
+    "dep:objc2-app-kit",
+    "dep:objc2-core-foundation",
+    "dep:objc2-metal",
+    "dep:objc2-quartz-core",
+]
 # Encode and present frames on a dedicated raster thread instead of inline on
 # the UI thread. Off by default: it caps latency at one extra frame and moves
 # the presentation outcome — and with it the first-frame notification — off the
@@ -72,14 +83,13 @@ aimer_scroll = { workspace = true, optional = true }
 aimer_space = { workspace = true, optional = true }
 aimer_text = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true, features = ["blocking"] }
-wgpu.workspace = true
+wgpu = { workspace = true, optional = true }
 
 #################
 
 
 winit = {workspace = true}
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wgpu.workspace = true
 objc.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"]}
 raw-window-handle.workspace = true
@@ -96,6 +106,15 @@ rustls-platform-verifier .workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda.workspace = true
+objc2-app-kit = { workspace = true, optional = true, features = [
+    "std",
+    "NSResponder",
+    "NSView",
+    "objc2-quartz-core",
+] }
+objc2-core-foundation = { workspace = true, optional = true }
+objc2-metal = { workspace = true, optional = true }
+objc2-quartz-core = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
