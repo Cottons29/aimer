@@ -265,8 +265,6 @@ openssl = { version = "0.10.81", features = ["vendored"] }
 uuid = { version = "1.23.5", features = ["js", "v4", "serde"] }
 dirs = "6.0.0"
 webbrowser = "1.2.4"
-lyon = "1.0.19"
-usvg = { version = "0.47.0", default-features = false }
 naga = { version = "30.0.0", features = ["wgsl-in"] }
 
 # Markdown - Optinal Feature

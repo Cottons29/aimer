@@ -18,11 +18,13 @@ use crate::utilities::{Mat3, Rgba8};
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct SvgVertex {
     position: [f32; 2],
+    coverage: f32,
 }
 
 impl SvgVertex {
     #[cfg(feature = "wgpu")]
-    const ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![0 => Float32x2];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+        wgpu::vertex_attr_array![0 => Float32x2, 7 => Float32];
 
     #[cfg(feature = "wgpu")]
     fn layout() -> wgpu::VertexBufferLayout<'static> {
@@ -34,12 +36,18 @@ impl SvgVertex {
     }
 
     #[cfg(feature = "pluggable-backend-exp")]
-    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 1] =
-        [crate::backend::VertexAttribute {
+    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 2] = [
+        crate::backend::VertexAttribute {
             format: crate::backend::VertexFormat::Float32x2,
             offset: std::mem::offset_of!(Self, position) as u64,
             shader_location: 0,
-        }];
+        },
+        crate::backend::VertexAttribute {
+            format: crate::backend::VertexFormat::Float32,
+            offset: std::mem::offset_of!(Self, coverage) as u64,
+            shader_location: 7,
+        },
+    ];
 }
 
 #[repr(C)]
@@ -124,6 +132,7 @@ pub struct SvgPipeline<B: crate::backend::GpuBackend = crate::backend::DefaultGp
     usage_clock: u64,
     max_gpu_mesh_bytes: u64,
     max_gpu_meshes: usize,
+    analytic_aa: bool,
 }
 
 #[cfg(not(feature = "pluggable-backend-exp"))]
@@ -143,6 +152,7 @@ pub struct SvgPipeline {
     usage_clock: u64,
     max_gpu_mesh_bytes: u64,
     max_gpu_meshes: usize,
+    analytic_aa: bool,
 }
 
 #[cfg(feature = "wgpu")]
@@ -216,6 +226,7 @@ impl SvgPipeline {
             usage_clock: 0,
             max_gpu_mesh_bytes: Self::MAX_GPU_MESH_BYTES,
             max_gpu_meshes: Self::MAX_GPU_MESHES,
+            analytic_aa: antialiasing == crate::AntiAlias::Analytic,
         }
     }
 
@@ -391,7 +402,7 @@ impl SvgPipeline {
     ) {
         let Ok(mesh) = self
             .geometry_cache
-            .mesh_for(geometry, style, physical_scale)
+            .mesh_for_with_analytic_aa(geometry, style, physical_scale, self.analytic_aa)
         else {
             return;
         };
@@ -440,7 +451,8 @@ impl SvgPipeline {
             .vertices
             .iter()
             .copied()
-            .map(|position| SvgVertex { position })
+            .zip(mesh.coverages.iter().copied())
+            .map(|(position, coverage)| SvgVertex { position, coverage })
             .collect::<Vec<_>>();
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("svg vertex buffer"),
@@ -631,6 +643,7 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
             usage_clock: 0,
             max_gpu_mesh_bytes: Self::MAX_GPU_MESH_BYTES,
             max_gpu_meshes: Self::MAX_GPU_MESHES,
+            analytic_aa: antialiasing == crate::AntiAlias::Analytic,
         }
     }
 
@@ -779,7 +792,7 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
     ) {
         let Ok(mesh) = self
             .geometry_cache
-            .mesh_for(geometry, style, physical_scale)
+            .mesh_for_with_analytic_aa(geometry, style, physical_scale, self.analytic_aa)
         else {
             return;
         };
@@ -824,7 +837,8 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
             .vertices
             .iter()
             .copied()
-            .map(|position| SvgVertex { position })
+            .zip(mesh.coverages.iter().copied())
+            .map(|(position, coverage)| SvgVertex { position, coverage })
             .collect::<Vec<_>>();
         let vertex_bytes = bytemuck::cast_slice(&vertices);
         let vertex_buffer = backend.create_buffer(&BufferDescriptor {

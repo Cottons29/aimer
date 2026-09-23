@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::svg::{SvgFillRule, SvgPathCommand};
+use crate::svg::{SvgElementKind, SvgFillRule, SvgPathCommand, SvgTransform, parse_svg};
 
 use super::color::ColorRgba;
 use super::{FontMetrics, Reader, SfntError, SfntFace, Tag, checked_add, checked_mul};
@@ -194,30 +194,50 @@ fn parse_index(table: &[u8], metrics: FontMetrics) -> Result<Vec<SvgDocumentEntr
     Ok(entries)
 }
 
-fn parse_document(bytes: &[u8], units_per_em: u16) -> Option<SvgGlyph> {
+fn parse_document(bytes: &[u8], _units_per_em: u16) -> Option<SvgGlyph> {
     if bytes.is_empty()
         || bytes.len() > MAX_SVG_DOCUMENT_BYTES
         || bytes.starts_with(&[0x1f, 0x8b])
     {
         return None;
     }
-    let source = std::str::from_utf8(bytes).ok()?;
-    // The owned font path does not need DTD/entity expansion for path glyphs.
-    // Rejecting it keeps the bounded source policy meaningful before usvg's
-    // general XML parser sees the document.
-    if source.contains("<!DOCTYPE") || source.contains("<!ENTITY") {
-        return None;
-    }
-
-    let mut options = usvg::Options::default();
-    options.default_size = usvg::Size::from_wh(
-        f32::from(units_per_em),
-        f32::from(units_per_em),
-    )?;
-    let tree = usvg::Tree::from_data_nested(bytes, &options).ok()?;
+    let scene = parse_svg(bytes).ok()?;
     let mut paths = Vec::new();
     let mut command_count = 0_usize;
-    collect_paths(tree.root(), &mut paths, &mut command_count)?;
+    for node in scene.nodes.iter() {
+        if node.element != SvgElementKind::Path || !node.visible {
+            continue;
+        }
+        if node.stroke.is_some() {
+            return None;
+        }
+        let Some(fill) = node.fill.as_ref() else { continue };
+        let alpha = scaled_alpha(fill.color.a * node.opacity)?;
+        if alpha == 0 { continue; }
+        let geometry = scene.geometry(node)?;
+        let mut commands = Vec::with_capacity(geometry.commands.len());
+        let mut bounds = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+        for command in geometry.commands.iter().copied() {
+            let command = map_command(command, node.transform)?;
+            include_command_bounds(command, &mut bounds);
+            commands.push(command);
+            command_count = command_count.checked_add(1)?;
+            if command_count > MAX_SVG_COMMANDS { return None; }
+        }
+        if paths.len() >= MAX_SVG_PATHS { return None; }
+        if !bounds.iter().all(|value| value.is_finite()) || bounds[0] > bounds[2] || bounds[1] > bounds[3] { return None; }
+        paths.push(SvgPath {
+            commands: commands.into(),
+            color: ColorRgba::new(
+                (fill.color.r.clamp(0.0, 1.0) * 255.0).round() as u8,
+                (fill.color.g.clamp(0.0, 1.0) * 255.0).round() as u8,
+                (fill.color.b.clamp(0.0, 1.0) * 255.0).round() as u8,
+                alpha,
+            ),
+            fill_rule: fill.rule,
+            bounds,
+        });
+    }
     if paths.is_empty() {
         return None;
     }
@@ -246,124 +266,28 @@ fn parse_document(bytes: &[u8], units_per_em: u16) -> Option<SvgGlyph> {
     })
 }
 
-fn collect_paths(
-    group: &usvg::Group,
-    paths: &mut Vec<SvgPath>,
-    command_count: &mut usize,
-) -> Option<()> {
-    if group.opacity().get() != 1.0
-        || group.should_isolate()
-        || !group.filters().is_empty()
-        || group.clip_path().is_some()
-        || group.mask().is_some()
-    {
-        return None;
-    }
-    for node in group.children() {
-        match node {
-            usvg::Node::Group(group) => collect_paths(group, paths, command_count)?,
-            usvg::Node::Path(path) => {
-                if !path.is_visible() {
-                    continue;
-                }
-                if path.stroke().is_some() {
-                    return None;
-                }
-                let Some(fill) = path.fill() else {
-                    continue;
-                };
-                let usvg::Paint::Color(color) = fill.paint() else {
-                    return None;
-                };
-                let alpha = scaled_alpha(fill.opacity().get())?;
-                if alpha == 0 {
-                    continue;
-                }
-                let transform = path.abs_transform();
-                let mut commands = Vec::new();
-                for segment in path.data().segments() {
-                    let command = match segment {
-                        usvg::tiny_skia_path::PathSegment::MoveTo(point) => {
-                            let (x, y) = map_point(point, transform)?;
-                            SvgPathCommand::MoveTo { x, y }
-                        }
-                        usvg::tiny_skia_path::PathSegment::LineTo(point) => {
-                            let (x, y) = map_point(point, transform)?;
-                            SvgPathCommand::LineTo { x, y }
-                        }
-                        usvg::tiny_skia_path::PathSegment::QuadTo(control, point) => {
-                            let (control_x, control_y) = map_point(control, transform)?;
-                            let (x, y) = map_point(point, transform)?;
-                            SvgPathCommand::QuadraticTo {
-                                control_x,
-                                control_y,
-                                x,
-                                y,
-                            }
-                        }
-                        usvg::tiny_skia_path::PathSegment::CubicTo(
-                            control_1,
-                            control_2,
-                            point,
-                        ) => {
-                            let (control1_x, control1_y) = map_point(control_1, transform)?;
-                            let (control2_x, control2_y) = map_point(control_2, transform)?;
-                            let (x, y) = map_point(point, transform)?;
-                            SvgPathCommand::CubicTo {
-                                control1_x,
-                                control1_y,
-                                control2_x,
-                                control2_y,
-                                x,
-                                y,
-                            }
-                        }
-                        usvg::tiny_skia_path::PathSegment::Close => SvgPathCommand::Close,
-                    };
-                    commands.push(command);
-                    *command_count = command_count.checked_add(1)?;
-                    if *command_count > MAX_SVG_COMMANDS {
-                        return None;
-                    }
-                }
-                if commands.is_empty() {
-                    continue;
-                }
-                if paths.len() >= MAX_SVG_PATHS {
-                    return None;
-                }
-                let bbox = path.abs_bounding_box();
-                let bounds = [bbox.left(), -bbox.bottom(), bbox.right(), -bbox.top()];
-                if !bounds.iter().all(|value| value.is_finite())
-                    || bounds[0] > bounds[2]
-                    || bounds[1] > bounds[3]
-                {
-                    return None;
-                }
-                paths.push(SvgPath {
-                    commands: commands.into(),
-                    color: ColorRgba::new(color.red, color.green, color.blue, alpha),
-                    fill_rule: match fill.rule() {
-                        usvg::FillRule::NonZero => SvgFillRule::NonZero,
-                        usvg::FillRule::EvenOdd => SvgFillRule::EvenOdd,
-                    },
-                    bounds,
-                });
-            }
-            usvg::Node::Image(_) | usvg::Node::Text(_) => return None,
-        }
-    }
-    Some(())
+fn map_command(command: SvgPathCommand, transform: SvgTransform) -> Option<SvgPathCommand> {
+    let point = |x: f32, y: f32| {
+        let (x, y) = transform.transform_point(x, y);
+        (x.is_finite() && y.is_finite()).then_some((x, -y))
+    };
+    Some(match command {
+        SvgPathCommand::MoveTo { x, y } => { let (x,y)=point(x,y)?; SvgPathCommand::MoveTo{x,y} },
+        SvgPathCommand::LineTo { x, y } => { let (x,y)=point(x,y)?; SvgPathCommand::LineTo{x,y} },
+        SvgPathCommand::QuadraticTo { control_x, control_y, x, y } => { let (control_x,control_y)=point(control_x,control_y)?;let(x,y)=point(x,y)?;SvgPathCommand::QuadraticTo{control_x,control_y,x,y} },
+        SvgPathCommand::CubicTo { control1_x, control1_y, control2_x, control2_y, x, y } => { let(control1_x,control1_y)=point(control1_x,control1_y)?;let(control2_x,control2_y)=point(control2_x,control2_y)?;let(x,y)=point(x,y)?;SvgPathCommand::CubicTo{control1_x,control1_y,control2_x,control2_y,x,y} },
+        SvgPathCommand::Close => SvgPathCommand::Close,
+    })
 }
 
-fn map_point(mut point: usvg::tiny_skia_path::Point, transform: usvg::Transform) -> Option<(f32, f32)> {
-    transform.map_point(&mut point);
-    if !point.x.is_finite() || !point.y.is_finite() {
-        return None;
+fn include_command_bounds(command: SvgPathCommand, bounds: &mut [f32; 4]) {
+    let mut include = |x: f32, y: f32| { bounds[0]=bounds[0].min(x);bounds[1]=bounds[1].min(y);bounds[2]=bounds[2].max(x);bounds[3]=bounds[3].max(y); };
+    match command {
+        SvgPathCommand::MoveTo{x,y}|SvgPathCommand::LineTo{x,y} => include(x,y),
+        SvgPathCommand::QuadraticTo{control_x,control_y,x,y} => {include(control_x,control_y);include(x,y);},
+        SvgPathCommand::CubicTo{control1_x,control1_y,control2_x,control2_y,x,y} => {include(control1_x,control1_y);include(control2_x,control2_y);include(x,y);},
+        SvgPathCommand::Close => {},
     }
-    // OpenType SVG uses y-down coordinates; the Aimer coverage rasterizer uses
-    // the y-up design grid shared by TrueType and CFF outlines.
-    Some((point.x, -point.y))
 }
 
 fn scaled_alpha(opacity: f32) -> Option<u8> {

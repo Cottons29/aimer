@@ -11,11 +11,12 @@ pub mod text_pipeline;
 /// [`Self::Analytic`] renders directly to the surface with one sample. Rounded
 /// rectangles, borders, clips, images, and text retain their shader- or
 /// coverage-based antialiasing without allocating a full-window multisample
-/// texture. The MSAA variants add hardware multisampling for tessellated and
-/// custom geometry that cannot use analytic coverage.
+/// texture. Cupid's SVG meshes add a one-pixel analytic coverage fringe. The
+/// MSAA variants add hardware multisampling for other tessellated and custom
+/// geometry.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum AntiAlias {
-    /// Use analytic shader coverage and signed-distance fields without MSAA.
+    /// Use analytic coverage and signed-distance fields without MSAA.
     #[default]
     Analytic,
     /// Use analytic coverage together with two-sample MSAA.

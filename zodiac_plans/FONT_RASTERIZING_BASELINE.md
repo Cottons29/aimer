@@ -3043,8 +3043,8 @@ therefore means “portable Aimer”, not “legacy font engine off”.
 The legacy font dependencies and their compatibility/comparison code were also
 removed from the workspace: `skrifa`, `harfrust`, `fontique`, and `swash` no
 longer occur in source, manifests, or the resolved Cupid dependency tree.
-`usvg` remains because it is the owned pipeline's bounded SVG-glyph document
-decoder, not a legacy text engine.
+SVG glyph documents now use Cupid's bounded in-house SVG parser; the workspace
+no longer depends on `usvg` or `lyon` for SVG decoding or tessellation.
 
 ### Last apples-to-apples comparison before removal
 

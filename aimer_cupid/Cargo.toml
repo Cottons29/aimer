@@ -81,8 +81,6 @@ image = { workspace = true, default-features = false, features = [
     "png",
     "tiff",
 ] }
-usvg.workspace = true
-lyon.workspace = true
 thiserror.workspace = true
 hashbrown.workspace = true
 smallvec.workspace = true
