@@ -89,8 +89,6 @@ pub(crate) const NORMAL_GLYPH_WEIGHT: u16 = 400;
 /// Apple's own UI faces pair with bold text, so the threshold sits there
 /// rather than at `700`.
 pub(crate) const BOLD_WEIGHT_THRESHOLD: u16 = 600;
-const FALLBACK_REGULAR_NORMALIZATION_FACTOR: f32 = 0.035;
-const FALLBACK_REGULAR_NORMALIZATION_MIN_OFFSET: f32 = 0.9;
 static PRIMARY_PRINTABLE_ASCII_COVERAGE: OnceLock<bool> = OnceLock::new();
 
 /// Returns whether a glyph needs a small synthetic stroke to reach the
@@ -1519,9 +1517,8 @@ impl GlyphRasterizer {
         synthetic_weight_offset_for(font_size, requested, self.drawn_weight(key))
     }
 
-    /// Returns the synthetic-stroke offset for a positioned glyph, including
-    /// the regular-weight correction used by fallback scripts whose nominal
-    /// W400 cut is visibly lighter than the primary Latin face.
+    /// Returns the synthetic-stroke offset for a positioned glyph when its
+    /// face is designed lighter than the requested weight.
     #[cfg(test)]
     pub(crate) fn synthetic_weight_offset_for_codepoint(
         &mut self,
@@ -1535,39 +1532,14 @@ impl GlyphRasterizer {
     }
 
     /// Returns the additional positioned copies needed to normalize a glyph's
-    /// optical weight. Most synthetic emphasis uses one copy shifted to the
-    /// right. Myanmar and Hangul use two half-shifts around the original so
-    /// their correction thickens the stroke without moving the glyph's visual
-    /// center.
+    /// weight. Synthetic emphasis uses one copy shifted to the right.
     pub(crate) fn synthetic_weight_plan_for_codepoint(
         &mut self,
         key: GlyphKey,
         requested: u16,
         font_size: f32,
-        codepoint: char,
+        _codepoint: char,
     ) -> Option<SyntheticWeightPlan> {
-        if requested == NORMAL_GLYPH_WEIGHT
-            && key.font_id != self.primary.id
-            && !self.face_needs_platform_raster(key.font_id)
-            && matches!(
-                fallback_script_for_codepoint(codepoint),
-                Some(FallbackScript::Myanmar | FallbackScript::Hangul)
-            )
-        {
-            // These system fallback families publish W400, but their regular
-            // outlines deposit less visual ink than the primary Latin face.
-            // Two bounded half-shifts balance the stroke without changing the
-            // glyph's visual center or advance. The floor keeps the correction
-            // visible at the small sizes used by UI text.
-            let span = (font_size.max(1.0) * FALLBACK_REGULAR_NORMALIZATION_FACTOR)
-                .max(FALLBACK_REGULAR_NORMALIZATION_MIN_OFFSET);
-            let half_span = span * 0.5;
-            return Some(SyntheticWeightPlan {
-                extra_offsets: [-half_span, half_span],
-                extra_count: 2,
-            });
-        }
-
         self.synthetic_weight_offset(key, requested, font_size)
             .map(|offset| SyntheticWeightPlan {
                 extra_offsets: [offset, 0.0],
@@ -4438,46 +4410,34 @@ mod tests {
     }
 
     #[test]
-    fn observed_fallback_scripts_get_regular_weight_normalization() {
+    fn myanmar_and_hangul_keep_the_requested_regular_weight() {
         let mut rasterizer = GlyphRasterizer::primary_only();
         let primary_id = rasterizer.primary_font_id();
         let fallback_id = primary_id.saturating_add(1);
         let key = GlyphKey::new(fallback_id, 1, 44.0).weighted(NORMAL_GLYPH_WEIGHT);
 
-        let myanmar_offset = rasterizer
-            .synthetic_weight_offset_for_codepoint(
-                key,
-                NORMAL_GLYPH_WEIGHT,
-                44.0,
-                'မ',
-            )
-            .expect("Myanmar regular fallback should receive a small correction");
-        let hangul_offset = rasterizer
-            .synthetic_weight_offset_for_codepoint(
-                key,
-                NORMAL_GLYPH_WEIGHT,
-                44.0,
-                '한',
-            )
-            .expect("Hangul regular fallback should receive a small correction");
-        assert!(myanmar_offset >= 1.0);
-        assert!(hangul_offset >= 1.0);
-
         for codepoint in ['မ', '한'] {
-            let plan = rasterizer
+            assert!(
+                rasterizer
+                    .synthetic_weight_offset_for_codepoint(
+                        key,
+                        NORMAL_GLYPH_WEIGHT,
+                        44.0,
+                        codepoint,
+                    )
+                    .is_none(),
+                "{codepoint:?} should not receive an extra regular-weight stroke"
+            );
+
+            let bold_plan = rasterizer
                 .synthetic_weight_plan_for_codepoint(
                     key,
-                    NORMAL_GLYPH_WEIGHT,
+                    FontWeight::Bold.numeric(),
                     44.0,
                     codepoint,
                 )
-                .expect("fallback script should use a symmetric normalization plan");
-            assert_eq!(plan.extra_offsets().len(), 2);
-            assert!(plan.extra_offsets()[0] < 0.0);
-            assert!(plan.extra_offsets()[1] > 0.0);
-            assert!(
-                (plan.extra_offsets()[0] + plan.extra_offsets()[1]).abs() < f32::EPSILON
-            );
+                .expect("bold fallback text should still receive synthetic emphasis");
+            assert_eq!(bold_plan.extra_offsets().len(), 1);
         }
 
         let primary_key = GlyphKey::new(primary_id, 1, 44.0).weighted(NORMAL_GLYPH_WEIGHT);
@@ -4499,7 +4459,7 @@ mod tests {
         feature = "apple-core-text"
     ))]
     #[test]
-    fn installed_myanmar_and_hangul_fallbacks_get_regular_normalization() {
+    fn installed_myanmar_and_hangul_fallbacks_use_only_needed_weight_adjustments() {
         let mut rasterizer = GlyphRasterizer::new();
         let primary_id = rasterizer.primary_font_id();
         rasterizer.begin_script_run("မြန်မာ 한글", None);
@@ -4520,17 +4480,15 @@ mod tests {
                 !rasterizer.face_needs_platform_raster(key.font_id),
                 "{codepoint:?} must use a readable fallback in the owned path"
             );
-            let offset = rasterizer
-                .synthetic_weight_offset_for_codepoint(
-                    key,
-                    NORMAL_GLYPH_WEIGHT,
-                    44.0,
-                    codepoint,
-                )
-                .expect("the readable fallback should receive regular normalization");
+            let plan = rasterizer.synthetic_weight_plan_for_codepoint(
+                key,
+                NORMAL_GLYPH_WEIGHT,
+                44.0,
+                codepoint,
+            );
             assert!(
-                offset >= 1.0,
-                "{codepoint:?} normalization offset {offset} is too small"
+                plan.is_none_or(|plan| plan.extra_offsets().len() == 1),
+                "{codepoint:?} must not receive a special double-stroke regular correction"
             );
         }
 

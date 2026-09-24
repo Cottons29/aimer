@@ -241,6 +241,9 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     /// run the same event and frame code.
     pub window: Option<WindowHandle>,
     pub window_attr: WindowAttr,
+    /// Delays a requested visible state until the first DX12 present succeeds.
+    #[cfg(all(target_os = "windows", feature = "dx12"))]
+    pub(crate) show_window_after_first_frame: bool,
     pub(crate) macos_windowing: aimer_native::macos_windowing::MacosWindowing,
     pub render_ctx: AimerRenderContext,
     pub widget_root: Option<AnyElement>,
@@ -745,6 +748,12 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
             }
         };
         let window_attributes = self.macos_windowing.apply_attributes(window_attributes);
+        #[cfg(all(target_os = "windows", feature = "dx12"))]
+        let window_attributes = if self.show_window_after_first_frame {
+            window_attributes.with_visible(false)
+        } else {
+            window_attributes
+        };
 
         if self.window.is_none() {
             let window = event_loop.create_window(window_attributes).unwrap();
@@ -840,6 +849,15 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         // On Android the surface may be (re-)created with the correct size now.
         // Schedule a resize so the GPU surface matches the actual window dimensions.
         self.pending_resize = Some(size);
+        #[cfg(all(target_os = "windows", feature = "dx12"))]
+        if self.show_window_after_first_frame {
+            // Render inline while the window is hidden so its first visible
+            // frame already contains the application UI.
+            self.render(event_loop);
+        } else {
+            window.request_redraw();
+        }
+        #[cfg(not(all(target_os = "windows", feature = "dx12")))]
         window.request_redraw();
     }
 
@@ -958,6 +976,13 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let outcome = render_ctx.render_frame_packet(move |canvas, width, height| {
             drawer.draw(canvas, width, height)
         });
+        #[cfg(all(target_os = "windows", feature = "dx12"))]
+        if outcome.is_presented() && self.show_window_after_first_frame {
+            if let Some(window) = self.native_window() {
+                window.set_visible(true);
+                self.show_window_after_first_frame = false;
+            }
+        }
         // A deferred frame is still in flight on the raster thread: it reports
         // the first-frame notification and any retry itself, from `on_present`,
         // because the outcome is not known until a frame later.

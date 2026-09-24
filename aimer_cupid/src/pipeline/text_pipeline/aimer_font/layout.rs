@@ -75,6 +75,7 @@ const SINH_TAG: Tag = Tag(*b"sinh");
 const THAI_TAG: Tag = Tag(*b"thai");
 const LAOO_TAG: Tag = Tag(*b"lao ");
 const KHMR_TAG: Tag = Tag(*b"khmr");
+const MYM2_TAG: Tag = Tag(*b"mym2");
 const MYMR_TAG: Tag = Tag(*b"mymr");
 const CCMP_TAG: Tag = Tag(*b"ccmp");
 const NUKT_TAG: Tag = Tag(*b"nukt");
@@ -113,11 +114,20 @@ const INDIC_GSUB_FEATURE_TAGS: &[Tag] = &[
     RCLT_TAG, RLIG_TAG, LIGA_TAG, CLIG_TAG, CALT_TAG,
 ];
 const INDIC_GPOS_FEATURE_TAGS: &[Tag] = &[ABVM_TAG, BLWM_TAG, MARK_TAG, MKMK_TAG, KERN_TAG];
-const SOUTHEAST_ASIAN_SCRIPT_TAGS: &[Tag] = &[THAI_TAG, LAOO_TAG, KHMR_TAG, MYMR_TAG];
+const SOUTHEAST_ASIAN_SCRIPT_TAGS: &[Tag] = &[THAI_TAG, LAOO_TAG, KHMR_TAG, MYM2_TAG, MYMR_TAG];
 const SOUTHEAST_ASIAN_GSUB_FEATURE_TAGS: &[Tag] = &[
     LOCL_TAG, CCMP_TAG, RLIG_TAG, LIGA_TAG, CLIG_TAG, CALT_TAG, NUKT_TAG, AKHN_TAG, RPHF_TAG,
     RKRF_TAG, PREF_TAG, BLWF_TAG, ABVF_TAG, HALF_TAG, PSTF_TAG, VATU_TAG, CJCT_TAG, PRES_TAG,
     ABVS_TAG, BLWS_TAG, PSTS_TAG, HALN_TAG, RCLT_TAG,
+];
+// Khmer uses its own ordered language-form and typographic-form stages.
+const KHMER_GSUB_FEATURE_TAGS: &[Tag] = &[
+    LOCL_TAG, CCMP_TAG, PREF_TAG, BLWF_TAG, ABVF_TAG, PSTF_TAG, PRES_TAG, BLWS_TAG, ABVS_TAG,
+    PSTS_TAG, CLIG_TAG,
+];
+const MYANMAR_GSUB_FEATURE_TAGS: &[Tag] = &[
+    LOCL_TAG, CCMP_TAG, RPHF_TAG, PREF_TAG, BLWF_TAG, PSTF_TAG, PRES_TAG, ABVS_TAG, BLWS_TAG,
+    PSTS_TAG,
 ];
 const SOUTHEAST_ASIAN_GPOS_FEATURE_TAGS: &[Tag] = &[
     DIST_TAG, ABVM_TAG, BLWM_TAG, MARK_TAG, MKMK_TAG, KERN_TAG,
@@ -154,6 +164,7 @@ pub(crate) struct LayoutScratch {
     codepoints: Vec<char>,
     source_codepoints: Vec<(usize, char)>,
     items: Vec<(char, LayoutGlyph)>,
+    myanmar_replacement: Vec<(char, LayoutGlyph)>,
     joining_types: Vec<Option<ArabicJoiningType>>,
     transparent: Vec<bool>,
     forms: Vec<Option<ArabicJoiningForm>>,
@@ -2307,6 +2318,62 @@ fn apply_single_substitution(
     Ok(true)
 }
 
+fn apply_alternate_substitution(
+    face: &SfntFace<'_>,
+    metrics: super::FontMetrics,
+    glyph: &mut LayoutGlyph,
+    subtable: &[u8],
+) -> Result<bool, SfntError> {
+    if read_u16(subtable, 0, GSUB_TAG)? != 1 {
+        return Ok(false);
+    }
+    let coverage_offset = usize::from(read_u16(subtable, 2, GSUB_TAG)?);
+    let Some(coverage_index) = coverage_index(subtable, coverage_offset, glyph.glyph_id, GSUB_TAG)?
+    else {
+        return Ok(false);
+    };
+    let alternate_set_count = usize::from(read_u16(subtable, 4, GSUB_TAG)?);
+    ensure(
+        subtable,
+        6,
+        checked_mul(alternate_set_count, 2)?,
+        GSUB_TAG,
+    )?;
+    if coverage_index >= alternate_set_count {
+        return Err(malformed(GSUB_TAG));
+    }
+    let alternate_set_offset = usize::from(read_u16(
+        subtable,
+        6 + coverage_index * 2,
+        GSUB_TAG,
+    )?);
+    if alternate_set_offset == 0 {
+        return Err(malformed(GSUB_TAG));
+    }
+    let alternate_set = slice_from(subtable, alternate_set_offset, GSUB_TAG)?;
+    let alternate_count = usize::from(read_u16(alternate_set, 0, GSUB_TAG)?);
+    if alternate_count == 0 {
+        return Err(malformed(GSUB_TAG));
+    }
+    ensure(alternate_set, 2, checked_mul(alternate_count, 2)?, GSUB_TAG)?;
+
+    // With no explicit alternate index, OpenType shaping uses the first glyph
+    // in the alternate set.
+    let replacement = read_u16(alternate_set, 2, GSUB_TAG)?;
+    if replacement == glyph.glyph_id {
+        return Ok(false);
+    }
+    let Some(advance) = face.glyph_advance_with_metrics(replacement, metrics)? else {
+        return Err(malformed(GSUB_TAG));
+    };
+    glyph.glyph_id = replacement;
+    glyph.x_advance = i32::from(advance);
+    glyph.y_advance = 0;
+    glyph.x_offset = 0;
+    glyph.y_offset = 0;
+    Ok(true)
+}
+
 /// Applies one lookup record to the glyph at `target_index`.
 ///
 /// Contextual GSUB records may target a ligature lookup, including through an
@@ -2337,6 +2404,19 @@ fn apply_gsub_lookup_at(
             subtable,
             extension_depth,
         ),
+        3 => {
+            if lookup_flags != 0
+                && gdef.ignores(glyphs[target_index].glyph_id, lookup_flags)?
+            {
+                return Ok(false);
+            }
+            apply_alternate_substitution(
+                face,
+                metrics,
+                &mut glyphs[target_index],
+                subtable,
+            )
+        }
         4 => apply_ligature_substitution_at(
             face,
             metrics,

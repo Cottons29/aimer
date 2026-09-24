@@ -648,6 +648,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 macos_windowing: Default::default(),
                 render_ctx: AimerRenderContext::new(antialiasing),
                 window_attr: WindowAttr::new(),
+                #[cfg(all(target_os = "windows", feature = "dx12"))]
+                show_window_after_first_frame: false,
                 widget_root: None,
                 event_dispatcher: aimer_widget::EventDispatcher::new(),
                 scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
@@ -1278,11 +1280,15 @@ fn start_event_loop(
     ));
 
     info!("Creating App instance...");
+    #[cfg(all(target_os = "windows", feature = "dx12"))]
+    let show_window_after_first_frame = window_attr.visible;
     let mut app = AimerApplicationHandler {
         window: None,
         macos_windowing: Default::default(),
         render_ctx: AimerRenderContext::new(antialiasing),
         window_attr,
+        #[cfg(all(target_os = "windows", feature = "dx12"))]
+        show_window_after_first_frame,
         widget_root: None,
         event_dispatcher: aimer_widget::EventDispatcher::new(),
         scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),

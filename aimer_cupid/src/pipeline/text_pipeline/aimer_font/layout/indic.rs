@@ -536,6 +536,43 @@ pub(super) fn apply_single_lookup(
     Ok(changed)
 }
 
+pub(super) fn apply_alternate_lookup(
+    face: &SfntFace<'_>,
+    metrics: FontMetrics,
+    glyphs: &mut Vec<LayoutGlyph>,
+    gdef: &Gdef,
+    layout: &LayoutTableState,
+    lookup: &super::LookupState,
+) -> Result<bool, SfntError> {
+    let table = layout.table(face)?;
+    let mut changed = false;
+    for glyph_index in 0..glyphs.len() {
+        if lookup.lookup_flags != 0
+            && gdef.ignores(glyphs[glyph_index].glyph_id, lookup.lookup_flags)?
+        {
+            continue;
+        }
+        for subtable_offset in &lookup.subtable_offsets {
+            let subtable = slice_from(table, *subtable_offset, GSUB_TAG)?;
+            if super::apply_gsub_lookup_at(
+                face,
+                metrics,
+                glyphs,
+                gdef,
+                lookup.lookup_flags,
+                lookup.lookup_type,
+                subtable,
+                glyph_index,
+                0,
+            )? {
+                changed = true;
+                break;
+            }
+        }
+    }
+    Ok(changed)
+}
+
 pub(super) fn apply_ligature_lookup(
     face: &SfntFace<'_>,
     metrics: FontMetrics,

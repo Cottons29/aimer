@@ -198,7 +198,8 @@ impl Dx12Buffer {
             D3D12_HEAP_PROPERTIES, D3D12_HEAP_TYPE_DEFAULT, D3D12_HEAP_TYPE_READBACK,
             D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_DIMENSION_BUFFER, D3D12_RESOURCE_FLAG_NONE,
             D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST,
-            D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATES,
+            D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
+            D3D12_RESOURCE_STATES,
             D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
         };
         use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_UNKNOWN, DXGI_SAMPLE_DESC};
@@ -229,10 +230,20 @@ impl Dx12Buffer {
             Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
             Flags: D3D12_RESOURCE_FLAG_NONE,
         };
+        let streamed_vertex_buffer = usage.contains(&BufferUsage::Vertex)
+            && usage.contains(&BufferUsage::CopyDst)
+            && !usage.contains(&BufferUsage::Index)
+            && !usage.contains(&BufferUsage::ReadOnlyStorage)
+            && !usage.contains(&BufferUsage::Storage);
         let initial = if upload_heap {
             D3D12_RESOURCE_STATE_GENERIC_READ
         } else if readback_heap {
             D3D12_RESOURCE_STATE_COPY_DEST
+        } else if streamed_vertex_buffer {
+            // Keep dynamic instance buffers in their draw state from creation.
+            // Their queued copies can then run before an already-recorded draw
+            // list without making that list's first barrier out of date.
+            D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER
         } else {
             D3D12_RESOURCE_STATE_COMMON
         };

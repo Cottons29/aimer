@@ -83,7 +83,8 @@ impl ApplicationHandler for Dx12Demo {
             .create_window(
                 Window::default_attributes()
                     .with_title("Aimer Cupid — DirectX 12")
-                    .with_inner_size(winit::dpi::LogicalSize::new(800, 600)),
+                    .with_inner_size(winit::dpi::LogicalSize::new(800, 600))
+                    .with_visible(false),
             )
             .expect("create DirectX 12 demo window");
         let backend = Dx12Backend::new().expect("create the system Direct3D 12 device and queue");
@@ -109,7 +110,11 @@ impl ApplicationHandler for Dx12Demo {
         self.backend = Some(backend);
         self.surface = Some(surface);
         self.window = Some(window);
+        // Renderer and first-frame setup are synchronous. Keep the native
+        // window hidden until its swap chain contains real demo content.
+        self.draw();
         if let Some(window) = &self.window {
+            window.set_visible(true);
             window.request_redraw();
         }
     }

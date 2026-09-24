@@ -1200,6 +1200,15 @@ fn is_shaping_control_cluster(cluster: &str) -> bool {
             .all(|codepoint| matches!(codepoint, '\u{200b}' | '\u{200c}' | '\u{200d}'))
 }
 
+#[inline]
+fn starts_with_line_attached_ascii_punctuation(text: &str) -> bool {
+    text.chars()
+        .find(|codepoint| !codepoint.is_ascii_whitespace())
+        .is_some_and(|codepoint| {
+            matches!(codepoint, ',' | '.' | ':' | ';' | '!' | '?' | ')' | ']' | '}')
+        })
+}
+
 /// A contiguous run of text that shares the same BiDi level and script, and can
 /// be shaped as a unit.
 #[derive(Clone)]
@@ -1433,10 +1442,13 @@ where
 
         // Check whether a line break is allowed at the run boundary.
         let break_allowed = break_offsets.binary_search(&run_end).is_ok();
+        let keep_punctuation_with_previous = script.is_none()
+            && starts_with_line_attached_ascii_punctuation(run_text);
 
         if max_width > 0.0
             && line_width + run_width > max_width
             && (break_allowed || !run_text.chars().all(char::is_whitespace))
+            && !keep_punctuation_with_previous
         {
             // Try to break the run at grapheme-cluster boundaries to avoid
             // splitting across lines at awkward positions.  We walk clusters

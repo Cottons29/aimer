@@ -43,6 +43,21 @@ pub struct Dx12RenderPass<'a> {
 
 impl Dx12Backend {
     pub(super) fn make_command_encoder(&self, label: &str) -> Dx12CommandEncoder {
+        let uploads = std::mem::take(
+            &mut *self
+                .shared
+                .pending_uploads
+                .lock()
+                .expect("D3D12 upload queue mutex is not poisoned"),
+        );
+        self.make_command_encoder_with_uploads(label, uploads)
+    }
+
+    fn make_command_encoder_with_uploads(
+        &self,
+        label: &str,
+        uploads: Vec<PendingUpload>,
+    ) -> Dx12CommandEncoder {
         let allocator = unsafe {
             self.shared
                 .device
@@ -71,13 +86,6 @@ impl Dx12Backend {
             descriptors: Vec::new(),
             objects: Vec::new(),
         };
-        let uploads = std::mem::take(
-            &mut *self
-                .shared
-                .pending_uploads
-                .lock()
-                .expect("D3D12 upload queue mutex is not poisoned"),
-        );
         for upload in uploads {
             encode_upload(&mut encoder, upload);
         }
@@ -310,36 +318,87 @@ impl Dx12Backend {
 
 impl Dx12CommandEncoder {
     pub(super) fn submit(self) {
-        unsafe { self.list.Close().expect("close D3D12 command list") };
-        let base: ID3D12CommandList = self.list.cast().expect("cast D3D12 command list");
-        let submission = self
-            .shared
+        let shared = self.shared.clone();
+        // Buffer uploads issued while a render pass is being recorded (the
+        // rectangle and image instance buffers) must execute before its draw
+        // list. Record them into a leading list and execute both lists in one
+        // queue submission so the CPU still pays for only one fence signal.
+        let uploads = std::mem::take(
+            &mut *self
+                .shared
+                .pending_uploads
+                .lock()
+                .expect("D3D12 upload queue mutex is not poisoned"),
+        );
+        let upload_encoder = if uploads.is_empty() {
+            None
+        } else {
+            let backend = Dx12Backend {
+                shared: self.shared.clone(),
+            };
+            Some(backend.make_command_encoder_with_uploads(
+                "D3D12 queued buffer uploads",
+                uploads,
+            ))
+        };
+
+        let mut command_lists = Vec::with_capacity(if upload_encoder.is_some() { 2 } else { 1 });
+        let mut resources = Vec::new();
+        let mut descriptors = Vec::new();
+        let mut objects = Vec::new();
+        if let Some(encoder) = upload_encoder {
+            let (list, mut encoder_resources, mut encoder_descriptors, mut encoder_objects) =
+                encoder.close();
+            command_lists.push(Some(list));
+            resources.append(&mut encoder_resources);
+            descriptors.append(&mut encoder_descriptors);
+            objects.append(&mut encoder_objects);
+        }
+        let (list, mut encoder_resources, mut encoder_descriptors, mut encoder_objects) =
+            self.close();
+        command_lists.push(Some(list));
+        resources.append(&mut encoder_resources);
+        descriptors.append(&mut encoder_descriptors);
+        objects.append(&mut encoder_objects);
+
+        let submission = shared
             .submit_lock
             .lock()
             .expect("D3D12 submission mutex is not poisoned");
-        unsafe { self.shared.queue.ExecuteCommandLists(&[Some(base)]) };
-        let fence_value = self.shared.next_fence.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        unsafe { shared.queue.ExecuteCommandLists(&command_lists) };
+        let fence_value = shared.next_fence.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         unsafe {
-            self.shared
-                .queue
-                .Signal(&self.shared.fence, fence_value)
+            shared.queue.Signal(&shared.fence, fence_value)
                 .expect("signal D3D12 submission fence");
         }
-        self.shared.last_fence.store(fence_value, std::sync::atomic::Ordering::Release);
-        let mut objects = self.objects;
-        objects.push(self.allocator.cast().expect("retain D3D12 allocator"));
-        objects.push(self.list.cast().expect("retain D3D12 command list"));
-        self.shared
+        shared.last_fence.store(fence_value, std::sync::atomic::Ordering::Release);
+        shared
             .retired
             .lock()
             .expect("D3D12 retired resource mutex is not poisoned")
             .push(RetiredBatch {
                 fence_value,
-                _resources: self.resources,
-                _descriptors: self.descriptors,
+                _resources: resources,
+                _descriptors: descriptors,
                 _objects: objects,
             });
         drop(submission);
+    }
+
+    fn close(
+        self,
+    ) -> (
+        ID3D12CommandList,
+        Vec<ID3D12Resource>,
+        Vec<Arc<DescriptorLease>>,
+        Vec<IUnknown>,
+    ) {
+        unsafe { self.list.Close().expect("close D3D12 command list") };
+        let base = self.list.cast().expect("cast D3D12 command list");
+        let mut objects = self.objects;
+        objects.push(self.allocator.cast().expect("retain D3D12 allocator"));
+        objects.push(self.list.cast().expect("retain D3D12 command list"));
+        (base, self.resources, self.descriptors, objects)
     }
 }
 
