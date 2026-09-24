@@ -36,6 +36,11 @@ metal = [
     "dep:objc2",
     "dep:objc2-quartz-core",
 ]
+# Native Direct3D 12 backend. Combine with `--no-default-features` to keep
+# WGPU out of the dependency graph.
+dx12 = ["dep:windows", "pluggable-backend-exp"]
+# Native Direct3D 12 windowed demo. Requires `--no-default-features` to omit WGPU.
+dx12-demo = ["dx12", "dep:winit", "dep:raw-window-handle"]
 metal-demo = [
     "metal",
     "dep:winit",
@@ -51,6 +56,11 @@ required-features = ["wgpu"]
 path = "src/bin_metal.rs"
 name = "cupid-metal"
 required-features = ["metal-demo"]
+
+[[bin]]
+path = "src/bin_dx12.rs"
+name = "cupid-dx12"
+required-features = ["dx12-demo"]
 
 [dependencies]
 aimer_utils = { workspace = true, features = ["time-cost"] }
@@ -179,3 +189,7 @@ wasm-bindgen-futures.workspace = true
 wasm-bindgen.workspace = true
 js-sys.workspace = true
 web-sys = { workspace = true, features = ["Window", "Response"] }
+
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, optional = true }

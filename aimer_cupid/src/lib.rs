@@ -37,6 +37,8 @@ pub use crate::text_pipeline::{glyph_atlas, glyph_rasterizer, text_layout};
 pub use backend::{GpuBackend, GpuLimits, GpuRenderPass};
 #[cfg(all(feature = "pluggable-backend-exp", feature = "wgpu"))]
 pub use backend::wgpu::WgpuBackend;
+#[cfg(all(feature = "pluggable-backend-exp", feature = "dx12", target_os = "windows"))]
+pub use backend::dx12::Dx12Backend;
 #[cfg(feature = "pluggable-backend-exp")]
 pub use custom_pipeline::{CustomPipelineGeneric, RenderContextGeneric};
 #[cfg(all(feature = "pluggable-backend-exp", feature = "wgpu"))]

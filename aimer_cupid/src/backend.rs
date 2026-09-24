@@ -18,6 +18,7 @@
 //! | [`self`] | `GpuBackend` trait, `GpuRenderPass` trait, shared descriptors |
 //! | [`wgpu`] | `WgpuBackend` — delegates every operation to the `wgpu` crate |
 //! | `metal` | `MetalBackend` — native Metal via `objc2-metal` |
+//! | `dx12` | `Dx12Backend` — native D3D12 with hand-authored HLSL |
 
 use std::num::NonZeroU32;
 use std::ops::Range;
@@ -31,6 +32,10 @@ pub mod wgpu;
 #[cfg(all(feature = "metal", any(target_os = "macos", target_os = "ios")))]
 pub mod metal;
 
+// The native Direct3D 12 adapter is available only on Windows.
+#[cfg(all(feature = "dx12", target_os = "windows"))]
+pub mod dx12;
+
 /// Backend selected by the active feature set for public generic type defaults.
 #[cfg(feature = "wgpu")]
 pub type DefaultGpuBackend = wgpu::WgpuBackend;
@@ -39,17 +44,24 @@ pub type DefaultGpuBackend = wgpu::WgpuBackend;
 #[cfg(all(not(feature = "wgpu"), feature = "metal"))]
 pub type DefaultGpuBackend = metal::MetalBackend;
 
+/// Direct3D 12 is the default backend when WGPU and Metal are disabled.
+#[cfg(all(not(feature = "wgpu"), not(feature = "metal"), feature = "dx12"))]
+pub type DefaultGpuBackend = dx12::Dx12Backend;
+
 #[cfg(all(
     feature = "metal",
     not(any(target_os = "macos", target_os = "ios"))
 ))]
 compile_error!("the `metal` feature is only supported on macOS and iOS");
 
+#[cfg(all(feature = "dx12", not(target_os = "windows")))]
+compile_error!("the `dx12` feature is only supported on Windows");
+
 #[cfg(all(
     feature = "pluggable-backend-exp",
-    not(any(feature = "wgpu", feature = "metal"))
+    not(any(feature = "wgpu", feature = "metal", feature = "dx12"))
 ))]
-compile_error!("enable either the `wgpu` or `metal` feature with `pluggable-backend-exp`");
+compile_error!("enable a GPU backend feature with `pluggable-backend-exp`");
 
 // ──────────────────────────────────────────────
 //  Descriptor types shared by all backends
@@ -846,10 +858,10 @@ pub trait GpuBackend: Sized + 'static {
     /// Compile a shader module from an opaque source blob.
     ///
     /// The bytes are interpreted in whatever language is native to the backend:
-    /// WGSL for [`WgpuBackend`](wgpu::WgpuBackend), MSL for a Metal backend. A
-    /// pipeline that is expected to run on more than one backend must therefore
-    /// supply source matching the backend it is built against; the blob is not
-    /// translated between them.
+    /// WGSL for [`WgpuBackend`](wgpu::WgpuBackend), MSL for a Metal backend, or
+    /// HLSL for the native D3D12 backend. A pipeline that is expected to run on
+    /// more than one backend must therefore supply source matching the backend
+    /// it is built against; the blob is not translated between them.
     fn create_shader_module(&self, source: &[u8], label: &str) -> Self::ShaderModule;
 
     /// Fallible counterpart of [`GpuBackend::create_shader_module`].

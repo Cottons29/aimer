@@ -101,6 +101,9 @@ frame-stats = ["aimer_quiver/frame-stats"]
 # Present the native Quiver window through Cupid's direct Metal backend.
 # Combine with `--no-default-features` to omit the default WGPU backend.
 metal = ["aimer_quiver/metal"]
+# Present native Windows frames through Cupid's Direct3D 12 backend.
+# Use `--no-default-features --features dx12` to omit WGPU.
+dx12 = ["aimer_quiver/dx12"]
 # Compile ordinary widgets through the hidden portable guest conversion path.
 # Generated shadow applications enable this feature; native applications do not.
 portable-guest = [
@@ -324,6 +327,16 @@ objc2-foundation = { version = "0.3.2", default-features = false }
 # MTL* submodules they need, mirroring wgpu-hal's own selection.
 objc2-metal = { version = "0.3.2", default-features = false }
 objc2-quartz-core = { version = "0.3.2", default-features = false }
+# Opt-in native Direct3D 12 bindings used by Cupid and Quiver on Windows.
+windows = { version = "0.62.2", default-features = false, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Direct3D_Fxc",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_Threading",
+] }
 
 # Aimer cli dependencies
 
