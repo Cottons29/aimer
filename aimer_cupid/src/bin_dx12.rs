@@ -16,7 +16,7 @@ use winit::window::{Window, WindowId};
 #[cfg(not(target_os = "windows"))]
 compile_error!("the `cupid-dx12` demo currently requires Windows");
 
-const SURFACE_FORMAT: Dx12TextureFormat = Dx12TextureFormat::Bgra8Unorm;
+const SURFACE_FORMAT: Dx12TextureFormat = Dx12TextureFormat::Bgra8UnormSrgb;
 
 struct Dx12Demo {
     backend: Option<Dx12Backend>,
@@ -66,7 +66,7 @@ impl Dx12Demo {
             frame.view(),
             width,
             height,
-            true,
+            SURFACE_FORMAT.is_srgb(),
             &self.canvas.draw_list(),
         );
         frame.present().expect("present the Direct3D 12 frame");

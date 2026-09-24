@@ -16,9 +16,8 @@ pub mod render_ctx {
     use crate::frame_stats::{FramePhase, PhaseTimer};
     use crate::render_ctx::PresentOutcome;
 
-    // DXGI flip-model swap chains use UNORM storage; the direct HLSL performs
-    // sRGB encoding on output when the target format is not marked sRGB.
-    const SURFACE_FORMAT: Dx12TextureFormat = Dx12TextureFormat::Bgra8Unorm;
+    // The flip-model swap chain uses UNORM storage and an sRGB render-target view.
+    const SURFACE_FORMAT: Dx12TextureFormat = Dx12TextureFormat::Bgra8UnormSrgb;
 
     /// Quiver's inline Windows presenter backed by a Direct3D 12 device.
     pub struct Dx12Api {
@@ -234,7 +233,14 @@ pub mod render_ctx {
             let (width, height) = drawable.size();
             if width == 0 || height == 0 { return false; }
             let encode = PhaseTimer::start();
-            renderer.render(backend, drawable.view(), width, height, true, &frame.draw_list);
+            renderer.render(
+                backend,
+                drawable.view(),
+                width,
+                height,
+                SURFACE_FORMAT.is_srgb(),
+                &frame.draw_list,
+            );
             encode.finish(FramePhase::Encode);
             let present = PhaseTimer::start();
             let success = drawable.present().is_ok();

@@ -47,6 +47,14 @@ impl Dx12TextureFormat {
         matches!(self, Self::Rgba8UnormSrgb | Self::Bgra8UnormSrgb)
     }
 
+    pub(super) fn swap_chain_storage(self) -> Self {
+        match self {
+            Self::Rgba8UnormSrgb => Self::Rgba8Unorm,
+            Self::Bgra8UnormSrgb => Self::Bgra8Unorm,
+            format => format,
+        }
+    }
+
     #[inline]
     pub fn bytes_per_pixel(self) -> usize {
         match self {

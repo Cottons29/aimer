@@ -28,6 +28,8 @@ use windows::Win32::Graphics::Direct3D12::{
     D3D12_RESOURCE_STATES, D3D12_HEAP_PROPERTIES,
     D3D12_HEAP_FLAG_NONE, D3D12_FENCE_FLAG_NONE, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
     D3D12_DESCRIPTOR_HEAP_TYPE_RTV, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER,
+    D3D12_RENDER_TARGET_VIEW_DESC, D3D12_RENDER_TARGET_VIEW_DESC_0,
+    D3D12_RTV_DIMENSION_TEXTURE2D, D3D12_TEX2D_RTV,
     ID3D12CommandQueue, ID3D12Device, ID3D12Fence, ID3D12Resource,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
@@ -187,18 +189,42 @@ impl Dx12Backend {
             .retain(|batch| batch.fence_value > completed);
     }
 
-    fn texture_view(&self, texture: &Dx12Texture) -> Dx12TextureView {
+    fn texture_view(
+        &self,
+        texture: &Dx12Texture,
+        rtv_format: Option<Dx12TextureFormat>,
+    ) -> Dx12TextureView {
         let rtv = texture
             .usage
             .contains(&TextureUsage::RenderAttachment)
             .then(|| self.shared.rtv_heap.allocate());
         if let Some(rtv) = &rtv {
-            unsafe {
-                self.shared.device.CreateRenderTargetView(
-                    &texture.resource,
-                    None,
-                    rtv.pool.cpu_handle(rtv.index),
-                );
+            if let Some(format) = rtv_format {
+                let desc = D3D12_RENDER_TARGET_VIEW_DESC {
+                    Format: format.dxgi(),
+                    ViewDimension: D3D12_RTV_DIMENSION_TEXTURE2D,
+                    Anonymous: D3D12_RENDER_TARGET_VIEW_DESC_0 {
+                        Texture2D: D3D12_TEX2D_RTV {
+                            MipSlice: 0,
+                            PlaneSlice: 0,
+                        },
+                    },
+                };
+                unsafe {
+                    self.shared.device.CreateRenderTargetView(
+                        &texture.resource,
+                        Some(&desc as *const _),
+                        rtv.pool.cpu_handle(rtv.index),
+                    );
+                }
+            } else {
+                unsafe {
+                    self.shared.device.CreateRenderTargetView(
+                        &texture.resource,
+                        None,
+                        rtv.pool.cpu_handle(rtv.index),
+                    );
+                }
             }
         }
         let srv = texture
@@ -249,7 +275,8 @@ impl Drop for BackendShared {
 /// A DXGI flip-model swap chain attached to a Win32 window.
 pub struct Dx12Surface {
     swap_chain: IDXGISwapChain3,
-    format: Dx12TextureFormat,
+    swap_chain_format: Dx12TextureFormat,
+    rtv_format: Dx12TextureFormat,
     shared: Arc<BackendShared>,
     buffer_fences: Arc<Mutex<[u64; 3]>>,
     buffers: Vec<Dx12TextureView>,
@@ -270,6 +297,9 @@ pub struct Dx12SurfaceFrame {
 
 impl Dx12Surface {
     /// Attaches a flip-discard DXGI swap chain to `hwnd`.
+    ///
+    /// `format` is the render-target-view format. An sRGB format uses its
+    /// matching UNORM format for flip-model swap-chain storage.
     pub fn new(
         backend: &Dx12Backend,
         hwnd: HWND,
@@ -277,13 +307,14 @@ impl Dx12Surface {
         height: u32,
         format: Dx12TextureFormat,
     ) -> Result<Self, windows::core::Error> {
+        let swap_chain_format = format.swap_chain_storage();
         let factory: IDXGIFactory2 = unsafe {
             CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))?
         };
         let desc = DXGI_SWAP_CHAIN_DESC1 {
             Width: width.max(1),
             Height: height.max(1),
-            Format: format.dxgi(),
+            Format: swap_chain_format.dxgi(),
             Stereo: false.into(),
             SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
             BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
@@ -308,7 +339,8 @@ impl Dx12Surface {
         let swap_chain: IDXGISwapChain3 = swap_chain1.cast()?;
         let mut surface = Self {
             swap_chain,
-            format,
+            swap_chain_format,
+            rtv_format: format,
             shared: backend.shared.clone(),
             buffer_fences: Arc::new(Mutex::new([0; 3])),
             buffers: Vec::with_capacity(3),
@@ -416,7 +448,7 @@ impl Dx12Surface {
                 3,
                 width,
                 height,
-                self.format.dxgi(),
+                self.swap_chain_format.dxgi(),
                 DXGI_SWAP_CHAIN_FLAG(0),
             )?;
         }
@@ -437,11 +469,14 @@ impl Dx12Surface {
             let texture = Dx12Texture {
                 resource,
                 size: (self.width, self.height, 1),
-                format: self.format,
+                format: self.swap_chain_format,
                 usage: vec![TextureUsage::RenderAttachment, TextureUsage::CopySrc],
                 state: Arc::new(Mutex::new(state)),
             };
-            self.buffers.push(backend.texture_view(&texture));
+            // The UNORM swap-chain buffer gets an sRGB RTV when requested so
+            // output conversion and fixed-function blending use linear RGB.
+            self.buffers
+                .push(backend.texture_view(&texture, Some(self.rtv_format)));
         }
         Ok(())
     }
@@ -560,7 +595,7 @@ impl GpuBackend for Dx12Backend {
     }
 
     fn create_texture_view(&self, texture: &Self::Texture, _label: &str) -> Self::TextureView {
-        self.texture_view(texture)
+        self.texture_view(texture, None)
     }
 
     fn create_sampler(&self, desc: &SamplerDescriptor) -> Self::Sampler {
