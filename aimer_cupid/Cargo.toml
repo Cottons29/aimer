@@ -23,7 +23,7 @@ apple-core-text = [
     "dep:objc2-core-graphics",
 ]
 # Experimental: expose the GpuBackend trait path and `RendererImpl<B>`, which
-# can be built with either the WGPU or native Metal backend.
+# can be built with WGPU or one of the native Metal, D3D12, and Vulkan backends.
 pluggable-backend-exp = []
 # Experimental: native Metal backend via objc2-metal.
 # Implies pluggable-backend-exp. Only compiles on macOS/iOS, because the
@@ -41,6 +41,9 @@ metal = [
 dx12 = ["dep:windows", "pluggable-backend-exp"]
 # Native Direct3D 12 windowed demo. Requires `--no-default-features` to omit WGPU.
 dx12-demo = ["dx12", "dep:winit", "dep:raw-window-handle"]
+# Native Vulkan backend and optional windowed demo.
+vulkan = ["dep:ash", "dep:ash-window", "dep:raw-window-handle", "pluggable-backend-exp"]
+vulkan-demo = ["vulkan", "dep:winit"]
 metal-demo = [
     "metal",
     "dep:winit",
@@ -61,6 +64,31 @@ required-features = ["metal-demo"]
 path = "src/bin_dx12.rs"
 name = "cupid-dx12"
 required-features = ["dx12-demo"]
+
+[[example]]
+name = "image_scroll_memory_profile"
+required-features = ["wgpu"]
+
+[[example]]
+name = "text_decoration_benchmark"
+required-features = ["wgpu"]
+
+[[example]]
+name = "text_prepare_mixed_benchmark"
+required-features = ["wgpu"]
+
+[[example]]
+name = "text_resize_benchmark"
+required-features = ["wgpu"]
+
+[[example]]
+name = "text_scroll_benchmark"
+required-features = ["wgpu"]
+
+[[bin]]
+path = "src/bin_vulkan.rs"
+name = "cupid-vulkan"
+required-features = ["vulkan-demo"]
 
 [dependencies]
 aimer_utils = { workspace = true, features = ["time-cost"] }
@@ -96,6 +124,11 @@ hashbrown.workspace = true
 smallvec.workspace = true
 dirs.workspace = true
 memmap2 = "0.9.11"
+ash = { workspace = true, optional = true }
+ash-window = { workspace = true, optional = true }
+
+[dev-dependencies]
+naga = { workspace = true, features = ["spv-out"] }
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
 objc2-core-foundation = { workspace = true, optional = true, features = [
