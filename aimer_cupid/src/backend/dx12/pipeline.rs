@@ -1,13 +1,16 @@
+use std::collections::HashMap;
 use std::mem::ManuallyDrop;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use aimer_utils::info;
 use windows::Win32::Graphics::Direct3D::{
     D3D11_PRIMITIVE_TOPOLOGY_LINELIST, D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP,
     D3D11_PRIMITIVE_TOPOLOGY_POINTLIST, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
     D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP, D3D_PRIMITIVE_TOPOLOGY,
     D3D_SHADER_MACRO, ID3DBlob,
 };
-use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
+use windows::Win32::Graphics::Direct3D::Fxc::{D3DCompile, D3DCOMPILE_OPTIMIZATION_LEVEL0};
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::core::PCSTR;
@@ -28,6 +31,7 @@ use super::{Dx12Backend, Dx12TextureFormat};
 pub struct Dx12ShaderModule {
     pub(super) source: Arc<str>,
     pub(super) label: String,
+    pub(super) compiled: Arc<Mutex<HashMap<(String, Vec<u8>, u32), Arc<[u8]>>>>,
 }
 
 #[derive(Clone)]
@@ -95,6 +99,7 @@ impl Dx12Backend {
         &self,
         layouts: &[&Dx12BindGroupLayout],
     ) -> Dx12PipelineLayout {
+        let layout_started = Instant::now();
         let range_count = layouts.iter().map(|layout| layout.entries.len()).sum();
         let mut ranges: Vec<D3D12_DESCRIPTOR_RANGE> = Vec::with_capacity(range_count);
         let mut parameters: Vec<D3D12_ROOT_PARAMETER> = Vec::with_capacity(range_count);
@@ -252,6 +257,12 @@ impl Dx12Backend {
                 .CreateRootSignature::<ID3D12RootSignature>(0, bytes)
         }
         .expect("create D3D12 root signature");
+        info!(
+            "DX12 root-signature layout timing: {} bind groups, {} parameters, serialization and creation {:.2} ms",
+            layouts.len(),
+            parameters.len(),
+            layout_started.elapsed().as_secs_f64() * 1000.0
+        );
         Dx12PipelineLayout {
             root_signature,
             groups,
@@ -262,6 +273,7 @@ impl Dx12Backend {
         &self,
         desc: &RenderPipelineDescriptor<Self>,
     ) -> Result<Dx12RenderPipeline, BackendError> {
+        let pipeline_started = Instant::now();
         let fallback_layout;
         let layout = if let Some(layout) = desc.layout {
             layout.clone()
@@ -269,21 +281,23 @@ impl Dx12Backend {
             fallback_layout = self.make_pipeline_layout(&[]);
             fallback_layout
         };
-        let vs = compile_hlsl(&desc.vertex.module.source, desc.vertex.entry_point, b"vs_5_1\0")
+        let vertex_started = Instant::now();
+        let vs = compile_hlsl(&desc.vertex.module, desc.vertex.entry_point, b"vs_5_1\0")
             .map_err(|message| BackendError {
                 operation: "compile_vertex_shader",
                 message: format!("{}: {message}", desc.vertex.module.label),
             })?;
-        let ps = if let Some(fragment) = &desc.fragment {
-            Some(
-                compile_hlsl(&fragment.module.source, fragment.entry_point, b"ps_5_1\0")
-                    .map_err(|message| BackendError {
-                        operation: "compile_pixel_shader",
-                        message: format!("{}: {message}", fragment.module.label),
-                    })?,
-            )
+        let vertex_elapsed = vertex_started.elapsed();
+        let (ps, pixel_elapsed) = if let Some(fragment) = &desc.fragment {
+            let pixel_started = Instant::now();
+            let shader = compile_hlsl(&fragment.module, fragment.entry_point, b"ps_5_1\0")
+                .map_err(|message| BackendError {
+                    operation: "compile_pixel_shader",
+                    message: format!("{}: {message}", fragment.module.label),
+                })?;
+            (Some(shader), pixel_started.elapsed())
         } else {
-            None
+            (None, Duration::ZERO)
         };
 
         let mut input_elements = Vec::new();
@@ -345,12 +359,14 @@ impl Dx12Backend {
                 message: "D3D12 depth-stencil pipeline state is not implemented yet".to_string(),
             });
         }
-        let state = unsafe {
+        let pso_started = Instant::now();
+        let state_result = unsafe {
             self.shared
                 .device
                 .CreateGraphicsPipelineState::<ID3D12PipelineState>(&pipeline_desc)
-        }
-        .map_err(|error| BackendError {
+        };
+        let pso_elapsed = pso_started.elapsed();
+        let state = state_result.map_err(|error| BackendError {
             operation: "create_render_pipeline",
             message: format!("{}: {error}", desc.label.as_deref().unwrap_or("pipeline")),
         });
@@ -358,6 +374,20 @@ impl Dx12Backend {
         // CreateGraphicsPipelineState returns.
         unsafe { ManuallyDrop::drop(&mut pipeline_desc.pRootSignature) };
         let state = state?;
+        let total_elapsed = pipeline_started.elapsed();
+        let other_elapsed = total_elapsed
+            .saturating_sub(vertex_elapsed)
+            .saturating_sub(pixel_elapsed)
+            .saturating_sub(pso_elapsed);
+        info!(
+            "DX12 pipeline timing: {} vertex HLSL {:.2} ms, pixel HLSL {:.2} ms, PSO creation {:.2} ms, other setup {:.2} ms, total {:.2} ms",
+            desc.label.as_deref().unwrap_or("pipeline"),
+            vertex_elapsed.as_secs_f64() * 1000.0,
+            pixel_elapsed.as_secs_f64() * 1000.0,
+            pso_elapsed.as_secs_f64() * 1000.0,
+            other_elapsed.as_secs_f64() * 1000.0,
+            total_elapsed.as_secs_f64() * 1000.0
+        );
         Ok(Dx12RenderPipeline {
             state,
             layout,
@@ -368,23 +398,41 @@ impl Dx12Backend {
 }
 
 pub(super) fn compile_hlsl(
-    source: &str,
+    module: &Dx12ShaderModule,
     entry_point: &str,
     target: &'static [u8],
-) -> Result<ID3DBlob, String> {
+) -> Result<Arc<[u8]>, String> {
     let entry = std::ffi::CString::new(entry_point).map_err(|error| error.to_string())?;
+    let flags = if cfg!(debug_assertions) {
+        // Keep development startup responsive; release builds retain FXC's
+        // default optimization level for shader execution speed.
+        D3DCOMPILE_OPTIMIZATION_LEVEL0
+    } else {
+        0
+    };
+    let key = (entry_point.to_string(), target.to_vec(), flags);
+    if let Some(bytecode) = module
+        .compiled
+        .lock()
+        .map_err(|_| "DX12 shader bytecode cache is poisoned".to_string())?
+        .get(&key)
+        .cloned()
+    {
+        return Ok(bytecode);
+    }
+
     let mut code = None;
     let mut errors = None;
     let result = unsafe {
         D3DCompile(
-            source.as_ptr().cast(),
-            source.len(),
+            module.source.as_ptr().cast(),
+            module.source.len(),
             PCSTR(b"cupid-hlsl\0".as_ptr()),
             None::<*const D3D_SHADER_MACRO>,
             None::<&windows::Win32::Graphics::Direct3D::ID3DInclude>,
             PCSTR(entry.as_ptr().cast()),
             PCSTR(target.as_ptr()),
-            0,
+            flags,
             0,
             &mut code,
             Some(&mut errors),
@@ -393,7 +441,16 @@ pub(super) fn compile_hlsl(
     if let Err(error) = result {
         return Err(blob_text(errors.as_ref()).unwrap_or_else(|| error.to_string()));
     }
-    code.ok_or_else(|| "D3DCompile returned no bytecode".to_string())
+    let code = code.ok_or_else(|| "D3DCompile returned no bytecode".to_string())?;
+    let length = unsafe { code.GetBufferSize() };
+    let pointer = unsafe { code.GetBufferPointer().cast::<u8>() };
+    // SAFETY: the blob owns this buffer and stays alive until the bytes are copied.
+    let bytecode = Arc::<[u8]>::from(unsafe { std::slice::from_raw_parts(pointer, length) });
+    let mut cache = module
+        .compiled
+        .lock()
+        .map_err(|_| "DX12 shader bytecode cache is poisoned".to_string())?;
+    Ok(cache.entry(key).or_insert(bytecode).clone())
 }
 
 pub(super) fn blob_text(blob: Option<&ID3DBlob>) -> Option<String> {
@@ -404,10 +461,10 @@ pub(super) fn blob_text(blob: Option<&ID3DBlob>) -> Option<String> {
     Some(String::from_utf8_lossy(bytes).trim_end_matches('\0').to_string())
 }
 
-fn shader_bytecode(blob: &ID3DBlob) -> D3D12_SHADER_BYTECODE {
+fn shader_bytecode(bytes: &[u8]) -> D3D12_SHADER_BYTECODE {
     D3D12_SHADER_BYTECODE {
-        pShaderBytecode: unsafe { blob.GetBufferPointer() },
-        BytecodeLength: unsafe { blob.GetBufferSize() },
+        pShaderBytecode: bytes.as_ptr().cast(),
+        BytecodeLength: bytes.len(),
     }
 }
 

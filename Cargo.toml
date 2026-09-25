@@ -129,7 +129,7 @@ portable-guest = [
 ]
 # Compile the native development host with the authenticated reload listener.
 # The CLI enables this only for `aimer +nightly run -Z hot-reload`.
-wasm-hot-reload = ["aimer_quiver/wasm-hot-reload"]
+wasm-hot-reload = ["aimer_quiver/wasm-hot-reload", "aimer_macro/hot-reload"]
 # Highlight fenced code blocks with the tree-sitter backed `arborium` instead
 # of the lightweight `synoptic` default. Better highlighting, heavier build.
 markdown-arborium = ["aimer_markdown/arborium"]

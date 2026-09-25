@@ -113,13 +113,18 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 fn expand_main(input_fn: ItemFn) -> proc_macro2::TokenStream {
     let fn_name = &input_fn.sig.ident;
+    let wasm_cfg = if cfg!(feature = "hot-reload") {
+        quote!(all(target_arch = "wasm32", not(aimer_portable_guest)))
+    } else {
+        quote!(target_arch = "wasm32")
+    };
 
     quote! {
         #[allow(unexpected_cfgs)]
-        #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
+        #[cfg(#wasm_cfg)]
         use aimer::wasm_bindgen;
         #[allow(unexpected_cfgs)]
-        #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
+        #[cfg(#wasm_cfg)]
         use aimer::wasm_bindgen::prelude::wasm_bindgen;
 
         #[inline]
@@ -145,7 +150,7 @@ fn expand_main(input_fn: ItemFn) -> proc_macro2::TokenStream {
         }
 
         #[allow(unexpected_cfgs)]
-        #[cfg(all(target_arch = "wasm32", not(aimer_portable_guest)))]
+        #[cfg(#wasm_cfg)]
         #[wasm_bindgen(start)]
         pub fn __generated_entrance_point(){
             #fn_name()

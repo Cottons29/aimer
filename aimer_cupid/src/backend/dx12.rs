@@ -560,6 +560,7 @@ impl GpuBackend for Dx12Backend {
         Ok(pipeline::Dx12ShaderModule {
             source: Arc::from(source),
             label: label.to_string(),
+            compiled: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         })
     }
 

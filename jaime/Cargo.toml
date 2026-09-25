@@ -32,6 +32,8 @@ metal = ["aimer/metal"]
 # Native Windows Direct3D 12 renderer. Use with `--no-default-features
 # --features desktop-bin,dx12` to keep the desktop binary and omit WGPU.
 dx12 = ["aimer/dx12"]
+# Enables the reload host and matching macro-generated portable lowerings.
+wasm-hot-reload = ["aimer/wasm-hot-reload"]
 
 # Enables the portable lowering hooks used by the application-level guest proof.
 portable-guest = ["aimer/portable-guest", "aimer_widget/portable-guest"]

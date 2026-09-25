@@ -7,8 +7,10 @@ pub mod render_ctx {
     use aimer_cupid::damage_region::DamageSet;
     use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
     use aimer_cupid::renderer::RendererImpl;
+    use aimer_utils::info;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use std::ffi::c_void;
+    use std::time::Instant;
     use windows::Win32::Foundation::HWND;
     use winit::dpi::PhysicalSize;
     use winit::window::Window;
@@ -32,6 +34,7 @@ pub mod render_ctx {
         renderer_generation: u64,
         context_generation: u64,
         resource_generation: u64,
+        startup_started: Option<Instant>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -80,6 +83,7 @@ pub mod render_ctx {
                 renderer_generation: 1,
                 context_generation: 1,
                 resource_generation: 0,
+                startup_started: None,
             }
         }
 
@@ -101,7 +105,13 @@ pub mod render_ctx {
                 self.resize(size);
                 return;
             }
+            let startup_started = Instant::now();
+            let backend_started = Instant::now();
             let backend = Dx12Backend::new().expect("create the system Direct3D 12 device and queue");
+            info!(
+                "DX12 startup stage: device, command queue, and descriptor heaps {:.2} ms",
+                backend_started.elapsed().as_secs_f64() * 1000.0
+            );
             let raw_handle = window.window_handle().expect("get the Windows window handle").as_raw();
             let RawWindowHandle::Win32(win32_handle) = raw_handle else {
                 panic!("winit returned a non-Win32 window handle on Windows");
@@ -109,6 +119,7 @@ pub mod render_ctx {
             let hwnd = HWND(win32_handle.hwnd.get() as *mut c_void);
             let max_dimension = backend.limits().max_texture_dimension_2d;
             let surface_size = SurfaceSize::new(size, max_dimension);
+            let surface_started = Instant::now();
             let surface = Dx12Surface::new(
                 &backend,
                 hwnd,
@@ -117,13 +128,29 @@ pub mod render_ctx {
                 SURFACE_FORMAT,
             )
             .expect("create the DXGI window swap chain");
-            let renderer = RendererImpl::with_antialiasing(&backend, SURFACE_FORMAT, self.antialiasing);
+            info!(
+                "DX12 startup stage: swap chain and back buffers {:.2} ms",
+                surface_started.elapsed().as_secs_f64() * 1000.0
+            );
+            let renderer_started = Instant::now();
+            let mut renderer =
+                RendererImpl::with_antialiasing(&backend, SURFACE_FORMAT, self.antialiasing);
+            renderer.enable_first_render_timing();
+            info!(
+                "DX12 startup stage: built-in renderer pipelines (HLSL compile and PSO creation) {:.2} ms",
+                renderer_started.elapsed().as_secs_f64() * 1000.0
+            );
             self.backend = Some(backend);
             self.surface = Some(surface);
             self.renderer = Some(renderer);
             self.canvas = Some(CupidCanvas::new());
             self.window = Some(window);
             self.surface_size = surface_size;
+            info!(
+                "DX12 startup stage: render context initialization {:.2} ms",
+                startup_started.elapsed().as_secs_f64() * 1000.0
+            );
+            self.startup_started = Some(startup_started);
         }
 
         /// Queues a DXGI buffer resize to the current physical client size.
@@ -141,13 +168,10 @@ pub mod render_ctx {
 
         /// Records and presents a full-damage frame.
         pub fn render_frame(&mut self, draw_fn: impl FnOnce(&CupidCanvas, u32, u32)) -> PresentOutcome {
-            match self.build_frame_packet(|canvas, width, height| {
+            self.render_frame_packet(|canvas, width, height| {
                 draw_fn(canvas, width, height);
                 (1.0, DamageSet::full(width, height))
-            }) {
-                Some(packet) => self.present_packet(packet),
-                None => PresentOutcome::Dropped,
-            }
+            })
         }
 
         /// Records and presents a frame with damage metadata from the widget walk.
@@ -155,10 +179,33 @@ pub mod render_ctx {
             &mut self,
             draw_fn: impl FnOnce(&CupidCanvas, u32, u32) -> (f32, DamageSet),
         ) -> PresentOutcome {
-            match self.build_frame_packet(draw_fn) {
-                Some(packet) => self.present_packet(packet),
-                None => PresentOutcome::Dropped,
+            let startup_frame = self.startup_started.is_some();
+            let build_started = startup_frame.then(Instant::now);
+            let packet = self.build_frame_packet(draw_fn);
+            if let Some(build_started) = build_started {
+                info!(
+                    "DX12 first-frame stage: widget build, layout, and draw-list recording {:.2} ms",
+                    build_started.elapsed().as_secs_f64() * 1000.0
+                );
             }
+
+            let Some(packet) = packet else {
+                if startup_frame {
+                    info!("DX12 first-frame attempt: no frame packet was produced");
+                }
+                return PresentOutcome::Dropped;
+            };
+
+            let present_started = startup_frame.then(Instant::now);
+            let outcome = self.present_packet(packet);
+            if let Some(present_started) = present_started {
+                info!(
+                    "DX12 first-frame stage: render and present path {:.2} ms (presented={})",
+                    present_started.elapsed().as_secs_f64() * 1000.0,
+                    outcome.is_presented()
+                );
+            }
+            outcome
         }
 
         /// Records a frame without acquiring a swap-chain buffer.
@@ -203,7 +250,16 @@ pub mod render_ctx {
             if let Some(canvas) = &self.canvas {
                 canvas.recycle_draw_list(packet.into_frame().into_draw_list());
             }
-            PresentOutcome::from_presented(presented)
+            let outcome = PresentOutcome::from_presented(presented);
+            if self.startup_started.is_some() && outcome.is_presented() {
+                if let Some(started) = self.startup_started.take() {
+                    info!(
+                        "DX12 startup total: context initialization to first presented frame completion {:.2} ms",
+                        started.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
+            }
+            outcome
         }
 
         /// Presents a frame and recycles its draw-list storage.
@@ -225,7 +281,16 @@ pub mod render_ctx {
                 self.surface.as_mut(),
                 self.renderer.as_mut(),
             ) else { return false; };
-            let drawable = match surface.try_acquire(backend) {
+            let startup_timing = self.startup_started.is_some();
+            let acquire_started = startup_timing.then(Instant::now);
+            let acquired = surface.try_acquire(backend);
+            if let Some(acquire_started) = acquire_started {
+                info!(
+                    "DX12 first-frame stage: swap-chain back-buffer acquisition {:.2} ms",
+                    acquire_started.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            let drawable = match acquired {
                 Ok(Some(drawable)) => drawable,
                 Ok(None) => return false,
                 Err(error) => panic!("resize the DXGI swap chain: {error}"),
@@ -233,6 +298,7 @@ pub mod render_ctx {
             let (width, height) = drawable.size();
             if width == 0 || height == 0 { return false; }
             let encode = PhaseTimer::start();
+            let encode_started = startup_timing.then(Instant::now);
             renderer.render(
                 backend,
                 drawable.view(),
@@ -241,9 +307,22 @@ pub mod render_ctx {
                 SURFACE_FORMAT.is_srgb(),
                 &frame.draw_list,
             );
+            if let Some(encode_started) = encode_started {
+                info!(
+                    "DX12 first-frame stage: renderer preparation, command encoding, and queue submission {:.2} ms (CPU elapsed)",
+                    encode_started.elapsed().as_secs_f64() * 1000.0
+                );
+            }
             encode.finish(FramePhase::Encode);
             let present = PhaseTimer::start();
+            let present_started = startup_timing.then(Instant::now);
             let success = drawable.present().is_ok();
+            if let Some(present_started) = present_started {
+                info!(
+                    "DX12 first-frame stage: DXGI present call {:.2} ms (success={success})",
+                    present_started.elapsed().as_secs_f64() * 1000.0
+                );
+            }
             present.finish(FramePhase::Present);
             success
         }

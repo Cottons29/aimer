@@ -1,6 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[cfg(all(target_os = "windows", feature = "dx12"))]
+use std::time::Instant;
+
+#[cfg(all(target_os = "windows", feature = "dx12"))]
+use aimer_utils::info;
+
 use crate::backend::{
     GpuBackend, LoadOp, Operations, RenderPassColorAttachment, RenderPassDescriptor, StoreOp,
 };
@@ -29,6 +35,41 @@ use super::{
 const RETAINED_LAYER_CACHE_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
 const RETAINED_LAYER_IDLE_FRAMES: u64 = 120;
 
+#[cfg(all(target_os = "windows", feature = "dx12"))]
+macro_rules! dx12_stage_start {
+    ($enabled:expr) => {
+        $enabled.then(Instant::now)
+    };
+}
+
+#[cfg(not(all(target_os = "windows", feature = "dx12")))]
+macro_rules! dx12_stage_start {
+    ($enabled:expr) => {{
+        let _ = $enabled;
+        ()
+    }};
+}
+
+#[cfg(all(target_os = "windows", feature = "dx12"))]
+macro_rules! dx12_stage_finish {
+    ($started:expr, $label:literal) => {{
+        if let Some(started) = $started {
+            info!(
+                "DX12 renderer first-frame stage: {} {:.2} ms (CPU elapsed)",
+                $label,
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+    }};
+}
+
+#[cfg(not(all(target_os = "windows", feature = "dx12")))]
+macro_rules! dx12_stage_finish {
+    ($started:expr, $label:literal) => {{
+        let _ = $started;
+    }};
+}
+
 /// Backend-generic renderer for the experimental pluggable backend path.
 pub struct RendererImpl<B: GpuBackend = crate::backend::DefaultGpuBackend> {
     rect_pipeline: RectPipeline<B>,
@@ -39,6 +80,9 @@ pub struct RendererImpl<B: GpuBackend = crate::backend::DefaultGpuBackend> {
     material_target: PersistentTargetGeneric<B>,
     material_composite_bind_group: Option<B::BindGroup>,
     custom_pipelines: Vec<CustomPipelineSlotGeneric<B>>,
+    antialiasing: crate::AntiAlias,
+    material_pipeline_enabled: bool,
+    material_pipeline_initialized: bool,
     format: B::TextureFormat,
     resolved: Vec<ResolvedCommand<B>>,
     text_requests: Vec<TextDrawRequest>,
@@ -51,6 +95,8 @@ pub struct RendererImpl<B: GpuBackend = crate::backend::DefaultGpuBackend> {
     clip_stack: Vec<ClipState>,
     retained_layers: HashMap<u64, RetainedLayerGeneric<B>>,
     frame_index: u64,
+    #[cfg(all(target_os = "windows", feature = "dx12"))]
+    first_render_timing_enabled: bool,
 }
 
 enum ResolvedCommand<B: GpuBackend> {
@@ -75,12 +121,16 @@ struct RetainedLayerGeneric<B: GpuBackend> {
 }
 
 impl<B: GpuBackend> RendererImpl<B> {
-    /// Creates all built-in pipelines using the selected backend.
+    /// Creates the built-in pipelines using the selected backend.
+    ///
+    /// The material pipeline is created on the first material draw.
     pub fn new(backend: &B, format: B::TextureFormat) -> Self {
         Self::with_antialiasing(backend, format, crate::AntiAlias::default())
     }
 
-    /// Creates all built-in pipelines using the selected backend and antialiasing mode.
+    /// Creates the built-in pipelines using the selected backend and antialiasing mode.
+    ///
+    /// The material pipeline is created on the first material draw.
     pub fn with_antialiasing(
         backend: &B,
         format: B::TextureFormat,
@@ -113,8 +163,6 @@ impl<B: GpuBackend> RendererImpl<B> {
             initialize_all.then(|| SvgPipeline::<B>::new_generic(backend, format, antialiasing));
         let frame_composite_pipeline =
             initialize_all.then(|| FrameCompositePipeline::<B>::new_generic(backend, format));
-        let material_pipeline = initialize_all
-            .then(|| MaterialPipeline::<B>::new_generic(backend, format, antialiasing));
         Self {
             rect_pipeline,
             image_pipeline,
@@ -123,10 +171,10 @@ impl<B: GpuBackend> RendererImpl<B> {
             frame_composite_pipeline,
             material_target: PersistentTargetGeneric::default(),
             material_composite_bind_group: None,
-            custom_pipelines: material_pipeline
-                .map(CustomPipelineSlotGeneric::new)
-                .into_iter()
-                .collect(),
+            custom_pipelines: Vec::new(),
+            antialiasing,
+            material_pipeline_enabled: initialize_all,
+            material_pipeline_initialized: false,
             format,
             resolved: Vec::new(),
             text_requests: Vec::new(),
@@ -139,7 +187,16 @@ impl<B: GpuBackend> RendererImpl<B> {
             clip_stack: Vec::new(),
             retained_layers: HashMap::new(),
             frame_index: 0,
+            #[cfg(all(target_os = "windows", feature = "dx12"))]
+            first_render_timing_enabled: false,
         }
+    }
+
+    /// Enables a one-shot breakdown of the next DX12 renderer frame.
+    #[cfg(all(target_os = "windows", feature = "dx12"))]
+    #[doc(hidden)]
+    pub fn enable_first_render_timing(&mut self) {
+        self.first_render_timing_enabled = true;
     }
 
     /// Returns the render-target format selected at construction.
@@ -183,8 +240,15 @@ impl<B: GpuBackend> RendererImpl<B> {
         if width == 0 || height == 0 {
             return;
         }
+        #[cfg(all(target_os = "windows", feature = "dx12"))]
+        let startup_timing = std::mem::replace(&mut self.first_render_timing_enabled, false);
+        #[cfg(not(all(target_os = "windows", feature = "dx12")))]
+        let startup_timing = false;
         self.frame_index = self.frame_index.wrapping_add(1);
+
+        let retained_started = dx12_stage_start!(startup_timing);
         self.prepare_retained_layers(backend, draw_list, is_srgb);
+        dx12_stage_finish!(retained_started, "retained layer preparation");
 
         if source_texture.is_none() && draw_list_uses_material(draw_list) {
             let key = PersistentTargetKey::new(
@@ -196,6 +260,7 @@ impl<B: GpuBackend> RendererImpl<B> {
                 0,
                 TargetValidity::Valid,
             );
+            let material_target_started = dx12_stage_start!(startup_timing);
             let result = self.material_target.ensure(backend, self.format, key);
             if matches!(result, TargetEnsureResult::Created | TargetEnsureResult::Recreated) {
                 let target_view = self
@@ -209,10 +274,12 @@ impl<B: GpuBackend> RendererImpl<B> {
                         .create_bind_group_generic(backend, target_view),
                 );
             }
+            dx12_stage_finish!(material_target_started, "material target setup");
             if let (Some(target_view), Some(target_texture)) = (
                 self.material_target.view().cloned(),
                 self.material_target.texture().cloned(),
             ) {
+                let contents_started = dx12_stage_start!(startup_timing);
                 self.render_contents(
                     backend,
                     &target_view,
@@ -221,14 +288,21 @@ impl<B: GpuBackend> RendererImpl<B> {
                     height,
                     is_srgb,
                     draw_list,
+                    startup_timing,
                 );
+                dx12_stage_finish!(contents_started, "render contents total");
                 self.material_target.mark_valid();
+                let composition_started = dx12_stage_start!(startup_timing);
                 self.composite_material_target(backend, view);
+                dx12_stage_finish!(composition_started, "material target composition");
+                let reclaim_started = dx12_stage_start!(startup_timing);
                 self.reclaim_retained_layers();
+                dx12_stage_finish!(reclaim_started, "retained layer reclamation");
                 return;
             }
         }
 
+        let contents_started = dx12_stage_start!(startup_timing);
         self.render_contents(
             backend,
             view,
@@ -237,8 +311,12 @@ impl<B: GpuBackend> RendererImpl<B> {
             height,
             is_srgb,
             draw_list,
+            startup_timing,
         );
+        dx12_stage_finish!(contents_started, "render contents total");
+        let reclaim_started = dx12_stage_start!(startup_timing);
         self.reclaim_retained_layers();
+        dx12_stage_finish!(reclaim_started, "retained layer reclamation");
     }
 
     fn composite_material_target(&self, backend: &B, view: &B::TextureView) {
@@ -280,8 +358,13 @@ impl<B: GpuBackend> RendererImpl<B> {
         height: u32,
         is_srgb: bool,
         draw_list: &DrawList,
+        startup_timing: bool,
     ) {
-        self.collect_commands(backend, draw_list, width, height);
+        let collect_started = dx12_stage_start!(startup_timing);
+        self.collect_commands(backend, draw_list, width, height, startup_timing);
+        dx12_stage_finish!(collect_started, "draw-list command collection");
+
+        let custom_started = dx12_stage_start!(startup_timing);
         for slot in &mut self.custom_pipelines {
             if slot.pipeline.has_work() {
                 slot.pipeline.prepare(&RenderContextGeneric {
@@ -295,25 +378,33 @@ impl<B: GpuBackend> RendererImpl<B> {
                 });
             }
         }
+        dx12_stage_finish!(custom_started, "custom pipeline preparation");
+
+        let text_started = dx12_stage_start!(startup_timing);
         if !self.text_requests.is_empty() || !self.decoration_requests.is_empty() {
             self.text_pipeline
                 .as_mut()
                 .expect("text commands require the text pipeline")
                 .prepare_generic(
-                backend,
-                width,
-                height,
-                is_srgb,
-                &self.text_requests,
-                &self.decoration_requests,
-            );
+                    backend,
+                    width,
+                    height,
+                    is_srgb,
+                    &self.text_requests,
+                    &self.decoration_requests,
+                );
         }
+        dx12_stage_finish!(text_started, "text shaping, glyph rasterization, and upload");
+
+        let svg_started = dx12_stage_start!(startup_timing);
         if let Some(svg_pipeline) = self.svg_pipeline.as_mut() {
             svg_pipeline.prepare_generic(backend, &self.svg_items, width, height, is_srgb);
         } else if !self.svg_items.is_empty() {
             panic!("SVG commands require the SVG pipeline");
         }
+        dx12_stage_finish!(svg_started, "SVG preparation");
 
+        let batch_started = dx12_stage_start!(startup_timing);
         let mut total_rects = 0;
         let mut total_images = 0;
         for command in &self.resolved {
@@ -332,7 +423,9 @@ impl<B: GpuBackend> RendererImpl<B> {
         } else if total_images != 0 {
             panic!("image commands require the image pipeline");
         }
+        dx12_stage_finish!(batch_started, "rect and image batch setup");
 
+        let encode_started = dx12_stage_start!(startup_timing);
         let mut encoder = backend.create_command_encoder("cupid generic render encoder");
         let mut start = 0;
         let mut first_pass = true;
@@ -406,7 +499,9 @@ impl<B: GpuBackend> RendererImpl<B> {
             image_pipeline.end_frame_generic(backend);
         }
         backend.submit(encoder);
+        dx12_stage_finish!(encode_started, "render command encoding and submission");
 
+        let cleanup_started = dx12_stage_start!(startup_timing);
         for texture_id in self.textures_to_remove.drain(..) {
             if let Some(image_pipeline) = self.image_pipeline.as_mut() {
                 image_pipeline.remove_texture(texture_id);
@@ -423,6 +518,7 @@ impl<B: GpuBackend> RendererImpl<B> {
                 }
             }
         }
+        dx12_stage_finish!(cleanup_started, "post-submit texture cleanup");
     }
 
     fn render_resolved_range(
@@ -597,6 +693,7 @@ impl<B: GpuBackend> RendererImpl<B> {
         draw_list: &DrawList,
         width: u32,
         height: u32,
+        startup_timing: bool,
     ) {
         self.resolved.clear();
         self.text_requests.clear();
@@ -1006,6 +1103,25 @@ impl<B: GpuBackend> RendererImpl<B> {
                     pipeline_name,
                     data,
                 } => {
+                    if pipeline_name == MATERIAL_PIPELINE_NAME
+                        && self.material_pipeline_enabled
+                        && !self.material_pipeline_initialized
+                    {
+                        let material_pipeline_started = dx12_stage_start!(startup_timing);
+                        let mut pipeline = MaterialPipeline::<B>::new_generic(
+                            backend,
+                            self.format,
+                            self.antialiasing,
+                        );
+                        pipeline.begin_frame();
+                        self.custom_pipelines
+                            .insert(0, CustomPipelineSlotGeneric::new(pipeline));
+                        self.material_pipeline_initialized = true;
+                        dx12_stage_finish!(
+                            material_pipeline_started,
+                            "lazy material pipeline initialization"
+                        );
+                    }
                     let Some(pipeline_index) = self
                         .custom_pipelines
                         .iter()

@@ -1247,6 +1247,7 @@ fn start_event_loop(
     // worker finishing while the loop is parked wakes it through the same
     // request the widget tree uses — the only thing a task on another thread is
     // allowed to do to this one.
+    let previous_venus = Venus::uninstall();
     let venus = Venus::new();
     venus.install();
     venus.set_notifier(request_frame_ready);
@@ -1279,49 +1280,73 @@ fn start_event_loop(
         async_runtime.handle().clone(),
     ));
 
-    info!("Creating App instance...");
-    #[cfg(all(target_os = "windows", feature = "dx12"))]
-    let show_window_after_first_frame = window_attr.visible;
-    let mut app = AimerApplicationHandler {
-        window: None,
-        macos_windowing: Default::default(),
-        render_ctx: AimerRenderContext::new(antialiasing),
-        window_attr,
+    let run_app = || {
+        info!("Creating App instance...");
         #[cfg(all(target_os = "windows", feature = "dx12"))]
-        show_window_after_first_frame,
-        widget_root: None,
-        event_dispatcher: aimer_widget::EventDispatcher::new(),
-        scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
-        #[cfg(target_arch = "wasm32")]
-        web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
-        pending_widget: Some(widget),
-        cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
-        pressed_button: None,
-        current_modifiers: Default::default(),
-        ime_composing: false,
-        window_scale: 1.0,
-        native_window_size: None,
-        pending_resize: None,
-        startup_hooks,
-        startup_resources: Vec::new(),
+        let show_window_after_first_frame = window_attr.visible;
+        let mut app = AimerApplicationHandler {
+            window: None,
+            macos_windowing: Default::default(),
+            render_ctx: AimerRenderContext::new(antialiasing),
+            window_attr,
+            #[cfg(all(target_os = "windows", feature = "dx12"))]
+            show_window_after_first_frame,
+            widget_root: None,
+            event_dispatcher: aimer_widget::EventDispatcher::new(),
+            scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
+            #[cfg(target_arch = "wasm32")]
+            web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
+            pending_widget: Some(widget),
+            cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
+            pressed_button: None,
+            current_modifiers: Default::default(),
+            ime_composing: false,
+            window_scale: 1.0,
+            native_window_size: None,
+            pending_resize: None,
+            startup_hooks,
+            startup_resources: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            async_runtime,
+            active_touch_id: None,
+            venus,
+            file_drag: crate::handler::file_drag::FileDrag::new(),
+            #[cfg(feature = "wasm-hot-reload")]
+            live_reload,
+        };
+
+        info!("Started main event loop");
+
+        // On iOS, this function never returns.
+        match event_loop.run_app(&mut app) {
+            Ok(_) => info!("EventLoop finished successfully"),
+            Err(e) => aimer_utils::error!("EventLoop::run_app failed: {:?}", e),
+        }
+
         #[cfg(not(target_arch = "wasm32"))]
-        async_runtime,
-        active_touch_id: None,
-        venus,
-        file_drag: crate::handler::file_drag::FileDrag::new(),
-        #[cfg(feature = "wasm-hot-reload")]
-        live_reload,
+        {
+            // Return the runtime only after the app, renderer, widget tree,
+            // and task context have been dropped at the end of this closure.
+            let AimerApplicationHandler { async_runtime, .. } = app;
+            async_runtime
+        }
     };
 
-    info!("Started main event loop");
-
-    // On iOS, this function never returns.
-    match event_loop.run_app(&mut app) {
-        Ok(_) => info!("EventLoop finished successfully"),
-        Err(e) => aimer_utils::error!("EventLoop::run_app failed: {:?}", e),
-    }
     #[cfg(not(target_arch = "wasm32"))]
-    app.async_runtime.shutdown_background();
+    let async_runtime = run_app();
+    #[cfg(target_arch = "wasm32")]
+    run_app();
+
+    // `Venus::install` keeps a thread-local strong reference. Drop it on the
+    // event-loop thread while Windows is still running, so OffloadPool joins
+    // its workers before thread-local teardown starts.
+    drop(Venus::uninstall());
+    #[cfg(not(target_arch = "wasm32"))]
+    async_runtime.shutdown_background();
+
+    if let Some(previous_venus) = previous_venus {
+        previous_venus.install();
+    }
 }
 
 #[cfg(test)]
