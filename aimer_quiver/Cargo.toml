@@ -21,6 +21,9 @@ metal = [
 # Present native Windows frames through Cupid's Direct3D 12 surface renderer.
 # Select with `--no-default-features --features dx12` for a WGPU-free Quiver.
 dx12 = ["aimer_cupid/dx12", "dep:windows"]
+# Present native desktop frames through Cupid's direct OpenGL renderer.
+# Select with `--no-default-features --features opengl` for a WGPU-free Quiver.
+opengl = ["aimer_cupid/opengl"]
 # Encode and present frames on a dedicated raster thread instead of inline on
 # the UI thread. Off by default: it caps latency at one extra frame and moves
 # the presentation outcome — and with it the first-frame notification — off the

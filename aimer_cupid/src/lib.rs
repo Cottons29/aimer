@@ -41,6 +41,8 @@ pub use backend::wgpu::WgpuBackend;
 pub use backend::dx12::Dx12Backend;
 #[cfg(all(feature = "pluggable-backend-exp", feature = "vulkan"))]
 pub use backend::vulkan::{VulkanBackend, VulkanError, VulkanSurface, VulkanSurfaceFrame};
+#[cfg(all(feature = "pluggable-backend-exp", feature = "opengl"))]
+pub use backend::opengl::{OpenGlBackend, OpenGlError, OpenGlSurface, OpenGlSurfaceFrame};
 #[cfg(feature = "pluggable-backend-exp")]
 pub use custom_pipeline::{CustomPipelineGeneric, RenderContextGeneric};
 #[cfg(all(feature = "pluggable-backend-exp", feature = "wgpu"))]

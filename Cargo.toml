@@ -104,6 +104,7 @@ metal = ["aimer_quiver/metal"]
 # Present native Windows frames through Cupid's Direct3D 12 backend.
 # Use `--no-default-features --features dx12` to omit WGPU.
 dx12 = ["aimer_quiver/dx12"]
+opengl = ["aimer_quiver/opengl"]
 # Compile ordinary widgets through the hidden portable guest conversion path.
 # Generated shadow applications enable this feature; native applications do not.
 portable-guest = [

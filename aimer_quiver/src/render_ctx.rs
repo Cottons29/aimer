@@ -18,6 +18,11 @@ mod dx12_ctx;
 #[cfg(all(not(target_arch = "wasm32"), feature = "dx12", target_os = "windows"))]
 pub use dx12_ctx::render_ctx::Dx12Api;
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "opengl"))]
+mod opengl_ctx;
+#[cfg(all(not(target_arch = "wasm32"), feature = "opengl"))]
+pub use opengl_ctx::render_ctx::OpenGlApi;
+
 #[cfg(all(feature = "metal", not(target_os = "macos")))]
 compile_error!("aimer_quiver's native `metal` renderer currently supports macOS only");
 
@@ -27,12 +32,18 @@ compile_error!("aimer_quiver's `metal` renderer does not support `raster-thread`
 #[cfg(all(feature = "dx12", not(target_os = "windows")))]
 compile_error!("aimer_quiver's `dx12` renderer currently supports Windows only");
 
+#[cfg(all(feature = "opengl", not(any(target_os = "windows", target_os = "linux"))))]
+compile_error!("aimer_quiver's `opengl` renderer currently supports Windows and Linux only");
+
 #[cfg(all(feature = "dx12", feature = "raster-thread"))]
 compile_error!("aimer_quiver's `dx12` renderer does not support `raster-thread` yet");
 
+#[cfg(all(feature = "opengl", feature = "raster-thread"))]
+compile_error!("aimer_quiver's `opengl` renderer does not support `raster-thread` yet");
+
 #[cfg(all(
     not(target_arch = "wasm32"),
-    not(any(feature = "wgpu", feature = "metal", feature = "dx12"))
+    not(any(feature = "wgpu", feature = "metal", feature = "dx12", feature = "opengl"))
 ))]
 compile_error!("enable an aimer_quiver renderer feature");
 
@@ -41,13 +52,21 @@ compile_error!("aimer_quiver's wasm renderer requires the `wgpu` feature");
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "dx12"))]
 pub type AimerRenderContext = Dx12Api;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(feature = "dx12"),
+    not(feature = "metal"),
+    feature = "opengl"
+))]
+pub type AimerRenderContext = OpenGlApi;
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "dx12"), feature = "metal"))]
 pub type AimerRenderContext = MetalApi;
 #[cfg(all(
     not(target_arch = "wasm32"),
     feature = "wgpu",
     not(feature = "metal"),
-    not(feature = "dx12")
+    not(feature = "dx12"),
+    not(feature = "opengl")
 ))]
 pub type AimerRenderContext = WgpuApi;
 #[cfg(all(target_arch = "wasm32", feature = "wgpu"))]

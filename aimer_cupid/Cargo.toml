@@ -44,6 +44,11 @@ dx12-demo = ["dx12", "dep:winit", "dep:raw-window-handle"]
 # Native Vulkan backend and optional windowed demo.
 vulkan = ["dep:ash", "dep:ash-window", "dep:raw-window-handle", "pluggable-backend-exp"]
 vulkan-demo = ["vulkan", "dep:winit"]
+# Native OpenGL 3.3 Core backend. Loads the platform OpenGL entry points directly.
+opengl = ["dep:raw-window-handle", "pluggable-backend-exp"]
+# Optional windowed demo for the direct OpenGL backend. Use with
+# `--no-default-features` to omit WGPU.
+opengl-demo = ["opengl", "dep:winit"]
 metal-demo = [
     "metal",
     "dep:winit",
@@ -89,6 +94,11 @@ required-features = ["wgpu"]
 path = "src/bin_vulkan.rs"
 name = "cupid-vulkan"
 required-features = ["vulkan-demo"]
+
+[[bin]]
+path = "src/bin_opengl.rs"
+name = "cupid-opengl"
+required-features = ["opengl-demo"]
 
 [dependencies]
 aimer_utils = { workspace = true, features = ["time-cost"] }

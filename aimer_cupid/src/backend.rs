@@ -40,6 +40,9 @@ pub mod dx12;
 #[cfg(feature = "vulkan")]
 pub mod vulkan;
 
+#[cfg(feature = "opengl")]
+pub mod opengl;
+
 /// Backend selected by the active feature set for public generic type defaults.
 #[cfg(feature = "wgpu")]
 pub type DefaultGpuBackend = wgpu::WgpuBackend;
@@ -61,6 +64,16 @@ pub type DefaultGpuBackend = dx12::Dx12Backend;
 ))]
 pub type DefaultGpuBackend = vulkan::VulkanBackend;
 
+/// OpenGL is the default backend when all other backends are disabled.
+#[cfg(all(
+    not(feature = "wgpu"),
+    not(feature = "metal"),
+    not(feature = "dx12"),
+    not(feature = "vulkan"),
+    feature = "opengl"
+))]
+pub type DefaultGpuBackend = opengl::OpenGlBackend;
+
 #[cfg(all(
     feature = "metal",
     not(any(target_os = "macos", target_os = "ios"))
@@ -76,9 +89,12 @@ compile_error!("the `dx12` feature is only supported on Windows");
 ))]
 compile_error!("the `vulkan` feature is supported on Windows, Linux, and Android");
 
+#[cfg(all(feature = "opengl", not(any(target_os = "windows", target_os = "linux"))))]
+compile_error!("the `opengl` feature is supported on Windows and Linux");
+
 #[cfg(all(
     feature = "pluggable-backend-exp",
-    not(any(feature = "wgpu", feature = "metal", feature = "dx12", feature = "vulkan"))
+    not(any(feature = "wgpu", feature = "metal", feature = "dx12", feature = "vulkan", feature = "opengl"))
 ))]
 compile_error!("enable a GPU backend feature with `pluggable-backend-exp`");
 
