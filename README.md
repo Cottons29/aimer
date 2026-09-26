@@ -23,7 +23,7 @@ f# Aimer
 
 **Aimer** is a cross-platform GUI framework inspired by the declarative, composable widget tree architecture, engineered from the ground up for Rust's zero-cost abstractions, strict ownership model, and concurrent execution guarantees.
 
-Unlike web-wrapper frameworks or heavyweight browser runtimes, Aimer renders directly through its custom hardware-accelerated 2D vector and typography engine (**Cupid**) on pluggable GPU backends. WGPU is the default; size-sensitive wasm builds can select the direct WebGL2 backend. Rendering is driven by a frame-budget-aware async UI scheduler (**Venus**) and small-object optimized memory buffers (**Rubick**).
+Unlike web-wrapper frameworks or heavyweight browser runtimes, Aimer renders directly through its custom hardware-accelerated 2D vector and typography engine (**Cupid**) on pluggable GPU backends. WGPU is the default for native builds; the `web` profile uses direct browser WebGPU first and falls back to direct WebGL2 without bundling the `wgpu` crate. Rendering is driven by a frame-budget-aware async UI scheduler (**Venus**) and small-object optimized memory buffers (**Rubick**).
 
 ### Core Philosophy
 
@@ -54,7 +54,7 @@ Aimer does **not** rely on third-party text shaping or rendering libraries such 
 
 | Subsystem | Crate | Role & Capabilities |
 | :--- | :--- | :--- |
-| **Rendering & Typography** | `aimer_cupid` | Fully self-implemented 2D vector renderer and typography engine (pure-Rust font parser, complex script shaper, subpixel curve rasterizer, GPU glyph atlas; zero external text dependencies), gradients, shadow blurs, and glass backdrops on WGPU or direct WebGL2. |
+| **Rendering & Typography** | `aimer_cupid` | Fully self-implemented 2D vector renderer and typography engine (pure-Rust font parser, complex script shaper, subpixel curve rasterizer, GPU glyph atlas; zero external text dependencies), gradients, shadow blurs, and glass backdrops on WGPU, direct WebGL2, or browser WebGPU. |
 | **Async Scheduler** | `aimer_venus` | Frame-aligned async runtime managing microtasks, UI animation frame hooks, budgeted idle tasks (e.g. image decoding, background glyph rasterization), and threadpool task offloading (`spawn_blocking`). |
 | **Memory & Pool** | `aimer_rubick` | Small-object optimization smart pointer (`Rubick<T, WORDS>`) providing inline storage (e.g. 8 words for `AnyWidget`) and thread-local element pooling to prevent heap allocations on hot rebuild paths. |
 | **Window & Shell** | `aimer_quiver` | Cross-platform window lifecycle, multi-window surface management via `winit` and GPU backend adapters, dedicated raster thread synchronization, and native macOS custom titlebar integration. |
@@ -105,7 +105,7 @@ Supports shell routes, nested route hierarchies, positional or named parameters,
 | **macOS** | Native Cocoa / `winit` | Metal (`wgpu`) | ✅ Supported |
 | **iOS** | UIKit / Native Bridge | Metal (`wgpu`) | ✅ Supported |
 | **Android** | NDK / NativeActivity | Vulkan / OpenGL ES (`wgpu`) | ✅ Supported |
-| **Web (WASM)** | `web-sys` / Canvas | Canvas 2D / WebGPU / direct WebGL2 | ✅ Supported |
+| **Web (WASM)** | `web-sys` / Canvas | Canvas 2D / direct WebGPU with WebGL2 fallback | ✅ Supported |
 | **Windows** | Win32 / `winit` | Direct3D 12 / Vulkan (`wgpu`) | 🚧 In Progress |
 | **Linux** | X11 / Wayland / `winit` | Vulkan (`wgpu`) | 🚧 In Progress |
 
@@ -277,9 +277,18 @@ cargo run --example text_field
 # Multiline text area demo
 cargo run --example text_area
 
-# Web target (requires wasm-pack)
+# Browser GPU preset: WebGPU primary, WebGL2 fallback (omits the `wgpu` crate)
+wasm-pack build --target web --no-default-features --features web website
+
+# Select one direct browser backend when desired
+wasm-pack build --target web --no-default-features --features native,webgpu website
 wasm-pack build --target web --no-default-features --features native,webgl website
 ```
+
+The workspace opts into web-sys's unstable WebGPU bindings for the wasm target
+in `.cargo/config.toml`. Downstream builds that enable `webgpu` must also pass
+`--cfg=web_sys_unstable_apis` for wasm, as described in the
+[wasm-bindgen guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html).
 
 ---
 

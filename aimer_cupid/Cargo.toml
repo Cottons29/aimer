@@ -48,6 +48,50 @@ vulkan-demo = ["vulkan", "dep:winit"]
 opengl = ["dep:raw-window-handle", "pluggable-backend-exp"]
 # Browser WebGL2 backend using web-sys. Pair with `--no-default-features` for a WGPU-free build.
 webgl = ["pluggable-backend-exp"]
+web = ["webgpu", "webgl"]
+# Browser WebGPU backend using the browser's WebGPU API through web-sys.
+webgpu = [
+    "pluggable-backend-exp",
+    "web-sys/Gpu",
+    "web-sys/GpuAdapter",
+    "web-sys/GpuAdapterInfo",
+    "web-sys/GpuBindGroup",
+    "web-sys/GpuBindGroupDescriptor",
+    "web-sys/GpuBindGroupLayout",
+    "web-sys/GpuBindGroupLayoutDescriptor",
+    "web-sys/GpuBuffer",
+    "web-sys/GpuBufferDescriptor",
+    "web-sys/GpuCanvasAlphaMode",
+    "web-sys/GpuCanvasConfiguration",
+    "web-sys/GpuCanvasContext",
+    "web-sys/GpuCommandBuffer",
+    "web-sys/GpuCommandEncoder",
+    "web-sys/GpuCommandEncoderDescriptor",
+    "web-sys/GpuDevice",
+    "web-sys/GpuExtent3dDict",
+    "web-sys/GpuIndexFormat",
+    "web-sys/GpuPipelineLayout",
+    "web-sys/GpuPipelineLayoutDescriptor",
+    "web-sys/GpuQueue",
+    "web-sys/GpuRenderPassColorAttachment",
+    "web-sys/GpuRenderPassDescriptor",
+    "web-sys/GpuRenderPassEncoder",
+    "web-sys/GpuRenderPipeline",
+    "web-sys/GpuRenderPipelineDescriptor",
+    "web-sys/GpuSampler",
+    "web-sys/GpuSamplerDescriptor",
+    "web-sys/GpuShaderModule",
+    "web-sys/GpuShaderModuleDescriptor",
+    "web-sys/GpuSupportedLimits",
+    "web-sys/GpuTexelCopyBufferInfo",
+    "web-sys/GpuTexelCopyBufferLayout",
+    "web-sys/GpuTexelCopyTextureInfo",
+    "web-sys/GpuTexture",
+    "web-sys/GpuTextureAspect",
+    "web-sys/GpuTextureDescriptor",
+    "web-sys/GpuTextureFormat",
+    "web-sys/GpuTextureView",
+]
 # Optional windowed demo for the direct OpenGL backend. Use with
 # `--no-default-features` to omit WGPU.
 opengl-demo = ["opengl", "dep:winit"]

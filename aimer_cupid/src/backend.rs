@@ -44,9 +44,15 @@ pub mod vulkan;
 pub mod opengl;
 #[cfg(all(feature = "webgl", target_arch = "wasm32"))]
 pub mod webgl;
+#[cfg(all(feature = "webgpu", target_arch = "wasm32"))]
+pub mod webgpu;
 
 /// Backend selected by the active feature set for public generic type defaults.
-#[cfg(feature = "wgpu")]
+/// Direct browser WebGPU takes precedence when selected for wasm.
+#[cfg(all(feature = "webgpu", target_arch = "wasm32"))]
+pub type DefaultGpuBackend = webgpu::WebGpuBackend;
+
+#[cfg(all(feature = "wgpu", not(all(feature = "webgpu", target_arch = "wasm32"))))]
 pub type DefaultGpuBackend = wgpu::WgpuBackend;
 
 /// Metal is the default backend when WGPU has explicitly been disabled.
@@ -83,6 +89,7 @@ pub type DefaultGpuBackend = opengl::OpenGlBackend;
     not(feature = "dx12"),
     not(feature = "vulkan"),
     not(feature = "opengl"),
+    not(feature = "webgpu"),
     feature = "webgl",
     target_arch = "wasm32"
 ))]
@@ -107,12 +114,21 @@ compile_error!("the `vulkan` feature is supported on Windows, Linux, and Android
 compile_error!("the `opengl` feature is supported on Windows and Linux");
 #[cfg(all(feature = "webgl", not(target_arch = "wasm32")))]
 compile_error!("the `webgl` feature is supported on wasm32 browser targets");
+#[cfg(all(feature = "webgpu", not(target_arch = "wasm32")))]
+compile_error!("the `webgpu` feature is supported on wasm32 browser targets");
 
 #[cfg(all(
     feature = "pluggable-backend-exp",
-    not(any(feature = "wgpu", feature = "metal", feature = "dx12", feature = "vulkan", feature = "opengl", feature = "webgl"))
+    not(any(feature = "wgpu", feature = "metal", feature = "dx12", feature = "vulkan", feature = "opengl", feature = "webgl", feature = "webgpu"))
 ))]
 compile_error!("enable a GPU backend feature with `pluggable-backend-exp`");
+
+#[cfg(all(
+    target_arch = "wasm32",
+    not(feature = "wgpu"),
+    not(feature = "pluggable-backend-exp")
+))]
+compile_error!("enable a browser renderer with `webgpu`, `webgl`, or `wgpu`");
 
 // ──────────────────────────────────────────────
 //  Descriptor types shared by all backends

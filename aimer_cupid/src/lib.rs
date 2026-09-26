@@ -45,6 +45,8 @@ pub use backend::vulkan::{VulkanBackend, VulkanError, VulkanSurface, VulkanSurfa
 pub use backend::opengl::{OpenGlBackend, OpenGlError, OpenGlSurface, OpenGlSurfaceFrame};
 #[cfg(all(feature = "pluggable-backend-exp", feature = "webgl", target_arch = "wasm32"))]
 pub use backend::webgl::{WebGl2Backend, WebGl2Error, WebGl2TextureFormat, WebGl2TextureView};
+#[cfg(all(feature = "pluggable-backend-exp", feature = "webgpu", target_arch = "wasm32"))]
+pub use backend::webgpu::{WebGpuBackend, WebGpuError, WebGpuTextureFormat, WebGpuTextureView};
 #[cfg(feature = "pluggable-backend-exp")]
 pub use custom_pipeline::{CustomPipelineGeneric, RenderContextGeneric};
 #[cfg(all(feature = "pluggable-backend-exp", feature = "wgpu"))]

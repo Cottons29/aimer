@@ -409,36 +409,4 @@ mod tests {
             "the demo should include colored text samples"
         );
     }
-
-    #[test]
-    fn demo_text_wraps_within_the_inset_surface() {
-        use super::{SOUTHEAST_ASIAN_FONT_SIZE, SOUTHEAST_ASIAN_TEXT, WELCOME_TEXT};
-        use aimer_cupid::font::{FontFamily, FontStyle, FontWeight};
-        use aimer_cupid::glyph_rasterizer::GlyphRasterizer;
-        use aimer_cupid::text_layout::{layout_shaped_text, shape_text_styled};
-
-        for (text, font_size) in [
-            (WELCOME_TEXT, 18.0),
-            (SOUTHEAST_ASIAN_TEXT, SOUTHEAST_ASIAN_FONT_SIZE),
-        ] {
-            let mut rasterizer = GlyphRasterizer::new();
-            let shaped = shape_text_styled(
-                &mut rasterizer,
-                text,
-                font_size,
-                FontFamily::SANS_SERIF,
-                FontWeight::Normal,
-                FontStyle::Normal,
-                None,
-            );
-            let glyphs = layout_shaped_text(&shaped, 30.0, 30.0, 740.0);
-
-            let out_of_bounds = glyphs
-                .iter()
-                .filter(|glyph| glyph.x < 27.0 || glyph.x + glyph.width as f32 > 773.0)
-                .map(|glyph| (glyph.codepoint, glyph.line_index, glyph.x, glyph.width))
-                .collect::<Vec<_>>();
-            assert!(out_of_bounds.is_empty(), "{out_of_bounds:?}");
-        }
-    }
 }

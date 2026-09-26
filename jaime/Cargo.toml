@@ -28,6 +28,7 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 default = ["desktop-bin", "wgpu"]
 desktop-bin = []
 wgpu = ["aimer/wgpu"]
+webgl = ["aimer/webgl"]
 metal = ["aimer/metal"]
 # Native Windows Direct3D 12 renderer. Use with `--no-default-features
 # --features desktop-bin,dx12` to keep the desktop binary and omit WGPU.

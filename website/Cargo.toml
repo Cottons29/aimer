@@ -8,6 +8,9 @@ default = ["native", "desktop-bin", "wgpu"]
 native = ["aimer/markdown", "aimer/svg", "aimer/provider"]
 wgpu = ["aimer/wgpu"]
 webgl = ["aimer/webgl"]
+webgpu = ["aimer/webgpu"]
+# Browser build profile with WebGPU primary and WebGL2 fallback.
+web = ["native", "aimer/web"]
 
 desktop-bin = []
 

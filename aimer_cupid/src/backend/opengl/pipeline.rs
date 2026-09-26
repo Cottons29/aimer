@@ -74,17 +74,33 @@ pub(super) enum OpenGlCommand {
     Draw { vertices: std::ops::Range<u32>, instances: std::ops::Range<u32> },
     DrawIndexed { indices: std::ops::Range<u32>, base_vertex: i32, instances: std::ops::Range<u32> },
     CopyBufferToTexture {
-        buffer: OpenGlBuffer, texture: super::OpenGlTexture, mip_level: u32,
-        origin: Origin3d, aspect: TextureAspect, layout: TexelCopyBufferLayout, extent: Extent3d,
+        buffer: OpenGlBuffer,
+        texture: super::OpenGlTexture,
+        mip_level: u32,
+        origin: Origin3d,
+        aspect: TextureAspect,
+        layout: TexelCopyBufferLayout,
+        extent: Extent3d,
     },
     CopyTextureToTexture {
-        source: super::OpenGlTexture, source_mip: u32, source_origin: Origin3d, source_aspect: TextureAspect,
-        destination: super::OpenGlTexture, destination_mip: u32, destination_origin: Origin3d,
-        destination_aspect: TextureAspect, extent: Extent3d,
+        source: super::OpenGlTexture,
+        source_mip: u32,
+        source_origin: Origin3d,
+        source_aspect: TextureAspect,
+        destination: super::OpenGlTexture,
+        destination_mip: u32,
+        destination_origin: Origin3d,
+        destination_aspect: TextureAspect,
+        extent: Extent3d,
     },
     CopyTextureToBuffer {
-        texture: super::OpenGlTexture, mip_level: u32, origin: Origin3d, aspect: TextureAspect,
-        buffer: OpenGlBuffer, layout: TexelCopyBufferLayout, extent: Extent3d,
+        texture: super::OpenGlTexture,
+        mip_level: u32,
+        origin: Origin3d,
+        aspect: TextureAspect,
+        buffer: OpenGlBuffer,
+        layout: TexelCopyBufferLayout,
+        extent: Extent3d,
     },
 }
 
@@ -256,10 +272,16 @@ impl GpuRenderPass<OpenGlBackend> for OpenGlExecutorPass {
         shared.use_program(state.program);
         shared.bind_vertex_array(state.vertex_array);
         unsafe {
-            (shared.gl.front_face)(match state.primitive.front_face { FrontFace::Ccw => gl::CCW, FrontFace::Cw => gl::CW });
+            (shared.gl.front_face)(match state.primitive.front_face {
+                FrontFace::Ccw => gl::CCW,
+                FrontFace::Cw => gl::CW
+            });
             if let Some(face) = state.primitive.cull_mode {
                 shared.set_capability(gl::CULL_FACE, true);
-                (shared.gl.cull_face)(match face { Face::Front => gl::FRONT, Face::Back => gl::BACK });
+                (shared.gl.cull_face)(match face {
+                    Face::Front => gl::FRONT,
+                    Face::Back => gl::BACK
+                });
             } else {
                 shared.set_capability(gl::CULL_FACE, false);
             }
@@ -407,7 +429,7 @@ impl GpuRenderPass<OpenGlBackend> for OpenGlExecutorPass {
         };
         self.apply_instance_base(instances.start);
         unsafe {
-                (self.shared.gl.draw_arrays_instanced)(
+            (self.shared.gl.draw_arrays_instanced)(
                 topology_for_draw(pipeline),
                 vertices.start as i32,
                 vertices.end.saturating_sub(vertices.start) as i32,
@@ -427,7 +449,7 @@ impl GpuRenderPass<OpenGlBackend> for OpenGlExecutorPass {
         let (format, bytes) = index_format(index.format);
         let byte_offset = index.offset + indices.start as u64 * bytes;
         unsafe {
-                (self.shared.gl.draw_elements_instanced_base_vertex)(
+            (self.shared.gl.draw_elements_instanced_base_vertex)(
                 topology_for_draw(pipeline),
                 indices.end.saturating_sub(indices.start) as i32,
                 format,
@@ -493,9 +515,15 @@ pub(super) fn begin_render_pass<'a>(
         LoadOp::Clear(clear) => Some([clear[0] as f32, clear[1] as f32, clear[2] as f32, clear[3] as f32]),
     }).collect();
     let clear_depth = desc.depth_stencil_attachment.as_ref().and_then(|depth| depth.depth_ops)
-        .and_then(|ops| match ops.load { LoadOp::Load => None, LoadOp::Clear(depth) => Some(depth) });
+        .and_then(|ops| match ops.load {
+            LoadOp::Load => None,
+            LoadOp::Clear(depth) => Some(depth)
+        });
     let clear_stencil = desc.depth_stencil_attachment.as_ref().and_then(|depth| depth.stencil_ops)
-        .and_then(|ops| match ops.load { LoadOp::Load => None, LoadOp::Clear(stencil) => Some(stencil as i32) });
+        .and_then(|ops| match ops.load {
+            LoadOp::Load => None,
+            LoadOp::Clear(stencil) => Some(stencil as i32)
+        });
     encoder.commands.push(OpenGlCommand::BeginPass(OpenGlPassSetup {
         framebuffer: framebuffer.framebuffer,
         size: framebuffer.size,

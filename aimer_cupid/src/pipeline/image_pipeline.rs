@@ -482,6 +482,8 @@ impl ImagePipeline {
             frame_instance_offset: 0,
             frame_instances: Vec::new(),
             upload: FrameUpload::new(),
+            #[cfg(feature = "pluggable-backend-exp")]
+            immediate_uploads: false,
             last_viewport: None,
             frame_index: 0,
         }
@@ -592,7 +594,6 @@ impl ImagePipeline {
         self.frame_index = self.frame_index.saturating_add(1);
         self.frame_instance_offset = 0;
         self.frame_instances.clear();
-        self.immediate_uploads = false;
         let previous_capacity = self.instance_policy.capacity();
         self.instance_policy.record_usage(total_instances);
         if self.instance_policy.capacity() != previous_capacity {
@@ -1104,6 +1105,7 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
         self.frame_index = self.frame_index.saturating_add(1);
         self.frame_instance_offset = 0;
         self.frame_instances.clear();
+        self.immediate_uploads = false;
         let previous_capacity = self.instance_policy.capacity();
         self.instance_policy.record_usage(total_instances);
         if self.instance_policy.capacity() != previous_capacity {

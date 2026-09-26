@@ -77,6 +77,12 @@ wgpu = ["aimer_quiver/wgpu"]
 # Select the direct browser WebGL2 renderer; use no default features to omit WGPU.
 # Web build: `cargo build --target wasm32-unknown-unknown --no-default-features --features webgl`.
 webgl = ["aimer_quiver/webgl"]
+# Select the direct browser WebGPU renderer through web-sys; use no default
+# features to omit the separate `wgpu` crate.
+webgpu = ["aimer_quiver/webgpu"]
+# Browser GPU preset: WebGPU primary, WebGL2 fallback. Pair with
+# `--no-default-features` to omit the WGPU crate.
+web = ["aimer_quiver/web"]
 markdown = []
 # Forward opt-in Venus microtask diagnostics through the umbrella crate.
 venus-debug = ["aimer_venus/venus-debug"]

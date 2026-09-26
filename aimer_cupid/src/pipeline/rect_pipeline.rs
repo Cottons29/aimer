@@ -255,6 +255,8 @@ impl RectPipeline {
             instances: Vec::new(),
             frame_instance_offset: 0,
             upload: FrameUpload::new(),
+            #[cfg(feature = "pluggable-backend-exp")]
+            immediate_uploads: false,
             last_viewport: None,
         }
     }

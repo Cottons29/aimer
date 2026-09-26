@@ -752,7 +752,7 @@ pub struct TextPipelineV2<B: crate::backend::GpuBackend = crate::backend::Defaul
     prepared_frame: Option<PreparedFrameCache>,
 }
 
-#[cfg(not(feature = "pluggable-backend-exp"))]
+#[cfg(all(feature = "wgpu", not(feature = "pluggable-backend-exp")))]
 pub struct TextPipelineV2 {
     rasterizer: GlyphRasterizer,
     executor: BatchExecutor,
@@ -1400,6 +1400,7 @@ impl TextPipelineV2 {
     /// presenter may use this as a hint while another frame source, such as
     /// active scrolling, is already keeping the render loop alive.
     #[inline]
+    #[cfg(not(feature = "pluggable-backend-exp"))]
     pub fn has_postponed_preparation(&self) -> bool {
         self.postponed_preparation
     }
