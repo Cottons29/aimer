@@ -121,7 +121,7 @@ impl WindowEventHandler {
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 Self::update_scale_factor(&mut app.window_scale, scale_factor);
-                #[cfg(all(target_os = "macos", feature = "metal"))]
+                #[cfg(all(target_os = "macos", feature = "native", not(feature = "wgpu")))]
                 if app.render_ctx.is_ready()
                     && let Some(window) = app.native_window()
                 {

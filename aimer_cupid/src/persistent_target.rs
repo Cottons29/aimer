@@ -1,7 +1,3 @@
-#[cfg(feature = "wgpu")]
-use wgpu::{Device, Texture, TextureFormat, TextureView};
-
-#[cfg(feature = "pluggable-backend-exp")]
 use crate::backend::GpuBackend;
 
 /// Whether the pixels currently stored in a persistent target may be reused.
@@ -158,29 +154,7 @@ impl PersistentTargetState {
 }
 
 /// A renderer-owned color target that survives between frames.
-#[cfg(feature = "wgpu")]
-pub(crate) struct PersistentTarget {
-    state: PersistentTargetState,
-    format: Option<TextureFormat>,
-    texture: Option<Texture>,
-    view: Option<TextureView>,
-}
 
-#[cfg(feature = "wgpu")]
-impl Default for PersistentTarget {
-    fn default() -> Self {
-        Self {
-            state: PersistentTargetState::default(),
-            format: None,
-            texture: None,
-            view: None,
-        }
-    }
-}
-
-// ── Generic version behind the experimental flag ──────────────────────
-
-#[cfg(feature = "pluggable-backend-exp")]
 pub(crate) struct PersistentTargetGeneric<B: GpuBackend> {
     state: PersistentTargetState,
     format: Option<B::TextureFormat>,
@@ -188,7 +162,6 @@ pub(crate) struct PersistentTargetGeneric<B: GpuBackend> {
     view: Option<B::TextureView>,
 }
 
-#[cfg(feature = "pluggable-backend-exp")]
 impl<B: GpuBackend> Default for PersistentTargetGeneric<B> {
     fn default() -> Self {
         Self {
@@ -200,7 +173,6 @@ impl<B: GpuBackend> Default for PersistentTargetGeneric<B> {
     }
 }
 
-#[cfg(feature = "pluggable-backend-exp")]
 impl<B: GpuBackend> PersistentTargetGeneric<B> {
     /// Ensures that a target allocation exists for `key` and `format`.
     #[inline]
@@ -235,6 +207,7 @@ impl<B: GpuBackend> PersistentTargetGeneric<B> {
             format,
             usage: vec![
                 crate::backend::TextureUsage::RenderAttachment,
+                crate::backend::TextureUsage::CopyDst,
                 crate::backend::TextureUsage::CopySrc,
                 crate::backend::TextureUsage::TextureBinding,
             ],
@@ -288,96 +261,6 @@ impl<B: GpuBackend> PersistentTargetGeneric<B> {
     }
 }
 
-#[cfg(feature = "wgpu")]
-impl PersistentTarget {
-    /// Ensures that a target allocation exists for `key` and `format`.
-    #[inline]
-    pub(crate) fn ensure(
-        &mut self,
-        device: &Device,
-        format: TextureFormat,
-        key: PersistentTargetKey,
-    ) -> TargetEnsureResult {
-        if key.width == 0 || key.height == 0 {
-            return TargetEnsureResult::Unavailable;
-        }
-
-        let resource_matches = self.texture.is_some()
-            && self.format == Some(format)
-            && self.state.same_resource(key);
-        if resource_matches {
-            return if self.state.can_reuse_contents(key) {
-                TargetEnsureResult::ReusedValid
-            } else {
-                TargetEnsureResult::ReusedInvalid
-            };
-        }
-
-        let had_target = self.texture.is_some();
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("aimer persistent color target"),
-            size: wgpu::Extent3d {
-                width: key.width,
-                height: key.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.texture = Some(texture);
-        self.view = Some(view);
-        self.format = Some(format);
-        self.state = PersistentTargetState::initialized(key.with_validity(TargetValidity::Invalid));
-        if had_target {
-            TargetEnsureResult::Recreated
-        } else {
-            TargetEnsureResult::Created
-        }
-    }
-
-    /// Marks the current target pixels complete and eligible for reuse.
-    #[inline]
-    pub(crate) fn mark_valid(&mut self) {
-        self.state.mark_valid();
-    }
-
-    /// Marks the target contents unknown while retaining its allocation.
-    #[inline]
-    pub(crate) fn invalidate(&mut self) {
-        self.state.invalidate();
-    }
-
-    /// Drops GPU resources after context loss or renderer teardown.
-    #[inline]
-    pub(crate) fn discard(&mut self) {
-        self.state = PersistentTargetState::default();
-        self.format = None;
-        self.view = None;
-        self.texture = None;
-    }
-
-    #[inline]
-    pub(crate) fn state(&self) -> PersistentTargetState {
-        self.state
-    }
-
-    #[inline]
-    pub(crate) fn view(&self) -> Option<&TextureView> {
-        self.view.as_ref()
-    }
-
-    #[inline]
-    pub(crate) fn texture(&self) -> Option<&Texture> {
-        self.texture.as_ref()
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -422,19 +305,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "wgpu")]
-    fn an_empty_target_is_unknown_and_can_be_discarded() {
-        let mut target = PersistentTarget::default();
-
-        assert_eq!(target.state().validity(), TargetValidity::Unknown);
-        assert_eq!(target.state().key(), None);
-
-        target.invalidate();
-        target.discard();
-
-        assert_eq!(target.state().validity(), TargetValidity::Unknown);
-        assert_eq!(target.state().key(), None);
-        assert!(target.view().is_none());
-        assert!(target.texture().is_none());
+    fn a_default_target_state_starts_unknown() {
+        let state = PersistentTargetState::default();
+        assert_eq!(state.validity(), TargetValidity::Unknown);
+        assert_eq!(state.key(), None);
     }
 }

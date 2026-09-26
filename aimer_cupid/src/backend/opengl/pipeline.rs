@@ -789,6 +789,16 @@ fn compile_shader(
     source: &str,
     label: &str,
 ) -> Result<u32, BackendError> {
+    #[cfg(target_os = "android")]
+    let source = source.replacen(
+        "#version 330 core",
+        if stage == gl::FRAGMENT_SHADER {
+            "#version 300 es\nprecision highp float;\nprecision highp int;"
+        } else {
+            "#version 300 es"
+        },
+        1,
+    );
     let shader = unsafe { (gl.create_shader)(stage) };
     if shader == 0 {
         return Err(BackendError {

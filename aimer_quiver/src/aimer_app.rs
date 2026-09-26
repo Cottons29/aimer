@@ -648,7 +648,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 macos_windowing: Default::default(),
                 render_ctx: AimerRenderContext::new(antialiasing),
                 window_attr: WindowAttr::new(),
-                #[cfg(all(target_os = "windows", feature = "dx12"))]
+                #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
                 show_window_after_first_frame: false,
                 widget_root: None,
                 event_dispatcher: aimer_widget::EventDispatcher::new(),
@@ -1282,14 +1282,14 @@ fn start_event_loop(
 
     let run_app = || {
         info!("Creating App instance...");
-        #[cfg(all(target_os = "windows", feature = "dx12"))]
+        #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
         let show_window_after_first_frame = window_attr.visible;
         let mut app = AimerApplicationHandler {
             window: None,
             macos_windowing: Default::default(),
             render_ctx: AimerRenderContext::new(antialiasing),
             window_attr,
-            #[cfg(all(target_os = "windows", feature = "dx12"))]
+            #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
             show_window_after_first_frame,
             widget_root: None,
             event_dispatcher: aimer_widget::EventDispatcher::new(),

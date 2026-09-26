@@ -1,7 +1,7 @@
 //! Wgpu backend adapter — delegates every [`GpuBackend`] operation to the
 //! `wgpu` crate.
 //!
-//! This is the default backend used when `pluggable-backend-exp` is enabled.
+//! This optional backend can be selected explicitly with the `wgpu` feature.
 //! Each trait method converts the generic descriptor to its `wgpu` counterpart
 //! and calls the corresponding `wgpu::Device` / `wgpu::Queue` / `wgpu::Encoder`
 //! method.
@@ -16,12 +16,18 @@ use crate::backend::*;
 pub struct WgpuBackend {
     pub device: ::wgpu::Device,
     pub queue: ::wgpu::Queue,
+    pipeline_cache: Option<::wgpu::PipelineCache>,
 }
 
 impl WgpuBackend {
     /// Create a new backend from an already-initialized wgpu device and queue.
     pub fn new(device: ::wgpu::Device, queue: ::wgpu::Queue) -> Self {
-        Self { device, queue }
+        let pipeline_cache = crate::pipeline_cache::create_pipeline_cache(&device);
+        Self {
+            device,
+            queue,
+            pipeline_cache,
+        }
     }
 
     /// Returns a reference to the wgpu device.
@@ -319,7 +325,7 @@ impl GpuBackend for WgpuBackend {
                     alpha_to_coverage_enabled: desc.multisample.alpha_to_coverage_enabled,
                 },
                 multiview_mask: None,
-                cache: None,
+                cache: self.pipeline_cache.as_ref(),
             })
     }
 
@@ -585,6 +591,12 @@ impl GpuBackend for WgpuBackend {
 
     fn submit(&self, encoder: Self::CommandEncoder) {
         self.queue.submit([encoder.finish()]);
+    }
+
+    fn save_pipeline_cache(&self) {
+        if let Some(cache) = &self.pipeline_cache {
+            crate::pipeline_cache::save_pipeline_cache(cache);
+        }
     }
 
     // ── Queries ─────────────────────────────────────────────────────────

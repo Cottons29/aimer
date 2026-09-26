@@ -471,7 +471,7 @@ mod tests {
             eprintln!("skipping: no Vulkan graphics device is available");
             return;
         };
-        let mut pipeline = MaterialPipeline::new_generic(
+        let mut pipeline = MaterialPipeline::new(
             &backend,
             VulkanBackend::rgba8_unorm_format(),
             crate::AntiAlias::Analytic,

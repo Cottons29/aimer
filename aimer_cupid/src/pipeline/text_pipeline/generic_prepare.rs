@@ -4,7 +4,7 @@ use super::*;
 impl<B: GpuBackend> TextPipelineV2<B> {
     /// Prepares glyphs and uploads atlases and instances through `backend`.
     #[allow(clippy::too_many_arguments)]
-    pub fn prepare_generic(
+    pub fn prepare(
         &mut self,
         backend: &B,
         width: u32,
@@ -16,6 +16,30 @@ impl<B: GpuBackend> TextPipelineV2<B> {
         self.prepare_inner_generic(
             backend, width, height, is_srgb, requests, decorations, None,
         );
+    }
+
+    /// Runs [`prepare`](Self::prepare) and returns a CPU-stage timing snapshot.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_profiled(
+        &mut self,
+        backend: &B,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        requests: &[TextDrawRequest],
+        decorations: &[TextDecorationDraw],
+    ) -> TextPreparationProfile {
+        let mut profile = TextPreparationProfile::default();
+        self.prepare_inner_generic(
+            backend,
+            width,
+            height,
+            is_srgb,
+            requests,
+            decorations,
+            Some(&mut profile),
+        );
+        profile
     }
 
     #[inline]
@@ -361,7 +385,7 @@ impl<B: GpuBackend> TextPipelineV2<B> {
                 for glyph in positioned {
                     let key = glyph.glyph_key;
                     let needs_bitmap =
-                        self.atlas.get_generic(&key).is_none() && self.color_atlas.get_generic(&key).is_none();
+                        self.atlas.get(&key).is_none() && self.color_atlas.get(&key).is_none();
                     if self.rasterizer.needs_prepared_glyph(key, needs_bitmap)
                         && queued_glyphs.insert(key)
                     {
@@ -458,9 +482,9 @@ impl<B: GpuBackend> TextPipelineV2<B> {
 
         for pg in positioned {
             let key = pg.glyph_key;
-            let (region, target_color_list) = if let Some(region) = self.atlas.get_generic(&key) {
+            let (region, target_color_list) = if let Some(region) = self.atlas.get(&key) {
                 (region, false)
-            } else if let Some(region) = self.color_atlas.get_generic(&key) {
+            } else if let Some(region) = self.color_atlas.get(&key) {
                 (region, true)
             } else {
                 let atlas_population_started = profile.is_some().then(Instant::now);
@@ -468,7 +492,7 @@ impl<B: GpuBackend> TextPipelineV2<B> {
                 let (is_color, glyph_width, glyph_height) =
                     (rg.is_color, rg.width, rg.height);
                 let region = if is_color {
-                    self.color_atlas.get_or_insert_generic(
+                    self.color_atlas.get_or_insert(
                         backend,
                         key,
                         glyph_width,
@@ -476,7 +500,7 @@ impl<B: GpuBackend> TextPipelineV2<B> {
                         &rg.bitmap,
                     )
                 } else {
-                    self.atlas.get_or_insert_generic(
+                    self.atlas.get_or_insert(
                         backend,
                         key,
                         glyph_width,
@@ -1084,8 +1108,8 @@ impl<B: GpuBackend> TextPipelineV2<B> {
 
         // Upload both atlases if new glyphs were added.
         let atlas_upload_started = profile.is_some().then(Instant::now);
-        self.atlas.upload_generic(backend);
-        self.color_atlas.upload_generic(backend);
+        self.atlas.upload(backend);
+        self.color_atlas.upload(backend);
         if let (Some(profile), Some(started)) = (profile.as_deref_mut(), atlas_upload_started) {
             profile.atlas_upload += started.elapsed();
         }
@@ -1094,7 +1118,7 @@ impl<B: GpuBackend> TextPipelineV2<B> {
         let atlas_gen = self.atlas.generation();
         if atlas_gen != self.atlas_generation {
             self.atlas_generation = atlas_gen;
-            self.bind_group = Self::create_bind_group_generic(
+            self.bind_group = Self::create_bind_group(
                 backend,
                 &self.bind_group_layout,
                 &self.viewport_buffer,
@@ -1105,7 +1129,7 @@ impl<B: GpuBackend> TextPipelineV2<B> {
         let color_gen = self.color_atlas.generation();
         if color_gen != self.color_atlas_generation {
             self.color_atlas_generation = color_gen;
-            self.color_bind_group = Self::create_bind_group_generic(
+            self.color_bind_group = Self::create_bind_group(
                 backend,
                 &self.bind_group_layout,
                 &self.viewport_buffer,
@@ -1167,10 +1191,10 @@ impl<B: GpuBackend> TextPipelineV2<B> {
         // bytes differ from what the GPU buffer already holds. Static text is
         // the common case, and it now costs no upload at all.
         self.instance_upload
-            .upload_generic(backend, &self.instance_buffer, &self.instances);
+            .upload(backend, &self.instance_buffer, &self.instances);
         self.color_instance_upload
-            .upload_generic(backend, &self.color_instance_buffer, &self.color_instances);
-        self.decoration_instance_upload.upload_generic(
+            .upload(backend, &self.color_instance_buffer, &self.color_instances);
+        self.decoration_instance_upload.upload(
             backend,
             &self.decoration_instance_buffer,
             &self.decoration_instances,

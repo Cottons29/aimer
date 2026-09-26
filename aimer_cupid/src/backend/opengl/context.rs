@@ -10,6 +10,9 @@ use super::gl::GlFns;
 #[cfg(target_os = "linux")]
 #[path = "context/linux.rs"]
 mod platform;
+#[cfg(target_os = "android")]
+#[path = "context/linux.rs"]
+mod platform;
 #[cfg(target_os = "windows")]
 #[path = "context/windows.rs"]
 mod platform;

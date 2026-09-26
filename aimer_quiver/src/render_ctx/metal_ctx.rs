@@ -7,10 +7,13 @@ pub mod render_ctx {
     use aimer_cupid::damage_region::DamageSet;
     use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
     use aimer_cupid::renderer::RendererImpl;
+    #[cfg(target_os = "macos")]
     use objc2_app_kit::NSView;
     use objc2_core_foundation::CGSize;
     use objc2_metal::MTLPixelFormat;
     use objc2_quartz_core::CAMetalLayer;
+    #[cfg(target_os = "ios")]
+    use objc2_ui_kit::UIView;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use winit::dpi::PhysicalSize;
     use winit::window::Window;
@@ -20,11 +23,11 @@ pub mod render_ctx {
 
     const SURFACE_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm_sRGB;
 
-    /// The Quiver render context backed by a native macOS `CAMetalLayer`.
+    /// The Quiver render context backed by a native Apple `CAMetalLayer`.
     ///
     /// This context owns the Metal backend, surface, and backend-generic Cupid
-    /// renderer. Metal is selected whenever Quiver's `metal` feature is enabled;
-    /// add `--no-default-features` to keep WGPU out of the build as well.
+    /// renderer. Metal is selected on macOS by the native dependency feature or
+    /// by explicitly enabling Quiver's `metal` feature.
     /// The presenter currently renders each frame's complete draw list; packet
     /// damage metadata remains available for API compatibility.
     pub struct MetalApi {
@@ -137,24 +140,42 @@ pub mod render_ctx {
             let backend = MetalBackend::new().expect("create the system Metal device and queue");
             let raw_handle = window
                 .window_handle()
-                .expect("get the macOS window handle")
+                .expect("get the Apple window handle")
                 .as_raw();
-            let RawWindowHandle::AppKit(appkit_handle) = raw_handle else {
-                panic!("winit returned a non-AppKit window handle on macOS");
+            #[cfg(target_os = "macos")]
+            let view = {
+                let RawWindowHandle::AppKit(appkit_handle) = raw_handle else {
+                    panic!("winit returned a non-AppKit window handle on macOS");
+                };
+                // SAFETY: Winit owns this NSView for the lifetime of `window`.
+                // The context keeps the window alive while the Metal layer is in use.
+                unsafe { &*appkit_handle.ns_view.as_ptr().cast::<NSView>() }
             };
-
-            // SAFETY: Winit owns this NSView for the lifetime of `window`. The
-            // context stores the leaked static window for as long as the layer
-            // and renderer are in use.
-            let view = unsafe { &*appkit_handle.ns_view.as_ptr().cast::<NSView>() };
+            #[cfg(target_os = "ios")]
+            let view = {
+                let RawWindowHandle::UiKit(uikit_handle) = raw_handle else {
+                    panic!("winit returned a non-UIKit window handle on iOS");
+                };
+                // SAFETY: Winit owns this UIView for the lifetime of `window`.
+                // The context keeps the window alive while the Metal layer is in use.
+                unsafe { &*uikit_handle.ui_view.as_ptr().cast::<UIView>() }
+            };
             let layer = CAMetalLayer::new();
+            #[cfg(target_os = "macos")]
             view.setWantsLayer(true);
+            #[cfg(target_os = "macos")]
             view.setLayer(Some(&layer));
+            #[cfg(target_os = "ios")]
+            {
+                view.layer().addSublayer(&layer);
+                layer.setFrame(view.bounds());
+            }
 
             let surface = MetalSurface::new(&backend, layer, SURFACE_FORMAT);
             let max_dimension = backend.limits().max_texture_dimension_2d;
             let surface_size = SurfaceSize::new(size, max_dimension);
             configure_surface(&surface, window, surface_size.size);
+            #[cfg(target_os = "macos")]
             crate::ffi_utils::macos_surface::enable_transactional_surface_presentation(window);
             let renderer = RendererImpl::with_antialiasing(
                 &backend,
@@ -318,6 +339,20 @@ pub mod render_ctx {
         window: &Window,
         size: PhysicalSize<u32>,
     ) {
+        #[cfg(target_os = "ios")]
+        {
+            let raw_handle = window
+                .window_handle()
+                .expect("get the iOS window handle")
+                .as_raw();
+            let RawWindowHandle::UiKit(uikit_handle) = raw_handle else {
+                panic!("winit returned a non-UIKit window handle on iOS");
+            };
+            // SAFETY: The window owns the UIView for its lifetime; this call
+            // only reads its bounds while `window` is borrowed.
+            let view = unsafe { &*uikit_handle.ui_view.as_ptr().cast::<UIView>() };
+            surface.layer().setFrame(view.bounds());
+        }
         surface.layer().setContentsScale(window.scale_factor());
         surface.layer().setDrawableSize(CGSize::new(
             f64::from(size.width),

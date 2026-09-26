@@ -1,8 +1,9 @@
 # OpenGL shaders
 
-These are Cupid's hand-maintained GLSL 3.30 Core shaders for the direct OpenGL
-backend. Edit the vertex and fragment GLSL in each `.glslpack` directly; no
-WGSL translation step is used for OpenGL.
+These are Cupid's hand-maintained GLSL 3.30 Core shaders for desktop OpenGL.
+Android's GLES 3 path and direct WebGL2 adapt the version line and add explicit
+fragment precision before compiling them. Edit the vertex and fragment GLSL in
+each `.glslpack` directly; no WGSL translation step is used for OpenGL.
 
 The direct WebGL2 backend reuses these packages and converts the version line
 to GLSL ES 3.00 with explicit fragment precision before compiling them.

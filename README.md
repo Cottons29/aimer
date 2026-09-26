@@ -23,7 +23,7 @@ f# Aimer
 
 **Aimer** is a cross-platform GUI framework inspired by the declarative, composable widget tree architecture, engineered from the ground up for Rust's zero-cost abstractions, strict ownership model, and concurrent execution guarantees.
 
-Unlike web-wrapper frameworks or heavyweight browser runtimes, Aimer renders directly through its custom hardware-accelerated 2D vector and typography engine (**Cupid**) on pluggable GPU backends. WGPU is the default for native builds; the `web` profile uses direct browser WebGPU first and falls back to direct WebGL2 without bundling the `wgpu` crate. Rendering is driven by a frame-budget-aware async UI scheduler (**Venus**) and small-object optimized memory buffers (**Rubick**).
+Unlike web-wrapper frameworks or heavyweight browser runtimes, Aimer renders directly through its custom hardware-accelerated 2D vector and typography engine (**Cupid**) on pluggable GPU backends. Native defaults use Metal on Apple platforms, Direct3D 12 on Windows, and Vulkan with OpenGL fallback on Linux and Android. Browser builds try WebGPU first and fall back to WebGL2 without bundling the `wgpu` crate. Rendering is driven by a frame-budget-aware async UI scheduler (**Venus**) and small-object optimized memory buffers (**Rubick**).
 
 ### Core Philosophy
 
@@ -277,16 +277,16 @@ cargo run --example text_field
 # Multiline text area demo
 cargo run --example text_area
 
-# Browser GPU preset: WebGPU primary, WebGL2 fallback (omits the `wgpu` crate)
+# Browser default: WebGPU primary, WebGL2 fallback (omits the `wgpu` crate)
 wasm-pack build --target web --no-default-features --features web website
 
-# Select one direct browser backend when desired
-wasm-pack build --target web --no-default-features --features native,webgpu website
-wasm-pack build --target web --no-default-features --features native,webgl website
+# Use the wgpu crate instead of target-selected native/browser APIs
+cargo check -p aimer --no-default-features --features wgpu
+wasm-pack build --target web --no-default-features --features wgpu website
 ```
 
 The workspace opts into web-sys's unstable WebGPU bindings for the wasm target
-in `.cargo/config.toml`. Downstream builds that enable `webgpu` must also pass
+in `.cargo/config.toml`. Downstream builds that enable `web` must also pass
 `--cfg=web_sys_unstable_apis` for wasm, as described in the
 [wasm-bindgen guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html).
 

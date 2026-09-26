@@ -87,33 +87,13 @@ impl<T: Pod> FrameUpload<T> {
         self.buffer_lost = false;
     }
 
-    /// Writes `current` into `buffer` at offset zero unless the buffer
-    /// already holds these bytes, returning whether a write was issued.
-    ///
-    /// An empty frame never writes: no draw was recorded against the buffer,
-    /// so its contents are irrelevant.
-    #[cfg(feature = "wgpu")]
-    pub(crate) fn upload(
-        &mut self,
-        queue: &wgpu::Queue,
-        buffer: &wgpu::Buffer,
-        current: &[T],
-    ) -> bool {
-        if current.is_empty() || !self.needs_upload(current) {
-            return false;
-        }
-        queue.write_buffer(buffer, 0, bytemuck::cast_slice(current));
-        self.mark_uploaded(current);
-        true
-    }
 }
 
-#[cfg(feature = "pluggable-backend-exp")]
 impl<T: Pod> FrameUpload<T> {
     /// Backend-agnostic upload that writes `current` into `buffer` via
     /// the given backend. Skips the write when the buffer already holds
     /// the same bytes.
-    pub(crate) fn upload_generic<B: crate::backend::GpuBackend>(
+    pub(crate) fn upload<B: crate::backend::GpuBackend>(
         &mut self,
         backend: &B,
         buffer: &B::Buffer,

@@ -1,15 +1,9 @@
 //! Pluggable GPU backends for the Cupid rendering engine.
 //!
-//! When the `pluggable-backend-exp` feature is enabled, the renderer and all
-//! pipelines are generic over a [`GpuBackend`] type parameter. This module
-//! defines the trait surface: the operations each backend must provide, the
-//! descriptor types they consume, and the render-pass operations a backend's
-//! temporary pass object must support.
-//!
-//! # Stability
-//!
-//! This API is **experimental** (`pluggable-backend-exp`). It will evolve as
-//! backends beyond the wgpu adapter mature.
+//! The renderer and pipelines are generic over a [`GpuBackend`] type
+//! parameter. This module defines the trait surface: the operations each
+//! backend must provide, the descriptor types they consume, and the
+//! render-pass operations a backend's temporary pass object must support.
 //!
 //! # Layout
 //!
@@ -24,111 +18,60 @@
 use std::num::NonZeroU32;
 use std::ops::Range;
 
-// Re-export the wgpu adapter when the feature is active.
+// WGPU is an opt-in compatibility backend.
 #[cfg(feature = "wgpu")]
 pub mod wgpu;
 
-// The native Metal adapter is available only where its target dependencies
-// exist. A separate compile error below gives a direct diagnostic elsewhere.
-#[cfg(all(feature = "metal", any(target_os = "macos", target_os = "ios")))]
+// Native backend modules are selected from the target, not individual Cargo
+// backend features. Linux and Android compile both APIs for init-time fallback.
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
 pub mod metal;
 
-// The native Direct3D 12 adapter is available only on Windows.
-#[cfg(all(feature = "dx12", target_os = "windows"))]
+#[cfg(all(feature = "native", not(feature = "wgpu"), target_os = "windows"))]
 pub mod dx12;
 
-#[cfg(feature = "vulkan")]
+#[cfg(all(
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "linux", target_os = "android")
+))]
 pub mod vulkan;
 
-#[cfg(feature = "opengl")]
+#[cfg(all(
+    feature = "native",
+    not(feature = "wgpu"),
+    any(target_os = "linux", target_os = "android")
+))]
 pub mod opengl;
-#[cfg(all(feature = "webgl", target_arch = "wasm32"))]
+#[cfg(all(feature = "web", target_arch = "wasm32", not(feature = "wgpu")))]
 pub mod webgl;
-#[cfg(all(feature = "webgpu", target_arch = "wasm32"))]
+#[cfg(all(feature = "web", target_arch = "wasm32", not(feature = "wgpu")))]
 pub mod webgpu;
 
-/// Backend selected by the active feature set for public generic type defaults.
-/// Direct browser WebGPU takes precedence when selected for wasm.
-#[cfg(all(feature = "webgpu", target_arch = "wasm32"))]
-pub type DefaultGpuBackend = webgpu::WebGpuBackend;
-
-#[cfg(all(feature = "wgpu", not(all(feature = "webgpu", target_arch = "wasm32"))))]
+/// Backend selected for generic type defaults on this target.
+#[cfg(feature = "wgpu")]
 pub type DefaultGpuBackend = wgpu::WgpuBackend;
 
-/// Metal is the default backend when WGPU has explicitly been disabled.
-#[cfg(all(not(feature = "wgpu"), feature = "metal"))]
+#[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "macos", target_os = "ios")))]
 pub type DefaultGpuBackend = metal::MetalBackend;
 
-/// Direct3D 12 is the default backend when WGPU and Metal are disabled.
-#[cfg(all(not(feature = "wgpu"), not(feature = "metal"), feature = "dx12"))]
+#[cfg(all(not(feature = "wgpu"), feature = "native", target_os = "windows"))]
 pub type DefaultGpuBackend = dx12::Dx12Backend;
 
-/// Vulkan is the default backend when WGPU, Metal, and Direct3D 12 are disabled.
-#[cfg(all(
-    not(feature = "wgpu"),
-    not(feature = "metal"),
-    not(feature = "dx12"),
-    feature = "vulkan"
-))]
+#[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "linux", target_os = "android")))]
 pub type DefaultGpuBackend = vulkan::VulkanBackend;
 
-/// Native OpenGL is the default backend when all other native backends are disabled.
+#[cfg(all(not(feature = "wgpu"), feature = "web", target_arch = "wasm32"))]
+pub type DefaultGpuBackend = webgpu::WebGpuBackend;
+
 #[cfg(all(
     not(feature = "wgpu"),
-    not(feature = "metal"),
-    not(feature = "dx12"),
-    not(feature = "vulkan"),
-    feature = "opengl"
+    not(any(
+        all(feature = "native", any(target_os = "macos", target_os = "ios", target_os = "windows", target_os = "linux", target_os = "android")),
+        all(feature = "web", target_arch = "wasm32")
+    ))
 ))]
-pub type DefaultGpuBackend = opengl::OpenGlBackend;
-
-/// WebGL2 is the default backend when all other backends are disabled for wasm.
-#[cfg(all(
-    not(feature = "wgpu"),
-    not(feature = "metal"),
-    not(feature = "dx12"),
-    not(feature = "vulkan"),
-    not(feature = "opengl"),
-    not(feature = "webgpu"),
-    feature = "webgl",
-    target_arch = "wasm32"
-))]
-pub type DefaultGpuBackend = webgl::WebGl2Backend;
-
-#[cfg(all(
-    feature = "metal",
-    not(any(target_os = "macos", target_os = "ios"))
-))]
-compile_error!("the `metal` feature is only supported on macOS and iOS");
-
-#[cfg(all(feature = "dx12", not(target_os = "windows")))]
-compile_error!("the `dx12` feature is only supported on Windows");
-
-#[cfg(all(
-    feature = "vulkan",
-    not(any(target_os = "windows", target_os = "linux", target_os = "android"))
-))]
-compile_error!("the `vulkan` feature is supported on Windows, Linux, and Android");
-
-#[cfg(all(feature = "opengl", not(any(target_os = "windows", target_os = "linux"))))]
-compile_error!("the `opengl` feature is supported on Windows and Linux");
-#[cfg(all(feature = "webgl", not(target_arch = "wasm32")))]
-compile_error!("the `webgl` feature is supported on wasm32 browser targets");
-#[cfg(all(feature = "webgpu", not(target_arch = "wasm32")))]
-compile_error!("the `webgpu` feature is supported on wasm32 browser targets");
-
-#[cfg(all(
-    feature = "pluggable-backend-exp",
-    not(any(feature = "wgpu", feature = "metal", feature = "dx12", feature = "vulkan", feature = "opengl", feature = "webgl", feature = "webgpu"))
-))]
-compile_error!("enable a GPU backend feature with `pluggable-backend-exp`");
-
-#[cfg(all(
-    target_arch = "wasm32",
-    not(feature = "wgpu"),
-    not(feature = "pluggable-backend-exp")
-))]
-compile_error!("enable a browser renderer with `webgpu`, `webgl`, or `wgpu`");
+compile_error!("enable the `native` or `web` dependency group for this target, or select `wgpu`");
 
 // ──────────────────────────────────────────────
 //  Descriptor types shared by all backends
@@ -918,8 +861,6 @@ pub trait GpuBackend: Sized + 'static {
     where
         Self: 'a;
 
-    // ── Resource creation ───────────────────────────────────────────────
-
     /// Shader source for the built-in rectangle pipeline.
     ///
     /// Most backends use the WGSL implementation. Backends with a native
@@ -1084,6 +1025,11 @@ pub trait GpuBackend: Sized + 'static {
     /// Finish the command encoder and submit the resulting command buffer to
     /// the GPU.
     fn submit(&self, encoder: Self::CommandEncoder);
+
+    /// Persists backend-managed pipeline cache data when supported.
+    ///
+    /// Backends without a persistent cache keep this as a no-op.
+    fn save_pipeline_cache(&self) {}
 
     // ── Queries ─────────────────────────────────────────────────────────
 

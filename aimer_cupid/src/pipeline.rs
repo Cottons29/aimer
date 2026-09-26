@@ -43,16 +43,7 @@ impl AntiAlias {
     }
 }
 
-#[cfg(feature = "wgpu")]
-pub(crate) fn multisample_state(antialiasing: AntiAlias) -> wgpu::MultisampleState {
-    wgpu::MultisampleState {
-        count: antialiasing.sample_count(),
-        ..Default::default()
-    }
-}
-
-#[cfg(feature = "pluggable-backend-exp")]
-pub(crate) fn multisample_state_generic(antialiasing: AntiAlias) -> crate::backend::MultisampleState {
+pub(crate) fn multisample_state(antialiasing: AntiAlias) -> crate::backend::MultisampleState {
     crate::backend::MultisampleState {
         count: antialiasing.sample_count(),
         mask: !0,

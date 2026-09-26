@@ -5,9 +5,23 @@ edition = "2024"
 description = "A rendering engine that optimized for the ui framework"
 
 [features]
-default = ["apple-core-text", "wgpu"]
-# Keep the compatibility renderer and the WGPU adapter optional so the
-# experimental generic renderer can be built with a native backend alone.
+default = ["native", "web"]
+# Enable the optional native API dependencies. Backend selection is performed
+# by target cfgs in backend.rs.
+native = [
+    "apple-core-text",
+    "dep:raw-window-handle",
+    "dep:objc2",
+    "dep:objc2-foundation",
+    "dep:objc2-quartz-core",
+    "dep:objc2-metal",
+    "dep:objc2-app-kit",
+    "dep:windows",
+    "dep:ash",
+    "dep:ash-window",
+]
+# Keep the WGPU adapter optional so a WGPU-only build can disable default
+# features and omit the native API dependency set.
 wgpu = ["dep:wgpu", "dep:winit"]
 # Keep optional checked-in fallback faces out of native downstream binaries
 # unless an application explicitly opts into deterministic bundled rendering.
@@ -22,36 +36,13 @@ apple-core-text = [
     "dep:objc2-core-text",
     "dep:objc2-core-graphics",
 ]
-# Experimental: expose the GpuBackend trait path and `RendererImpl<B>`, which
-# can be built with WGPU or one of the native Metal, D3D12, and Vulkan backends.
-pluggable-backend-exp = []
-# Experimental: native Metal backend via objc2-metal.
-# Implies pluggable-backend-exp. Only compiles on macOS/iOS, because the
-# objc2-metal dependency below is declared in an Apple target table.
-metal = [
-    "pluggable-backend-exp",
-    "apple-core-text",
-    "dep:objc2-metal",
-    "dep:objc2-foundation",
-    "dep:objc2",
-    "dep:objc2-quartz-core",
-]
-# Native Direct3D 12 backend. Combine with `--no-default-features` to keep
-# WGPU out of the dependency graph.
-dx12 = ["dep:windows", "pluggable-backend-exp"]
-# Native Direct3D 12 windowed demo. Requires `--no-default-features` to omit WGPU.
-dx12-demo = ["dx12", "dep:winit", "dep:raw-window-handle"]
-# Native Vulkan backend and optional windowed demo.
-vulkan = ["dep:ash", "dep:ash-window", "dep:raw-window-handle", "pluggable-backend-exp"]
-vulkan-demo = ["vulkan", "dep:winit"]
-# Native OpenGL 3.3 Core backend. Loads the platform OpenGL entry points directly.
-opengl = ["dep:raw-window-handle", "pluggable-backend-exp"]
-# Browser WebGL2 backend using web-sys. Pair with `--no-default-features` for a WGPU-free build.
-webgl = ["pluggable-backend-exp"]
-web = ["webgpu", "webgl"]
-# Browser WebGPU backend using the browser's WebGPU API through web-sys.
-webgpu = [
-    "pluggable-backend-exp",
+# Native Direct3D 12 windowed demo.
+dx12-demo = ["native", "dep:winit"]
+# Native Vulkan and OpenGL windowed demos.
+vulkan-demo = ["native", "dep:winit"]
+opengl-demo = ["native", "dep:winit"]
+# Browser GPU APIs used by the target-selected WebGPU/WebGL2 backends.
+web = [
     "web-sys/Gpu",
     "web-sys/GpuAdapter",
     "web-sys/GpuAdapterInfo",
@@ -92,11 +83,9 @@ webgpu = [
     "web-sys/GpuTextureFormat",
     "web-sys/GpuTextureView",
 ]
-# Optional windowed demo for the direct OpenGL backend. Use with
-# `--no-default-features` to omit WGPU.
-opengl-demo = ["opengl", "dep:winit"]
+# Optional windowed demo for the direct OpenGL backend.
 metal-demo = [
-    "metal",
+    "native",
     "dep:winit",
     "dep:raw-window-handle",
     "dep:objc2-app-kit",
@@ -180,8 +169,6 @@ hashbrown.workspace = true
 smallvec.workspace = true
 dirs.workspace = true
 memmap2 = "0.9.11"
-ash = { workspace = true, optional = true }
-ash-window = { workspace = true, optional = true }
 
 [dev-dependencies]
 naga = { workspace = true, features = ["spv-out"] }
@@ -296,3 +283,7 @@ web-sys = { workspace = true, features = [
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { workspace = true, optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+ash = { workspace = true, optional = true }
+ash-window = { workspace = true, optional = true }

@@ -4,14 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["native", "desktop-bin", "wgpu"]
-native = ["aimer/markdown", "aimer/svg", "aimer/provider"]
-wgpu = ["aimer/wgpu"]
-webgl = ["aimer/webgl"]
-webgpu = ["aimer/webgpu"]
-# Browser build profile with WebGPU primary and WebGL2 fallback.
-web = ["native", "aimer/web"]
-
+default = ["native", "desktop-bin"]
+app = ["aimer/markdown", "aimer/svg", "aimer/provider"]
+native = ["app", "aimer/native"]
+web = ["app", "aimer/web"]
+wgpu = ["app", "aimer/wgpu"]
 desktop-bin = []
 
 

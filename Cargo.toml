@@ -72,17 +72,20 @@ wgpu.workspace = true
 winit.workspace = true
 
 [features]
-default = ["wgpu"]
+default = ["native", "web"]
+# Enables the platform's native backend dependencies. Backend selection is
+# determined by target cfgs, not by this feature.
+native = ["aimer_quiver/native", "aimer_cupid/native"]
 wgpu = ["aimer_quiver/wgpu"]
-# Select the direct browser WebGL2 renderer; use no default features to omit WGPU.
-# Web build: `cargo build --target wasm32-unknown-unknown --no-default-features --features webgl`.
-webgl = ["aimer_quiver/webgl"]
-# Select the direct browser WebGPU renderer through web-sys; use no default
-# features to omit the separate `wgpu` crate.
-webgpu = ["aimer_quiver/webgpu"]
-# Browser GPU preset: WebGPU primary, WebGL2 fallback. Pair with
-# `--no-default-features` to omit the WGPU crate.
-web = ["aimer_quiver/web"]
+# Enables the direct browser WebGPU/WebGL2 APIs. Target cfgs select the browser
+# path; WebGPU is tried first and WebGL2 is the initialization fallback.
+web = ["aimer_quiver/web", "aimer_cupid/web"]
+# Deprecated feature forwards kept only because the untouched Jaime workspace
+# manifest still requests these names. They enable dependency groups; target
+# cfgs select the actual backend.
+metal = ["native"]
+dx12 = ["native"]
+webgl = ["web"]
 markdown = []
 # Forward opt-in Venus microtask diagnostics through the umbrella crate.
 venus-debug = ["aimer_venus/venus-debug"]
@@ -108,12 +111,6 @@ raster-thread = ["aimer_quiver/raster-thread"]
 # Collect the per-frame build / encode / present breakdown.
 frame-stats = ["aimer_quiver/frame-stats"]
 # Present the native Quiver window through Cupid's direct Metal backend.
-# Combine with `--no-default-features` to omit the default WGPU backend.
-metal = ["aimer_quiver/metal"]
-# Present native Windows frames through Cupid's Direct3D 12 backend.
-# Use `--no-default-features --features dx12` to omit WGPU.
-dx12 = ["aimer_quiver/dx12"]
-opengl = ["aimer_quiver/opengl"]
 # Compile ordinary widgets through the hidden portable guest conversion path.
 # Generated shadow applications enable this feature; native applications do not.
 portable-guest = [

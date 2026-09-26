@@ -242,7 +242,7 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub window: Option<WindowHandle>,
     pub window_attr: WindowAttr,
     /// Delays a requested visible state until the first DX12 present succeeds.
-    #[cfg(all(target_os = "windows", feature = "dx12"))]
+    #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
     pub(crate) show_window_after_first_frame: bool,
     pub(crate) macos_windowing: aimer_native::macos_windowing::MacosWindowing,
     pub render_ctx: AimerRenderContext,
@@ -748,7 +748,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
             }
         };
         let window_attributes = self.macos_windowing.apply_attributes(window_attributes);
-        #[cfg(all(target_os = "windows", feature = "dx12"))]
+        #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
         let window_attributes = if self.show_window_after_first_frame {
             window_attributes.with_visible(false)
         } else {
@@ -849,7 +849,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         // On Android the surface may be (re-)created with the correct size now.
         // Schedule a resize so the GPU surface matches the actual window dimensions.
         self.pending_resize = Some(size);
-        #[cfg(all(target_os = "windows", feature = "dx12"))]
+        #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
         if self.show_window_after_first_frame {
             // Render inline while the window is hidden so its first visible
             // frame already contains the application UI.
@@ -857,7 +857,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         } else {
             window.request_redraw();
         }
-        #[cfg(not(all(target_os = "windows", feature = "dx12")))]
+        #[cfg(not(all(target_os = "windows", feature = "native", not(feature = "wgpu"))))]
         window.request_redraw();
     }
 
@@ -976,7 +976,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let outcome = render_ctx.render_frame_packet(move |canvas, width, height| {
             drawer.draw(canvas, width, height)
         });
-        #[cfg(all(target_os = "windows", feature = "dx12"))]
+        #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
         if outcome.is_presented() && self.show_window_after_first_frame {
             if let Some(window) = self.native_window() {
                 window.set_visible(true);

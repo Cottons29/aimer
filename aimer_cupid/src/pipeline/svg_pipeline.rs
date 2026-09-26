@@ -3,8 +3,6 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-#[cfg(feature = "wgpu")]
-use wgpu::util::DeviceExt;
 
 use super::frame_upload::FrameUpload;
 use super::image_pipeline::InstanceBufferPolicy;
@@ -35,8 +33,7 @@ impl SvgVertex {
         }
     }
 
-    #[cfg(feature = "pluggable-backend-exp")]
-    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 2] = [
+        const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 2] = [
         crate::backend::VertexAttribute {
             format: crate::backend::VertexFormat::Float32x2,
             offset: std::mem::offset_of!(Self, position) as u64,
@@ -81,8 +78,7 @@ impl SvgInstance {
         }
     }
 
-    #[cfg(feature = "pluggable-backend-exp")]
-    const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 6] = [
+        const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 6] = [
         crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, transform_x) as u64, shader_location: 1 },
         crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, transform_y) as u64, shader_location: 2 },
         crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, color) as u64, shader_location: 3 },
@@ -92,7 +88,6 @@ impl SvgInstance {
     ];
 }
 
-#[cfg(feature = "pluggable-backend-exp")]
 struct GpuMesh<B: crate::backend::GpuBackend> {
     _mesh: Arc<SvgMesh>,
     vertex_buffer: B::Buffer,
@@ -102,22 +97,12 @@ struct GpuMesh<B: crate::backend::GpuBackend> {
     last_used: u64,
 }
 
-#[cfg(not(feature = "pluggable-backend-exp"))]
-struct GpuMesh {
-    _mesh: Arc<SvgMesh>,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    index_count: u32,
-    bytes: u64,
-    last_used: u64,
-}
 
 struct PreparedDraw {
     mesh_key: usize,
     instance_index: u32,
 }
 
-#[cfg(feature = "pluggable-backend-exp")]
 pub struct SvgPipeline<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
     pipeline: B::RenderPipeline,
     geometry_cache: SvgGeometryCache,
@@ -135,407 +120,7 @@ pub struct SvgPipeline<B: crate::backend::GpuBackend = crate::backend::DefaultGp
     analytic_aa: bool,
 }
 
-#[cfg(not(feature = "pluggable-backend-exp"))]
-pub struct SvgPipeline {
-    pipeline: wgpu::RenderPipeline,
-    geometry_cache: SvgGeometryCache,
-    gpu_meshes: HashMap<usize, GpuMesh>,
-    prepared_draws: Vec<PreparedDraw>,
-    item_ranges: Vec<Range<usize>>,
-    instances: Vec<SvgInstance>,
-    instance_buffer: wgpu::Buffer,
-    instance_policy: InstanceBufferPolicy,
-    /// Skips the frame's instance upload when the buffer already holds the
-    /// frame's exact bytes — the common case for a static scene.
-    upload: FrameUpload<SvgInstance>,
-    gpu_mesh_bytes: u64,
-    usage_clock: u64,
-    max_gpu_mesh_bytes: u64,
-    max_gpu_meshes: usize,
-    analytic_aa: bool,
-}
 
-#[cfg(feature = "wgpu")]
-impl SvgPipeline {
-    #[cfg(not(feature = "pluggable-backend-exp"))]
-    const INITIAL_INSTANCE_CAPACITY: usize = 64;
-    #[cfg(not(feature = "pluggable-backend-exp"))]
-    const MAX_CPU_MESH_BYTES: usize = 32 * 1024 * 1024;
-    #[cfg(not(feature = "pluggable-backend-exp"))]
-    const MAX_CPU_MESHES: usize = 4096;
-    #[cfg(not(feature = "pluggable-backend-exp"))]
-    const MAX_GPU_MESH_BYTES: u64 = 64 * 1024 * 1024;
-    #[cfg(not(feature = "pluggable-backend-exp"))]
-    const MAX_GPU_MESHES: usize = 4096;
-
-    pub fn new(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        pipeline_cache: Option<&wgpu::PipelineCache>,
-        antialiasing: crate::AntiAlias,
-    ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("svg shader"),
-            source: wgpu::ShaderSource::Wgsl(Self::shader_source().into()),
-        });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("svg pipeline layout"),
-            bind_group_layouts: &[],
-            immediate_size: 0,
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("svg pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Some(SvgVertex::layout()), Some(SvgInstance::layout())],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: Self::multisample_state(antialiasing),
-            multiview_mask: None,
-            cache: pipeline_cache,
-        });
-        let instance_buffer = create_instance_buffer(device, Self::INITIAL_INSTANCE_CAPACITY);
-        Self {
-            pipeline,
-            geometry_cache: SvgGeometryCache::new(Self::MAX_CPU_MESH_BYTES, Self::MAX_CPU_MESHES),
-            gpu_meshes: HashMap::new(),
-            prepared_draws: Vec::new(),
-            item_ranges: Vec::new(),
-            instances: Vec::new(),
-            instance_buffer,
-            instance_policy: InstanceBufferPolicy::new(Self::INITIAL_INSTANCE_CAPACITY),
-            upload: FrameUpload::new(),
-            gpu_mesh_bytes: 0,
-            usage_clock: 0,
-            max_gpu_mesh_bytes: Self::MAX_GPU_MESH_BYTES,
-            max_gpu_meshes: Self::MAX_GPU_MESHES,
-            analytic_aa: antialiasing == crate::AntiAlias::Analytic,
-        }
-    }
-
-    #[inline]
-    fn shader_source() -> &'static str {
-        svg_shader_source()
-    }
-
-    fn multisample_state(antialiasing: crate::AntiAlias) -> wgpu::MultisampleState {
-        crate::pipeline::multisample_state(antialiasing)
-    }
-
-    pub fn prepare(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        items: &[SvgRenderItem],
-        width: u32,
-        height: u32,
-        is_srgb: bool,
-    ) {
-        self.usage_clock = self.usage_clock.wrapping_add(1);
-        self.prepared_draws.clear();
-        self.item_ranges.clear();
-        self.instances.clear();
-        let mut frame_meshes = HashSet::new();
-        for item in items {
-            let range_start = self.prepared_draws.len();
-            if item.opacity > 0.0 && item.destination.width > 0.0 && item.destination.height > 0.0 {
-                self.prepare_item(device, item, width, height, is_srgb, &mut frame_meshes);
-            }
-            self.item_ranges
-                .push(range_start..self.prepared_draws.len());
-        }
-
-        let old_capacity = self.instance_policy.capacity();
-        self.instance_policy.record_usage(self.instances.len());
-        if old_capacity != self.instance_policy.capacity() {
-            self.instance_buffer = create_instance_buffer(device, self.instance_policy.capacity());
-            self.upload.invalidate();
-        }
-        // One write for the whole frame, skipped when the buffer already
-        // holds these exact bytes (a static scene).
-        self.upload
-            .upload(queue, &self.instance_buffer, &self.instances);
-        self.evict_gpu_meshes(&frame_meshes);
-    }
-
-    fn prepare_item(
-        &mut self,
-        device: &wgpu::Device,
-        item: &SvgRenderItem,
-        width: u32,
-        height: u32,
-        is_srgb: bool,
-        frame_meshes: &mut HashSet<usize>,
-    ) {
-        for node in item
-            .scene
-            .nodes
-            .iter()
-            .filter(|node| node.visible && node.geometry.is_some())
-        {
-            let Some(geometry) = item.scene.geometry(node) else {
-                continue;
-            };
-            let node_override = item
-                .overrides
-                .iter()
-                .find(|value| value.node_id == node.node_id);
-            let transform = combined_transform(item, node, node_override);
-            if outside_viewport(transform, geometry, width, height) {
-                continue;
-            }
-            let physical_scale = transform_scale(transform);
-            let opacity = item.opacity
-                * node_override
-                    .and_then(|value| value.opacity)
-                    .unwrap_or(node.opacity);
-            if opacity <= 0.0 {
-                continue;
-            }
-            let fill = resolved_fill(node, node_override);
-            let stroke = resolved_stroke(node, node_override);
-            match node.paint_order {
-                SvgPaintOrder::FillAndStroke => {
-                    if let Some((color, style)) = fill {
-                        self.prepare_mesh(
-                            device,
-                            geometry,
-                            style,
-                            transform,
-                            color,
-                            opacity,
-                            item,
-                            width,
-                            height,
-                            is_srgb,
-                            physical_scale,
-                            frame_meshes,
-                        );
-                    }
-                    if let Some((color, style)) = stroke {
-                        self.prepare_mesh(
-                            device,
-                            geometry,
-                            style,
-                            transform,
-                            color,
-                            opacity,
-                            item,
-                            width,
-                            height,
-                            is_srgb,
-                            physical_scale,
-                            frame_meshes,
-                        );
-                    }
-                }
-                SvgPaintOrder::StrokeAndFill => {
-                    if let Some((color, style)) = stroke {
-                        self.prepare_mesh(
-                            device,
-                            geometry,
-                            style,
-                            transform,
-                            color,
-                            opacity,
-                            item,
-                            width,
-                            height,
-                            is_srgb,
-                            physical_scale,
-                            frame_meshes,
-                        );
-                    }
-                    if let Some((color, style)) = fill {
-                        self.prepare_mesh(
-                            device,
-                            geometry,
-                            style,
-                            transform,
-                            color,
-                            opacity,
-                            item,
-                            width,
-                            height,
-                            is_srgb,
-                            physical_scale,
-                            frame_meshes,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn prepare_mesh(
-        &mut self,
-        device: &wgpu::Device,
-        geometry: &crate::svg::SvgGeometry,
-        style: SvgMeshStyle,
-        transform: Mat3,
-        color: SvgColor,
-        opacity: f32,
-        item: &SvgRenderItem,
-        width: u32,
-        height: u32,
-        is_srgb: bool,
-        physical_scale: f32,
-        frame_meshes: &mut HashSet<usize>,
-    ) {
-        let Ok(mesh) = self
-            .geometry_cache
-            .mesh_for_with_analytic_aa(geometry, style, physical_scale, self.analytic_aa)
-        else {
-            return;
-        };
-        if mesh.indices.is_empty() {
-            return;
-        }
-        let mesh_key = Arc::as_ptr(&mesh) as usize;
-        frame_meshes.insert(mesh_key);
-        self.ensure_gpu_mesh(device, mesh_key, &mesh);
-        let instance_index = self.instances.len() as u32;
-        self.instances.push(SvgInstance {
-            transform_x: [
-                transform.cols[0][0],
-                transform.cols[1][0],
-                transform.cols[2][0],
-                0.0,
-            ],
-            transform_y: [
-                transform.cols[0][1],
-                transform.cols[1][1],
-                transform.cols[2][1],
-                0.0,
-            ],
-            color: Rgba8::from_unorm([color.r, color.g, color.b, color.a * opacity]),
-            clip_rect: item.clip_rect,
-            clip_border_radius: item.clip_border_radius,
-            viewport: [
-                width as f32,
-                height as f32,
-                surface_srgb_value(is_srgb),
-                0.0,
-            ],
-        });
-        self.prepared_draws.push(PreparedDraw {
-            mesh_key,
-            instance_index,
-        });
-    }
-
-    fn ensure_gpu_mesh(&mut self, device: &wgpu::Device, key: usize, mesh: &Arc<SvgMesh>) {
-        if let Some(entry) = self.gpu_meshes.get_mut(&key) {
-            entry.last_used = self.usage_clock;
-            return;
-        }
-        let vertices = mesh
-            .vertices
-            .iter()
-            .copied()
-            .zip(mesh.coverages.iter().copied())
-            .map(|(position, coverage)| SvgVertex { position, coverage })
-            .collect::<Vec<_>>();
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("svg vertex buffer"),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("svg index buffer"),
-            contents: bytemuck::cast_slice(&mesh.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        let bytes = mesh.memory_bytes() as u64;
-        self.gpu_mesh_bytes += bytes;
-        self.gpu_meshes.insert(
-            key,
-            GpuMesh {
-                _mesh: mesh.clone(),
-                vertex_buffer,
-                index_buffer,
-                index_count: mesh.indices.len() as u32,
-                bytes,
-                last_used: self.usage_clock,
-            },
-        );
-    }
-
-    fn evict_gpu_meshes(&mut self, frame_meshes: &HashSet<usize>) {
-        while self.gpu_meshes.len() > self.max_gpu_meshes
-            || self.gpu_mesh_bytes > self.max_gpu_mesh_bytes
-        {
-            let Some(key) = self
-                .gpu_meshes
-                .iter()
-                .filter(|(key, _)| !frame_meshes.contains(key))
-                .min_by_key(|(_, mesh)| mesh.last_used)
-                .map(|(key, _)| *key)
-            else {
-                break;
-            };
-            if let Some(mesh) = self.gpu_meshes.remove(&key) {
-                self.gpu_mesh_bytes = self.gpu_mesh_bytes.saturating_sub(mesh.bytes);
-            }
-        }
-    }
-
-    pub fn draw_item<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, item_index: usize) {
-        let Some(range) = self.item_ranges.get(item_index) else {
-            return;
-        };
-        pass.set_pipeline(&self.pipeline);
-        for draw in &self.prepared_draws[range.clone()] {
-            let Some(mesh) = self.gpu_meshes.get(&draw.mesh_key) else {
-                continue;
-            };
-            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(
-                0..mesh.index_count,
-                0,
-                draw.instance_index..draw.instance_index + 1,
-            );
-        }
-    }
-
-    pub fn cpu_geometry_bytes(&self) -> u64 {
-        self.geometry_cache.memory_bytes() as u64
-    }
-
-    pub fn gpu_geometry_bytes(&self) -> u64 {
-        self.gpu_mesh_bytes
-    }
-
-    pub fn instance_buffer_bytes(&self) -> u64 {
-        (self.instance_policy.capacity() * size_of::<SvgInstance>()) as u64
-    }
-
-    pub fn clear_resources(&mut self) {
-        self.geometry_cache.clear();
-        self.gpu_meshes.clear();
-        self.gpu_mesh_bytes = 0;
-    }
-}
 
 #[cfg(feature = "wgpu")]
 #[inline]
@@ -556,24 +141,17 @@ fn svg_shader_source() -> &'static str {
     }
 }
 
-// ── Backend-agnostic generic path (pluggable-backend-exp) ─────────────────
-//
-// When `pluggable-backend-exp` is enabled, the pipeline can be constructed and
-// driven through the [`GpuBackend`] trait using `WgpuBackend`.
+// ── Backend-generic pipeline implementation ─────────────────────────────────
 
-#[cfg(feature = "pluggable-backend-exp")]
 impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
     const INITIAL_INSTANCE_CAPACITY: usize = 64;
     const MAX_CPU_MESH_BYTES: usize = 32 * 1024 * 1024;
     const MAX_CPU_MESHES: usize = 4096;
     const MAX_GPU_MESH_BYTES: u64 = 64 * 1024 * 1024;
     const MAX_GPU_MESHES: usize = 4096;
-    /// Create the pipeline through the [`GpuBackend`] trait via
-    /// [`WgpuBackend`](crate::backend::wgpu::WgpuBackend).
-    ///
-    /// Equivalent to [`SvgPipeline::new`] but routes all GPU operations through
-    /// the backend trait instead of calling wgpu directly.
-    pub fn new_generic(
+    /// Creates the pipeline and its GPU resources through the selected
+    /// [`GpuBackend`].
+    pub fn new(
         backend: &B,
         format: B::TextureFormat,
         antialiasing: crate::AntiAlias,
@@ -620,7 +198,7 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
             }),
             primitive: PrimitiveState::default(),
             depth_stencil: None,
-            multisample: crate::pipeline::multisample_state_generic(antialiasing),
+            multisample: crate::pipeline::multisample_state(antialiasing),
         });
 
         let instance_buffer = backend.create_buffer(&BufferDescriptor {
@@ -647,14 +225,9 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
         }
     }
 
-    /// Equivalent to [`SvgPipeline::prepare`] but routes GPU operations through
-    /// the [`GpuBackend`] trait.
-    ///
-    /// Mesh vertex/index buffer creation still uses the concrete wgpu device
-    /// extracted from the backend (since `WgpuBackend::Buffer == wgpu::Buffer`);
-    /// the instance-buffer creation and instance-data upload go through the
-    /// backend trait methods.
-    pub fn prepare_generic(
+    /// Prepares SVG meshes and uploads their GPU buffers through the selected
+    /// backend.
+    pub fn prepare(
         &mut self,
         backend: &B,
         items: &[SvgRenderItem],
@@ -662,7 +235,6 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
         height: u32,
         is_srgb: bool,
     ) {
-        use crate::backend::GpuBackend;
         self.usage_clock = self.usage_clock.wrapping_add(1);
         self.prepared_draws.clear();
         self.item_ranges.clear();
@@ -701,7 +273,7 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
             self.upload.invalidate();
         }
         self.upload
-            .upload_generic(backend, &self.instance_buffer, &self.instances);
+            .upload(backend, &self.instance_buffer, &self.instances);
         self.evict_gpu_meshes_generic(&frame_meshes);
     }
 
@@ -828,7 +400,7 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
     }
 
     fn ensure_gpu_mesh_generic(&mut self, backend: &B, key: usize, mesh: &Arc<SvgMesh>) {
-        use crate::backend::{BufferDescriptor, BufferUsage, GpuBackend};
+        use crate::backend::{BufferDescriptor, BufferUsage};
         if let Some(entry) = self.gpu_meshes.get_mut(&key) {
             entry.last_used = self.usage_clock;
             return;
@@ -888,7 +460,7 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
         }
     }
 
-    pub fn draw_item_generic<'a>(
+    pub fn draw_item<'a>(
         &'a self,
         pass: &mut B::RenderPass<'a>,
         item_index: usize,
@@ -915,19 +487,19 @@ impl<B: crate::backend::GpuBackend> SvgPipeline<B> {
         }
     }
 
-    pub fn cpu_geometry_bytes_generic(&self) -> u64 {
+    pub fn cpu_geometry_bytes(&self) -> u64 {
         self.geometry_cache.memory_bytes() as u64
     }
 
-    pub fn gpu_geometry_bytes_generic(&self) -> u64 {
+    pub fn gpu_geometry_bytes(&self) -> u64 {
         self.gpu_mesh_bytes
     }
 
-    pub fn instance_buffer_bytes_generic(&self) -> u64 {
+    pub fn instance_buffer_bytes(&self) -> u64 {
         (self.instance_policy.capacity() * size_of::<SvgInstance>()) as u64
     }
 
-    pub fn clear_resources_generic(&mut self) {
+    pub fn clear_resources(&mut self) {
         self.geometry_cache.clear();
         self.gpu_meshes.clear();
         self.gpu_mesh_bytes = 0;
@@ -1059,16 +631,14 @@ fn surface_srgb_value(is_srgb: bool) -> f32 {
 #[cfg(all(test, feature = "wgpu"))]
 mod tests {
 
-    use super::SvgPipeline;
-
     #[test]
     fn svg_pipeline_uses_configured_antialiasing() {
         assert_eq!(
-            SvgPipeline::multisample_state(crate::AntiAlias::Analytic).count,
+            crate::pipeline::multisample_state(crate::AntiAlias::Analytic).count,
             1
         );
         assert_eq!(
-            SvgPipeline::multisample_state(crate::AntiAlias::Msaa4x).count,
+            crate::pipeline::multisample_state(crate::AntiAlias::Msaa4x).count,
             4
         );
     }

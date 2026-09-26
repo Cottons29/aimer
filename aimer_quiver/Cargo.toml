@@ -6,30 +6,22 @@ resolver = "3"
 
 
 [features]
-default = ["wgpu"]
-# Present native frames through Cupid's WGPU surface renderer.
-wgpu = ["dep:wgpu", "aimer_cupid/wgpu", "aimer_cupid/apple-core-text"]
-# Present browser frames through Cupid's direct WebGL2 backend.
-webgl = ["aimer_cupid/webgl"]
-# Default browser backend set: WebGPU first with WebGL2 available as fallback.
-web = ["webgpu", "webgl"]
-# Present browser frames through the browser's direct WebGPU API.
-webgpu = ["aimer_cupid/webgpu"]
-# Present native macOS frames through Cupid's direct Metal surface renderer.
-# Select with `--no-default-features --features metal` for a WGPU-free Quiver.
-metal = [
-    "aimer_cupid/metal",
+default = ["native", "web"]
+# Enables the optional native API dependencies. Target cfgs choose which
+# backend is compiled and selected; Linux/Android also compile OpenGL fallback.
+native = [
+    "aimer_cupid/native",
     "dep:objc2-app-kit",
     "dep:objc2-core-foundation",
     "dep:objc2-metal",
     "dep:objc2-quartz-core",
+    "dep:objc2-ui-kit",
+    "dep:windows",
 ]
-# Present native Windows frames through Cupid's Direct3D 12 surface renderer.
-# Select with `--no-default-features --features dx12` for a WGPU-free Quiver.
-dx12 = ["aimer_cupid/dx12", "dep:windows"]
-# Present native desktop frames through Cupid's direct OpenGL renderer.
-# Select with `--no-default-features --features opengl` for a WGPU-free Quiver.
-opengl = ["aimer_cupid/opengl"]
+# Present native frames through Cupid's WGPU surface renderer.
+wgpu = ["dep:wgpu", "aimer_cupid/wgpu", "aimer_cupid/apple-core-text"]
+# Enables the browser API bindings; target cfgs select WebGPU then WebGL2 fallback.
+web = ["aimer_cupid/web"]
 # Encode and present frames on a dedicated raster thread instead of inline on
 # the UI thread. Off by default: it caps latency at one extra frame and moves
 # the presentation outcome — and with it the first-frame notification — off the
@@ -127,6 +119,9 @@ objc2-app-kit = { workspace = true, optional = true, features = [
 objc2-core-foundation = { workspace = true, optional = true }
 objc2-metal = { workspace = true, optional = true }
 objc2-quartz-core = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-ui-kit = { workspace = true, optional = true, features = ["std", "UIView"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { workspace = true, optional = true }

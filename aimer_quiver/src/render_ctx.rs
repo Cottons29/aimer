@@ -1,81 +1,89 @@
-#[cfg(all(target_arch = "wasm32", any(feature = "wgpu", feature = "webgl", feature = "webgpu")))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeBackendChoice {
+    Vulkan,
+    OpenGl,
+}
+
+fn choose_native_backend(
+    initialize_vulkan: impl FnOnce() -> bool,
+    initialize_opengl: impl FnOnce() -> bool,
+) -> Option<NativeBackendChoice> {
+    if initialize_vulkan() {
+        Some(NativeBackendChoice::Vulkan)
+    } else if initialize_opengl() {
+        Some(NativeBackendChoice::OpenGl)
+    } else {
+        None
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", any(feature = "wgpu", feature = "web")))]
 mod h5canva;
-#[cfg(all(target_arch = "wasm32", any(feature = "wgpu", feature = "webgl", feature = "webgpu")))]
+#[cfg(all(target_arch = "wasm32", any(feature = "wgpu", feature = "web")))]
 pub use h5canva::render_ctx::H5CanvasApi;
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "wgpu", not(feature = "dx12")))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "wgpu"))]
 mod wgpu_ctx;
-#[cfg(all(not(target_arch = "wasm32"), feature = "wgpu", not(feature = "dx12")))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "wgpu"))]
 pub use wgpu_ctx::render_ctx::WgpuApi;
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "metal", target_os = "macos"))]
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
 mod metal_ctx;
-#[cfg(all(not(target_arch = "wasm32"), feature = "metal", target_os = "macos"))]
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
 pub use metal_ctx::render_ctx::MetalApi;
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "dx12", target_os = "windows"))]
+#[cfg(all(feature = "native", not(feature = "wgpu"), target_os = "windows"))]
 mod dx12_ctx;
-#[cfg(all(not(target_arch = "wasm32"), feature = "dx12", target_os = "windows"))]
+#[cfg(all(feature = "native", not(feature = "wgpu"), target_os = "windows"))]
 pub use dx12_ctx::render_ctx::Dx12Api;
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "opengl"))]
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
 mod opengl_ctx;
-#[cfg(all(not(target_arch = "wasm32"), feature = "opengl"))]
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
 pub use opengl_ctx::render_ctx::OpenGlApi;
 
-#[cfg(all(feature = "metal", not(target_os = "macos")))]
-compile_error!("aimer_quiver's native `metal` renderer currently supports macOS only");
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+mod native_auto_ctx;
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+pub use native_auto_ctx::NativeAutoApi;
 
-#[cfg(all(feature = "metal", feature = "raster-thread"))]
-compile_error!("aimer_quiver's `metal` renderer does not support `raster-thread` yet");
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+mod vulkan_ctx;
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+pub use vulkan_ctx::render_ctx::VulkanApi;
 
-#[cfg(all(feature = "dx12", not(target_os = "windows")))]
-compile_error!("aimer_quiver's `dx12` renderer currently supports Windows only");
-
-#[cfg(all(feature = "opengl", not(any(target_os = "windows", target_os = "linux"))))]
-compile_error!("aimer_quiver's `opengl` renderer currently supports Windows and Linux only");
-
-#[cfg(all(feature = "dx12", feature = "raster-thread"))]
-compile_error!("aimer_quiver's `dx12` renderer does not support `raster-thread` yet");
-
-#[cfg(all(feature = "opengl", feature = "raster-thread"))]
-compile_error!("aimer_quiver's `opengl` renderer does not support `raster-thread` yet");
-
+#[cfg(all(feature = "native", not(feature = "wgpu"), feature = "raster-thread", any(target_os = "macos", target_os = "ios")))]
+compile_error!("aimer_quiver's Metal renderer does not support `raster-thread` yet");
+#[cfg(all(feature = "native", not(feature = "wgpu"), feature = "raster-thread", target_os = "windows"))]
+compile_error!("aimer_quiver's DirectX renderer does not support `raster-thread`");
+#[cfg(all(feature = "native", not(feature = "wgpu"), feature = "raster-thread", any(target_os = "linux", target_os = "android")))]
+compile_error!("aimer_quiver's OpenGL renderer does not support `raster-thread`");
+#[cfg(all(feature = "wgpu", feature = "raster-thread", not(target_arch = "wasm32")))]
+compile_error!("the WGPU renderer's custom pipeline trait is not `Send`, so it cannot use `raster-thread`");
+#[cfg(all(target_arch = "wasm32", not(feature = "wgpu"), not(feature = "web")))]
+compile_error!("enable the `web` or `wgpu` feature for wasm rendering");
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "wgpu"), not(feature = "native")))]
+compile_error!("enable the `native` or `wgpu` feature for native rendering");
 #[cfg(all(
-    not(target_arch = "wasm32"),
-    not(any(feature = "wgpu", feature = "metal", feature = "dx12", feature = "opengl", feature = "webgl", feature = "webgpu"))
+    not(feature = "wgpu"),
+    not(any(
+        all(feature = "native", any(target_os = "macos", target_os = "ios", target_os = "windows", target_os = "linux", target_os = "android")),
+        all(feature = "web", target_arch = "wasm32")
+    ))
 ))]
-compile_error!("enable an aimer_quiver renderer feature");
+compile_error!("no default renderer is available for this target");
 
-#[cfg(all(target_arch = "wasm32", not(any(feature = "wgpu", feature = "webgl", feature = "webgpu"))))]
-compile_error!("aimer_quiver's wasm renderer requires the `wgpu`, `webgl`, or `webgpu` feature");
-
-#[cfg(all(not(target_arch = "wasm32"), feature = "dx12"))]
-pub type AimerRenderContext = Dx12Api;
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    not(feature = "dx12"),
-    not(feature = "metal"),
-    feature = "opengl"
-))]
-pub type AimerRenderContext = OpenGlApi;
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "dx12"), feature = "metal"))]
-pub type AimerRenderContext = MetalApi;
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    feature = "wgpu",
-    not(feature = "metal"),
-    not(feature = "dx12"),
-    not(feature = "opengl")
-))]
+#[cfg(all(feature = "wgpu", not(target_arch = "wasm32")))]
 pub type AimerRenderContext = WgpuApi;
-/// Browser WebGPU is primary; when WebGL2 is enabled, initialization can fall back to it.
-#[cfg(all(target_arch = "wasm32", feature = "webgpu"))]
+#[cfg(all(feature = "wgpu", target_arch = "wasm32"))]
 pub type AimerRenderContext = H5CanvasApi;
-/// The WebGL2 browser path is used when WebGPU is not selected.
-#[cfg(all(target_arch = "wasm32", feature = "webgl", not(feature = "webgpu")))]
-pub type AimerRenderContext = H5CanvasApi;
-#[cfg(all(target_arch = "wasm32", feature = "wgpu", not(feature = "webgl"), not(feature = "webgpu")))]
+#[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "macos", target_os = "ios")))]
+pub type AimerRenderContext = MetalApi;
+#[cfg(all(not(feature = "wgpu"), feature = "native", target_os = "windows"))]
+pub type AimerRenderContext = Dx12Api;
+#[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "linux", target_os = "android")))]
+pub type AimerRenderContext = NativeAutoApi;
+#[cfg(all(not(feature = "wgpu"), feature = "web", target_arch = "wasm32"))]
 pub type AimerRenderContext = H5CanvasApi;
 
 /// What happened to a frame the renderer was handed.
@@ -110,6 +118,57 @@ pub enum PresentOutcome {
     /// through the `on_present` callback, which is where a retry or a
     /// first-frame notification has to come from.
     Deferred,
+}
+
+#[cfg(test)]
+mod backend_selection_tests {
+    use std::cell::RefCell;
+
+    use super::{NativeBackendChoice, choose_native_backend};
+
+    #[test]
+    fn native_selection_uses_vulkan_when_it_initializes() {
+        let calls = RefCell::new(Vec::new());
+        let selected = choose_native_backend(
+            || {
+                calls.borrow_mut().push("vulkan");
+                true
+            },
+            || {
+                calls.borrow_mut().push("opengl");
+                true
+            },
+        );
+
+        assert_eq!(selected, Some(NativeBackendChoice::Vulkan));
+        assert_eq!(*calls.borrow(), ["vulkan"]);
+    }
+
+    #[test]
+    fn native_selection_tries_opengl_after_vulkan_failure() {
+        let calls = RefCell::new(Vec::new());
+        let selected = choose_native_backend(
+            || {
+                calls.borrow_mut().push("vulkan");
+                false
+            },
+            || {
+                calls.borrow_mut().push("opengl");
+                true
+            },
+        );
+
+        assert_eq!(selected, Some(NativeBackendChoice::OpenGl));
+        assert_eq!(*calls.borrow(), ["vulkan", "opengl"]);
+    }
+
+    #[test]
+    fn native_selection_reports_failure_when_both_backends_fail() {
+        assert_eq!(
+            choose_native_backend(|| false, || false),
+            None,
+        );
+    }
 }
 
 impl PresentOutcome {

@@ -15,7 +15,9 @@ const EGL_FALSE: EglBoolean = 0;
 const EGL_NONE: EglInt = 0x3038;
 const EGL_DEFAULT_DISPLAY: *mut c_void = null_mut();
 const EGL_OPENGL_API: EglEnum = 0x30A2;
+const EGL_OPENGL_ES_API: EglEnum = 0x30A0;
 const EGL_OPENGL_BIT: EglInt = 0x0008;
+const EGL_OPENGL_ES3_BIT: EglInt = 0x0040;
 const EGL_WINDOW_BIT: EglInt = 0x0004;
 const EGL_PBUFFER_BIT: EglInt = 0x0001;
 const EGL_RED_SIZE: EglInt = 0x3024;
@@ -33,6 +35,7 @@ const EGL_CONTEXT_MAJOR_VERSION_KHR: EglInt = 0x3098;
 const EGL_CONTEXT_MINOR_VERSION_KHR: EglInt = 0x30FB;
 const EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR: EglInt = 0x30FD;
 const EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR: EglInt = 0x0001;
+const EGL_CONTEXT_CLIENT_VERSION: EglInt = 0x3098;
 const EGL_PLATFORM_X11_EXT: EglEnum = 0x31D5;
 const EGL_PLATFORM_WAYLAND_EXT: EglEnum = 0x31D8;
 const EGL_PLATFORM_XCB_EXT: EglEnum = 0x31DC;
@@ -100,9 +103,13 @@ struct EglFns {
 impl EglFns {
     fn load() -> Result<Self, String> {
         // SAFETY: dlopen receives a static, nul-terminated system library name.
-        let library = unsafe { dlopen(c"libEGL.so.1".as_ptr(), RTLD_NOW | RTLD_LOCAL) };
+        #[cfg(target_os = "android")]
+        let library_name = c"libEGL.so";
+        #[cfg(not(target_os = "android"))]
+        let library_name = c"libEGL.so.1";
+        let library = unsafe { dlopen(library_name.as_ptr(), RTLD_NOW | RTLD_LOCAL) };
         if library.is_null() {
-            return Err("could not load libEGL.so.1".to_owned());
+            return Err(format!("could not load {}", library_name.to_string_lossy()));
         }
         macro_rules! symbol {
             ($name:literal, $ty:ty) => {{
@@ -110,7 +117,7 @@ impl EglFns {
                 let address = unsafe { dlsym(library, cstr!($name).as_ptr()) };
                 if address.is_null() {
                     unsafe { dlclose(library) };
-                    return Err(format!("libEGL.so.1 is missing {}", $name));
+                    return Err(format!("{} is missing {}", library_name.to_string_lossy(), $name));
                 }
                 // SAFETY: the EGL implementation exports this function with the declared ABI.
                 unsafe { std::mem::transmute::<*mut c_void, $ty>(address) }
@@ -239,21 +246,29 @@ impl Context {
         if unsafe { (egl.initialize)(display, &mut egl_major, &mut egl_minor) } == EGL_FALSE {
             return Err(format!("eglInitialize failed for the headless display (error {:#x})", unsafe { (egl.get_error)() }));
         }
-        if unsafe { (egl.bind_api)(EGL_OPENGL_API) } == EGL_FALSE {
+        #[cfg(target_os = "android")]
+        let gl_api = EGL_OPENGL_ES_API;
+        #[cfg(not(target_os = "android"))]
+        let gl_api = EGL_OPENGL_API;
+        if unsafe { (egl.bind_api)(gl_api) } == EGL_FALSE {
             unsafe { (egl.terminate)(display) };
             return Err(format!("eglBindAPI(OpenGL) failed (error {:#x})", unsafe { (egl.get_error)() }));
         }
-        let attributes = [
+        #[cfg(target_os = "android")]
+        let renderable_type = EGL_OPENGL_ES3_BIT;
+        #[cfg(not(target_os = "android"))]
+        let renderable_type = EGL_OPENGL_BIT;
+        let mut attributes = vec![
             EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-            EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+            EGL_RENDERABLE_TYPE, renderable_type,
             EGL_RED_SIZE, 8,
             EGL_GREEN_SIZE, 8,
             EGL_BLUE_SIZE, 8,
             EGL_ALPHA_SIZE, 8,
-            EGL_DEPTH_SIZE, 24,
-            EGL_STENCIL_SIZE, 8,
-            EGL_NONE,
         ];
+        #[cfg(not(target_os = "android"))]
+        attributes.extend([EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8]);
+        attributes.push(EGL_NONE);
         let mut config = null_mut();
         let mut config_count = 0;
         if unsafe { (egl.choose_config)(display, attributes.as_ptr(), &mut config, 1, &mut config_count) } == EGL_FALSE || config_count == 0 {
@@ -266,10 +281,16 @@ impl Context {
             unsafe { (egl.terminate)(display) };
             return Err(format!("eglCreatePbufferSurface failed (error {:#x})", unsafe { (egl.get_error)() }));
         }
+        #[cfg(target_os = "android")]
+        let context_attributes = [EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE];
+        #[cfg(not(target_os = "android"))]
         let context_attributes = [
-            EGL_CONTEXT_MAJOR_VERSION_KHR, 3,
-            EGL_CONTEXT_MINOR_VERSION_KHR, 3,
-            EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
+            EGL_CONTEXT_MAJOR_VERSION_KHR,
+            3,
+            EGL_CONTEXT_MINOR_VERSION_KHR,
+            3,
+            EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR,
+            EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
             EGL_NONE,
         ];
         let context = unsafe { (egl.create_context)(display, config, null_mut(), context_attributes.as_ptr()) };
@@ -288,7 +309,11 @@ impl Context {
             }
             return Err(format!("eglMakeCurrent failed for the headless context (error {:#x})", unsafe { (egl.get_error)() }));
         }
-        let gl_library = unsafe { dlopen(c"libGL.so.1".as_ptr(), RTLD_NOW | RTLD_LOCAL) };
+        #[cfg(target_os = "android")]
+        let gl_library_name = c"libGLESv3.so";
+        #[cfg(not(target_os = "android"))]
+        let gl_library_name = c"libGL.so.1";
+        let gl_library = unsafe { dlopen(gl_library_name.as_ptr(), RTLD_NOW | RTLD_LOCAL) };
         Ok(Self { egl, display, surface, context, wayland: None, _gl_library: gl_library })
     }
 
@@ -300,7 +325,9 @@ impl Context {
         let egl = EglFns::load()?;
         let (platform, native_display, native_window, visual_id, wayland_surface) =
             native_handles(display_handle, window_handle)?;
-        let display = if let Some(get_platform_display) = egl.get_platform_display.or_else(|| {
+        let display = if cfg!(target_os = "android") {
+            unsafe { (egl.get_display)(native_display) }
+        } else if let Some(get_platform_display) = egl.get_platform_display.or_else(|| {
             let address = unsafe { egl.proc(c"eglGetPlatformDisplayEXT") };
             (!address.is_null()).then(|| unsafe { std::mem::transmute(address) })
         }) {
@@ -319,16 +346,24 @@ impl Context {
         if unsafe { (egl.initialize)(display, &mut egl_major, &mut egl_minor) } == EGL_FALSE {
             return Err(format!("eglInitialize failed (error {:#x})", unsafe { (egl.get_error)() }));
         }
-        if unsafe { (egl.bind_api)(EGL_OPENGL_API) } == EGL_FALSE {
+        #[cfg(target_os = "android")]
+        let gl_api = EGL_OPENGL_ES_API;
+        #[cfg(not(target_os = "android"))]
+        let gl_api = EGL_OPENGL_API;
+        if unsafe { (egl.bind_api)(gl_api) } == EGL_FALSE {
             unsafe { (egl.terminate)(display) };
             return Err(format!("eglBindAPI(OpenGL) failed (error {:#x})", unsafe { (egl.get_error)() }));
         }
 
+        #[cfg(target_os = "android")]
+        let renderable_type = EGL_OPENGL_ES3_BIT;
+        #[cfg(not(target_os = "android"))]
+        let renderable_type = EGL_OPENGL_BIT;
         let mut config_attributes = vec![
             EGL_SURFACE_TYPE,
             EGL_WINDOW_BIT,
             EGL_RENDERABLE_TYPE,
-            EGL_OPENGL_BIT,
+            renderable_type,
             EGL_RED_SIZE,
             8,
             EGL_GREEN_SIZE,
@@ -337,11 +372,9 @@ impl Context {
             8,
             EGL_ALPHA_SIZE,
             8,
-            EGL_DEPTH_SIZE,
-            24,
-            EGL_STENCIL_SIZE,
-            8,
         ];
+        #[cfg(not(target_os = "android"))]
+        config_attributes.extend([EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8]);
         if let Some(visual_id) = visual_id {
             config_attributes.extend([EGL_NATIVE_VISUAL_ID, visual_id as i32]);
         }
@@ -379,6 +412,9 @@ impl Context {
             return Err(format!("EGL could not create a window surface (error {:#x})", unsafe { (egl.get_error)() }));
         }
 
+        #[cfg(target_os = "android")]
+        let context_attributes = [EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE];
+        #[cfg(not(target_os = "android"))]
         let context_attributes = [
             EGL_CONTEXT_MAJOR_VERSION_KHR,
             3,
@@ -406,7 +442,11 @@ impl Context {
         }
         unsafe { (egl.swap_interval)(display, 1) };
 
-        let gl_library = unsafe { dlopen(c"libGL.so.1".as_ptr(), RTLD_NOW | RTLD_LOCAL) };
+        #[cfg(target_os = "android")]
+        let gl_library_name = c"libGLESv3.so";
+        #[cfg(not(target_os = "android"))]
+        let gl_library_name = c"libGL.so.1";
+        let gl_library = unsafe { dlopen(gl_library_name.as_ptr(), RTLD_NOW | RTLD_LOCAL) };
         Ok(Self {
             egl,
             display,
@@ -490,6 +530,13 @@ fn native_handles(
             None,
             Some(window.surface.as_ptr()),
         )),
-        _ => Err("Linux OpenGL expects matching X11 or Wayland display/window handles".to_owned()),
+        (RawDisplayHandle::Android(_), RawWindowHandle::AndroidNdk(window)) => Ok((
+            0,
+            EGL_DEFAULT_DISPLAY,
+            window.a_native_window.as_ptr(),
+            None,
+            None,
+        )),
+        _ => Err("OpenGL expects matching platform display/window handles".to_owned()),
     }
 }

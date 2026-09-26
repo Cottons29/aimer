@@ -1,4 +1,4 @@
-//! Direct OpenGL 3.3 Core backend for native Windows and Linux windows.
+//! Direct OpenGL backend for native Windows/Linux windows and Android GLES 3.
 
 mod context;
 mod gl;

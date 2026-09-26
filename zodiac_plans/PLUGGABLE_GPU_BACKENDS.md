@@ -459,3 +459,11 @@ The `metal` feature now builds Cupid without pulling WGPU or winit into its norm
 Run the Metal demo with `cargo run -p aimer_cupid --no-default-features --features metal-demo --bin cupid-metal`.
 
 Validation on this Darwin host: `cargo check -p aimer_cupid --no-default-features --features metal` passes, and `cargo check -p aimer_cupid --no-default-features --features metal --tests` compiles the test targets without running them. `cargo build -p aimer_cupid --no-default-features --features metal-demo --bin cupid-metal` links the native demo executable. Its normal dependency graph contains no `wgpu`. Default and `pluggable-backend-exp` library checks pass, as does `git diff --check`.
+# Historical plan — superseded by the stable backend implementation
+
+The migration described below has been implemented. Current backend dependency
+groups are `native`, `web`, and opt-in `wgpu`; target `cfg` selects native APIs,
+and the generic `Renderer<B = DefaultGpuBackend>` is the public renderer.
+References below to `pluggable-backend-exp`, backend-selection Cargo features,
+or a separate WGPU-only `Renderer` describe the original proposal, not the
+current configuration. This file remains for its design history.

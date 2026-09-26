@@ -10,7 +10,7 @@ pub mod ios_safe_area;
 pub mod ios_screen;
 #[cfg(target_os = "macos")]
 pub mod macos_drag;
-#[cfg(all(target_os = "macos", any(feature = "wgpu", feature = "metal")))]
+#[cfg(all(target_os = "macos", any(feature = "wgpu", feature = "native")))]
 pub mod macos_surface;
 #[cfg(target_arch = "wasm32")]
 pub mod web_safe_area;

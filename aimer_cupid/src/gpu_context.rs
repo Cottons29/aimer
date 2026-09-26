@@ -162,16 +162,14 @@ pub struct GpuContext<'w> {
 }
 
 /// Headless / offscreen GPU pair used when a windowed [`GpuContext`] is not
-/// needed. Available behind `pluggable-backend-exp` so tests and non-surface
+/// needed. Available with the `wgpu` feature so tests and non-surface
 /// consumers can build a [`crate::backend::wgpu::WgpuBackend`] without going
 /// through winit.
-#[cfg(feature = "pluggable-backend-exp")]
 pub struct GpuDevice {
     pub device: Device,
     pub queue: Queue,
 }
 
-#[cfg(feature = "pluggable-backend-exp")]
 impl GpuDevice {
     /// Wraps an existing device/queue pair.
     #[inline]
@@ -362,11 +360,9 @@ impl<'w> GpuContext<'w> {
     /// Builds a [`crate::backend::wgpu::WgpuBackend`] over this context's
     /// device and queue.
     ///
-    /// Use with [`crate::renderer::RendererImpl::new`] when the
-    /// `pluggable-backend-exp` feature is enabled. `Device`/`Queue` are
+    /// Use with [`crate::renderer::Renderer::new`]. `Device` and `Queue` are
     /// reference-counted, so cloning them into the backend is cheap and does
     /// not invalidate the context.
-    #[cfg(feature = "pluggable-backend-exp")]
     #[inline]
     pub fn backend(&self) -> crate::backend::wgpu::WgpuBackend {
         crate::backend::wgpu::WgpuBackend::new(self.device.clone(), self.queue.clone())
@@ -374,7 +370,6 @@ impl<'w> GpuContext<'w> {
 
     /// Returns a headless [`GpuDevice`] view of this context's device/queue
     /// pair (surface is not included).
-    #[cfg(feature = "pluggable-backend-exp")]
     #[inline]
     pub fn device_pair(&self) -> GpuDevice {
         GpuDevice::new(self.device.clone(), self.queue.clone())

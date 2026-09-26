@@ -13,6 +13,8 @@ use demo_content::{
 #[allow(unused_imports)]
 use aimer_cupid::canvas::CupidCanvas;
 #[allow(unused_imports)]
+use aimer_cupid::backend::wgpu::WgpuBackend;
+#[allow(unused_imports)]
 use aimer_cupid::gpu_context::GpuContext;
 #[allow(unused_imports)]
 use aimer_cupid::renderer::Renderer;
@@ -39,6 +41,7 @@ pub fn time_consume(func: impl FnOnce()) {
 #[cfg(not(target_arch = "wasm32"))]
 struct App<'w> {
     gpu: Option<GpuContext<'w>>,
+    backend: Option<WgpuBackend>,
     renderer: Option<Renderer>,
     canvas: CupidCanvas,
     window: Option<Window>,
@@ -53,6 +56,7 @@ impl<'w> App<'w> {
     fn new() -> Self {
         Self {
             gpu: None,
+            backend: None,
             renderer: None,
             canvas: CupidCanvas::new(),
             window: None,
@@ -94,9 +98,10 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
         // The window outlives the GpuContext because we drop gpu before window.
         let window_ref: &'w Window = unsafe { &*(&window as *const Window) };
         let gpu = GpuContext::initialize(window_ref, size);
+        let backend = gpu.backend();
 
         debug!("Initializing GPU context and loading test image");
-        let mut img_renderer = Renderer::new(&gpu.device, gpu.format);
+        let mut img_renderer = Renderer::new(&backend, gpu.format);
         debug!("Initialized GPU context");
 
         // AOT-style warm-up: move the expensive text shaping/rasterization off
@@ -107,26 +112,24 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
         // Level 2 — pre-rasterize the common ASCII glyph set at the font sizes
         // the app uses, filling the glyph atlas so even brand-new strings only
         // pay shaping (never glyph rasterization).
-        img_renderer.warm_glyph_set(&gpu.device, &gpu.queue, &WARM_FONT_SIZES);
+        img_renderer.warm_glyph_set(&backend, &WARM_FONT_SIZES);
         // Level 1 — pre-shape and lay out the known static text at the size and
         // wrapping width it is drawn with, so it renders from the warm cache on
         // the very first frame. The wrap width mirrors the draw call below
         // (`inner_size().width - 60.0`).
         img_renderer.warm_text(
-            &gpu.device,
-            &gpu.queue,
+            &backend,
             WELCOME_TEXT,
             44.0,
             size.width as f32 - 60.0,
         );
         img_renderer.warm_text(
-            &gpu.device,
-            &gpu.queue,
+            &backend,
             SOUTHEAST_ASIAN_TEXT,
             SOUTHEAST_ASIAN_FONT_SIZE,
             size.width as f32 - 60.0,
         );
-        img_renderer.warm_text(&gpu.device, &gpu.queue, COLOR_GLYPH_SHOWCASE, 22.0, 0.0);
+        img_renderer.warm_text(&backend, COLOR_GLYPH_SHOWCASE, 22.0, 0.0);
         debug!("Text warm-up complete");
         let image_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("image.png");
         debug!("Loading test image from {}", image_path.display());
@@ -134,9 +137,8 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
             .unwrap_or_else(|e| panic!("Failed to load {}: {e}", image_path.display()))
             .into_rgba8();
         let (img_w, img_h) = img.dimensions();
-        let tex_id = img_renderer.image_pipeline.upload_image(
-            &gpu.device,
-            &gpu.queue,
+        let tex_id = img_renderer.upload_image(
+            &backend,
             img_w,
             img_h,
             img.as_raw(),
@@ -144,6 +146,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
         debug!("Uploaded image to GPU");
 
         self.texture_id = Some(tex_id);
+        self.backend = Some(backend);
         debug!("Test image uploaded");
         self.renderer = Some(img_renderer);
         debug!("Renderer initialized");
@@ -287,8 +290,7 @@ impl<'w> ApplicationHandler<MyWindowEvent> for App<'w> {
 
                 ExecTimes::print_time(|| {
                     renderer.render(
-                        &gpu.device,
-                        &gpu.queue,
+                        self.backend.as_ref().unwrap(),
                         &view,
                         width,
                         height,
