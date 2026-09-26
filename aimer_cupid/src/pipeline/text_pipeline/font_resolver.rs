@@ -2,7 +2,11 @@
 use std::collections::HashMap;
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
 use std::collections::HashSet;
+#[cfg(target_os = "linux")]
+use std::fmt::Write as FmtWrite;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{LazyLock, RwLock};
@@ -733,11 +737,31 @@ fn first_open_match(
 
 /// Builds only the fallback face for `script`.
 ///
-/// The platform collection is still walked until this lane has a usable face,
-/// but no face is parsed for unrelated scripts and no unrelated font record is
-/// retained. The caller gives each lane its own id range, so the result is
-/// independent of the order in which scripts first appear in the UI.
+/// Linux asks Fontconfig for candidates in system preference order. Other
+/// desktop targets scan their font catalogue. The caller gives each lane its
+/// own id range, so the result is independent of the order in which scripts
+/// first appear in the UI.
+#[cfg(target_os = "linux")]
+fn build_fallback_chain_for_script(script: FallbackScript) -> Vec<FontRecord> {
+    let probes = &PROBE_GROUPS[script.index()];
+    match fontconfig_font_record(
+        script.id_base(),
+        "sans-serif",
+        probes.probes,
+        Some(script),
+        probes.hint_color,
+    ) {
+        Ok(Some(record)) => return vec![record],
+        Ok(None) => return Vec::new(),
+        Err(_) => {}
+    }
+
+    let paths = system_font_paths();
+    build_fallback_chain_for_scripts(std::slice::from_ref(&script), &paths)
+}
+
 #[cfg(all(
+    not(target_os = "linux"),
     not(any(target_os = "ios", target_os = "macos"))
 ))]
 fn build_fallback_chain_for_script(script: FallbackScript) -> Vec<FontRecord> {
@@ -987,6 +1011,112 @@ fn system_font_paths() -> Vec<PathBuf> {
     paths
 }
 
+#[cfg(target_os = "linux")]
+fn fontconfig_language(script: FallbackScript) -> Option<&'static str> {
+    match script {
+        FallbackScript::Emoji | FallbackScript::Cjk => None,
+        FallbackScript::Hangul => Some("ko"),
+        FallbackScript::Arabic => Some("ar"),
+        FallbackScript::Hebrew => Some("he"),
+        FallbackScript::Devanagari => Some("hi"),
+        FallbackScript::Tamil => Some("ta"),
+        FallbackScript::Thai => Some("th"),
+        FallbackScript::Armenian => Some("hy"),
+        FallbackScript::Georgian => Some("ka"),
+        FallbackScript::Ethiopic => Some("am"),
+        FallbackScript::Myanmar => Some("my"),
+        FallbackScript::Khmer => Some("km"),
+        FallbackScript::Tibetan => Some("bo"),
+        FallbackScript::Sinhala => Some("si"),
+        FallbackScript::Telugu => Some("te"),
+        FallbackScript::Kannada => Some("kn"),
+        FallbackScript::Malayalam => Some("ml"),
+        FallbackScript::Gujarati => Some("gu"),
+        FallbackScript::Gurmukhi => Some("pa"),
+        FallbackScript::Bengali => Some("bn"),
+        FallbackScript::Oriya => Some("or"),
+        FallbackScript::Lao => Some("lo"),
+        FallbackScript::Mongolian => Some("mn"),
+        FallbackScript::Cherokee => Some("chr"),
+        FallbackScript::Yi => Some("ii"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct FcMatchUnavailable;
+
+#[cfg(target_os = "linux")]
+fn fontconfig_font_record(
+    id: FontId,
+    family: &str,
+    probes: &[char],
+    script: Option<FallbackScript>,
+    hint_color: bool,
+) -> Result<Option<FontRecord>, FcMatchUnavailable> {
+    let mut pattern = format!("{family}:weight=regular:slant=roman");
+    if let Some(language) = script.and_then(fontconfig_language) {
+        write!(&mut pattern, ":lang={language}").expect("writing to a String cannot fail");
+    }
+    pattern.push_str(":charset=");
+    for (index, &codepoint) in probes.iter().enumerate() {
+        if index != 0 {
+            pattern.push(',');
+        }
+        write!(&mut pattern, "{:x}", codepoint as u32)
+            .expect("writing to a String cannot fail");
+    }
+
+    // Use the host's Fontconfig ordering when available. Calling through argv
+    // avoids shell parsing, and the path scanner below remains a fallback for
+    // minimal systems without the `fc-match` utility.
+    let output = Command::new("fc-match")
+        .arg("--sort")
+        .arg(r"--format=%{file}\t%{index}\n")
+        .arg(pattern)
+        .output()
+        .map_err(|_| FcMatchUnavailable)?;
+    if !output.status.success() {
+        return Err(FcMatchUnavailable);
+    }
+
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((filename, font_index)) = line.rsplit_once('\t') else {
+            continue;
+        };
+        let Ok(font_index) = font_index.parse::<u32>() else {
+            continue;
+        };
+        // Fontconfig may encode a variable-font named instance in the high
+        // bits. Cupid's SFNT reader needs only the collection face index.
+        let collection_index = font_index & 0xffff;
+        let path = PathBuf::from(filename);
+        let Some(mapping) = probe_font_file(&path) else {
+            continue;
+        };
+        let Ok(face) = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
+            &mapping,
+            collection_index,
+        ) else {
+            continue;
+        };
+        let has_color_tables = face.has_color_tables() || face.has_apple_private_color_tables();
+        let Some(probe_is_color) = face_matches_probes(&face, probes, hint_color) else {
+            continue;
+        };
+
+        let path = Arc::new(path);
+        retain_probed_font_file(path.as_path(), mapping);
+        return Ok(Some(FontRecord {
+            id,
+            bytes: None,
+            collection_index,
+            path: Some(path),
+            is_color: has_color_tables || probe_is_color,
+        }));
+    }
+    Ok(None)
+}
+
 #[cfg(all(
     not(any(target_os = "ios", target_os = "macos")),
     not(target_arch = "wasm32")
@@ -1083,7 +1213,20 @@ pub(crate) fn system_primary_font() -> Option<FontRecord> {
     {
         static PRIMARY: OnceLock<Option<FontRecord>> = OnceLock::new();
         PRIMARY
-            .get_or_init(|| system_font_record_from_paths(SYSTEM_PRIMARY_FONT_ID, &['A', 'a', '0'], false))
+            .get_or_init(|| {
+                #[cfg(target_os = "linux")]
+                match fontconfig_font_record(
+                    SYSTEM_PRIMARY_FONT_ID,
+                    "sans-serif",
+                    &['A', 'a', '0'],
+                    None,
+                    false,
+                ) {
+                    Ok(record) => return record,
+                    Err(_) => {}
+                }
+                system_font_record_from_paths(SYSTEM_PRIMARY_FONT_ID, &['A', 'a', '0'], false)
+            })
             .clone()
     }
 
@@ -1111,7 +1254,20 @@ pub(crate) fn system_monospace_font(id: FontId) -> Option<FontRecord> {
     {
         static MONOSPACE: OnceLock<Option<FontRecord>> = OnceLock::new();
         MONOSPACE
-            .get_or_init(|| system_font_record_from_paths(id, &['M', 'i', '0'], true))
+            .get_or_init(|| {
+                #[cfg(target_os = "linux")]
+                match fontconfig_font_record(
+                    id,
+                    "monospace",
+                    &['M', 'i', '0'],
+                    None,
+                    false,
+                ) {
+                    Ok(record) => return record,
+                    Err(_) => {}
+                }
+                system_font_record_from_paths(id, &['M', 'i', '0'], true)
+            })
             .clone()
     }
 
@@ -1148,21 +1304,30 @@ pub fn shared_fallback_chain() -> Vec<FontRecord> {
             .collect::<Vec<_>>();
 
         if !missing_scripts.is_empty() {
-            let paths = system_font_paths();
-            let records = build_fallback_chain_for_scripts(&missing_scripts, &paths);
-            let mut lane_records: Vec<Vec<FontRecord>> = (0..missing_scripts.len())
-                .map(|_| Vec::new())
-                .collect();
-            for record in records {
-                if let Some(index) = missing_scripts
-                    .iter()
-                    .position(|script| script.id_base() == record.id)
-                {
-                    lane_records[index].push(record);
-                }
-            }
-            for (script, records) in missing_scripts.into_iter().zip(lane_records) {
+            #[cfg(target_os = "linux")]
+            for script in missing_scripts {
+                let records = build_fallback_chain_for_script(script);
                 let _ = fallbacks[script.index()].set(records);
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            {
+                let paths = system_font_paths();
+                let records = build_fallback_chain_for_scripts(&missing_scripts, &paths);
+                let mut lane_records: Vec<Vec<FontRecord>> = (0..missing_scripts.len())
+                    .map(|_| Vec::new())
+                    .collect();
+                for record in records {
+                    if let Some(index) = missing_scripts
+                        .iter()
+                        .position(|script| script.id_base() == record.id)
+                    {
+                        lane_records[index].push(record);
+                    }
+                }
+                for (script, records) in missing_scripts.into_iter().zip(lane_records) {
+                    let _ = fallbacks[script.index()].set(records);
+                }
             }
         }
 
