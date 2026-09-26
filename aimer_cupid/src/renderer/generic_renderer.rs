@@ -205,6 +205,14 @@ impl<B: GpuBackend> RendererImpl<B> {
         self.format
     }
 
+    /// Whether the previous render left off-screen text unprepared for lack of budget.
+    #[inline]
+    pub fn has_postponed_text_preparation(&self) -> bool {
+        self.text_pipeline
+            .as_ref()
+            .is_some_and(|pipeline| pipeline.has_postponed_preparation())
+    }
+
     /// Registers a backend-generic custom pipeline.
     pub fn register_custom_pipeline(&mut self, pipeline: impl CustomPipelineGeneric<B>) {
         self.custom_pipelines

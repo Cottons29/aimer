@@ -9,6 +9,8 @@ resolver = "3"
 default = ["wgpu"]
 # Present native frames through Cupid's WGPU surface renderer.
 wgpu = ["dep:wgpu", "aimer_cupid/wgpu", "aimer_cupid/apple-core-text"]
+# Present browser frames through Cupid's direct WebGL2 backend.
+webgl = ["aimer_cupid/webgl"]
 # Present native macOS frames through Cupid's direct Metal surface renderer.
 # Select with `--no-default-features --features metal` for a WGPU-free Quiver.
 metal = [

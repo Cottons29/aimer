@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["native", "desktop-bin"]
+default = ["native", "desktop-bin", "wgpu"]
 native = ["aimer/markdown", "aimer/svg", "aimer/provider"]
+wgpu = ["aimer/wgpu"]
+webgl = ["aimer/webgl"]
 
 desktop-bin = []
 
@@ -20,7 +22,7 @@ path = "src/main.rs"
 required-features = ["desktop-bin"]
 
 [dependencies]
-aimer = { path = ".." }
+aimer = { path = "..", default-features = false }
 webbrowser = "1.2.1"
 serde.workspace = true
 serde_json.workspace = true

@@ -1,6 +1,6 @@
-#[cfg(all(target_arch = "wasm32", feature = "wgpu"))]
+#[cfg(all(target_arch = "wasm32", any(feature = "wgpu", feature = "webgl")))]
 mod h5canva;
-#[cfg(all(target_arch = "wasm32", feature = "wgpu"))]
+#[cfg(all(target_arch = "wasm32", any(feature = "wgpu", feature = "webgl")))]
 pub use h5canva::render_ctx::H5CanvasApi;
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "wgpu", not(feature = "dx12")))]
@@ -43,12 +43,12 @@ compile_error!("aimer_quiver's `opengl` renderer does not support `raster-thread
 
 #[cfg(all(
     not(target_arch = "wasm32"),
-    not(any(feature = "wgpu", feature = "metal", feature = "dx12", feature = "opengl"))
+    not(any(feature = "wgpu", feature = "metal", feature = "dx12", feature = "opengl", feature = "webgl"))
 ))]
 compile_error!("enable an aimer_quiver renderer feature");
 
-#[cfg(all(target_arch = "wasm32", not(feature = "wgpu")))]
-compile_error!("aimer_quiver's wasm renderer requires the `wgpu` feature");
+#[cfg(all(target_arch = "wasm32", not(any(feature = "wgpu", feature = "webgl"))))]
+compile_error!("aimer_quiver's wasm renderer requires the `wgpu` or `webgl` feature");
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "dx12"))]
 pub type AimerRenderContext = Dx12Api;
@@ -69,7 +69,10 @@ pub type AimerRenderContext = MetalApi;
     not(feature = "opengl")
 ))]
 pub type AimerRenderContext = WgpuApi;
-#[cfg(all(target_arch = "wasm32", feature = "wgpu"))]
+/// The WebGL2 browser path is preferred when its feature is explicitly enabled.
+#[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+pub type AimerRenderContext = H5CanvasApi;
+#[cfg(all(target_arch = "wasm32", feature = "wgpu", not(feature = "webgl")))]
 pub type AimerRenderContext = H5CanvasApi;
 
 /// What happened to a frame the renderer was handed.

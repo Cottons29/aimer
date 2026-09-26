@@ -89,6 +89,7 @@ pub struct RectPipeline<B: crate::backend::GpuBackend = crate::backend::DefaultG
     instances: Vec<RectInstance>,
     frame_instance_offset: usize,
     upload: FrameUpload<RectInstance>,
+    immediate_uploads: bool,
     last_viewport: Option<(u32, u32, bool)>,
 }
 
@@ -410,6 +411,7 @@ impl<B: crate::backend::GpuBackend> RectPipeline<B> {
     pub fn clear(&mut self) {
         self.instances.clear();
         self.frame_instance_offset = 0;
+        self.immediate_uploads = false;
     }
 
     #[inline]
@@ -520,6 +522,7 @@ impl<B: crate::backend::GpuBackend> RectPipeline<B> {
             instances: Vec::new(),
             frame_instance_offset: 0,
             upload: FrameUpload::new(),
+            immediate_uploads: false,
             last_viewport: None,
         }
     }
@@ -552,9 +555,8 @@ impl<B: crate::backend::GpuBackend> RectPipeline<B> {
         }
 
         // Match concrete begin_frame: only size the buffer + write viewport.
-        // Instance bytes are uploaded later in end_frame_generic, after flushes
-        // have recorded draws against buffer offsets (queue.write_buffer is
-        // ordered before the submitted pass executes).
+        // Queued backends upload instances in end_frame_generic; immediate
+        // backends upload each pending range in flush_generic before drawing it.
         #[cfg(target_os = "android")]
         let is_srgb_f32 = 2.0_f32;
         #[cfg(not(target_os = "android"))]
@@ -574,8 +576,12 @@ impl<B: crate::backend::GpuBackend> RectPipeline<B> {
     /// Uploads pending instance data through the selected backend.
     pub fn end_frame_generic(&mut self, backend: &B) {
         use crate::backend::GpuBackend;
-        self.upload
-            .upload_generic(backend, &self.instance_buffer, &self.instances);
+        if self.immediate_uploads {
+            self.upload.mark_uploaded(&self.instances);
+        } else {
+            self.upload
+                .upload_generic(backend, &self.instance_buffer, &self.instances);
+        }
     }
 
     /// Records the pending rectangle batch through the backend render pass.
@@ -590,6 +596,11 @@ impl<B: crate::backend::GpuBackend> RectPipeline<B> {
         }
         debug_assert!(self.instances.len() <= self.instance_policy.capacity());
         let byte_offset = (self.frame_instance_offset * size_of::<RectInstance>()) as u64;
+        self.immediate_uploads |= pass.write_buffer_before_draw(
+            &self.instance_buffer,
+            byte_offset,
+            bytemuck::cast_slice(&self.instances[self.frame_instance_offset..]),
+        );
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
         pass.set_vertex_buffer(0, &self.instance_buffer, byte_offset);
@@ -609,6 +620,11 @@ impl<B: crate::backend::GpuBackend> RectPipeline<B> {
         }
         debug_assert!(self.instances.len() <= self.instance_policy.capacity());
         let byte_offset = (self.frame_instance_offset * size_of::<RectInstance>()) as u64;
+        self.immediate_uploads |= pass.write_buffer_before_draw(
+            &self.instance_buffer,
+            byte_offset,
+            bytemuck::cast_slice(&self.instances[self.frame_instance_offset..]),
+        );
         pass.set_pipeline(&self.clear_pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
         pass.set_vertex_buffer(0, &self.instance_buffer, byte_offset);

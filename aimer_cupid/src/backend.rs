@@ -42,6 +42,8 @@ pub mod vulkan;
 
 #[cfg(feature = "opengl")]
 pub mod opengl;
+#[cfg(all(feature = "webgl", target_arch = "wasm32"))]
+pub mod webgl;
 
 /// Backend selected by the active feature set for public generic type defaults.
 #[cfg(feature = "wgpu")]
@@ -64,7 +66,7 @@ pub type DefaultGpuBackend = dx12::Dx12Backend;
 ))]
 pub type DefaultGpuBackend = vulkan::VulkanBackend;
 
-/// OpenGL is the default backend when all other backends are disabled.
+/// Native OpenGL is the default backend when all other native backends are disabled.
 #[cfg(all(
     not(feature = "wgpu"),
     not(feature = "metal"),
@@ -73,6 +75,18 @@ pub type DefaultGpuBackend = vulkan::VulkanBackend;
     feature = "opengl"
 ))]
 pub type DefaultGpuBackend = opengl::OpenGlBackend;
+
+/// WebGL2 is the default backend when all other backends are disabled for wasm.
+#[cfg(all(
+    not(feature = "wgpu"),
+    not(feature = "metal"),
+    not(feature = "dx12"),
+    not(feature = "vulkan"),
+    not(feature = "opengl"),
+    feature = "webgl",
+    target_arch = "wasm32"
+))]
+pub type DefaultGpuBackend = webgl::WebGl2Backend;
 
 #[cfg(all(
     feature = "metal",
@@ -91,10 +105,12 @@ compile_error!("the `vulkan` feature is supported on Windows, Linux, and Android
 
 #[cfg(all(feature = "opengl", not(any(target_os = "windows", target_os = "linux"))))]
 compile_error!("the `opengl` feature is supported on Windows and Linux");
+#[cfg(all(feature = "webgl", not(target_arch = "wasm32")))]
+compile_error!("the `webgl` feature is supported on wasm32 browser targets");
 
 #[cfg(all(
     feature = "pluggable-backend-exp",
-    not(any(feature = "wgpu", feature = "metal", feature = "dx12", feature = "vulkan", feature = "opengl"))
+    not(any(feature = "wgpu", feature = "metal", feature = "dx12", feature = "vulkan", feature = "opengl", feature = "webgl"))
 ))]
 compile_error!("enable a GPU backend feature with `pluggable-backend-exp`");
 
@@ -766,6 +782,20 @@ pub trait GpuRenderPass<B: GpuBackend> {
     fn set_vertex_buffer(&mut self, slot: u32, buffer: &B::Buffer, offset: u64);
     fn set_index_buffer(&mut self, buffer: &B::Buffer, index_format: IndexFormat, offset: u64);
     fn set_scissor_rect(&mut self, x: u32, y: u32, width: u32, height: u32);
+
+    /// Uploads the next draw's instance bytes immediately when the backend
+    /// executes draws before encoder submission. Queued backends leave the
+    /// upload to the pipeline's frame-end batch and return `false`.
+    #[inline]
+    fn write_buffer_before_draw(
+        &mut self,
+        _buffer: &B::Buffer,
+        _offset: u64,
+        _data: &[u8],
+    ) -> bool {
+        false
+    }
+
     fn draw(&mut self, vertices: Range<u32>, instances: Range<u32>);
     fn draw_indexed(&mut self, indices: Range<u32>, base_vertex: i32, instances: Range<u32>);
 }

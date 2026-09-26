@@ -46,6 +46,8 @@ vulkan = ["dep:ash", "dep:ash-window", "dep:raw-window-handle", "pluggable-backe
 vulkan-demo = ["vulkan", "dep:winit"]
 # Native OpenGL 3.3 Core backend. Loads the platform OpenGL entry points directly.
 opengl = ["dep:raw-window-handle", "pluggable-backend-exp"]
+# Browser WebGL2 backend using web-sys. Pair with `--no-default-features` for a WGPU-free build.
+webgl = ["pluggable-backend-exp"]
 # Optional windowed demo for the direct OpenGL backend. Use with
 # `--no-default-features` to omit WGPU.
 opengl-demo = ["opengl", "dep:winit"]
@@ -231,7 +233,21 @@ objc2-metal = { workspace = true, optional = true, features = [
 wasm-bindgen-futures.workspace = true
 wasm-bindgen.workspace = true
 js-sys.workspace = true
-web-sys = { workspace = true, features = ["Window", "Response"] }
+web-sys = { workspace = true, features = [
+    "Window",
+    "Response",
+    "HtmlCanvasElement",
+    "WebGl2RenderingContext",
+    "WebGlBuffer",
+    "WebGlFramebuffer",
+    "WebGlProgram",
+    "WebGlRenderbuffer",
+    "WebGlSampler",
+    "WebGlShader",
+    "WebGlTexture",
+    "WebGlUniformLocation",
+    "WebGlVertexArrayObject",
+] }
 
 
 [target.'cfg(target_os = "windows")'.dependencies]

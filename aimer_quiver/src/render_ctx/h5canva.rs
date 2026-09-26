@@ -8,17 +8,32 @@ pub mod render_ctx {
     use aimer_cupid::compositor::CompositorScene;
     use aimer_cupid::damage_region::DamageSet;
     use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
+    #[cfg(all(not(feature = "webgl"), feature = "wgpu"))]
     use aimer_cupid::gpu_context::GpuContext;
+    #[cfg(all(not(feature = "webgl"), feature = "wgpu"))]
     use aimer_cupid::renderer::Renderer;
+    #[cfg(feature = "webgl")]
+    use aimer_cupid::renderer::RendererImpl;
+    #[cfg(feature = "webgl")]
+    use aimer_cupid::{WebGl2Backend, WebGl2TextureFormat, WebGl2TextureView};
     use aimer_utils::info;
     use winit::dpi::PhysicalSize;
-    use winit::event_loop::EventLoop;
     use winit::platform::web::WindowExtWebSys;
     use winit::window::Window;
 
     use crate::frame_stats::{FramePhase, PhaseTimer};
     use crate::render_ctx::PresentOutcome;
 
+    #[cfg(feature = "webgl")]
+    struct GpuState {
+        backend: WebGl2Backend,
+        surface_view: WebGl2TextureView,
+        renderer: RendererImpl<WebGl2Backend>,
+        size: (u32, u32),
+        canvas: CupidCanvas,
+    }
+
+    #[cfg(all(not(feature = "webgl"), feature = "wgpu"))]
     struct GpuState {
         gpu: GpuContext<'static>,
         renderer: Renderer,
@@ -47,8 +62,7 @@ pub mod render_ctx {
                 antialiasing,
             }
         }
-        /// Returns true when the async GPU init has completed and the context
-        /// is usable.
+        /// Returns true when the browser GPU context is usable.
         pub fn is_ready(&self) -> bool {
             self.state.borrow().is_some()
         }
@@ -79,27 +93,58 @@ pub mod render_ctx {
                 info!("Canvas created.");
             }
 
-            // Spawn async GPU initialization
-            let state = self.state.clone();
-            let antialiasing = self.antialiasing;
-            wasm_bindgen_futures::spawn_local(async move {
-                info!("Initializing GPU context (wasm)...");
-                let gpu = GpuContext::initialize_async(window, size).await;
-                let canvas = CupidCanvas::new();
-                let renderer = Renderer::with_antialiasing(&gpu.device, gpu.format, antialiasing);
-                *state.borrow_mut() = Some(GpuState {
-                    gpu,
+            #[cfg(feature = "webgl")]
+            {
+                let canvas = window.canvas().expect("winit did not provide a browser canvas");
+                let backend = WebGl2Backend::new(canvas)
+                    .unwrap_or_else(|error| panic!("failed to initialize WebGL2: {error}"));
+                backend.resize(size.width, size.height);
+                let surface_view = backend.surface_view();
+                let renderer = RendererImpl::<WebGl2Backend>::with_antialiasing(
+                    &backend,
+                    WebGl2TextureFormat::Rgba8Unorm,
+                    self.antialiasing,
+                );
+                *self.state.borrow_mut() = Some(GpuState {
+                    backend,
+                    surface_view,
                     renderer,
-                    canvas,
+                    size: (size.width, size.height),
+                    canvas: CupidCanvas::new(),
                 });
-                info!("GPU context initialized (wasm).");
-                // Request a redraw so the first frame renders
+                info!("WebGL2 context initialized (wasm).");
                 window.request_redraw();
-            });
+            }
+
+            #[cfg(all(not(feature = "webgl"), feature = "wgpu"))]
+            {
+                // Spawn async GPU initialization
+                let state = self.state.clone();
+                let antialiasing = self.antialiasing;
+                wasm_bindgen_futures::spawn_local(async move {
+                    info!("Initializing GPU context (wasm)...");
+                    let gpu = GpuContext::initialize_async(window, size).await;
+                    let canvas = CupidCanvas::new();
+                    let renderer = Renderer::with_antialiasing(&gpu.device, gpu.format, antialiasing);
+                    *state.borrow_mut() = Some(GpuState {
+                        gpu,
+                        renderer,
+                        canvas,
+                    });
+                    info!("GPU context initialized (wasm).");
+                    window.request_redraw();
+                });
+            }
         }
 
         pub fn resize(&mut self, size: PhysicalSize<u32>) {
             if let Some(state) = self.state.borrow_mut().as_mut() {
+                #[cfg(feature = "webgl")]
+                {
+                    state.backend.resize(size.width, size.height);
+                    state.size = (size.width, size.height);
+                }
+                #[cfg(all(not(feature = "webgl"), feature = "wgpu"))]
                 state.gpu.resize(size);
             }
         }
@@ -134,13 +179,13 @@ pub mod render_ctx {
         /// `WgpuApi::build_frame`.
         ///
         /// The browser has no usable thread to hand the frame to — `wasm32`
-        /// needs `SharedArrayBuffer` plus atomics, and the WebGPU objects are
+        /// needs `SharedArrayBuffer` plus atomics, and browser GPU objects are
         /// bound to the realm that created them — so the frame is always
         /// presented on the same task. The split is kept so both backends share
         /// one shape, and so the widget walk stops running while a surface
         /// texture is held here too.
         ///
-        /// Returns `None` until the async GPU init has completed.
+        /// Returns `None` until the browser GPU context is usable.
         pub fn build_frame(
             &mut self,
             draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
@@ -162,8 +207,10 @@ pub mod render_ctx {
             let mut state_ref = self.state.borrow_mut();
             let state = state_ref.as_mut()?;
 
-            let width = state.gpu.width();
-            let height = state.gpu.height();
+            #[cfg(feature = "webgl")]
+            let (width, height) = state.size;
+            #[cfg(all(not(feature = "webgl"), feature = "wgpu"))]
+            let (width, height) = (state.gpu.width(), state.gpu.height());
 
             let build = PhaseTimer::start();
             state.canvas.begin_frame();
@@ -234,6 +281,30 @@ pub mod render_ctx {
         fn encode(state: &mut GpuState, packet: &FramePacket) -> bool {
             let encode = PhaseTimer::start();
 
+            #[cfg(feature = "webgl")]
+            {
+                let frame = packet.frame();
+                state.renderer.render(
+                    &state.backend,
+                    &state.surface_view,
+                    frame.width,
+                    frame.height,
+                    false,
+                    &frame.draw_list,
+                );
+                encode.finish(FramePhase::Encode);
+
+                if state.renderer.has_postponed_text_preparation() {
+                    aimer_events::window::request_animation_frame();
+                }
+
+                let present = PhaseTimer::start();
+                state.backend.present();
+                present.finish(FramePhase::Present);
+            }
+
+            #[cfg(all(not(feature = "webgl"), feature = "wgpu"))]
+            {
             let surface = match state.gpu.begin_frame() {
                 wgpu::CurrentSurfaceTexture::Success(texture)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
@@ -264,6 +335,7 @@ pub mod render_ctx {
             let present = PhaseTimer::start();
             state.gpu.end_frame(surface);
             present.finish(FramePhase::Present);
+            }
 
             true
         }

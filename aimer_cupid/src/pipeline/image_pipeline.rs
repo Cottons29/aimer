@@ -293,6 +293,7 @@ pub struct ImagePipeline<B: crate::backend::GpuBackend = crate::backend::Default
     frame_instance_offset: usize,
     frame_instances: Vec<ImageInstance>,
     upload: FrameUpload<ImageInstance>,
+    immediate_uploads: bool,
     last_viewport: Option<(u32, u32, bool)>,
     frame_index: u64,
 }
@@ -591,6 +592,7 @@ impl ImagePipeline {
         self.frame_index = self.frame_index.saturating_add(1);
         self.frame_instance_offset = 0;
         self.frame_instances.clear();
+        self.immediate_uploads = false;
         let previous_capacity = self.instance_policy.capacity();
         self.instance_policy.record_usage(total_instances);
         if self.instance_policy.capacity() != previous_capacity {
@@ -1080,6 +1082,7 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
             frame_instance_offset: 0,
             frame_instances: Vec::new(),
             upload: FrameUpload::new(),
+            immediate_uploads: false,
             last_viewport: None,
             frame_index: 0,
         }
@@ -1326,8 +1329,12 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
     /// Uploads frame instance data through the selected backend.
     pub fn end_frame_generic(&mut self, backend: &B) {
         use crate::backend::GpuBackend;
-        self.upload
-            .upload_generic(backend, &self.instance_buffer, &self.frame_instances);
+        if self.immediate_uploads {
+            self.upload.mark_uploaded(&self.frame_instances);
+        } else {
+            self.upload
+                .upload_generic(backend, &self.instance_buffer, &self.frame_instances);
+        }
     }
 
     pub fn draw_batch_generic<'a>(
@@ -1369,14 +1376,14 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
     ) where
         B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
     {
-        use crate::backend::{BufferDescriptor, BufferUsage, GpuBackend, GpuRenderPass};
+        use crate::backend::{BufferDescriptor, BufferUsage, GpuRenderPass};
         if instances.is_empty() {
             return;
         }
 
         let end = self.frame_instance_offset + instances.len();
         if end > self.instance_policy.capacity() {
-            if !self.frame_instances.is_empty() {
+            if !self.immediate_uploads && !self.frame_instances.is_empty() {
                 backend.write_buffer(
                     &self.instance_buffer,
                     0,
@@ -1394,6 +1401,11 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
 
         let byte_offset = (self.frame_instance_offset * size_of::<ImageInstance>()) as u64;
         self.frame_instances.extend_from_slice(instances);
+        self.immediate_uploads |= pass.write_buffer_before_draw(
+            &self.instance_buffer,
+            byte_offset,
+            bytemuck::cast_slice(instances),
+        );
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
         pass.set_bind_group(1, bind_group, &[]);

@@ -74,6 +74,9 @@ winit.workspace = true
 [features]
 default = ["wgpu"]
 wgpu = ["aimer_quiver/wgpu"]
+# Select the direct browser WebGL2 renderer; use no default features to omit WGPU.
+# Web build: `cargo build --target wasm32-unknown-unknown --no-default-features --features webgl`.
+webgl = ["aimer_quiver/webgl"]
 markdown = []
 # Forward opt-in Venus microtask diagnostics through the umbrella crate.
 venus-debug = ["aimer_venus/venus-debug"]

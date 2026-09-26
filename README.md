@@ -23,7 +23,7 @@ f# Aimer
 
 **Aimer** is a cross-platform GUI framework inspired by the declarative, composable widget tree architecture, engineered from the ground up for Rust's zero-cost abstractions, strict ownership model, and concurrent execution guarantees.
 
-Unlike web-wrapper frameworks or heavyweight browser runtimes, Aimer renders directly through its custom hardware-accelerated 2D vector and typography engine (**Cupid**) atop **wgpu**, driven by a frame-budget-aware async UI scheduler (**Venus**) and small-object optimized memory buffers (**Rubick**).
+Unlike web-wrapper frameworks or heavyweight browser runtimes, Aimer renders directly through its custom hardware-accelerated 2D vector and typography engine (**Cupid**) on pluggable GPU backends. WGPU is the default; size-sensitive wasm builds can select the direct WebGL2 backend. Rendering is driven by a frame-budget-aware async UI scheduler (**Venus**) and small-object optimized memory buffers (**Rubick**).
 
 ### Core Philosophy
 
@@ -54,10 +54,10 @@ Aimer does **not** rely on third-party text shaping or rendering libraries such 
 
 | Subsystem | Crate | Role & Capabilities |
 | :--- | :--- | :--- |
-| **Rendering & Typography** | `aimer_cupid` | Fully self-implemented 2D vector renderer and typography engine (pure-Rust font parser, complex script shaper, subpixel curve rasterizer, GPU glyph atlas; zero external text dependencies), gradients, shadow blurs, and glass backdrops atop `wgpu`. |
+| **Rendering & Typography** | `aimer_cupid` | Fully self-implemented 2D vector renderer and typography engine (pure-Rust font parser, complex script shaper, subpixel curve rasterizer, GPU glyph atlas; zero external text dependencies), gradients, shadow blurs, and glass backdrops on WGPU or direct WebGL2. |
 | **Async Scheduler** | `aimer_venus` | Frame-aligned async runtime managing microtasks, UI animation frame hooks, budgeted idle tasks (e.g. image decoding, background glyph rasterization), and threadpool task offloading (`spawn_blocking`). |
 | **Memory & Pool** | `aimer_rubick` | Small-object optimization smart pointer (`Rubick<T, WORDS>`) providing inline storage (e.g. 8 words for `AnyWidget`) and thread-local element pooling to prevent heap allocations on hot rebuild paths. |
-| **Window & Shell** | `aimer_quiver` | Cross-platform window lifecycle, multi-window surface management via `winit` and `wgpu`, dedicated raster thread synchronization, and native macOS custom titlebar integration. |
+| **Window & Shell** | `aimer_quiver` | Cross-platform window lifecycle, multi-window surface management via `winit` and GPU backend adapters, dedicated raster thread synchronization, and native macOS custom titlebar integration. |
 | **Security & IPC** | `aimer_anteros` | Capability boundary, host-guest IPC, sandboxed plugin execution, and WebAssembly hot-reload transport. |
 
 ### Ergonomic Macro Ecosystem
@@ -105,7 +105,7 @@ Supports shell routes, nested route hierarchies, positional or named parameters,
 | **macOS** | Native Cocoa / `winit` | Metal (`wgpu`) | ✅ Supported |
 | **iOS** | UIKit / Native Bridge | Metal (`wgpu`) | ✅ Supported |
 | **Android** | NDK / NativeActivity | Vulkan / OpenGL ES (`wgpu`) | ✅ Supported |
-| **Web (WASM)** | `web-sys` / Canvas | Canvas 2D / WebGPU | ✅ Supported |
+| **Web (WASM)** | `web-sys` / Canvas | Canvas 2D / WebGPU / direct WebGL2 | ✅ Supported |
 | **Windows** | Win32 / `winit` | Direct3D 12 / Vulkan (`wgpu`) | 🚧 In Progress |
 | **Linux** | X11 / Wayland / `winit` | Vulkan (`wgpu`) | 🚧 In Progress |
 
@@ -278,7 +278,7 @@ cargo run --example text_field
 cargo run --example text_area
 
 # Web target (requires wasm-pack)
-wasm-pack build --target web website
+wasm-pack build --target web --no-default-features --features native,webgl website
 ```
 
 ---
@@ -297,7 +297,7 @@ flowchart TD
 
     Venus -->|render pass| Quiver[aimer_quiver / Shell]
     Quiver -->|2D drawing & shaping| Cupid[aimer_cupid]
-    Cupid -->|GPU commands| WGPU[wgpu / Hardware Surface]
+    Cupid -->|GPU commands| GPU[WGPU or direct WebGL2]
 ```
 
 ### Workspace Structure

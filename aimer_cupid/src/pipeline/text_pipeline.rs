@@ -3224,6 +3224,12 @@ impl<B: crate::backend::GpuBackend> TextPipelineV2<B> {
         pass.set_vertex_buffer(0, &self.decoration_instance_buffer, 0);
         pass.draw(0..6, start as u32..end as u32);
     }
+
+    /// Whether the last generic render left viewport-ahead text unprepared.
+    #[inline]
+    pub fn has_postponed_preparation(&self) -> bool {
+        self.postponed_preparation
+    }
 }
 
 #[cfg(all(test, feature = "wgpu"))]
