@@ -1,13 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use aimer_cupid::svg::{
-    SvgColor, SvgElementKind, SvgFill, SvgFillRule, SvgFitPolicy, SvgGeometry, SvgGradient,
-    SvgGradientStop, SvgGradientUnits, SvgLineCap, SvgLineJoin, SvgNode, SvgNodeId,
-    SvgPaint, SvgPaintOrder, SvgPathCommand, SvgPreserveAspectRatio, SvgScene, SvgSpreadMethod,
-    SvgStroke, SvgTransform, SvgViewBox, SvgViewport,
+    SvgFitPolicy, SvgGradient, SvgNodeId, SvgPaint, SvgPathCommand, SvgPreserveAspectRatio,
+    SvgScene, SvgTransform, SvgViewBox, parse_svg_document,
 };
-use usvg::tiny_skia_path::PathSegment;
 
 use crate::{SvgError, SvgSelector};
 
@@ -36,17 +33,10 @@ pub struct SvgDiagnostic {
     pub message: Arc<str>,
 }
 
-/// The parsed paints for one renderable SVG node.
-///
-/// Solid paints are also retained here for consumers that need a complete
-/// source model. The current Cupid GPU pipeline consumes solid paints from the
-/// legacy node fields; deferred paint kinds remain available for diagnostics
-/// and a later renderer handoff.
+/// Parsed source paints retained beside Cupid's renderer-ready scene.
 #[derive(Clone, Debug, Default)]
 pub struct SvgNodePaint {
-    /// The node's fill paint, if one was authored.
     pub fill: Option<SvgPaint>,
-    /// The node's stroke paint, if one was authored.
     pub stroke: Option<SvgPaint>,
 }
 
@@ -77,41 +67,16 @@ impl SvgDocument {
             return Err(SvgError::EmptyInput);
         }
         check_limit("source bytes", bytes.len(), limits.max_source_bytes)?;
-        let source =
-            std::str::from_utf8(bytes).map_err(|error| SvgError::Parse(error.to_string()))?;
-        let xml = usvg::roxmltree::Document::parse(source)
+        check_limit(
+            "source bytes",
+            bytes.len(),
+            SvgLimits::default().max_source_bytes,
+        )?;
+        let source = std::str::from_utf8(bytes)
             .map_err(|error| SvgError::Parse(error.to_string()))?;
-        reject_non_finite_literals(&xml)?;
-        reject_external_resources(&xml)?;
-        let root = xml.root_element();
-        let explicit_view_box = root
-            .attribute("viewBox")
-            .map(|value| {
-                value
-                    .parse::<SvgViewBox>()
-                    .map_err(|error| SvgError::InvalidViewBox(error.to_string()))
-            })
-            .transpose()?;
-        let preserve_aspect_ratio = root
-            .attribute("preserveAspectRatio")
-            .map(|value| {
-                value.parse::<SvgPreserveAspectRatio>().map_err(|error| {
-                    SvgError::InvalidPreserveAspectRatio(error.to_string())
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
-        let diagnostics = collect_diagnostics(&xml);
-        let metadata = collect_metadata(&xml, limits.max_nodes)?;
-        let gradient_units = collect_gradient_units(&xml);
-
-        let tree = usvg::Tree::from_data(bytes, &usvg::Options::default())
-            .map_err(|error| SvgError::Parse(error.to_string()))?;
-        let size = tree.size();
-        let viewport = SvgViewport {
-            width: size.width(),
-            height: size.height(),
-        };
+        reject_non_finite_literals(source)?;
+        let parsed = parse_svg_document(bytes).map_err(map_parse_error)?;
+        let viewport = parsed.scene.viewport;
         if !viewport.width.is_finite() || !viewport.height.is_finite() {
             return Err(SvgError::NonFinite);
         }
@@ -120,50 +85,49 @@ impl SvgDocument {
                 "SVG viewport width and height must be positive".to_owned(),
             ));
         }
-        if viewport.width > limits.max_viewport_dimension
-            || viewport.height > limits.max_viewport_dimension
-        {
-            return Err(SvgError::LimitExceeded {
-                resource: "viewport dimension",
-                actual: viewport.width.max(viewport.height) as usize,
-                limit: limits.max_viewport_dimension as usize,
-            });
-        }
+        check_limit(
+            "viewport dimension",
+            viewport.width.max(viewport.height) as usize,
+            limits.max_viewport_dimension as usize,
+        )?;
+        check_limit("nodes", parsed.scene.nodes.len(), limits.max_nodes)?;
+        let command_count = parsed
+            .scene
+            .geometries
+            .iter()
+            .map(|geometry| geometry.commands.len())
+            .sum();
+        check_limit("path commands", command_count, limits.max_path_commands)?;
 
-        let view_box = explicit_view_box.unwrap_or(
-            SvgViewBox::try_new(0.0, 0.0, viewport.width, viewport.height)
-                .map_err(|_| SvgError::NonFinite)?,
-        );
-        let fit_policy = if explicit_view_box.is_some() {
-            SvgFitPolicy::PreserveAspectRatio(preserve_aspect_ratio)
+        let fit_policy = if parsed.has_view_box {
+            SvgFitPolicy::PreserveAspectRatio(parsed.preserve_aspect_ratio)
         } else {
             SvgFitPolicy::Stretch
         };
-        let root_transform = if explicit_view_box.is_some() {
-            view_box
-                .fit_transform(
-                    viewport.width,
-                    viewport.height,
-                    SvgFitPolicy::PreserveAspectRatio(preserve_aspect_ratio),
+        let root_transform = parsed.root_transform;
+        let node_paints = parsed
+            .node_paints
+            .into_iter()
+            .map(|(node_id, paints)| {
+                (
+                    node_id,
+                    SvgNodePaint {
+                        fill: paints.fill,
+                        stroke: paints.stroke,
+                    },
                 )
-                .map_err(|error| SvgError::InvalidViewBox(error.to_string()))?
-        } else {
-            SvgTransform::default()
-        };
-        let gradients = collect_gradients(&tree, &gradient_units)?;
+            })
+            .collect();
 
-        let mut builder = SceneBuilder::new(viewport, metadata, limits);
-        builder.add_group(tree.root(), None, 1.0)?;
-        let (scene, node_paints) = builder.finish();
         Ok(Self {
             source: Arc::from(source),
-            scene: Arc::new(scene),
-            diagnostics: diagnostics.into(),
-            view_box,
-            preserve_aspect_ratio,
+            scene: Arc::new(parsed.scene),
+            diagnostics: collect_diagnostics(source).into(),
+            view_box: parsed.view_box,
+            preserve_aspect_ratio: parsed.preserve_aspect_ratio,
             fit_policy,
             root_transform,
-            gradients: gradients.into(),
+            gradients: parsed.gradients,
             node_paints: Arc::new(node_paints),
         })
     }
@@ -180,23 +144,18 @@ impl SvgDocument {
         &self.diagnostics
     }
 
-    /// Returns the validated root `viewBox`, or the finite viewport fallback
-    /// when the source did not provide one.
     pub fn view_box(&self) -> SvgViewBox {
         self.view_box
     }
 
-    /// Returns the root `preserveAspectRatio` value after parsing defaults.
     pub fn preserve_aspect_ratio(&self) -> SvgPreserveAspectRatio {
         self.preserve_aspect_ratio
     }
 
-    /// Returns the effective root fit policy.
     pub fn fit_policy(&self) -> SvgFitPolicy {
         self.fit_policy
     }
 
-    /// Computes the finite mapping from root SVG user space to a destination.
     pub fn fit_transform(
         &self,
         destination_width: f32,
@@ -218,12 +177,10 @@ impl SvgDocument {
             })
     }
 
-    /// Returns the complete parsed gradient catalog.
     pub fn gradients(&self) -> &[SvgGradient] {
         &self.gradients
     }
 
-    /// Returns the source fill/stroke paints for `node_id`.
     pub fn paint_for(&self, node_id: SvgNodeId) -> Option<&SvgNodePaint> {
         self.node_paints.get(&node_id)
     }
@@ -299,7 +256,7 @@ impl SvgPath {
         let path_nodes: Vec<_> = matches
             .into_iter()
             .filter_map(|node_id| document.scene.node(node_id))
-            .filter(|node| node.element == SvgElementKind::Path)
+            .filter(|node| node.element == aimer_cupid::svg::SvgElementKind::Path)
             .collect();
         if path_nodes.len() != 1 {
             return Err(SvgError::PathSelection(path_nodes.len()));
@@ -318,625 +275,85 @@ impl SvgPath {
     }
 }
 
-#[derive(Clone, Debug)]
-struct SourceMetadata {
-    source_index: usize,
-    parent_group_index: Option<usize>,
-    svg_id: Option<Arc<str>>,
-    classes: Arc<[Arc<str>]>,
-    element: SvgElementKind,
-}
-
-fn collect_metadata(
-    document: &usvg::roxmltree::Document<'_>,
-    max_nodes: usize,
-) -> Result<Vec<SourceMetadata>, SvgError> {
-    let supported = [
-        "svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
-    ];
-    let mut metadata = Vec::new();
-    let mut group_indices = HashMap::new();
-    for node in document.descendants().filter(|node| {
-        node.is_element()
-            && supported.contains(&node.tag_name().name())
-            && !node.ancestors().any(|ancestor| {
-                ancestor.is_element()
-                    && matches!(
-                        ancestor.tag_name().name(),
-                        "defs" | "clipPath" | "mask" | "pattern" | "symbol"
-                    )
-            })
-    }) {
-        if node.tag_name().name() == "svg" {
-            continue;
+fn map_parse_error(error: aimer_cupid::svg::SvgParseError) -> SvgError {
+    use aimer_cupid::svg::SvgParseError as ParseError;
+    match error {
+        ParseError::Empty => SvgError::EmptyInput,
+        ParseError::TooLarge => SvgError::LimitExceeded {
+            resource: "source bytes",
+            actual: 0,
+            limit: SvgLimits::default().max_source_bytes,
+        },
+        ParseError::InvalidUtf8 => SvgError::Parse("SVG source is not UTF-8".to_owned()),
+        ParseError::InvalidXml(message) => SvgError::Parse(message.to_owned()),
+        ParseError::InvalidRoot => SvgError::Parse("invalid SVG root or dimensions".to_owned()),
+        ParseError::InvalidNumber => SvgError::NonFinite,
+        ParseError::InvalidPath => SvgError::InvalidPath("invalid SVG path data".to_owned()),
+        ParseError::Unsupported(feature) => {
+            SvgError::Parse(format!("unsupported SVG feature: {feature}"))
         }
-        check_limit("nodes", metadata.len() + 1, max_nodes)?;
-        let parent_group_index = node
-            .ancestors()
-            .find(|ancestor| ancestor.is_element() && ancestor.tag_name().name() == "g")
-            .and_then(|ancestor| group_indices.get(&ancestor.id()).copied());
-        let source_index = metadata.len();
-        let classes = node
-            .attribute("class")
-            .unwrap_or_default()
-            .split_ascii_whitespace()
-            .map(Arc::<str>::from)
-            .collect::<Vec<_>>()
-            .into();
-        metadata.push(SourceMetadata {
-            source_index,
-            parent_group_index,
-            svg_id: node
-                .attribute("id")
-                .filter(|id| !id.is_empty())
-                .map(Arc::from),
-            classes,
-            element: if node.tag_name().name() == "g" {
-                SvgElementKind::Group
-            } else {
-                SvgElementKind::Path
-            },
-        });
-        if node.tag_name().name() == "g" {
-            group_indices.insert(node.id(), source_index);
-        }
+        ParseError::InvalidViewBox => SvgError::InvalidViewBox("invalid viewBox".to_owned()),
+        ParseError::InvalidPreserveAspectRatio => SvgError::InvalidPreserveAspectRatio(
+            "invalid preserveAspectRatio".to_owned(),
+        ),
+        ParseError::ExternalResource(resource) => SvgError::ExternalResource(resource),
+        ParseError::LimitExceeded(resource) => SvgError::LimitExceeded {
+            resource,
+            actual: 0,
+            limit: 0,
+        },
     }
-    Ok(metadata)
 }
 
-fn reject_non_finite_literals(document: &usvg::roxmltree::Document<'_>) -> Result<(), SvgError> {
-    for attribute in document
-        .descendants()
-        .filter(|node| node.is_element())
-        .flat_map(|node| node.attributes())
-    {
-        let value = attribute.value().to_ascii_lowercase();
-        if value
-            .split(|character: char| {
-                !(character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.'))
-            })
-            .any(|token| {
-                matches!(
-                    token,
-                    "nan" | "inf" | "+inf" | "-inf" | "infinity" | "+infinity" | "-infinity"
-                )
-            })
-        {
-            return Err(SvgError::NonFinite);
-        }
-    }
-    Ok(())
-}
-
-fn collect_gradient_units(
-    document: &usvg::roxmltree::Document<'_>,
-) -> HashMap<Arc<str>, SvgGradientUnits> {
-    document
-        .descendants()
-        .filter(|node| {
-            node.is_element()
-                && matches!(node.tag_name().name(), "linearGradient" | "radialGradient")
-        })
-        .filter_map(|node| {
-            let id = node.attribute("id")?;
-            let units = match node.attribute("gradientUnits") {
-                Some("userSpaceOnUse") => SvgGradientUnits::UserSpaceOnUse,
-                _ => SvgGradientUnits::ObjectBoundingBox,
-            };
-            Some((Arc::from(id), units))
-        })
-        .collect()
-}
-
-fn collect_gradients(
-    tree: &usvg::Tree,
-    units: &HashMap<Arc<str>, SvgGradientUnits>,
-) -> Result<Vec<SvgGradient>, SvgError> {
-    let mut gradients = Vec::with_capacity(
-        tree.linear_gradients().len() + tree.radial_gradients().len(),
-    );
-    for gradient in tree.linear_gradients() {
-        let gradient = convert_linear_gradient(
-            gradient,
-            units
-                .get(gradient.id())
-                .copied()
-                .unwrap_or(SvgGradientUnits::ObjectBoundingBox),
-        )?;
-        gradients.push(gradient);
-    }
-    for gradient in tree.radial_gradients() {
-        let gradient = convert_radial_gradient(
-            gradient,
-            units
-                .get(gradient.id())
-                .copied()
-                .unwrap_or(SvgGradientUnits::ObjectBoundingBox),
-        )?;
-        gradients.push(gradient);
-    }
-    Ok(gradients)
-}
-
-fn collect_diagnostics(document: &usvg::roxmltree::Document<'_>) -> Vec<SvgDiagnostic> {
+fn collect_diagnostics(source: &str) -> Vec<SvgDiagnostic> {
     let mut diagnostics = Vec::new();
-    let mut found = HashSet::new();
-    for node in document.descendants().filter(|node| node.is_element()) {
-        let feature = match node.tag_name().name() {
-            "linearGradient" | "radialGradient" => Some("gradient"),
-            "pattern" => Some("pattern"),
-            "clipPath" => Some("clip-path"),
-            "mask" => Some("mask"),
-            "filter" => Some("filter"),
-            "text" | "tspan" => Some("text"),
-            "script" => Some("script"),
-            "image" => Some("image"),
-            _ => None,
-        };
-        if let Some(feature) = feature
-            && found.insert(feature)
-        {
-            diagnostics.push(SvgDiagnostic {
-                feature,
-                message: Arc::from(format!(
-                    "{feature} is retained in the model; renderer support is deferred"
-                )),
-            });
+    let mut found = std::collections::HashSet::new();
+    let lower = source.to_ascii_lowercase();
+    for (needle, feature, message) in [
+        ("lineargradient", "gradient", "gradient is retained in the model; renderer support is deferred"),
+        ("radialgradient", "gradient", "gradient is retained in the model; renderer support is deferred"),
+        ("<pattern", "pattern", "pattern is retained in the model; renderer support is deferred"),
+        ("<clippath", "clip-path", "clip path is retained in the model; renderer support is deferred"),
+        ("<mask", "mask", "mask is retained in the model; renderer support is deferred"),
+        ("<filter", "filter", "filter is retained in the model; renderer support is deferred"),
+        ("<text", "text", "text is retained in the model; renderer support is deferred"),
+        ("<script", "script", "script is retained in the model; renderer support is deferred"),
+        ("<image", "image", "image is retained in the model; renderer support is deferred"),
+    ] {
+        if lower.contains(needle) && found.insert(feature) {
+            diagnostics.push(SvgDiagnostic { feature, message: Arc::from(message) });
         }
-        if node
-            .attribute("fill")
-            .is_some_and(is_url_paint_reference)
-        {
-            push_diagnostic(
-                &mut diagnostics,
-                &mut found,
-                "gradient-fill",
-                "gradient fill is retained in the model; renderer support is deferred",
-            );
-        }
-        if node
-            .attribute("stroke")
-            .is_some_and(is_url_paint_reference)
-        {
-            push_diagnostic(
-                &mut diagnostics,
-                &mut found,
-                "gradient-stroke",
-                "gradient stroke is retained in the model; renderer support is deferred",
-            );
-        }
-        if node
-            .attribute("stroke-dasharray")
-            .is_some_and(|value| !value.trim().is_empty() && value.trim() != "none")
-        {
-            push_diagnostic(
-                &mut diagnostics,
-                &mut found,
-                "dashed-stroke",
-                "dashed stroke is retained in the model; renderer support is deferred",
-            );
-        }
+    }
+    if lower.contains("fill=\"url(") || lower.contains("fill='url(") || lower.contains("fill:url(") {
+        found.insert("gradient-fill");
+        diagnostics.push(SvgDiagnostic { feature: "gradient-fill", message: Arc::from("gradient fill is retained in the model; renderer support is deferred") });
+    }
+    if lower.contains("stroke=\"url(") || lower.contains("stroke='url(") || lower.contains("stroke:url(") {
+        found.insert("gradient-stroke");
+        diagnostics.push(SvgDiagnostic { feature: "gradient-stroke", message: Arc::from("gradient stroke is retained in the model; renderer support is deferred") });
+    }
+    if lower.contains("stroke-dasharray") && !lower.contains("stroke-dasharray=\"none\"") && !lower.contains("stroke-dasharray='none'") && found.insert("dashed-stroke") {
+        diagnostics.push(SvgDiagnostic { feature: "dashed-stroke", message: Arc::from("dashed stroke is retained in the model; renderer support is deferred") });
     }
     diagnostics
 }
 
-fn push_diagnostic(
-    diagnostics: &mut Vec<SvgDiagnostic>,
-    found: &mut HashSet<&'static str>,
-    feature: &'static str,
-    message: &'static str,
-) {
-    if found.insert(feature) {
-        diagnostics.push(SvgDiagnostic {
-            feature,
-            message: Arc::from(message),
-        });
-    }
-}
-
-fn is_url_paint_reference(value: &str) -> bool {
-    value.trim_start().starts_with("url(")
-}
-
-fn reject_external_resources(document: &usvg::roxmltree::Document<'_>) -> Result<(), SvgError> {
-    for node in document.descendants().filter(|node| node.is_element()) {
-        for attribute in node.attributes() {
-            if matches!(attribute.name(), "href" | "xlink:href") {
-                let value = attribute.value().trim();
-                if !value.is_empty() && !value.starts_with('#') {
-                    return Err(SvgError::ExternalResource(value.to_owned()));
-                }
-            }
+fn reject_non_finite_literals(source: &str) -> Result<(), SvgError> {
+    for value in source.split(|character: char| {
+        !(character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.'))
+    }) {
+        match value.to_ascii_lowercase().as_str() {
+            "nan" | "+nan" | "-nan" | "inf" | "+inf" | "-inf" | "infinity"
+            | "+infinity" | "-infinity" => return Err(SvgError::NonFinite),
+            _ => {}
         }
     }
     Ok(())
 }
 
-struct SceneBuilder {
-    viewport: SvgViewport,
-    metadata_by_id: HashMap<Arc<str>, SourceMetadata>,
-    unnamed_path_metadata: Vec<SourceMetadata>,
-    group_nodes: HashMap<usize, SvgNodeId>,
-    path_metadata_index: usize,
-    nodes: Vec<SvgNode>,
-    geometries: Vec<SvgGeometry>,
-    node_paints: HashMap<SvgNodeId, SvgNodePaint>,
-    command_count: usize,
-    limits: SvgLimits,
-}
-
-impl SceneBuilder {
-    fn new(viewport: SvgViewport, metadata: Vec<SourceMetadata>, limits: SvgLimits) -> Self {
-        let metadata_by_id = metadata
-            .iter()
-            .filter_map(|metadata| metadata.svg_id.clone().map(|id| (id, metadata.clone())))
-            .collect();
-        let unnamed_path_metadata = metadata
-            .iter()
-            .filter(|metadata| {
-                metadata.element == SvgElementKind::Path && metadata.svg_id.is_none()
-            })
-            .cloned()
-            .collect();
-        let mut group_nodes = HashMap::new();
-        let mut nodes = Vec::new();
-        for group in metadata
-            .iter()
-            .filter(|metadata| metadata.element == SvgElementKind::Group)
-        {
-            let node_id = SvgNodeId(nodes.len() as u32);
-            let parent = group
-                .parent_group_index
-                .and_then(|source_index| group_nodes.get(&source_index).copied());
-            nodes.push(SvgNode {
-                node_id,
-                svg_id: group.svg_id.clone(),
-                classes: group.classes.clone(),
-                element: SvgElementKind::Group,
-                parent,
-                children: Arc::from([]),
-                transform: SvgTransform::default(),
-                opacity: 1.0,
-                geometry: None,
-                fill: None,
-                stroke: None,
-                paint_order: SvgPaintOrder::FillAndStroke,
-                visible: true,
-            });
-            group_nodes.insert(group.source_index, node_id);
-        }
-        Self {
-            viewport,
-            metadata_by_id,
-            unnamed_path_metadata,
-            group_nodes,
-            path_metadata_index: 0,
-            nodes,
-            geometries: Vec::new(),
-            node_paints: HashMap::new(),
-            command_count: 0,
-            limits,
-        }
-    }
-
-    fn finish(self) -> (SvgScene, HashMap<SvgNodeId, SvgNodePaint>) {
-        let node_paints = self.node_paints;
-        let mut nodes = self.nodes;
-        for index in 0..nodes.len() {
-            if nodes[index].element != SvgElementKind::Group {
-                continue;
-            }
-            let node_id = nodes[index].node_id;
-            nodes[index].children = nodes
-                .iter()
-                .filter(|node| node.parent == Some(node_id))
-                .map(|node| node.node_id)
-                .collect::<Vec<_>>()
-                .into();
-        }
-        (
-            SvgScene {
-                viewport: self.viewport,
-                nodes: nodes.into(),
-                geometries: self.geometries.into(),
-            },
-            node_paints,
-        )
-    }
-
-    fn add_group(
-        &mut self,
-        group: &usvg::Group,
-        parent: Option<SvgNodeId>,
-        inherited_opacity: f32,
-    ) -> Result<(), SvgError> {
-        let group_opacity = inherited_opacity * group.opacity().get();
-        let group_node_id = if group.id().is_empty() {
-            parent
-        } else if let Some(metadata) = self.metadata_by_id.get(group.id()) {
-            let node_id = self.group_nodes.get(&metadata.source_index).copied();
-            if let Some(node_id) = node_id {
-                let node = &mut self.nodes[node_id.0 as usize];
-                node.transform = convert_transform(group.abs_transform());
-                node.opacity = group_opacity;
-            }
-            node_id.or(parent)
-        } else {
-            parent
-        };
-        for child in group.children() {
-            match child {
-                usvg::Node::Group(group) => self.add_group(group, group_node_id, group_opacity)?,
-                usvg::Node::Path(path) => self.add_path(path, group_node_id, group_opacity)?,
-                usvg::Node::Image(_) | usvg::Node::Text(_) => {}
-            }
-        }
-        Ok(())
-    }
-
-    fn add_path(
-        &mut self,
-        path: &usvg::Path,
-        parent: Option<SvgNodeId>,
-        opacity: f32,
-    ) -> Result<(), SvgError> {
-        check_limit("nodes", self.nodes.len() + 1, self.limits.max_nodes)?;
-        let metadata = if path.id().is_empty() {
-            let metadata = self
-                .unnamed_path_metadata
-                .get(self.path_metadata_index)
-                .cloned();
-            self.path_metadata_index += 1;
-            metadata
-        } else {
-            self.metadata_by_id.get(path.id()).cloned()
-        };
-        let source_parent = metadata
-            .as_ref()
-            .and_then(|metadata| metadata.parent_group_index)
-            .and_then(|source_index| self.group_nodes.get(&source_index).copied())
-            .or(parent);
-        let commands = convert_path(path.data());
-        self.command_count += commands.len();
-        check_limit(
-            "path commands",
-            self.command_count,
-            self.limits.max_path_commands,
-        )?;
-        let transform = convert_transform(path.abs_transform());
-        if !transform.is_finite() || !opacity.is_finite() {
-            return Err(SvgError::NonFinite);
-        }
-        let geometry = self.geometries.len();
-        self.geometries.push(SvgGeometry {
-            commands: commands.into(),
-        });
-        let node_id = SvgNodeId(self.nodes.len() as u32);
-        self.nodes.push(SvgNode {
-            node_id,
-            svg_id: metadata
-                .as_ref()
-                .and_then(|metadata| metadata.svg_id.clone())
-                .or_else(|| (!path.id().is_empty()).then(|| Arc::from(path.id()))),
-            classes: metadata
-                .map(|metadata| metadata.classes)
-                .unwrap_or_default(),
-            element: SvgElementKind::Path,
-            parent: source_parent,
-            children: Arc::from([]),
-            transform,
-            opacity,
-            geometry: Some(geometry),
-            fill: path.fill().and_then(convert_fill),
-            stroke: path.stroke().and_then(convert_stroke),
-            paint_order: match path.paint_order() {
-                usvg::PaintOrder::FillAndStroke => SvgPaintOrder::FillAndStroke,
-                usvg::PaintOrder::StrokeAndFill => SvgPaintOrder::StrokeAndFill,
-            },
-            visible: path.is_visible(),
-        });
-        let paint = SvgNodePaint {
-            fill: path
-                .fill()
-                .map(|fill| convert_paint_model(fill.paint()))
-                .transpose()?,
-            stroke: path
-                .stroke()
-                .map(|stroke| convert_paint_model(stroke.paint()))
-                .transpose()?,
-        };
-        if paint.fill.is_some() || paint.stroke.is_some() {
-            self.node_paints.insert(node_id, paint);
-        }
-        Ok(())
-    }
-}
-
-fn convert_path(path: &usvg::tiny_skia_path::Path) -> Vec<SvgPathCommand> {
-    path.segments()
-        .map(|segment| match segment {
-            PathSegment::MoveTo(point) => SvgPathCommand::MoveTo {
-                x: point.x,
-                y: point.y,
-            },
-            PathSegment::LineTo(point) => SvgPathCommand::LineTo {
-                x: point.x,
-                y: point.y,
-            },
-            PathSegment::QuadTo(control, point) => SvgPathCommand::QuadraticTo {
-                control_x: control.x,
-                control_y: control.y,
-                x: point.x,
-                y: point.y,
-            },
-            PathSegment::CubicTo(control1, control2, point) => SvgPathCommand::CubicTo {
-                control1_x: control1.x,
-                control1_y: control1.y,
-                control2_x: control2.x,
-                control2_y: control2.y,
-                x: point.x,
-                y: point.y,
-            },
-            PathSegment::Close => SvgPathCommand::Close,
-        })
-        .collect()
-}
-
-fn convert_transform(transform: usvg::Transform) -> SvgTransform {
-    SvgTransform {
-        sx: transform.sx,
-        ky: transform.ky,
-        kx: transform.kx,
-        sy: transform.sy,
-        tx: transform.tx,
-        ty: transform.ty,
-    }
-}
-
-fn convert_fill(fill: &usvg::Fill) -> Option<SvgFill> {
-    let color = convert_paint(fill.paint(), fill.opacity().get())?;
-    Some(SvgFill {
-        color,
-        rule: match fill.rule() {
-            usvg::FillRule::NonZero => SvgFillRule::NonZero,
-            usvg::FillRule::EvenOdd => SvgFillRule::EvenOdd,
-        },
-    })
-}
-
-fn convert_stroke(stroke: &usvg::Stroke) -> Option<SvgStroke> {
-    Some(SvgStroke {
-        color: convert_paint(stroke.paint(), stroke.opacity().get())?,
-        width: stroke.width().get(),
-        line_cap: match stroke.linecap() {
-            usvg::LineCap::Butt => SvgLineCap::Butt,
-            usvg::LineCap::Round => SvgLineCap::Round,
-            usvg::LineCap::Square => SvgLineCap::Square,
-        },
-        line_join: match stroke.linejoin() {
-            usvg::LineJoin::Miter => SvgLineJoin::Miter,
-            usvg::LineJoin::MiterClip => SvgLineJoin::MiterClip,
-            usvg::LineJoin::Round => SvgLineJoin::Round,
-            usvg::LineJoin::Bevel => SvgLineJoin::Bevel,
-        },
-        miter_limit: stroke.miterlimit().get(),
-        dash_array: stroke.dasharray().unwrap_or_default().to_vec().into(),
-        dash_offset: stroke.dashoffset(),
-    })
-}
-
-fn convert_paint_model(paint: &usvg::Paint) -> Result<SvgPaint, SvgError> {
-    match paint {
-        usvg::Paint::Color(color) => Ok(SvgPaint::Solid(SvgColor {
-            r: color.red as f32 / 255.0,
-            g: color.green as f32 / 255.0,
-            b: color.blue as f32 / 255.0,
-            a: 1.0,
-        })),
-        usvg::Paint::LinearGradient(gradient) => Ok(SvgPaint::Linear(
-            convert_linear_gradient(gradient, SvgGradientUnits::ObjectBoundingBox)?,
-        )),
-        usvg::Paint::RadialGradient(gradient) => Ok(SvgPaint::Radial(
-            convert_radial_gradient(gradient, SvgGradientUnits::ObjectBoundingBox)?,
-        )),
-        usvg::Paint::Pattern(pattern) => Ok(SvgPaint::Pattern {
-            id: Arc::from(pattern.id()),
-        }),
-    }
-}
-
-fn convert_linear_gradient(
-    gradient: &usvg::LinearGradient,
-    units: SvgGradientUnits,
-) -> Result<SvgGradient, SvgError> {
-    let gradient = SvgGradient::Linear {
-        id: Arc::from(gradient.id()),
-        x1: gradient.x1(),
-        y1: gradient.y1(),
-        x2: gradient.x2(),
-        y2: gradient.y2(),
-        units,
-        transform: convert_transform(gradient.transform()),
-        spread: convert_spread_method(gradient.spread_method()),
-        stops: convert_gradient_stops(gradient.stops())?.into(),
-    };
-    gradient
-        .is_finite()
-        .then_some(gradient)
-        .ok_or(SvgError::NonFinite)
-}
-
-fn convert_radial_gradient(
-    gradient: &usvg::RadialGradient,
-    units: SvgGradientUnits,
-) -> Result<SvgGradient, SvgError> {
-    let gradient = SvgGradient::Radial {
-        id: Arc::from(gradient.id()),
-        cx: gradient.cx(),
-        cy: gradient.cy(),
-        radius: gradient.r().get(),
-        fx: gradient.fx(),
-        fy: gradient.fy(),
-        focal_radius: gradient.fr().get(),
-        units,
-        transform: convert_transform(gradient.transform()),
-        spread: convert_spread_method(gradient.spread_method()),
-        stops: convert_gradient_stops(gradient.stops())?.into(),
-    };
-    gradient
-        .is_finite()
-        .then_some(gradient)
-        .ok_or(SvgError::NonFinite)
-}
-
-fn convert_gradient_stops(stops: &[usvg::Stop]) -> Result<Vec<SvgGradientStop>, SvgError> {
-    stops
-        .iter()
-        .map(|stop| {
-            let color = stop.color();
-            let stop = SvgGradientStop {
-                offset: stop.offset().get(),
-                color: SvgColor {
-                    r: color.red as f32 / 255.0,
-                    g: color.green as f32 / 255.0,
-                    b: color.blue as f32 / 255.0,
-                    a: stop.opacity().get(),
-                },
-            };
-            stop.is_finite().then_some(stop).ok_or(SvgError::NonFinite)
-        })
-        .collect()
-}
-
-fn convert_spread_method(spread: usvg::SpreadMethod) -> SvgSpreadMethod {
-    match spread {
-        usvg::SpreadMethod::Pad => SvgSpreadMethod::Pad,
-        usvg::SpreadMethod::Reflect => SvgSpreadMethod::Reflect,
-        usvg::SpreadMethod::Repeat => SvgSpreadMethod::Repeat,
-    }
-}
-
-fn convert_paint(paint: &usvg::Paint, opacity: f32) -> Option<SvgColor> {
-    match paint {
-        usvg::Paint::Color(color) => Some(SvgColor::rgba8(
-            color.red,
-            color.green,
-            color.blue,
-            (opacity * 255.0).round() as u8,
-        )),
-        usvg::Paint::LinearGradient(_)
-        | usvg::Paint::RadialGradient(_)
-        | usvg::Paint::Pattern(_) => None,
-    }
-}
-
 fn check_limit(resource: &'static str, actual: usize, limit: usize) -> Result<(), SvgError> {
     if actual > limit {
-        Err(SvgError::LimitExceeded {
-            resource,
-            actual,
-            limit,
-        })
+        Err(SvgError::LimitExceeded { resource, actual, limit })
     } else {
         Ok(())
     }

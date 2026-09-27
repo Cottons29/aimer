@@ -189,6 +189,7 @@ fn aligned_upload_row_bytes(row_bytes: usize) -> usize {
 /// submission. `copy_buffer_to_texture` requires 256-byte row alignment, so
 /// each small glyph is copied into an aligned row slice before the GPU copies
 /// it to its already-packed atlas rectangle.
+#[cfg(feature = "wgpu")]
 fn upload_pending(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -390,40 +391,287 @@ fn upload_pending(
     *pending = pending_batch;
 }
 
-pub struct GlyphAtlas {
-    pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
+pub struct GlyphAtlas<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
+    pub texture: B::Texture,
+    pub view: B::TextureView,
     pub width: u32,
     pub height: u32,
     packer: ShelfPacker,
     cache: HashMap<GlyphKey, AtlasRegion>,
-    /// Glyphs packed but not yet uploaded to the GPU texture. Each entry owns
-    /// only its own bitmap, which is dropped after [`upload`](Self::upload), so
-    /// no full-size CPU copy of the atlas is retained.
     pending: Vec<PendingGlyph>,
-    /// Reusable GPU upload storage; it grows only to the largest pending batch.
-    staging_buffer: Option<wgpu::Buffer>,
+    staging_buffer: Option<B::Buffer>,
     staging_capacity: usize,
-    /// Reusable CPU packing storage for aligned buffer-to-texture copies.
     staging_data: Vec<u8>,
     staging_copies: Vec<StagedGlyph>,
-    /// Incremented whenever the texture or its glyph-to-region layout changes.
-    /// The latter includes a max-size repack that keeps the same texture.
     generation: u64,
 }
 
-impl GlyphAtlas {
+
+
+// ---------------------------------------------------------------------------
+// Color glyph atlas (RGBA8, for sbix PNG strikes)
+// ---------------------------------------------------------------------------
+
+/// Sibling to [`GlyphAtlas`] that stores RGBA8 color glyphs (Apple Color
+/// Emoji, etc.). The shape and behavior are intentionally near-identical: a
+/// shelf packer, lazy re-upload of a dirty rectangle, and 2× growth on
+/// overflow. Only the per-pixel size and texture format differ.
+pub struct ColorGlyphAtlas<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
+    pub texture: B::Texture,
+    pub view: B::TextureView,
+    pub width: u32,
+    pub height: u32,
+    packer: ShelfPacker,
+    cache: HashMap<GlyphKey, AtlasRegion>,
+    pending: Vec<PendingGlyph>,
+    staging_buffer: Option<B::Buffer>,
+    staging_capacity: usize,
+    staging_data: Vec<u8>,
+    staging_copies: Vec<StagedGlyph>,
+    generation: u64,
+}
+
+
+
+// ── Backend-generic atlas resources and uploads ────────────────────────────
+
+/// Backend-driven equivalent of [`upload_pending`]. Shared by
+/// [`GlyphAtlas::upload`] and [`ColorGlyphAtlas::upload`].
+fn upload_pending_generic<B: crate::backend::GpuBackend>(
+    backend: &B,
+    texture: &B::Texture,
+    pending: &mut Vec<PendingGlyph>,
+    staging_buffer: &mut Option<B::Buffer>,
+    staging_capacity: &mut usize,
+    staging_data: &mut Vec<u8>,
+    staging_copies: &mut Vec<StagedGlyph>,
+    bytes_per_pixel: usize,
+    label: &'static str,
+) {
+    use crate::backend::{
+        BufferDescriptor, BufferUsage, Extent3d, Origin3d, TexelCopyBufferInfo,
+        TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect, WriteTextureDescriptor,
+    };
+
+    if pending.is_empty() {
+        return;
+    }
+
+    let packed_bytes = pending
+        .iter()
+        .map(|glyph| glyph.width as usize * glyph.height as usize * bytes_per_pixel)
+        .sum::<usize>();
+    let aligned_bytes = pending
+        .iter()
+        .map(|glyph| {
+            aligned_upload_row_bytes(glyph.width as usize * bytes_per_pixel)
+                * glyph.height as usize
+        })
+        .sum::<usize>();
+    if aligned_bytes > packed_bytes.saturating_mul(4) {
+        let mut groups: Vec<PackedUploadGroup> = Vec::new();
+        for (index, glyph) in pending.iter().enumerate() {
+            if glyph.width == 0 || glyph.height == 0 {
+                continue;
+            }
+            let right = glyph.x + glyph.width;
+            if let Some(group) = groups.last_mut()
+                && group.y == glyph.y
+                && group.end == index
+            {
+                group.end += 1;
+                group.width = right - group.min_x;
+                group.height = group.height.max(glyph.height);
+            } else {
+                groups.push(PackedUploadGroup {
+                    start: index,
+                    end: index + 1,
+                    y: glyph.y,
+                    min_x: glyph.x,
+                    width: glyph.width,
+                    height: glyph.height,
+                });
+            }
+        }
+
+        for group in groups {
+            let row_bytes = group.width as usize * bytes_per_pixel;
+            staging_data.resize(row_bytes * group.height as usize, 0);
+            staging_data.fill(0);
+            for glyph in &pending[group.start..group.end] {
+                if glyph.width == 0 || glyph.height == 0 {
+                    continue;
+                }
+                let source_row_bytes = glyph.width as usize * bytes_per_pixel;
+                let x_offset = (glyph.x - group.min_x) as usize * bytes_per_pixel;
+                for row in 0..glyph.height as usize {
+                    let source_start = row * source_row_bytes;
+                    let target_start = row * row_bytes + x_offset;
+                    staging_data[target_start..target_start + source_row_bytes]
+                        .copy_from_slice(&glyph.data[source_start..source_start + source_row_bytes]);
+                }
+            }
+            backend.write_texture(&WriteTextureDescriptor {
+                texture,
+                mip_level: 0,
+                origin: Origin3d {
+                    x: group.min_x,
+                    y: group.y,
+                    z: 0,
+                },
+                aspect: TextureAspect::All,
+                data: staging_data,
+                buffer_layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row_bytes as u32),
+                    rows_per_image: Some(group.height),
+                },
+                extent: Extent3d {
+                    width: group.width,
+                    height: group.height,
+                    depth_or_array_layers: 1,
+                },
+            });
+        }
+        pending.clear();
+        return;
+    }
+
+    let pending_batch = std::mem::take(pending);
+    staging_data.clear();
+    staging_copies.clear();
+    staging_copies.reserve(pending_batch.len());
+
+    for glyph in pending_batch.iter() {
+        if glyph.width == 0 || glyph.height == 0 {
+            continue;
+        }
+        let row_bytes = glyph.width as usize * bytes_per_pixel;
+        let bytes_per_row = aligned_upload_row_bytes(row_bytes);
+        let offset = staging_data.len();
+        let glyph_bytes = bytes_per_row * glyph.height as usize;
+        staging_data.resize(offset + glyph_bytes, 0);
+        for row in 0..glyph.height as usize {
+            let source_start = row * row_bytes;
+            let source_end = source_start + row_bytes;
+            let target_start = offset + row * bytes_per_row;
+            staging_data[target_start..target_start + row_bytes]
+                .copy_from_slice(&glyph.data[source_start..source_end]);
+        }
+        staging_copies.push(StagedGlyph {
+            x: glyph.x,
+            y: glyph.y,
+            width: glyph.width,
+            height: glyph.height,
+            offset: offset as u64,
+            bytes_per_row: bytes_per_row as u32,
+        });
+    }
+
+    if staging_data.is_empty() {
+        let mut pending_batch = pending_batch;
+        pending_batch.clear();
+        *pending = pending_batch;
+        return;
+    }
+
+    if *staging_capacity < staging_data.len() {
+        let capacity = staging_data.len().next_power_of_two();
+        *staging_buffer = Some(backend.create_buffer(&BufferDescriptor {
+            label: Some(label.to_string()),
+            size: capacity as u64,
+            usage: vec![BufferUsage::CopySrc, BufferUsage::CopyDst],
+        }));
+        *staging_capacity = capacity;
+    }
+
+    let buffer = staging_buffer
+        .as_ref()
+        .expect("staging buffer is allocated for non-empty atlas data");
+    backend.write_buffer(buffer, 0, staging_data);
+
+    let mut encoder = backend.create_command_encoder(label);
+    for copy in staging_copies.iter().copied() {
+        backend.copy_buffer_to_texture(
+            &mut encoder,
+            &TexelCopyBufferInfo {
+                buffer,
+                layout: TexelCopyBufferLayout {
+                    offset: copy.offset,
+                    bytes_per_row: Some(copy.bytes_per_row),
+                    rows_per_image: Some(copy.height),
+                },
+            },
+            &TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: Origin3d {
+                    x: copy.x,
+                    y: copy.y,
+                    z: 0,
+                },
+                aspect: TextureAspect::All,
+            },
+            Extent3d {
+                width: copy.width,
+                height: copy.height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    backend.submit(encoder);
+
+    let mut pending_batch = pending_batch;
+    pending_batch.clear();
+    *pending = pending_batch;
+}
+
+impl<B: crate::backend::GpuBackend> GlyphAtlas<B> {
     const INITIAL_SIZE: u32 = 512;
-    /// Hard cap on atlas dimensions. Instead of doubling without bound (which
-    /// could reach 4096² = 16 MB of GPU memory), once the atlas reaches this
-    /// size a full overflow evicts every cached glyph and repacks from scratch
-    /// rather than growing further.
     const MAX_SIZE: u32 = 2048;
 
-    pub fn new(device: &wgpu::Device) -> Self {
+    #[inline]
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn memory_bytes(&self) -> u64 {
+        self.width as u64 * self.height as u64
+    }
+
+    /// Looks up a cached glyph region on a backend-generic atlas.
+    #[inline]
+    pub fn get(&self, key: &GlyphKey) -> Option<AtlasRegion> {
+        self.cache.get(key).copied()
+    }
+
+    pub(super) fn plan_batch_generic(&self, glyphs: &[(GlyphKey, u32, u32)]) -> BatchCapacityPlan {
+        let missing = glyphs
+            .iter()
+            .filter(|(key, _, _)| !self.cache.contains_key(key))
+            .map(|(_, width, height)| (*width, *height))
+            .collect::<Vec<_>>();
+        let all = glyphs
+            .iter()
+            .map(|(_, width, height)| (*width, *height))
+            .collect::<Vec<_>>();
+        plan_batch(&self.packer, Self::MAX_SIZE, &missing, &all)
+    }
+
+    pub(super) fn apply_batch_plan_generic(&mut self, plan: BatchCapacityPlan) {
+        if plan == BatchCapacityPlan::Reset {
+            self.cache.clear();
+            self.pending.clear();
+            self.packer = ShelfPacker::new(self.width, self.height);
+            self.generation += 1;
+        }
+    }
+
+    /// Creates the atlas through the selected [`GpuBackend`].
+    pub fn new(backend: &B) -> Self {
         let width = Self::INITIAL_SIZE;
         let height = Self::INITIAL_SIZE;
-        let (texture, view) = Self::create_texture(device, width, height);
+        let (texture, view) = Self::create_texture_generic(backend, width, height);
         Self {
             texture,
             view,
@@ -440,76 +688,33 @@ impl GlyphAtlas {
         }
     }
 
-    fn create_texture(
-        device: &wgpu::Device,
+    fn create_texture_generic(
+        backend: &B,
         width: u32,
         height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("glyph atlas"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+    ) -> (B::Texture, B::TextureView) {
+        use crate::backend::{TextureDescriptor, TextureDimension, TextureUsage};
+        let texture = backend.create_texture(&TextureDescriptor {
+            label: Some("glyph atlas".to_string()),
+            size: (width, height, 1),
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
-            // COPY_SRC lets `grow` preserve existing glyphs with a GPU
-            // texture-to-texture copy instead of re-uploading from a CPU mirror.
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
+            dimension: TextureDimension::D2,
+            format: B::r8_unorm_format(),
+            usage: vec![
+                TextureUsage::TextureBinding,
+                TextureUsage::CopyDst,
+                TextureUsage::CopySrc,
+            ],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = backend.create_texture_view(&texture, "glyph atlas view");
         (texture, view)
     }
 
-    /// Look up a cached glyph region without inserting.
-    pub fn get(&self, key: &GlyphKey) -> Option<AtlasRegion> {
-        self.cache.get(key).copied()
-    }
-
-    /// Returns the current atlas generation (incremented when the texture or
-    /// glyph-to-region layout is recreated).
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    pub fn memory_bytes(&self) -> u64 {
-        self.width as u64 * self.height as u64
-    }
-
-    pub(super) fn plan_batch(&self, glyphs: &[(GlyphKey, u32, u32)]) -> BatchCapacityPlan {
-        let missing = glyphs
-            .iter()
-            .filter(|(key, _, _)| !self.cache.contains_key(key))
-            .map(|(_, width, height)| (*width, *height))
-            .collect::<Vec<_>>();
-        let all = glyphs
-            .iter()
-            .map(|(_, width, height)| (*width, *height))
-            .collect::<Vec<_>>();
-        plan_batch(&self.packer, Self::MAX_SIZE, &missing, &all)
-    }
-
-    pub(super) fn apply_batch_plan(&mut self, plan: BatchCapacityPlan) {
-        if plan == BatchCapacityPlan::Reset {
-            self.cache.clear();
-            self.pending.clear();
-            self.packer = ShelfPacker::new(self.width, self.height);
-            self.generation += 1;
-        }
-    }
-
-    /// Look up or insert a glyph into the atlas. Returns the atlas region.
-    /// `bitmap` must be `width * height` bytes (grayscale alpha).
+    /// Backend-driven equivalent of [`GlyphAtlas::get_or_insert`].
     pub fn get_or_insert(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        backend: &B,
         key: GlyphKey,
         glyph_w: u32,
         glyph_h: u32,
@@ -519,21 +724,17 @@ impl GlyphAtlas {
             return *region;
         }
 
-        // Try to allocate.
         let pos = self.packer.allocate(glyph_w, glyph_h);
         let (x, y) = match pos {
             Some(p) => p,
             None => {
-                // Atlas full — grow (or evict at the size cap) and retry.
-                self.grow(device, queue);
+                self.grow_generic(backend);
                 self.packer
                     .allocate(glyph_w, glyph_h)
                     .expect("glyph too large for atlas even after grow")
             }
         };
 
-        // Stage the glyph bitmap for the next `upload`. We keep only this glyph's
-        // bytes (dropped after upload) rather than a full-size CPU mirror.
         self.pending.push(PendingGlyph {
             x,
             y,
@@ -552,13 +753,10 @@ impl GlyphAtlas {
         region
     }
 
-    /// Writes every glyph staged since the last upload through one reusable
-    /// staging buffer, then drops the per-glyph bitmap storage. No full-size
-    /// CPU mirror of the atlas is materialized.
-    pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        upload_pending(
-            device,
-            queue,
+    /// Backend-driven equivalent of [`GlyphAtlas::upload`].
+    pub fn upload(&mut self, backend: &B) {
+        upload_pending_generic(
+            backend,
             &self.texture,
             &mut self.pending,
             &mut self.staging_buffer,
@@ -570,16 +768,10 @@ impl GlyphAtlas {
         );
     }
 
-    /// Grow the atlas to fit more glyphs. Below [`MAX_SIZE`](Self::MAX_SIZE)
-    /// the atlas doubles and the existing texture content is preserved with
-    /// a GPU texture-to-texture copy (no CPU mirror needed). At the cap we
-    /// instead evict everything and repack from scratch, so memory never
-    /// grows past `MAX_SIZE²`.
-    fn grow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        // At the size cap: evict all cached glyphs and repack into the existing
-        // texture instead of allocating a larger one. Stale pixels left in the
-        // texture are simply never referenced again (the cache is cleared, so
-        // every glyph is re-inserted and re-uploaded on demand).
+    /// Backend-driven equivalent of [`GlyphAtlas::grow`].
+    fn grow_generic(&mut self, backend: &B) {
+        use crate::backend::{Extent3d, Origin3d, TexelCopyTextureInfo, TextureAspect};
+
         if self.width >= Self::MAX_SIZE {
             self.cache.clear();
             self.pending.clear();
@@ -592,101 +784,88 @@ impl GlyphAtlas {
         let old_h = self.height;
         let new_w = self.width * 2;
         let new_h = self.height * 2;
-        let (texture, view) = Self::create_texture(device, new_w, new_h);
+        let (texture, view) = Self::create_texture_generic(backend, new_w, new_h);
 
-        // Preserve every already-uploaded glyph by copying the old texture into
-        // the top-left of the new one on the GPU. Existing glyphs keep their
-        // exact (x, y) positions, so their cached `AtlasRegion`s — and any UVs
-        // captured for them earlier this frame — stay valid once re-resolved
-        // against the final dimensions. Glyphs staged this frame but not yet
-        // uploaded remain in `self.pending` with their (still valid) positions
-        // and are written to the new texture by the next `upload`.
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("glyph atlas grow"),
-        });
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
+        let mut encoder = backend.create_command_encoder("glyph atlas grow");
+        backend.copy_texture_to_texture(
+            &mut encoder,
+            &TexelCopyTextureInfo {
                 texture: &self.texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
             },
-            wgpu::TexelCopyTextureInfo {
+            &TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
             },
-            wgpu::Extent3d {
+            Extent3d {
                 width: old_w,
                 height: old_h,
                 depth_or_array_layers: 1,
             },
         );
-        queue.submit(Some(encoder.finish()));
+        backend.submit(encoder);
 
         self.texture = texture;
         self.view = view;
-
-        // Resume packing on a fresh shelf directly below the preserved content.
-        //
-        // We deliberately do NOT reset the packer and replay the old allocations:
-        // the atlas width has doubled, so the shelf packer would wrap rows
-        // differently than the preserved layout and could hand out positions that
-        // overlap existing glyphs. New glyphs would then be written on top of old
-        // ones, producing the overlapping/garbled text seen after resizing the
-        // window down and back up (which reflows text and inserts many glyphs at
-        // once, triggering a grow). Starting the next shelf at the old height keeps
-        // all cached positions valid while guaranteeing new glyphs land in free
-        // space.
         self.packer = ShelfPacker::new(new_w, new_h);
         self.packer.start_fresh_shelf_at(old_h);
-
         self.width = new_w;
         self.height = new_h;
         self.generation += 1;
     }
 }
 
-// ---------------------------------------------------------------------------
-// Color glyph atlas (RGBA8, for sbix PNG strikes)
-// ---------------------------------------------------------------------------
-
-/// Sibling to [`GlyphAtlas`] that stores RGBA8 color glyphs (Apple Color
-/// Emoji, etc.). The shape and behavior are intentionally near-identical: a
-/// shelf packer, lazy re-upload of a dirty rectangle, and 2× growth on
-/// overflow. Only the per-pixel size and texture format differ.
-pub struct ColorGlyphAtlas {
-    pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    pub width: u32,
-    pub height: u32,
-    packer: ShelfPacker,
-    cache: HashMap<GlyphKey, AtlasRegion>,
-    /// Glyphs packed but not yet uploaded. Each entry owns only its own RGBA8
-    /// bytes (dropped after [`upload`](Self::upload)); no full-size CPU mirror.
-    pending: Vec<PendingGlyph>,
-    /// Reusable GPU upload storage; it grows only to the largest pending batch.
-    staging_buffer: Option<wgpu::Buffer>,
-    staging_capacity: usize,
-    /// Reusable CPU packing storage for aligned buffer-to-texture copies.
-    staging_data: Vec<u8>,
-    staging_copies: Vec<StagedGlyph>,
-    /// Incremented whenever the texture or its glyph-to-region layout changes.
-    generation: u64,
-}
-
-impl ColorGlyphAtlas {
+impl<B: crate::backend::GpuBackend> ColorGlyphAtlas<B> {
     const INITIAL_SIZE: u32 = 512;
     const BYTES_PER_PIXEL: u32 = 4;
-    /// Hard cap on atlas dimensions (see [`GlyphAtlas::MAX_SIZE`]). Caps the
-    /// RGBA8 color atlas at `MAX_SIZE² * 4` bytes of GPU memory.
     const MAX_SIZE: u32 = 2048;
 
-    pub fn new(device: &wgpu::Device) -> Self {
+    #[inline]
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn memory_bytes(&self) -> u64 {
+        self.width as u64 * self.height as u64 * Self::BYTES_PER_PIXEL as u64
+    }
+
+    /// Looks up a cached glyph region on a backend-generic color atlas.
+    #[inline]
+    pub fn get(&self, key: &GlyphKey) -> Option<AtlasRegion> {
+        self.cache.get(key).copied()
+    }
+
+    pub(super) fn plan_batch_generic(&self, glyphs: &[(GlyphKey, u32, u32)]) -> BatchCapacityPlan {
+        let missing = glyphs
+            .iter()
+            .filter(|(key, _, _)| !self.cache.contains_key(key))
+            .map(|(_, width, height)| (*width, *height))
+            .collect::<Vec<_>>();
+        let all = glyphs
+            .iter()
+            .map(|(_, width, height)| (*width, *height))
+            .collect::<Vec<_>>();
+        plan_batch(&self.packer, Self::MAX_SIZE, &missing, &all)
+    }
+
+    pub(super) fn apply_batch_plan_generic(&mut self, plan: BatchCapacityPlan) {
+        if plan == BatchCapacityPlan::Reset {
+            self.cache.clear();
+            self.pending.clear();
+            self.packer = ShelfPacker::new(self.width, self.height);
+            self.generation += 1;
+        }
+    }
+
+    /// Creates the atlas through the selected [`GpuBackend`].
+    pub fn new(backend: &B) -> Self {
         let width = Self::INITIAL_SIZE;
         let height = Self::INITIAL_SIZE;
-        let (texture, view) = Self::create_texture(device, width, height);
+        let (texture, view) = Self::create_texture_generic(backend, width, height);
         Self {
             texture,
             view,
@@ -703,73 +882,33 @@ impl ColorGlyphAtlas {
         }
     }
 
-    fn create_texture(
-        device: &wgpu::Device,
+    fn create_texture_generic(
+        backend: &B,
         width: u32,
         height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("color glyph atlas"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+    ) -> (B::Texture, B::TextureView) {
+        use crate::backend::{TextureDescriptor, TextureDimension, TextureUsage};
+        let texture = backend.create_texture(&TextureDescriptor {
+            label: Some("color glyph atlas".to_string()),
+            size: (width, height, 1),
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            // COPY_SRC enables GPU texture-to-texture preservation on grow.
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
+            dimension: TextureDimension::D2,
+            format: B::rgba8_unorm_format(),
+            usage: vec![
+                TextureUsage::TextureBinding,
+                TextureUsage::CopyDst,
+                TextureUsage::CopySrc,
+            ],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = backend.create_texture_view(&texture, "color glyph atlas view");
         (texture, view)
     }
 
-    pub fn get(&self, key: &GlyphKey) -> Option<AtlasRegion> {
-        self.cache.get(key).copied()
-    }
-
-    /// Returns the current atlas generation (incremented when the texture or
-    /// glyph-to-region layout is recreated).
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    pub fn memory_bytes(&self) -> u64 {
-        self.width as u64 * self.height as u64 * Self::BYTES_PER_PIXEL as u64
-    }
-
-    pub(super) fn plan_batch(&self, glyphs: &[(GlyphKey, u32, u32)]) -> BatchCapacityPlan {
-        let missing = glyphs
-            .iter()
-            .filter(|(key, _, _)| !self.cache.contains_key(key))
-            .map(|(_, width, height)| (*width, *height))
-            .collect::<Vec<_>>();
-        let all = glyphs
-            .iter()
-            .map(|(_, width, height)| (*width, *height))
-            .collect::<Vec<_>>();
-        plan_batch(&self.packer, Self::MAX_SIZE, &missing, &all)
-    }
-
-    pub(super) fn apply_batch_plan(&mut self, plan: BatchCapacityPlan) {
-        if plan == BatchCapacityPlan::Reset {
-            self.cache.clear();
-            self.pending.clear();
-            self.packer = ShelfPacker::new(self.width, self.height);
-            self.generation += 1;
-        }
-    }
-
-    /// `bitmap` must be `width * height * 4` bytes (non-premultiplied RGBA8).
+    /// Backend-driven equivalent of [`ColorGlyphAtlas::get_or_insert`].
     pub fn get_or_insert(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        backend: &B,
         key: GlyphKey,
         glyph_w: u32,
         glyph_h: u32,
@@ -783,14 +922,13 @@ impl ColorGlyphAtlas {
         let (x, y) = match pos {
             Some(p) => p,
             None => {
-                self.grow(device, queue);
+                self.grow_generic(backend);
                 self.packer
                     .allocate(glyph_w, glyph_h)
                     .expect("color glyph too large for atlas even after grow")
             }
         };
 
-        // Stage this glyph's RGBA8 bytes for the next `upload`; no full-size mirror.
         self.pending.push(PendingGlyph {
             x,
             y,
@@ -809,10 +947,10 @@ impl ColorGlyphAtlas {
         region
     }
 
-    pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        upload_pending(
-            device,
-            queue,
+    /// Backend-driven equivalent of [`ColorGlyphAtlas::upload`].
+    pub fn upload(&mut self, backend: &B) {
+        upload_pending_generic(
+            backend,
             &self.texture,
             &mut self.pending,
             &mut self.staging_buffer,
@@ -824,9 +962,10 @@ impl ColorGlyphAtlas {
         );
     }
 
-    fn grow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        // At the size cap: evict and repack into the existing texture rather than
-        // allocating a larger one (see `GlyphAtlas::grow`).
+    /// Backend-driven equivalent of [`ColorGlyphAtlas::grow`].
+    fn grow_generic(&mut self, backend: &B) {
+        use crate::backend::{Extent3d, Origin3d, TexelCopyTextureInfo, TextureAspect};
+
         if self.width >= Self::MAX_SIZE {
             self.cache.clear();
             self.pending.clear();
@@ -839,53 +978,42 @@ impl ColorGlyphAtlas {
         let old_h = self.height;
         let new_w = self.width * 2;
         let new_h = self.height * 2;
-        let (texture, view) = Self::create_texture(device, new_w, new_h);
+        let (texture, view) = Self::create_texture_generic(backend, new_w, new_h);
 
-        // Preserve already-uploaded glyphs with a GPU texture-to-texture copy
-        // (no CPU mirror). Glyphs staged this frame stay in `self.pending` with
-        // their still-valid positions and are written by the next `upload`.
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("color glyph atlas grow"),
-        });
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
+        let mut encoder = backend.create_command_encoder("color glyph atlas grow");
+        backend.copy_texture_to_texture(
+            &mut encoder,
+            &TexelCopyTextureInfo {
                 texture: &self.texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
             },
-            wgpu::TexelCopyTextureInfo {
+            &TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
             },
-            wgpu::Extent3d {
+            Extent3d {
                 width: old_w,
                 height: old_h,
                 depth_or_array_layers: 1,
             },
         );
-        queue.submit(Some(encoder.finish()));
+        backend.submit(encoder);
 
         self.texture = texture;
         self.view = view;
-
-        // Existing glyphs keep their positions in the enlarged atlas; resume packing
-        // on a fresh shelf below them. Replaying the old allocations would be wrong
-        // because the atlas width doubled, so the packer would wrap differently and
-        // could place new glyphs over existing ones (overlapping/garbled text after
-        // a resize-triggered reflow). See `GlyphAtlas::grow` for the full rationale.
         self.packer = ShelfPacker::new(new_w, new_h);
         self.packer.start_fresh_shelf_at(old_h);
-
         self.width = new_w;
         self.height = new_h;
         self.generation += 1;
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "wgpu"))]
 mod tests {
     use super::*;
 

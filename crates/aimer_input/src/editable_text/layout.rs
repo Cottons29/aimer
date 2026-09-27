@@ -154,7 +154,7 @@ impl EditableGeometry {
                         .get(line_index + 1)
                         .copied()
                         .unwrap_or(0.0),
-                y: next_line.baseline - next_line.ascent,
+                y: next_line.baseline - next_line.ascent - next_line.line_gap * 0.5,
                 width: 0.0,
                 height: (next_line.ascent - next_line.descent + next_line.line_gap).max(0.0),
             });

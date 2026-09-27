@@ -2,7 +2,11 @@
 use std::collections::HashMap;
 #[cfg(not(any(target_os = "ios", target_os = "macos")))]
 use std::collections::HashSet;
+#[cfg(target_os = "linux")]
+use std::fmt::Write as FmtWrite;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{LazyLock, RwLock};
@@ -733,15 +737,90 @@ fn first_open_match(
 
 /// Builds only the fallback face for `script`.
 ///
-/// The platform collection is still walked until this lane has a usable face,
-/// but no face is parsed for unrelated scripts and no unrelated font record is
-/// retained. The caller gives each lane its own id range, so the result is
-/// independent of the order in which scripts first appear in the UI.
+/// Linux asks Fontconfig for candidates in system preference order. Other
+/// desktop targets scan their font catalogue. The caller gives each lane its
+/// own id range, so the result is independent of the order in which scripts
+/// first appear in the UI.
+#[cfg(target_os = "linux")]
+fn build_fallback_chain_for_script(script: FallbackScript) -> Vec<FontRecord> {
+    let probes = &PROBE_GROUPS[script.index()];
+    match fontconfig_font_record(
+        script.id_base(),
+        "sans-serif",
+        probes.probes,
+        Some(script),
+        probes.hint_color,
+    ) {
+        Ok(Some(record)) => return vec![record],
+        Ok(None) => return Vec::new(),
+        Err(_) => {}
+    }
+
+    let paths = system_font_paths();
+    build_fallback_chain_for_scripts(std::slice::from_ref(&script), &paths)
+}
+
 #[cfg(all(
+    not(target_os = "linux"),
     not(any(target_os = "ios", target_os = "macos"))
 ))]
 fn build_fallback_chain_for_script(script: FallbackScript) -> Vec<FontRecord> {
-    build_fallback_chain_for_scripts(std::slice::from_ref(&script), script.id_base())
+    let paths = system_font_paths();
+    build_fallback_chain_for_scripts(std::slice::from_ref(&script), &paths)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_fallback_font_filename(script: FallbackScript) -> Option<&'static str> {
+    match script {
+        FallbackScript::Thai | FallbackScript::Khmer | FallbackScript::Lao => {
+            Some("LeelawUI.ttf")
+        }
+        FallbackScript::Myanmar => Some("mmrtext.ttf"),
+        FallbackScript::Devanagari
+        | FallbackScript::Tamil
+        | FallbackScript::Sinhala
+        | FallbackScript::Telugu
+        | FallbackScript::Kannada
+        | FallbackScript::Malayalam
+        | FallbackScript::Gujarati
+        | FallbackScript::Gurmukhi
+        | FallbackScript::Bengali
+        | FallbackScript::Oriya => Some("Nirmala.ttf"),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn prioritized_fallback_paths<'a>(
+    paths: &'a [PathBuf],
+    preferred_filenames: &[&str],
+) -> Vec<&'a PathBuf> {
+    let mut unique_preferences = Vec::with_capacity(preferred_filenames.len());
+    for &preferred in preferred_filenames {
+        if !unique_preferences
+            .iter()
+            .any(|known: &&str| known.eq_ignore_ascii_case(preferred))
+        {
+            unique_preferences.push(preferred);
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(paths.len());
+    for preferred in &unique_preferences {
+        ordered.extend(paths.iter().filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case(preferred))
+        }));
+    }
+    ordered.extend(paths.iter().filter(|path| {
+        !unique_preferences.iter().any(|preferred| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case(preferred))
+        })
+    }));
+    ordered
 }
 
 #[cfg(all(
@@ -749,22 +828,92 @@ fn build_fallback_chain_for_script(script: FallbackScript) -> Vec<FontRecord> {
 ))]
 fn build_fallback_chain_for_scripts(
     scripts: &[FallbackScript],
-    next_id: FontId,
+    font_paths: &[PathBuf],
 ) -> Vec<FontRecord> {
-    let groups = scripts
-        .iter()
-        .map(|script| script.index())
-        .collect::<Vec<_>>();
-
-    let mut slots: Vec<Option<FontRecord>> = (0..groups.len()).map(|_| None).collect();
-    let mut open = vec![true; groups.len()];
-    let mut open_count = groups.len();
+    let mut slots: Vec<Option<FontRecord>> =
+        (0..scripts.len()).map(|_| None).collect();
+    let mut open = vec![true; scripts.len()];
+    let mut open_count = scripts.len();
     if open_count == 0 {
         return Vec::new();
     }
 
-    for path in system_font_paths() {
-        let Some(mapping) = probe_font_file(&path) else {
+    #[cfg(target_os = "windows")]
+    {
+        let preferred_filenames = scripts
+            .iter()
+            .filter_map(|script| windows_fallback_font_filename(*script))
+            .collect::<Vec<_>>();
+        if !preferred_filenames.is_empty() {
+            for path in prioritized_fallback_paths(font_paths, &preferred_filenames) {
+                let filename = path.file_name().and_then(|name| name.to_str());
+                let mut preferred_open = scripts
+                    .iter()
+                    .enumerate()
+                    .map(|(index, script)| {
+                        open[index]
+                            && windows_fallback_font_filename(*script).is_some_and(|preferred| {
+                                filename.is_some_and(|name| name.eq_ignore_ascii_case(preferred))
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                if !preferred_open.iter().any(|is_open| *is_open) {
+                    continue;
+                }
+
+                let Some(mapping) = probe_font_file(path) else {
+                    continue;
+                };
+                let data = &mapping[..];
+                for collection_index in 0..64 {
+                    let Ok(face) = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
+                        data,
+                        collection_index,
+                    ) else {
+                        break;
+                    };
+
+                    while let Some((group, is_color)) = first_open_match(&preferred_open, |group| {
+                        let probe_group = &PROBE_GROUPS[scripts[group].index()];
+                        if !any_probe_is_mapped(
+                            |codepoint| {
+                                face.glyph_index(codepoint as u32)
+                                    .ok()
+                                    .flatten()
+                                    .map(u32::from)
+                            },
+                            probe_group.probes,
+                        ) {
+                            return None;
+                        }
+                        face_matches_probes(&face, probe_group.probes, probe_group.hint_color)
+                    }) {
+                        let record_path = Arc::new(path.clone());
+                        slots[group] = Some(FontRecord {
+                            id: scripts[group].id_base(),
+                            bytes: None,
+                            collection_index,
+                            path: Some(record_path.clone()),
+                            is_color,
+                        });
+                        retain_probed_font_file(record_path.as_path(), mapping.clone());
+                        preferred_open[group] = false;
+                        open[group] = false;
+                        open_count -= 1;
+                        if open_count == 0 {
+                            return slots.into_iter().flatten().collect();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for path in font_paths {
+        if open_count == 0 {
+            return slots.into_iter().flatten().collect();
+        }
+        let Some(mapping) = probe_font_file(path) else {
             continue;
         };
         let data = &mapping[..];
@@ -776,32 +925,35 @@ fn build_fallback_chain_for_scripts(
                 break;
             };
 
-            let Some((group, is_color)) = first_open_match(&open, |group| {
-                let group = &PROBE_GROUPS[groups[group]];
+            while let Some((group, is_color)) = first_open_match(&open, |group| {
+                let probe_group = &PROBE_GROUPS[scripts[group].index()];
                 if !any_probe_is_mapped(
-                    |codepoint| face.glyph_index(codepoint as u32).ok().flatten().map(u32::from),
-                    group.probes,
+                    |codepoint| {
+                        face.glyph_index(codepoint as u32)
+                            .ok()
+                            .flatten()
+                            .map(u32::from)
+                    },
+                    probe_group.probes,
                 ) {
                     return None;
                 }
-                face_matches_probes(&face, group.probes, group.hint_color)
-            }) else {
-                continue;
-            };
-
-            let record_path = Arc::new(path.clone());
-            slots[group] = Some(FontRecord {
-                id: next_id + group as FontId,
-                bytes: None,
-                collection_index,
-                path: Some(record_path.clone()),
-                is_color,
-            });
-            retain_probed_font_file(record_path.as_path(), mapping.clone());
-            open[group] = false;
-            open_count -= 1;
-            if open_count == 0 {
-                return slots.into_iter().flatten().collect();
+                face_matches_probes(&face, probe_group.probes, probe_group.hint_color)
+            }) {
+                let record_path = Arc::new(path.clone());
+                slots[group] = Some(FontRecord {
+                    id: scripts[group].id_base(),
+                    bytes: None,
+                    collection_index,
+                    path: Some(record_path.clone()),
+                    is_color,
+                });
+                retain_probed_font_file(record_path.as_path(), mapping.clone());
+                open[group] = false;
+                open_count -= 1;
+                if open_count == 0 {
+                    return slots.into_iter().flatten().collect();
+                }
             }
         }
     }
@@ -859,6 +1011,112 @@ fn system_font_paths() -> Vec<PathBuf> {
     paths
 }
 
+#[cfg(target_os = "linux")]
+fn fontconfig_language(script: FallbackScript) -> Option<&'static str> {
+    match script {
+        FallbackScript::Emoji | FallbackScript::Cjk => None,
+        FallbackScript::Hangul => Some("ko"),
+        FallbackScript::Arabic => Some("ar"),
+        FallbackScript::Hebrew => Some("he"),
+        FallbackScript::Devanagari => Some("hi"),
+        FallbackScript::Tamil => Some("ta"),
+        FallbackScript::Thai => Some("th"),
+        FallbackScript::Armenian => Some("hy"),
+        FallbackScript::Georgian => Some("ka"),
+        FallbackScript::Ethiopic => Some("am"),
+        FallbackScript::Myanmar => Some("my"),
+        FallbackScript::Khmer => Some("km"),
+        FallbackScript::Tibetan => Some("bo"),
+        FallbackScript::Sinhala => Some("si"),
+        FallbackScript::Telugu => Some("te"),
+        FallbackScript::Kannada => Some("kn"),
+        FallbackScript::Malayalam => Some("ml"),
+        FallbackScript::Gujarati => Some("gu"),
+        FallbackScript::Gurmukhi => Some("pa"),
+        FallbackScript::Bengali => Some("bn"),
+        FallbackScript::Oriya => Some("or"),
+        FallbackScript::Lao => Some("lo"),
+        FallbackScript::Mongolian => Some("mn"),
+        FallbackScript::Cherokee => Some("chr"),
+        FallbackScript::Yi => Some("ii"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct FcMatchUnavailable;
+
+#[cfg(target_os = "linux")]
+fn fontconfig_font_record(
+    id: FontId,
+    family: &str,
+    probes: &[char],
+    script: Option<FallbackScript>,
+    hint_color: bool,
+) -> Result<Option<FontRecord>, FcMatchUnavailable> {
+    let mut pattern = format!("{family}:weight=regular:slant=roman");
+    if let Some(language) = script.and_then(fontconfig_language) {
+        write!(&mut pattern, ":lang={language}").expect("writing to a String cannot fail");
+    }
+    pattern.push_str(":charset=");
+    for (index, &codepoint) in probes.iter().enumerate() {
+        if index != 0 {
+            pattern.push(',');
+        }
+        write!(&mut pattern, "{:x}", codepoint as u32)
+            .expect("writing to a String cannot fail");
+    }
+
+    // Use the host's Fontconfig ordering when available. Calling through argv
+    // avoids shell parsing, and the path scanner below remains a fallback for
+    // minimal systems without the `fc-match` utility.
+    let output = Command::new("fc-match")
+        .arg("--sort")
+        .arg(r"--format=%{file}\t%{index}\n")
+        .arg(pattern)
+        .output()
+        .map_err(|_| FcMatchUnavailable)?;
+    if !output.status.success() {
+        return Err(FcMatchUnavailable);
+    }
+
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((filename, font_index)) = line.rsplit_once('\t') else {
+            continue;
+        };
+        let Ok(font_index) = font_index.parse::<u32>() else {
+            continue;
+        };
+        // Fontconfig may encode a variable-font named instance in the high
+        // bits. Cupid's SFNT reader needs only the collection face index.
+        let collection_index = font_index & 0xffff;
+        let path = PathBuf::from(filename);
+        let Some(mapping) = probe_font_file(&path) else {
+            continue;
+        };
+        let Ok(face) = crate::text_pipeline::aimer_font::SfntFace::from_bytes(
+            &mapping,
+            collection_index,
+        ) else {
+            continue;
+        };
+        let has_color_tables = face.has_color_tables() || face.has_apple_private_color_tables();
+        let Some(probe_is_color) = face_matches_probes(&face, probes, hint_color) else {
+            continue;
+        };
+
+        let path = Arc::new(path);
+        retain_probed_font_file(path.as_path(), mapping);
+        return Ok(Some(FontRecord {
+            id,
+            bytes: None,
+            collection_index,
+            path: Some(path),
+            is_color: has_color_tables || probe_is_color,
+        }));
+    }
+    Ok(None)
+}
+
 #[cfg(all(
     not(any(target_os = "ios", target_os = "macos")),
     not(target_arch = "wasm32")
@@ -882,6 +1140,20 @@ fn system_font_record_from_paths(
     let mut paths = system_font_paths();
     if prefer_monospace {
         paths.sort_by_key(|path| (!path_looks_monospace(path), path.clone()));
+    }
+    #[cfg(target_os = "windows")]
+    if !prefer_monospace {
+        // Prefer the Windows UI family over the first alphabetic face (which
+        // can be a condensed display font such as Agency FB).
+        paths.sort_by_key(|path| {
+            let filename = path.file_name().and_then(|name| name.to_str());
+            let priority = match filename {
+                Some(name) if name.eq_ignore_ascii_case("SegUIVar.ttf") => 0,
+                Some(name) if name.eq_ignore_ascii_case("segoeui.ttf") => 1,
+                _ => 2,
+            };
+            (priority, path.clone())
+        });
     }
 
     for path in paths {
@@ -941,7 +1213,20 @@ pub(crate) fn system_primary_font() -> Option<FontRecord> {
     {
         static PRIMARY: OnceLock<Option<FontRecord>> = OnceLock::new();
         PRIMARY
-            .get_or_init(|| system_font_record_from_paths(SYSTEM_PRIMARY_FONT_ID, &['A', 'a', '0'], false))
+            .get_or_init(|| {
+                #[cfg(target_os = "linux")]
+                match fontconfig_font_record(
+                    SYSTEM_PRIMARY_FONT_ID,
+                    "sans-serif",
+                    &['A', 'a', '0'],
+                    None,
+                    false,
+                ) {
+                    Ok(record) => return record,
+                    Err(_) => {}
+                }
+                system_font_record_from_paths(SYSTEM_PRIMARY_FONT_ID, &['A', 'a', '0'], false)
+            })
             .clone()
     }
 
@@ -969,7 +1254,20 @@ pub(crate) fn system_monospace_font(id: FontId) -> Option<FontRecord> {
     {
         static MONOSPACE: OnceLock<Option<FontRecord>> = OnceLock::new();
         MONOSPACE
-            .get_or_init(|| system_font_record_from_paths(id, &['M', 'i', '0'], true))
+            .get_or_init(|| {
+                #[cfg(target_os = "linux")]
+                match fontconfig_font_record(
+                    id,
+                    "monospace",
+                    &['M', 'i', '0'],
+                    None,
+                    false,
+                ) {
+                    Ok(record) => return record,
+                    Err(_) => {}
+                }
+                system_font_record_from_paths(id, &['M', 'i', '0'], true)
+            })
             .clone()
     }
 
@@ -980,12 +1278,70 @@ pub(crate) fn system_monospace_font(id: FontId) -> Option<FontRecord> {
     }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+static SHARED_FALLBACKS_BY_SCRIPT: OnceLock<
+    [OnceLock<Vec<FontRecord>>; FallbackScript::COUNT],
+> = OnceLock::new();
+
+#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+fn shared_fallback_lanes() -> &'static [OnceLock<Vec<FontRecord>>; FallbackScript::COUNT] {
+    SHARED_FALLBACKS_BY_SCRIPT.get_or_init(|| std::array::from_fn(|_| OnceLock::new()))
+}
+
 pub fn shared_fallback_chain() -> Vec<FontRecord> {
-    FallbackScript::ALL
-        .iter()
-        .copied()
-        .flat_map(shared_fallback_chain_for_script)
-        .collect()
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    {
+        Vec::new()
+    }
+
+    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+    {
+        let fallbacks = shared_fallback_lanes();
+        let missing_scripts = FallbackScript::ALL
+            .iter()
+            .copied()
+            .filter(|script| fallbacks[script.index()].get().is_none())
+            .collect::<Vec<_>>();
+
+        if !missing_scripts.is_empty() {
+            #[cfg(target_os = "linux")]
+            for script in missing_scripts {
+                let records = build_fallback_chain_for_script(script);
+                let _ = fallbacks[script.index()].set(records);
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            {
+                let paths = system_font_paths();
+                let records = build_fallback_chain_for_scripts(&missing_scripts, &paths);
+                let mut lane_records: Vec<Vec<FontRecord>> = (0..missing_scripts.len())
+                    .map(|_| Vec::new())
+                    .collect();
+                for record in records {
+                    if let Some(index) = missing_scripts
+                        .iter()
+                        .position(|script| script.id_base() == record.id)
+                    {
+                        lane_records[index].push(record);
+                    }
+                }
+                for (script, records) in missing_scripts.into_iter().zip(lane_records) {
+                    let _ = fallbacks[script.index()].set(records);
+                }
+            }
+        }
+
+        let mut chain = Vec::new();
+        for script in FallbackScript::ALL {
+            chain.extend(
+                fallbacks[script.index()]
+                    .get_or_init(|| build_fallback_chain_for_script(script))
+                    .iter()
+                    .cloned(),
+            );
+        }
+        chain
+    }
 }
 
 /// Returns the fallback faces for one script, building that lane at most once
@@ -999,30 +1355,22 @@ pub(crate) fn shared_fallback_chain_for_script(script: FallbackScript) -> Vec<Fo
 
     #[cfg(not(any(target_os = "ios", target_os = "macos")))]
     {
-        static FALLBACKS: OnceLock<
-            [OnceLock<Vec<FontRecord>>; FallbackScript::COUNT],
-        > = OnceLock::new();
-        let fallbacks = FALLBACKS.get_or_init(|| std::array::from_fn(|_| OnceLock::new()));
-        fallbacks[script.index()]
+        shared_fallback_lanes()[script.index()]
             .get_or_init(|| build_fallback_chain_for_script(script))
             .clone()
     }
 }
 
-/// Pre-build the fallback chain and validate each fallback face with the
-/// checked Aimer reader, avoiding eager whole-font parsing during warmup. Safe to call
-/// from any thread; the inner `OnceLock` is also used by
-/// `GlyphRasterizer::ensure_fallbacks`.
+/// Pre-build fallback lanes and retain their validated file mappings so first
+/// use avoids walking the system font directories. Safe to call from any
+/// thread; the inner `OnceLock` is also used by `GlyphRasterizer::ensure_fallbacks`.
 #[cfg_attr(
     any(target_os = "ios", target_os = "macos", target_arch = "wasm32"),
     allow(dead_code)
 )]
 pub fn warm_fallbacks() {
     let start = aimer_utils::AnimInstant::now();
-    let chain = shared_fallback_chain();
-    for record in &chain {
-        let _ = record.ensure_face();
-    }
+    let _ = shared_fallback_chain();
     info!("warm_fallbacks() took {} ms", start.elapsed().as_millis());
 }
 
@@ -1371,4 +1719,61 @@ mod tests {
             "probing must stop at the claimed group and skip already filled ones"
         );
     }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn preferred_fallback_paths_keep_the_remaining_search_order() {
+        let paths = vec![
+            PathBuf::from(r"C:\Fonts\a.ttf"),
+            PathBuf::from(r"C:\Fonts\bar.ttf"),
+            PathBuf::from(r"C:\Fonts\z.ttf"),
+        ];
+        let ordered = super::prioritized_fallback_paths(&paths, &["BAR.ttf", "bar.ttf"]);
+        let names = ordered
+            .iter()
+            .map(|path| path.file_name().and_then(|name| name.to_str()).unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, ["bar.ttf", "a.ttf", "z.ttf"]);
+    }
+
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        not(any(target_os = "ios", target_os = "macos"))
+    ))]
+    #[test]
+    fn batched_fallback_discovery_matches_each_script_lane() {
+        let paths = super::system_font_paths();
+        let batched = super::build_fallback_chain_for_scripts(&FallbackScript::ALL, &paths);
+
+        for script in FallbackScript::ALL {
+            let separate = super::build_fallback_chain_for_scripts(&[script], &paths);
+            let batched_lane = batched
+                .iter()
+                .filter(|record| record.id == script.id_base())
+                .map(|record| {
+                    (
+                        record.id,
+                        record.path.as_ref().map(|path| path.as_ref().clone()),
+                        record.collection_index,
+                        record.is_color,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let separate_lane = separate
+                .iter()
+                .map(|record| {
+                    (
+                        record.id,
+                        record.path.as_ref().map(|path| path.as_ref().clone()),
+                        record.collection_index,
+                        record.is_color,
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(batched_lane, separate_lane, "lane {script:?} changed");
+        }
+    }
+
 }

@@ -3,69 +3,64 @@
 /// Material frames use this final pass when the presentation surface cannot be
 /// copied. The pass is deliberately sample-free and uniform-free: one texture
 /// load per output pixel keeps the compatibility path predictable and cheap.
-pub(crate) struct FrameCompositePipeline {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
+pub(crate) struct FrameCompositePipeline<
+    B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend,
+> {
+    pipeline: B::RenderPipeline,
+    bind_group_layout: B::BindGroupLayout,
 }
 
-impl FrameCompositePipeline {
+
+
+// ── Backend-agnostic generic path ──────────────────────────────────────────
+//
+// Pipeline resources and draw operations use the selected backend's associated types.
+impl<B: crate::backend::GpuBackend> FrameCompositePipeline<B> {
+    /// Creates the frame composite pipeline using the selected backend.
     pub(crate) fn new(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        pipeline_cache: Option<&wgpu::PipelineCache>,
+        backend: &B,
+        format: B::TextureFormat,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("frame composite shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("./frame_composite.wgsl").into(),
-            ),
-        });
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("frame composite bind group layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    },
-                    count: None,
-                }],
-            });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("frame composite pipeline layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("frame composite pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
+        use crate::backend::*;
+
+        let shader = backend.create_shader_module(
+            backend.builtin_shader_source(BuiltinShader::FrameComposite),
+            "frame composite shader",
+        );
+
+        let bind_group_layout = backend.create_bind_group_layout(&[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: vec![ShaderStage::Fragment],
+            ty: BindingType::Texture {
+                multisampled: false,
+                view_dimension: TextureViewDimension::D2,
+                sample_type: TextureSampleType::Float { filterable: false },
             },
-            fragment: Some(wgpu::FragmentState {
+            count: None,
+        }]);
+
+        let pipeline_layout = backend.create_pipeline_layout(&[&bind_group_layout]);
+
+        let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("frame composite pipeline".to_string()),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
                 module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                entry_point: "vs_main",
+                buffers: &[],
+            },
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
                     format,
                     blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
+                    write_mask: ColorWriteMask::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
+            primitive: PrimitiveState::default(),
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: pipeline_cache,
+            multisample: MultisampleState::default(),
         });
 
         Self {
@@ -76,24 +71,27 @@ impl FrameCompositePipeline {
 
     pub(crate) fn create_bind_group(
         &self,
-        device: &wgpu::Device,
-        source: &wgpu::TextureView,
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("frame composite bind group"),
-            layout: &self.bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
+        backend: &B,
+        source: &B::TextureView,
+    ) -> B::BindGroup {
+        backend.create_bind_group(
+            &self.bind_group_layout,
+            &[crate::backend::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(source),
+                resource: crate::backend::BindingResource::TextureView(source),
             }],
-        })
+        )
     }
 
-    pub(crate) fn render<'pass>(
-        &'pass self,
-        pass: &mut wgpu::RenderPass<'pass>,
-        bind_group: &'pass wgpu::BindGroup,
-    ) {
+    pub(crate) fn render<'a>(
+        &'a self,
+        pass: &mut B::RenderPass<'a>,
+        bind_group: &'a B::BindGroup,
+    )
+    where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::GpuRenderPass;
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         pass.draw(0..6, 0..1);

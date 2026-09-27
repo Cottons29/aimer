@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aimer_cupid::AntiAlias;
+use aimer_cupid::backend::wgpu::WgpuBackend;
 use aimer_cupid::font::{FontFamily, FontStyle, TextLanguage};
 use aimer_cupid::text_layout::TextHorizontalAlign;
 use aimer_cupid::text_pipeline::{
@@ -130,24 +131,21 @@ fn requests() -> Vec<TextDrawRequest> {
         .collect()
 }
 
-fn pipeline(device: &wgpu::Device) -> TextPipelineV2 {
+fn pipeline(backend: &WgpuBackend) -> TextPipelineV2<WgpuBackend> {
     TextPipelineV2::new(
-        device,
+        backend,
         wgpu::TextureFormat::Rgba8Unorm,
-        None,
         AntiAlias::Analytic,
     )
 }
 
 fn prepare(
-    pipeline: &mut TextPipelineV2,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    pipeline: &mut TextPipelineV2<WgpuBackend>,
+    backend: &WgpuBackend,
     requests: &[TextDrawRequest],
 ) -> TextPreparationProfile {
     let profile = pipeline.prepare_profiled(
-        device,
-        queue,
+        backend,
         SURFACE_WIDTH,
         SURFACE_HEIGHT,
         false,
@@ -270,6 +268,7 @@ fn main() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
+    let backend = WgpuBackend::new(device, queue);
     let requests = requests();
 
     // Keep pipeline construction out of this timer: the benchmark is about
@@ -278,19 +277,19 @@ fn main() {
     let mut cold_samples = Vec::with_capacity(MEASURED_ITERATIONS);
     let mut cold_profiles = Vec::with_capacity(MEASURED_ITERATIONS);
     for _ in 0..MEASURED_ITERATIONS {
-        let mut pipeline = pipeline(&device);
+        let mut pipeline = pipeline(&backend);
         let start = Instant::now();
-        cold_profiles.push(prepare(&mut pipeline, &device, &queue, &requests));
+        cold_profiles.push(prepare(&mut pipeline, &backend, &requests));
         cold_samples.push(start.elapsed());
     }
 
-    let mut warm_pipeline = pipeline(&device);
-    let _ = prepare(&mut warm_pipeline, &device, &queue, &requests);
+    let mut warm_pipeline = pipeline(&backend);
+    let _ = prepare(&mut warm_pipeline, &backend, &requests);
     let mut warm_samples = Vec::with_capacity(MEASURED_ITERATIONS);
     let mut warm_profiles = Vec::with_capacity(MEASURED_ITERATIONS);
     for _ in 0..MEASURED_ITERATIONS {
         let start = Instant::now();
-        warm_profiles.push(prepare(&mut warm_pipeline, &device, &queue, &requests));
+        warm_profiles.push(prepare(&mut warm_pipeline, &backend, &requests));
         warm_samples.push(start.elapsed());
     }
 
@@ -310,14 +309,14 @@ fn main() {
 
     let edit_a = shifted_requests(&requests, 1.0);
     let edit_b = shifted_requests(&requests, 2.0);
-    let mut edit_pipeline = pipeline(&device);
-    let _ = prepare(&mut edit_pipeline, &device, &queue, &requests);
+    let mut edit_pipeline = pipeline(&backend);
+    let _ = prepare(&mut edit_pipeline, &backend, &requests);
     let mut edit_samples = Vec::with_capacity(MEASURED_ITERATIONS);
     let mut edit_profiles = Vec::with_capacity(MEASURED_ITERATIONS);
     for index in 0..MEASURED_ITERATIONS {
         let start = Instant::now();
         let edited = if index % 2 == 0 { &edit_a } else { &edit_b };
-        edit_profiles.push(prepare(&mut edit_pipeline, &device, &queue, edited));
+        edit_profiles.push(prepare(&mut edit_pipeline, &backend, edited));
         edit_samples.push(start.elapsed());
     }
     print_stats("warm alternating single-request edit", edit_samples);

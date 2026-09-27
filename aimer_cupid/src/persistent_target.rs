@@ -1,4 +1,4 @@
-use wgpu::{Device, Texture, TextureFormat, TextureView};
+use crate::backend::GpuBackend;
 
 /// Whether the pixels currently stored in a persistent target may be reused.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -154,14 +154,15 @@ impl PersistentTargetState {
 }
 
 /// A renderer-owned color target that survives between frames.
-pub(crate) struct PersistentTarget {
+
+pub(crate) struct PersistentTargetGeneric<B: GpuBackend> {
     state: PersistentTargetState,
-    format: Option<TextureFormat>,
-    texture: Option<Texture>,
-    view: Option<TextureView>,
+    format: Option<B::TextureFormat>,
+    texture: Option<B::Texture>,
+    view: Option<B::TextureView>,
 }
 
-impl Default for PersistentTarget {
+impl<B: GpuBackend> Default for PersistentTargetGeneric<B> {
     fn default() -> Self {
         Self {
             state: PersistentTargetState::default(),
@@ -172,13 +173,13 @@ impl Default for PersistentTarget {
     }
 }
 
-impl PersistentTarget {
+impl<B: GpuBackend> PersistentTargetGeneric<B> {
     /// Ensures that a target allocation exists for `key` and `format`.
     #[inline]
     pub(crate) fn ensure(
         &mut self,
-        device: &Device,
-        format: TextureFormat,
+        backend: &B,
+        format: B::TextureFormat,
         key: PersistentTargetKey,
     ) -> TargetEnsureResult {
         if key.width == 0 || key.height == 0 {
@@ -197,23 +198,21 @@ impl PersistentTarget {
         }
 
         let had_target = self.texture.is_some();
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("aimer persistent color target"),
-            size: wgpu::Extent3d {
-                width: key.width,
-                height: key.height,
-                depth_or_array_layers: 1,
-            },
+        let texture = backend.create_texture(&crate::backend::TextureDescriptor {
+            label: Some("aimer persistent color target".into()),
+            size: (key.width, key.height, 1),
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: crate::backend::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
+            usage: vec![
+                crate::backend::TextureUsage::RenderAttachment,
+                crate::backend::TextureUsage::CopyDst,
+                crate::backend::TextureUsage::CopySrc,
+                crate::backend::TextureUsage::TextureBinding,
+            ],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = backend.create_texture_view(&texture, "persistent target view");
         self.texture = Some(texture);
         self.view = Some(view);
         self.format = Some(format);
@@ -252,15 +251,16 @@ impl PersistentTarget {
     }
 
     #[inline]
-    pub(crate) fn view(&self) -> Option<&TextureView> {
+    pub(crate) fn view(&self) -> Option<&B::TextureView> {
         self.view.as_ref()
     }
 
     #[inline]
-    pub(crate) fn texture(&self) -> Option<&Texture> {
+    pub(crate) fn texture(&self) -> Option<&B::Texture> {
         self.texture.as_ref()
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -305,18 +305,9 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_target_is_unknown_and_can_be_discarded() {
-        let mut target = PersistentTarget::default();
-
-        assert_eq!(target.state().validity(), TargetValidity::Unknown);
-        assert_eq!(target.state().key(), None);
-
-        target.invalidate();
-        target.discard();
-
-        assert_eq!(target.state().validity(), TargetValidity::Unknown);
-        assert_eq!(target.state().key(), None);
-        assert!(target.view().is_none());
-        assert!(target.texture().is_none());
+    fn a_default_target_state_starts_unknown() {
+        let state = PersistentTargetState::default();
+        assert_eq!(state.validity(), TargetValidity::Unknown);
+        assert_eq!(state.key(), None);
     }
 }

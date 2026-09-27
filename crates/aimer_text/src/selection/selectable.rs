@@ -175,13 +175,14 @@ impl TextGeometry {
             };
             let left = snapshot.layout.origin_x;
             // `origin_y` is the first line's baseline, while `metrics.height`
-            // covers the line box from its top. Using the baseline as the top
-            // rejects the upper part of every ordinary paragraph, which makes
-            // a press on text miss selection and lets an enclosing scrollable
-            // steal the drag.
+            // covers the full line box. Subtract the ascent and half the line
+            // gap to recover that box's top and keep hit testing aligned with
+            // the painted selection band.
             let top = match snapshot.layout.writing_mode {
                 TextWritingMode::HorizontalTb => {
-                    snapshot.layout.origin_y - snapshot.layout.metrics.ascent
+                    snapshot.layout.origin_y
+                        - snapshot.layout.metrics.ascent
+                        - snapshot.layout.metrics.line_gap * 0.5
                 }
                 TextWritingMode::VerticalRl => snapshot.layout.origin_y,
             };

@@ -331,7 +331,7 @@ impl ParagraphLayout {
                 y: if self.writing_mode.is_vertical() {
                     self.origin_y
                 } else {
-                    line.baseline - line.ascent
+                    line_top(line)
                 },
                 width: if self.writing_mode.is_vertical() {
                     (line.ascent - line.descent).max(0.0)
@@ -451,7 +451,7 @@ impl ParagraphLayout {
         let mut nearest = 0;
         let mut nearest_distance = f32::INFINITY;
         for (index, line) in self.lines.iter().enumerate() {
-            let top = line.baseline - line.ascent;
+            let top = line_top(line);
             let bottom = top + line_height(line);
             if y >= top && y <= bottom {
                 return Some(index);
@@ -741,7 +741,7 @@ impl TextInteractionLayout {
                 y: if self.writing_mode.is_vertical() {
                     self.origin_y
                 } else {
-                    line.baseline - line.ascent
+                    line_top(line)
                 },
                 width: if self.writing_mode.is_vertical() {
                     (line.ascent - line.descent).max(0.0)
@@ -866,7 +866,7 @@ impl TextInteractionLayout {
         let mut nearest = 0;
         let mut nearest_distance = f32::INFINITY;
         for (index, line) in self.lines.iter().enumerate() {
-            let top = line.baseline - line.ascent;
+            let top = line_top(line);
             let bottom = top + line_height(line);
             if y >= top && y <= bottom {
                 return Some(index);
@@ -1200,6 +1200,15 @@ fn is_shaping_control_cluster(cluster: &str) -> bool {
             .all(|codepoint| matches!(codepoint, '\u{200b}' | '\u{200c}' | '\u{200d}'))
 }
 
+#[inline]
+fn starts_with_line_attached_ascii_punctuation(text: &str) -> bool {
+    text.chars()
+        .find(|codepoint| !codepoint.is_ascii_whitespace())
+        .is_some_and(|codepoint| {
+            matches!(codepoint, ',' | '.' | ':' | ';' | '!' | '?' | ')' | ']' | '}')
+        })
+}
+
 /// A contiguous run of text that shares the same BiDi level and script, and can
 /// be shaped as a unit.
 #[derive(Clone)]
@@ -1433,10 +1442,13 @@ where
 
         // Check whether a line break is allowed at the run boundary.
         let break_allowed = break_offsets.binary_search(&run_end).is_ok();
+        let keep_punctuation_with_previous = script.is_none()
+            && starts_with_line_attached_ascii_punctuation(run_text);
 
         if max_width > 0.0
             && line_width + run_width > max_width
             && (break_allowed || !run_text.chars().all(char::is_whitespace))
+            && !keep_punctuation_with_previous
         {
             // Try to break the run at grapheme-cluster boundaries to avoid
             // splitting across lines at awkward positions.  We walk clusters
@@ -1919,6 +1931,10 @@ fn line_height(line: &TextLine) -> f32 {
     (line.ascent - line.descent + line.line_gap).max(0.0)
 }
 
+fn line_top(line: &TextLine) -> f32 {
+    line.baseline - line.ascent - line.line_gap * 0.5
+}
+
 fn build_text_clusters(
     glyphs: &[PositionedShapedGlyph],
     lines: &[TextLine],
@@ -1967,7 +1983,7 @@ fn build_text_clusters(
                         end_x,
                         start_y: line.baseline,
                         end_y: line.baseline,
-                        y: line.baseline - line.ascent,
+                        y: line_top(line),
                         height: line_height(line),
                     });
                 }

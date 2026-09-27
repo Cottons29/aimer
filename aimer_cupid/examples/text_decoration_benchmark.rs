@@ -15,6 +15,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use aimer_cupid::AntiAlias;
+use aimer_cupid::backend::wgpu::WgpuBackend;
 use aimer_cupid::text_pipeline::{
     TextDecorationDraw, TextPipelineV2, TextPreparationProfile,
 };
@@ -89,19 +90,16 @@ fn average_profile(samples: &[TextPreparationProfile]) -> TextPreparationProfile
 }
 
 fn run_case(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    backend: &WgpuBackend,
     lines_per_fragment: usize,
 ) -> (Vec<Duration>, Vec<TextPreparationProfile>) {
     let mut pipeline = TextPipelineV2::new(
-        device,
+        backend,
         wgpu::TextureFormat::Rgba8Unorm,
-        None,
         AntiAlias::Analytic,
     );
     let _ = pipeline.prepare_profiled(
-        device,
-        queue,
+        backend,
         SURFACE_WIDTH,
         SURFACE_HEIGHT,
         false,
@@ -116,8 +114,7 @@ fn run_case(
         let frame_decorations = decorations(offset, lines_per_fragment);
         let start = Instant::now();
         let profile = pipeline.prepare_profiled(
-            device,
-            queue,
+            backend,
             SURFACE_WIDTH,
             SURFACE_HEIGHT,
             false,
@@ -152,9 +149,10 @@ fn main() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
+    let backend = WgpuBackend::new(device, queue);
 
-    let (mut one_durations, one_profiles) = run_case(&device, &queue, 1);
-    let (mut three_durations, three_profiles) = run_case(&device, &queue, 3);
+    let (mut one_durations, one_profiles) = run_case(&backend, 1);
+    let (mut three_durations, three_profiles) = run_case(&backend, 3);
     let one_count = DECORATED_LINES;
     let three_count = DECORATED_LINES * 3;
 

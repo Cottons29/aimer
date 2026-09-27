@@ -161,6 +161,44 @@ pub struct GpuContext<'w> {
     viewport_size: PhysicalSize<u32>,
 }
 
+/// Headless / offscreen GPU pair used when a windowed [`GpuContext`] is not
+/// needed. Available with the `wgpu` feature so tests and non-surface
+/// consumers can build a [`crate::backend::wgpu::WgpuBackend`] without going
+/// through winit.
+pub struct GpuDevice {
+    pub device: Device,
+    pub queue: Queue,
+}
+
+impl GpuDevice {
+    /// Wraps an existing device/queue pair.
+    #[inline]
+    pub fn new(device: Device, queue: Queue) -> Self {
+        Self { device, queue }
+    }
+
+    /// Builds a [`crate::backend::wgpu::WgpuBackend`] over this device/queue.
+    ///
+    /// `Device` and `Queue` are cheap to clone (they are reference-counted
+    /// handles), so this does not transfer ownership away from `self`.
+    #[inline]
+    pub fn backend(&self) -> crate::backend::wgpu::WgpuBackend {
+        crate::backend::wgpu::WgpuBackend::new(self.device.clone(), self.queue.clone())
+    }
+
+    /// Borrows the underlying wgpu device.
+    #[inline]
+    pub fn device(&self) -> &Device {
+        &self.device
+    }
+
+    /// Borrows the underlying wgpu queue.
+    #[inline]
+    pub fn queue(&self) -> &Queue {
+        &self.queue
+    }
+}
+
 impl<'w> GpuContext<'w> {
     /// Synchronous initializer for non-wasm targets.
     #[cfg(not(target_arch = "wasm32"))]
@@ -317,6 +355,24 @@ impl<'w> GpuContext<'w> {
         // wgpu 30: presentation moved from `SurfaceTexture::present()` to
         // `Queue::present()`.
         self.queue.present(frame);
+    }
+
+    /// Builds a [`crate::backend::wgpu::WgpuBackend`] over this context's
+    /// device and queue.
+    ///
+    /// Use with [`crate::renderer::Renderer::new`]. `Device` and `Queue` are
+    /// reference-counted, so cloning them into the backend is cheap and does
+    /// not invalidate the context.
+    #[inline]
+    pub fn backend(&self) -> crate::backend::wgpu::WgpuBackend {
+        crate::backend::wgpu::WgpuBackend::new(self.device.clone(), self.queue.clone())
+    }
+
+    /// Returns a headless [`GpuDevice`] view of this context's device/queue
+    /// pair (surface is not included).
+    #[inline]
+    pub fn device_pair(&self) -> GpuDevice {
+        GpuDevice::new(self.device.clone(), self.queue.clone())
     }
 }
 

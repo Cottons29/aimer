@@ -1,5 +1,6 @@
 struct SvgVertex {
     @location(0) position: vec2<f32>,
+    @location(7) coverage: f32,
 };
 
 struct SvgInstance {
@@ -18,6 +19,7 @@ struct VertexOutput {
     @location(2) clip_rect: vec4<f32>,
     @location(3) clip_border_radius: vec4<f32>,
     @location(4) surface_is_srgb: f32,
+    @location(5) coverage: f32,
 };
 
 @vertex
@@ -38,6 +40,7 @@ fn vs_main(vertex: SvgVertex, instance: SvgInstance) -> VertexOutput {
     output.clip_rect = instance.clip_rect;
     output.clip_border_radius = instance.clip_border_radius;
     output.surface_is_srgb = instance.viewport.z;
+    output.coverage = vertex.coverage;
     return output;
 }
 
@@ -75,7 +78,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             color.a,
         );
     }
-    var result = vec4<f32>(color.rgb * color.a, color.a) * clip;
+    var result = vec4<f32>(color.rgb * color.a, color.a) * clip * input.coverage;
     if input.surface_is_srgb < 0.5 && result.a > 0.000001 {
         let unpremultiplied = result.rgb / result.a;
         result = vec4<f32>(

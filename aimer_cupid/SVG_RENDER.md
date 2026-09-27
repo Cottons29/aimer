@@ -6,15 +6,15 @@ This document is the implementation specification and current status for Aimer's
 
 ### Interactive core
 
-- [x] Parse SVG with `usvg` into Aimer-owned retained scene data.
+- [x] Parse supported SVG XML and path data in Cupid into retained scene data.
 - [x] Preserve source IDs, classes, element names, source groups, parent links, and paint order.
 - [x] Normalize paths, basic shapes, viewport dimensions, finite `viewBox`/`preserveAspectRatio` fit policy, transforms, opacity, solid fills, and solid strokes.
 - [x] Select nodes with `#id`, `.class`, and element-name selectors.
 - [x] Construct standalone paths from SVG path data or a selected SVG node.
-- [x] Tessellate non-zero/even-odd fills and cap/join/miter-aware strokes with `lyon`.
+- [x] Tessellate non-zero/even-odd fills and stroke meshes with Cupid-owned geometry code.
 - [x] Cache geometry independently from transform, opacity, and color values.
 - [x] Render SVG through a first-class Cupid command and GPU pipeline.
-- [x] Anti-alias tessellated fill and stroke edges with 4x multisampling.
+- [x] Anti-alias SVG fill and stroke edges with a one-pixel coverage fringe in analytic mode, without a full-window multisample target.
 - [x] Preserve SVG/rectangle/text/image paint order and current canvas transform, clip, bounds, and alpha.
 - [x] Apply runtime fill, stroke, opacity, and transform overrides without retessellation.
 - [x] Hit-test fills and solid strokes under normalized nested transforms in reverse paint order.
@@ -29,7 +29,7 @@ This document is the implementation specification and current status for Aimer's
 
 ```mermaid
 flowchart TD
-    Source[SVG bytes or path data] --> Parser[usvg and roxmltree]
+    Source[SVG bytes or path data] --> Parser[Cupid SVG parser]
     Parser --> Document[SvgDocument and SvgPath]
     Document --> Scene[Cupid SvgScene]
     Scene --> Widget[Svg and RawSvg]
@@ -37,13 +37,13 @@ flowchart TD
     Canvas --> Command[DrawCommand Svg]
     Command --> Renderer[ordered resolution]
     Renderer --> Pipeline[SvgPipeline]
-    Pipeline --> Cache[lyon mesh caches]
+    Pipeline --> Cache[Cupid mesh caches]
     Cache --> GPU[wgpu buffers and shader]
     Scene --> HitTest[CPU hit testing]
     HitTest --> Callback[path callback]
 ```
 
-`aimer_svg` owns parsing, public selectors and styles, source loading, widgets, and interaction. `aimer_cupid::svg` owns parser-independent scene and geometry types. This keeps Cupid independent from `usvg` and prevents a dependency cycle through the canvas/widget layers.
+`aimer_cupid::svg` owns parsing, retained scene data, path tessellation, and geometry caching. `aimer_svg` provides the document facade, selectors, source loading, widgets, and interaction. The SVG stack does not depend on `usvg`, `roxmltree`, or `lyon`.
 
 ## Public API
 
@@ -90,8 +90,8 @@ Native file/network loading uses the platform filesystem and `reqwest`. Browser 
 ## Scene and rendering behavior
 
 - Paths retain normalized absolute move, line, quadratic, cubic, and close commands.
-- Basic SVG shapes are normalized to paths by `usvg`.
-- Source groups remain selectable even when `usvg` flattens a visually redundant group.
+- `rect`, `circle`, `ellipse`, `line`, `polyline`, and `polygon` are normalized to retained path commands by Cupid.
+- Source groups remain selectable and retain their parent links and transforms.
 - Renderable paths carry the normalized absolute transform, cumulative group opacity, solid fill/stroke, fill rule, and paint order. The document sidecar also retains complete linear/radial gradient paints and dash parameters without pretending that deferred paints are solid.
 - A finite root `viewBox` maps to widget destination bounds through the parsed `preserveAspectRatio` policy (`meet`, `slice`, or `none`). The same fit compensation is applied to hit testing, including letterboxed and cropped regions.
 - Canvas transform and rectangular/rounded widget clip are captured at command resolution.
@@ -106,6 +106,7 @@ Geometry cache keys contain:
 - normalized path command bits;
 - fill rule, or stroke width/cap/join/miter limit;
 - one of eight bounded physical-scale tolerance buckets.
+- whether analytic coverage fringe geometry is enabled.
 
 Dashed paths are flattened into independent visible subpaths by the bounded
 `tessellate_dashed_stroke` helper. They are not inserted into the existing solid
@@ -153,9 +154,10 @@ Hit testing maps pointer coordinates from widget bounds into scene coordinates, 
 
 ## Known restrictions
 
-- The current GPU path submits only solid fills and solid strokes. Parsed gradient paints and dash arrays are retained, and their diagnostic entries identify the deferred renderer feature. `tessellate_dashed_stroke` provides a bounded CPU geometry seam for a future dash-aware GPU instance format.
+- The current GPU path submits only solid fills and solid strokes. Parsed gradient paints and dash arrays are retained, and their diagnostic entries identify the deferred renderer feature. `tessellate_dashed_stroke` provides bounded CPU geometry for a future dash-aware GPU instance format.
+- Analytic SVG edge coverage is enabled when Cupid uses its default single-sample mode. Explicit MSAA modes use hardware coverage and omit the analytic fringe.
 - Source groups are retained for selectors and hierarchy. Selector style overrides propagate through retained group ancestors; SVG-authored clip paths, masks, patterns, isolation, and blend modes remain deferred.
-- Root `viewBox` and `preserveAspectRatio` fit/alignment are parsed and applied by the widget and hit-test seam. Nested SVG fit behavior continues to follow `usvg`'s normalized transforms.
+- Root `viewBox` and `preserveAspectRatio` fit/alignment are parsed and applied by the widget and hit-test seam. Nested SVG viewports are rejected.
 - CPU curve hit testing uses bounded subdivision and can differ slightly from GPU tessellation at extreme zoom.
 - Tessellation errors skip the affected draw rather than failing the complete frame.
 - The loader exposes state but does not automatically construct loading/error fallback widgets.
@@ -188,6 +190,6 @@ Scripts, uncontrolled external resources, and animated image formats remain outs
 
 ## Validation
 
-The implementation has focused tests for parser errors and limits, selectors and source-group retention, normalized transforms/styles, finite view-box fit policies, path construction, fill/stroke and dashed tessellation, gradient paint retention, group-style propagation, fill rules, cache reuse and eviction, scale buckets, mixed command order, renderer state capture, WGSL validation, intrinsic sizing, style isolation, transformed reverse-order hit testing, fit-aware hit testing, stroke hits, pointer lifecycle, and loading-state transitions.
+The existing suite covers parser errors and limits, selectors and source-group retention, normalized transforms/styles, finite view-box fit policies, path construction, fill/stroke and dashed tessellation, gradient paint retention, group-style propagation, fill rules, cache reuse and eviction, scale buckets, mixed command order, renderer state capture, WGSL validation, intrinsic sizing, style isolation, transformed reverse-order hit testing, fit-aware hit testing, stroke hits, pointer lifecycle, and loading-state transitions.
 
 Required release checks are native and `wasm32-unknown-unknown` compilation, focused/downstream tests, `cargo fmt --all`, strict Clippy for affected crates, and `git diff --check`.

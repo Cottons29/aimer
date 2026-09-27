@@ -1034,6 +1034,13 @@ impl ImageSource {
             .map_err(|e| format!("Context cast failed: {:?}", e))?;
         ctx.draw_image_with_image_bitmap(&bitmap, 0.0, 0.0)
             .map_err(|e| format!("drawImage failed: {:?}", e))?;
+        #[allow(unexpected_cfgs)]
+        #[cfg(web_sys_unstable_apis)]
+        let image_data = ctx
+            .get_image_data(0, 0, upload_width as i32, upload_height as i32)
+            .map_err(|e| format!("getImageData failed: {:?}", e))?;
+        #[allow(unexpected_cfgs)]
+        #[cfg(not(web_sys_unstable_apis))]
         let image_data = ctx
             .get_image_data(0.0, 0.0, upload_width as f64, upload_height as f64)
             .map_err(|e| format!("getImageData failed: {:?}", e))?;

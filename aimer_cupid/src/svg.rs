@@ -4,7 +4,12 @@ use aimer_color::prelude::Color;
 
 mod fit;
 mod paint;
+mod parser;
 mod tessellation;
+
+pub use parser::{
+    SvgParsedDocument, SvgParsedPaints, SvgParseError, parse_svg, parse_svg_document,
+};
 
 pub use tessellation::{
     tessellate_dashed_stroke, SvgGeometryCache, SvgMesh, SvgMeshStyle, SvgTessellationError,

@@ -1,6 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod render_ctx {
     use aimer_cupid::AntiAlias;
+    use aimer_cupid::backend::wgpu::WgpuBackend;
     use aimer_cupid::canvas::CupidCanvas;
     use aimer_cupid::compositor::CompositorScene;
     use aimer_cupid::damage_region::DamageSet;
@@ -86,7 +87,14 @@ pub mod render_ctx {
     /// `Send` for the same reason.
     struct GpuPresenter {
         gpu: GpuContext<'static>,
-        renderer: Renderer,
+        backend: WgpuBackend,
+        renderer: Renderer<WgpuBackend>,
+    }
+
+    impl Drop for GpuPresenter {
+        fn drop(&mut self) {
+            self.renderer.save_pipeline_cache(&self.backend);
+        }
     }
 
     impl GpuPresenter {
@@ -137,8 +145,7 @@ pub mod render_ctx {
             {
                 if let Some(packet) = packet {
                     self.renderer.render_packet_with_source_texture(
-                        &self.gpu.device,
-                        &self.gpu.queue,
+                        &self.backend,
                         &view,
                         &surface.texture,
                         packet,
@@ -146,10 +153,9 @@ pub mod render_ctx {
                     );
                 } else {
                     self.renderer.render_with_source_texture(
-                        &self.gpu.device,
-                        &self.gpu.queue,
+                        &self.backend,
                         &view,
-                        &surface.texture,
+                        Some(&surface.texture),
                         frame.width,
                         frame.height,
                         self.gpu.is_srgb,
@@ -158,16 +164,14 @@ pub mod render_ctx {
                 }
             } else if let Some(packet) = packet {
                 self.renderer.render_packet(
-                    &self.gpu.device,
-                    &self.gpu.queue,
+                    &self.backend,
                     &view,
                     packet,
                     self.gpu.is_srgb,
                 );
             } else {
                 self.renderer.render(
-                    &self.gpu.device,
-                    &self.gpu.queue,
+                    &self.backend,
                     &view,
                     frame.width,
                     frame.height,
@@ -301,9 +305,14 @@ pub mod render_ctx {
             #[cfg(target_os = "macos")]
             crate::ffi_utils::macos_surface::enable_transactional_surface_presentation(window);
             let canvas = CupidCanvas::new();
-            let renderer = Renderer::with_antialiasing(&gpu.device, gpu.format, self.antialiasing);
+            let backend = gpu.backend();
+            let renderer = Renderer::with_antialiasing(&backend, gpu.format, self.antialiasing);
 
-            let presenter = GpuPresenter { gpu, renderer };
+            let presenter = GpuPresenter {
+                gpu,
+                backend,
+                renderer,
+            };
             self.surface_size = SurfaceSize::new(
                 presenter.surface_size(),
                 presenter.gpu.max_texture_dimension(),

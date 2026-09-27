@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aimer_cupid::AntiAlias;
+use aimer_cupid::backend::wgpu::WgpuBackend;
 use aimer_cupid::font::{FontFamily, FontStyle};
 use aimer_cupid::text_pipeline::{TextDrawRequest, TextOverflowMode, TextPipelineV2};
 use aimer_cupid::text_layout::TextHorizontalAlign;
@@ -97,10 +98,10 @@ fn main() {
         eprintln!("skipping: no GPU adapter available");
         return;
     };
+    let backend = WgpuBackend::new(device, queue);
     let mut pipeline = TextPipelineV2::new(
-        &device,
+        &backend,
         wgpu::TextureFormat::Rgba8Unorm,
-        None,
         AntiAlias::Analytic,
     );
 
@@ -112,8 +113,7 @@ fn main() {
     loop {
         let requests = document(line_count, 0.0);
         pipeline.prepare(
-            &device,
-            &queue,
+            &backend,
             SURFACE_WIDTH,
             SURFACE_HEIGHT,
             false,
@@ -135,8 +135,7 @@ fn main() {
 
         let start = Instant::now();
         pipeline.prepare(
-            &device,
-            &queue,
+            &backend,
             SURFACE_WIDTH,
             SURFACE_HEIGHT,
             false,

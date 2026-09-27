@@ -340,7 +340,10 @@ impl<'a> CffFont<'a> {
                 6 => horizontal_line_to(state, self.tag)?,
                 7 => vertical_line_to(state, self.tag)?,
                 8 => curve_to(state, self.tag)?,
-                10 => self.call_subroutine(false, glyph_id, state, active, depth)?,
+                10 => match self.call_subroutine(false, glyph_id, state, active, depth)? {
+                    Stop::Return => {}
+                    Stop::EndChar => return Ok(Stop::EndChar),
+                },
                 11 => {
                     if !is_subroutine {
                         return Err(malformed(self.tag));
@@ -396,7 +399,10 @@ impl<'a> CffFont<'a> {
                 26 => vv_curve_to(state, self.tag)?,
                 27 => hh_curve_to(state, self.tag)?,
                 28 => unreachable!("shortint is decoded as a number"),
-                29 => self.call_subroutine(true, glyph_id, state, active, depth)?,
+                29 => match self.call_subroutine(true, glyph_id, state, active, depth)? {
+                    Stop::Return => {}
+                    Stop::EndChar => return Ok(Stop::EndChar),
+                },
                 30 => vh_curve_to(state, self.tag)?,
                 31 => hv_curve_to(state, self.tag)?,
                 12 => {
@@ -440,6 +446,7 @@ impl<'a> CffFont<'a> {
         Err(malformed(self.tag))
     }
 
+    // In Type 2 charstrings, `endchar` in a subroutine ends the full glyph program.
     fn call_subroutine(
         &self,
         global: bool,
@@ -447,7 +454,7 @@ impl<'a> CffFont<'a> {
         state: &mut CharStringState,
         active: &mut Vec<SubroutineRef>,
         depth: usize,
-    ) -> Result<(), SfntError> {
+    ) -> Result<Stop, SfntError> {
         let operand = state.stack.pop().ok_or_else(|| malformed(self.tag))?;
         let bias = if global {
             subroutine_bias(self.global_subrs.len())
@@ -473,10 +480,7 @@ impl<'a> CffFont<'a> {
         active.push(reference);
         let result = self.execute(program, true, glyph_id, state, active, depth + 1);
         active.pop();
-        match result? {
-            Stop::Return => Ok(()),
-            Stop::EndChar => Err(malformed(self.tag)),
-        }
+        result
     }
 }
 
