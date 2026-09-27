@@ -331,7 +331,7 @@ impl ParagraphLayout {
                 y: if self.writing_mode.is_vertical() {
                     self.origin_y
                 } else {
-                    line.baseline - line.ascent
+                    line_top(line)
                 },
                 width: if self.writing_mode.is_vertical() {
                     (line.ascent - line.descent).max(0.0)
@@ -451,7 +451,7 @@ impl ParagraphLayout {
         let mut nearest = 0;
         let mut nearest_distance = f32::INFINITY;
         for (index, line) in self.lines.iter().enumerate() {
-            let top = line.baseline - line.ascent;
+            let top = line_top(line);
             let bottom = top + line_height(line);
             if y >= top && y <= bottom {
                 return Some(index);
@@ -741,7 +741,7 @@ impl TextInteractionLayout {
                 y: if self.writing_mode.is_vertical() {
                     self.origin_y
                 } else {
-                    line.baseline - line.ascent
+                    line_top(line)
                 },
                 width: if self.writing_mode.is_vertical() {
                     (line.ascent - line.descent).max(0.0)
@@ -866,7 +866,7 @@ impl TextInteractionLayout {
         let mut nearest = 0;
         let mut nearest_distance = f32::INFINITY;
         for (index, line) in self.lines.iter().enumerate() {
-            let top = line.baseline - line.ascent;
+            let top = line_top(line);
             let bottom = top + line_height(line);
             if y >= top && y <= bottom {
                 return Some(index);
@@ -1931,6 +1931,10 @@ fn line_height(line: &TextLine) -> f32 {
     (line.ascent - line.descent + line.line_gap).max(0.0)
 }
 
+fn line_top(line: &TextLine) -> f32 {
+    line.baseline - line.ascent - line.line_gap * 0.5
+}
+
 fn build_text_clusters(
     glyphs: &[PositionedShapedGlyph],
     lines: &[TextLine],
@@ -1979,7 +1983,7 @@ fn build_text_clusters(
                         end_x,
                         start_y: line.baseline,
                         end_y: line.baseline,
-                        y: line.baseline - line.ascent,
+                        y: line_top(line),
                         height: line_height(line),
                     });
                 }

@@ -803,7 +803,7 @@ impl CupidCanvas {
         let layout = Rc::new(crate::text_layout::layout_shaped_text_with_interaction(
             &shaped,
             0.0,
-            shaped.ascent,
+            shaped.ascent + shaped.line_gap * 0.5,
             max_width,
         ));
         if is_unwrapped {

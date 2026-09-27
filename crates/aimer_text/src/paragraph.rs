@@ -273,6 +273,10 @@ pub(crate) struct Paragraph {
     paint_cache: RefCell<ParagraphPaintCache>,
 }
 
+fn centered_line_baseline(top: f32, ascent: f32, descent: f32, height: f32) -> f32 {
+    top + ascent + (height - ascent - descent).max(0.0) * 0.5
+}
+
 impl Paragraph {
     /// Creates a paragraph over already resolved spans.
     #[inline]
@@ -464,6 +468,14 @@ impl Paragraph {
             .iter()
             .map(|span| span.text.as_ref())
             .collect::<String>();
+        let baseline_for_line = |line: usize| {
+            centered_line_baseline(
+                line_top[line],
+                line_ascent[line],
+                line_descent[line],
+                line_heights[line],
+            )
+        };
         let mut clusters = Vec::with_capacity(graphemes.len() + line_breaks.len());
         let mut grapheme_cursor = 0;
         for (fragment_index, fragment) in fragments.iter().enumerate() {
@@ -523,8 +535,8 @@ impl Paragraph {
                             level,
                             start_x,
                             end_x,
-                            start_y: line_top[fragment.line] + line_ascent[fragment.line],
-                            end_y: line_top[fragment.line] + line_ascent[fragment.line],
+                            start_y: baseline_for_line(fragment.line),
+                            end_y: baseline_for_line(fragment.line),
                             y: line_top[fragment.line],
                             height: line_heights[fragment.line],
                         },
@@ -552,8 +564,8 @@ impl Paragraph {
                             level: cluster.level,
                             start_x: fragment.x + cluster.start_x * fragment_scale,
                             end_x: fragment.x + cluster.end_x * fragment_scale,
-                            start_y: line_top[fragment.line] + line_ascent[fragment.line],
-                            end_y: line_top[fragment.line] + line_ascent[fragment.line],
+                            start_y: baseline_for_line(fragment.line),
+                            end_y: baseline_for_line(fragment.line),
                             y: line_top[fragment.line],
                             height: line_heights[fragment.line],
                         },
@@ -572,8 +584,8 @@ impl Paragraph {
                             level: unicode_bidi::Level::ltr(),
                             start_x: grapheme.x,
                             end_x: grapheme.x + grapheme.width,
-                            start_y: line_top[fragment.line] + line_ascent[fragment.line],
-                            end_y: line_top[fragment.line] + line_ascent[fragment.line],
+                            start_y: baseline_for_line(fragment.line),
+                            end_y: baseline_for_line(fragment.line),
                             y: line_top[fragment.line],
                             height: line_heights[fragment.line],
                         },
@@ -598,8 +610,8 @@ impl Paragraph {
                     level: unicode_bidi::Level::ltr(),
                     start_x: x,
                     end_x: x,
-                    start_y: line_top[line_break.line] + line_ascent[line_break.line],
-                    end_y: line_top[line_break.line] + line_ascent[line_break.line],
+                    start_y: baseline_for_line(line_break.line),
+                    end_y: baseline_for_line(line_break.line),
                     y: line_break.y,
                     height: line_break.height,
                 },
@@ -645,7 +657,12 @@ impl Paragraph {
                 TextLine {
                     text_range,
                     glyph_range: 0..0,
-                    baseline: line_top.get(line).copied().unwrap_or(0.0) + ascent_for_line,
+                    baseline: centered_line_baseline(
+                        line_top.get(line).copied().unwrap_or(0.0),
+                        ascent_for_line,
+                        descent_for_line,
+                        line_heights.get(line).copied().unwrap_or(0.0),
+                    ),
                     width: line_width.get(line).copied().unwrap_or(0.0),
                     ascent: ascent_for_line,
                     descent: -descent_for_line,
@@ -795,7 +812,12 @@ impl Paragraph {
                     rendered_source_ranges: fragment.rendered_source_ranges,
                     line: fragment.line,
                     x: fragment.x + line_offset,
-                    baseline: line_top[fragment.line] + line_ascent[fragment.line],
+                    baseline: centered_line_baseline(
+                        line_top[fragment.line],
+                        line_ascent[fragment.line],
+                        line_descent[fragment.line],
+                        line_heights[fragment.line],
+                    ),
                     width: fragment.width,
                     height: line_ascent[fragment.line] + line_descent[fragment.line],
                     ascent: line_ascent[fragment.line],

@@ -238,8 +238,8 @@ pub(crate) fn selection_runs(
         }
         let fragment = &layout.fragments[fragment_index];
         if !vertical_span_is_visible(
-            fragment.baseline - fragment.ascent,
-            fragment.height,
+            line_box_top(layout, fragment),
+            layout.line_heights[fragment.line],
             visible_rect,
         ) {
             continue;
@@ -299,11 +299,16 @@ fn flush_fragment_run(
         PreparedSelection {
             line: fragment.line,
             x: start,
-            y: fragment.baseline - fragment.ascent,
+            y: line_box_top(layout, fragment),
             width: end - start,
             height: layout.line_heights[fragment.line],
         },
     );
+}
+
+fn line_box_top(layout: &PreparedLayout, fragment: &PreparedFragment) -> f32 {
+    let leading = (layout.line_heights[fragment.line] - fragment.height).max(0.0);
+    fragment.baseline - fragment.ascent - leading * 0.5
 }
 
 #[cfg(test)]

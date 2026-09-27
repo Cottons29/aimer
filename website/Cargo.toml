@@ -4,11 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["native", "desktop-bin"]
-app = ["aimer/markdown", "aimer/svg", "aimer/provider"]
-native = ["app", "aimer/native"]
-web = ["app", "aimer/web"]
-wgpu = ["app", "aimer/wgpu"]
 desktop-bin = []
 
 
@@ -19,10 +14,9 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [[bin]]
 name = "website"
 path = "src/main.rs"
-required-features = ["desktop-bin"]
 
 [dependencies]
-aimer = { path = "..", default-features = false }
+aimer = { path = "..", features = ["provider", "markdown", "markdown-arborium", "svg"]}
 webbrowser = "1.2.1"
 serde.workspace = true
 serde_json.workspace = true
@@ -33,4 +27,3 @@ muda = "0.19.3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
-tempfile.workspace = true
