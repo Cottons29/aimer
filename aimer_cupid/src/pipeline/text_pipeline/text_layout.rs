@@ -1932,7 +1932,7 @@ fn line_height(line: &TextLine) -> f32 {
 }
 
 fn line_top(line: &TextLine) -> f32 {
-    line.baseline - line.ascent - line.line_gap * 0.5
+    line.baseline - line.ascent
 }
 
 fn build_text_clusters(

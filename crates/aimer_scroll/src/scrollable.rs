@@ -34,8 +34,6 @@ use controller::ScrollState;
 pub use controller::{DragMode, ScrollController};
 pub use overscroll_source::{OverscrollSource, OverscrollSources};
 pub use scroll_behavior::{ScrollAxis, ScrollBehavior};
-use velocity_history::VelocityHistory;
-
 use crate::scrollable::raw_scroll::RawScrollableContainer;
 pub use crate::scrollable::scroll_bar::*;
 use crate::scrollable::scroll_bar::{reserved_viewport, track_width};
@@ -664,7 +662,7 @@ impl<W: Widget + 'static> ScrollableState<W> {
             axis: self.axis,
             scroll_bar_placement: self.scroll_bar_placement,
             cursor_pos: Cell::new(None),
-            velocity_history: RefCell::new(VelocityHistory::new()),
+            velocity_history: RefCell::new(None),
             cached_viewport: Cell::new((0.0, 0.0)),
             cached_v_track_width: Cell::new(0.0),
             cached_h_track_width: Cell::new(0.0),
@@ -856,7 +854,6 @@ mod tests {
     use aimer_widget::base::WindowHandle;
     use aimer_widget::{AnyElement, ErrorWidget, Key, State, StatefulWidget, Widget};
     use crate::controller::ScrollState;
-    use crate::ScrollableState;
     use super::{
         scroll_storage, BuildContext, OverscrollSource, OverscrollSources, ScrollAxis,
         ScrollBarPlacement, Scrollable, resolved_overscroll_sources, resolved_parent_extent,

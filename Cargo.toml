@@ -108,6 +108,7 @@ force-scalar = ["aimer_flex/force-scalar"]
 # Present frames from a dedicated raster thread. Off by default — see the
 # feature notes in `aimer_quiver/Cargo.toml`.
 raster-thread = ["aimer_quiver/raster-thread"]
+
 # Collect the per-frame build / encode / present breakdown.
 frame-stats = ["aimer_quiver/frame-stats"]
 # Present the native Quiver window through Cupid's direct Metal backend.
@@ -140,6 +141,10 @@ wasm-hot-reload = ["aimer_quiver/wasm-hot-reload", "aimer_macro/hot-reload"]
 # Highlight fenced code blocks with the tree-sitter backed `arborium` instead
 # of the lightweight `synoptic` default. Better highlighting, heavier build.
 markdown-arborium = ["aimer_markdown/arborium"]
+
+[[test]]
+name = "glass_backdrop"
+required-features = ["wgpu"]
 
 [workspace]
 resolver = "3"
@@ -202,7 +207,7 @@ members = [
 ]
 
 [workspace.dependencies]
-aimer_cupid = { path = "aimer_cupid", default-features = false, features = ["apple-core-text"] }
+aimer_cupid = { path = "aimer_cupid", default-features = false, features = ["apple-core-text", "native"] }
 aimer_rubick = { path = "aimer_rubick" }
 aimer_venus = { path = "aimer_venus" }
 aimer_quiver = { path = "aimer_quiver", default-features = false }

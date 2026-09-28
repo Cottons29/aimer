@@ -19,6 +19,7 @@ hashbrown.workspace = true
 
 
 [dev-dependencies]
+aimer_cupid = { workspace = true, features = ["native"] }
 aimer_canvas.workspace = true
 aimer_container.workspace = true
 aimer_flex.workspace = true
