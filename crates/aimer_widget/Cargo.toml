@@ -6,6 +6,7 @@ resolver = "3"
 
 [features]
 portable-guest = []
+event-tree-exp = []
 # Keep the allocation-free draw traversal counter available to release
 # acceptance probes without paying for it in ordinary release applications.
 frame-stats = []

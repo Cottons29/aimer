@@ -1218,8 +1218,9 @@ mod tests {
         let scroll_content = frame_content_stats();
         let scroll_breakdown = frame_breakdown();
 
-        // Same scroll, but the cursor sits over the right pane: no hover
-        // churn inside the scrolling content.
+        // This control moves the cursor back to the right pane before the
+        // frame drains each queued wheel event. It measures hover crossings
+        // plus a wheel miss, not scrolling the sidebar.
         app.send_window_event(WindowEvent::CursorMoved {
             device_id: device,
             position: PhysicalPosition::new(900.0, 400.0),
@@ -1227,7 +1228,7 @@ mod tests {
         app.pump_frames(2);
         reset_frame_breakdown();
         reset_frame_content_stats();
-        let mut away_times = Vec::new();
+        let mut miss_times = Vec::new();
         for _ in 0..60 {
             app.send_window_event(WindowEvent::CursorMoved {
                 device_id: device,
@@ -1244,20 +1245,21 @@ mod tests {
             });
             let start = Instant::now();
             app.render_frame();
-            away_times.push(start.elapsed().as_secs_f64() * 1e6);
+            miss_times.push(start.elapsed().as_secs_f64() * 1e6);
         }
-        away_times.sort_by(f64::total_cmp);
-        let away_content = frame_content_stats();
+        miss_times.sort_by(f64::total_cmp);
+        let miss_content = frame_content_stats();
 
         eprintln!("=== idle frame: {idle_us:.0} us");
         eprintln!(
-            "=== idle per frame: nodes={:.0} cmds={:.0} retained={:.0} text_cmds={:.0} text_miss={:.1} layout_calls={:.0} paint_calls={:.0} rebuild_visits={:.0} rebuilds(S={:.1},L={:.1})",
+            "=== idle per frame: nodes={:.0} cmds={:.0} retained={:.0} text_cmds={:.0} text_miss={:.1} layout_calls={:.0} hit_test_visits={:.0} paint_calls={:.0} rebuild_visits={:.0} rebuilds(S={:.1},L={:.1})",
             idle_content.average_drawn_nodes(),
             idle_content.average_draw_commands(),
             idle_content.average_retained_layers(),
             idle_content.average_text_commands(),
             idle_content.average_text_cache_misses(),
             idle_content.layout_calls as f64 / idle_content.frames.max(1) as f64,
+            idle_content.hit_test_visits as f64 / idle_content.frames.max(1) as f64,
             idle_content.paint_calls as f64 / idle_content.frames.max(1) as f64,
             idle_content.rebuild_visits as f64 / idle_content.frames.max(1) as f64,
             idle_content.stateful_builds as f64 / idle_content.frames.max(1) as f64,
@@ -1276,34 +1278,36 @@ mod tests {
             scroll_breakdown.present.average().as_secs_f64() * 1e6,
         );
         eprintln!(
-            "=== scroll per frame: nodes={:.0} cmds={:.0} retained={:.0} text_cmds={:.0} text_miss={:.1} layout_calls={:.0} paint_calls={:.0} rebuild_visits={:.0} rebuilds(S={:.1},L={:.1})",
+            "=== scroll per frame: nodes={:.0} cmds={:.0} retained={:.0} text_cmds={:.0} text_miss={:.1} layout_calls={:.0} hit_test_visits={:.0} paint_calls={:.0} rebuild_visits={:.0} rebuilds(S={:.1},L={:.1})",
             scroll_content.average_drawn_nodes(),
             scroll_content.average_draw_commands(),
             scroll_content.average_retained_layers(),
             scroll_content.average_text_commands(),
             scroll_content.average_text_cache_misses(),
             scroll_content.layout_calls as f64 / scroll_content.frames.max(1) as f64,
+            scroll_content.hit_test_visits as f64 / scroll_content.frames.max(1) as f64,
             scroll_content.paint_calls as f64 / scroll_content.frames.max(1) as f64,
             scroll_content.rebuild_visits as f64 / scroll_content.frames.max(1) as f64,
             scroll_content.stateful_builds as f64 / scroll_content.frames.max(1) as f64,
             scroll_content.stateless_builds as f64 / scroll_content.frames.max(1) as f64,
         );
         eprintln!(
-            "=== scroll (cursor away) frame: p50={:.0} us  p95={:.0} us",
-            away_times[away_times.len() / 2],
-            away_times[(away_times.len() as f64 * 0.95) as usize - 1],
+            "=== wheel miss after cursor crossings: p50={:.0} us  p95={:.0} us",
+            miss_times[miss_times.len() / 2],
+            miss_times[(miss_times.len() as f64 * 0.95) as usize - 1],
         );
         eprintln!(
-            "=== scroll (cursor away) per frame: nodes={:.0} cmds={:.0} retained={:.0} text_cmds={:.0} text_miss={:.1} paint_calls={:.0} rebuild_visits={:.0} rebuilds(S={:.1},L={:.1})",
-            away_content.average_drawn_nodes(),
-            away_content.average_draw_commands(),
-            away_content.average_retained_layers(),
-            away_content.average_text_commands(),
-            away_content.average_text_cache_misses(),
-            away_content.paint_calls as f64 / away_content.frames.max(1) as f64,
-            away_content.rebuild_visits as f64 / away_content.frames.max(1) as f64,
-            away_content.stateful_builds as f64 / away_content.frames.max(1) as f64,
-            away_content.stateless_builds as f64 / away_content.frames.max(1) as f64,
+            "=== wheel miss per frame: nodes={:.0} cmds={:.0} retained={:.0} text_cmds={:.0} text_miss={:.1} hit_test_visits={:.0} paint_calls={:.0} rebuild_visits={:.0} rebuilds(S={:.1},L={:.1})",
+            miss_content.average_drawn_nodes(),
+            miss_content.average_draw_commands(),
+            miss_content.average_retained_layers(),
+            miss_content.average_text_commands(),
+            miss_content.average_text_cache_misses(),
+            miss_content.hit_test_visits as f64 / miss_content.frames.max(1) as f64,
+            miss_content.paint_calls as f64 / miss_content.frames.max(1) as f64,
+            miss_content.rebuild_visits as f64 / miss_content.frames.max(1) as f64,
+            miss_content.stateful_builds as f64 / miss_content.frames.max(1) as f64,
+            miss_content.stateless_builds as f64 / miss_content.frames.max(1) as f64,
         );
     }
 }

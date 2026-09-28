@@ -17,16 +17,29 @@ mod lazy_tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
+    #[cfg(feature = "event-tree-exp")]
+    use std::cell::RefCell;
+
+    #[cfg(feature = "event-tree-exp")]
+    use aimer_events::element::ElementEvent;
+
+    #[cfg(feature = "event-tree-exp")]
+    use std::time::Instant;
+
     use aimer_widget::base::{BuildContext, ResolvedSize, Vec2d};
     use aimer_widget::{
-        AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement,
+        AnyElement, Drawable, Element, EventElement, EventTreeRole, LayoutElement, Rebuildable,
+        VisitorElement,
     };
+
+    #[cfg(feature = "event-tree-exp")]
+    use aimer_widget::{EventDispatcher, EventResult, Widget};
 
     use crate::flex::raw_flex::RawFlex;
     use crate::flex::test_support::{
         CountingChild, ResizingChild, dummy_build_context, replace_a_generated_subtree,
     };
-    use crate::flex::{FlexDirection, OverflowBehavior};
+    use crate::flex::{Column, FlexDirection, OverflowBehavior};
 
     const CHILD_COUNT: usize = 100_000;
     const CHILD_HEIGHT: f32 = 80.0;
@@ -229,6 +242,295 @@ mod lazy_tests {
         let mut reversed = 0;
         column.hit_test_children_at_reversed(pos, &mut |_| reversed += 1);
         assert_eq!(reversed, 1);
+    }
+
+    #[test]
+    fn raw_flex_declares_an_indexed_hit_test_boundary() {
+        let column = RawFlex::new(FlexDirection::Column, Vec::new(), "Column");
+
+        assert_eq!(
+            column.event_tree_role(),
+            EventTreeRole::IndexedHitTestBoundary
+        );
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    struct DispatchProbe {
+        id: usize,
+        role: EventTreeRole,
+        events: Rc<RefCell<Vec<usize>>>,
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl VisitorElement for DispatchProbe {
+        fn debug_name(&self) -> &'static str {
+            "DispatchProbe"
+        }
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl EventElement for DispatchProbe {
+        fn event_tree_role(&self) -> EventTreeRole {
+            self.role
+        }
+
+        fn on_event(&self, _event: &ElementEvent) -> EventResult {
+            self.events.borrow_mut().push(self.id);
+            EventResult::ignored()
+        }
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl Drawable for DispatchProbe {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl LayoutElement for DispatchProbe {
+        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+            ResolvedSize {
+                width: 100.0,
+                height: 10.0,
+            }
+        }
+
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            let top = self.id as f32 * 10.0;
+            Some((
+                Vec2d { x: 0.0, y: top },
+                Vec2d {
+                    x: 100.0,
+                    y: top + 10.0,
+                },
+            ))
+        }
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl Rebuildable for DispatchProbe {}
+
+    #[cfg(feature = "event-tree-exp")]
+    struct DispatchProbeWidget {
+        id: usize,
+        role: EventTreeRole,
+        events: Rc<RefCell<Vec<usize>>>,
+        wrapper_depth: usize,
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl Widget for DispatchProbeWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            wrap_dispatch_probe(
+                DispatchProbe {
+                    id: self.id,
+                    role: self.role,
+                    events: self.events,
+                }
+                .boxed(),
+                self.wrapper_depth,
+            )
+        }
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl aimer_widget::PortableWidget for DispatchProbeWidget {}
+
+    #[cfg(feature = "event-tree-exp")]
+    struct TransparentDispatchWrapper {
+        child: AnyElement,
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl VisitorElement for TransparentDispatchWrapper {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.child.as_ref());
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "TransparentDispatchWrapper"
+        }
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl EventElement for TransparentDispatchWrapper {
+        fn event_tree_role(&self) -> EventTreeRole {
+            EventTreeRole::Transparent
+        }
+
+        fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.child.as_ref());
+        }
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl Drawable for TransparentDispatchWrapper {
+        fn draw(&self, ctx: &BuildContext) {
+            self.child.draw(ctx);
+        }
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl LayoutElement for TransparentDispatchWrapper {
+        fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+            self.child.computed_size(ctx)
+        }
+
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            self.child.pos_start_end()
+        }
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl Rebuildable for TransparentDispatchWrapper {}
+
+    #[cfg(feature = "event-tree-exp")]
+    fn wrap_dispatch_probe(mut child: AnyElement, depth: usize) -> AnyElement {
+        for _ in 0..depth {
+            child = TransparentDispatchWrapper { child }.boxed();
+        }
+        child
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    fn build_dispatch_fixture(
+        child_count: usize,
+        wrapper_depth: usize,
+        legacy_child: Option<usize>,
+        viewport_height: f32,
+    ) -> (
+        AnyElement,
+        EventDispatcher,
+        Rc<RefCell<Vec<usize>>>,
+        Vec2d,
+        ElementEvent,
+        std::time::Duration,
+    ) {
+        let started = Instant::now();
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let ctx = dummy_build_context(
+            100.0,
+            viewport_height,
+            Some((0.0, 0.0, 100.0, viewport_height)),
+        );
+        let children: Vec<DispatchProbeWidget> = (0..child_count)
+            .map(|id| {
+                let role = if legacy_child == Some(id) {
+                    EventTreeRole::Legacy
+                } else {
+                    EventTreeRole::IndexedTarget
+                };
+                DispatchProbeWidget {
+                    id,
+                    role,
+                    events: events.clone(),
+                    wrapper_depth,
+                }
+            })
+            .collect();
+        let column = Column::new().children(children).to_element(&ctx);
+        column.draw(&ctx);
+
+        let pos = Vec2d { x: 50.0, y: 5.0 };
+        let event = ElementEvent::DragOver {
+            pos,
+            source: aimer_events::pointer::PointerSource::Mouse,
+            id: 7,
+        };
+        let mut dispatcher = EventDispatcher::new();
+        let _ = dispatcher.dispatch(column.as_ref(), pos, &event);
+        events.borrow_mut().clear();
+        (column, dispatcher, events, pos, event, started.elapsed())
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    fn dispatch_through_test_column(force_legacy_fallback: bool) -> (Vec<usize>, Vec<usize>) {
+        let (column, mut dispatcher, events, pos, event, _) =
+            build_dispatch_fixture(5, 0, force_legacy_fallback.then_some(4), 15.0);
+        let _ = dispatcher.dispatch(column.as_ref(), pos, &event);
+        let pointer_hits = std::mem::take(&mut *events.borrow_mut());
+
+        let _ = aimer_widget::broadcast_event(column.as_ref(), &ElementEvent::Cancel);
+        let broadcast_hits = std::mem::take(&mut *events.borrow_mut());
+
+        (pointer_hits, broadcast_hits)
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    #[test]
+    fn indexed_flex_dispatch_matches_general_painted_child_and_broadcast_views() {
+        let indexed = dispatch_through_test_column(false);
+        let general = dispatch_through_test_column(true);
+
+        assert_eq!(indexed, general);
+        assert!(!indexed.0.contains(&4), "an unpainted child received a pointer event");
+        assert_eq!(indexed.1, [4, 3, 2, 1, 0]);
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    #[test]
+    #[ignore = "manual debug-profile comparison of warmed production RawFlex routes"]
+    fn compare_warmed_indexed_flex_dispatch_with_general_routing() {
+        const CHILD_COUNT: usize = 10_000;
+        const WRAPPER_DEPTH: usize = 6;
+        const ROUTES: usize = 2_000;
+        const VIEWPORT_HEIGHT: f32 = 40.0;
+
+        // Warm the headless canvas and allocator before measuring either path.
+        let _ = build_dispatch_fixture(8, 1, Some(7), VIEWPORT_HEIGHT);
+        let (general_root, mut general_dispatcher, general_events, pos, event, general_setup) =
+            build_dispatch_fixture(
+                CHILD_COUNT,
+                WRAPPER_DEPTH,
+                Some(CHILD_COUNT - 1),
+                VIEWPORT_HEIGHT,
+            );
+        let (
+            indexed_root,
+            mut indexed_dispatcher,
+            indexed_events,
+            _,
+            _,
+            indexed_setup,
+        ) = build_dispatch_fixture(CHILD_COUNT, WRAPPER_DEPTH, None, VIEWPORT_HEIGHT);
+
+        let mut indexed_samples = Vec::new();
+        for _ in 0..ROUTES {
+            indexed_events.borrow_mut().clear();
+            let result = indexed_dispatcher.dispatch(indexed_root.as_ref(), pos, &event);
+            assert_eq!(result, EventResult::ignored());
+            indexed_samples.push(std::mem::take(&mut *indexed_events.borrow_mut()));
+        }
+        let mut general_samples = Vec::new();
+        for _ in 0..ROUTES {
+            general_events.borrow_mut().clear();
+            let result = general_dispatcher.dispatch(general_root.as_ref(), pos, &event);
+            assert_eq!(result, EventResult::ignored());
+            general_samples.push(std::mem::take(&mut *general_events.borrow_mut()));
+        }
+        assert_eq!(indexed_samples, general_samples);
+
+        let indexed_elapsed = {
+            let start = Instant::now();
+            for _ in 0..ROUTES {
+                indexed_events.borrow_mut().clear();
+                let _ = indexed_dispatcher.dispatch(indexed_root.as_ref(), pos, &event);
+            }
+            start.elapsed()
+        };
+        let general_elapsed = {
+            let start = Instant::now();
+            for _ in 0..ROUTES {
+                general_events.borrow_mut().clear();
+                let _ = general_dispatcher.dispatch(general_root.as_ref(), pos, &event);
+            }
+            start.elapsed()
+        };
+
+        eprintln!(
+            "RawFlex {CHILD_COUNT} children, {WRAPPER_DEPTH} transparent wrappers/item, {ROUTES} warmed routes: setup general={general_setup:?}, indexed={indexed_setup:?}; route indexed={:.2} us, general={:.2} us",
+            indexed_elapsed.as_secs_f64() * 1_000_000.0 / ROUTES as f64,
+            general_elapsed.as_secs_f64() * 1_000_000.0 / ROUTES as f64,
+        );
     }
 
     #[test]

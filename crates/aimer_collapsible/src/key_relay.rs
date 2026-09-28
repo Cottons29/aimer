@@ -4,7 +4,7 @@ use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, PortableWidget,
-    Rebuildable, RequiredChild, VisitorElement, Widget,
+    EventTreeRole, Rebuildable, RequiredChild, VisitorElement, Widget,
 };
 
 /// A small focused-key seam used by [`crate::CollapsibleList`].
@@ -105,12 +105,20 @@ impl LayoutElement for RawKeyRelay {
         self.child.content_size(ctx)
     }
 
+    fn event_tree_bounds(&self) -> Option<(Vec2d, Vec2d)> {
+        self.child.event_tree_bounds()
+    }
+
     fn get_size_from_child(&self) -> Option<Size> {
         self.child.get_size_from_child()
     }
 }
 
 impl EventElement for RawKeyRelay {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         if is_activation_key(event) && (self.on_activate)() {
             EventResult::consumed()
@@ -152,8 +160,57 @@ fn is_activation_key(event: &ElementEvent) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "event-tree-exp")]
+    use std::rc::Rc;
+
     use super::is_activation_key;
     use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
+
+    #[cfg(feature = "event-tree-exp")]
+    use super::RawKeyRelay;
+    #[cfg(feature = "event-tree-exp")]
+    use aimer_widget::base::BuildContext;
+    #[cfg(feature = "event-tree-exp")]
+    use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement};
+
+    #[cfg(feature = "event-tree-exp")]
+    struct Child;
+
+    #[cfg(feature = "event-tree-exp")]
+    impl VisitorElement for Child {
+        fn debug_name(&self) -> &'static str {
+            "KeyRelayTestChild"
+        }
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl EventElement for Child {}
+
+    #[cfg(feature = "event-tree-exp")]
+    impl LayoutElement for Child {}
+
+    #[cfg(feature = "event-tree-exp")]
+    impl Drawable for Child {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    impl Rebuildable for Child {}
+
+    #[cfg(feature = "event-tree-exp")]
+    #[test]
+    fn key_relay_is_an_indexed_target() {
+        let relay = RawKeyRelay {
+            child: Child.boxed(),
+            on_activate: Rc::new(|| false),
+        };
+
+        assert_eq!(
+            relay.event_tree_role(),
+            aimer_widget::EventTreeRole::IndexedTarget
+        );
+        assert_eq!(relay.event_tree_bounds(), None);
+    }
 
     #[test]
     fn activation_accepts_enter_and_space_press_only() {

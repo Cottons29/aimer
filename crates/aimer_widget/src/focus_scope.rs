@@ -10,7 +10,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 
 use crate::base::BuildContext;
-use crate::components::event_element::{EventElement, EventResult};
+use crate::components::event_element::{EventElement, EventResult, EventTreeRole};
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 use crate::components::visitor_element::VisitorElement;
@@ -139,6 +139,11 @@ struct RawFocusScope {
 impl Rebuildable for RawFocusScope {}
 
 impl EventElement for RawFocusScope {
+    fn event_tree_role(&self) -> EventTreeRole {
+        // Focus trapping is collected from the structural tree independently.
+        EventTreeRole::Transparent
+    }
+
     #[inline]
     fn traps_focus(&self) -> bool {
         self.traps
@@ -192,6 +197,40 @@ impl VisitorElement for RawFocusScope {
 
     fn debug_name(&self) -> &'static str {
         "FocusScope"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestChild;
+
+    impl VisitorElement for TestChild {
+        fn debug_name(&self) -> &'static str {
+            "TestChild"
+        }
+    }
+
+    impl EventElement for TestChild {}
+    impl LayoutElement for TestChild {}
+    impl Rebuildable for TestChild {}
+
+    impl Drawable for TestChild {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    #[test]
+    fn focus_scope_is_transparent_without_changing_focus_trapping() {
+        let child = TestChild.boxed();
+        let scope = RawFocusScope {
+            child,
+            traps: true,
+        };
+
+        assert_eq!(scope.event_tree_role(), EventTreeRole::Transparent);
+        assert!(scope.traps_focus());
+        assert!(!scope.on_event(&ElementEvent::FocusGained).is_consumed());
     }
 }
 

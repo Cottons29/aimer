@@ -15,8 +15,8 @@ use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
 use aimer_animation::layout::LayoutGeometry;
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutCache, LayoutElement,
-    Rebuildable, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventTreeRole, LayoutCache,
+    LayoutElement, Rebuildable, VisitorElement, Widget,
 };
 
 /// Arranges a homogeneous collection of children along a configurable main
@@ -1242,6 +1242,10 @@ impl VisitorElement for RawFlex {
 }
 
 impl EventElement for RawFlex {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedHitTestBoundary
+    }
+
     /// The event and visual child views are the same retained source.
     #[inline]
     fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {

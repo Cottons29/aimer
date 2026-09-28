@@ -73,6 +73,16 @@ winit.workspace = true
 
 [features]
 markdown = []
+# Experimental sparse event routing. Disabled by default while parity and
+# performance are evaluated against the general element-tree dispatcher.
+event-tree-exp = [
+    "aimer_widget/event-tree-exp",
+    "aimer_flex/event-tree-exp",
+    "aimer_input/event-tree-exp",
+    "aimer_scroll/event-tree-exp",
+    "aimer_container/event-tree-exp",
+    "aimer_collapsible/event-tree-exp",
+]
 # Forward opt-in Venus microtask diagnostics through the umbrella crate.
 venus-debug = ["aimer_venus/venus-debug"]
 provider = []

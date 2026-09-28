@@ -49,9 +49,9 @@ use aimer_events::element::ElementEvent;
 use aimer_events::pointer::{FILE_DRAG_POINTER_ID, PointerSource};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
-    Rebuildable, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget,
-    VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, EventTreeRole,
+    LayoutElement, PointerKey, Rebuildable, RequiredChild, State, StateUpdater, StatefulElement,
+    StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::target::{DragTargetState, HasChild, TargetChild, clear_hover, enter_hover};
@@ -398,6 +398,10 @@ impl VisitorElement for RawDropZone {
 }
 
 impl EventElement for RawDropZone {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         match event {
             ElementEvent::HoveredFile { path, .. } => {
@@ -486,6 +490,38 @@ impl Rebuildable for RawDropZone {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct TestElement;
+
+    impl VisitorElement for TestElement {
+        fn debug_name(&self) -> &'static str {
+            "TestElement"
+        }
+    }
+
+    impl EventElement for TestElement {}
+    impl LayoutElement for TestElement {}
+    impl Rebuildable for TestElement {}
+
+    impl Drawable for TestElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    #[test]
+    fn drop_zone_opts_into_indexed_event_routing() {
+        let zone = RawDropZone {
+            child: TestElement.boxed(),
+            logic: Rc::new(ZoneLogic {
+                id: 1,
+                extensions: None,
+                pending: Rc::new(RefCell::new(Vec::new())),
+                updater: StateUpdater::empty(),
+            }),
+            bounds: CacheBounds::new(),
+        };
+
+        assert_eq!(zone.event_tree_role(), EventTreeRole::IndexedTarget);
+    }
 
     fn allowed() -> Vec<String> {
         vec!["png".to_owned(), "jpg".to_owned()]

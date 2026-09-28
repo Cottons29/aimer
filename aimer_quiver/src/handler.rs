@@ -361,15 +361,18 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         // out of this frame's time.
         self.venus.begin_frame();
 
+        let mut need_redraw = false;
+
         // A browser never reports the end of a scroll, so the gesture is closed
         // here once its stream has gone quiet — before this frame's step is
         // dispatched, so the terminating phase rides along with it.
         #[cfg(target_arch = "wasm32")]
         if self.web_scroll_phase.poll_idle() {
             self.scroll_smoother.end_gesture();
+            need_redraw = true;
         }
 
-        let _ = self.dispatch_smoothed_scroll();
+
 
         // An open web gesture keeps the frame loop alive even with no distance
         // left, because the idle poll above only runs on a rendered frame.
@@ -378,7 +381,9 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         #[cfg(not(target_arch = "wasm32"))]
         let gesture_open = false;
         if self.scroll_smoother.is_active() || gesture_open {
-            self.request_animation_frame();
+            let _ = self.dispatch_smoothed_scroll();
+            // self.request_animation_frame();
+            need_redraw = true;
         }
 
 
@@ -389,6 +394,10 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         // resolved is visible to *this* frame, not the next one.
         self.venus.run_frame_tasks();
         self.venus.run_microtasks();
+
+        if need_redraw {
+            self.request_animation_frame();
+        }
     }
 
     /// The bookkeeping every frame does once the tree has been drawn.

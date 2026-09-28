@@ -131,5 +131,15 @@ pub trait LayoutElement: VisitorElement {
         let end = start.get_end(resolved);
         Some((start, end))
     }
+
+    /// Returns stable bounds that the sparse event tree can cache for this
+    /// element. The default uses [`Self::pos_start_end`]. Return `None` when
+    /// screen-space bounds can move during painting without invalidating
+    /// layout; the event tree will retain the target as a candidate and live
+    /// hit testing can still reject events during dispatch.
+    #[inline]
+    fn event_tree_bounds(&self) -> Option<(Vec2d, Vec2d)> {
+        self.pos_start_end()
+    }
     // fn layer(&self) -> u32;
 }

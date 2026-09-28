@@ -7,7 +7,7 @@ pub use aimer_style::*;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutCache,
-    LayoutElement, RequiredChild, VisitorElement, Widget,
+    EventTreeRole, LayoutElement, RequiredChild, VisitorElement, Widget,
 };
 
 #[cfg(feature = "portable-guest")]
@@ -601,6 +601,14 @@ impl<T: Element> VisitorElement for RawContainer<T> {
 }
 
 impl<T: Element> EventElement for RawContainer<T> {
+    fn event_tree_role(&self) -> EventTreeRole {
+        if self.is_opaque() {
+            EventTreeRole::IndexedTarget
+        } else {
+            EventTreeRole::Transparent
+        }
+    }
+
     /// The opaque container has one child in both structural views.
     #[inline]
     fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -629,6 +637,13 @@ impl<T: Element> EventElement for RawContainer<T> {
 }
 
 impl<T: Element> LayoutElement for RawContainer<T> {
+    fn event_tree_bounds(&self) -> Option<(Vec2d, Vec2d)> {
+        // These bounds follow paint transforms such as scroll offsets, which
+        // can change without a layout-generation update. Keep this target
+        // unbounded in the cached event index; dispatch checks the live bounds.
+        None
+    }
+
     #[inline]
     fn is_layout_stable(&self) -> bool {
         self.can_delegate_paint_islands() && self.child.is_layout_stable()
@@ -928,6 +943,28 @@ mod tests {
         fn debug_name(&self) -> &'static str {
             "DrawProbe"
         }
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    #[test]
+    fn containers_are_transparent_unless_they_occlude_scroll_and_never_cache_draw_bounds() {
+        let child = DrawProbe {
+            draws: Rc::new(Cell::new(0)),
+        }
+        .boxed();
+        let mut container = RawContainer::new(child);
+
+        assert_eq!(
+            container.event_tree_role(),
+            aimer_widget::EventTreeRole::Transparent
+        );
+        assert_eq!(container.event_tree_bounds(), None);
+
+        container.color = Some(Color::BLACK);
+        assert_eq!(
+            container.event_tree_role(),
+            aimer_widget::EventTreeRole::IndexedTarget
+        );
     }
 
     /// Counts every call that reaches the system allocator on this thread.

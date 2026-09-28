@@ -1930,6 +1930,29 @@ mod tests {
         assert_eq!(outer.ctrl.scroll_offset.get().y, 0.0);
     }
 
+    #[cfg(feature = "event-tree-exp")]
+    #[test]
+    fn scrollable_is_an_indexed_target_while_keeping_its_child_dispatch_private() {
+        let child = FixedSizeChild {
+            size: ResolvedSize {
+                width: 100.0,
+                height: 200.0,
+            },
+        }
+        .boxed();
+        let scrollable = raw_scrollable(child);
+
+        assert_eq!(
+            scrollable.event_tree_role(),
+            aimer_widget::EventTreeRole::IndexedTarget
+        );
+        assert_eq!(scrollable.event_tree_bounds(), None);
+
+        let mut event_children = 0;
+        scrollable.event_children(&mut |_| event_children += 1);
+        assert_eq!(event_children, 0);
+    }
+
     #[test]
     fn nested_scrollables_ignore_cross_axis_drift_for_a_vertical_dominant_frame() {
         let inner = sized_scrollable(

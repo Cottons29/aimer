@@ -13,8 +13,8 @@ use aimer_svg::{Svg, SvgDocument, SvgStyle};
 use aimer_widget::base::{BuildContext, ResolvedSize, Vec2d};
 use aimer_widget::{
     AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, EventResult,
-    LayoutElement, PaintDamageTracker, PortableWidget, Rebuildable, RequiredChild, State,
-    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
+    EventTreeRole, LayoutElement, PaintDamageTracker, PortableWidget, Rebuildable, RequiredChild,
+    State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::key_relay::KeyRelay;
@@ -220,6 +220,10 @@ impl VisitorElement for AnimatedCollapseElement {
 }
 
 impl EventElement for AnimatedCollapseElement {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         if self.is_event_visible() {
             self.child.on_event(event)
@@ -252,6 +256,10 @@ impl Rebuildable for AnimatedCollapseElement {
 }
 
 impl LayoutElement for AnimatedCollapseElement {
+    fn event_tree_bounds(&self) -> Option<(Vec2d, Vec2d)> {
+        None
+    }
+
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         let natural = self.natural_size(ctx);
         ResolvedSize {

@@ -20,9 +20,9 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
-    Rebuildable, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget,
-    VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, EventTreeRole,
+    LayoutElement, PointerKey, Rebuildable, RequiredChild, State, StateUpdater, StatefulElement,
+    StatefulWidget, VisitorElement, Widget,
 };
 
 use crate::DragSession;
@@ -367,6 +367,10 @@ impl<T: 'static> VisitorElement for RawDragTarget<T> {
 }
 
 impl<T: 'static> EventElement for RawDragTarget<T> {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         match event {
             ElementEvent::DragOver { .. } => {
@@ -453,6 +457,38 @@ impl<T: 'static> Rebuildable for RawDragTarget<T> {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct TestElement;
+
+    impl VisitorElement for TestElement {
+        fn debug_name(&self) -> &'static str {
+            "TestElement"
+        }
+    }
+
+    impl EventElement for TestElement {}
+    impl LayoutElement for TestElement {}
+    impl Rebuildable for TestElement {}
+
+    impl Drawable for TestElement {
+        fn draw(&self, _ctx: &BuildContext) {}
+    }
+
+    #[test]
+    fn drag_target_opts_into_indexed_event_routing() {
+        let target = RawDragTarget::<u32> {
+            child: TestElement.boxed(),
+            logic: Rc::new(TargetLogic {
+                id: 1,
+                will_accept: None,
+                on_accept: None,
+                updater: StateUpdater::empty(),
+            }),
+            bounds: CacheBounds::new(),
+        };
+
+        assert_eq!(target.event_tree_role(), EventTreeRole::IndexedTarget);
+    }
 
     #[test]
     fn a_new_hover_tells_the_previous_one_it_was_left() {

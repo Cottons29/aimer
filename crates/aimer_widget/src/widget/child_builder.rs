@@ -13,7 +13,7 @@ use crate::base::BuildContext;
 use crate::components::diagnostics::ErrorWidget;
 use crate::components::drawable::Drawable;
 use crate::components::element::{Element, ElementId, EventDispatchContext, VisitorElement};
-use crate::components::event_element::{EventElement, EventResult};
+use crate::components::event_element::{EventElement, EventResult, EventTreeRole};
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 use crate::key::Key;
@@ -456,9 +456,19 @@ impl LayoutElement for RetainedChildElement {
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.child().and_then(LayoutElement::pos_start_end)
     }
+
+    fn event_tree_bounds(&self) -> Option<(Vec2d, Vec2d)> {
+        self.child().and_then(LayoutElement::event_tree_bounds)
+    }
 }
 
 impl EventElement for RetainedChildElement {
+    fn event_tree_role(&self) -> EventTreeRole {
+        self.child()
+            .map(EventElement::event_tree_role)
+            .unwrap_or(EventTreeRole::Transparent)
+    }
+
     fn focus_node(&self) -> Option<&FocusNode> {
         self.child().and_then(EventElement::focus_node)
     }
@@ -524,6 +534,37 @@ impl EventElement for RetainedChildElement {
         if let Some(child) = self.child() {
             child.hit_test_children(visitor);
         }
+    }
+
+    fn hit_test_children_reversed<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        if let Some(child) = self.child() {
+            child.hit_test_children_reversed(visitor);
+        }
+    }
+
+    fn hit_test_children_at<'a>(
+        &'a self,
+        pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        if let Some(child) = self.child() {
+            child.hit_test_children_at(pos, visitor);
+        }
+    }
+
+    fn hit_test_children_at_reversed<'a>(
+        &'a self,
+        pos: Vec2d,
+        visitor: &mut dyn FnMut(&'a dyn Element),
+    ) {
+        if let Some(child) = self.child() {
+            child.hit_test_children_at_reversed(pos, visitor);
+        }
+    }
+
+    fn has_overlapping_hit_targets(&self) -> bool {
+        self.child()
+            .is_some_and(EventElement::has_overlapping_hit_targets)
     }
 }
 

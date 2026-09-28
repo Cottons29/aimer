@@ -5,7 +5,7 @@ use aimer_events::pointer::PointerSource;
 use aimer_utils::AnimInstant;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    Element, EventElement, EventResult, LayoutElement, PointerKey, VisitorElement,
+    Element, EventElement, EventResult, EventTreeRole, LayoutElement, PointerKey, VisitorElement,
     is_pointer_claimed,
 };
 
@@ -174,6 +174,10 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
     #[inline]
     fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.visit_children(visitor);
+    }
+
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
     }
 
     fn on_event(&self, event: &ElementEvent) -> EventResult {
@@ -786,6 +790,10 @@ impl<E: Element> VisitorElement for RawScrollableContainer<E> {
 }
 
 impl<E: Element> LayoutElement for RawScrollableContainer<E> {
+    fn event_tree_bounds(&self) -> Option<(Vec2d, Vec2d)> {
+        None
+    }
+
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.layout_size(ctx)
     }

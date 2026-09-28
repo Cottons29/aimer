@@ -179,6 +179,15 @@ Or configure optional features:
 aimer = { git = "https://github.com/Cottons29/aimer.git", features = ["markdown", "svg", "provider"] }
 ```
 
+The experimental event-tree path is off by default. Enable `event-tree-exp` on
+the `aimer` umbrella crate or directly on `aimer_widget`; custom elements stay
+on legacy routing unless they explicitly report an `EventTreeRole`.
+The laboratory parity cases can be run with:
+
+```bash
+cargo test -p aimer_laboratory --features event-tree-exp framework_dispatch_comparison
+```
+
 ---
 
 ## Examples

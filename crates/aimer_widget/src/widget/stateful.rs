@@ -25,7 +25,7 @@ use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 use crate::paint_isolated::{PaintCache, PaintContract};
 use crate::{
-    AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement,
+    AnyElement, Drawable, Element, EventElement, EventResult, EventTreeRole, LayoutElement,
     Rebuildable, VisitorElement, Widget,
 };
 use crate::PaintDamageTracker;
@@ -2084,6 +2084,10 @@ impl VisitorElement for StatefulElement {
 }
 
 impl EventElement for StatefulElement {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::Transparent
+    }
+
     fn on_event(&self, _event: &ElementEvent) -> EventResult {
         EventResult::ignored()
     }
@@ -2665,6 +2669,10 @@ mod tests {
     }
 
     impl EventElement for EventProbeElement {
+        fn event_tree_role(&self) -> EventTreeRole {
+            EventTreeRole::IndexedTarget
+        }
+
         fn on_event(&self, _event: &ElementEvent) -> EventResult {
             self.events.set(self.events.get() + 1);
             EventResult::ignored()
@@ -2688,6 +2696,7 @@ mod tests {
             "EventProbeWidget",
             None,
         );
+        assert_eq!(element.event_tree_role(), EventTreeRole::Transparent);
 
         let _ = EventDispatcher::new().dispatch(
             &element,

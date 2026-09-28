@@ -9,6 +9,9 @@ description = "Isolated experiments for Aimer's core ownership model, published 
 [features]
 # Forward the release flex benchmark control to the root framework dependency.
 force-scalar = ["aimer/force-scalar"]
+# Enable the framework's experimental sparse event-routing path while running
+# the parity and routing benchmarks in `new_event_tree`.
+event-tree-exp = ["aimer/event-tree-exp"]
 # The before/after benchmark depends on the historical framework revision,
 # which is intentionally not part of this checkout.
 legacy-benchmark = []
@@ -19,6 +22,8 @@ required-features = ["legacy-benchmark"]
 
 [dependencies]
 aimer_rubick.workspace = true
+aimer_attribute.workspace = true
+aimer_widget.workspace = true
 
 # Only the benchmarks in `examples/` need a framework; the crate itself keeps
 # using nothing but the ownership primitive, so nothing here reaches the

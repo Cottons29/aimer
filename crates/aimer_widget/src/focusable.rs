@@ -17,7 +17,7 @@ use std::panic::Location;
 use crate::base::BuildContext;
 use crate::components::drawable::Drawable;
 use crate::components::element::{Element, dispatch_focused_event};
-use crate::components::event_element::{EventElement, EventResult};
+use crate::components::event_element::{EventElement, EventResult, EventTreeRole};
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 use crate::components::visitor_element::VisitorElement;
@@ -512,6 +512,10 @@ impl Rebuildable for RawFocusable {
 }
 
 impl EventElement for RawFocusable {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
     /// This wrapper exposes one child through both structural views.
     #[inline]
     fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -592,6 +596,10 @@ impl LayoutElement for RawFocusable {
     /// element that forgets this is focused by a press anywhere in the window.
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         self.child.pos_start_end()
+    }
+
+    fn event_tree_bounds(&self) -> Option<(Vec2d, Vec2d)> {
+        None
     }
 
     fn size(&self) -> Option<Size> {

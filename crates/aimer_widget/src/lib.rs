@@ -16,6 +16,8 @@ pub mod reconcile;
 mod reconciliation_plan;
 mod frame_work_stats;
 mod rebuild_stats;
+#[cfg(feature = "event-tree-exp")]
+mod event_tree;
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 mod paint_isolated;
 mod paint_damage;
@@ -119,7 +121,7 @@ pub use crate::components::element::{
 #[cfg(any(debug_assertions, feature = "frame-stats"))]
 pub use crate::rebuild_stats::{reset as reset_rebuild_stats, take as take_rebuild_stats};
 pub use crate::components::event_element::{
-    CaptureRequest, EventElement, EventResult, FollowUp, PointerKey,
+    CaptureRequest, EventElement, EventResult, EventTreeRole, FollowUp, PointerKey,
 };
 /// Keyboard focus lives in its own crate; it is re-exported here so
 /// `aimer_widget::focus::*` keeps naming the focus system.

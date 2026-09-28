@@ -25,8 +25,9 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [features]
-default = ["desktop-bin"]
+default = ["desktop-bin", "event-tree-exp"]
 desktop-bin = []
+event-tree-exp = ["aimer/event-tree-exp"]
 
 # Enables the portable lowering hooks used by the application-level guest proof.
 portable-guest = ["aimer/portable-guest", "aimer_widget/portable-guest"]

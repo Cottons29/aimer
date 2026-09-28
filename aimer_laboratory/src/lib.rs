@@ -68,6 +68,7 @@
 mod element;
 pub mod experiment;
 mod widget;
+pub mod new_event_tree;
 
 pub use crate::element::{AnyElement, Element};
 pub use crate::widget::Widget;

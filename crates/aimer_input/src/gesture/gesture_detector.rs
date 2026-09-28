@@ -18,8 +18,8 @@ use aimer_utils::AnimInstant;
 use aimer_macro::{PortableValue, PortableWidget};
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
-    Rebuildable, RequiredChild, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, EventTreeRole,
+    LayoutElement, PointerKey, Rebuildable, RequiredChild, VisitorElement, Widget,
 };
 
 use crate::callback::VoidCallback;
@@ -398,6 +398,10 @@ impl<E: Element> VisitorElement for RawGestureDetector<E> {
 }
 
 impl<E: Element> EventElement for RawGestureDetector<E> {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         if matches!(event, ElementEvent::Cancel) {
             self.process(&PointerEvent::Cancel);
@@ -473,6 +477,10 @@ impl<E: Element> EventElement for RawGestureDetector<E> {
 impl<E: Element> LayoutElement for RawGestureDetector<E> {
     #[inline]
     fn size(&self) -> Option<Size> {
+        None
+    }
+
+    fn event_tree_bounds(&self) -> Option<(Vec2d, Vec2d)> {
         None
     }
 
@@ -621,6 +629,18 @@ mod tests {
             state: RefCell::new(GestureState::default()),
             behavior: GestureDetectorBehavior::PassThrough,
         }
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    #[test]
+    fn gesture_detector_is_an_indexed_target() {
+        let detector = counting_detector(Rc::new(std::cell::Cell::new(0)));
+
+        assert_eq!(
+            detector.event_tree_role(),
+            aimer_widget::EventTreeRole::IndexedTarget
+        );
+        assert_eq!(detector.event_tree_bounds(), None);
     }
 
     fn recording_detector(

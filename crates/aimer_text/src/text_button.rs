@@ -11,8 +11,8 @@ use aimer_utils::AnimInstant;
 use aimer_utils::callback::{CallbackExecutor, VoidCallback};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, EventResult, LayoutCache, LayoutElement,
-    Rebuildable, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, EventResult, EventTreeRole, LayoutCache,
+    LayoutElement, Rebuildable, VisitorElement, Widget,
 };
 
 use crate::RawTextWidget;
@@ -390,6 +390,10 @@ impl VisitorElement for RawTextButton {
 }
 
 impl EventElement for RawTextButton {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         match event {
             ElementEvent::PointerMove(info) if info.source == PointerSource::Mouse => {
@@ -517,6 +521,13 @@ mod tests {
             last_tap: Cell::new(None),
             bounds: TextHitBounds::default(),
         }
+    }
+
+    #[test]
+    fn text_button_opts_into_indexed_event_routing() {
+        let button = raw_button(TextButton::new("Open"));
+
+        assert_eq!(button.event_tree_role(), EventTreeRole::IndexedTarget);
     }
 
     #[test]

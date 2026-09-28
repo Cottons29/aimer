@@ -9,6 +9,7 @@ portable-guest = [
     "aimer_style/portable-guest",
     "aimer_widget/portable-guest",
 ]
+event-tree-exp = ["aimer_widget/event-tree-exp"]
 # Keeps the release benchmark able to compare the optimized kernel with the
 # compiler-optimized scalar implementation on the same workload.
 force-scalar = []
@@ -25,6 +26,7 @@ aimer_widget.workspace = true
 [dev-dependencies]
 aimer_canvas.workspace = true
 aimer_container.workspace = true
+aimer_events.workspace = true
 winit.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

@@ -9,7 +9,8 @@ use aimer_macro::PortableWidget;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventDispatchContext, EventElement, EventResult,
-    LayoutElement, PointerKey, Rebuildable, RequiredChild, VisitorElement, Widget, dispatch_event,
+    EventTreeRole, LayoutElement, PointerKey, Rebuildable, RequiredChild, VisitorElement, Widget,
+    dispatch_event,
 };
 
 use crate::callback::{CallbackExecutor, VoidCallback};
@@ -337,6 +338,10 @@ impl<E: Element> VisitorElement for RawMouseRegion<E> {
 }
 
 impl<E: Element> EventElement for RawMouseRegion<E> {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         self.handle_event(event, None)
     }
@@ -363,6 +368,10 @@ impl<E: Element> LayoutElement for RawMouseRegion<E> {
 
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         self.child.computed_size(ctx)
+    }
+
+    fn event_tree_bounds(&self) -> Option<(Vec2d, Vec2d)> {
+        None
     }
 }
 
@@ -484,6 +493,20 @@ mod tests {
 
         assert_eq!(region.cursor, Some(winit::window::CursorIcon::Pointer));
         assert!(Rc::ptr_eq(&region.current_state, &current_state));
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    #[test]
+    fn mouse_region_is_an_indexed_target_while_keeping_its_private_child_view() {
+        let events = Rc::new(Cell::new(0));
+        let region = capturing_region(events);
+
+        assert_eq!(region.event_tree_role(), aimer_widget::EventTreeRole::IndexedTarget);
+        assert_eq!(region.event_tree_bounds(), None);
+
+        let mut event_children = 0;
+        region.event_children(&mut |_| event_children += 1);
+        assert_eq!(event_children, 0);
     }
 
     #[test]

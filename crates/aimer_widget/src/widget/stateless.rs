@@ -9,8 +9,8 @@ use crate::widget::AnyWidgetExt;
 use crate::widget::recovery::{BuildPhase, build_or_error};
 use crate::widget::stateful::{RebuildCallBack, SyncChild};
 use crate::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
-    VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventTreeRole, LayoutElement,
+    Rebuildable, VisitorElement, Widget,
 };
 // StatelessWidget is effectively just a Widget.
 // We rely on direct Widget implementation to avoid blanket implementation
@@ -102,7 +102,11 @@ impl crate::widget::PortableWidget for NamedWidget {
     }
 }
 
-impl EventElement for StatelessElement {}
+impl EventElement for StatelessElement {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::Transparent
+    }
+}
 
 impl Rebuildable for StatelessElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
@@ -782,6 +786,7 @@ mod tests {
         let wrapper = StatelessElement::wrapper(FlexibleLeaf.boxed(), None, "Wrapper");
 
         assert_eq!(wrapper.flex(), Some(2.5));
+        assert_eq!(wrapper.event_tree_role(), EventTreeRole::Transparent);
     }
 
     #[test]
