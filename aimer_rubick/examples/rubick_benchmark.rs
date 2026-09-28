@@ -14,7 +14,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use aimer_rubick::{ErasedFrom, INLINE_CAPACITY, Rubick};
+use aimer_rubick::{ErasedFrom, INLINE_CAPACITY, Rubick, UiMemory};
 
 const ROUNDS: usize = 5;
 
@@ -332,6 +332,7 @@ fn bench_dispatch() {
 fn bench_tree_rebuild() {
     const NODES: usize = 8_192;
     const FRAMES: usize = 24;
+    const UI_MEMORY_LIMIT: usize = 16 * 1024 * 1024;
 
     println!("--- widget tree rebuild (build, traverse, drop) ---");
     measure("Rubick tree frame", NODES * FRAMES, || {
@@ -396,6 +397,27 @@ fn bench_tree_rebuild() {
             }
             black_box(total);
         }
+    });
+    let ui_memory = UiMemory::new(UI_MEMORY_LIMIT);
+    let ui_allocator = ui_memory.allocator();
+    measure("UiMemory erased tree frame, element capacity", NODES * FRAMES, || {
+        ui_allocator.scope(|| {
+            for _ in 0..FRAMES {
+                let mut tree: Vec<Rubick<dyn Node, 1>> = Vec::with_capacity(NODES);
+                for index in 0..NODES {
+                    match index % 3 {
+                        0 => tree.push(Rubick::erase(Tiny::new(index))),
+                        1 => tree.push(Rubick::erase(Medium::new(index))),
+                        _ => tree.push(Rubick::erase(Large::new(index))),
+                    }
+                }
+                let mut total = 0_usize;
+                for node in &tree {
+                    total = total.wrapping_add(node.value());
+                }
+                black_box(total);
+            }
+        });
     });
     measure("Box tree frame", NODES * FRAMES, || {
         for _ in 0..FRAMES {

@@ -489,6 +489,16 @@ impl<'a> BuildContext<'a> {
         }
     }
 
+    /// Returns the UI allocator active while this build context is in use.
+    ///
+    /// Aimer activates the owning application's allocator around widget
+    /// construction and rebuilds. The returned handle can also be used for
+    /// explicit `allocator-api2` collections or `boxed_in` conversions.
+    #[inline]
+    pub fn ui_allocator(&self) -> Option<aimer_rubick::UiAllocator> {
+        aimer_rubick::UiAllocator::current()
+    }
+
     /// Replaces the canvas used by this build context.
     ///
     /// Native and portable builds store the canvas behind different internal

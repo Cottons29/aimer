@@ -1,5 +1,6 @@
 use crate::base::BuildContext;
 use crate::{AnyElement, AnyWidget};
+use aimer_rubick::UiAllocator;
 
 pub mod child_builder;
 mod recovery;
@@ -98,6 +99,18 @@ pub trait Widget: PortableWidget {
         Self: Sized + 'static,
     {
         AnyWidget::erase(self)
+    }
+
+    /// Erases this widget using the supplied application UI allocator.
+    ///
+    /// The erased owner retains the allocator for as long as its heap payload
+    /// exists, even if it is dropped outside the allocator's active scope.
+    #[inline]
+    fn boxed_in(self, allocator: &UiAllocator) -> AnyWidget
+    where
+        Self: Sized + 'static,
+    {
+        AnyWidget::erase_in(self, allocator)
     }
 
     /// Returns the text content if this is a text widget.
@@ -295,6 +308,14 @@ impl Widget for AnyWidget {
     {
         self
     }
+
+    #[inline]
+    fn boxed_in(self, _allocator: &UiAllocator) -> AnyWidget
+    where
+        Self: Sized + 'static,
+    {
+        self
+    }
 }
 
 #[cfg(test)]
@@ -340,6 +361,16 @@ mod tests {
         let owners = std::hint::black_box([inline, heap]);
         assert_eq!(Widget::debug_name(&owners[0]), "StorageWidget");
         assert_eq!(Widget::debug_name(&owners[1]), "StorageWidget");
+    }
+
+    #[test]
+    fn boxed_in_uses_the_supplied_ui_memory() {
+        let memory = aimer_rubick::UiMemory::new(2 * 1024 * 1024);
+        let allocator = memory.allocator();
+        let widget = StorageWidget([0; WIDGET_CAPACITY + 1]).boxed_in(&allocator);
+
+        assert!(widget.is_heap());
+        assert_eq!(allocator.committed_bytes(), 2 * 1024 * 1024);
     }
 
     #[test]

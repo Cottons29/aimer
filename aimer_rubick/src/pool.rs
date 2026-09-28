@@ -1,12 +1,11 @@
-//! A thread-local free-list allocator for heap-mode payloads.
+//! Heap-mode payload blocks for both app-owned and thread-local allocators.
 //!
 //! A retained widget or element tree is rebuilt many times per second and
 //! most of its heap payloads share a handful of layouts. Routing those blocks
 //! through the global allocator pays for a lock-free-but-not-free `malloc`
-//! search on every node, every frame. This module instead recycles blocks in
-//! per-size-class free lists: allocation pops a pointer, deallocation pushes
-//! it back, and the global allocator only sees the first block of each class
-//! and anything that does not fit a class.
+//! search on every node, every frame. Outside a UI scope, this module recycles
+//! blocks in per-size-class free lists. During an app build, it uses the app's
+//! allocator and records the owning handle in each block header.
 //!
 //! The pool is sound because [`Rubick`](crate::Rubick) is neither `Send` nor
 //! `Sync`, so a payload is always freed on the thread that allocated it. The
@@ -17,17 +16,41 @@ use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::cell::Cell;
 use std::ptr::NonNull;
 
+use crate::UiAllocator;
+
 /// Alignment guaranteed by every pooled block.
 ///
 /// Requests with a stricter alignment bypass the pool and use their exact
 /// layout, which keeps recycling correct without over-aligning every class.
 const CLASS_ALIGNMENT: usize = 16;
 
+/// Metadata at the start of each Rubick heap block. The header is aligned to
+/// the largest pooled alignment, making the payload offset stable for pooled
+/// layouts while keeping origin information out of every Rubick owner.
+#[repr(C, align(16))]
+struct HeapHeader {
+    origin: HeapOrigin,
+}
+
+enum HeapOrigin {
+    ThreadLocal,
+    Ui(UiAllocator),
+}
+
+/// Returns the block layout and payload offset needed to store `layout` after
+/// a provenance header. `None` means the combined allocation would overflow.
+pub(crate) const fn heap_layout(layout: Layout) -> Option<(Layout, usize)> {
+    match Layout::new::<HeapHeader>().extend(layout) {
+        Ok((combined, offset)) => Some((combined.pad_to_align(), offset)),
+        Err(_) => None,
+    }
+}
+
 /// Block sizes served by the pool, in ascending order.
 ///
 /// The smallest class is at least two words so an intrusive next pointer
 /// always fits, and the largest bounds how much memory one thread can retain.
-const CLASS_SIZES: [usize; 6] = [16, 32, 64, 128, 256, 512];
+pub(crate) const CLASS_SIZES: [usize; 6] = [16, 32, 64, 128, 256, 512];
 
 /// Bytes a single class may keep cached before blocks are returned to the
 /// global allocator.
@@ -41,7 +64,7 @@ const CLASS_SIZES: [usize; 6] = [16, 32, 64, 128, 256, 512];
 const CLASS_BUDGET: usize = 512 * 1024;
 
 /// Returns how many blocks of `size` bytes the pool may retain.
-const fn class_capacity(size: usize) -> usize {
+pub(crate) const fn class_capacity(size: usize) -> usize {
     let blocks = CLASS_BUDGET / size;
     if blocks < 8 { 8 } else { blocks }
 }
@@ -79,7 +102,7 @@ pub(crate) const fn class_of(layout: Layout) -> u8 {
 
 /// Returns the layout every block of `class` is allocated and freed with.
 #[inline(always)]
-const fn class_layout(class: u8) -> Layout {
+pub(crate) const fn class_layout(class: u8) -> Layout {
     // SAFETY: Every class size is a non-zero multiple of `CLASS_ALIGNMENT`,
     // which is a power of two, so the pair is a valid layout.
     unsafe { Layout::from_size_align_unchecked(CLASS_SIZES[class as usize], CLASS_ALIGNMENT) }
@@ -237,6 +260,58 @@ pub(crate) unsafe fn deallocate(pointer: NonNull<u8>, class: u8, layout: Layout)
         // SAFETY: Pooled blocks are always allocated with their class layout,
         // so they must be freed with it.
         unsafe { dealloc(pointer.as_ptr(), class_layout(class)) };
+    }
+}
+
+/// Allocates one Rubick block and records the allocator that owns it.
+#[inline(always)]
+pub(crate) fn allocate_rubick(class: u8, layout: Layout) -> NonNull<u8> {
+    let (block, origin) = if let Some(allocator) = UiAllocator::current() {
+        let block = match allocator.allocate_rubick(class, layout) {
+            Ok(block) => block,
+            Err(_) => handle_alloc_error(layout),
+        };
+        (block, HeapOrigin::Ui(allocator))
+    } else {
+        (allocate(class, layout), HeapOrigin::ThreadLocal)
+    };
+
+    // SAFETY: the block layout includes a correctly aligned header at its
+    // start, and the header is initialized before the payload is written.
+    unsafe { block.cast::<HeapHeader>().as_ptr().write(HeapHeader { origin }) };
+    block
+}
+
+/// Returns the payload address following a Rubick block's header.
+#[inline(always)]
+pub(crate) fn heap_data_pointer(block: *mut u8, offset: usize) -> *mut u8 {
+    // SAFETY: `offset` comes from `heap_layout` for the same concrete payload
+    // and lies within the allocated combined layout.
+    unsafe { block.add(offset) }
+}
+
+/// Releases a Rubick block through the allocator recorded in its header.
+///
+/// # Safety
+///
+/// `block` must be a live result of [`allocate_rubick`] for `class` and
+/// `layout`, and its payload must already have been destroyed or moved out.
+#[inline(always)]
+pub(crate) unsafe fn deallocate_rubick(block: NonNull<u8>, class: u8, layout: Layout) {
+    // SAFETY: the caller guarantees this is a live Rubick block with an
+    // initialized header.
+    let header = unsafe { block.cast::<HeapHeader>().as_ptr().read() };
+    match header.origin {
+        HeapOrigin::ThreadLocal => {
+            // SAFETY: the block was originally allocated from this thread pool
+            // with the same class and combined layout.
+            unsafe { deallocate(block, class, layout) };
+        }
+        HeapOrigin::Ui(allocator) => {
+            // SAFETY: the header retains the allocator that produced the
+            // allocation, including after the build scope or app has ended.
+            unsafe { allocator.deallocate_rubick(block, class, layout) };
+        }
     }
 }
 

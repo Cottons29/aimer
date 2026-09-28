@@ -1,5 +1,16 @@
 mod os;
-pub mod read_only;
+
+/// Compatibility path for the shared ownership types now implemented by
+/// `aimer_rubick`.
+///
+/// ```
+/// use aimer_std::read_only::{Shared, Weak};
+///
+/// let value = Shared::new(42);
+/// let weak: Weak<i32> = Shared::downgrade(&value);
+/// assert_eq!(*weak.upgrade().unwrap(), 42);
+/// ```
+pub use aimer_rubick::shared as read_only;
 
 /// Selects a value based on a condition. Shorthand for `if`-`else` expressions.
 ///

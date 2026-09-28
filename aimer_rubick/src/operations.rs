@@ -124,7 +124,11 @@ pub(crate) struct Operations<T: ?Sized> {
     pub(crate) drop_in_place: unsafe fn(*mut u8),
     /// The concrete layout, used to allocate, free, and reuse heap blocks.
     pub(crate) layout: Layout,
-    /// The pool class serving that layout, resolved once at compile time.
+    /// The complete allocation layout, including Rubick's origin header.
+    pub(crate) heap_layout: Option<Layout>,
+    /// Offset from the block base to the concrete payload.
+    pub(crate) heap_data_offset: usize,
+    /// The pool class serving `heap_layout`, resolved once at compile time.
     pub(crate) heap_class: u8,
     /// Whether the payload lives in the owner instead of a heap block.
     ///
@@ -136,11 +140,20 @@ pub(crate) struct Operations<T: ?Sized> {
 impl<T: ?Sized> Operations<T> {
     /// Describes a concrete storage type `U` for an owner of `capacity` bytes.
     const fn describe<U>(projection: Projection<T>, capacity: usize) -> Self {
+        let layout = Layout::new::<U>();
+        let (heap_layout, heap_data_offset, heap_class) = match pool::heap_layout(layout) {
+            Some((heap_layout, data_offset)) => {
+                (Some(heap_layout), data_offset, pool::class_of(heap_layout))
+            }
+            None => (None, 0, pool::UNPOOLED),
+        };
         Self {
             projection,
             drop_in_place: drop_in_place::<U>,
-            layout: Layout::new::<U>(),
-            heap_class: pool::class_of(Layout::new::<U>()),
+            layout,
+            heap_layout,
+            heap_data_offset,
+            heap_class,
             inline: size_of::<U>() <= capacity && align_of::<U>() <= INLINE_ALIGNMENT,
         }
     }
@@ -159,7 +172,18 @@ impl<T: ?Sized + 'static> Operations<T> {
         },
         drop_in_place: drop_in_place::<()>,
         layout: Layout::new::<()>(),
-        heap_class: pool::class_of(Layout::new::<()>()),
+        heap_layout: match pool::heap_layout(Layout::new::<()>()) {
+            Some((layout, _)) => Some(layout),
+            None => None,
+        },
+        heap_data_offset: match pool::heap_layout(Layout::new::<()>()) {
+            Some((_, offset)) => offset,
+            None => 0,
+        },
+        heap_class: match pool::heap_layout(Layout::new::<()>()) {
+            Some((layout, _)) => pool::class_of(layout),
+            None => pool::UNPOOLED,
+        },
         inline: true,
     };
 

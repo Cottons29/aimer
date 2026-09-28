@@ -207,6 +207,10 @@ members = [
 ]
 
 [workspace.dependencies]
+allocator-api2 = "0.2.21"
+dlmalloc = "0.2.14"
+libc = "0.2.189"
+windows-sys = { version = "0.61.2", features = ["Win32_System_Memory", "Win32_System_SystemInformation"] }
 aimer_cupid = { path = "aimer_cupid", default-features = false, features = ["apple-core-text", "native"] }
 aimer_rubick = { path = "aimer_rubick" }
 aimer_venus = { path = "aimer_venus" }

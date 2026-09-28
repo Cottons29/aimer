@@ -13,6 +13,7 @@ use aimer_cupid::AntiAlias;
 use aimer_events::text_editing::NativeTextRange;
 use aimer_events::text_editing::TextEditingDelta;
 use aimer_modal::ModalHost;
+use aimer_rubick::UiMemory;
 use aimer_utils::info;
 use aimer_venus::Venus;
 use aimer_widget::Widget;
@@ -501,6 +502,7 @@ pub extern "system" fn Java_com_aimer_AimerActivity_nativeBackspace<'caller>(
 pub struct AimerApp<W = ()> {
     child: W,
     antialiasing: AntiAlias,
+    ui_memory_limit: usize,
     startup_hooks: Vec<StartupHook>,
     window_attr: WindowAttr,
     #[cfg(feature = "wasm-hot-reload")]
@@ -602,6 +604,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         options: HeadlessOptions,
         antialiasing: AntiAlias,
         startup_hooks: Vec<StartupHook>,
+        ui_memory_limit: usize,
         #[cfg(feature = "wasm-hot-reload")] live_reload: Option<LiveReloadLaunch>,
     ) -> HeadlessAimerApp<W> {
         let scale_factor = if options.scale_factor.is_finite() && options.scale_factor > 0.0 {
@@ -647,6 +650,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 window: Some(window.clone()),
                 macos_windowing: Default::default(),
                 render_ctx: AimerRenderContext::new(antialiasing),
+                ui_memory: UiMemory::new(ui_memory_limit),
                 window_attr: WindowAttr::new(),
                 #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
                 show_window_after_first_frame: false,
@@ -745,6 +749,15 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         self.app.end_frame();
 
         crate::first_frame::notify_first_frame_presented(true);
+    }
+
+    /// Returns a handle to this application's UI memory pool.
+    ///
+    /// The handle exposes committed usage and the configured limit, and keeps
+    /// the pool alive if allocations made by the application still use it.
+    #[inline]
+    pub fn ui_memory(&self) -> UiMemory {
+        self.app.ui_memory.clone()
     }
 
     /// Renders frames for as long as the application keeps asking for them, up
@@ -1002,6 +1015,7 @@ impl AimerApp {
         Self {
             child: (),
             antialiasing: AntiAlias::default(),
+            ui_memory_limit: usize::MAX,
             startup_hooks: Vec::new(),
             window_attr: WindowAttr::new(),
             #[cfg(feature = "wasm-hot-reload")]
@@ -1013,6 +1027,15 @@ impl AimerApp {
     #[inline]
     pub fn with_antialiasing(mut self, antialiasing: AntiAlias) -> Self {
         self.antialiasing = antialiasing;
+        self
+    }
+
+    /// Sets the maximum system memory committed by this application's UI
+    /// heap. The heap grows lazily in 2 MiB regions when the limit allows it.
+    /// WebAssembly retains grown linear-memory pages for the module lifetime.
+    #[inline]
+    pub fn ui_memory_limit(mut self, max_bytes: usize) -> Self {
+        self.ui_memory_limit = max_bytes;
         self
     }
 
@@ -1074,6 +1097,7 @@ impl AimerApp {
         AimerApp {
             child,
             antialiasing: self.antialiasing,
+            ui_memory_limit: self.ui_memory_limit,
             startup_hooks: self.startup_hooks,
             window_attr: self.window_attr,
             #[cfg(feature = "wasm-hot-reload")]
@@ -1139,6 +1163,7 @@ impl<W: Widget + 'static> AimerApp<W> {
             native_startup_hooks(self.startup_hooks),
             self.antialiasing,
             self.window_attr,
+            self.ui_memory_limit,
             #[cfg(feature = "wasm-hot-reload")]
             self.live_reload,
         );
@@ -1153,6 +1178,7 @@ impl<W: Widget + 'static> AimerApp<W> {
             native_startup_hooks(self.startup_hooks),
             self.antialiasing,
             self.window_attr,
+            self.ui_memory_limit,
             #[cfg(feature = "wasm-hot-reload")]
             self.live_reload,
         );
@@ -1171,6 +1197,7 @@ impl<W: Widget + 'static> AimerApp<W> {
             options,
             self.antialiasing,
             self.startup_hooks,
+            self.ui_memory_limit,
             #[cfg(feature = "wasm-hot-reload")]
             self.live_reload,
         )
@@ -1182,6 +1209,7 @@ fn start_event_loop(
     startup_hooks: Vec<StartupHook>,
     antialiasing: AntiAlias,
     window_attr: WindowAttr,
+    ui_memory_limit: usize,
     #[cfg(feature = "wasm-hot-reload")] live_reload: Option<LiveReloadLaunch>,
 ) {
     if APP_STARTED.swap(true, Ordering::SeqCst) {
@@ -1288,6 +1316,7 @@ fn start_event_loop(
             window: None,
             macos_windowing: Default::default(),
             render_ctx: AimerRenderContext::new(antialiasing),
+            ui_memory: UiMemory::new(ui_memory_limit),
             window_attr,
             #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
             show_window_after_first_frame,
@@ -2523,6 +2552,23 @@ mod tests {
     }
 
     #[test]
+    fn headless_frame_builds_use_the_configured_ui_memory_pool() {
+        let observed_commit = Arc::new(AtomicUsize::new(0));
+        let mut app = AimerApp::new()
+            .ui_memory_limit(2 * 1024 * 1024)
+            .child(UiMemoryProbeWidget {
+                observed_commit: observed_commit.clone(),
+            })
+            .run_headless();
+
+        assert_eq!(app.ui_memory().limit_bytes(), 2 * 1024 * 1024);
+        app.render_frame();
+
+        assert_eq!(observed_commit.load(Ordering::SeqCst), 2 * 1024 * 1024);
+        assert_eq!(app.ui_memory().committed_bytes(), 2 * 1024 * 1024);
+    }
+
+    #[test]
     fn app_window_configuration_is_retained_when_child_is_attached() {
         let app = AimerApp::new()
             .window(WindowAttr::new().title("Configured Window").inner_size(900, 600))
@@ -2560,6 +2606,40 @@ mod tests {
         }
     }
     impl EventElement for RedrawElement {}
+
+    struct UiMemoryProbeWidget {
+        observed_commit: Arc<AtomicUsize>,
+    }
+
+    impl Widget for UiMemoryProbeWidget {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            let allocator = ctx
+                .ui_allocator()
+                .expect("headless widget builds run in the app UI allocator scope");
+            let element = UiMemoryProbeElement([0; 4]).boxed();
+            self.observed_commit
+                .store(allocator.committed_bytes(), Ordering::SeqCst);
+            element
+        }
+    }
+
+    impl aimer_widget::PortableWidget for UiMemoryProbeWidget {}
+
+    struct UiMemoryProbeElement([u64; 4]);
+
+    impl Drawable for UiMemoryProbeElement {
+        fn draw(&self, _ctx: &BuildContext) {
+            let _ = self.0;
+        }
+    }
+    impl LayoutElement for UiMemoryProbeElement {}
+    impl Rebuildable for UiMemoryProbeElement {}
+    impl VisitorElement for UiMemoryProbeElement {
+        fn debug_name(&self) -> &'static str {
+            "UiMemoryProbeElement"
+        }
+    }
+    impl EventElement for UiMemoryProbeElement {}
 
     #[test]
     fn headless_redraw_requests_can_drive_a_frame_pump() {

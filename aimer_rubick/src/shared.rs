@@ -1,10 +1,11 @@
 //! Single-threaded shared ownership with read-only field projection.
 //!
 //! [`Shared`] owns one heap allocation containing strong and weak-reference
-//! counters and a value. Allocation is performed directly through
-//! [`std::alloc`]; neither `Box` nor another smart pointer owns the value.
+//! counters and a value. Inside a [`UiAllocator::scope`], the allocation comes
+//! from the active application UI heap. Otherwise, it uses the same
+//! thread-local size-class pool as heap-mode [`Rubick`] values.
 
-use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
+use std::alloc::{Layout, handle_alloc_error};
 use std::borrow::Borrow;
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -16,11 +17,32 @@ use std::ops::Deref;
 use std::ptr::{self, NonNull};
 use std::rc::Rc;
 
+use allocator_api2::alloc::Allocator;
+
+use crate::erase::ErasedFrom;
+use crate::pool;
+use crate::{Rubick, UiAllocator};
+
 struct SharedAllocation<T> {
     strong: Cell<usize>,
     // Includes one implicit weak reference while the value is alive.
     weak: Cell<usize>,
+    origin: AllocationOrigin,
     value: ManuallyDrop<T>,
+}
+
+enum AllocationOrigin {
+    ThreadLocal(u8),
+    Ui(UiAllocator),
+}
+
+impl AllocationOrigin {
+    fn ui_allocator(&self) -> Option<UiAllocator> {
+        match self {
+            Self::ThreadLocal(_) => None,
+            Self::Ui(allocator) => Some(allocator.clone()),
+        }
+    }
 }
 
 /// Releases the implicit weak reference even when dropping the value unwinds.
@@ -45,13 +67,21 @@ impl<T> Drop for ReleaseImplicitWeak<T> {
 
 /// Deallocates an allocation whose value has already been destroyed.
 unsafe fn deallocate_allocation<T>(allocation: NonNull<SharedAllocation<T>>) {
+    let layout = Layout::new::<SharedAllocation<T>>();
     // SAFETY: the caller guarantees that no strong or weak reference can access
     // the allocation again and that `value` has already been destroyed.
-    unsafe {
-        dealloc(
-            allocation.as_ptr().cast::<u8>(),
-            Layout::new::<SharedAllocation<T>>(),
-        );
+    let origin = unsafe { ptr::addr_of!((*allocation.as_ptr()).origin).read() };
+    match origin {
+        AllocationOrigin::ThreadLocal(class) => {
+            // SAFETY: this allocation came from the thread-local Rubick pool
+            // with this exact class and layout.
+            unsafe { pool::deallocate(allocation.cast(), class, layout) };
+        }
+        AllocationOrigin::Ui(allocator) => {
+            // SAFETY: this allocation came from this UI heap with the exact
+            // layout, and the stored handle kept that heap alive.
+            unsafe { allocator.deallocate(allocation.cast(), layout) };
+        }
     }
 }
 
@@ -74,6 +104,8 @@ fn increment_count(count: usize) -> usize {
 /// The value is read-only while shared. Mutable access is available through
 /// [`get_mut`](Self::get_mut) when there is exactly one strong owner and no
 /// [`Weak`] handles, or through [`make_mut`](Self::make_mut) using copy-on-write.
+/// The `Shared` allocation uses the active UI heap when one is scoped; heap
+/// allocations owned internally by `T` continue to use `T`'s own allocator.
 ///
 /// `Shared` is deliberately neither [`Send`] nor [`Sync`]. Cycles made entirely
 /// from strong handles still leak; use [`Weak`] for non-owning back references.
@@ -81,7 +113,7 @@ fn increment_count(count: usize) -> usize {
 /// # Examples
 ///
 /// ```
-/// use aimer_std::read_only::Shared;
+/// use aimer_rubick::shared::Shared;
 ///
 /// let first = Shared::new(String::from("pineapple"));
 /// let second = first.clone();
@@ -104,7 +136,7 @@ pub struct Shared<T> {
 /// # Examples
 ///
 /// ```
-/// use aimer_std::read_only::Shared;
+/// use aimer_rubick::shared::Shared;
 ///
 /// let value = Shared::new(String::from("pineapple"));
 /// let weak = Shared::downgrade(&value);
@@ -119,23 +151,55 @@ pub struct Weak<T> {
 
 impl<T> Shared<T> {
     /// Allocates `value` with an initial strong-reference count of one.
+    ///
+    /// Inside a [`UiAllocator::scope`], the active application UI heap owns
+    /// this allocation. Otherwise it uses the same thread-local size-class
+    /// pool as heap-mode [`Rubick`] values.
+    ///
+    /// This controls the allocation for `Shared` itself. Heap-owning fields of
+    /// `T`, such as a `String`, keep using their own allocator.
     #[must_use]
     pub fn new(value: T) -> Self {
-        let layout = Layout::new::<SharedAllocation<T>>();
+        Self::new_with_allocator(value, UiAllocator::current())
+    }
 
-        // SAFETY: the layout is non-zero because the allocation contains a
-        // `usize`. A null result is handled before the pointer is written.
-        let raw = unsafe { alloc(layout).cast::<SharedAllocation<T>>() };
-        let Some(allocation) = NonNull::new(raw) else {
-            handle_alloc_error(layout);
-        };
+    /// Allocates `value` from the supplied application UI heap.
+    ///
+    /// The allocation retains `allocator` until its final strong and weak
+    /// handles are dropped, so the returned handle may outlive both the
+    /// allocator scope and the [`UiMemory`](crate::UiMemory) value.
+    #[must_use]
+    pub fn new_in(value: T, allocator: &UiAllocator) -> Self {
+        Self::new_with_allocator(value, Some(allocator.clone()))
+    }
+
+    fn new_with_allocator(value: T, allocator: Option<UiAllocator>) -> Self {
+        let layout = Layout::new::<SharedAllocation<T>>();
+        let (allocation, origin): (NonNull<SharedAllocation<T>>, AllocationOrigin) =
+            match allocator {
+                Some(allocator) => {
+                    let allocation = match allocator.allocate(layout) {
+                        Ok(allocation) => allocation.cast(),
+                        Err(_) => handle_alloc_error(layout),
+                    };
+                    (allocation, AllocationOrigin::Ui(allocator))
+                }
+                None => {
+                    let class = pool::class_of(layout);
+                    (
+                        pool::allocate(class, layout).cast(),
+                        AllocationOrigin::ThreadLocal(class),
+                    )
+                }
+            };
 
         // SAFETY: `allocation` is suitably sized and aligned uninitialized
-        // storage returned for exactly `layout`.
+        // storage returned for exactly `layout` by the recorded allocator.
         unsafe {
             allocation.as_ptr().write(SharedAllocation {
                 strong: Cell::new(1),
                 weak: Cell::new(1),
+                origin,
                 value: ManuallyDrop::new(value),
             });
         }
@@ -202,7 +266,9 @@ impl<T> Shared<T> {
         T: Clone,
     {
         if Self::strong_count(this) != 1 || Self::weak_count(this) != 0 {
-            *this = Self::new((**this).clone());
+            let value = (**this).clone();
+            let allocator = UiAllocator::current().or_else(|| this.ui_allocator());
+            *this = Self::new_with_allocator(value, allocator);
         }
 
         Self::get_mut(this).expect("a newly allocated Shared has one owner")
@@ -245,7 +311,7 @@ impl<T> Shared<T> {
     /// # Examples
     ///
     /// ```
-    /// use aimer_std::read_only::Shared;
+    /// use aimer_rubick::shared::Shared;
     ///
     /// struct State { title: String }
     ///
@@ -273,6 +339,11 @@ impl<T> Shared<T> {
         // SAFETY: every live `Shared` owns one strong reference, so its
         // allocation remains initialized for the duration of this borrow.
         unsafe { self.allocation.as_ref() }
+    }
+
+    #[inline]
+    fn ui_allocator(&self) -> Option<UiAllocator> {
+        self.inner().origin.ui_allocator()
     }
 
     #[inline]
@@ -502,7 +573,7 @@ impl<T: ?Sized> SharedRef<Rc<T>, T, fn(&Rc<T>) -> &T> {
     /// # Examples
     ///
     /// ```
-    /// use aimer_std::read_only::SharedRef;
+    /// use aimer_rubick::shared::SharedRef;
     /// use std::rc::Rc;
     ///
     /// let value = Rc::new(String::from("pineapple"));
@@ -615,6 +686,19 @@ where
     }
 }
 
+// SAFETY: The template carries the vtable for the concrete `SharedRef`, whose
+// `SharedValue<Field>` implementation returns a borrow tied to that owner.
+unsafe impl<Owner, Field, Select> ErasedFrom<SharedRef<Owner, Field, Select>>
+    for dyn SharedValue<Field>
+where
+    Owner: 'static,
+    Field: ?Sized + 'static,
+    Select: for<'a> Fn(&'a Owner) -> &'a Field + 'static,
+{
+    const TEMPLATE: *const Self =
+        std::ptr::null::<SharedRef<Owner, Field, Select>>() as *const dyn SharedValue<Field>;
+}
+
 struct ProjectedShareRef<T: ?Sized + 'static, U: ?Sized + 'static, Select> {
     source: ShareRef<T>,
     select: Select,
@@ -633,6 +717,18 @@ where
     }
 }
 
+// SAFETY: The template carries the vtable for `ProjectedShareRef`, whose
+// `SharedValue<U>` implementation returns a borrow tied to the source handle.
+unsafe impl<T, U, Select> ErasedFrom<ProjectedShareRef<T, U, Select>> for dyn SharedValue<U>
+where
+    T: ?Sized + 'static,
+    U: ?Sized + 'static,
+    Select: for<'a> Fn(&'a T) -> &'a U + 'static,
+{
+    const TEMPLATE: *const Self =
+        std::ptr::null::<ProjectedShareRef<T, U, Select>>() as *const dyn SharedValue<U>;
+}
+
 /// A type-erased, owning read-only reference to a shared value.
 ///
 /// `ShareRef<T>` is the stable interface for APIs that need to retain a
@@ -644,7 +740,7 @@ where
 /// Use [`ShareRef::from_shared_ref`] to adapt a [`SharedRef`] produced by
 /// [`Shared::project`], or [`ShareRef::from_rc`] for an existing [`Rc`].
 pub struct ShareRef<T: ?Sized + 'static> {
-    value: Rc<dyn SharedValue<T>>,
+    value: Shared<Rubick<dyn SharedValue<T>, 1>>,
 }
 
 impl<T: ?Sized + 'static> ShareRef<T> {
@@ -659,8 +755,20 @@ impl<T: ?Sized + 'static> ShareRef<T> {
         Owner: 'static,
         Select: for<'a> Fn(&'a Owner) -> &'a T + 'static,
     {
-        Self {
-            value: Rc::new(reference),
+        let allocator = UiAllocator::current().or_else(|| reference.owner.ui_allocator());
+        match allocator {
+            Some(allocator) => allocator.scope(|| {
+                let value: Rubick<dyn SharedValue<T>, 1> = Rubick::erase(reference);
+                Self {
+                    value: Shared::new_in(value, &allocator),
+                }
+            }),
+            None => {
+                let value: Rubick<dyn SharedValue<T>, 1> = Rubick::erase(reference);
+                Self {
+                    value: Shared::new(value),
+                }
+            }
         }
     }
 
@@ -683,12 +791,30 @@ impl<T: ?Sized + 'static> ShareRef<T> {
         U: ?Sized + 'static,
         Select: for<'a> Fn(&'a T) -> &'a U + 'static,
     {
-        ShareRef {
-            value: Rc::new(ProjectedShareRef {
-                source: self,
-                select,
-                target: PhantomData,
+        let allocator = UiAllocator::current().or_else(|| self.value.ui_allocator());
+        match allocator {
+            Some(allocator) => allocator.scope(|| {
+                let projected = ProjectedShareRef {
+                    source: self,
+                    select,
+                    target: PhantomData,
+                };
+                let value: Rubick<dyn SharedValue<U>, 1> = Rubick::erase(projected);
+                ShareRef {
+                    value: Shared::new_in(value, &allocator),
+                }
             }),
+            None => {
+                let projected = ProjectedShareRef {
+                    source: self,
+                    select,
+                    target: PhantomData,
+                };
+                let value: Rubick<dyn SharedValue<U>, 1> = Rubick::erase(projected);
+                ShareRef {
+                    value: Shared::new(value),
+                }
+            }
         }
     }
 
@@ -704,7 +830,7 @@ impl<T: ?Sized + 'static> Clone for ShareRef<T> {
     #[inline]
     fn clone(&self) -> Self {
         Self {
-            value: Rc::clone(&self.value),
+            value: self.value.clone(),
         }
     }
 }
@@ -740,7 +866,10 @@ impl<T: ?Sized + fmt::Display + 'static> fmt::Display for ShareRef<T> {
 #[cfg(test)]
 mod share_ref_tests {
     use super::{ShareRef, Shared};
+    use crate::UiMemory;
     use std::rc::Rc;
+
+    const TWO_MIB: usize = 2 * 1024 * 1024;
 
     #[test]
     fn from_rc_borrows_the_original_string_allocation() {
@@ -762,5 +891,58 @@ mod share_ref_tests {
         let reference = ShareRef::from_shared_ref(state.project(|state| &state.title));
 
         assert!(std::ptr::eq(reference.get(), &state.title));
+    }
+
+    #[test]
+    fn shared_uses_the_active_ui_memory_through_the_final_weak_drop() {
+        let memory = UiMemory::new(TWO_MIB);
+        let allocator = memory.allocator();
+        let (value, weak) = allocator.scope(|| {
+            let value = Shared::new([7_u8; 1024]);
+            let weak = Shared::downgrade(&value);
+            (value, weak)
+        });
+
+        assert_eq!(allocator.committed_bytes(), TWO_MIB);
+        drop(allocator);
+        drop(memory);
+
+        assert_eq!(value[0], 7);
+        drop(value);
+        assert!(weak.upgrade().is_none());
+        drop(weak);
+    }
+
+    #[test]
+    fn share_ref_uses_the_active_ui_memory_when_erasing_a_global_owner() {
+        let owner = Shared::new(String::from("projected"));
+        let projected = owner.project(|value: &String| value.as_str());
+        let memory = UiMemory::new(TWO_MIB);
+        let allocator = memory.allocator();
+
+        let reference = allocator.scope(|| ShareRef::from_shared_ref(projected));
+
+        assert_eq!(allocator.committed_bytes(), TWO_MIB);
+        drop(owner);
+        drop(allocator);
+        drop(memory);
+
+        assert_eq!(&*reference, "projected");
+        drop(reference);
+    }
+
+    #[test]
+    fn projecting_a_share_ref_reuses_its_ui_memory() {
+        let memory = UiMemory::new(TWO_MIB);
+        let allocator = memory.allocator();
+        let source = allocator.scope(|| {
+            let value: Rc<str> = Rc::from("projected");
+            ShareRef::from_rc(&value)
+        });
+
+        let projected = source.project(|value: &str| value);
+
+        assert_eq!(&*projected, "projected");
+        assert_eq!(allocator.committed_bytes(), TWO_MIB);
     }
 }

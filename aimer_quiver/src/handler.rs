@@ -28,6 +28,7 @@ use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_venus::Venus;
+use aimer_rubick::{UiAllocator, UiMemory};
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{AnyElement, EventDispatcher, EventResult, Widget, begin_event_frame};
 use std::any::Any;
@@ -246,6 +247,8 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub(crate) show_window_after_first_frame: bool,
     pub(crate) macos_windowing: aimer_native::macos_windowing::MacosWindowing,
     pub render_ctx: AimerRenderContext,
+    /// Per-application heap used by retained widget and element allocations.
+    pub(crate) ui_memory: UiMemory,
     pub widget_root: Option<AnyElement>,
     pub event_dispatcher: EventDispatcher,
     pub(crate) scroll_smoother: DualScroller,
@@ -554,6 +557,7 @@ pub(crate) struct FrameDrawer<'a, W: Widget + 'static> {
     #[cfg(feature = "wasm-hot-reload")]
     live_reload: &'a mut Option<crate::hot_reload::LiveReloadHost>,
     window: WindowHandle,
+    ui_allocator: UiAllocator,
     scale: f32,
     cursor_pos: Vec2d,
     #[cfg(not(target_arch = "wasm32"))]
@@ -569,6 +573,16 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
     /// canvas scope so a widget that leaves a transform behind cannot leak it
     /// into the next frame.
     pub(crate) fn draw(
+        &mut self,
+        canvas: &aimer_canvas::InnerCanvas,
+        width: u32,
+        height: u32,
+    ) -> (f32, aimer_cupid::damage_region::DamageSet) {
+        let allocator = self.ui_allocator.clone();
+        allocator.scope(|| self.draw_scoped(canvas, width, height))
+    }
+
+    fn draw_scoped(
         &mut self,
         canvas: &aimer_canvas::InnerCanvas,
         width: u32,
@@ -907,6 +921,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     ) -> (&mut AimerRenderContext, FrameDrawer<'_, W>) {
         let scale = self.window_scale as f32;
         let cursor_pos = self.cursor_pos;
+        let ui_allocator = self.ui_memory.allocator();
         let Self {
             render_ctx,
             widget_root,
@@ -928,6 +943,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 #[cfg(feature = "wasm-hot-reload")]
                 live_reload,
                 window,
+                ui_allocator,
                 scale,
                 cursor_pos,
                 #[cfg(not(target_arch = "wasm32"))]

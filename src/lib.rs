@@ -185,7 +185,7 @@ pub use wasm_bindgen;
 
 pub use aimer_std::case;
 pub mod sync {
-    pub use aimer_std::read_only::*;
+    pub use aimer_rubick::{ShareRef, Shared, SharedRef, Weak};
 }
 
 #[cfg(test)]
