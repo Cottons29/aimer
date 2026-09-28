@@ -15,6 +15,7 @@ pub mod portable;
 pub mod reconcile;
 mod reconciliation_plan;
 mod frame_work_stats;
+mod hover_reconciliation;
 mod rebuild_stats;
 #[cfg(feature = "event-tree-exp")]
 mod event_tree;
@@ -112,6 +113,11 @@ pub use crate::frame_work_stats::{
     record_hit_test_visit, record_layout_call, record_paint_call, record_redraw_request,
     record_root_draw_call, record_scroll_event, record_scroll_offset_update, record_scroll_step,
     record_smoothing_step, record_state_update, reset_frame_work_stats, take_frame_work_stats,
+};
+#[doc(hidden)]
+pub use crate::hover_reconciliation::{
+    mouse_region_hover_reconciliation_deferred, request_mouse_region_hover_reconciliation,
+    with_deferred_mouse_region_hover_reconciliation,
 };
 #[cfg(any(debug_assertions, feature = "frame-stats"))]
 pub use crate::components::element::{

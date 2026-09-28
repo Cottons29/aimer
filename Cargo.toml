@@ -82,6 +82,7 @@ event-tree-exp = [
     "aimer_scroll/event-tree-exp",
     "aimer_container/event-tree-exp",
     "aimer_collapsible/event-tree-exp",
+    "aimer_modal/event-tree-exp",
 ]
 # Forward opt-in Venus microtask diagnostics through the umbrella crate.
 venus-debug = ["aimer_venus/venus-debug"]

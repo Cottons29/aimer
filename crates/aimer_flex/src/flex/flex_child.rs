@@ -1,8 +1,9 @@
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_macro::{EventElement, Rebuildable};
+use aimer_macro::Rebuildable;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, LayoutElement, RequiredChild, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventTreeRole, LayoutElement,
+    RequiredChild, VisitorElement, Widget,
 };
 
 /// A flex child that fills the remaining main-axis space inside a flex
@@ -113,11 +114,17 @@ impl<W: Widget + 'static> Widget for Expanded<W> {
 /// [`LayoutElement::flex`] to distribute the remaining main-axis space. On
 /// layout it delegates intrinsic measurement to its child; the flex parent
 /// applies the allocated extent on its own main axis.
-#[derive(Rebuildable, EventElement)]
+#[derive(Rebuildable)]
 pub struct RawExpanded<E: Element> {
     pub(crate) child: E,
     pub(crate) flex: f32,
     pub(crate) debug_name: &'static str,
+}
+
+impl<E: Element> EventElement for RawExpanded<E> {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::Transparent
+    }
 }
 
 impl<E: Element> RawExpanded<E> {

@@ -13,8 +13,9 @@ use aimer_provider::with_portable_provider;
 use aimer_widget::base::{BuildContext, ResolvedSize, Size, Vec2d};
 use aimer_widget::{
     AnyElement, AnyWidget, Brightness, ChildBuilder, Drawable, Element, EventElement, Key,
-    LayoutElement, Rebuildable, RequiredChild, State, StateUpdater, StatefulElement,
-    StatefulWidget, StatelessElement, VisitorElement, Widget, platform_brightness,
+    EventTreeRole, LayoutElement, Rebuildable, RequiredChild, State, StateUpdater,
+    StatefulElement, StatefulWidget, StatelessElement, VisitorElement, Widget,
+    platform_brightness,
 };
 
 #[cfg(feature = "portable-guest")]
@@ -683,7 +684,11 @@ impl<T: Theme> Drawable for AnimatedThemeElement<T> {
     }
 }
 
-impl<T: Theme> EventElement for AnimatedThemeElement<T> {}
+impl<T: Theme> EventElement for AnimatedThemeElement<T> {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::Transparent
+    }
+}
 
 impl<T: Theme> Rebuildable for AnimatedThemeElement<T> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
@@ -1137,6 +1142,29 @@ mod tests {
             WindowHandle::headless(Default::default(), 1.0),
             tokio::runtime::Handle::current(),
         )
+    }
+
+    #[tokio::test]
+    async fn animated_theme_element_is_transparent_to_event_routing() {
+        let ctx = context();
+        let value = theme(42);
+        let current = Rc::new(RefCell::new(value.clone()));
+        let element = AnimatedThemeElement {
+            current,
+            child: Probe {
+                conversions: Rc::new(Cell::new(0)),
+                builds: Rc::new(Cell::new(0)),
+            }
+            .to_element(&ctx),
+            controller: AnimationController::new(Duration::ZERO, Curve::Linear),
+            transition: Rc::new(RefCell::new(ThemeTransition::new(value.clone()))),
+            handle: ProviderHandle::new(value),
+        };
+
+        assert_eq!(
+            element.event_tree_role(),
+            aimer_widget::EventTreeRole::Transparent
+        );
     }
 
     fn frame_of(state: &AnimatedThemeState<ThemeData>, ctx: &BuildContext) {

@@ -1,10 +1,11 @@
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_macro::{EventElement, PortableWidget, Rebuildable};
+use aimer_macro::{PortableWidget, Rebuildable};
 use aimer_widget::base::{Color, *};
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, LayoutCache, LayoutElement, VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, EventTreeRole, LayoutCache,
+    LayoutElement, VisitorElement, Widget,
 };
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{
@@ -164,7 +165,7 @@ fn validate_portable_sized_box<W: Widget + 'static>(
     }
     Ok(())
 }
-#[derive(Rebuildable, EventElement)]
+#[derive(Rebuildable)]
 pub struct RawSizedBox<E: Element> {
     pub(crate) width: Dimension,
     pub(crate) height: Dimension,
@@ -172,6 +173,12 @@ pub struct RawSizedBox<E: Element> {
     pub(crate) child: E,
     pub(crate) cache: LayoutCache,
     pub(crate) debug_name: &'static str,
+}
+
+impl<E: Element> EventElement for RawSizedBox<E> {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
 }
 
 impl<E: Element> Drawable for RawSizedBox<E> {
@@ -290,7 +297,7 @@ mod tests {
 
     use super::*;
     use aimer_widget::base::WindowHandle;
-    use aimer_widget::{Drawable, EventElement, Rebuildable, VisitorElement};
+    use aimer_widget::{Drawable, EventElement, EventTreeRole, Rebuildable, VisitorElement};
 
     struct FixedChild;
 
@@ -399,6 +406,14 @@ mod tests {
         element.draw(&ctx);
 
         assert_eq!(draws.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn sized_box_keeps_its_layout_bounds_in_indexed_event_routing() {
+        let ctx = context();
+        let element = SizedBox::new().child(FixedChild).to_element(&ctx);
+
+        assert_eq!(element.event_tree_role(), EventTreeRole::IndexedTarget);
     }
 }
 

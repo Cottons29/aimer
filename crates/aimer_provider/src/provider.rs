@@ -9,9 +9,9 @@ use std::rc::{Rc, Weak};
 
 use aimer_widget::base::{BuildConsumer, BuildContext, ResolvedSize, Size, Vec2d, WindowHandle};
 use aimer_widget::{
-    AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, LayoutElement,
-    Rebuildable, RequiredChild, State, StateUpdater, StatefulElement, StatefulWidget,
-    VisitorElement, Widget,
+    AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, EventTreeRole,
+    LayoutElement, Rebuildable, RequiredChild, State, StateUpdater, StatefulElement,
+    StatefulWidget, VisitorElement, Widget,
 };
 
 use aimer_widget::portable::__anteros::{ValueSchemaMetadata, Version};
@@ -844,6 +844,9 @@ impl<T: 'static> LayoutElement for ProviderElement<T> {
 }
 
 impl<T: 'static> EventElement for ProviderElement<T> {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::Transparent
+    }
 }
 
 impl<T: 'static> Rebuildable for ProviderElement<T> {
@@ -1100,6 +1103,9 @@ impl<T: 'static, A: 'static> LayoutElement for StoreElement<T, A> {
     }
 }
 impl<T: 'static, A: 'static> EventElement for StoreElement<T, A> {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::Transparent
+    }
 }
 impl<T: 'static, A: 'static> Rebuildable for StoreElement<T, A> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
@@ -1128,8 +1134,8 @@ mod tests {
     use aimer_utils::PanicSite;
     use aimer_widget::base::{BuildConsumer, BuildContext, WindowHandle};
     use aimer_widget::{
-        Drawable, Element, EventElement, LayoutElement, Rebuildable, State, StateUpdater,
-        StatefulElement, StatefulWidget, StatelessElement, VisitorElement, Widget,
+        Drawable, Element, EventElement, EventTreeRole, LayoutElement, Rebuildable, State,
+        StateUpdater, StatefulElement, StatefulWidget, StatelessElement, VisitorElement, Widget,
     };
 
     use super::*;
@@ -1157,6 +1163,23 @@ mod tests {
     impl EventElement for Leaf {}
     impl LayoutElement for Leaf {}
     impl Rebuildable for Leaf {}
+
+    #[test]
+    fn provider_wrappers_are_transparent_to_event_routing() {
+        let provider = ProviderElement {
+            handle: ProviderHandle::new(Counter::default()),
+            child: Leaf.boxed(),
+        };
+        let store = StoreElement {
+            handle: ProviderHandle::new(Counter::default()),
+            dispatcher: StoreDispatcher(Rc::new(|_: ()| {})),
+            child: Leaf.boxed(),
+            marker: PhantomData,
+        };
+
+        assert_eq!(provider.event_tree_role(), EventTreeRole::Transparent);
+        assert_eq!(store.event_tree_role(), EventTreeRole::Transparent);
+    }
 
     struct ReadingWidget {
         observed: Rc<Cell<usize>>,

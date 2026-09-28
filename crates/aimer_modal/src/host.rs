@@ -10,8 +10,9 @@ use aimer_macro::Rebuildable;
 use aimer_widget::base::BuildContext;
 use aimer_widget::focus::FocusTrap;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventDispatcher, EventElement, EventResult, LayoutElement,
-    PointerKey, RequiredChild, VisitorElement, Widget, broadcast_event, dispatch_focused_event,
+    AnyElement, Drawable, Element, EventDispatcher, EventElement, EventResult, EventTreeRole,
+    LayoutElement, PointerKey, RequiredChild, VisitorElement, Widget, broadcast_event,
+    dispatch_focused_event,
 };
 
 use crate::ModalAnimation;
@@ -251,7 +252,7 @@ impl<W: Widget + 'static> Widget for ModalHost<W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawModalHost {
             child: self.child.to_element(ctx),
-            overlay: RawModalOverlay::default(),
+            overlay: RawModalOverlay::default().boxed(),
         }
         .boxed()
     }
@@ -264,7 +265,7 @@ impl<W: Widget + 'static> Widget for ModalHost<W> {
 #[derive(Rebuildable)]
 struct RawModalHost {
     child: AnyElement,
-    overlay: RawModalOverlay,
+    overlay: AnyElement,
 }
 
 impl Drop for RawModalHost {
@@ -275,21 +276,25 @@ impl Drop for RawModalHost {
 
 impl Drawable for RawModalHost {
     fn draw(&self, ctx: &BuildContext) {
-        if self.overlay.prepare(ctx) {
+        if process_commands(ctx) {
             let _ = broadcast_event(self.child.as_ref(), &ElementEvent::Cancel);
         }
         self.child.draw(ctx);
-        self.overlay.draw_entries(ctx);
+        draw_hosted_entries(ctx);
     }
 }
 
 impl EventElement for RawModalHost {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
-        self.overlay.on_event(event)
+        self.overlay.as_ref().on_event(event)
     }
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
-        visitor(&self.overlay);
+        visitor(self.overlay.as_ref());
     }
 }
 
@@ -310,7 +315,7 @@ impl LayoutElement for RawModalHost {
 impl VisitorElement for RawModalHost {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
-        visitor(&self.overlay);
+        visitor(self.overlay.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {
@@ -329,23 +334,27 @@ impl RawModalOverlay {
     }
 
     fn draw_entries(&self, ctx: &BuildContext) {
-        let now = AnimInstant::now();
-        ENTRIES.with(|entries| {
-            let mut entries = entries.borrow_mut();
-            for entry in entries.iter() {
-                entry.timeline.borrow_mut().tick(now, entry.animation);
-                entry.element.draw(ctx);
-            }
-            entries.retain(|entry| {
-                let retain = !entry.timeline.borrow().finished();
-                if !retain {
-                    cancel_hosted_entry(entry);
-                }
-                retain
-            });
-        });
-        draw_layers(ctx);
+        draw_hosted_entries(ctx);
     }
+}
+
+fn draw_hosted_entries(ctx: &BuildContext) {
+    let now = AnimInstant::now();
+    ENTRIES.with(|entries| {
+        let mut entries = entries.borrow_mut();
+        for entry in entries.iter() {
+            entry.timeline.borrow_mut().tick(now, entry.animation);
+            entry.element.draw(ctx);
+        }
+        entries.retain(|entry| {
+            let retain = !entry.timeline.borrow().finished();
+            if !retain {
+                cancel_hosted_entry(entry);
+            }
+            retain
+        });
+    });
+    draw_layers(ctx);
 }
 
 impl Drawable for RawModalOverlay {
@@ -356,6 +365,10 @@ impl Drawable for RawModalOverlay {
 }
 
 impl EventElement for RawModalOverlay {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         ENTRIES.with(|entries| {
             let entries = entries.borrow();
@@ -742,11 +755,30 @@ mod tests {
     use aimer_widget::focus::{FocusNode, FocusTrap, active_focus_trap};
     use aimer_widget::{
         CaptureRequest, Drawable, Element, EventDispatcher, EventElement, EventResult,
+        EventTreeRole,
         LayoutElement, PointerKey, Rebuildable, VisitorElement,
     };
 
     use super::{HostedModal, ModalId, ModalTimeline, dispatch_hosted_event};
     use crate::ModalAnimation;
+
+    #[test]
+    fn modal_host_and_overlay_opt_into_indexed_event_routing() {
+        let host = super::RawModalHost {
+            child: CapturingModalElement {
+                events: Rc::new(Cell::new(0)),
+            }
+            .boxed(),
+            overlay: super::RawModalOverlay::default().boxed(),
+        };
+
+        assert_eq!(host.event_tree_role(), EventTreeRole::IndexedTarget);
+        assert_eq!(host.overlay.event_tree_role(), EventTreeRole::IndexedTarget);
+        assert!(
+            host.overlay.element_id().is_some(),
+            "the indexed overlay needs a stable element identity"
+        );
+    }
 
     /// Builds an entry that confines focus, as `process_commands` does.
     fn trapping_entry(element: aimer_widget::AnyElement) -> HostedModal {
@@ -844,6 +876,10 @@ mod tests {
     }
 
     impl EventElement for CapturingModalElement {
+        fn event_tree_role(&self) -> EventTreeRole {
+            EventTreeRole::IndexedTarget
+        }
+
         fn on_event(&self, event: &ElementEvent) -> EventResult {
             self.events.set(self.events.get() + 1);
             match event {
@@ -913,6 +949,64 @@ mod tests {
         assert_eq!(events.get(), 3);
         assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
         assert_eq!(entry.dispatcher.borrow().capture_count(), 0);
+    }
+
+    #[test]
+    fn modal_host_routes_capture_through_its_indexed_overlay() {
+        super::reset_registry_for_test();
+        let modal_events = Rc::new(Cell::new(0));
+        let app_events = Rc::new(Cell::new(0));
+        let entry = trapping_entry(
+            CapturingModalElement {
+                events: modal_events.clone(),
+            }
+            .boxed(),
+        );
+        super::ENTRIES.with(|entries| entries.borrow_mut().push(entry));
+
+        let host = super::RawModalHost {
+            child: CapturingModalElement {
+                events: app_events.clone(),
+            }
+            .boxed(),
+            overlay: super::RawModalOverlay::default().boxed(),
+        }
+        .boxed();
+        let mut dispatcher = EventDispatcher::new();
+        let pointer = PointerKey::new(PointerSource::Touch, 9);
+        let inside = Vec2d { x: 5.0, y: 5.0 };
+        let outside = Vec2d { x: 50.0, y: 50.0 };
+
+        let down = ElementEvent::PointerDown(PointerInfo::new(
+            inside,
+            pointer.source,
+            pointer.id,
+            PointerButton::Primary,
+        ));
+        let _ = dispatcher.dispatch(host.as_ref(), inside, &down);
+        assert!(dispatcher.is_captured(pointer));
+        assert_eq!(modal_events.get(), 1);
+        assert_eq!(app_events.get(), 0, "the modal overlay stays above app content");
+
+        let move_event = ElementEvent::PointerMove(PointerInfo::new(
+            outside,
+            pointer.source,
+            pointer.id,
+            PointerButton::Primary,
+        ));
+        let _ = dispatcher.dispatch(host.as_ref(), outside, &move_event);
+        let up = ElementEvent::PointerUp(PointerInfo::new(
+            outside,
+            pointer.source,
+            pointer.id,
+            PointerButton::Primary,
+        ));
+        let _ = dispatcher.dispatch(host.as_ref(), outside, &up);
+
+        assert_eq!(modal_events.get(), 3);
+        assert_eq!(app_events.get(), 0);
+        assert!(!dispatcher.is_captured(pointer));
+        super::reset_registry_for_test();
     }
 
     #[test]

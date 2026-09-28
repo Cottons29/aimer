@@ -1,7 +1,8 @@
 use aimer_attribute::{Dimension, Size};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement, Widget,
+    AnyElement, Drawable, Element, EventElement, EventTreeRole, LayoutElement, Rebuildable,
+    VisitorElement, Widget,
 };
 /// A leaf widget that occupies no space and paints nothing.
 ///
@@ -41,7 +42,11 @@ impl VisitorElement for ZeroSizedBox {
     }
 }
 
-impl EventElement for ZeroSizedBox {}
+impl EventElement for ZeroSizedBox {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::Transparent
+    }
+}
 
 impl LayoutElement for ZeroSizedBox {
     #[inline]
@@ -62,5 +67,19 @@ impl Rebuildable for ZeroSizedBox {}
 impl Widget for ZeroSizedBox {
     fn to_element(self, _: &BuildContext) -> AnyElement {
         Element::boxed(ZeroSizedBox)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ZeroSizedBox;
+    use aimer_widget::EventElement;
+
+    #[test]
+    fn zero_sized_box_is_transparent_to_event_routing() {
+        assert_eq!(
+            ZeroSizedBox.event_tree_role(),
+            aimer_widget::EventTreeRole::Transparent
+        );
     }
 }

@@ -135,6 +135,19 @@ mod lazy_tests {
         assert!(!column.is_paint_stable());
     }
 
+    #[test]
+    fn expanded_is_transparent_to_event_routing() {
+        let expanded = crate::flex::flex_child::RawExpanded::new(
+            HitTestChild {
+                bounds: (Vec2d::ZERO, Vec2d { x: 100.0, y: 20.0 }),
+            },
+            1.0,
+            "Expanded",
+        );
+
+        assert_eq!(expanded.event_tree_role(), EventTreeRole::Transparent);
+    }
+
     /// A `Column` under a viewport must paint only the children intersecting it,
     /// and must not re-measure the whole list to find them.
     #[test]

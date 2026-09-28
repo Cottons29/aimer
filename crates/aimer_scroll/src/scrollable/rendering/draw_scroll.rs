@@ -1,7 +1,15 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
+#[cfg(feature = "event-tree-exp")]
+use aimer_events::element::ElementEvent;
+#[cfg(feature = "event-tree-exp")]
+use aimer_events::pointer::{PointerButton, PointerInfo};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Drawable, Element, LayoutElement};
+#[cfg(feature = "event-tree-exp")]
+use aimer_widget::{
+    request_mouse_region_hover_reconciliation, with_deferred_mouse_region_hover_reconciliation,
+};
 
 use crate::ScrollAxis;
 use crate::scrollable::constants::SNAP_EPSILON;
@@ -285,6 +293,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // The extra content is still clipped on the GPU by the viewport clip
         // set above, so it costs nothing to draw.
         let travel = visible_travel(self.ctrl.last_drawn_offset.get(), snapped_offset);
+        #[cfg(feature = "event-tree-exp")]
+        let content_moved = travel != Vec2d::ZERO;
         self.ctrl.last_drawn_offset.set(Some(snapped_offset));
         child_ctx.visible_rect = Some(cache_rect(
             self.ctrl.axis,
@@ -300,26 +310,59 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // Check it before entering the erased child so an off-screen scrollable
         // still updates its physics and bounds without walking its content.
         if ctx.is_rect_visible(0.0, 0.0, viewport_w, viewport_h) {
-            #[cfg(not(feature = "portable-guest"))]
-            if retained_scroll_paint_supported(cfg!(target_arch = "wasm32")) {
-                self.draw_child_with_retained_paint(ctx, &child_ctx, content_size);
-            } else {
-                // Browser backends still have an unstable nested render-target
-                // path for retained scroll paint. Live replay keeps SVG and text
-                // in the main frame's compositor state until that path is safe.
+            let draw_content = || {
+                #[cfg(not(feature = "portable-guest"))]
+                if retained_scroll_paint_supported(cfg!(target_arch = "wasm32")) {
+                    self.draw_child_with_retained_paint(ctx, &child_ctx, content_size);
+                } else {
+                    // Browser backends still have an unstable nested render-target
+                    // path for retained scroll paint. Live replay keeps SVG and text
+                    // in the main frame's compositor state until that path is safe.
+                    self.child.draw(&child_ctx);
+                }
+                #[cfg(feature = "portable-guest")]
                 self.child.draw(&child_ctx);
-            }
-            #[cfg(feature = "portable-guest")]
-            self.child.draw(&child_ctx);
 
-            if provisional_extent || !self.child.is_layout_stable() {
-                self.refresh_content_size_after_draw(
-                    ctx,
-                    viewport_w,
-                    viewport_h,
-                    content_size,
-                    provisional_extent,
-                    preserve_content_end,
+                if provisional_extent || !self.child.is_layout_stable() {
+                    self.refresh_content_size_after_draw(
+                        ctx,
+                        viewport_w,
+                        viewport_h,
+                        content_size,
+                        provisional_extent,
+                        preserve_content_end,
+                    );
+                }
+            };
+            #[cfg(feature = "event-tree-exp")]
+            let should_dispatch_hover = if content_moved
+                && self.ctrl.drag_mode.get() == DragMode::None
+                && self.event_dispatcher.borrow().capture_count() == 0
+            {
+                let (_, needs_reconciliation) =
+                    with_deferred_mouse_region_hover_reconciliation(|| {
+                        request_mouse_region_hover_reconciliation();
+                        draw_content();
+                    });
+                needs_reconciliation
+            } else {
+                draw_content();
+                false
+            };
+            #[cfg(not(feature = "event-tree-exp"))]
+            {
+                draw_content();
+            }
+            #[cfg(feature = "event-tree-exp")]
+            if should_dispatch_hover {
+                let event = ElementEvent::PointerMove(PointerInfo::mouse(
+                    ctx.cursor_pos,
+                    PointerButton::Primary,
+                ));
+                let _ = self.event_dispatcher.borrow_mut().dispatch(
+                    &self.child,
+                    ctx.cursor_pos,
+                    &event,
                 );
             }
         }

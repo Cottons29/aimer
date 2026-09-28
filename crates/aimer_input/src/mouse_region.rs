@@ -385,7 +385,9 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
 
         let cursor = ctx.cursor_pos;
         let is_inside = self.cached_bounds.is_inside(cursor.x, cursor.y);
-        self.sync_hover(is_inside);
+        if !aimer_widget::mouse_region_hover_reconciliation_deferred() {
+            self.sync_hover(is_inside);
+        }
 
         self.child.draw(ctx);
     }
