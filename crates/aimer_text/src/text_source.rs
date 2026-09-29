@@ -249,8 +249,7 @@ mod tests {
         let state = Shared::new(State {
             title: String::from("projected"),
         });
-        let title = ShareRef::from_shared_ref(state.project(|state| &state.title))
-            .project(String::as_str);
+        let title = state.project(|state| &state.title).project(String::as_str);
         let source = TextSource::from(title);
 
         drop(state);

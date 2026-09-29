@@ -467,3 +467,4 @@ and the generic `Renderer<B = DefaultGpuBackend>` is the public renderer.
 References below to `pluggable-backend-exp`, backend-selection Cargo features,
 or a separate WGPU-only `Renderer` describe the original proposal, not the
 current configuration. This file remains for its design history.
+

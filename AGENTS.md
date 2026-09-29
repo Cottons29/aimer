@@ -2,6 +2,13 @@
 
 These instructions apply to the entire repository. A nested `AGENTS.md` takes precedence for files in its directory.
 
+
+## Explorer
+
+When exploring the projects, consider using subagent to work with these rules: 
+
+- if you are ChatGPT: using chat-gpt-6-luna (high) for subagents
+
 ## Priorities
 
 When requirements compete, use this order:

@@ -3,6 +3,7 @@ use std::time::Duration;
 use aimer::macros::widget;
 use aimer::style::*;
 use aimer::*;
+use aimer::input::button::Button;
 
 pub fn start_animated_theme_example() {
     AimerApp::start(AnimatedThemeExample::new())

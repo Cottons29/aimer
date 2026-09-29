@@ -1667,6 +1667,7 @@ mod memory_tests {
             },
             nodes: Arc::from([]),
             geometries: Arc::from([]),
+            resources: Arc::new(crate::svg::SvgResourceGraph::empty()),
         });
         let mut list = DrawList::new();
         list.fill_rect(

@@ -6,7 +6,7 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
-
+use aimer_rubick::{ShareRef, Shared};
 use aimer_widget::base::{BuildConsumer, BuildContext, ResolvedSize, Size, Vec2d, WindowHandle};
 use aimer_widget::{
     AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, LayoutElement,
@@ -144,6 +144,20 @@ struct ProviderStore<T> {
 /// provider is updated.
 pub struct Snapshot<T>(Rc<T>);
 
+
+impl<T> Snapshot<T> {
+    /// Creates a read-only handle to a borrowed part of `T`.
+    #[inline]
+    pub fn project<Field, Select>(&self, select: Select) -> ShareRef<Field>
+    where
+        T: 'static,
+        Field: ?Sized + 'static,
+        Select: for<'a> Fn(&'a T) -> &'a Field + 'static,
+    {
+        ShareRef::from_rc(&self.0).project(select)
+    }
+}
+
 impl<T> Clone for Snapshot<T> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
@@ -180,7 +194,6 @@ impl<T: 'static> ProviderHandle<T> {
             next_subscriber: Cell::new(0),
         }))
     }
-
     /// Returns an immutable snapshot of the current value without subscribing a
     /// widget.
     pub fn read(&self) -> Snapshot<T> {
@@ -385,7 +398,7 @@ pub trait ProviderContext {
     /// Returns a projection and rebuilds the current widget only when that
     /// projection changes.
     fn select<T: 'static, R: PartialEq + 'static>(&self, selector: impl Fn(&T) -> R + 'static)
-    -> R;
+                                                  -> R;
 
     /// Mutates the nearest provided `T` and notifies its subscribers.
     fn update<T: Clone + 'static>(&self, mutation: impl FnOnce(&mut T));
@@ -777,7 +790,7 @@ impl<T: 'static> Widget for ProviderScope<T> {
             handle: self.handle.clone(),
             child,
         }
-        .boxed()
+            .boxed()
     }
 }
 
@@ -843,8 +856,7 @@ impl<T: 'static> LayoutElement for ProviderElement<T> {
     }
 }
 
-impl<T: 'static> EventElement for ProviderElement<T> {
-}
+impl<T: 'static> EventElement for ProviderElement<T> {}
 
 impl<T: 'static> Rebuildable for ProviderElement<T> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
@@ -956,7 +968,7 @@ pub struct StoreState<T, A, W> {
 }
 
 impl<T: Clone + 'static, A: 'static, W: Widget + 'static> StatefulWidget
-    for StoreProvider<T, A, W>
+for StoreProvider<T, A, W>
 {
     type State = StoreState<T, A, W>;
     fn create_state(self) -> Self::State {
@@ -982,7 +994,7 @@ impl<T: Clone + 'static, A: 'static, W: Widget + 'static> StatefulWidget
 }
 
 impl<T: Clone + 'static, A: 'static, W: Widget + 'static> State<StoreProvider<T, A, W>>
-    for StoreState<T, A, W>
+for StoreState<T, A, W>
 {
     fn init_state(&mut self, _updater: StateUpdater<Self>) {}
     fn adopt_config_from(&mut self, new: Self) {
@@ -1033,7 +1045,7 @@ impl<T: Clone + 'static, A: 'static> Widget for StoreScope<T, A> {
             child,
             marker: PhantomData,
         }
-        .boxed()
+            .boxed()
     }
 }
 
@@ -1099,8 +1111,7 @@ impl<T: 'static, A: 'static> LayoutElement for StoreElement<T, A> {
         self.child.pos_start_end()
     }
 }
-impl<T: 'static, A: 'static> EventElement for StoreElement<T, A> {
-}
+impl<T: 'static, A: 'static> EventElement for StoreElement<T, A> {}
 impl<T: 'static, A: 'static> Rebuildable for StoreElement<T, A> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.rebuild_if_dirty(ctx));
@@ -1362,8 +1373,8 @@ mod tests {
                 "KeyedProviderConsumer",
                 Some(aimer_widget::Key::Static("keyed-provider-consumer")),
             )
-            .0
-            .boxed()
+                .0
+                .boxed()
         }
     }
 
@@ -1453,7 +1464,7 @@ mod tests {
                 .with_max_blob_bytes(128),
             aimer_widget::portable::PortableLimits::new(8, 16, 64, 128, 1_024),
         )
-        .unwrap()
+            .unwrap()
     }
 
     #[cfg(feature = "portable-guest")]
@@ -1515,7 +1526,7 @@ mod tests {
                 aimer_widget::portable::StableId128::from_bytes([7; 16]),
             ),
         )
-        .unwrap();
+            .unwrap();
         let document = context.finish_document(root).unwrap();
         let limits = document.model_limits();
         let image = document.encode().unwrap();
@@ -1529,7 +1540,7 @@ mod tests {
             property.property_id()
                 == aimer_widget::portable::__anteros::PROPERTY_PROVIDER_VALUE
                 && property.value()
-                    == aimer_widget::portable::__anteros::PropertyValue::BlobRef(0)
+                == aimer_widget::portable::__anteros::PropertyValue::BlobRef(0)
         }));
         assert_eq!(view.blob(0), Some(7_u32.to_le_bytes().as_slice()));
     }
@@ -1547,7 +1558,7 @@ mod tests {
                 aimer_widget::portable::StableId128::from_bytes([8; 16]),
             ),
         )
-        .expect_err("a provider without a stable codec must not cross the guest boundary");
+            .expect_err("a provider without a stable codec must not cross the guest boundary");
 
         assert!(matches!(
             error,
@@ -1579,7 +1590,7 @@ mod tests {
         let payload = catch_unwind(AssertUnwindSafe(|| {
             let _ = ProviderContext::read::<Counter>(&context);
         }))
-        .expect_err("reading a missing provider should panic");
+            .expect_err("reading a missing provider should panic");
         let site = watch.take_site().expect("the panic site should be recorded");
         let message = payload
             .downcast_ref::<String>()
@@ -1602,7 +1613,7 @@ mod tests {
             let failed = catch_unwind(AssertUnwindSafe(|| {
                 let _ = ProviderContext::watch::<Counter>(context);
             }))
-            .is_err();
+                .is_err();
             let site = watch.take_site().expect("the panic site should be recorded");
 
             assert!(failed);
@@ -1620,7 +1631,7 @@ mod tests {
         let failed = catch_unwind(AssertUnwindSafe(|| {
             ProviderContext::dispatch(&context, 7_u32);
         }))
-        .is_err();
+            .is_err();
         let site = watch.take_site().expect("the panic site should be recorded");
 
         assert!(failed);
@@ -1762,10 +1773,10 @@ mod tests {
         let rendered = catch_unwind(|| {
             let _ = ProviderHandle::<Counter>::of(&context());
         })
-        .err()
-        .and_then(|_| watch.take_site())
-        .expect("the panic site should be recorded")
-        .to_string();
+            .err()
+            .and_then(|_| watch.take_site())
+            .expect("the panic site should be recorded")
+            .to_string();
 
         assert!(rendered.starts_with("at "), "{rendered}");
         assert!(rendered.contains(file!()), "{rendered}");

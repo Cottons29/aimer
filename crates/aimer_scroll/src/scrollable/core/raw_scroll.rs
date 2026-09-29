@@ -566,7 +566,7 @@ impl<E: Element> RawScrollableContainer<E> {
 
             let recording_canvas = ctx.canvas.fork_for_recording();
             let mut recording_ctx = child_ctx.clone();
-            recording_ctx.canvas = Canvas::new(&recording_canvas);
+            recording_ctx.replace_canvas(Canvas::new(&recording_canvas));
             // A retained stream must contain all content. The outer viewport clip
             // still prevents it from reaching the framebuffer when replayed.
             recording_ctx.visible_rect = None;
@@ -675,7 +675,7 @@ impl<E: Element> RawScrollableContainer<E> {
                     return;
                 };
                 let mut paint_ctx = island_ctx.clone();
-                paint_ctx.canvas = Canvas::new(recording);
+                paint_ctx.replace_canvas(Canvas::new(recording));
                 recording.save();
                 if let Some(clip) = clip {
                     recording.set_clip(0.0, 0.0, clip.width, clip.height);
@@ -872,7 +872,7 @@ impl<E: Element> RawScrollableContainer<E> {
         let recording_canvas = ctx.canvas.fork_for_recording();
         recording_canvas.translate(-rect.x, -rect.y);
         let mut recording_ctx = child_ctx.clone();
-        recording_ctx.canvas = Canvas::new(&recording_canvas);
+        recording_ctx.replace_canvas(Canvas::new(&recording_canvas));
         recording_ctx.visible_rect = Some((
             (rect.x - RETAINED_LAYER_TILE_OVERLAP_PX).max(0.0),
             (rect.y - RETAINED_LAYER_TILE_OVERLAP_PX).max(0.0),
@@ -1435,8 +1435,10 @@ mod tests {
     use aimer_events::pointer::{PointerInfo, PointerSource};
     use aimer_widget::{
         AnyElement, CaptureRequest, Drawable, EventElement, EventResult, LayoutElement, PointerKey,
-        StatelessElement, VisitorElement,
+        VisitorElement,
     };
+    #[cfg(not(feature = "portable-guest"))]
+    use aimer_widget::StatelessElement;
 
     use super::*;
 

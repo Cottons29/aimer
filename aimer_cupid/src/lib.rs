@@ -1968,16 +1968,24 @@ mod generic_backend_tests {
                 svg_id: None,
                 classes: Arc::new([]),
                 element: crate::svg::SvgElementKind::Path,
+                is_definition: false,
+                definition_owner: None,
+                clip_path: None,
+                mask: None,
+                filter: None,
                 parent: None,
                 children: Arc::new([]),
                 transform: crate::svg::SvgTransform::default(),
                 opacity: 1.0,
                 geometry: Some(0),
+                fill_rule: crate::svg::SvgFillRule::NonZero,
                 fill: Some(crate::svg::SvgFill {
                     color: crate::svg::SvgColor::rgba8(255, 0, 0, 255),
                     rule: crate::svg::SvgFillRule::NonZero,
                 }),
                 stroke: None,
+                fill_paint: None,
+                stroke_paint: None,
                 paint_order: crate::svg::SvgPaintOrder::FillAndStroke,
                 visible: true,
             }]),
@@ -1990,6 +1998,7 @@ mod generic_backend_tests {
                     crate::svg::SvgPathCommand::Close,
                 ]),
             }]),
+            resources: Arc::new(crate::svg::SvgResourceGraph::empty()),
         });
 
         let item = crate::renderer::SvgRenderItem {
@@ -2061,10 +2070,10 @@ mod generic_backend_tests {
         );
     }
 
-    /// Exercise SvgPipeline::new + prepare by rendering a
-    /// filled-red rectangle SVG scene through the WgpuBackend-driven path.
+    /// Exercise parsed gradients and a local rectangular clip through the
+    /// WgpuBackend-driven SVG path.
     #[test]
-    fn generic_svg_path_renders_filled_rect() {
+    fn generic_svg_path_renders_gradient_and_clip_path() {
         let Some((device, queue)) = gpu() else {
             eprintln!("skipping: no GPU adapter available");
             return;
@@ -2081,39 +2090,19 @@ mod generic_backend_tests {
             crate::AntiAlias::Analytic,
         );
 
-        let scene = Arc::new(crate::svg::SvgScene {
-            viewport: crate::svg::SvgViewport {
-                width: 10.0,
-                height: 10.0,
-            },
-            nodes: Arc::new([crate::svg::SvgNode {
-                node_id: crate::svg::SvgNodeId(0),
-                svg_id: None,
-                classes: Arc::new([]),
-                element: crate::svg::SvgElementKind::Path,
-                parent: None,
-                children: Arc::new([]),
-                transform: crate::svg::SvgTransform::default(),
-                opacity: 1.0,
-                geometry: Some(0),
-                fill: Some(crate::svg::SvgFill {
-                    color: crate::svg::SvgColor::rgba8(255, 0, 0, 255),
-                    rule: crate::svg::SvgFillRule::NonZero,
-                }),
-                stroke: None,
-                paint_order: crate::svg::SvgPaintOrder::FillAndStroke,
-                visible: true,
-            }]),
-            geometries: Arc::new([crate::svg::SvgGeometry {
-                commands: Arc::new([
-                    crate::svg::SvgPathCommand::MoveTo { x: 0.0, y: 0.0 },
-                    crate::svg::SvgPathCommand::LineTo { x: 10.0, y: 0.0 },
-                    crate::svg::SvgPathCommand::LineTo { x: 10.0, y: 10.0 },
-                    crate::svg::SvgPathCommand::LineTo { x: 0.0, y: 10.0 },
-                    crate::svg::SvgPathCommand::Close,
-                ]),
-            }]),
-        });
+        let parsed = crate::svg::parse_svg_document(
+            br##"<svg width="10" height="10"><defs>
+                <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" stop-color="#ff0000"/>
+                    <stop offset="1" stop-color="#0000ff"/>
+                </linearGradient>
+                <clipPath id="clip" clipPathUnits="userSpaceOnUse"><rect width="5" height="10"/></clipPath>
+                <pattern id="dots" patternUnits="userSpaceOnUse" width="2" height="2">
+                    <rect width="1" height="2" fill="#00ff00"/>
+                </pattern>
+            </defs><rect width="10" height="10" fill="url(#g)" clip-path="url(#clip)"/><rect y="6" width="10" height="4" fill="url(#dots)"/></svg>"##,
+        ).expect("gradient and clip resources should parse");
+        let scene = Arc::new(parsed.scene);
 
         let item = crate::renderer::SvgRenderItem {
             scene,
@@ -2172,12 +2161,15 @@ mod generic_backend_tests {
         backend.submit(encoder);
 
         let pixels = read_target(backend.device(), backend.queue(), &target);
-        let sample = pixel(&pixels, SIZE / 2, SIZE / 2);
-        assert_eq!(
-            sample,
-            [255, 0, 0, 255],
-            "generic svg path: center must be red, got {sample:?}"
-        );
+        let inside = pixel(&pixels, SIZE / 4, SIZE / 2);
+        let clipped = pixel(&pixels, SIZE * 3 / 4, SIZE / 2);
+        let patterned = pixel(&pixels, SIZE / 16, SIZE * 7 / 10);
+        let pattern_gap = pixel(&pixels, SIZE * 3 / 16, SIZE * 7 / 10);
+        assert!(inside[0] > inside[2], "left side should retain the red gradient start: {inside:?}");
+        assert!(inside[2] > 0, "the gradient should vary across the painted path: {inside:?}");
+        assert_eq!(clipped, [0, 0, 0, 255], "the clip path should suppress the right half: {clipped:?}");
+        assert_eq!(patterned, [0, 255, 0, 255], "the pattern tile should paint the first half of its repeat: {patterned:?}");
+        assert!(pattern_gap[1] < 32 && pattern_gap[0] > 0 && pattern_gap[2] > 0, "the pattern gap should preserve the underlying gradient: {pattern_gap:?}");
     }
 
     // ── MaterialPipeline ─────────────────────────────────────────────

@@ -5,6 +5,7 @@ use aimer_color::prelude::Color;
 mod fit;
 mod paint;
 mod parser;
+mod resources;
 mod tessellation;
 
 pub use parser::{
@@ -19,6 +20,11 @@ pub use fit::{
     SvgAspectAlign, SvgAspectMode, SvgFitError, SvgFitPolicy, SvgPreserveAspectRatio, SvgViewBox,
 };
 pub use paint::{SvgGradient, SvgGradientStop, SvgGradientUnits, SvgPaint, SvgSpreadMethod};
+pub use resources::{
+    SvgBlendMode, SvgClipPath, SvgColorMatrix, SvgCompositeOperator, SvgFilter,
+    SvgFilterInput, SvgFilterPrimitive, SvgMask, SvgMaskType, SvgPattern,
+    SvgResourceGraph, SvgResourceUnits,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SvgViewport {
@@ -221,13 +227,29 @@ pub struct SvgNode {
     pub svg_id: Option<Arc<str>>,
     pub classes: Arc<[Arc<str>]>,
     pub element: SvgElementKind,
+    /// Whether this node is defined for reuse and should not paint directly.
+    pub is_definition: bool,
+    /// ID of the definition that owns this geometry, if any.
+    pub definition_owner: Option<Arc<str>>,
+    /// Local clip path reference applied to this node.
+    pub clip_path: Option<Arc<str>>,
+    /// Local mask reference applied to this node.
+    pub mask: Option<Arc<str>>,
+    /// Local filter reference applied to this node.
+    pub filter: Option<Arc<str>>,
     pub parent: Option<SvgNodeId>,
     pub children: Arc<[SvgNodeId]>,
     pub transform: SvgTransform,
     pub opacity: f32,
     pub geometry: Option<usize>,
+    /// Fill rule used by solid and referenced fill paints.
+    pub fill_rule: SvgFillRule,
     pub fill: Option<SvgFill>,
     pub stroke: Option<SvgStroke>,
+    /// Authored fill paint, including a local gradient or pattern reference.
+    pub fill_paint: Option<SvgPaint>,
+    /// Authored stroke paint, including a local gradient or pattern reference.
+    pub stroke_paint: Option<SvgPaint>,
     pub paint_order: SvgPaintOrder,
     pub visible: bool,
 }
@@ -246,6 +268,8 @@ pub struct SvgScene {
     pub viewport: SvgViewport,
     pub nodes: Arc<[SvgNode]>,
     pub geometries: Arc<[SvgGeometry]>,
+    /// Local paint and effect definitions retained from this SVG document.
+    pub resources: Arc<SvgResourceGraph>,
 }
 
 impl SvgScene {
@@ -342,6 +366,31 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &reused));
         assert!(!Arc::ptr_eq(&first, &changed));
         assert!(!first.vertices.is_empty());
+    }
+
+    #[test]
+    fn curve_tessellation_refines_for_higher_physical_scale() {
+        let curved = geometry([
+            SvgPathCommand::MoveTo { x: 0.0, y: 0.0 },
+            SvgPathCommand::CubicTo {
+                control1_x: 0.0,
+                control1_y: 10.0,
+                control2_x: 10.0,
+                control2_y: 10.0,
+                x: 10.0,
+                y: 0.0,
+            },
+            SvgPathCommand::LineTo { x: 10.0, y: 10.0 },
+            SvgPathCommand::LineTo { x: 0.0, y: 10.0 },
+            SvgPathCommand::Close,
+        ]);
+        let mut cache = SvgGeometryCache::new(1024 * 1024, 16);
+        let style = SvgMeshStyle::Fill(SvgFillRule::NonZero);
+
+        let low_scale = cache.mesh_for(&curved, style, 1.0).unwrap();
+        let high_scale = cache.mesh_for(&curved, style, 4.0).unwrap();
+
+        assert!(high_scale.vertices.len() > low_scale.vertices.len());
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use aimer_cupid::svg::{
     SvgFitPolicy, SvgGradient, SvgNodeId, SvgPaint, SvgPathCommand, SvgPreserveAspectRatio,
-    SvgScene, SvgTransform, SvgViewBox, parse_svg_document,
+    SvgResourceGraph, SvgScene, SvgTransform, SvgViewBox, parse_svg_document,
 };
 
 use crate::{SvgError, SvgSelector};
@@ -50,6 +50,7 @@ pub struct SvgDocument {
     fit_policy: SvgFitPolicy,
     root_transform: SvgTransform,
     gradients: Arc<[SvgGradient]>,
+    resources: Arc<SvgResourceGraph>,
     node_paints: Arc<HashMap<SvgNodeId, SvgNodePaint>>,
 }
 
@@ -59,6 +60,21 @@ impl SvgDocument {
     }
 
     pub fn from_svg_with_limits(
+        bytes: impl AsRef<[u8]>,
+        limits: SvgLimits,
+    ) -> Result<Self, SvgError> {
+        let result = Self::parse_with_limits(bytes, limits);
+        if let Err(error) = &result {
+            aimer_utils::warn!("SVG parsing failed: {}", error);
+        }
+        result
+    }
+
+    pub(crate) fn from_svg_for_loader(bytes: impl AsRef<[u8]>) -> Result<Self, SvgError> {
+        Self::parse_with_limits(bytes, SvgLimits::default())
+    }
+
+    fn parse_with_limits(
         bytes: impl AsRef<[u8]>,
         limits: SvgLimits,
     ) -> Result<Self, SvgError> {
@@ -119,15 +135,26 @@ impl SvgDocument {
             })
             .collect();
 
+        let diagnostics = collect_diagnostics(
+            source,
+            &parsed.resources,
+            &parsed.scene,
+            &parsed.unsupported_elements,
+        );
+        for diagnostic in &diagnostics {
+            aimer_utils::warn!("SVG {}: {}", diagnostic.feature, diagnostic.message);
+        }
+
         Ok(Self {
             source: Arc::from(source),
             scene: Arc::new(parsed.scene),
-            diagnostics: collect_diagnostics(source).into(),
+            diagnostics: diagnostics.into(),
             view_box: parsed.view_box,
             preserve_aspect_ratio: parsed.preserve_aspect_ratio,
             fit_policy,
             root_transform,
             gradients: parsed.gradients,
+            resources: parsed.resources,
             node_paints: Arc::new(node_paints),
         })
     }
@@ -179,6 +206,11 @@ impl SvgDocument {
 
     pub fn gradients(&self) -> &[SvgGradient] {
         &self.gradients
+    }
+
+    /// Returns locally defined clips, masks, filters, and patterns.
+    pub fn resources(&self) -> &SvgResourceGraph {
+        &self.resources
     }
 
     pub fn paint_for(&self, node_id: SvgNodeId) -> Option<&SvgNodePaint> {
@@ -305,37 +337,164 @@ fn map_parse_error(error: aimer_cupid::svg::SvgParseError) -> SvgError {
     }
 }
 
-fn collect_diagnostics(source: &str) -> Vec<SvgDiagnostic> {
+fn collect_diagnostics(
+    source: &str,
+    resources: &SvgResourceGraph,
+    scene: &SvgScene,
+    unsupported_elements: &[Arc<str>],
+) -> Vec<SvgDiagnostic> {
     let mut diagnostics = Vec::new();
     let mut found = std::collections::HashSet::new();
     let lower = source.to_ascii_lowercase();
-    for (needle, feature, message) in [
-        ("lineargradient", "gradient", "gradient is retained in the model; renderer support is deferred"),
-        ("radialgradient", "gradient", "gradient is retained in the model; renderer support is deferred"),
-        ("<pattern", "pattern", "pattern is retained in the model; renderer support is deferred"),
-        ("<clippath", "clip-path", "clip path is retained in the model; renderer support is deferred"),
-        ("<mask", "mask", "mask is retained in the model; renderer support is deferred"),
-        ("<filter", "filter", "filter is retained in the model; renderer support is deferred"),
-        ("<text", "text", "text is retained in the model; renderer support is deferred"),
-        ("<script", "script", "script is retained in the model; renderer support is deferred"),
-        ("<image", "image", "image is retained in the model; renderer support is deferred"),
-    ] {
-        if lower.contains(needle) && found.insert(feature) {
-            diagnostics.push(SvgDiagnostic { feature, message: Arc::from(message) });
-        }
+    let skipped_elements = unsupported_elements
+        .iter()
+        .map(|element| element.as_ref())
+        .collect::<std::collections::BTreeSet<_>>();
+    if !skipped_elements.is_empty() {
+        diagnostics.push(SvgDiagnostic {
+            feature: "unsupported-element",
+            message: Arc::from(format!(
+                "unsupported SVG element contents were skipped: {}",
+                skipped_elements.into_iter().collect::<Vec<_>>().join(", ")
+            )),
+        });
     }
-    if lower.contains("fill=\"url(") || lower.contains("fill='url(") || lower.contains("fill:url(") {
-        found.insert("gradient-fill");
-        diagnostics.push(SvgDiagnostic { feature: "gradient-fill", message: Arc::from("gradient fill is retained in the model; renderer support is deferred") });
+    if scene.nodes.iter().any(|node| {
+        node.filter.as_deref().is_some_and(|id| {
+            node.element != aimer_cupid::svg::SvgElementKind::Path
+                || !resources.filter(id).is_some_and(|filter| {
+                    filter.primitives.iter().all(|primitive| match primitive {
+                        aimer_cupid::svg::SvgFilterPrimitive::Offset { input, .. }
+                        | aimer_cupid::svg::SvgFilterPrimitive::ColorMatrix { input, .. } => {
+                            matches!(input, aimer_cupid::svg::SvgFilterInput::SourceGraphic | aimer_cupid::svg::SvgFilterInput::Previous)
+                        }
+                        _ => false,
+                    })
+                })
+        })
+    }) && found.insert("filter")
+    {
+        diagnostics.push(SvgDiagnostic {
+            feature: "filter",
+            message: Arc::from("offset and color-matrix filters are applied; blur, flood, blend, composite, merge, and other filter operations are retained and skipped"),
+        });
     }
-    if lower.contains("stroke=\"url(") || lower.contains("stroke='url(") || lower.contains("stroke:url(") {
-        found.insert("gradient-stroke");
-        diagnostics.push(SvgDiagnostic { feature: "gradient-stroke", message: Arc::from("gradient stroke is retained in the model; renderer support is deferred") });
+    if scene.nodes.iter().any(|node| {
+        node.clip_path.as_deref().is_some_and(|id| {
+            node.element != aimer_cupid::svg::SvgElementKind::Path
+                || !resources.clip_path(id).is_some_and(|clip| {
+                    clip.nodes.len() == 1
+                        && scene
+                            .node(aimer_cupid::svg::SvgNodeId(clip.nodes[0]))
+                            .and_then(|node| scene.geometry(node))
+                            .is_some_and(is_rect_geometry)
+                })
+        })
+    }) && found.insert("clip-path")
+    {
+        diagnostics.push(SvgDiagnostic {
+            feature: "clip-path",
+            message: Arc::from("only a single axis-aligned rectangular clip shape is applied; other clip paths are retained and skipped"),
+        });
+    }
+    if scene.nodes.iter().any(|node| {
+        node.mask.as_deref().is_some_and(|id| {
+            node.element != aimer_cupid::svg::SvgElementKind::Path
+                || !resources.mask(id).is_some_and(|mask| {
+                    mask.nodes.len() == 1
+                        && scene
+                            .node(aimer_cupid::svg::SvgNodeId(mask.nodes[0]))
+                            .is_some_and(|mask_node| {
+                                mask_node
+                                    .fill_paint
+                                    .as_ref()
+                                    .map_or(mask_node.fill.is_some(), |paint| {
+                                        matches!(paint, aimer_cupid::svg::SvgPaint::Solid(_))
+                                    })
+                                    && mask_node.stroke.is_none()
+                                    && scene
+                                        .geometry(mask_node)
+                                        .is_some_and(is_rect_geometry)
+                            })
+                })
+        })
+    }) && found.insert("mask")
+    {
+        diagnostics.push(SvgDiagnostic {
+            feature: "mask",
+            message: Arc::from("only a single solid rectangular mask shape is applied; other masks are retained and skipped"),
+        });
+    }
+    if scene.nodes.iter().any(|node| {
+        node.fill_paint
+            .iter()
+            .chain(node.stroke_paint.iter())
+            .any(|paint| match paint {
+                aimer_cupid::svg::SvgPaint::Pattern { id } => {
+                    node.element != aimer_cupid::svg::SvgElementKind::Path
+                        || !resources.pattern(id).is_some_and(|pattern| {
+                            pattern.tile[2] > 0.0
+                                && pattern.tile[3] > 0.0
+                                && is_identity_transform(pattern.transform)
+                                && node.geometry.and_then(|index| scene.geometries.get(index)).is_some_and(is_rect_geometry)
+                                && pattern.nodes.iter().all(|node_id| {
+                                    let Some(pattern_node) = scene.node(aimer_cupid::svg::SvgNodeId(*node_id)) else {
+                                        return false;
+                                    };
+                                    pattern_node.geometry.is_none()
+                                        || (pattern_node.visible
+                                            && pattern_node.clip_path.is_none()
+                                            && pattern_node.mask.is_none()
+                                            && pattern_node.filter.is_none()
+                                            && !pattern_node
+                                                .fill_paint
+                                                .as_ref()
+                                                .is_some_and(|paint| matches!(paint, aimer_cupid::svg::SvgPaint::Pattern { .. }))
+                                            && !pattern_node
+                                                .stroke_paint
+                                                .as_ref()
+                                                .is_some_and(|paint| matches!(paint, aimer_cupid::svg::SvgPaint::Pattern { .. }))
+                                            && pattern_node.stroke.as_ref().map_or(true, |stroke| stroke.dash_array.is_empty()))
+                                })
+                        })
+                }
+                _ => false,
+            })
+    }) && found.insert("pattern")
+    {
+        diagnostics.push(SvgDiagnostic {
+            feature: "pattern",
+            message: Arc::from("only untransformed patterns used on rectangular paths are applied; other pattern paints are retained and skipped"),
+        });
     }
     if lower.contains("stroke-dasharray") && !lower.contains("stroke-dasharray=\"none\"") && !lower.contains("stroke-dasharray='none'") && found.insert("dashed-stroke") {
         diagnostics.push(SvgDiagnostic { feature: "dashed-stroke", message: Arc::from("dashed stroke is retained in the model; renderer support is deferred") });
     }
     diagnostics
+}
+
+fn is_identity_transform(transform: aimer_cupid::svg::SvgTransform) -> bool {
+    let epsilon = f32::EPSILON * 8.0;
+    (transform.sx - 1.0).abs() <= epsilon
+        && (transform.sy - 1.0).abs() <= epsilon
+        && transform.ky.abs() <= epsilon
+        && transform.kx.abs() <= epsilon
+        && transform.tx.abs() <= epsilon
+        && transform.ty.abs() <= epsilon
+}
+
+fn is_rect_geometry(geometry: &aimer_cupid::svg::SvgGeometry) -> bool {
+    let [
+        aimer_cupid::svg::SvgPathCommand::MoveTo { x: x0, y: y0 },
+        aimer_cupid::svg::SvgPathCommand::LineTo { x: x1, y: y1 },
+        aimer_cupid::svg::SvgPathCommand::LineTo { x: x2, y: y2 },
+        aimer_cupid::svg::SvgPathCommand::LineTo { x: x3, y: y3 },
+        aimer_cupid::svg::SvgPathCommand::Close,
+    ] = geometry.commands.as_ref()
+    else {
+        return false;
+    };
+    y0 == y1 && x1 == x2 && y2 == y3 && x3 == x0 && x0 != x1 && y0 != y2
 }
 
 fn reject_non_finite_literals(source: &str) -> Result<(), SvgError> {

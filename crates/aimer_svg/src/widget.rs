@@ -22,6 +22,8 @@ use aimer_widget::{
 
 use crate::{SvgDocument, SvgError, SvgLoadState, SvgLoader, SvgSelector, SvgSource, SvgStyle};
 use crate::source::load_source;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::source::report_load_result;
 
 pub type SvgCallback = Callback<SvgHit, ()>;
 
@@ -551,6 +553,7 @@ impl Widget for SvgAsset {
         #[cfg(not(target_arch = "wasm32"))]
         match aimer_venus::Venus::current() {
             Some(venus) => {
+                let source = source.clone();
                 venus.spawn(async move {
                     let _ = updates.send(SvgLoadState::Loading);
                     let _ = updates.send(load_source(&source).await);
@@ -558,9 +561,11 @@ impl Widget for SvgAsset {
                 });
             }
             None => {
-                let _ = updates.send(SvgLoadState::Error(Arc::from(
-                    "Venus runtime is unavailable",
-                )));
+                let state = report_load_result(
+                    &source,
+                    SvgLoadState::Error(Arc::from("Venus runtime is unavailable")),
+                );
+                let _ = updates.send(state);
                 window.request_redraw();
             }
         }
@@ -784,7 +789,7 @@ fn document_paint_is_bounded(document: &SvgDocument) -> bool {
     for node in scene
         .nodes
         .iter()
-        .filter(|node| node.visible && node.opacity > 0.0 && node.geometry.is_some())
+        .filter(|node| node.visible && !node.is_definition && node.opacity > 0.0 && node.geometry.is_some())
     {
         let Some(geometry) = scene.geometry(node) else {
             return false;
@@ -930,7 +935,7 @@ impl RawSvg {
             .scene()
             .nodes
             .iter()
-            .filter(|node| node.geometry.is_some())
+            .filter(|node| !node.is_definition && node.geometry.is_some())
         {
             if let Some(override_) = overrides
                 .iter_mut()
@@ -1264,7 +1269,7 @@ pub(crate) fn hit_test_scene(
         .nodes
         .iter()
         .rev()
-        .filter(|node| node.visible && node.geometry.is_some())
+        .filter(|node| node.visible && !node.is_definition && node.geometry.is_some())
     {
         let node_override = overrides.iter().find(|value| value.node_id == node.node_id);
         if node_override

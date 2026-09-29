@@ -6,9 +6,11 @@ mod style;
 mod widget;
 
 pub use aimer_cupid::svg::{
-    SvgAspectAlign, SvgAspectMode, SvgColor, SvgFillRule, SvgFitError, SvgFitPolicy, SvgGradient,
-    SvgGradientStop, SvgGradientUnits, SvgNodeId, SvgPaint, SvgPreserveAspectRatio,
-    SvgSpreadMethod, SvgTransform, SvgViewBox,
+    SvgAspectAlign, SvgAspectMode, SvgBlendMode, SvgClipPath, SvgColor, SvgColorMatrix,
+    SvgCompositeOperator, SvgFillRule, SvgFilter, SvgFilterInput, SvgFilterPrimitive,
+    SvgFitError, SvgFitPolicy, SvgGradient, SvgGradientStop, SvgGradientUnits, SvgMask,
+    SvgMaskType, SvgNodeId, SvgPaint, SvgPattern, SvgPreserveAspectRatio, SvgResourceGraph,
+    SvgResourceUnits, SvgSpreadMethod, SvgTransform, SvgViewBox,
 };
 pub use document::{SvgDiagnostic, SvgDocument, SvgLimits, SvgNodePaint, SvgPath};
 pub use error::SvgError;
@@ -82,6 +84,62 @@ mod tests {
     }
 
     #[test]
+    fn embedded_stylesheets_match_tags_ids_and_classes_with_css_cascade() {
+        let document = SvgDocument::from_svg(
+            br##"<svg width="64" height="16" xmlns="http://www.w3.org/2000/svg">
+                <path id="inline" class="painted" d="M0 0h2v2z" fill="#ffffff" style="fill:#0000ff"/>
+                <rect id="rectangle" x="3" y="0" width="2" height="2"/>
+                <circle id="circle" cx="6" cy="1" r="1"/>
+                <path id="ordered" class="ordered" d="M8 0h2v2z"/>
+                <path id="important" d="M11 0h2v2z" style="fill:#0000ff"/>
+                <path id="inline-important" d="M14 0h2v2z" style="fill:#0000ff!important"/>
+                <g class="group"><path id="group-child" d="M17 0h2v2z"/></g>
+                <path id="root-inherited" d="M20 0h2v2z"/>
+                <path id="presentation" d="M23 0h2v2z" fill="#ffffff"/>
+                <style>
+                    <![CDATA[
+                    svg { fill: #112233; }
+                    path { stroke: red; stroke-width: 2; }
+                    .painted, #unused { fill: green; }
+                    #inline { fill: red; }
+                    rect { fill: blue; }
+                    circle { fill: yellow; }
+                    .ordered { fill: green; }
+                    .ordered { fill: blue; }
+                    #important { fill: red !important; }
+                    #inline-important { fill: red !important; }
+                    .group { opacity: 0.5; }
+                    #presentation { fill: red; }
+                    ]]>
+                </style>
+            </svg>"##,
+        )
+        .expect("embedded CSS should parse");
+
+        let node = |id: &str| {
+            let selected = document.select(format!("#{id}")).unwrap();
+            assert_eq!(selected.len(), 1);
+            document.scene().node(selected[0]).unwrap()
+        };
+        let color = |id: &str| node(id).fill.as_ref().unwrap().color;
+
+        assert_eq!(color("inline"), SvgColor::rgba8(0, 0, 255, 255));
+        assert_eq!(color("rectangle"), SvgColor::rgba8(0, 0, 255, 255));
+        assert_eq!(color("circle"), SvgColor::rgba8(255, 255, 0, 255));
+        assert_eq!(color("ordered"), SvgColor::rgba8(0, 0, 255, 255));
+        assert_eq!(color("important"), SvgColor::rgba8(255, 0, 0, 255));
+        assert_eq!(
+            color("inline-important"),
+            SvgColor::rgba8(0, 0, 255, 255)
+        );
+        assert_eq!(color("presentation"), SvgColor::rgba8(255, 0, 0, 255));
+        assert_eq!(color("group-child"), SvgColor::rgba8(17, 34, 51, 255));
+        assert_eq!(color("root-inherited"), SvgColor::rgba8(17, 34, 51, 255));
+        assert_eq!(node("inline").stroke.as_ref().unwrap().width, 2.0);
+        assert_eq!(node("group-child").opacity, 0.5);
+    }
+
+    #[test]
     fn selectors_match_id_class_and_element_name_in_paint_order() {
         let document = SvgDocument::from_svg(
             br#"<svg width="20" height="10" xmlns="http://www.w3.org/2000/svg">
@@ -149,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_external_resources_and_reports_deferred_content() {
+    fn rejects_external_resources_and_reports_unsupported_resources() {
         let external = br#"<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg"><image href="https://example.com/a.png"/></svg>"#;
         assert!(matches!(
             SvgDocument::from_svg(external),
@@ -158,12 +216,55 @@ mod tests {
 
         let gradient = br#"<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g"/></defs><path d="M0 0h10v10z" fill="url(#g)"/></svg>"#;
         let document = SvgDocument::from_svg(gradient).unwrap();
-        assert!(
-            document
-                .diagnostics()
-                .iter()
-                .any(|diagnostic| diagnostic.feature == "gradient")
-        );
+        assert!(document.diagnostics().iter().all(|diagnostic| diagnostic.feature != "gradient"));
+    }
+
+    #[test]
+    fn exposes_local_filter_definitions_and_reports_skipped_primitives() {
+        let document = SvgDocument::from_svg(
+            br#"<svg width="10" height="10">
+                <style>.soft { filter: url(#blur); }</style>
+                <defs><filter id="blur"><feGaussianBlur stdDeviation="2"/></filter></defs>
+                <path class="soft" d="M0 0h10v10z" fill="red"/>
+            </svg>"#,
+        )
+        .expect("the filter graph should be retained");
+
+        let filter = document.resources().filter("blur").unwrap();
+        assert!(matches!(
+            filter.primitives.first(),
+            Some(aimer_cupid::svg::SvgFilterPrimitive::GaussianBlur { deviation, .. })
+                if *deviation == [2.0, 2.0]
+        ));
+        assert!(document
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.feature == "filter"));
+    }
+
+    #[test]
+    fn applies_root_level_clip_paths_that_reference_local_use_shapes() {
+        let document = SvgDocument::from_svg(
+            br##"<?xml version="1.0" encoding="utf-8"?>
+                <!-- Uploaded to: SVG Repo -->
+                <svg width="800px" height="800px" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+                    <defs><path class="icon-path" id="a" d="M-22 2.24h42V22h-42z"/></defs>
+                    <clipPath id="b"><use xlink:href="#a" overflow="visible"/></clipPath>
+                    <path clip-path="url(#b)" class="icon-path-fill" d="M16.543 8.028c-.023 1.503-.523 3.538-2.867 4.327.734-1.746.846-3.417.326-4.979-.695-2.097-3.014-3.735-4.557-4.627-.527-.306-1.203.074-1.193.683.02 1.112-.318 2.737-1.959 4.378C4.107 9.994 3 12.251 3 14.517 3 17.362 5 21 9 21c-4.041-4.041-1-7.483-1-7.483C8.846 19.431 12.988 21 15 21c1.711 0 5-1.25 5-6.448 0-3.133-1.332-5.511-2.385-6.899-.347-.458-1.064-.198-1.072.375"/>
+                </svg>"##,
+        )
+        .expect("a root-level clip path should not reject the renderable path");
+
+        assert_eq!(document.select(".icon-path-fill").unwrap().len(), 1);
+        assert!(document.resources().clip_path("b").is_some());
+        assert!(!document.diagnostics().iter().any(|diagnostic| {
+            diagnostic.feature == "unsupported-element" && diagnostic.message.contains("use")
+        }));
+        assert!(!document
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.feature == "clip-path"));
+        assert_eq!(document.resources().clip_path("b").unwrap().nodes.len(), 1);
     }
 
     #[test]
@@ -190,6 +291,7 @@ mod tests {
     fn style_overrides_affect_matching_nodes_only() {
         let document = SvgDocument::from_svg(
             br##"<svg width="20" height="10" xmlns="http://www.w3.org/2000/svg">
+                <style>.accent { fill: blue; }</style>
                 <path id="left" class="accent" d="M0 0h8v8z" fill="#000000"/>
                 <path id="right" d="M10 0h8v8z" fill="#000000"/>
             </svg>"##,
@@ -200,6 +302,21 @@ mod tests {
             widget::overrides_for_rules(document.scene(), &[(".accent".parse().unwrap(), style)]);
 
         assert_eq!(overrides.len(), 1);
+        assert_eq!(
+            document
+                .scene()
+                .node(overrides[0].node_id)
+                .unwrap()
+                .fill
+                .as_ref()
+                .unwrap()
+                .color,
+            aimer_cupid::svg::SvgColor::rgba8(0, 0, 255, 255)
+        );
+        assert_eq!(
+            overrides[0].fill,
+            Some(Some(aimer_cupid::svg::SvgColor::rgba8(255, 0, 0, 255)))
+        );
         assert_eq!(
             document
                 .scene()
@@ -414,7 +531,7 @@ mod tests {
     }
 
     #[test]
-    fn retains_gradient_paints_and_reports_only_the_deferred_renderer_feature() {
+    fn retains_gradient_paints_and_reports_deferred_stroke_support() {
         let document = SvgDocument::from_svg(
             br##"<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg">
                 <defs><linearGradient id="g" spreadMethod="reflect"><stop offset="0" stop-color="#ff0000" stop-opacity="0.5"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs>
@@ -430,10 +547,6 @@ mod tests {
             document.gradients()[0],
             SvgGradient::Linear { spread: SvgSpreadMethod::Reflect, .. }
         ));
-        assert!(document.diagnostics().iter().any(|diagnostic| {
-            diagnostic.feature == "gradient-fill"
-                && diagnostic.message.contains("renderer support is deferred")
-        }));
         assert!(document
             .diagnostics()
             .iter()

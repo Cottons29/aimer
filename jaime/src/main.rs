@@ -58,6 +58,8 @@ mod window_example;
 use aimer::style::*;
 #[allow(unused_imports)]
 use aimer::*;
+use aimer::input::input::{InputType, TextField};
+use aimer::input::TextEditingController;
 use aimer::native::macos_windowing::MacosWindowing;
 
 // this is the entry point of the app

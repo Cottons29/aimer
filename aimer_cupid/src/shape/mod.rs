@@ -109,13 +109,21 @@ pub fn build_scene(
         svg_id: None,
         classes: Arc::from([]),
         element: SvgElementKind::Path,
+        is_definition: false,
+        definition_owner: None,
+        clip_path: None,
+        mask: None,
+        filter: None,
         parent: None,
         children: Arc::from([]),
         transform: svg_transform(request.transform),
         opacity: request.opacity,
         geometry: Some(0),
+        fill_rule: fill.as_ref().map(|fill| fill.rule).unwrap_or(crate::svg::SvgFillRule::NonZero),
         fill,
         stroke,
+        fill_paint: None,
+        stroke_paint: None,
         paint_order: SvgPaintOrder::FillAndStroke,
         visible: true,
     };
@@ -126,6 +134,7 @@ pub fn build_scene(
         },
         nodes: Arc::from([node]),
         geometries: Arc::from([geometry]),
+        resources: Arc::new(crate::svg::SvgResourceGraph::empty()),
     }))
 }
 

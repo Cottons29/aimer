@@ -103,6 +103,13 @@
     "title": "Shared Ownership and Experimental Hot Reload",
     "author": "Cottons29",
     "tags": ["Rust", "Performance", "Hot Reload"]
+  },
+  {
+    "id": "pluggable-native-backends-ui-memory",
+    "upload_time": "2026-09-28T22:22:20Z",
+    "title": "Pluggable Native Rendering and the UI Heap",
+    "author": "Cottons29",
+    "tags": ["Rendering", "Rust", "Memory"]
   }
 
 ]

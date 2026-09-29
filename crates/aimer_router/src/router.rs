@@ -29,7 +29,7 @@ impl RouteMatch {
     }
 }
 
-pub trait Route: Clone + Send + Sync + 'static {
+pub trait Route: Clone + 'static {
     fn parse(path: &str) -> Option<Self>
     where
         Self: Sized;

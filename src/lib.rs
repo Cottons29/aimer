@@ -15,17 +15,7 @@ pub use aimer_range as range;
 pub use aimer_selection as selection;
 pub use aimer_shape as shape;
 pub use aimer_storage as storage;
-
 pub use aimer_anteros as anteros;
-pub use aimer_anteros::{
-    CapabilityBindings, CapabilityCall, CapabilityCompletionToken, CapabilityDecoder,
-    CapabilityDescriptor, CapabilityEncoder, CapabilityError, CapabilityGeneration,
-    CapabilityLimits, CapabilityPolicy, CapabilityProvider, CapabilityRegistry,
-    CapabilityRegistryError, CapabilityRequirement, CapabilityResult, CapabilityTransport,
-    CallbackBindingError, CallbackBindingSnapshot, Generation, GenerationCompletionToken,
-    GenerationHandle, GenerationId, GenerationLimits, GenerationResource,
-    GenerationResourceError, GenerationResourceKind, CapabilityStagingClass, StagedCapability,
-};
 #[cfg(target_arch = "wasm32")]
 pub use aimer_anteros::WasmCapabilityTransport;
 pub use aimer_assets::img_widget::image_widget::Image;
@@ -60,10 +50,7 @@ pub use aimer_focus::{
 pub use aimer_grid::*;
 pub use aimer_haptics as haptics;
 pub use aimer_haptics::{HapticFeedback, HapticKind};
-pub use aimer_input::button::Button;
-pub use aimer_input::callback::{AsyncCallback, RawInnerCallback};
-pub use aimer_input::input::*;
-pub use aimer_input::*;
+pub use aimer_input as input;
 pub use aimer_macro::{PortableValue, Router, StatefulWidget, StatelessWidget, Theme, capability, key, main};
 #[cfg(feature = "markdown")]
 pub use aimer_markdown::{
@@ -78,11 +65,13 @@ pub use aimer_markdown::{
     LinkHandler as MarkdownLinkHandler, MarkdownError, MarkdownImage, MarkdownTheme,
     MarkdownViewer,
 };
-pub use aimer_modal::{
-    Anchor, AnchorHandle, Floating, FloatingAlign, FloatingPlacement, FloatingSide, Modal,
-    ModalAnimation, ModalController, ModalHandle, ModalHost, ModalId, OverflowPolicy, OverlayLayer,
-    OverlayLayerHandle, PlacementSpec, resolve_placement,
-};
+pub mod modal {
+    pub use aimer_modal::{
+        Anchor, AnchorHandle, Floating, FloatingAlign, FloatingPlacement, FloatingSide, Modal,
+        ModalAnimation, ModalController, ModalHandle, ModalHost, ModalId, OverflowPolicy, OverlayLayer,
+        OverlayLayerHandle, PlacementSpec, resolve_placement,
+    };
+}
 #[cfg(feature = "provider")]
 pub use aimer_provider::{
     NotifierProvider, Provider, ProviderContext, ProviderHandle, StoreProvider,
@@ -96,7 +85,7 @@ pub use aimer_quiver::{
     self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions, WindowAttr,
     set_first_frame_rendered_callback,
 };
-pub use aimer_rubick::{self, ErasedFrom, Rubick};
+
 pub use aimer_scroll::*;
 pub use aimer_space::*;
 #[cfg(feature = "svg")]
@@ -109,7 +98,7 @@ pub use aimer_svg::{
     SvgNodePaint, SvgPaint, SvgPath, SvgPreserveAspectRatio, SvgSelector, SvgSource, SvgSpreadMethod,
     SvgStyle, SvgTransform, SvgViewBox,
 };
-pub use aimer_text::{RichText, SelectionArea, ShareRef, SpanStyle, Text, TextButton, TextSpan};
+pub use aimer_text::{RichText, SelectionArea, SpanStyle, Text, TextButton, TextSpan};
 pub use aimer_text::{
     TextAccessibilityCaret, TextAccessibilityCluster, TextAccessibilityLine,
     TextAccessibilitySelectionRect, TextAccessibilitySnapshot,
@@ -129,9 +118,7 @@ pub mod widget {
     pub use aimer_widget::{State, StatefulWidget, StatelessWidget, Widget, *};
 }
 
-pub mod animation {
-    pub use aimer_animation::*;
-}
+pub use aimer_animation as animation;
 
 #[cfg(test)]
 mod public_api_tests {
@@ -184,8 +171,12 @@ pub use wasm_bindgen;
 
 
 pub use aimer_std::case;
-pub mod sync {
-    pub use aimer_rubick::{ShareRef, Shared, SharedRef, Weak};
+pub mod share {
+    pub use aimer_rubick::{Shared, Weak, ShareRef};
+}
+
+pub mod rubick {
+    pub use aimer_rubick::{ErasedFrom, Rubick};
 }
 
 #[cfg(test)]
@@ -337,13 +328,14 @@ mod tests {
     }
 
     mod box_child {
-        use aimer::gesture::gesture_detector::GestureDetector;
-        use aimer::mouse_region::MouseRegion;
+        use aimer::input::gesture::gesture_detector::GestureDetector;
+        use aimer::input::mouse_region::MouseRegion;
         use aimer::style::AnimatedTheme;
         use aimer::{
-            Align, AnyWidget, AspectRatio, Button, Container, Expanded, Opacity, Positioned, Scrollable,
+            Align, AnyWidget, AspectRatio, Container, Expanded, Opacity, Positioned, Scrollable,
             SizedBox, ZeroSizedBox,
         };
+        use aimer::input::button::Button;
         #[cfg(feature = "provider")]
         use aimer::{Provider, StoreProvider};
 
@@ -377,7 +369,8 @@ mod tests {
     }
 
     mod capability_macro {
-        use aimer::{CapabilityResult, capability};
+        use aimer::anteros::CapabilityResult;
+        use aimer::capability;
 
         #[capability(
             name = "haptics",
@@ -683,7 +676,7 @@ mod tests {
                 *highlighted.borrow_mut() = state.is_hovered;
                 SizedBox::new().width(100).height(100)
             })
-            .boxed()
+                .boxed()
         }
 
         fn batches() -> Batches {
@@ -915,9 +908,10 @@ mod tests {
         use std::rc::Rc;
 
         use aimer::style::{LayoutSpacing, Spacing};
+        use aimer::modal::{Anchor, AnchorHandle, Floating, FloatingAlign, FloatingSide, ModalHandle};
         use aimer::{
-            Anchor, AnchorHandle, AnyElement, BuildContext, Container, Dimension, Drawable, Element,
-            EventElement, Floating, FloatingAlign, FloatingSide, LayoutElement, ModalHandle, Rebuildable,
+            AnyElement, BuildContext, Container, Dimension, Drawable, Element,
+            EventElement, LayoutElement, Rebuildable,
             ResolvedSize, SizedBox, VisitorElement, Widget,
         };
 
@@ -941,7 +935,7 @@ mod tests {
                         height: 60.0,
                     },
                 }
-                .boxed()
+                    .boxed()
             }
         }
 
@@ -1075,14 +1069,14 @@ mod tests {
                 weight: FontWeight::Normal,
                 style: FontStyle::Normal,
             })
-            .expect("valid font bytes should register");
+                .expect("valid font bytes should register");
             let bold_family = FontRegistry::register(FontRegistration {
                 family: " aimer registry test mono ",
                 bytes: TEST_FONT,
                 weight: FontWeight::Bold,
                 style: FontStyle::Normal,
             })
-            .expect("a second variant should register under the same normalized family");
+                .expect("a second variant should register under the same normalized family");
 
             assert_eq!(family, bold_family);
 
@@ -1119,7 +1113,7 @@ mod tests {
                 weight: FontWeight::Normal,
                 style: FontStyle::Normal,
             })
-            .unwrap();
+                .unwrap();
             let base = TextStyle::new().font_family(family);
             let span = TextSpan::root([
                 TextSpan::new("let "),
@@ -1166,7 +1160,7 @@ mod tests {
                 SizeProbeElement {
                     observed: self.observed.clone(),
                 }
-                .boxed()
+                    .boxed()
             }
         }
 
@@ -1235,7 +1229,6 @@ mod tests {
 
     #[cfg(feature = "markdown")]
     mod markdown_custom_widget_headless {
-
         //! Custom widgets rendered by Markdown must remain interactive.
 
         use std::cell::Cell;
@@ -1246,7 +1239,7 @@ mod tests {
         use aimer::quiver::winit::dpi::PhysicalPosition;
         use aimer::quiver::winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
         use aimer::{
-            AimerApp, Button, MarkdownInlineRule, MarkdownInlineSyntax, MarkdownViewer, SizedBox, Widget,
+            AimerApp, MarkdownInlineRule, MarkdownInlineSyntax, MarkdownViewer, SizedBox, Widget,
         };
 
         fn move_to<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>, x: f64, y: f64) {
@@ -1383,7 +1376,7 @@ mod tests {
                     None,
                     "Probe",
                 )
-                .boxed()
+                    .boxed()
             }
         }
 
@@ -1896,8 +1889,9 @@ mod tests {
         use aimer::quiver::winit::dpi::PhysicalPosition;
         use aimer::quiver::winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
         use aimer::style::LayoutSpacing;
+        use aimer::input::button::Button;
         use aimer::{
-            AimerApp, AnyElement, BuildContext, Button, Container, Direction, Resizable, ResolvedSize,
+            AimerApp, AnyElement, BuildContext, Container, Direction, Resizable, ResolvedSize,
             SizedBox, State, StateUpdater, StatefulElement, StatefulWidget, Widget,
         };
 
@@ -2094,8 +2088,9 @@ mod tests {
         use aimer::quiver::winit::event::WindowEvent;
         use aimer::quiver::winit::window::Theme as SystemTheme;
         use aimer::style::{AnimatedTheme, Theme, ThemeData, ThemeMode};
+        use aimer::modal::ModalHost;
         use aimer::{
-            AimerApp, AnyElement, BuildContext, Color, Element, ModalHost, SizedBox, State, StateUpdater,
+            AimerApp, AnyElement, BuildContext, Color, Element, SizedBox, State, StateUpdater,
             StatefulElement, StatefulWidget, StatelessElement, Widget,
         };
 
@@ -2128,7 +2123,7 @@ mod tests {
                     None,
                     "Probe",
                 )
-                .boxed()
+                    .boxed()
             }
         }
 
@@ -2377,7 +2372,8 @@ mod tests {
         use aimer::quiver::winit::dpi::PhysicalPosition;
         use aimer::quiver::winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
         use aimer::style::{LayoutSpacing, Spacing};
-        use aimer::{AimerApp, Container, TextEditingController, TextField, Widget};
+        use aimer::input::{input::TextField, TextEditingController};
+        use aimer::{AimerApp, Container, Widget};
         use aimer_events::text_editing::{NativeTextRange, TextEditingDelta};
 
         /// Moves the pointer to `(x, y)` and taps there.
@@ -2546,10 +2542,11 @@ mod tests {
         };
         use aimer::quiver::aimer_app::HeadlessAimerApp;
         use aimer::style::{AnimatedTheme, Theme, ThemeData};
+        use aimer::modal::ModalHost;
         use aimer::{
             AimerApp, AnyElement, AnyWidget, AsyncBuilder, AsyncSnapshot, BuildContext, Column, Container,
             Drawable, Element, EventElement, Expanded, LayoutElement, Rebuildable, ScrollAxis, Scrollable,
-            ModalHost, SizedBox, State, StateUpdater, StatefulElement, StatefulWidget, StatelessElement,
+            SizedBox, State, StateUpdater, StatefulElement, StatefulWidget, StatelessElement,
             VisitorElement, Widget,
         };
 
@@ -2618,11 +2615,11 @@ mod tests {
                     Self::Blog => Shell::new(AppShell, |_| {
                         transitioned_page("blog", BlogListPage.boxed()).boxed()
                     })
-                    .boxed(),
+                        .boxed(),
                     Self::Learn => Shell::new(AppShell, |_| {
                         transitioned_page("learn", LearnPage.boxed()).boxed()
                     })
-                    .boxed(),
+                        .boxed(),
                 }
             }
         }
@@ -2708,7 +2705,7 @@ mod tests {
                     None,
                     "ThemedFrame",
                 )
-                .boxed()
+                    .boxed()
             }
 
             fn debug_name(&self) -> &'static str {
@@ -2758,7 +2755,7 @@ mod tests {
                     None,
                     "BlogListPage",
                 )
-                .boxed()
+                    .boxed()
             }
 
             fn debug_name(&self) -> &'static str {
@@ -2812,7 +2809,7 @@ mod tests {
                     None,
                     "LearnPage",
                 )
-                .boxed()
+                    .boxed()
             }
 
             fn debug_name(&self) -> &'static str {
@@ -2851,7 +2848,7 @@ mod tests {
                     label: self.label,
                     child: SizedBox::new().height(self.height).to_element(ctx),
                 }
-                .boxed()
+                    .boxed()
             }
 
             fn debug_name(&self) -> &'static str {
@@ -3042,9 +3039,10 @@ mod tests {
         use aimer::quiver::aimer_app::HeadlessAimerApp;
         use aimer::router::{Navigator, Outlet, Route, Router, Shell};
         use aimer::style::{AnimatedTheme, Theme, ThemeData};
+        use aimer::modal::ModalHost;
         use aimer::{
             AimerApp, AnyElement, AnyWidget, BuildContext, Column, Container, Drawable, Element,
-            EventElement, Expanded, Key, LayoutElement, ModalHost, Rebuildable, ScrollAxis, Scrollable,
+            EventElement, Expanded, Key, LayoutElement, Rebuildable, ScrollAxis, Scrollable,
             SizedBox, State, StateUpdater, StatefulElement, StatefulWidget, StatelessElement,
             VisitorElement, Widget,
         };
@@ -3102,11 +3100,11 @@ mod tests {
                         Curve::FastOutSlowIn,
                         HomePage.boxed(),
                     )
-                    .child_key("home")
-                    .key(ROUTE_SWITCHER_KEY)
-                    .boxed()
+                        .child_key("home")
+                        .key(ROUTE_SWITCHER_KEY)
+                        .boxed()
                 })
-                .boxed()
+                    .boxed()
             }
         }
 
@@ -3191,7 +3189,7 @@ mod tests {
                     None,
                     "ThemedFrame",
                 )
-                .boxed()
+                    .boxed()
             }
 
             fn debug_name(&self) -> &'static str {
@@ -3230,7 +3228,7 @@ mod tests {
                             SelectionSection {
                                 key: Some(SECTION_KEY.into()),
                             }
-                            .boxed(),
+                                .boxed(),
                             SizedBox::new().height(48).boxed(),
                         ])),
                 )
@@ -3297,8 +3295,8 @@ mod tests {
                                     Curve::FastOutSlowIn,
                                     Marker::new(index),
                                 )
-                                .child_key(PLATFORMS[index % PLATFORMS.len()])
-                                .key(SWITCHER_KEY),
+                                    .child_key(PLATFORMS[index % PLATFORMS.len()])
+                                    .key(SWITCHER_KEY),
                             )
                             .boxed(),
                         SizedBox::new().height(40).boxed(),
@@ -3345,7 +3343,7 @@ mod tests {
                     index: self.index,
                     child: SizedBox::new().height(80).to_element(ctx),
                 }
-                .boxed()
+                    .boxed()
             }
 
             fn debug_name(&self) -> &'static str {
@@ -3547,7 +3545,8 @@ mod tests {
         use std::time::{Duration, Instant};
 
         use aimer::quiver::aimer_app::HeadlessAimerApp;
-        use aimer::{AimerApp, ModalHost, SizedBox, Venus};
+        use aimer::modal::ModalHost;
+        use aimer::{AimerApp, SizedBox, Venus};
 
         /// The application under test: what it draws is irrelevant, only that it is a
         /// real one, started the way `main` starts it.
@@ -3984,7 +3983,7 @@ mod tests {
                 Greeting {
                     name: "route".to_string(),
                 }
-                .boxed()
+                    .boxed()
             }
         }
 
@@ -3993,7 +3992,7 @@ mod tests {
                 Greeting {
                     name: "dash".to_string(),
                 }
-                .boxed()
+                    .boxed()
             }
         }
 
@@ -4064,7 +4063,7 @@ mod tests {
                 AppRoute::Profile {
                     name: "john".to_string()
                 }
-                .format(),
+                    .format(),
                 "/profile/john"
             );
         }
@@ -4106,10 +4105,9 @@ mod tests {
                 AppRoute::Profile {
                     name: "john".to_string()
                 }
-                .name(),
+                    .name(),
                 Some("profile")
             );
         }
     }
-
 }

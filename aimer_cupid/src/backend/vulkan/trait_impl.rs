@@ -419,16 +419,24 @@ mod tests {
                 svg_id: None,
                 classes: Arc::new([]),
                 element: crate::svg::SvgElementKind::Path,
+                is_definition: false,
+                definition_owner: None,
+                clip_path: None,
+                mask: None,
+                filter: None,
                 parent: None,
                 children: Arc::new([]),
                 transform: crate::svg::SvgTransform::default(),
                 opacity: 1.0,
                 geometry: Some(0),
+                fill_rule: crate::svg::SvgFillRule::NonZero,
                 fill: Some(crate::svg::SvgFill {
                     color: crate::svg::SvgColor::rgba8(255, 0, 0, 255),
                     rule: crate::svg::SvgFillRule::NonZero,
                 }),
                 stroke: None,
+                fill_paint: None,
+                stroke_paint: None,
                 paint_order: crate::svg::SvgPaintOrder::FillAndStroke,
                 visible: true,
             }]),
@@ -441,6 +449,7 @@ mod tests {
                     crate::svg::SvgPathCommand::Close,
                 ]),
             }]),
+            resources: Arc::new(crate::svg::SvgResourceGraph::empty()),
         });
         draw.draw_svg(svg_scene, Rect::new(64.0, 0.0, 24.0, 24.0), Arc::new([]));
         let target = create_target(&backend, WIDTH, HEIGHT);

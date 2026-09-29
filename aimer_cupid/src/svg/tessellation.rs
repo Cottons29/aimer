@@ -42,7 +42,9 @@ pub enum SvgMeshStyle {
 pub struct SvgToleranceBucket(u8);
 
 impl SvgToleranceBucket {
-    pub const COUNT: usize = 8;
+    const MIN_EXPONENT: i32 = -8;
+    const MAX_EXPONENT: i32 = 16;
+    pub const COUNT: usize = (Self::MAX_EXPONENT - Self::MIN_EXPONENT + 1) as usize;
 
     pub fn from_scale(scale: f32) -> Self {
         let scale = if scale.is_finite() && scale > 0.0 {
@@ -50,12 +52,17 @@ impl SvgToleranceBucket {
         } else {
             1.0
         };
-        let exponent = scale.log2().round().clamp(-3.0, 4.0) as i32;
-        Self((exponent + 3) as u8)
+        let exponent = scale
+            .log2()
+            .ceil()
+            .clamp(Self::MIN_EXPONENT as f32, Self::MAX_EXPONENT as f32)
+            as i32;
+        Self((exponent - Self::MIN_EXPONENT) as u8)
     }
 
     fn tolerance(self) -> f32 {
-        let representative_scale = 2.0_f32.powi(self.0 as i32 - 3);
+        let exponent = i32::from(self.0) + Self::MIN_EXPONENT;
+        let representative_scale = 2.0_f32.powi(exponent);
         0.25 / representative_scale
     }
 }
@@ -222,7 +229,7 @@ fn tessellate(
     let fringe_width = tolerance * 4.0;
     match style {
         SvgMeshStyle::Fill(rule) => {
-            let contours = close_fill_contours(flatten_for_dashing(geometry));
+            let contours = close_fill_contours(flatten_path(geometry, tolerance));
             let mut mesh = scanline_fill(&contours, rule)?;
             if analytic_aa && fringe_width.is_finite() && fringe_width > 0.0 {
                 add_fill_fringe(&mut mesh, &contours, rule, fringe_width);
@@ -245,7 +252,7 @@ fn tessellate(
                 ));
             }
             let mut mesh = stroke_mesh(
-                &flatten_for_dashing(geometry), width, line_cap, line_join, miter_limit,
+                &flatten_path(geometry, tolerance), width, line_cap, line_join, miter_limit,
             );
             if analytic_aa && fringe_width.is_finite() && fringe_width > 0.0 {
                 add_mesh_fringe(&mut mesh, fringe_width);
@@ -870,6 +877,7 @@ pub fn tessellate_dashed_stroke(
     stroke: &SvgStroke,
     physical_scale: f32,
 ) -> Result<SvgMesh, SvgTessellationError> {
+    let tolerance = SvgToleranceBucket::from_scale(physical_scale).tolerance();
     if stroke.dash_array.is_empty() {
         return tessellate(
             geometry,
@@ -879,7 +887,7 @@ pub fn tessellate_dashed_stroke(
                 line_join: stroke.line_join,
                 miter_limit: stroke.miter_limit,
             },
-            SvgToleranceBucket::from_scale(physical_scale).tolerance(),
+            tolerance,
             false,
         );
     }
@@ -912,7 +920,7 @@ pub fn tessellate_dashed_stroke(
     if pattern.len() % 2 == 1 {
         pattern.extend_from_within(..);
     }
-    let commands = dashed_commands(geometry, &pattern, stroke.dash_offset);
+    let commands = dashed_commands(geometry, &pattern, stroke.dash_offset, tolerance);
     if commands.is_empty() {
         return Ok(empty_mesh());
     }
@@ -926,7 +934,7 @@ pub fn tessellate_dashed_stroke(
             line_join: stroke.line_join,
             miter_limit: stroke.miter_limit,
         },
-        SvgToleranceBucket::from_scale(physical_scale).tolerance(),
+        tolerance,
         false,
     )
 }
@@ -943,6 +951,7 @@ fn dashed_commands(
     geometry: &SvgGeometry,
     pattern: &[f32],
     dash_offset: f32,
+    tolerance: f32,
 ) -> Vec<SvgPathCommand> {
     let Some(period) = pattern.iter().copied().reduce(|sum, value| sum + value) else {
         return Vec::new();
@@ -952,7 +961,7 @@ fn dashed_commands(
     }
 
     let mut commands = Vec::new();
-    for contour in flatten_for_dashing(geometry) {
+    for contour in flatten_path(geometry, tolerance) {
         if contour.len() < 2 {
             continue;
         }
@@ -1028,9 +1037,12 @@ fn advance_dash_cursor(
     *on = false;
 }
 
-fn flatten_for_dashing(geometry: &SvgGeometry) -> Vec<Vec<(f32, f32)>> {
+const MAX_CURVE_SUBDIVISION_DEPTH: u8 = 12;
+
+fn flatten_path(geometry: &SvgGeometry, tolerance: f32) -> Vec<Vec<(f32, f32)>> {
     let mut contours = Vec::new();
     let mut contour = Vec::new();
+    let tolerance_squared = tolerance * tolerance;
     let mut current = (0.0, 0.0);
     for command in geometry.commands.iter().copied() {
         match command {
@@ -1059,15 +1071,14 @@ fn flatten_for_dashing(geometry: &SvgGeometry) -> Vec<Vec<(f32, f32)>> {
                 if contour.is_empty() {
                     contour.push(current);
                 }
-                let start = current;
-                for step in 1..=16 {
-                    let t = step as f32 / 16.0;
-                    let inverse = 1.0 - t;
-                    contour.push((
-                        inverse * inverse * start.0 + 2.0 * inverse * t * control_x + t * t * x,
-                        inverse * inverse * start.1 + 2.0 * inverse * t * control_y + t * t * y,
-                    ));
-                }
+                flatten_quadratic(
+                    &mut contour,
+                    current,
+                    (control_x, control_y),
+                    (x, y),
+                    tolerance_squared,
+                    0,
+                );
                 current = (x, y);
             }
             SvgPathCommand::CubicTo {
@@ -1081,21 +1092,15 @@ fn flatten_for_dashing(geometry: &SvgGeometry) -> Vec<Vec<(f32, f32)>> {
                 if contour.is_empty() {
                     contour.push(current);
                 }
-                let start = current;
-                for step in 1..=24 {
-                    let t = step as f32 / 24.0;
-                    let inverse = 1.0 - t;
-                    contour.push((
-                        inverse.powi(3) * start.0
-                            + 3.0 * inverse * inverse * t * control1_x
-                            + 3.0 * inverse * t * t * control2_x
-                            + t.powi(3) * x,
-                        inverse.powi(3) * start.1
-                            + 3.0 * inverse * inverse * t * control1_y
-                            + 3.0 * inverse * t * t * control2_y
-                            + t.powi(3) * y,
-                    ));
-                }
+                flatten_cubic(
+                    &mut contour,
+                    current,
+                    (control1_x, control1_y),
+                    (control2_x, control2_y),
+                    (x, y),
+                    tolerance_squared,
+                    0,
+                );
                 current = (x, y);
             }
             SvgPathCommand::Close => {
@@ -1112,6 +1117,111 @@ fn flatten_for_dashing(geometry: &SvgGeometry) -> Vec<Vec<(f32, f32)>> {
         contours.push(contour);
     }
     contours
+}
+
+fn flatten_quadratic(
+    contour: &mut Vec<(f32, f32)>,
+    start: (f32, f32),
+    control: (f32, f32),
+    end: (f32, f32),
+    tolerance_squared: f32,
+    depth: u8,
+) {
+    if depth >= MAX_CURVE_SUBDIVISION_DEPTH
+        || distance_to_segment_squared(control, start, end) <= tolerance_squared
+    {
+        contour.push(end);
+        return;
+    }
+
+    let start_control = midpoint(start, control);
+    let control_end = midpoint(control, end);
+    let middle = midpoint(start_control, control_end);
+    flatten_quadratic(
+        contour,
+        start,
+        start_control,
+        middle,
+        tolerance_squared,
+        depth + 1,
+    );
+    flatten_quadratic(
+        contour,
+        middle,
+        control_end,
+        end,
+        tolerance_squared,
+        depth + 1,
+    );
+}
+
+fn flatten_cubic(
+    contour: &mut Vec<(f32, f32)>,
+    start: (f32, f32),
+    control1: (f32, f32),
+    control2: (f32, f32),
+    end: (f32, f32),
+    tolerance_squared: f32,
+    depth: u8,
+) {
+    if depth >= MAX_CURVE_SUBDIVISION_DEPTH
+        || (distance_to_segment_squared(control1, start, end) <= tolerance_squared
+            && distance_to_segment_squared(control2, start, end) <= tolerance_squared)
+    {
+        contour.push(end);
+        return;
+    }
+
+    let start_control1 = midpoint(start, control1);
+    let control1_control2 = midpoint(control1, control2);
+    let control2_end = midpoint(control2, end);
+    let start_middle = midpoint(start_control1, control1_control2);
+    let middle_end = midpoint(control1_control2, control2_end);
+    let middle = midpoint(start_middle, middle_end);
+    flatten_cubic(
+        contour,
+        start,
+        start_control1,
+        start_middle,
+        middle,
+        tolerance_squared,
+        depth + 1,
+    );
+    flatten_cubic(
+        contour,
+        middle,
+        middle_end,
+        control2_end,
+        end,
+        tolerance_squared,
+        depth + 1,
+    );
+}
+
+fn midpoint(a: (f32, f32), b: (f32, f32)) -> (f32, f32) {
+    (a.0 * 0.5 + b.0 * 0.5, a.1 * 0.5 + b.1 * 0.5)
+}
+
+fn distance_to_segment_squared(
+    point: (f32, f32),
+    start: (f32, f32),
+    end: (f32, f32),
+) -> f32 {
+    let segment = (end.0 - start.0, end.1 - start.1);
+    let length_squared = segment.0 * segment.0 + segment.1 * segment.1;
+    let projection = if length_squared > 0.0 {
+        (((point.0 - start.0) * segment.0 + (point.1 - start.1) * segment.1)
+            / length_squared)
+            .clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let nearest = (
+        start.0 + segment.0 * projection,
+        start.1 + segment.1 * projection,
+    );
+    let delta = (point.0 - nearest.0, point.1 - nearest.1);
+    delta.0 * delta.0 + delta.1 * delta.1
 }
 
 fn path_key(geometry: &SvgGeometry) -> Vec<u32> {
@@ -1154,4 +1264,107 @@ fn path_key(geometry: &SvgGeometry) -> Vec<u32> {
         }
     }
     key
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cubic_flattening_respects_the_screen_space_error_bound() {
+        let geometry = SvgGeometry {
+            commands: Arc::from([
+                SvgPathCommand::MoveTo { x: 0.0, y: 0.0 },
+                SvgPathCommand::CubicTo {
+                    control1_x: 0.0,
+                    control1_y: 10.0,
+                    control2_x: 10.0,
+                    control2_y: 10.0,
+                    x: 10.0,
+                    y: 0.0,
+                },
+            ]),
+        };
+        let physical_scale = 4.0;
+        let tolerance = SvgToleranceBucket::from_scale(physical_scale).tolerance();
+        let contour = &flatten_path(&geometry, tolerance)[0];
+        let mut maximum_error_squared = 0.0_f32;
+
+        for step in 0..=1000 {
+            let t = step as f32 / 1000.0;
+            let inverse = 1.0 - t;
+            let point = (
+                inverse.powi(3) * 0.0
+                    + 3.0 * inverse.powi(2) * t * 0.0
+                    + 3.0 * inverse * t.powi(2) * 10.0
+                    + t.powi(3) * 10.0,
+                inverse.powi(3) * 0.0
+                    + 3.0 * inverse.powi(2) * t * 10.0
+                    + 3.0 * inverse * t.powi(2) * 10.0
+                    + t.powi(3) * 0.0,
+            );
+            let nearest_error_squared = contour
+                .windows(2)
+                .map(|segment| distance_to_segment_squared(point, segment[0], segment[1]))
+                .fold(f32::INFINITY, f32::min);
+            maximum_error_squared = maximum_error_squared.max(nearest_error_squared);
+        }
+
+        assert!(maximum_error_squared.sqrt() * physical_scale <= 0.25 + 1e-4);
+    }
+
+    #[test]
+    fn quadratic_flattening_refines_for_the_screen_space_error_bound() {
+        let geometry = SvgGeometry {
+            commands: Arc::from([
+                SvgPathCommand::MoveTo { x: 0.0, y: 0.0 },
+                SvgPathCommand::QuadraticTo {
+                    control_x: 5.0,
+                    control_y: 10.0,
+                    x: 10.0,
+                    y: 0.0,
+                },
+            ]),
+        };
+        let physical_scale = 4.0;
+        let tolerance = SvgToleranceBucket::from_scale(physical_scale).tolerance();
+        let contour = &flatten_path(&geometry, tolerance)[0];
+        let mut maximum_error_squared = 0.0_f32;
+
+        for step in 0..=1000 {
+            let t = step as f32 / 1000.0;
+            let inverse = 1.0 - t;
+            let point = (
+                inverse.powi(2) * 0.0 + 2.0 * inverse * t * 5.0 + t.powi(2) * 10.0,
+                inverse.powi(2) * 0.0 + 2.0 * inverse * t * 10.0 + t.powi(2) * 0.0,
+            );
+            let nearest_error_squared = contour
+                .windows(2)
+                .map(|segment| distance_to_segment_squared(point, segment[0], segment[1]))
+                .fold(f32::INFINITY, f32::min);
+            maximum_error_squared = maximum_error_squared.max(nearest_error_squared);
+        }
+
+        assert!(maximum_error_squared.sqrt() * physical_scale <= 0.25 + 1e-4);
+    }
+
+    #[test]
+    fn straight_bezier_does_not_subdivide_at_large_scales() {
+        let geometry = SvgGeometry {
+            commands: Arc::from([
+                SvgPathCommand::MoveTo { x: 0.0, y: 0.0 },
+                SvgPathCommand::CubicTo {
+                    control1_x: 3.0,
+                    control1_y: 0.0,
+                    control2_x: 7.0,
+                    control2_y: 0.0,
+                    x: 10.0,
+                    y: 0.0,
+                },
+            ]),
+        };
+        let contour = flatten_path(&geometry, SvgToleranceBucket::from_scale(10_000.0).tolerance());
+
+        assert_eq!(contour[0].len(), 2);
+    }
 }
