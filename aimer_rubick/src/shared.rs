@@ -497,6 +497,33 @@ impl<T: ?Sized> Shared<T> {
         ShareRef::<Field>::from_projection(self.clone(), select)
     }
 
+    /// Creates a read-only handle to the complete value while retaining this
+    /// `Shared` as its owner.
+    ///
+    /// The returned handle owns a clone of `self`. Use
+    /// [`into_share_ref`](Self::into_share_ref) to transfer this handle instead.
+    #[must_use]
+    #[inline]
+    pub fn as_share_ref(&self) -> ShareRef<T>
+    where
+        T: 'static,
+    {
+        ShareRef::from_projection(self.clone(), |value: &T| value)
+    }
+
+    /// Converts this owner into a read-only handle to the complete value.
+    ///
+    /// This transfers the `Shared` handle into the `ShareRef` without
+    /// incrementing its strong-reference count.
+    #[must_use]
+    #[inline]
+    pub fn into_share_ref(self) -> ShareRef<T>
+    where
+        T: 'static,
+    {
+        ShareRef::from_projection(self, |value: &T| value)
+    }
+
     #[inline]
     fn inner(&self) -> &SharedAllocation<T> {
         // SAFETY: every live `Shared` owns one strong reference, so its
@@ -715,6 +742,12 @@ impl<T: ?Sized> Borrow<T> for Shared<T> {
     }
 }
 
+impl<T: Borrow<str>> Borrow<str> for Shared<T> {
+    fn borrow(&self) -> &str {
+        Borrow::<str>::borrow(&**self)
+    }
+}
+
 impl<T: ?Sized + fmt::Debug> fmt::Debug for Shared<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&**self, formatter)
@@ -869,6 +902,73 @@ pub struct ShareRef<T: ?Sized + 'static> {
     value: ShareRefStorage<T>,
 }
 
+/// Adds projection and [`ShareRef`] conversion methods to [`Rc`] values.
+///
+/// Import this trait to project a field from an `Rc` into an owning
+/// [`ShareRef`]. The returned handle retains an `Rc` clone, so it remains
+/// valid after the original `Rc` is dropped; the selected field is not cloned.
+///
+/// # Examples
+///
+/// ```
+/// use aimer_rubick::RcProjectExt;
+/// use std::rc::Rc;
+///
+/// struct State { title: String }
+///
+/// let state = Rc::new(State { title: String::from("Aimer") });
+/// let title = state.project(|state| state.title.as_str());
+/// drop(state);
+///
+/// assert_eq!(&*title, "Aimer");
+/// ```
+pub trait RcProjectExt<T: ?Sized + 'static> {
+    /// Creates an owning handle to the complete `Rc` value.
+    ///
+    /// The returned handle retains an `Rc` clone. Use
+    /// [`into_share_ref`](Self::into_share_ref) to transfer the `Rc` instead.
+    fn as_share_ref(&self) -> ShareRef<T>;
+
+    /// Converts this `Rc` into an owning read-only handle to its value.
+    ///
+    /// This moves the `Rc` into the returned handle without incrementing its
+    /// strong-reference count.
+    fn into_share_ref(self) -> ShareRef<T>;
+
+    /// Creates an owning handle to a borrowed part of the `Rc` value.
+    fn project<Field, Select>(&self, select: Select) -> ShareRef<Field>
+    where
+        Field: ?Sized + 'static,
+        Select: for<'a> Fn(&'a T) -> &'a Field + 'static;
+}
+
+impl<T: ?Sized + 'static> RcProjectExt<T> for Rc<T> {
+    #[inline]
+    fn as_share_ref(&self) -> ShareRef<T> {
+        ShareRef::from_rc(self)
+    }
+
+    #[inline]
+    fn into_share_ref(self) -> ShareRef<T> {
+        ShareRef::from_projection(Shared::new(self), |owner: &Rc<T>| owner.as_ref())
+    }
+
+    #[inline]
+    fn project<Field, Select>(&self, select: Select) -> ShareRef<Field>
+    where
+        Field: ?Sized + 'static,
+        Select: for<'a> Fn(&'a T) -> &'a Field + 'static,
+    {
+        ShareRef::from_projection(Shared::new(Rc::clone(self)), move |owner: &Rc<T>| {
+            select(owner.as_ref())
+        })
+    }
+}
+
+
+
+
+
 impl<T: ?Sized + 'static> ShareRef<T> {
     #[inline]
     fn from_projection<Owner: ?Sized, Select>(owner: Shared<Owner>, select: Select) -> Self
@@ -1021,6 +1121,24 @@ impl<T: ?Sized + 'static> AsRef<T> for ShareRef<T> {
     }
 }
 
+impl<T: ?Sized + 'static> Borrow<T> for ShareRef<T> {
+    fn borrow(&self) -> &T {
+        self.get()
+    }
+}
+
+impl<T: Borrow<str> + 'static> Borrow<str> for ShareRef<T> {
+    fn borrow(&self) -> &str {
+        Borrow::<str>::borrow(self.get())
+    }
+}
+
+impl<T: ?Sized + Hash + 'static> Hash for ShareRef<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get().hash(state);
+    }
+}
+
 impl<T: ?Sized + fmt::Debug + 'static> fmt::Debug for ShareRef<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self.get(), formatter)
@@ -1040,6 +1158,13 @@ where
 {
     fn eq(&self, other: &ShareRef<U>) -> bool {
         self.get() == other.get()
+    }
+}
+
+
+impl<T: ?Sized + 'static> From<&'static T> for ShareRef<T> {
+    fn from(value: &'static T) -> Self {
+        ShareRef::from_static(value)
     }
 }
 

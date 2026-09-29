@@ -11,7 +11,7 @@ pub mod test;
 
 pub use allocator_api2;
 pub use crate::ui_memory::{UiAllocator, UiMemory};
-pub use crate::shared::{ShareRef, Shared, Weak};
+pub use crate::shared::{RcProjectExt, ShareRef, Shared, Weak};
 
 use std::alloc::{Layout, handle_alloc_error};
 use std::marker::PhantomData;

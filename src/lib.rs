@@ -172,7 +172,7 @@ pub use wasm_bindgen;
 
 pub use aimer_std::case;
 pub mod share {
-    pub use aimer_rubick::{Shared, Weak, ShareRef};
+    pub use aimer_rubick::{RcProjectExt, ShareRef, Shared, Weak};
 }
 
 pub mod rubick {

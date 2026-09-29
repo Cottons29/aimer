@@ -617,9 +617,9 @@ impl State<ExampleShowcase> for ExampleShowcaseState {
                                 .width(Dimension::Px(1.0))
                                 .color(theme::divider(&app_theme))
                                 .boxed(),
-                            // Expanded::new()
-                            //     .child(content(self.selected, app_theme))
-                            //     .boxed(),
+                            Expanded::new()
+                                .child(content(self.selected, app_theme))
+                                .boxed(),
                         ]),
                     )
                     .boxed(),
