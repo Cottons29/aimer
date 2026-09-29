@@ -28,7 +28,8 @@ scope.
 - Read the relevant implementation, tests, and any nested `AGENTS.md` before changing code.
 - Use available IDE context or Codegraph MCP when it is relevant, but do not assume an IDE integration exists. CLI
   inspection is valid.
-- Do not invent missing facts. First inspect the repository, compiler output, tests, or documentation. Ask the user only
+- Use the aimer mcp or cli tool to search the documents from the docs.rs if the aimer is existed.
+- Do not invent missing facts. First, inspect the repository, compiler output, tests, or documentation. Ask the user only
   when the ambiguity cannot be resolved locally and different answers would materially change the implementation.
 - Preserve unrelated user changes. Do not revert or overwrite them.
 - Match existing module patterns unless this file or the user explicitly requires otherwise.

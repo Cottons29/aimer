@@ -1,11 +1,9 @@
-#[cfg(test)]
 use std::cell::Cell;
+use std::rc::Rc;
 #[cfg(feature = "wasm-hot-reload")]
 use std::net::SocketAddr;
-#[cfg(feature = "wasm-hot-reload")]
-use std::rc::Rc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use aimer_attribute::size::ResolvedSize;
 use aimer_cupid::AntiAlias;
@@ -75,13 +73,82 @@ pub enum AimerNativePlatformEvent {
 
 pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerNativePlatformEvent>> = OnceLock::new();
 
-/// Whether a `FrameReady` animation event is waiting in the event loop.
+/// The reason a pending frame was scheduled, kept private to the event loop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FrameRequestKind {
+    ScrollOnly,
+    Full,
+}
+
+impl FrameRequestKind {
+    pub(crate) fn merge(self, other: Self) -> Self {
+        if matches!(self, Self::Full) || matches!(other, Self::Full) {
+            Self::Full
+        } else {
+            Self::ScrollOnly
+        }
+    }
+
+    const fn encode(self) -> u8 {
+        match self {
+            Self::ScrollOnly => 1,
+            Self::Full => 2,
+        }
+    }
+
+    const fn decode(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::ScrollOnly),
+            2 => Some(Self::Full),
+            _ => None,
+        }
+    }
+}
+
+thread_local! {
+    static CURRENT_FRAME_REQUEST_KIND: Cell<FrameRequestKind> = const {
+        Cell::new(FrameRequestKind::Full)
+    };
+}
+
+struct FrameRequestKindGuard(FrameRequestKind);
+
+impl Drop for FrameRequestKindGuard {
+    fn drop(&mut self) {
+        CURRENT_FRAME_REQUEST_KIND.with(|current| current.set(self.0));
+    }
+}
+
+pub(crate) fn with_frame_request_kind<T>(kind: FrameRequestKind, request: impl FnOnce() -> T) -> T {
+    let previous = CURRENT_FRAME_REQUEST_KIND.with(|current| current.replace(kind));
+    let _restore = FrameRequestKindGuard(previous);
+    request()
+}
+
+fn current_frame_request_kind() -> FrameRequestKind {
+    CURRENT_FRAME_REQUEST_KIND.with(Cell::get)
+}
+
+pub(crate) fn request_scroll_frame(request: impl FnOnce()) {
+    with_frame_request_kind(FrameRequestKind::ScrollOnly, request);
+}
+
+fn observe_frame_request(slot: &Cell<Option<FrameRequestKind>>) {
+    let kind = current_frame_request_kind();
+    let kind = slot.get().map_or(kind, |pending| pending.merge(kind));
+    slot.set(Some(kind));
+    if kind == FrameRequestKind::Full {
+        promote_pending_scroll_frame_request();
+    }
+}
+
+/// Encoded redraw reason for a queued `FrameReady` event; zero means no event is pending.
 ///
 /// Cursor movement can request a direct redraw while an animation event is
 /// already queued. Rendering that redraw schedules another animation frame;
 /// coalescing here prevents those requests from accumulating faster than the
 /// event loop can deliver them.
-static FRAME_READY_PENDING: AtomicBool = AtomicBool::new(false);
+static FRAME_READY_PENDING: AtomicU8 = AtomicU8::new(0);
 
 /// Whether a live-reload native callback wake is waiting in the event loop.
 ///
@@ -90,22 +157,54 @@ static FRAME_READY_PENDING: AtomicBool = AtomicBool::new(false);
 /// wake that makes a freshly queued callback visible.
 static CALLBACK_READY_PENDING: AtomicBool = AtomicBool::new(false);
 
-fn try_begin_frame_ready_request(pending: &AtomicBool) -> bool {
-    pending
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok()
+fn try_begin_frame_ready_request(
+    pending: &AtomicU8,
+    kind: FrameRequestKind,
+) -> bool {
+    let requested = kind.encode();
+    loop {
+        let current = pending.load(Ordering::Acquire);
+        if current == 0 {
+            if pending
+                .compare_exchange(0, requested, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return true;
+            }
+        } else if let Some(current_kind) = FrameRequestKind::decode(current) {
+            let merged = current_kind.merge(kind).encode();
+            if merged == current {
+                return false;
+            }
+            if pending
+                .compare_exchange(current, merged, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
 }
 
-fn complete_frame_ready_request(pending: &AtomicBool) {
-    pending.store(false, Ordering::Release);
+fn complete_frame_ready_request(pending: &AtomicU8) -> FrameRequestKind {
+    FrameRequestKind::decode(pending.swap(0, Ordering::AcqRel)).unwrap_or(FrameRequestKind::Full)
+}
+
+pub(crate) fn promote_pending_scroll_frame_request() {
+    let _ = FRAME_READY_PENDING.compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire);
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
-fn request_direct_frame(pending: &AtomicBool, request_redraw: impl FnOnce()) -> bool {
-    if !try_begin_frame_ready_request(pending) {
+fn request_direct_frame(
+    pending: &AtomicU8,
+    kind: FrameRequestKind,
+    request_redraw: impl FnOnce(),
+) -> bool {
+    if !try_begin_frame_ready_request(pending, kind) {
         return false;
     }
-    complete_frame_ready_request(pending);
     request_redraw();
     true
 }
@@ -120,9 +219,10 @@ fn complete_callback_ready_request(pending: &AtomicBool) {
     pending.store(false, Ordering::Release);
 }
 
-pub(crate) fn frame_ready_delivered() {
-    complete_frame_ready_request(&FRAME_READY_PENDING);
+pub(crate) fn frame_ready_delivered() -> FrameRequestKind {
+    let kind = complete_frame_ready_request(&FRAME_READY_PENDING);
     crate::frame_stats::record_display_tick();
+    kind
 }
 
 pub(crate) fn callback_ready_delivered() {
@@ -144,11 +244,15 @@ fn request_frame_ready() {
         // JavaScript thread. Wake the canvas directly instead of sending a
         // user event through winit: the web loop may be parked in Wait even
         // though this callback is executing on its owner thread.
-        let _ = request_direct_frame(&FRAME_READY_PENDING, || window.request_redraw());
+        let _ = request_direct_frame(
+            &FRAME_READY_PENDING,
+            current_frame_request_kind(),
+            || window.request_redraw(),
+        );
         return;
     }
 
-    if !try_begin_frame_ready_request(&FRAME_READY_PENDING) {
+    if !try_begin_frame_ready_request(&FRAME_READY_PENDING, current_frame_request_kind()) {
         crate::frame_stats::record_frame_request_coalesced();
         return;
     }
@@ -593,6 +697,9 @@ pub struct HeadlessAimerApp<W: Widget + 'static> {
     /// The frame requester that was installed for this thread before this
     /// application took it over, put back when the application is dropped.
     previous_frame_requester: Option<std::rc::Rc<dyn Fn()>>,
+    /// The redraw observer installed for this thread, restored when this app is
+    /// dropped so later headless apps receive their own redraw reasons.
+    previous_redraw_observer: Option<Rc<dyn Fn()>>,
     /// The UI-thread runtime that was installed for this thread before this
     /// application took it over, put back when the application is dropped.
     previous_runtime: Option<std::rc::Rc<Venus>>,
@@ -633,15 +740,20 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         ));
 
         let window = WindowHandle::headless(options.size, scale_factor);
+        let frame_request_reason = Rc::new(Cell::new(None));
         #[cfg(feature = "wasm-hot-reload")]
         let live_reload = live_reload.map(|launch| {
             let wake_window = window.clone();
+            let wake_reason = frame_request_reason.clone();
             LiveReloadHost::bind(
                 launch.address,
                 launch.credentials,
                 launch.config,
                 Rc::clone(venus.scheduler()),
-                move || wake_window.request_redraw(),
+                move || {
+                    wake_reason.set(Some(FrameRequestKind::Full));
+                    wake_window.request_redraw();
+                },
             )
             .expect("failed to start configured live reload listener")
         });
@@ -657,6 +769,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 widget_root: None,
                 event_dispatcher: aimer_widget::EventDispatcher::new(),
                 scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
+                frame_request_reason: frame_request_reason.clone(),
                 #[cfg(target_arch = "wasm32")]
                 web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
                 pending_widget: Some(widget),
@@ -689,6 +802,10 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             previous_frame_requester: aimer_events::window::set_thread_redraw_requester(
                 move || window.request_redraw(),
             ),
+            previous_redraw_observer: aimer_events::window::set_thread_redraw_observer({
+                let frame_request_reason = frame_request_reason.clone();
+                move || observe_frame_request(&frame_request_reason)
+            }),
             previous_runtime,
         };
 
@@ -716,12 +833,14 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 
     /// Builds and draws one frame into the non-presenting in-memory canvas.
     ///
-    /// A frame does what a windowed frame does: this frame's share of a scroll
-    /// gesture is delivered, a resize the surface has not caught up with is
-    /// applied, and the tree is drawn through the shared frame drawer. An
-    /// animation that is not finished asks for the next frame, which
-    /// [`take_redraw_request`](Self::take_redraw_request) reports and
-    /// [`pump_frames`](Self::pump_frames) acts on.
+/// A frame does what a windowed frame does: this frame's share of a scroll
+/// gesture is delivered, a resize the surface has not caught up with is
+/// applied, and the tree is drawn through the shared frame drawer when the
+/// scroll tick or other work requires it. An unchanged no-op scroll tick still
+/// advances the gesture without drawing the tree. An animation that is not
+/// finished asks for the next frame, which
+/// [`take_redraw_request`](Self::take_redraw_request) reports and
+/// [`pump_frames`](Self::pump_frames) acts on.
     pub fn render_frame(&mut self) {
         if self.exit_requested {
             return;
@@ -732,23 +851,32 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         // asks for is a request for the *next* one.
         self.window.take_redraw_request();
 
-        self.app.begin_frame();
-        let build = crate::frame_stats::PhaseTimer::start();
+        let kind = self.app.take_frame_request_reason();
+        let preparation = self.app.begin_frame();
+        let had_pending_resize = self.app.pending_resize.is_some();
         self.apply_pending_resize();
 
-        let canvas = aimer_canvas::Canvas::new(&self.canvas);
-        canvas.begin_frame();
+        let skip_draw = self
+            .app
+            .should_skip_scroll_frame(kind, &preparation, had_pending_resize);
+        if !skip_draw {
+            let build = crate::frame_stats::PhaseTimer::start();
+            let canvas = aimer_canvas::Canvas::new(&self.canvas);
+            canvas.begin_frame();
 
-        let (width, height) = (self.size.width, self.size.height);
-        let window = self.window.clone();
-        self.app
-            .frame_drawer(window)
-            .draw(&self.canvas, width, height);
-        build.finish(crate::frame_stats::FramePhase::Build);
+            let (width, height) = (self.size.width, self.size.height);
+            let window = self.window.clone();
+            self.app
+                .frame_drawer(window)
+                .draw(&self.canvas, width, height);
+            build.finish(crate::frame_stats::FramePhase::Build);
+        }
 
         self.app.end_frame();
 
-        crate::first_frame::notify_first_frame_presented(true);
+        if !skip_draw {
+            crate::first_frame::notify_first_frame_presented(true);
+        }
     }
 
     /// Returns a handle to this application's UI memory pool.
@@ -993,6 +1121,7 @@ impl<W: Widget + 'static> Drop for HeadlessAimerApp<W> {
     /// gone, so a later one — or none at all — receives them instead.
     fn drop(&mut self) {
         aimer_events::window::restore_thread_redraw_requester(self.previous_frame_requester.take());
+        aimer_events::window::restore_thread_redraw_observer(self.previous_redraw_observer.take());
         Venus::uninstall();
         if let Some(previous) = self.previous_runtime.take() {
             previous.install();
@@ -1323,6 +1452,7 @@ fn start_event_loop(
             widget_root: None,
             event_dispatcher: aimer_widget::EventDispatcher::new(),
             scroll_smoother: crate::handler::scroll_classifier::DualScroller::new(),
+            frame_request_reason: Rc::new(Cell::new(None)),
             #[cfg(target_arch = "wasm32")]
             web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
             pending_widget: Some(widget),
@@ -1344,6 +1474,11 @@ fn start_event_loop(
             live_reload,
         };
 
+        let previous_redraw_observer = aimer_events::window::set_thread_redraw_observer({
+            let frame_request_reason = app.frame_request_reason.clone();
+            move || observe_frame_request(&frame_request_reason)
+        });
+
         info!("Started main event loop");
 
         // On iOS, this function never returns.
@@ -1351,6 +1486,7 @@ fn start_event_loop(
             Ok(_) => info!("EventLoop finished successfully"),
             Err(e) => aimer_utils::error!("EventLoop::run_app failed: {:?}", e),
         }
+        aimer_events::window::restore_thread_redraw_observer(previous_redraw_observer);
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -1416,38 +1552,59 @@ mod tests {
 
     #[test]
     fn pending_frame_ready_requests_are_coalesced_until_delivery() {
-        let pending = AtomicBool::new(false);
+        let pending = AtomicU8::new(0);
 
-        assert!(try_begin_frame_ready_request(&pending));
-        assert!(!try_begin_frame_ready_request(&pending));
+        assert!(try_begin_frame_ready_request(
+            &pending,
+            FrameRequestKind::ScrollOnly
+        ));
+        assert!(!try_begin_frame_ready_request(
+            &pending,
+            FrameRequestKind::ScrollOnly
+        ));
+        assert!(!try_begin_frame_ready_request(&pending, FrameRequestKind::Full));
 
-        complete_frame_ready_request(&pending);
+        assert_eq!(
+            complete_frame_ready_request(&pending),
+            FrameRequestKind::Full,
+            "a coalesced full request must promote a pending scroll tick"
+        );
 
-        assert!(try_begin_frame_ready_request(&pending));
+        assert!(try_begin_frame_ready_request(
+            &pending,
+            FrameRequestKind::ScrollOnly
+        ));
     }
 
     #[test]
-    fn direct_frame_wakes_release_the_pending_slot_after_requesting_redraw() {
-        let pending = AtomicBool::new(false);
+    fn direct_frame_wakes_coalesce_and_preserve_the_strongest_reason() {
+        let pending = AtomicU8::new(0);
         let redraws = AtomicUsize::new(0);
 
-        assert!(request_direct_frame(&pending, || {
+        assert!(request_direct_frame(&pending, FrameRequestKind::ScrollOnly, || {
             redraws.fetch_add(1, Ordering::SeqCst);
         }));
-        assert!(request_direct_frame(&pending, || {
+        assert!(!request_direct_frame(&pending, FrameRequestKind::ScrollOnly, || {
+            redraws.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert!(!request_direct_frame(&pending, FrameRequestKind::Full, || {
             redraws.fetch_add(1, Ordering::SeqCst);
         }));
 
-        assert_eq!(redraws.load(Ordering::SeqCst), 2);
-        assert!(!pending.load(Ordering::Acquire));
+        assert_eq!(redraws.load(Ordering::SeqCst), 1);
+        assert_eq!(complete_frame_ready_request(&pending), FrameRequestKind::Full);
+        assert!(request_direct_frame(&pending, FrameRequestKind::ScrollOnly, || {
+            redraws.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert_eq!(complete_frame_ready_request(&pending), FrameRequestKind::ScrollOnly);
     }
 
     #[test]
     fn callback_ready_requests_are_independent_of_animation_frame_requests() {
-        let frame_pending = AtomicBool::new(false);
+        let frame_pending = AtomicU8::new(0);
         let callback_pending = AtomicBool::new(false);
 
-        assert!(try_begin_frame_ready_request(&frame_pending));
+        assert!(try_begin_frame_ready_request(&frame_pending, FrameRequestKind::Full));
         assert!(try_begin_callback_ready_request(&callback_pending));
         assert!(!try_begin_callback_ready_request(&callback_pending));
 
@@ -2430,6 +2587,182 @@ mod tests {
             events.last().map(|(_, _, phase)| *phase),
             Some(TouchPhase::Ended)
         );
+    }
+
+    struct NoopScrollWidget {
+        draws: Arc<AtomicUsize>,
+        phases: Arc<Mutex<Vec<TouchPhase>>>,
+        redraw_on_scroll: bool,
+        direct_redraw_on_scroll: bool,
+    }
+
+    impl Widget for NoopScrollWidget {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            NoopScrollElement {
+                draws: self.draws,
+                phases: self.phases,
+                redraw_on_scroll: self.redraw_on_scroll,
+                direct_redraw_on_scroll: self.direct_redraw_on_scroll,
+                window: ctx.window.clone(),
+            }
+            .boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for NoopScrollWidget {}
+
+    struct NoopScrollElement {
+        draws: Arc<AtomicUsize>,
+        phases: Arc<Mutex<Vec<TouchPhase>>>,
+        redraw_on_scroll: bool,
+        direct_redraw_on_scroll: bool,
+        window: WindowHandle,
+    }
+
+    impl Drawable for NoopScrollElement {
+        fn draw(&self, _ctx: &BuildContext) {
+            self.draws.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl LayoutElement for NoopScrollElement {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some((Vec2d::default(), Vec2d { x: 100.0, y: 100.0 }))
+        }
+    }
+
+    impl Rebuildable for NoopScrollElement {}
+
+    impl VisitorElement for NoopScrollElement {
+        fn debug_name(&self) -> &'static str {
+            "NoopScrollElement"
+        }
+    }
+
+    impl EventElement for NoopScrollElement {
+        fn on_event(&self, event: &ElementEvent) -> aimer_widget::EventResult {
+            if let ElementEvent::Scroll { phase, .. } = event {
+                self.phases.lock().unwrap().push(*phase);
+                if self.direct_redraw_on_scroll {
+                    self.window.request_redraw();
+                }
+                if self.redraw_on_scroll {
+                    return aimer_widget::EventResult::consumed().with_redraw();
+                }
+            }
+            if matches!(event, ElementEvent::Scroll { .. }) {
+                aimer_widget::EventResult::consumed()
+            } else {
+                aimer_widget::EventResult::ignored()
+            }
+        }
+    }
+
+    #[test]
+    fn no_op_scroll_ticks_deliver_phases_without_redrawing_the_root() {
+        let draws = Arc::new(AtomicUsize::new(0));
+        let phases = Arc::new(Mutex::new(Vec::new()));
+        let mut app = AimerApp::start_headless(NoopScrollWidget {
+            draws: draws.clone(),
+            phases: phases.clone(),
+            redraw_on_scroll: false,
+            direct_redraw_on_scroll: false,
+        });
+        app.render_frame();
+        let initial_draws = draws.load(Ordering::SeqCst);
+        app.app.cursor_pos = Vec2d { x: 20.0, y: 20.0 };
+        let _ = app.take_redraw_request();
+
+        app.send_window_event(WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta: MouseScrollDelta::LineDelta(0.0, -2.0),
+            phase: TouchPhase::Moved,
+        });
+        let frames = app.pump_frames(64);
+
+        assert!(frames > 1, "the smoothed gesture must keep receiving ticks");
+        assert!(!app.app.scroll_smoother.is_active());
+        assert_eq!(
+            draws.load(Ordering::SeqCst),
+            initial_draws,
+            "a no-op scroll tick must not draw an unchanged root"
+        );
+        let phases = phases.lock().unwrap();
+        assert!(phases.contains(&TouchPhase::Started));
+        assert_eq!(phases.last(), Some(&TouchPhase::Ended));
+    }
+
+    #[test]
+    fn scroll_redraw_result_keeps_the_scroll_tick_drawable() {
+        let draws = Arc::new(AtomicUsize::new(0));
+        let mut app = AimerApp::start_headless(NoopScrollWidget {
+            draws: draws.clone(),
+            phases: Arc::new(Mutex::new(Vec::new())),
+            redraw_on_scroll: true,
+            direct_redraw_on_scroll: false,
+        });
+        app.render_frame();
+        let initial_draws = draws.load(Ordering::SeqCst);
+        app.app.cursor_pos = Vec2d { x: 20.0, y: 20.0 };
+        let _ = app.take_redraw_request();
+
+        app.send_window_event(WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta: MouseScrollDelta::LineDelta(0.0, -2.0),
+            phase: TouchPhase::Moved,
+        });
+
+        assert_eq!(app.pump_frames(1), 1);
+        assert_eq!(draws.load(Ordering::SeqCst), initial_draws + 1);
+    }
+
+    #[test]
+    fn coalesced_direct_redraw_promotes_a_scroll_tick() {
+        let draws = Arc::new(AtomicUsize::new(0));
+        let mut app = AimerApp::start_headless(NoopScrollWidget {
+            draws: draws.clone(),
+            phases: Arc::new(Mutex::new(Vec::new())),
+            redraw_on_scroll: false,
+            direct_redraw_on_scroll: false,
+        });
+        app.render_frame();
+        let initial_draws = draws.load(Ordering::SeqCst);
+        app.app.cursor_pos = Vec2d { x: 20.0, y: 20.0 };
+        let _ = app.take_redraw_request();
+
+        app.send_window_event(WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta: MouseScrollDelta::LineDelta(0.0, -2.0),
+            phase: TouchPhase::Moved,
+        });
+        app.window.request_redraw();
+
+        assert_eq!(app.pump_frames(1), 1);
+        assert_eq!(draws.load(Ordering::SeqCst), initial_draws + 1);
+    }
+
+    #[test]
+    fn direct_redraw_during_a_scroll_tick_keeps_it_drawable() {
+        let draws = Arc::new(AtomicUsize::new(0));
+        let mut app = AimerApp::start_headless(NoopScrollWidget {
+            draws: draws.clone(),
+            phases: Arc::new(Mutex::new(Vec::new())),
+            redraw_on_scroll: false,
+            direct_redraw_on_scroll: true,
+        });
+        app.render_frame();
+        let initial_draws = draws.load(Ordering::SeqCst);
+        app.app.cursor_pos = Vec2d { x: 20.0, y: 20.0 };
+        let _ = app.take_redraw_request();
+
+        app.send_window_event(WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta: MouseScrollDelta::LineDelta(0.0, -2.0),
+            phase: TouchPhase::Moved,
+        });
+
+        assert_eq!(app.pump_frames(1), 1);
+        assert_eq!(draws.load(Ordering::SeqCst), initial_draws + 1);
     }
 
     #[test]

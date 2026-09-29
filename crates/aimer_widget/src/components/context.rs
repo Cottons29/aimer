@@ -219,6 +219,7 @@ impl WindowHandle {
 
     pub fn request_redraw(&self) {
         crate::frame_work_stats::record_redraw_request();
+        aimer_events::window::notify_redraw_requested();
         match self {
             #[cfg(not(aimer_portable_guest))]
             Self::Native(window) => window.request_redraw(),
@@ -239,6 +240,7 @@ impl WindowHandle {
     /// direct redraw operation used by event-loop handling code.
     pub fn request_animation_frame(&self) {
         crate::frame_work_stats::record_redraw_request();
+        aimer_events::window::notify_redraw_requested();
         match self {
             #[cfg(not(aimer_portable_guest))]
             Self::Native(_) => aimer_events::window::request_animation_frame(),
