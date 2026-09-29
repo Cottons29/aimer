@@ -13,7 +13,7 @@ pub(crate) mod web_scroll_phase;
 
 #[cfg(target_os = "android")]
 use crate::aimer_app::ANDROID_APP;
-use crate::aimer_app::AimerNativePlatformEvent;
+use crate::aimer_app::{AimerNativePlatformEvent, FrameRequestKind};
 #[cfg(target_os = "android")]
 use crate::ffi_utils::android_screen;
 #[allow(unused)]
@@ -32,6 +32,7 @@ use aimer_rubick::{UiAllocator, UiMemory};
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{AnyElement, EventDispatcher, EventResult, Widget, begin_event_frame};
 use std::any::Any;
+use std::cell::Cell;
 use std::rc::Rc;
 #[cfg(feature = "wasm-hot-reload")]
 use aimer_anteros::{
@@ -232,6 +233,12 @@ impl<G: ReloadGuest, E> HeadlessReloadHost<G, AnyElement, E> {
     }
 }
 
+pub(crate) struct FramePreparation {
+    scroll_result: EventResult,
+    rebuild_generation: u64,
+    layout_generation: u64,
+}
+
 pub struct AimerApplicationHandler<W: Widget + 'static> {
     /// The window this application draws into and asks for frames.
     ///
@@ -252,6 +259,8 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub widget_root: Option<AnyElement>,
     pub event_dispatcher: EventDispatcher,
     pub(crate) scroll_smoother: DualScroller,
+    /// Reason merged into the redraw currently waiting for this application.
+    pub(crate) frame_request_reason: Rc<Cell<Option<FrameRequestKind>>>,
     /// Gesture boundaries inferred for the phase-less browser wheel stream.
     #[cfg(target_arch = "wasm32")]
     pub(crate) web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase,
@@ -336,6 +345,27 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         aimer_events::window::request_animation_frame();
     }
 
+    pub(crate) fn note_frame_request(&self, kind: FrameRequestKind) {
+        let kind = self
+            .frame_request_reason
+            .get()
+            .map_or(kind, |pending| pending.merge(kind));
+        self.frame_request_reason.set(Some(kind));
+    }
+
+    pub(crate) fn take_frame_request_reason(&self) -> FrameRequestKind {
+        self.frame_request_reason
+            .take()
+            .unwrap_or(FrameRequestKind::Full)
+    }
+
+    pub(crate) fn request_full_redraw(&self) {
+        self.note_frame_request(FrameRequestKind::Full);
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+
     /// Tells the runtime how fast the display it is drawing on actually is.
     ///
     /// winit reports the rate in millihertz, and only for a monitor it can
@@ -362,7 +392,10 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     /// what keeps momentum alive without a platform timer. Shared by the
     /// windowed loop and the headless application so a frame costs the same
     /// work in both.
-    pub(crate) fn begin_frame(&mut self) {
+    pub(crate) fn begin_frame(&mut self) -> FramePreparation {
+        let rebuild_generation = aimer_widget::rebuild_invalidation_generation();
+        let layout_generation = aimer_widget::layout_invalidation_generation();
+
         // The budget starts here, because everything after this point is spent
         // out of this frame's time.
         self.venus.begin_frame();
@@ -375,7 +408,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             self.scroll_smoother.end_gesture();
         }
 
-        let _ = self.dispatch_smoothed_scroll();
+        let scroll_result = self.dispatch_smoothed_scroll();
 
         // An open web gesture keeps the frame loop alive even with no distance
         // left, because the idle poll above only runs on a rendered frame.
@@ -384,7 +417,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         #[cfg(not(target_arch = "wasm32"))]
         let gesture_open = false;
         if self.scroll_smoother.is_active() || gesture_open {
-            self.request_animation_frame();
+            crate::aimer_app::request_scroll_frame(|| self.request_animation_frame());
         }
 
 
@@ -395,6 +428,28 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         // resolved is visible to *this* frame, not the next one.
         self.venus.run_frame_tasks();
         self.venus.run_microtasks();
+
+        FramePreparation {
+            scroll_result,
+            rebuild_generation,
+            layout_generation,
+        }
+    }
+
+    pub(crate) fn should_skip_scroll_frame(
+        &self,
+        kind: FrameRequestKind,
+        preparation: &FramePreparation,
+        had_pending_resize: bool,
+    ) -> bool {
+        kind == FrameRequestKind::ScrollOnly
+            && !preparation.scroll_result.needs_redraw()
+            && !had_pending_resize
+            && self.pending_widget.is_none()
+            && self.frame_request_reason.get() != Some(FrameRequestKind::Full)
+            && aimer_widget::rebuild_invalidation_generation()
+                == preparation.rebuild_generation
+            && aimer_widget::layout_invalidation_generation() == preparation.layout_generation
     }
 
     /// The bookkeeping every frame does once the tree has been drawn.
@@ -869,10 +924,10 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
             // frame already contains the application UI.
             self.render(event_loop);
         } else {
-            window.request_redraw();
+            self.request_full_redraw();
         }
         #[cfg(not(all(target_os = "windows", feature = "native", not(feature = "wgpu"))))]
-        window.request_redraw();
+        self.request_full_redraw();
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AimerNativePlatformEvent) {
@@ -898,9 +953,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         #[cfg(target_os = "macos")]
         if self.file_drag.is_active() {
             WindowEventHandler::poll_file_drag(self);
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
+            self.request_full_redraw();
         }
     }
 }
@@ -960,7 +1013,10 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
     #[allow(unused)]
     pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
-        self.begin_frame();
+        #[cfg(target_arch = "wasm32")]
+        self.note_frame_request(crate::aimer_app::frame_ready_delivered());
+        let kind = self.take_frame_request_reason();
+        let preparation = self.begin_frame();
 
         #[cfg(target_os = "android")]
         {
@@ -972,11 +1028,17 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             }
         }
 
+        let had_pending_resize = self.pending_resize.is_some();
         #[allow(clippy::collapsible_if)]
         if self.render_ctx.is_ready() {
             if let Some(size) = self.pending_resize.take() {
                 self.render_ctx.resize(size);
             }
+        }
+
+        if self.should_skip_scroll_frame(kind, &preparation, had_pending_resize) {
+            self.end_frame();
+            return;
         }
 
         let Some(window) = self.window.clone() else {
@@ -1008,6 +1070,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             // window not ready).  Request a redraw so we retry next frame
             // instead of staying blank.  Critical on web (async GPU init)
             // and iOS (late surface availability).
+            self.note_frame_request(FrameRequestKind::Full);
             if let Some(window) = &self.window {
                 window.request_redraw();
             }
