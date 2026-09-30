@@ -28,7 +28,15 @@
 
 use std::ops::Range;
 use std::sync::Mutex;
+#[cfg(any(feature = "frame-stats", debug_assertions))]
+use std::ptr::NonNull;
+#[cfg(any(feature = "frame-stats", debug_assertions))]
+use std::sync::Arc;
+#[cfg(any(feature = "frame-stats", debug_assertions))]
+use std::time::Duration;
 
+#[cfg(any(feature = "frame-stats", debug_assertions))]
+use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
@@ -82,6 +90,102 @@ pub struct MetalBackend {
     device: Retained<ProtocolObject<dyn MTLDevice>>,
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pending_uploads: Mutex<Vec<PendingUpload>>,
+    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    active_gpu_frame: Mutex<Option<Arc<GpuFrameCapture>>>,
+}
+
+#[cfg(any(feature = "frame-stats", debug_assertions))]
+#[derive(Debug)]
+struct GpuFrameCapture {
+    report: fn(Duration),
+    state: Mutex<GpuFrameCaptureState>,
+}
+
+#[cfg(any(feature = "frame-stats", debug_assertions))]
+#[derive(Debug, Default)]
+struct GpuFrameCaptureState {
+    pending_submissions: usize,
+    encoding_finished: bool,
+    invalid_timestamp: bool,
+    has_interval: bool,
+    gpu_start_seconds: f64,
+    gpu_end_seconds: f64,
+    reported: bool,
+}
+
+#[cfg(any(feature = "frame-stats", debug_assertions))]
+impl GpuFrameCapture {
+    fn new(report: fn(Duration)) -> Self {
+        Self {
+            report,
+            state: Mutex::new(GpuFrameCaptureState::default()),
+        }
+    }
+
+    fn register_submission(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("Metal GPU frame timing state is not poisoned");
+        state.pending_submissions = state.pending_submissions.saturating_add(1);
+    }
+
+    fn complete_submission(&self, gpu_start_seconds: f64, gpu_end_seconds: f64) {
+        let duration = {
+            let mut state = self
+                .state
+                .lock()
+                .expect("Metal GPU frame timing state is not poisoned");
+            if gpu_start_seconds.is_finite()
+                && gpu_end_seconds.is_finite()
+                && gpu_start_seconds > 0.0
+                && gpu_end_seconds > gpu_start_seconds
+            {
+                if state.has_interval {
+                    state.gpu_start_seconds = state.gpu_start_seconds.min(gpu_start_seconds);
+                    state.gpu_end_seconds = state.gpu_end_seconds.max(gpu_end_seconds);
+                } else {
+                    state.gpu_start_seconds = gpu_start_seconds;
+                    state.gpu_end_seconds = gpu_end_seconds;
+                    state.has_interval = true;
+                }
+            } else {
+                state.invalid_timestamp = true;
+            }
+            state.pending_submissions = state.pending_submissions.saturating_sub(1);
+            ready_gpu_duration(&mut state)
+        };
+        if let Some(duration) = duration {
+            (self.report)(duration);
+        }
+    }
+
+    fn finish_encoding(&self) {
+        let duration = {
+            let mut state = self
+                .state
+                .lock()
+                .expect("Metal GPU frame timing state is not poisoned");
+            state.encoding_finished = true;
+            ready_gpu_duration(&mut state)
+        };
+        if let Some(duration) = duration {
+            (self.report)(duration);
+        }
+    }
+}
+
+#[cfg(any(feature = "frame-stats", debug_assertions))]
+fn ready_gpu_duration(state: &mut GpuFrameCaptureState) -> Option<Duration> {
+    if !state.encoding_finished || state.pending_submissions != 0 || state.reported {
+        return None;
+    }
+    state.reported = true;
+    if state.invalid_timestamp || !state.has_interval {
+        return None;
+    }
+    let seconds = state.gpu_end_seconds - state.gpu_start_seconds;
+    (seconds.is_finite() && seconds > 0.0).then(|| Duration::from_secs_f64(seconds))
 }
 
 enum PendingUpload {
@@ -220,7 +324,41 @@ impl MetalBackend {
             device,
             queue,
             pending_uploads: Mutex::new(Vec::new()),
+            #[cfg(any(feature = "frame-stats", debug_assertions))]
+            active_gpu_frame: Mutex::new(None),
         })
+    }
+
+    /// Starts collecting GPU intervals for command buffers submitted until
+    /// [`Self::end_gpu_frame_timing`] is called. `report` runs once after every
+    /// submission in the captured frame has completed with valid timestamps.
+    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    #[doc(hidden)]
+    pub fn begin_gpu_frame_timing(&self, report: fn(Duration)) {
+        let capture = Arc::new(GpuFrameCapture::new(report));
+        let previous = self
+            .active_gpu_frame
+            .lock()
+            .expect("Metal active GPU frame state is not poisoned")
+            .replace(capture);
+        if let Some(previous) = previous {
+            previous.finish_encoding();
+        }
+    }
+
+    /// Closes the current GPU frame capture; its timestamp is reported after
+    /// all command buffers submitted by the renderer have completed.
+    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    #[doc(hidden)]
+    pub fn end_gpu_frame_timing(&self) {
+        let capture = self
+            .active_gpu_frame
+            .lock()
+            .expect("Metal active GPU frame state is not poisoned")
+            .take();
+        if let Some(capture) = capture {
+            capture.finish_encoding();
+        }
     }
 
     /// Copies queued CPU uploads into GPU resources before the next submitted
@@ -1162,6 +1300,34 @@ impl GpuBackend for MetalBackend {
         self.commit_pending_uploads(&mut pending_uploads);
         let mut encoder = encoder;
         encoder.end_blit();
+        #[cfg(any(feature = "frame-stats", debug_assertions))]
+        if let Some(capture) = self
+            .active_gpu_frame
+            .lock()
+            .expect("Metal active GPU frame state is not poisoned")
+            .as_ref()
+            .cloned()
+        {
+            capture.register_submission();
+            let callback_capture = capture.clone();
+            let callback = RcBlock::new(
+                move |command_buffer: NonNull<ProtocolObject<dyn MTLCommandBuffer>>| {
+                    // SAFETY: Metal invokes the handler with a live command buffer.
+                    let command_buffer = unsafe { command_buffer.as_ref() };
+                    callback_capture.complete_submission(
+                        command_buffer.GPUStartTime(),
+                        command_buffer.GPUEndTime(),
+                    );
+                },
+            );
+            // SAFETY: `callback` owns a valid block pointer for this call, and
+            // Metal retains the completion handler until it has invoked it.
+            unsafe {
+                encoder
+                    .command_buffer
+                    .addCompletedHandler(RcBlock::as_ptr(&callback));
+            }
+        }
         encoder.command_buffer.commit();
     }
 

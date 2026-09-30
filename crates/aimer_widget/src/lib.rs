@@ -1,6 +1,7 @@
 extern crate self as aimer_widget;
 
 mod async_builder;
+mod element_invalidation;
 pub mod components;
 pub mod focus_scope;
 pub mod focusable;
@@ -106,13 +107,20 @@ pub use crate::components::element::{
     take_paint_frame_damage,
 };
 #[doc(hidden)]
+pub use crate::element_invalidation::{
+    ElementChangeKind, ElementInvalidation, ElementInvalidationBatch,
+    ElementInvalidationBounds, ElementInvalidationRevisions,
+};
+#[doc(hidden)]
 pub use crate::paint_damage::PaintDamageTracker;
 pub use crate::rebuild_stats::RebuildStats;
 pub use crate::frame_work_stats::FrameWorkStats;
 pub use crate::frame_work_stats::{
     record_hit_test_visit, record_layout_call, record_paint_call, record_redraw_request,
     record_root_draw_call, record_scroll_event, record_scroll_offset_update, record_scroll_step,
-    record_smoothing_step, record_state_update, reset_frame_work_stats, take_frame_work_stats,
+    record_smoothing_step, record_state_update, record_invalidation_queued,
+    record_invalidation_coalesced, record_element_index_lookup, record_stale_element_id,
+    reset_frame_work_stats, take_frame_work_stats,
 };
 #[doc(hidden)]
 pub use crate::hover_reconciliation::{

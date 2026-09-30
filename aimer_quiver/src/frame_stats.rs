@@ -9,6 +9,13 @@
 //! | [`FramePhase::Encode`]    | acquire the surface texture and encode draw calls |
 //! | [`FramePhase::Present`]   | hand the swap chain image to the compositor     |
 //!
+//! On native Metal, `cpu_frame` spans the start of frame preparation through
+//! command-buffer submission, before drawable presentation. `gpu_frame` spans
+//! the earliest GPU start through the latest GPU completion among the command
+//! buffers submitted for that frame. GPU measurements arrive asynchronously
+//! from Metal completion handlers. Their p95 values are upper bounds from
+//! 0.5 ms histogram buckets.
+//!
 //! Moving encode and present to a raster thread (the `raster-thread` feature)
 //! buys nothing unless they are a meaningful share of the frame, and it costs an
 //! extra frame of latency. This module is the measurement that decides it.
@@ -100,6 +107,18 @@ pub struct FrameBreakdown {
     pub present: PhaseSamples,
 }
 
+/// Timing summaries for the native Metal frame window.
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct FrameTimingStats {
+    pub cpu_frame: PhaseSamples,
+    pub cpu_frame_p95: Duration,
+    pub cpu_frame_p95_saturated: bool,
+    pub gpu_frame: PhaseSamples,
+    pub gpu_frame_p95: Duration,
+    pub gpu_frame_p95_saturated: bool,
+}
+
 /// Counts the UI work recorded for a group of frames.
 ///
 /// These values describe the build-side workload. They are deliberately kept
@@ -153,6 +172,14 @@ pub struct FrameContentStats {
     pub smoothing_steps: u64,
     /// Number of state updates requested through the framework state API.
     pub state_updates: u64,
+    /// New element invalidation records queued during the interval.
+    pub invalidations_queued: u64,
+    /// Element invalidations merged into an already pending record.
+    pub invalidations_coalesced: u64,
+    /// Direct retained-tree lookups performed for invalidation records.
+    pub element_index_lookups: u64,
+    /// Invalidation IDs that were stale in the current tree generation.
+    pub stale_element_ids: u64,
     /// Number of scroll-offset changes committed to retained scroll state.
     pub scroll_offset_updates: u64,
     /// Number of window redraw requests observed by the framework.
@@ -321,6 +348,10 @@ struct FrameAccumulator {
     build: AtomicPhase,
     encode: AtomicPhase,
     present: AtomicPhase,
+    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    cpu_frame: AtomicPhase,
+    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    gpu_frame: AtomicPhase,
 }
 
 // `record` only has a caller in the render path when instrumentation is
@@ -349,29 +380,74 @@ impl FrameAccumulator {
         }
     }
 
+    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    fn timing_snapshot(&self) -> FrameTimingStats {
+        let (cpu_frame_p95, cpu_frame_p95_saturated) = self.cpu_frame.p95_bucket();
+        let (gpu_frame_p95, gpu_frame_p95_saturated) = self.gpu_frame.p95_bucket();
+        FrameTimingStats {
+            cpu_frame: self.cpu_frame.snapshot(),
+            cpu_frame_p95,
+            cpu_frame_p95_saturated,
+            gpu_frame: self.gpu_frame.snapshot(),
+            gpu_frame_p95,
+            gpu_frame_p95_saturated,
+        }
+    }
+
     fn reset(&self) {
         self.build.reset();
         self.encode.reset();
         self.present.reset();
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        self.cpu_frame.reset();
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        self.gpu_frame.reset();
     }
 }
 
-#[derive(Debug, Default)]
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
+const PERCENTILE_BUCKET_WIDTH_NANOS: u64 = 500_000;
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
+const PERCENTILE_BUCKET_COUNT: usize = 512;
+
+#[derive(Debug)]
 struct AtomicPhase {
     samples: AtomicU64,
     nanos: AtomicU64,
+    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    percentile_buckets: [AtomicU64; PERCENTILE_BUCKET_COUNT],
+}
+
+impl Default for AtomicPhase {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg_attr(not(feature = "frame-stats"), allow(dead_code))]
 impl AtomicPhase {
+    const fn new() -> Self {
+        Self {
+            samples: AtomicU64::new(0),
+            nanos: AtomicU64::new(0),
+            #[cfg(any(debug_assertions, feature = "frame-stats"))]
+            percentile_buckets: [const { AtomicU64::new(0) }; PERCENTILE_BUCKET_COUNT],
+        }
+    }
+
     #[inline]
     fn record(&self, elapsed: Duration) {
+        let nanos = elapsed.as_nanos().min(u64::MAX as u128) as u64;
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        let bucket = (nanos / PERCENTILE_BUCKET_WIDTH_NANOS)
+            .min((PERCENTILE_BUCKET_COUNT - 1) as u64) as usize;
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        self.percentile_buckets[bucket].fetch_add(1, Ordering::Relaxed);
         // Relaxed is enough: the counters are statistics, not a happens-before
         // edge for any other data, and a snapshot that catches a phase mid-update
         // is off by at most one frame.
         self.samples.fetch_add(1, Ordering::Relaxed);
-        self.nanos
-            .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+        self.nanos.fetch_add(nanos, Ordering::Relaxed);
     }
 
     fn snapshot(&self) -> PhaseSamples {
@@ -381,9 +457,39 @@ impl AtomicPhase {
         }
     }
 
+    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    fn p95_bucket(&self) -> (Duration, bool) {
+        let sample_count = self.samples.load(Ordering::Relaxed);
+        if sample_count == 0 {
+            return (Duration::ZERO, false);
+        }
+        let rank = sample_count.saturating_mul(95).saturating_add(99) / 100;
+        let mut cumulative = 0_u64;
+        for (index, bucket) in self.percentile_buckets.iter().enumerate() {
+            cumulative = cumulative.saturating_add(bucket.load(Ordering::Relaxed));
+            if cumulative >= rank {
+                let upper_bound = (index as u64 + 1) * PERCENTILE_BUCKET_WIDTH_NANOS;
+                return (
+                    Duration::from_nanos(upper_bound),
+                    index + 1 == PERCENTILE_BUCKET_COUNT,
+                );
+            }
+        }
+        (
+            Duration::from_nanos(
+                PERCENTILE_BUCKET_COUNT as u64 * PERCENTILE_BUCKET_WIDTH_NANOS,
+            ),
+            true,
+        )
+    }
+
     fn reset(&self) {
         self.samples.store(0, Ordering::Relaxed);
         self.nanos.store(0, Ordering::Relaxed);
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        for bucket in &self.percentile_buckets {
+            bucket.store(0, Ordering::Relaxed);
+        }
     }
 }
 
@@ -413,6 +519,10 @@ struct FrameContentAccumulator {
     scroll_steps: AtomicU64,
     smoothing_steps: AtomicU64,
     state_updates: AtomicU64,
+    invalidations_queued: AtomicU64,
+    invalidations_coalesced: AtomicU64,
+    element_index_lookups: AtomicU64,
+    stale_element_ids: AtomicU64,
     scroll_offset_updates: AtomicU64,
     redraw_requests: AtomicU64,
 }
@@ -472,6 +582,14 @@ impl FrameContentAccumulator {
             .fetch_add(work.smoothing_steps, Ordering::Relaxed);
         self.state_updates
             .fetch_add(work.state_updates, Ordering::Relaxed);
+        self.invalidations_queued
+            .fetch_add(work.invalidations_queued, Ordering::Relaxed);
+        self.invalidations_coalesced
+            .fetch_add(work.invalidations_coalesced, Ordering::Relaxed);
+        self.element_index_lookups
+            .fetch_add(work.element_index_lookups, Ordering::Relaxed);
+        self.stale_element_ids
+            .fetch_add(work.stale_element_ids, Ordering::Relaxed);
         self.scroll_offset_updates
             .fetch_add(work.scroll_offset_updates, Ordering::Relaxed);
         self.redraw_requests
@@ -503,6 +621,10 @@ impl FrameContentAccumulator {
             scroll_steps: self.scroll_steps.load(Ordering::Relaxed),
             smoothing_steps: self.smoothing_steps.load(Ordering::Relaxed),
             state_updates: self.state_updates.load(Ordering::Relaxed),
+            invalidations_queued: self.invalidations_queued.load(Ordering::Relaxed),
+            invalidations_coalesced: self.invalidations_coalesced.load(Ordering::Relaxed),
+            element_index_lookups: self.element_index_lookups.load(Ordering::Relaxed),
+            stale_element_ids: self.stale_element_ids.load(Ordering::Relaxed),
             scroll_offset_updates: self.scroll_offset_updates.load(Ordering::Relaxed),
             redraw_requests: self.redraw_requests.load(Ordering::Relaxed),
         }
@@ -532,24 +654,23 @@ impl FrameContentAccumulator {
         self.scroll_steps.store(0, Ordering::Relaxed);
         self.smoothing_steps.store(0, Ordering::Relaxed);
         self.state_updates.store(0, Ordering::Relaxed);
+        self.invalidations_queued.store(0, Ordering::Relaxed);
+        self.invalidations_coalesced.store(0, Ordering::Relaxed);
+        self.element_index_lookups.store(0, Ordering::Relaxed);
+        self.stale_element_ids.store(0, Ordering::Relaxed);
         self.scroll_offset_updates.store(0, Ordering::Relaxed);
         self.redraw_requests.store(0, Ordering::Relaxed);
     }
 }
 
 static FRAME_STATS: FrameAccumulator = FrameAccumulator {
-    build: AtomicPhase {
-        samples: AtomicU64::new(0),
-        nanos: AtomicU64::new(0),
-    },
-    encode: AtomicPhase {
-        samples: AtomicU64::new(0),
-        nanos: AtomicU64::new(0),
-    },
-    present: AtomicPhase {
-        samples: AtomicU64::new(0),
-        nanos: AtomicU64::new(0),
-    },
+    build: AtomicPhase::new(),
+    encode: AtomicPhase::new(),
+    present: AtomicPhase::new(),
+    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    cpu_frame: AtomicPhase::new(),
+    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    gpu_frame: AtomicPhase::new(),
 };
 
 static FRAME_CONTENT_STATS: FrameContentAccumulator = FrameContentAccumulator {
@@ -576,6 +697,10 @@ static FRAME_CONTENT_STATS: FrameContentAccumulator = FrameContentAccumulator {
     scroll_steps: AtomicU64::new(0),
     smoothing_steps: AtomicU64::new(0),
     state_updates: AtomicU64::new(0),
+    invalidations_queued: AtomicU64::new(0),
+    invalidations_coalesced: AtomicU64::new(0),
+    element_index_lookups: AtomicU64::new(0),
+    stale_element_ids: AtomicU64::new(0),
     scroll_offset_updates: AtomicU64::new(0),
     redraw_requests: AtomicU64::new(0),
 };
@@ -586,7 +711,7 @@ static FRAME_REQUEST_STATS: FrameRequestAccumulator = FrameRequestAccumulator {
     display_ticks: AtomicU64::new(0),
 };
 
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
 const DEBUG_REPORT_INTERVAL: u64 = 30;
 
 /// The frame breakdown accumulated so far.
@@ -623,6 +748,13 @@ pub fn reset_frame_content_stats() {
 #[inline]
 pub fn frame_request_stats() -> FrameRequestStats {
     FRAME_REQUEST_STATS.snapshot()
+}
+
+/// Record one completed Metal GPU frame interval.
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[inline]
+pub(crate) fn record_gpu_frame_time(elapsed: Duration) {
+    FRAME_STATS.gpu_frame.record(elapsed);
 }
 
 /// Drop every native frame-wake counter collected so far.
@@ -682,16 +814,17 @@ pub fn record_frame_content(
 /// every thirty build frames keeps the terminal useful during a long scroll
 /// without adding a log call to the hot path itself.
 #[doc(hidden)]
-#[cfg(debug_assertions)]
-pub(crate) fn take_debug_report() -> Option<(FrameBreakdown, FrameContentStats)> {
+#[cfg(any(debug_assertions, feature = "frame-stats"))]
+pub(crate) fn take_debug_report() -> Option<(FrameBreakdown, FrameContentStats, FrameTimingStats)> {
     let content = FRAME_CONTENT_STATS.snapshot();
     if content.frames < DEBUG_REPORT_INTERVAL {
         return None;
     }
     FRAME_CONTENT_STATS.reset();
     let breakdown = FRAME_STATS.snapshot();
+    let timing = FRAME_STATS.timing_snapshot();
     FRAME_STATS.reset();
-    Some((breakdown, content))
+    Some((breakdown, content, timing))
 }
 
 /// A running measurement of one [`FramePhase`].
@@ -734,6 +867,15 @@ impl PhaseTimer {
         FRAME_STATS.record(phase, self.started.elapsed());
         #[cfg(not(any(feature = "frame-stats", debug_assertions)))]
         let _ = phase;
+    }
+
+    /// Record the elapsed CPU interval through native Metal command submission.
+    #[inline]
+    pub(crate) fn finish_cpu_frame(self) {
+        #[cfg(any(feature = "frame-stats", debug_assertions))]
+        FRAME_STATS.cpu_frame.record(self.started.elapsed());
+        #[cfg(not(any(feature = "frame-stats", debug_assertions)))]
+        let _ = self;
     }
 }
 
@@ -897,6 +1039,7 @@ mod tests {
                 state_updates: 2,
                 scroll_offset_updates: 3,
                 redraw_requests: 4,
+                ..aimer_widget::FrameWorkStats::default()
             },
         );
         accumulator.record(
@@ -929,6 +1072,7 @@ mod tests {
                 state_updates: 1,
                 scroll_offset_updates: 2,
                 redraw_requests: 3,
+                ..aimer_widget::FrameWorkStats::default()
             },
         );
         let stats = accumulator.snapshot();
