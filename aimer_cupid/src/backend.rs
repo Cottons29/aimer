@@ -788,14 +788,14 @@ impl BuiltinShader {
             .as_bytes(),
             #[cfg(not(target_os = "android"))]
             Self::Image => concat!(
-                include_str!("pipeline/shaders/color.wgsl"),
-                include_str!("pipeline/shaders/image.wgsl")
+                include_str!("pipeline/shaders/wgsl/color.wgsl"),
+                include_str!("pipeline/shaders/wgsl/image.wgsl")
             )
             .as_bytes(),
-            Self::Text => include_str!("pipeline/shaders/text.wgsl").as_bytes(),
-            Self::TextColor => include_str!("pipeline/shaders/text_color.wgsl").as_bytes(),
+            Self::Text => include_str!("pipeline/shaders/wgsl/text.wgsl").as_bytes(),
+            Self::TextColor => include_str!("pipeline/shaders/wgsl/text_color.wgsl").as_bytes(),
             Self::TextDecoration => {
-                include_str!("pipeline/shaders/text_decoration.wgsl").as_bytes()
+                include_str!("pipeline/shaders/wgsl/text_decoration.wgsl").as_bytes()
             }
             #[cfg(target_os = "android")]
             Self::Svg => concat!(
@@ -805,13 +805,13 @@ impl BuiltinShader {
             .as_bytes(),
             #[cfg(not(target_os = "android"))]
             Self::Svg => concat!(
-                include_str!("pipeline/shaders/color.wgsl"),
-                include_str!("pipeline/shaders/svg.wgsl")
+                include_str!("pipeline/shaders/wgsl/color.wgsl"),
+                include_str!("pipeline/shaders/wgsl/svg.wgsl")
             )
             .as_bytes(),
-            Self::FrameComposite => include_str!("pipeline/frame_composite.wgsl").as_bytes(),
+            Self::FrameComposite => include_str!("pipeline/shaders/wgsl/frame_composite.wgsl").as_bytes(),
             Self::Material => {
-                include_str!("pipeline/material/shaders/material.wgsl").as_bytes()
+                include_str!("pipeline/shaders/wgsl/material.wgsl").as_bytes()
             }
         }
     }
@@ -868,7 +868,7 @@ pub trait GpuBackend: Sized + 'static {
     /// entry-point names and vertex layout.
     #[doc(hidden)]
     fn rect_shader_source(&self) -> &'static [u8] {
-        include_str!("pipeline/shaders/rect.wgsl").as_bytes()
+        include_str!("pipeline/shaders/wgsl/rect.wgsl").as_bytes()
     }
 
     /// Returns the selected backend's source for one built-in shader module.

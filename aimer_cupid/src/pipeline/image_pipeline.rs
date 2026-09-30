@@ -264,15 +264,15 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
         #[cfg(target_os = "android")]
         {
             concat!(
-                include_str!("./shaders/android_color.wgsl"),
-                include_str!("./shaders/image.wgsl")
+                include_str!("./shaders/wgsl/android_color.wgsl"),
+                include_str!("./shaders/wgsl/image.wgsl")
             )
         }
         #[cfg(not(target_os = "android"))]
         {
             concat!(
-                include_str!("./shaders/color.wgsl"),
-                include_str!("./shaders/image.wgsl")
+                include_str!("./shaders/wgsl/color.wgsl"),
+                include_str!("./shaders/wgsl/image.wgsl")
             )
         }
     }

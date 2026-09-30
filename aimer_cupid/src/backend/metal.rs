@@ -697,41 +697,41 @@ impl GpuBackend for MetalBackend {
     type RenderPass<'a> = MetalRenderPass<'a>;
 
     fn rect_shader_source(&self) -> &'static [u8] {
-        include_str!("../pipeline/shaders/rect.metal").as_bytes()
+        include_str!("../pipeline/shaders/metal/rect.metal").as_bytes()
     }
 
     fn builtin_shader_source(&self, shader: BuiltinShader) -> &'static [u8] {
         match shader {
             BuiltinShader::Image => concat!(
-                include_str!("../pipeline/shaders/color.metal"),
-                include_str!("../pipeline/shaders/image.metal")
+                include_str!("../pipeline/shaders/metal/color.metal"),
+                include_str!("../pipeline/shaders/metal/image.metal")
             )
             .as_bytes(),
             BuiltinShader::Text => concat!(
-                include_str!("../pipeline/shaders/text_common.metal"),
-                include_str!("../pipeline/shaders/text.metal")
+                include_str!("../pipeline/shaders/metal/text_common.metal"),
+                include_str!("../pipeline/shaders/metal/text.metal")
             )
             .as_bytes(),
             BuiltinShader::TextColor => concat!(
-                include_str!("../pipeline/shaders/text_common.metal"),
-                include_str!("../pipeline/shaders/text_color.metal")
+                include_str!("../pipeline/shaders/metal/text_common.metal"),
+                include_str!("../pipeline/shaders/metal/text_color.metal")
             )
             .as_bytes(),
             BuiltinShader::TextDecoration => concat!(
-                include_str!("../pipeline/shaders/text_common.metal"),
-                include_str!("../pipeline/shaders/text_decoration.metal")
+                include_str!("../pipeline/shaders/metal/text_common.metal"),
+                include_str!("../pipeline/shaders/metal/text_decoration.metal")
             )
             .as_bytes(),
             BuiltinShader::Svg => concat!(
-                include_str!("../pipeline/shaders/color.metal"),
-                include_str!("../pipeline/shaders/svg.metal")
+                include_str!("../pipeline/shaders/metal/color.metal"),
+                include_str!("../pipeline/shaders/metal/svg.metal")
             )
             .as_bytes(),
             BuiltinShader::FrameComposite => {
                 include_str!("../pipeline/frame_composite.metal").as_bytes()
             }
             BuiltinShader::Material => {
-                include_str!("../pipeline/material/shaders/material.metal").as_bytes()
+                include_str!("../pipeline/shaders/metal/material.metal").as_bytes()
             }
         }
     }
@@ -2232,7 +2232,7 @@ mod tests {
 
         // A shader that fails to compile here is the most likely first failure
         // of a hand-written MSL port, so carry the compiler's own words.
-        let msl = include_str!("../pipeline/shaders/rect.metal");
+        let msl = include_str!("../pipeline/shaders/metal/rect.metal");
         let module = backend
             .try_create_shader_module(msl.as_bytes(), "rect shader")
             .expect("rect.metal must compile as MSL");
@@ -2496,7 +2496,7 @@ mod tests {
             eprintln!("skipping: this host exposes no Metal device");
             return;
         };
-        let msl = include_str!("../pipeline/shaders/rect.metal");
+        let msl = include_str!("../pipeline/shaders/metal/rect.metal");
         let module = backend
             .try_create_shader_module(msl.as_bytes(), "rect shader")
             .expect("rect.metal must compile as MSL");
