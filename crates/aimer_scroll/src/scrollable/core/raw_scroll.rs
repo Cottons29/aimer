@@ -1439,7 +1439,7 @@ mod tests {
     use std::cell::Cell;
 
     use aimer_events::element::{ElementEvent, ScrollDeltaKind, TouchPhase};
-    use aimer_events::pointer::{PointerInfo, PointerSource};
+    use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
     use aimer_widget::{
         AnyElement, CaptureRequest, Drawable, EventElement, EventResult, LayoutElement, PointerKey,
         VisitorElement,
@@ -2090,6 +2090,53 @@ mod tests {
 
         assert_eq!(inner_ctrl.scroll_offset.get().x, -100.0);
         assert_eq!(outer.ctrl.scroll_offset.get().y, 20.0);
+        aimer_widget::release_pointer(PointerKey::new(PointerSource::Touch, 3));
+    }
+
+    #[test]
+    fn content_drag_scrolls_with_touch_but_not_with_mouse() {
+        let mouse = sized_scrollable(
+            crate::ScrollAxis::Vertical,
+            ResolvedSize {
+                width: 100.0,
+                height: 300.0,
+            },
+        );
+        mouse.ctrl.cached_max_scroll.set(Vec2d { x: 0.0, y: 200.0 });
+        mouse.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let start = Vec2d { x: 50.0, y: 50.0 };
+        let _ = mouse.on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
+            start,
+            PointerButton::Primary,
+        )));
+        let _ = mouse.on_event(&ElementEvent::PointerMove(PointerInfo::mouse(
+            Vec2d { x: 50.0, y: 25.0 },
+            PointerButton::Primary,
+        )));
+        let _ = mouse.on_event(&ElementEvent::PointerUp(PointerInfo::mouse(
+            Vec2d { x: 50.0, y: 25.0 },
+            PointerButton::Primary,
+        )));
+
+        assert_eq!(mouse.ctrl.scroll_offset.get().y, 0.0);
+        assert_eq!(mouse.ctrl.drag_mode.get(), DragMode::None);
+
+        let touch = sized_scrollable(
+            crate::ScrollAxis::Vertical,
+            ResolvedSize {
+                width: 100.0,
+                height: 300.0,
+            },
+        );
+        touch.ctrl.cached_max_scroll.set(Vec2d { x: 0.0, y: 200.0 });
+        touch.bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let pointer = |y| PointerInfo::touch(Vec2d { x: 50.0, y }, 3);
+        let _ = touch.on_event(&ElementEvent::PointerDown(pointer(50.0)));
+        let _ = touch.on_event(&ElementEvent::PointerMove(pointer(25.0)));
+        let _ = touch.on_event(&ElementEvent::PointerMove(pointer(15.0)));
+
+        assert_ne!(touch.ctrl.scroll_offset.get().y, 0.0);
+        let _ = touch.on_event(&ElementEvent::PointerUp(pointer(25.0)));
         aimer_widget::release_pointer(PointerKey::new(PointerSource::Touch, 3));
     }
 

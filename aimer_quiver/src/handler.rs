@@ -454,12 +454,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             && self.pending_widget.is_none()
             && self.frame_request_reason.get() != Some(FrameRequestKind::Full)
             && aimer_widget::rebuild_invalidation_generation()
-                == preparation.rebuild_generation
+            == preparation.rebuild_generation
             && aimer_widget::layout_invalidation_generation() == preparation.layout_generation
-
-        if need_redraw {
-            self.request_animation_frame();
-        }
     }
 
     /// The bookkeeping every frame does once the tree has been drawn.

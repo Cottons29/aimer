@@ -19,9 +19,9 @@ const AXIS_DOMINANCE_RATIO: f32 = 1.2;
 
 /// The overscroll source a pointer gesture belongs to.
 ///
-/// A finger and a mouse button drive the very same drag code but are not the
-/// same device to a target that only trusts some of them with a rubber band,
-/// so the distinction is kept all the way into the scroll engine.
+/// Touch content drags and mouse scrollbar drags share the scroll physics, but
+/// are not the same device to a target that only trusts some of them with a
+/// rubber band, so the distinction is kept all the way into the scroll engine.
 #[inline]
 fn drag_overscroll_source(source: PointerSource) -> OverscrollSource {
     match source {
@@ -56,7 +56,7 @@ fn pending_content_drag_wins(
     }
 }
 
-/// Whether the gesture of `pointer` is still free to become a scroll.
+/// Whether a touch gesture is still free to become a content scroll.
 ///
 /// A press inside a scroll view is ambiguous — it could be a tap, or the start
 /// of a scroll — so the view arms a pending drag and takes the gesture from
@@ -72,7 +72,7 @@ fn pending_content_drag_wins(
 /// make a scroll view full of buttons unscrollable.
 #[inline]
 fn content_drag_allowed(pointer: PointerKey) -> bool {
-    !is_pointer_claimed(pointer)
+    pointer.source == PointerSource::Touch && !is_pointer_claimed(pointer)
 }
 
 fn pointer_drag_delta(
@@ -168,14 +168,6 @@ fn dispatch_child_event<E: Element>(
 }
 
 impl<E: Element> EventElement for RawScrollableContainer<E> {
-    /// Event dispatch is handled by the nested dispatcher, but focus and
-    /// reconciliation still need the child and live scroll bars from the
-    /// visual structural view.
-    #[inline]
-    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        self.visit_children(visitor);
-    }
-
     fn event_tree_role(&self) -> EventTreeRole {
         EventTreeRole::IndexedTarget
     }
@@ -190,12 +182,14 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             None if matches!(event, ElementEvent::Cancel) => Vec2d::default(),
             None => return EventResult::ignored(),
         };
-        let inside = self.bounds.is_inside(cursor.x, cursor.y);
+
         let active_drag = self.ctrl.drag_mode.get() != DragMode::None;
         let child_captured = event_pointer_key(event)
             .is_some_and(|pointer| self.event_dispatcher.borrow().is_captured(pointer))
             || (matches!(event, ElementEvent::Cancel)
                 && self.event_dispatcher.borrow().capture_count() > 0);
+
+        let inside = self.bounds.is_inside(cursor.x, cursor.y);
         if !child_route_allowed(inside, active_drag, child_captured) {
             return EventResult::ignored();
         }
@@ -388,6 +382,28 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
             }
             ElementEvent::PointerDown(pointer) => {
                 let p = &pointer.pos;
+                if pointer.source == PointerSource::Mouse {
+                    let (vp_w, vp_h) = self.ctrl.cached_viewport.get();
+                    let vertical_track_width = self.ctrl.cached_v_track_width.get();
+                    let horizontal_track_height = self.ctrl.cached_h_track_width.get();
+                    let hits_scrollbar = self.ctrl.hit_test_v_thumb(*p)
+                        || self.ctrl.hit_test_h_thumb(*p)
+                        || self.ctrl.hit_test_v_track(
+                            *p,
+                            vp_w,
+                            vp_h,
+                            vertical_track_width,
+                        )
+                        || self.ctrl.hit_test_h_track(
+                            *p,
+                            vp_w,
+                            vp_h,
+                            horizontal_track_height,
+                        );
+                    if !hits_scrollbar {
+                        return child_result;
+                    }
+                }
                 if let Some(prev_id) = self.ctrl.active_touch_id.get()
                     && prev_id != pointer.id
                 {
@@ -406,9 +422,9 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                     }
                 }
                 self.ctrl.active_touch_id.set(Some(pointer.id));
-                // A touch/mouse interaction takes over from any wheel/trackpad
-                // gesture, so it must not inherit that gesture's recovery state
-                // nor be judged by the device that produced it.
+                // A touch contact or mouse scrollbar interaction takes over from
+                // any wheel/trackpad gesture, so it must not inherit that
+                // gesture's recovery state nor be judged by its input source.
                 self.ctrl
                     .set_overscroll_source(drag_overscroll_source(pointer.source));
                 self.ctrl.release_overscroll_recovery();
@@ -500,6 +516,7 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
                 true
             }
             ElementEvent::PointerMove(pointer) => {
+
                 let p = &pointer.pos;
                 // Ignore moves from non-primary fingers.
                 if self.ctrl.active_touch_id.get().is_some()
@@ -771,6 +788,14 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
     }
 
     fn event_children<'a>(&'a self, _: &mut dyn FnMut(&'a dyn Element)) {}
+
+    /// Event dispatch is handled by the nested dispatcher, but focus and
+    /// reconciliation still need the child and live scroll bars from the
+    /// visual structural view.
+    #[inline]
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.visit_children(visitor);
+    }
 }
 
 impl<E: Element> VisitorElement for RawScrollableContainer<E> {
@@ -950,5 +975,10 @@ mod tests {
             content_drag_allowed(pointer),
             "the gesture is over, so the next drag of that pointer scrolls again"
         );
+    }
+
+    #[test]
+    fn a_mouse_pointer_cannot_start_a_content_scroll_drag() {
+        assert!(!content_drag_allowed(PointerKey::new(PointerSource::Mouse, 0)));
     }
 }

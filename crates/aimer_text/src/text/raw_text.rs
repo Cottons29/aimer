@@ -4,6 +4,7 @@ use std::rc::Rc;
 use aimer_attribute::size::ResolvedSize;
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::*;
+use aimer_utils::debug;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{TextOverflowMode, *};
 
@@ -156,7 +157,7 @@ impl RawTextWidget {
             height_bits: height.to_bits(),
             scale_bits: ctx.scale.to_bits(),
             font_size_bits: font_size.to_bits(),
-            layout_generation: aimer_widget::layout_invalidation_generation(),
+            layout_generation: layout_invalidation_generation(),
         };
 
         self.cache.with_extra(|slot: &mut Option<RawTextAuxCache>| {
@@ -271,15 +272,29 @@ impl RawTextWidget {
 impl Drawable for RawTextWidget {
     fn draw(&self, ctx: &BuildContext) {
         // println!("Drawing text widget : {:?}", self.text);
+
         self.paint(ctx);
     }
 
     #[inline]
     fn paint(&self, ctx: &BuildContext) {
+
+
+
         if self.uses_paragraph_layout() {
+            if self.text.contains("Published nodes:" ) {
+                debug!("drawing the Text (cached)")
+
+            }
             self.draw_paragraph(ctx);
             return;
         }
+
+        if self.text.contains("Published nodes:" ) {
+            debug!("drawing the Text")
+
+        }
+
         let font_size = self.font_size(ctx.scale);
         let width = ctx.parent_size.width;
         let height = ctx.parent_size.height;

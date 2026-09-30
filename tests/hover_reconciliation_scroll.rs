@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use aimer::events::element::ElementEvent;
-use aimer::mouse_region::MouseRegion;
+use aimer::input::mouse_region::MouseRegion;
 use aimer::quiver::winit::dpi::PhysicalPosition;
 use aimer::quiver::winit::event::{DeviceId, WindowEvent};
 use aimer::{
