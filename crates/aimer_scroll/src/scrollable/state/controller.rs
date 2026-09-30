@@ -118,7 +118,9 @@ pub struct ScrollState {
     pub(crate) last_scale: Cell<f32>,
     pub(crate) speed_multiplier: f32,
     pub(crate) cursor_pos: Cell<Option<Vec2d>>,
-    pub(crate) velocity_history: RefCell<VelocityHistory>,
+    /// Allocated on the first drag sample. Keeping the fixed-size ring inline
+    /// here made every idle scrollable carry its full sample buffer.
+    pub(crate) velocity_history: RefCell<Option<Box<VelocityHistory>>>,
     pub(crate) cached_viewport: Cell<(f32, f32)>,
     pub(crate) cached_v_track_width: Cell<f32>,
     pub(crate) cached_h_track_width: Cell<f32>,
@@ -286,7 +288,11 @@ impl ScrollState {
         self.last_frame_time.set(prev.last_frame_time.get());
         self.cursor_pos.set(prev.cursor_pos.get());
         self.thumb_hovered.set(prev.thumb_hovered.get());
-        *self.velocity_history.borrow_mut() = prev.velocity_history.borrow().clone();
+        *self.velocity_history.borrow_mut() = prev
+            .velocity_history
+            .borrow()
+            .as_ref()
+            .map(|history| Box::new((**history).clone()));
         self.fling_start_time.set(prev.fling_start_time.get());
         self.fling_start_offset
             .set(Self::axis_only(self.axis, prev.fling_start_offset.get()));
@@ -1175,7 +1181,10 @@ impl ScrollState {
     /// Record `velocity` as the speed the finger held for the `dt` seconds
     /// that ended at `at`.
     pub(crate) fn push_velocity(&self, velocity: Vec2d, dt: f32, at: AnimInstant) {
-        self.velocity_history.borrow_mut().push(velocity, dt, at);
+        self.velocity_history
+            .borrow_mut()
+            .get_or_insert_with(|| Box::new(VelocityHistory::new()))
+            .push(velocity, dt, at);
     }
 
     /// Return the speed the finger is moving at as of `now`, averaged over the
@@ -1185,12 +1194,17 @@ impl ScrollState {
     /// describes the *end* of the gesture: a drag whose last recorded motion
     /// has fallen out of the horizon reports zero and flings nothing.
     pub(crate) fn smoothed_velocity(&self, now: AnimInstant) -> Vec2d {
-        self.velocity_history.borrow().velocity_at(now)
+        self.velocity_history
+            .borrow()
+            .as_ref()
+            .map_or(Vec2d::ZERO, |history| history.velocity_at(now))
     }
 
     /// Clear the velocity history (e.g. on pointer-down).
     pub(crate) fn clear_velocity_history(&self) {
-        self.velocity_history.borrow_mut().clear();
+        if let Some(history) = self.velocity_history.borrow_mut().as_mut() {
+            history.clear();
+        }
     }
 
     /// Fold a raw drag delta (already scaled by `speed_multiplier`) into the
@@ -1714,7 +1728,7 @@ impl ScrollState {
             last_scale: Cell::new(1.0),
             speed_multiplier: 1.0,
             cursor_pos: Cell::new(None),
-            velocity_history: RefCell::new(VelocityHistory::new()),
+            velocity_history: RefCell::new(None),
             cached_viewport: Cell::new((0.0, 0.0)),
             cached_v_track_width: Cell::new(0.0),
             cached_h_track_width: Cell::new(0.0),
@@ -1761,6 +1775,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+
 
     fn ctrl_with_offset(offset: Vec2d) -> ScrollState {
         ScrollState::for_test_at(offset)

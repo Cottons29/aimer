@@ -1,5 +1,16 @@
 mod os;
-pub mod read_only;
+
+/// Compatibility path for the shared ownership types now implemented by
+/// `aimer_rubick`.
+///
+/// ```
+/// use aimer_std::read_only::{Shared, Weak};
+///
+/// let value = Shared::new(42);
+/// let weak: Weak<i32> = Shared::downgrade(&value);
+/// assert_eq!(*weak.upgrade().unwrap(), 42);
+/// ```
+pub use aimer_rubick::shared as read_only;
 
 /// Selects a value based on a condition. Shorthand for `if`-`else` expressions.
 ///
@@ -98,7 +109,7 @@ macro_rules! case {
 
 #[cfg(test)]
 mod tests {
-    use crate::read_only::{Shared, SharedRef, Weak};
+    use crate::read_only::{Shared, Weak};
     use std::cell::{Cell, RefCell};
     use std::mem::{align_of, size_of};
     use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -327,17 +338,6 @@ mod tests {
         assert_eq!(drops.get(), 2);
     }
 
-    #[test]
-    fn an_rc_can_back_a_shared_ref() {
-        let field = Rc::new(String::from("pineapple"));
-        let reference = SharedRef::from_rc(&field);
-
-        assert_eq!(Rc::strong_count(&field), 2);
-        drop(field);
-
-        assert_eq!(&*reference, "pineapple");
-        assert_eq!(reference.get(), "pineapple");
-    }
 
     #[test]
     fn separate_fields_can_be_projected_from_one_owner() {

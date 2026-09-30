@@ -135,6 +135,161 @@ impl SvgGradient {
                 && stops.iter().all(|stop| stop.is_finite()),
         }
     }
+
+    /// Samples the gradient at a point in the painted node's local coordinates.
+    ///
+    /// `bounds` is the node's local geometry bounds. Radial sampling accounts
+    /// for the focal center and focal radius.
+    pub fn sample_at(&self, x: f32, y: f32, bounds: [f32; 4]) -> Option<SvgColor> {
+        self.color_at_position(self.position_at(x, y, bounds)?)
+    }
+
+    /// Returns the normalized spread-adjusted gradient coordinate at a point.
+    pub fn position_at(&self, x: f32, y: f32, bounds: [f32; 4]) -> Option<f32> {
+        let (transform, units) = match self {
+            Self::Linear { transform, units, .. } | Self::Radial { transform, units, .. } => {
+                (*transform, *units)
+            }
+        };
+        let (mut x, mut y) = match units {
+            SvgGradientUnits::UserSpaceOnUse => (x, y),
+            SvgGradientUnits::ObjectBoundingBox => {
+                if bounds[2] <= 0.0 || bounds[3] <= 0.0 {
+                    return None;
+                }
+                ((x - bounds[0]) / bounds[2], (y - bounds[1]) / bounds[3])
+            }
+        };
+        (x, y) = transform.inverse()?.transform_point(x, y);
+        let (position, spread) = match self {
+            Self::Linear {
+                x1,
+                y1,
+                x2,
+                y2,
+                spread,
+                ..
+            } => {
+                let dx = x2 - x1;
+                let dy = y2 - y1;
+                let length_squared = dx * dx + dy * dy;
+                if length_squared <= f32::EPSILON {
+                    (1.0, *spread)
+                } else {
+                    (((x - x1) * dx + (y - y1) * dy) / length_squared, *spread)
+                }
+            }
+            Self::Radial {
+                cx,
+                cy,
+                radius,
+                fx,
+                fy,
+                focal_radius,
+                spread,
+                ..
+            } => {
+                if *radius <= 0.0 {
+                    return None;
+                }
+                (
+                    radial_position(x, y, *cx, *cy, *radius, *fx, *fy, *focal_radius)?,
+                    *spread,
+                )
+            }
+        };
+        let position = match spread {
+            SvgSpreadMethod::Pad => position.clamp(0.0, 1.0),
+            SvgSpreadMethod::Repeat => position.rem_euclid(1.0),
+            SvgSpreadMethod::Reflect => {
+                let value = position.rem_euclid(2.0);
+                if value > 1.0 { 2.0 - value } else { value }
+            }
+        };
+        position.is_finite().then_some(position)
+    }
+
+    /// Samples the ordered stops at a normalized coordinate.
+    pub fn color_at_position(&self, position: f32) -> Option<SvgColor> {
+        if !position.is_finite() {
+            return None;
+        }
+        let stops = self.stops();
+        if stops.is_empty() {
+            return None;
+        }
+        let first = stops[0];
+        if position <= first.offset {
+            return Some(first.color);
+        }
+        for pair in stops.windows(2) {
+            let [left, right] = pair else { continue };
+            if position <= right.offset {
+                let width = right.offset - left.offset;
+                let amount = if width <= f32::EPSILON {
+                    1.0
+                } else {
+                    ((position - left.offset) / width).clamp(0.0, 1.0)
+                };
+                return Some(interpolate_color(left.color, right.color, amount));
+            }
+        }
+        stops.last().map(|stop| stop.color)
+    }
+}
+
+fn radial_position(
+    x: f32,
+    y: f32,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    fx: f32,
+    fy: f32,
+    focal_radius: f32,
+) -> Option<f32> {
+    let center_delta = [cx - fx, cy - fy];
+    let point_delta = [x - fx, y - fy];
+    let radius_delta = radius - focal_radius;
+    let a = center_delta[0] * center_delta[0]
+        + center_delta[1] * center_delta[1]
+        - radius_delta * radius_delta;
+    let b = -2.0
+        * (point_delta[0] * center_delta[0]
+            + point_delta[1] * center_delta[1]
+            + focal_radius * radius_delta);
+    let c = point_delta[0] * point_delta[0] + point_delta[1] * point_delta[1]
+        - focal_radius * focal_radius;
+    if ![a, b, c].into_iter().all(f32::is_finite) {
+        return None;
+    }
+
+    if a.abs() <= f32::EPSILON {
+        if b.abs() <= f32::EPSILON {
+            return None;
+        }
+        let position = -c / b;
+        return position.is_finite().then_some(position);
+    }
+    let discriminant = b * b - 4.0 * a * c;
+    if !discriminant.is_finite() || discriminant < 0.0 {
+        return None;
+    }
+    let root = discriminant.sqrt();
+    let denominator = 2.0 * a;
+    let first = (-b - root) / denominator;
+    let second = (-b + root) / denominator;
+    let position = first.max(second);
+    position.is_finite().then_some(position)
+}
+
+fn interpolate_color(from: SvgColor, to: SvgColor, amount: f32) -> SvgColor {
+    SvgColor {
+        r: from.r + (to.r - from.r) * amount,
+        g: from.g + (to.g - from.g) * amount,
+        b: from.b + (to.b - from.b) * amount,
+        a: from.a + (to.a - from.a) * amount,
+    }
 }
 
 /// A paint retained by the parser, including paints the current GPU path has
@@ -147,7 +302,7 @@ pub enum SvgPaint {
     Linear(SvgGradient),
     /// A radial gradient.
     Radial(SvgGradient),
-    /// A pattern reference whose tile rendering is deferred.
+    /// A local pattern reference retained for SVG tile rendering.
     Pattern { id: Arc<str> },
 }
 

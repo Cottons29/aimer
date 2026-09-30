@@ -8,21 +8,59 @@ pub mod render_ctx {
     use aimer_cupid::compositor::CompositorScene;
     use aimer_cupid::damage_region::DamageSet;
     use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
-    use aimer_cupid::gpu_context::GpuContext;
     use aimer_cupid::renderer::Renderer;
+    #[cfg(feature = "wgpu")]
+    use aimer_cupid::gpu_context::GpuContext;
+    #[cfg(feature = "wgpu")]
+    use aimer_cupid::backend::wgpu::WgpuBackend;
+    #[cfg(all(feature = "web", not(feature = "wgpu")))]
+    use aimer_cupid::{WebGl2Backend, WebGl2TextureFormat, WebGl2TextureView};
+    #[cfg(all(feature = "web", not(feature = "wgpu")))]
+    use aimer_cupid::{WebGpuBackend, WebGpuTextureView};
     use aimer_utils::info;
     use winit::dpi::PhysicalSize;
-    use winit::event_loop::EventLoop;
     use winit::platform::web::WindowExtWebSys;
     use winit::window::Window;
 
     use crate::frame_stats::{FramePhase, PhaseTimer};
     use crate::render_ctx::PresentOutcome;
 
+
+
+    #[cfg(all(feature = "web", not(feature = "wgpu")))]
+    enum BrowserGpuState {
+        WebGpu {
+            backend: WebGpuBackend,
+            surface_view: WebGpuTextureView,
+            renderer: Renderer<WebGpuBackend>,
+        },
+        WebGl {
+            backend: WebGl2Backend,
+            surface_view: WebGl2TextureView,
+            renderer: Renderer<WebGl2Backend>,
+        },
+    }
+
+    #[cfg(all(feature = "web", not(feature = "wgpu")))]
+    struct GpuState {
+        backend: BrowserGpuState,
+        size: (u32, u32),
+        canvas: CupidCanvas,
+    }
+
+    #[cfg(feature = "wgpu")]
     struct GpuState {
         gpu: GpuContext<'static>,
-        renderer: Renderer,
+        backend: WgpuBackend,
+        renderer: Renderer<WgpuBackend>,
         canvas: CupidCanvas,
+    }
+
+    #[cfg(feature = "wgpu")]
+    impl Drop for GpuState {
+        fn drop(&mut self) {
+            self.renderer.save_pipeline_cache(&self.backend);
+        }
     }
 
     pub struct H5CanvasApi {
@@ -47,8 +85,7 @@ pub mod render_ctx {
                 antialiasing,
             }
         }
-        /// Returns true when the async GPU init has completed and the context
-        /// is usable.
+        /// Returns true when the browser GPU context is usable.
         pub fn is_ready(&self) -> bool {
             self.state.borrow().is_some()
         }
@@ -79,27 +116,100 @@ pub mod render_ctx {
                 info!("Canvas created.");
             }
 
-            // Spawn async GPU initialization
-            let state = self.state.clone();
-            let antialiasing = self.antialiasing;
-            wasm_bindgen_futures::spawn_local(async move {
-                info!("Initializing GPU context (wasm)...");
-                let gpu = GpuContext::initialize_async(window, size).await;
-                let canvas = CupidCanvas::new();
-                let renderer = Renderer::with_antialiasing(&gpu.device, gpu.format, antialiasing);
-                *state.borrow_mut() = Some(GpuState {
-                    gpu,
-                    renderer,
-                    canvas,
+
+
+            #[cfg(all(feature = "web", not(feature = "wgpu")))]
+            {
+                let canvas = window.canvas().expect("winit did not provide a browser canvas");
+                let state = self.state.clone();
+                let antialiasing = self.antialiasing;
+                wasm_bindgen_futures::spawn_local(async move {
+                    let backend = match WebGpuBackend::new(canvas.clone()).await {
+                        Ok(backend) => {
+                            backend.resize(size.width, size.height);
+                            let surface_view = backend.surface_view();
+                            let renderer = Renderer::<WebGpuBackend>::with_antialiasing(
+                                &backend,
+                                backend.format(),
+                                antialiasing,
+                            );
+                            info!("WebGPU initialized; using it as the browser renderer.");
+                            BrowserGpuState::WebGpu {
+                                backend,
+                                surface_view,
+                                renderer,
+                            }
+                        }
+                        Err(error) if error.can_fallback_to_webgl() => {
+                            info!("WebGPU unavailable ({error}); falling back to WebGL2.");
+                            let backend = WebGl2Backend::new(canvas)
+                                .unwrap_or_else(|webgl_error| {
+                                    panic!("WebGPU failed ({error}); WebGL2 fallback failed: {webgl_error}")
+                                });
+                            backend.resize(size.width, size.height);
+                            let surface_view = backend.surface_view();
+                            let renderer = Renderer::<WebGl2Backend>::with_antialiasing(
+                                &backend,
+                                WebGl2TextureFormat::Rgba8Unorm,
+                                antialiasing,
+                            );
+                            BrowserGpuState::WebGl {
+                                backend,
+                                surface_view,
+                                renderer,
+                            }
+                        }
+                        Err(error) => panic!(
+                            "WebGPU failed after acquiring the canvas context; WebGL2 fallback is unavailable: {error}"
+                        ),
+                    };
+                    *state.borrow_mut() = Some(GpuState {
+                        backend,
+                        size: (size.width, size.height),
+                        canvas: CupidCanvas::new(),
+                    });
+                    window.request_redraw();
                 });
-                info!("GPU context initialized (wasm).");
-                // Request a redraw so the first frame renders
-                window.request_redraw();
-            });
+            }
+
+            #[cfg(feature = "wgpu")]
+            {
+                // Spawn async GPU initialization
+                let state = self.state.clone();
+                let antialiasing = self.antialiasing;
+                wasm_bindgen_futures::spawn_local(async move {
+                    info!("Initializing GPU context (wasm)...");
+                    let gpu = GpuContext::initialize_async(window, size).await;
+                    let backend = gpu.backend();
+                    let canvas = CupidCanvas::new();
+                    let renderer = Renderer::with_antialiasing(&backend, gpu.format, antialiasing);
+                    *state.borrow_mut() = Some(GpuState {
+                        gpu,
+                        backend,
+                        renderer,
+                        canvas,
+                    });
+                    info!("GPU context initialized (wasm).");
+                    window.request_redraw();
+                });
+            }
         }
 
         pub fn resize(&mut self, size: PhysicalSize<u32>) {
             if let Some(state) = self.state.borrow_mut().as_mut() {
+                #[cfg(all(feature = "web", not(feature = "wgpu")))]
+                {
+                    match &state.backend {
+                        BrowserGpuState::WebGpu { backend, .. } => {
+                            backend.resize(size.width, size.height)
+                        }
+                        BrowserGpuState::WebGl { backend, .. } => {
+                            backend.resize(size.width, size.height)
+                        }
+                    }
+                    state.size = (size.width, size.height);
+                }
+                #[cfg(feature = "wgpu")]
                 state.gpu.resize(size);
             }
         }
@@ -134,13 +244,13 @@ pub mod render_ctx {
         /// `WgpuApi::build_frame`.
         ///
         /// The browser has no usable thread to hand the frame to — `wasm32`
-        /// needs `SharedArrayBuffer` plus atomics, and the WebGPU objects are
+        /// needs `SharedArrayBuffer` plus atomics, and browser GPU objects are
         /// bound to the realm that created them — so the frame is always
         /// presented on the same task. The split is kept so both backends share
         /// one shape, and so the widget walk stops running while a surface
         /// texture is held here too.
         ///
-        /// Returns `None` until the async GPU init has completed.
+        /// Returns `None` until the browser GPU context is usable.
         pub fn build_frame(
             &mut self,
             draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
@@ -162,8 +272,10 @@ pub mod render_ctx {
             let mut state_ref = self.state.borrow_mut();
             let state = state_ref.as_mut()?;
 
-            let width = state.gpu.width();
-            let height = state.gpu.height();
+            #[cfg(all(feature = "web", not(feature = "wgpu")))]
+            let (width, height) = state.size;
+            #[cfg(feature = "wgpu")]
+            let (width, height) = (state.gpu.width(), state.gpu.height());
 
             let build = PhaseTimer::start();
             state.canvas.begin_frame();
@@ -234,6 +346,59 @@ pub mod render_ctx {
         fn encode(state: &mut GpuState, packet: &FramePacket) -> bool {
             let encode = PhaseTimer::start();
 
+
+
+            #[cfg(all(feature = "web", not(feature = "wgpu")))]
+            {
+                let frame = packet.frame();
+                match &mut state.backend {
+                    BrowserGpuState::WebGpu {
+                        backend,
+                        surface_view,
+                        renderer,
+                    } => {
+                        renderer.render(
+                            backend,
+                            surface_view,
+                            frame.width,
+                            frame.height,
+                            backend.is_srgb(),
+                            &frame.draw_list,
+                        );
+                        encode.finish(FramePhase::Encode);
+                        if renderer.has_postponed_text_preparation() {
+                            aimer_events::window::request_animation_frame();
+                        }
+                        let present = PhaseTimer::start();
+                        backend.present();
+                        present.finish(FramePhase::Present);
+                    }
+                    BrowserGpuState::WebGl {
+                        backend,
+                        surface_view,
+                        renderer,
+                    } => {
+                        renderer.render(
+                            backend,
+                            surface_view,
+                            frame.width,
+                            frame.height,
+                            false,
+                            &frame.draw_list,
+                        );
+                        encode.finish(FramePhase::Encode);
+                        if renderer.has_postponed_text_preparation() {
+                            aimer_events::window::request_animation_frame();
+                        }
+                        let present = PhaseTimer::start();
+                        backend.present();
+                        present.finish(FramePhase::Present);
+                    }
+                }
+            }
+
+            #[cfg(feature = "wgpu")]
+            {
             let surface = match state.gpu.begin_frame() {
                 wgpu::CurrentSurfaceTexture::Success(texture)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
@@ -243,8 +408,7 @@ pub mod render_ctx {
             let view = surface.texture.create_view(&Default::default());
 
             state.renderer.render_packet(
-                &state.gpu.device,
-                &state.gpu.queue,
+                &state.backend,
                 &view,
                 packet,
                 state.gpu.is_srgb,
@@ -264,6 +428,7 @@ pub mod render_ctx {
             let present = PhaseTimer::start();
             state.gpu.end_frame(surface);
             present.finish(FramePhase::Present);
+            }
 
             true
         }

@@ -412,7 +412,7 @@ fn line_bounds(layout: &TextInteractionLayout, line: &TextLine) -> Bounds {
     } else {
         Bounds::new(
             layout.origin_x,
-            line.baseline - line.ascent,
+            line.baseline - line.ascent - line.line_gap * 0.5,
             line.width.max(0.0),
             line_height(line),
         )

@@ -431,8 +431,8 @@ pub enum DrawCommand {
     },
     /// Draw using a user-registered custom pipeline.
     /// `pipeline_name` must match the name returned by
-    /// `CustomPipeline::name()`. `data` is an arbitrary payload forwarded
-    /// to `CustomPipeline::prepare()`.
+    /// `CustomPipelineGeneric::name()`. `data` is an arbitrary payload forwarded
+    /// to `CustomPipelineGeneric::prepare_command()`.
     Custom {
         pipeline_name: String,
         data: Box<dyn Any + Send>,
@@ -889,9 +889,8 @@ impl DrawList {
     }
 
     /// Enqueue a draw command for a user-registered custom pipeline.
-    /// `pipeline_name` must match `CustomPipeline::name()` of a registered
-    /// pipeline. `data` is an arbitrary payload that will be forwarded to
-    /// `CustomPipeline::prepare()`.
+    /// `pipeline_name` must match `CustomPipelineGeneric::name()` of a registered
+    /// pipeline. `data` is forwarded to its `prepare_command()` hook.
     pub fn draw_custom(&mut self, pipeline_name: impl Into<String>, data: impl Any + Send) {
         self.commands.push(DrawCommand::Custom {
             pipeline_name: pipeline_name.into(),
@@ -1668,6 +1667,7 @@ mod memory_tests {
             },
             nodes: Arc::from([]),
             geometries: Arc::from([]),
+            resources: Arc::new(crate::svg::SvgResourceGraph::empty()),
         });
         let mut list = DrawList::new();
         list.fill_rect(

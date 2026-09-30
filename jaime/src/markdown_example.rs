@@ -5,6 +5,7 @@ use aimer::style::{
     BoxDecoration, FontWeight, LayoutSpacing, Spacing, TextAlign, TextStyle, Theme, ThemeData,
 };
 use aimer::*;
+use aimer::input::button::Button;
 
 const JAIME_MARKDOWN: &str = include_str!("../assets/JAIME.md");
 const CUSTOM_MARKDOWN: &str = r#"# Custom Markdown Widgets

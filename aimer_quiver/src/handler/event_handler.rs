@@ -121,6 +121,14 @@ impl WindowEventHandler {
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 Self::update_scale_factor(&mut app.window_scale, scale_factor);
+                #[cfg(all(target_os = "macos", feature = "native", not(feature = "wgpu")))]
+                if app.render_ctx.is_ready()
+                    && let Some(window) = app.native_window()
+                {
+                    // Keep CAMetalLayer's contents scale current even when the
+                    // physical drawable size did not change with the display.
+                    app.render_ctx.resize(window.inner_size());
+                }
                 app.sync_headless_metrics(None);
                 if let Some(root) = app.active_root() {
                     root.invalidate_layout();
@@ -128,16 +136,13 @@ impl WindowEventHandler {
                 }
                 Self::refresh_system_appearance(app);
                 Self::refresh_safe_area(app);
-                if let Some(window) = &app.window {
-                    window.request_redraw();
-                }
+                app.request_full_redraw();
             }
 
             WindowEvent::ThemeChanged(theme) => {
                 if Self::handle_theme_changed(theme)
-                    && let Some(window) = &app.window
                 {
-                    window.request_redraw();
+                    app.request_full_redraw();
                 }
             }
 
@@ -147,10 +152,8 @@ impl WindowEventHandler {
                 }
                 if is_focus {
                     let result = app.cancel_element_events();
-                    if let Some(window) = &app.window
-                        && Self::should_redraw(result, true)
-                    {
-                        window.request_redraw();
+                    if Self::should_redraw(result, true) {
+                        app.request_full_redraw();
                     }
                 } else {
                     #[cfg(target_arch = "wasm32")]
@@ -363,10 +366,8 @@ impl WindowEventHandler {
             if !was_captured && let Some(root) = app.active_root() {
                 result = result.merge(broadcast_event(root.as_ref(), &event));
             }
-            if let Some(window) = &app.window
-                && Self::should_redraw(result, true)
-            {
-                window.request_redraw();
+            if Self::should_redraw(result, true) {
+                app.request_full_redraw();
             }
         }
     }
@@ -375,9 +376,7 @@ impl WindowEventHandler {
         // CursorEntered carries no coordinates. Keep hover disabled until the
         // following CursorMoved supplies a valid position.
         app.cursor_pos = CURSOR_OUTSIDE_POSITION;
-        if let Some(window) = &app.window {
-            window.request_redraw();
-        }
+        app.request_full_redraw();
     }
 
     /// Translates a winit mouse button into the framework's own.
@@ -472,10 +471,8 @@ impl WindowEventHandler {
                 if app.active_root().is_some() {
                     let result = app.dispatch_element_event(app.cursor_pos, &ev);
                     let handled = result.is_consumed();
-                    if let Some(window) = &app.window
-                        && Self::should_redraw(result, handled)
-                    {
-                        window.request_redraw();
+                    if Self::should_redraw(result, handled) {
+                        app.request_full_redraw();
                     }
                 }
                 return;
@@ -541,10 +538,8 @@ impl WindowEventHandler {
             if app.active_root().is_some() {
                 let result = app.dispatch_element_event(app.cursor_pos, &ev);
                 let handled = result.is_consumed();
-                if let Some(window) = &app.window
-                    && Self::should_redraw(result, handled)
-                {
-                    window.request_redraw();
+                if Self::should_redraw(result, handled) {
+                    app.request_full_redraw();
                 }
             }
         }
@@ -583,10 +578,8 @@ impl WindowEventHandler {
         };
         let result = app.dispatch_element_event(app.cursor_pos, &event);
         let handled = result.is_consumed();
-        if let Some(window) = &app.window
-            && Self::should_redraw(result, handled)
-        {
-            window.request_redraw();
+        if Self::should_redraw(result, handled) {
+            app.request_full_redraw();
         }
     }
 
@@ -642,10 +635,8 @@ impl WindowEventHandler {
         let event = ElementEvent::ImePreedit { text, cursor };
         let result = app.dispatch_element_event(app.cursor_pos, &event);
         let handled = result.is_consumed();
-        if let Some(window) = &app.window
-            && Self::should_redraw(result, handled)
-        {
-            window.request_redraw();
+        if Self::should_redraw(result, handled) {
+            app.request_full_redraw();
         }
     }
 
@@ -685,7 +676,7 @@ impl WindowEventHandler {
             // can race that later request and make one input burst produce an
             // extra native frame; the platform requester coalesces the wake
             // until the display loop delivers it.
-            app.request_animation_frame();
+            crate::aimer_app::request_scroll_frame(|| app.request_animation_frame());
         }
     }
 
@@ -721,9 +712,7 @@ impl WindowEventHandler {
             return;
         }
         app.scroll_smoother.end_gesture();
-        if let Some(window) = &app.window {
-            window.request_redraw();
-        }
+        crate::aimer_app::request_scroll_frame(|| app.request_animation_frame());
     }
 
     pub(crate) const SCROLL_MULTIPLIER: f32 = 1.5;
@@ -931,10 +920,8 @@ impl WindowEventHandler {
             result = result.merge(broadcast_event(root.as_ref(), &left));
         }
 
-        if let Some(window) = &app.window
-            && Self::should_redraw(result, true)
-        {
-            window.request_redraw();
+        if Self::should_redraw(result, true) {
+            app.request_full_redraw();
         }
     }
 
@@ -971,10 +958,8 @@ impl WindowEventHandler {
             result = result.merge(broadcast_event(root.as_ref(), event));
         }
 
-        if result.needs_redraw()
-            && let Some(window) = &app.window
-        {
-            window.request_redraw();
+        if result.needs_redraw() {
+            app.request_full_redraw();
         }
     }
 }

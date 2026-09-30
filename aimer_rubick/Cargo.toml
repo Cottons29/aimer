@@ -5,3 +5,9 @@ edition = "2024"
 resolver = "3"
 
 [dependencies]
+allocator-api2.workspace = true
+dlmalloc.workspace = true
+libc.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys.workspace = true

@@ -3,19 +3,23 @@
 //! Thai, Lao, Khmer, and Myanmar all use combining marks and font-specific
 //! GSUB/GPOS data, but they do not share one universal syllable algorithm.
 //! This module therefore keeps the Unicode work deliberately bounded: it
-//! recognizes one script per run, performs the small pre-base reorder needed
-//! by Thai/Lao/Myanmar input, and delegates the font-specific forms and mark
+//! recognizes one script per run, applies Khmer/Myanmar syllable ordering and
+//! the Thai/Lao pre-base reorder, and delegates font-specific forms and mark
 //! anchors to the checked OpenType lookup readers. A lookup kind outside this
 //! slice returns `Ok(None)` so the checked scalar layout retains ownership of
-//! cases that need a complete script implementation.
+//! cases that need a complete script implementation. Unsupported contextual
+//! GPOS lookups are skipped while preserving supported GSUB substitutions.
 
 use super::super::{FontMetrics, SfntError, SfntFace};
-use super::indic::{apply_ligature_lookup, apply_multiple_lookup, apply_single_lookup};
+use super::indic::{
+    apply_alternate_lookup, apply_ligature_lookup, apply_multiple_lookup, apply_single_lookup,
+};
 use super::{
     apply_gpos, checked_add, checked_mul, context, coverage_index,
     mark_to_base_adjustment_for_lookup, mark_to_mark_adjustment_for_lookup, read_u16, read_u32,
     slice_from, AimerShapedRun, Gdef, LayoutGlyph, LayoutState, LayoutTableState,
     Tag, ABVM_TAG, BLWM_TAG, DIST_TAG, GPOS_TAG, KERN_TAG, MARK_TAG, MKMK_TAG,
+    KHMER_GSUB_FEATURE_TAGS, MYANMAR_GSUB_FEATURE_TAGS, MYM2_TAG,
     SOUTHEAST_ASIAN_GPOS_FEATURE_TAGS, SOUTHEAST_ASIAN_GSUB_FEATURE_TAGS, THAI_TAG, LAOO_TAG,
     KHMR_TAG, MYMR_TAG, MAX_EXTENSION_DEPTH,
 };
@@ -35,9 +39,31 @@ impl SoutheastAsianScript {
             Self::Thai => THAI_TAG,
             Self::Lao => LAOO_TAG,
             Self::Khmer => KHMR_TAG,
-            Self::Myanmar => MYMR_TAG,
+            Self::Myanmar => MYM2_TAG,
         }
     }
+}
+
+fn script_tag_with_features(
+    layout: &LayoutTableState,
+    script: SoutheastAsianScript,
+    feature_tags: &[Tag],
+) -> Tag {
+    if matches!(script, SoutheastAsianScript::Myanmar)
+        && !feature_tags.iter().any(|feature_tag| {
+            !layout
+                .feature_lookups_with_language(
+                    MYM2_TAG,
+                    None,
+                    std::slice::from_ref(feature_tag),
+                )
+                .is_empty()
+        })
+    {
+        // Older fonts may only expose the limited legacy `mymr` script tag.
+        return MYMR_TAG;
+    }
+    script.tag()
 }
 
 /// Returns the one Southeast Asian script represented by `text`.
@@ -212,7 +238,11 @@ pub(super) fn shape_run_with_layout(
     // The cmap pass is in source order, so cluster keys are already sorted.
     // Keep this map before visual reordering; it also preserves the first
     // source codepoint for the Khmer composite glyph's duplicate cluster.
-    let reordered = reorder_prebase_marks(&mut scratch.items, script);
+    let reordered = reorder_prebase_marks(
+        &mut scratch.items,
+        script,
+        &mut scratch.myanmar_replacement,
+    );
     scratch.glyphs.extend(scratch.items.drain(..).map(|(_, glyph)| glyph));
 
     let Some((gsub_supported, gsub_changed)) =
@@ -270,9 +300,13 @@ const KHMER_OO_DECOMPOSITION: [char; 2] = ['\u{17c1}', '\u{17b6}'];
 fn reorder_prebase_marks(
     items: &mut Vec<(char, LayoutGlyph)>,
     script: SoutheastAsianScript,
+    myanmar_replacement: &mut Vec<(char, LayoutGlyph)>,
 ) -> bool {
     if matches!(script, SoutheastAsianScript::Khmer) {
         return reorder_khmer_syllables(items);
+    }
+    if matches!(script, SoutheastAsianScript::Myanmar) {
+        return reorder_myanmar_syllables(items, myanmar_replacement);
     }
     let mut changed = false;
     let mut index = 0;
@@ -308,6 +342,144 @@ fn reorder_prebase_marks(
         index = segment_end;
     }
     changed
+}
+
+fn reorder_myanmar_syllables(
+    items: &mut Vec<(char, LayoutGlyph)>,
+    replacement: &mut Vec<(char, LayoutGlyph)>,
+) -> bool {
+    let mut changed = false;
+    let mut segment_start = 0;
+    while segment_start < items.len() {
+        while segment_start < items.len()
+            && !is_script_codepoint(SoutheastAsianScript::Myanmar, items[segment_start].0)
+        {
+            segment_start += 1;
+        }
+        if segment_start == items.len() {
+            break;
+        }
+        let segment_end = items[segment_start..]
+            .iter()
+            .position(|(codepoint, _)| {
+                !is_script_codepoint(SoutheastAsianScript::Myanmar, *codepoint)
+            })
+            .map_or(items.len(), |offset| segment_start + offset);
+
+        let mut syllable_start = segment_start;
+        for index in segment_start + 1..segment_end {
+            if is_myanmar_base_start(items, index) {
+                changed |= reorder_myanmar_syllable(items, syllable_start, index, replacement);
+                syllable_start = index;
+            }
+        }
+        changed |= reorder_myanmar_syllable(items, syllable_start, segment_end, replacement);
+        segment_start = segment_end;
+    }
+    changed
+}
+
+#[inline]
+fn is_myanmar_kinzi_prefix(items: &[(char, LayoutGlyph)], index: usize) -> bool {
+    items
+        .get(index..index.saturating_add(3))
+        .is_some_and(|sequence| {
+            sequence[0].0 == '\u{1004}'
+                && sequence[1].0 == '\u{103a}'
+                && sequence[2].0 == '\u{1039}'
+        })
+}
+
+#[inline]
+fn is_myanmar_base_start(items: &[(char, LayoutGlyph)], index: usize) -> bool {
+    if is_myanmar_kinzi_prefix(items, index) {
+        return true;
+    }
+    let previous = index
+        .checked_sub(1)
+        .and_then(|previous| items.get(previous))
+        .map(|(codepoint, _)| *codepoint);
+    is_base(SoutheastAsianScript::Myanmar, items[index].0) && previous != Some('\u{1039}')
+}
+
+fn reorder_myanmar_syllable(
+    items: &mut Vec<(char, LayoutGlyph)>,
+    start: usize,
+    end: usize,
+    replacement: &mut Vec<(char, LayoutGlyph)>,
+) -> bool {
+    if start >= end {
+        return false;
+    }
+
+    let kinzi_end = if is_myanmar_kinzi_prefix(items, start) {
+        start + 3
+    } else {
+        start
+    };
+    let Some(base_index) = (kinzi_end..end)
+        .find(|index| is_base(SoutheastAsianScript::Myanmar, items[*index].0))
+    else {
+        return false;
+    };
+
+    let moved_prebase = (base_index + 1..end).any(|index| items[index].0 == '\u{1031}');
+    let moved_medial_ra = (base_index + 1..end).any(|index| items[index].0 == '\u{103c}');
+    replacement.clear();
+    replacement.extend(
+        (start..end)
+            .filter(|index| *index >= kinzi_end && items[*index].0 == '\u{1031}')
+            .map(|index| items[index]),
+    );
+    replacement.extend(
+        (start..end)
+            .filter(|index| *index >= kinzi_end && items[*index].0 == '\u{103c}')
+            .map(|index| items[index]),
+    );
+    replacement.extend((start..base_index).filter_map(|index| {
+        let item = items[index];
+        (index >= kinzi_end && !matches!(item.0, '\u{1031}' | '\u{103c}')).then_some(item)
+    }));
+    let body_base_index = replacement.len();
+    replacement.push(items[base_index]);
+    if kinzi_end > start {
+        replacement.extend(items[start..kinzi_end].iter().copied());
+    }
+    replacement.extend((base_index + 1..end).filter_map(|index| {
+        let item = items[index];
+        (!matches!(item.0, '\u{1031}' | '\u{103c}')).then_some(item)
+    }));
+    let moved_anusvara = reorder_myanmar_anusvara(replacement, body_base_index);
+
+    let changed = moved_prebase || moved_medial_ra || kinzi_end > start || moved_anusvara;
+    drop(items.splice(start..end, replacement.iter().copied()));
+    replacement.clear();
+    changed
+}
+
+fn reorder_myanmar_anusvara(body: &mut Vec<(char, LayoutGlyph)>, base_index: usize) -> bool {
+    let mut changed = false;
+    let mut index = base_index + 1;
+    while index < body.len() {
+        if body[index].0 != '\u{1036}' || !is_myanmar_below_vowel(body[index - 1].0) {
+            index += 1;
+            continue;
+        }
+        let mut below_start = index - 1;
+        while below_start > base_index + 1 && is_myanmar_below_vowel(body[below_start - 1].0) {
+            below_start -= 1;
+        }
+        let anusvara = body.remove(index);
+        body.insert(below_start, anusvara);
+        changed = true;
+        index = below_start + 1;
+    }
+    changed
+}
+
+#[inline]
+fn is_myanmar_below_vowel(codepoint: char) -> bool {
+    matches!(codepoint, '\u{102f}' | '\u{1030}')
 }
 
 fn reorder_khmer_syllables(items: &mut Vec<(char, LayoutGlyph)>) -> bool {
@@ -428,11 +600,16 @@ fn apply_southeast_asian_gsub(
         return Ok(Some((false, false)));
     };
     let advances = face.glyph_advances_with_metrics(metrics)?;
-    let script_tag = script.tag();
+    let feature_tags = match script {
+        SoutheastAsianScript::Khmer => KHMER_GSUB_FEATURE_TAGS,
+        SoutheastAsianScript::Myanmar => MYANMAR_GSUB_FEATURE_TAGS,
+        _ => SOUTHEAST_ASIAN_GSUB_FEATURE_TAGS,
+    };
+    let script_tag = script_tag_with_features(layout, script, feature_tags);
     let mut supported = false;
     let mut changed = false;
 
-    for feature_tag in SOUTHEAST_ASIAN_GSUB_FEATURE_TAGS {
+    for feature_tag in feature_tags {
         let lookups = layout.feature_lookups_with_language(
             script_tag,
             None,
@@ -466,6 +643,11 @@ fn apply_southeast_asian_gsub(
                 }
                 2 => {
                     changed |= apply_multiple_lookup(face, advances, glyphs, layout, lookup)?;
+                }
+                3 => {
+                    changed |= apply_alternate_lookup(
+                        face, metrics, glyphs, gdef, layout, lookup,
+                    )?;
                 }
                 4 => {
                     changed |= apply_ligature_lookup(
@@ -501,11 +683,16 @@ fn apply_southeast_asian_gpos(
     let Some(layout) = state.gpos.as_ref() else {
         return Ok(Some((false, false)));
     };
-    let script_tag = script.tag();
+    let script_tag = script_tag_with_features(
+        layout,
+        script,
+        SOUTHEAST_ASIAN_GPOS_FEATURE_TAGS,
+    );
     let mut supported = false;
     let mut changed = false;
     let mut has_pair = false;
     let mut has_dist_pair = false;
+    let mut has_mark_pair = false;
     let mut has_mark_lookup = false;
     let mut has_single_lookup = false;
 
@@ -538,8 +725,17 @@ fn apply_southeast_asian_gpos(
                 if matches!(lookup.lookup_type, 2 | 9) {
                     has_pair = true;
                 }
+            } else if *feature_tag == MARK_TAG && lookup.lookup_type == 2 {
+                // Myanmar Text includes pair positioning in its `mark`
+                // feature alongside mark-to-base and mark-to-mark lookups.
+                has_mark_pair = true;
             } else if matches!(lookup.lookup_type, 4 | 5 | 6 | 9) {
                 has_mark_lookup = true;
+            } else if matches!(lookup.lookup_type, 7 | 8) {
+                // Contextual positioning lookups can wrap mark attachment
+                // lookups. This bounded path cannot execute those rules; keep
+                // supported script substitutions instead of abandoning the
+                // entire run for scalar cmap output.
             } else {
                 // Single/alternate positioning is outside this bounded
                 // slice. Keep the checked scalar layout responsible for it.
@@ -550,7 +746,7 @@ fn apply_southeast_asian_gpos(
 
     if has_single_lookup {
         let Some(single_changed) = apply_southeast_asian_single_positioning(
-            face, glyphs, gdef, layout, script,
+            face, glyphs, gdef, layout, script_tag,
         )?
         else {
             return Ok(None);
@@ -582,9 +778,21 @@ fn apply_southeast_asian_gpos(
         )?;
     }
 
+    if has_mark_pair {
+        changed |= apply_gpos(
+            face,
+            glyphs,
+            gdef,
+            Some(layout),
+            script_tag,
+            None,
+            std::slice::from_ref(&MARK_TAG),
+        )?;
+    }
+
     if has_mark_lookup {
         let Some(mark_changed) = apply_sea_mark_positioning(
-            face, glyphs, codepoints, gdef, layout, script,
+            face, glyphs, codepoints, gdef, layout, script_tag, script,
         )?
         else {
             return Ok(None);
@@ -600,10 +808,10 @@ fn apply_southeast_asian_single_positioning(
     glyphs: &mut [LayoutGlyph],
     gdef: &Gdef,
     layout: &LayoutTableState,
-    script: SoutheastAsianScript,
+    script_tag: Tag,
 ) -> Result<Option<bool>, SfntError> {
     let lookups = layout.feature_lookups_with_language(
-        script.tag(),
+        script_tag,
         None,
         std::slice::from_ref(&DIST_TAG),
     );
@@ -711,21 +919,28 @@ fn apply_sea_mark_positioning(
     codepoints: &[char],
     gdef: &Gdef,
     layout: &LayoutTableState,
+    script_tag: Tag,
     script: SoutheastAsianScript,
 ) -> Result<Option<bool>, SfntError> {
     if glyphs.len() != codepoints.len() {
         return Ok(None);
     }
 
-    let base_feature_tags = [ABVM_TAG, BLWM_TAG, MARK_TAG];
+    // Khmer applies below-base positioning first; Myanmar uses its required
+    // `mark` feature before the optional above/below mark features.
+    let base_feature_tags = match script {
+        SoutheastAsianScript::Khmer => [BLWM_TAG, ABVM_TAG, MARK_TAG],
+        SoutheastAsianScript::Myanmar => [MARK_TAG, ABVM_TAG, BLWM_TAG],
+        _ => [ABVM_TAG, BLWM_TAG, MARK_TAG],
+    };
     let mark_to_mark_lookups = layout.feature_lookups_with_language(
-        script.tag(),
+        script_tag,
         None,
         std::slice::from_ref(&MKMK_TAG),
     );
     let has_base_lookups = base_feature_tags.iter().any(|feature_tag| {
         !layout.feature_lookups_with_language(
-            script.tag(),
+            script_tag,
             None,
             std::slice::from_ref(feature_tag),
         )
@@ -781,7 +996,7 @@ fn apply_sea_mark_positioning(
             let mut attached = false;
             for feature_tag in base_feature_tags {
                 for lookup in layout.feature_lookups_with_language(
-                    script.tag(),
+                    script_tag,
                     None,
                     std::slice::from_ref(&feature_tag),
                 ) {
@@ -988,7 +1203,8 @@ mod tests {
 
         assert!(reorder_prebase_marks(
             &mut items,
-            SoutheastAsianScript::Myanmar
+            SoutheastAsianScript::Myanmar,
+            &mut Vec::new(),
         ));
         assert_eq!(
             items.iter().map(|(codepoint, _)| *codepoint).collect::<Vec<_>>(),
@@ -1005,7 +1221,8 @@ mod tests {
         ];
         assert!(reorder_prebase_marks(
             &mut ra_items,
-            SoutheastAsianScript::Khmer
+            SoutheastAsianScript::Khmer,
+            &mut Vec::new(),
         ));
         assert_eq!(
             ra_items.iter().map(|(codepoint, _)| *codepoint).collect::<Vec<_>>(),
@@ -1020,7 +1237,8 @@ mod tests {
         ];
         assert!(reorder_prebase_marks(
             &mut e_items,
-            SoutheastAsianScript::Khmer
+            SoutheastAsianScript::Khmer,
+            &mut Vec::new(),
         ));
         assert_eq!(
             e_items.iter().map(|(codepoint, _)| *codepoint).collect::<Vec<_>>(),

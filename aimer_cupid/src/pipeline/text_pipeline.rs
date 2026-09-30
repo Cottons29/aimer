@@ -59,12 +59,11 @@ use crate::text_pipeline::paint_cache::{
 };
 use crate::text_pipeline::preparation_batch::{BatchExecutor, IndexedJob, PreparationBatch};
 use crate::text_pipeline::text_layout::{
-    ShapedText, layout_shaped_text_result,
-    layout_shaped_text_result_with_bounds, line_alignment_offsets, positioned_line_widths,
-    prepare_shaped_text_with_writing_mode, shape_text_styled,
+    ShapedText, layout_shaped_text_result_with_bounds, line_alignment_offsets,
+    positioned_line_widths, prepare_shaped_text_with_writing_mode,
 };
 use crate::utilities::Rgba8;
-use crate::text_pipeline::text_layout::TextInteractionLayout;
+
 
 /// Per-instance data for one glyph quad.
 #[repr(C)]
@@ -252,6 +251,7 @@ fn normalize_pixel_uv_rect(pixel_rect: [f32; 4], atlas_width: u32, atlas_height:
 }
 
 impl GlyphInstance {
+    #[cfg(feature = "wgpu")]
     const ATTRIBS: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
@@ -263,6 +263,7 @@ impl GlyphInstance {
         7 => Float32,
     ];
 
+    #[cfg(feature = "wgpu")]
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: size_of::<GlyphInstance>() as wgpu::BufferAddress,
@@ -270,6 +271,17 @@ impl GlyphInstance {
             attributes: &Self::ATTRIBS,
         }
     }
+
+        const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 8] = [
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, position) as u64, shader_location: 0 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, size) as u64, shader_location: 1 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, uv_rect) as u64, shader_location: 2 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, color) as u64, shader_location: 3 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 4 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 5 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32, offset: std::mem::offset_of!(Self, skew) as u64, shader_location: 6 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32, offset: std::mem::offset_of!(Self, coverage_exponent) as u64, shader_location: 7 },
+    ];
 }
 
 /// Per-instance data for one decoration line quad (underline/overline/strike).
@@ -290,6 +302,7 @@ struct DecorationInstance {
 }
 
 impl DecorationInstance {
+    #[cfg(feature = "wgpu")]
     const ATTRIBS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
@@ -299,6 +312,7 @@ impl DecorationInstance {
         5 => Float32x4,
     ];
 
+    #[cfg(feature = "wgpu")]
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: size_of::<DecorationInstance>() as wgpu::BufferAddress,
@@ -306,6 +320,15 @@ impl DecorationInstance {
             attributes: &Self::ATTRIBS,
         }
     }
+
+        const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 6] = [
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, position) as u64, shader_location: 0 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, size) as u64, shader_location: 1 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, color) as u64, shader_location: 2 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 3 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 4 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, params) as u64, shader_location: 5 },
+    ];
 }
 
 /// A single styled decoration line to render, in final screen-space geometry.
@@ -674,89 +697,42 @@ pub struct TextPreparationProfile {
     pub color_glyphs: usize,
 }
 
-pub struct TextPipelineV2 {
+pub struct TextPipelineV2<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
     rasterizer: GlyphRasterizer,
     executor: BatchExecutor,
-    /// Whether the last frame ran out of budget before preparing everything a
-    /// viewport asked for ahead of itself. See [`has_postponed_preparation`].
-    ///
-    /// [`has_postponed_preparation`]: TextPipelineV2::has_postponed_preparation
     postponed_preparation: bool,
-    /// Alpha-coverage atlas (R8Unorm) for monochrome glyphs.
-    atlas: GlyphAtlas,
-    /// RGBA8 atlas for COLR layers and embedded color glyph bitmaps.
-    color_atlas: ColorGlyphAtlas,
-    pipeline: wgpu::RenderPipeline,
-    /// Pipeline that samples the RGBA color atlas instead of the alpha atlas.
-    color_pipeline: wgpu::RenderPipeline,
-    viewport_buffer: wgpu::Buffer,
-    /// Shared layout used by both the alpha and color bind groups (the binding
-    /// shape — uniform + texture_2d<f32> + sampler — is identical).
-    bind_group_layout: wgpu::BindGroupLayout,
-    bind_group: wgpu::BindGroup,
-    color_bind_group: wgpu::BindGroup,
-    sampler: wgpu::Sampler,
-    instance_buffer: wgpu::Buffer,
+    atlas: GlyphAtlas<B>,
+    color_atlas: ColorGlyphAtlas<B>,
+    pipeline: B::RenderPipeline,
+    color_pipeline: B::RenderPipeline,
+    viewport_buffer: B::Buffer,
+    bind_group_layout: B::BindGroupLayout,
+    bind_group: B::BindGroup,
+    color_bind_group: B::BindGroup,
+    sampler: B::Sampler,
+    instance_buffer: B::Buffer,
     instance_policy: InstanceBufferPolicy,
     instances: Vec<GlyphInstance>,
-    /// Skips the alpha-glyph upload when the buffer already holds the frame's
-    /// exact bytes — static text costs no upload at all.
     instance_upload: FrameUpload<GlyphInstance>,
-    /// Sibling buffer + scratch list for color glyph quads (drawn in a second
-    /// pass after the alpha glyphs so they layer on top of the same line).
-    color_instance_buffer: wgpu::Buffer,
+    color_instance_buffer: B::Buffer,
     color_instance_policy: InstanceBufferPolicy,
     color_instances: Vec<GlyphInstance>,
-    /// Upload skip gate for `color_instance_buffer`.
     color_instance_upload: FrameUpload<GlyphInstance>,
-    /// Decoration-line pipeline + its own instance list/buffer. Decoration
-    /// quads are drawn after the glyphs (see `render`) so lines layer with
-    /// their text.
-    decoration_pipeline: wgpu::RenderPipeline,
-    decoration_instance_buffer: wgpu::Buffer,
+    decoration_pipeline: B::RenderPipeline,
+    decoration_instance_buffer: B::Buffer,
     decoration_instance_policy: InstanceBufferPolicy,
     decoration_instances: Vec<DecorationInstance>,
-    /// Upload skip gate for `decoration_instance_buffer`.
     decoration_instance_upload: FrameUpload<DecorationInstance>,
-    /// Track atlas generation to only rebuild bind group when atlas texture
-    /// changes.
     atlas_generation: u64,
     color_atlas_generation: u64,
-    /// Cached viewport dimensions to skip redundant uniform writes.
     last_viewport: (u32, u32),
-    /// Surface size the previous [`prepare`] ran against. A frame whose size
-    /// differs is a live-resize frame: every wrapped layout is keyed by a
-    /// width that will be different again next frame, so `prepare` postpones
-    /// the ahead-of-view work instead of computing it at a transient width.
-    ///
-    /// [`prepare`]: TextPipelineV2::prepare
     last_prepared_surface: (u32, u32),
-    /// Layout cache: maps a stable key derived from text content + render
-    /// parameters to the pre-computed `Vec<PositionedGlyph>`. Entries are
-    /// evicted by recency once the cache outgrows its capacity (see
-    /// [`LayoutCache`]), so a resize's flood of transient-width layouts is
-    /// shed without ever taking the current screen's layouts with it.
     layout_cache: LayoutCache,
-    /// Width-independent shaping cache.  Resize may invalidate final positions
-    /// for wrapping/ellipsis text, but shaped glyph ids and advances only
-    /// depend on text content and font size.
     shaping_cache: HashMap<ShapingCacheKey, Arc<ShapedText>>,
-    /// Origin-relative glyph/shadow geometry reused when position, clip, or
-    /// foreground color changes without changing text layout.
     paint_cache: TextPaintCache,
-    /// Per-request glyph ranges recorded during `prepare` so the renderer can
-    /// draw a single text request at its own z-position (interleaved with
-    /// rects/images) instead of drawing all text in one final pass — the
-    /// latter made text ignore z-order (e.g. a `Stack`'s upper layer could not
-    /// cover text belonging to a lower layer).
     request_ranges: Vec<TextRequestRange>,
-    /// Reusable span-key storage for frames whose inputs changed without
-    /// changing the pipeline's request count.
     visible_span_ranges: Vec<Range<usize>>,
     visible_span_keys: Vec<SpanLayoutKeys>,
-    /// Reusable glyph-descriptor storage and the last descriptor set that was
-    /// submitted to each atlas planner. A changed position/color does not
-    /// alter atlas capacity, so planning can be skipped in that case.
     alpha_glyph_descriptors: Vec<(GlyphKey, u32, u32)>,
     color_glyph_descriptors: Vec<(GlyphKey, u32, u32)>,
     planned_alpha_descriptors: Vec<(GlyphKey, u32, u32)>,
@@ -764,227 +740,219 @@ pub struct TextPipelineV2 {
     seen_glyphs: HashSet<GlyphKey>,
     planned_alpha_atlas_generation: u64,
     planned_color_atlas_generation: u64,
-    /// Generation of the logical request/decorations state. It advances only
-    /// when an exact warm-frame comparison fails; the retained snapshot is
-    /// published after a complete successful prepare.
     frame_generation: u64,
     prepared_frame_generation: u64,
     prepared_frame: Option<PreparedFrameCache>,
 }
 
-impl TextPipelineV2 {
-    const INITIAL_CAPACITY: usize = 64;
-    /// Soft upper bound on the number of cached positioned-glyph layouts.
-    /// The cache is kept persistent across frames/screens; once it outgrows
-    /// this bound, entries no recent frame read are evicted at the start of
-    /// the next frame (see [`LayoutCache`]), so shaping/layout work is reused
-    /// instead of being thrown away on every screen transition.
-    const LAYOUT_CACHE_CAPACITY: usize = 4096;
-    /// Absolute upper bound on the number of cached shaped strings. Shaped
-    /// results are width-independent and tiny, so this can be generous.
-    const SHAPING_CACHE_CAPACITY: usize = 4096;
 
+
+// ── Backend-generic text preparation and rendering ─────────────────────────
+mod generic_prepare;
+
+impl<B: crate::backend::GpuBackend> TextPipelineV2<B> {
+    const INITIAL_CAPACITY: usize = 64;
+    const LAYOUT_CACHE_CAPACITY: usize = 4096;
+    const SHAPING_CACHE_CAPACITY: usize = 4096;
+    /// Creates the pipeline through the selected [`GpuBackend`].
+    ///
+    /// Creates GPU resources through the selected backend, including shader
+    /// modules, atlases, samplers, buffers, bind groups, and render pipelines.
     pub fn new(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        pipeline_cache: Option<&wgpu::PipelineCache>,
+        backend: &B,
+        format: B::TextureFormat,
         antialiasing: crate::AntiAlias,
     ) -> Self {
-        // The pipeline is built once, while the first frame is still being
-        // laid out, so this is the last moment at which the platform fallback
-        // chain can be built without a frame waiting on it.
+        use crate::backend::*;
+
         warm_fallbacks_in_background();
 
         let rasterizer = GlyphRasterizer::new();
-        let atlas = GlyphAtlas::new(device);
-        let color_atlas = ColorGlyphAtlas::new(device);
+        let atlas = GlyphAtlas::new(backend);
+        let color_atlas = ColorGlyphAtlas::new(backend);
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("text shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("./shaders/text.wgsl").into()),
-        });
-        let color_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("text color shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("./shaders/text_color.wgsl").into()),
-        });
-        let decoration_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("text decoration shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("./shaders/text_decoration.wgsl").into()),
+        let shader = backend.create_shader_module(
+            backend.builtin_shader_source(BuiltinShader::Text),
+            "text shader",
+        );
+        let color_shader = backend.create_shader_module(
+            backend.builtin_shader_source(BuiltinShader::TextColor),
+            "text color shader",
+        );
+        let decoration_shader = backend.create_shader_module(
+            backend.builtin_shader_source(BuiltinShader::TextDecoration),
+            "text decoration shader",
+        );
+
+        let sampler = backend.create_sampler(&SamplerDescriptor {
+            label: Some("text atlas sampler".to_string()),
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            address_mode_w: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mipmap_filter: FilterMode::Nearest,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: f32::MAX,
+            compare: None,
+            max_anisotropy: 1,
         });
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("text atlas sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-
-        let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("text viewport uniform"),
+        let viewport_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("text viewport uniform".to_string()),
             size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+            usage: vec![BufferUsage::Uniform, BufferUsage::CopyDst],
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("text bind group layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
+        let bind_group_layout = backend.create_bind_group_layout(&[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: vec![ShaderStage::Vertex, ShaderStage::Fragment],
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: vec![ShaderStage::Fragment],
+                ty: BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: TextureViewDimension::D2,
+                    sample_type: TextureSampleType::Float { filterable: true },
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: vec![ShaderStage::Fragment],
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+        ]);
 
         let bind_group = Self::create_bind_group(
-            device,
+            backend,
             &bind_group_layout,
             &viewport_buffer,
             &atlas.view,
             &sampler,
         );
         let color_bind_group = Self::create_bind_group(
-            device,
+            backend,
             &bind_group_layout,
             &viewport_buffer,
             &color_atlas.view,
             &sampler,
         );
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("text pipeline layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
+        let pipeline_layout = backend.create_pipeline_layout(&[&bind_group_layout]);
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("text pipeline v2"),
+        let glyph_buffers = [Some(VertexBufferLayout {
+            array_stride: size_of::<GlyphInstance>() as u64,
+            step_mode: VertexStepMode::Instance,
+            attributes: &GlyphInstance::GENERIC_ATTRIBUTES,
+        })];
+
+        let decoration_buffers = [Some(VertexBufferLayout {
+            array_stride: size_of::<DecorationInstance>() as u64,
+            step_mode: VertexStepMode::Instance,
+            attributes: &DecorationInstance::GENERIC_ATTRIBUTES,
+        })];
+
+        let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("text pipeline v2".to_string()),
             layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
+            vertex: VertexState {
                 module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Some(GlyphInstance::layout())],
-                compilation_options: Default::default(),
+                entry_point: "vs_main",
+                buffers: &glyph_buffers,
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(FragmentState {
                 module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: ColorWriteMask::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
             depth_stencil: None,
             multisample: crate::pipeline::multisample_state(antialiasing),
-            multiview_mask: None,
-            cache: pipeline_cache,
         });
 
-        let color_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("text color pipeline"),
+        let color_pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("text color pipeline".to_string()),
             layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
+            vertex: VertexState {
                 module: &color_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Some(GlyphInstance::layout())],
-                compilation_options: Default::default(),
+                entry_point: "vs_main",
+                buffers: &glyph_buffers,
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(FragmentState {
                 module: &color_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: ColorWriteMask::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
             depth_stencil: None,
             multisample: crate::pipeline::multisample_state(antialiasing),
-            multiview_mask: None,
-            cache: pipeline_cache,
         });
 
-        let decoration_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("text decoration pipeline"),
+        let decoration_pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("text decoration pipeline".to_string()),
             layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
+            vertex: VertexState {
                 module: &decoration_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Some(DecorationInstance::layout())],
-                compilation_options: Default::default(),
+                entry_point: "vs_main",
+                buffers: &decoration_buffers,
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(FragmentState {
                 module: &decoration_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: ColorWriteMask::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
             depth_stencil: None,
             multisample: crate::pipeline::multisample_state(antialiasing),
-            multiview_mask: None,
-            cache: pipeline_cache,
         });
 
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("text instance buffer"),
+        let instance_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("text instance buffer".to_string()),
             size: (Self::INITIAL_CAPACITY * size_of::<GlyphInstance>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+            usage: vec![BufferUsage::Vertex, BufferUsage::CopyDst],
         });
 
-        let color_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("text color instance buffer"),
+        let color_instance_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("text color instance buffer".to_string()),
             size: (Self::INITIAL_CAPACITY * size_of::<GlyphInstance>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+            usage: vec![BufferUsage::Vertex, BufferUsage::CopyDst],
         });
 
-        let decoration_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("text decoration instance buffer"),
+        let decoration_instance_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("text decoration instance buffer".to_string()),
             size: (Self::INITIAL_CAPACITY * size_of::<DecorationInstance>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+            usage: vec![BufferUsage::Vertex, BufferUsage::CopyDst],
         });
 
         Self {
@@ -1036,1712 +1004,176 @@ impl TextPipelineV2 {
         }
     }
 
+    /// Backend-driven equivalent of the private `create_bind_group` helper.
     fn create_bind_group(
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-        viewport_buffer: &wgpu::Buffer,
-        atlas_view: &wgpu::TextureView,
-        sampler: &wgpu::Sampler,
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("text bind group"),
+        backend: &B,
+        layout: &B::BindGroupLayout,
+        viewport_buffer: &B::Buffer,
+        atlas_view: &B::TextureView,
+        sampler: &B::Sampler,
+    ) -> B::BindGroup {
+        use crate::backend::{BindGroupEntry, BindingResource};
+        backend.create_bind_group(
             layout,
-            entries: &[
-                wgpu::BindGroupEntry {
+            &[
+                BindGroupEntry {
                     binding: 0,
-                    resource: viewport_buffer.as_entire_binding(),
+                    resource: BindingResource::Buffer(viewport_buffer),
                 },
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(atlas_view),
+                    resource: BindingResource::TextureView(atlas_view),
                 },
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(sampler),
+                    resource: BindingResource::Sampler(sampler),
                 },
             ],
-        })
-    }
-
-    pub fn preload_text(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        text: &str,
-        font_size: f32,
-    ) {
-        let mut uploaded_keys = Vec::with_capacity(text.chars().count());
-        let rasterizer = &mut self.rasterizer;
-        let atlas = &mut self.atlas;
-        let color_atlas = &mut self.color_atlas;
-        rasterizer.preload_text_into(text, font_size, None, |key, glyph| {
-            Self::insert_rasterized_glyph_into(
-                atlas,
-                color_atlas,
-                device,
-                queue,
-                key,
-                glyph.is_color,
-                glyph.width,
-                glyph.height,
-                &glyph.bitmap,
-            );
-            uploaded_keys.push(key);
-        });
-        for key in uploaded_keys {
-            rasterizer.release_bitmap(key);
-        }
-
-        self.flush_atlas(device, queue);
-    }
-
-    /// Common glyph set warmed by [`warm_glyph_set`](Self::warm_glyph_set):
-    /// the space, digits, lowercase and uppercase ASCII letters, and the
-    /// printable ASCII punctuation. Rasterizing this set fills the glyph atlas
-    /// (the heavier of the two per-glyph costs) so even brand-new, never-seen
-    /// strings only pay Aimer shaping and never glyph rasterization.
-    const COMMON_GLYPH_SET: &'static str = " 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-
-    /// Inserts a glyph into the matching atlas while allowing the rasterizer
-    /// and atlas fields to be borrowed independently during streamed preload.
-    #[allow(clippy::too_many_arguments)]
-    fn insert_rasterized_glyph_into(
-        atlas: &mut GlyphAtlas,
-        color_atlas: &mut ColorGlyphAtlas,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        key: GlyphKey,
-        is_color: bool,
-        width: u32,
-        height: u32,
-        bitmap: &[u8],
-    ) {
-        if width == 0 || height == 0 {
-            return;
-        }
-        if is_color {
-            if color_atlas.get(&key).is_none() {
-                color_atlas.get_or_insert(device, queue, key, width, height, bitmap);
-            }
-        } else if atlas.get(&key).is_none() {
-            atlas.get_or_insert(device, queue, key, width, height, bitmap);
-        }
-    }
-
-    /// Upload any pending atlas changes to the GPU and rebuild the bind groups
-    /// if either atlas texture was reallocated (generation changed). Shared by
-    /// the warm-up paths and `preload_text`.
-    fn flush_atlas(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.atlas.upload(device, queue);
-        self.color_atlas.upload(device, queue);
-
-        let atlas_gen = self.atlas.generation();
-        if atlas_gen != self.atlas_generation {
-            self.atlas_generation = atlas_gen;
-            self.bind_group = Self::create_bind_group(
-                device,
-                &self.bind_group_layout,
-                &self.viewport_buffer,
-                &self.atlas.view,
-                &self.sampler,
-            );
-        }
-
-        let color_gen = self.color_atlas.generation();
-        if color_gen != self.color_atlas_generation {
-            self.color_atlas_generation = color_gen;
-            self.color_bind_group = Self::create_bind_group(
-                device,
-                &self.bind_group_layout,
-                &self.viewport_buffer,
-                &self.color_atlas.view,
-                &self.sampler,
-            );
-        }
-    }
-
-    /// Level 2 warm-up — pre-rasterize the common ASCII glyph set at each of
-    /// the supplied font sizes so the glyph atlas is already populated
-    /// before the first frame is drawn. Because rasterization (not shaping)
-    /// is the heavier per-glyph cost, this keeps even brand-new strings
-    /// (numbers, usernames, live text) cheap: they only pay shaping, never
-    /// glyph rasterization.
-    pub fn warm_glyph_set(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        font_sizes: &[f32],
-    ) {
-        for &font_size in font_sizes {
-            let mut uploaded_keys = Vec::with_capacity(Self::COMMON_GLYPH_SET.len());
-            let rasterizer = &mut self.rasterizer;
-            let atlas = &mut self.atlas;
-            let color_atlas = &mut self.color_atlas;
-            rasterizer.preload_text_into(
-                Self::COMMON_GLYPH_SET,
-                font_size,
-                None,
-                |key, glyph| {
-                    Self::insert_rasterized_glyph_into(
-                        atlas,
-                        color_atlas,
-                        device,
-                        queue,
-                        key,
-                        glyph.is_color,
-                        glyph.width,
-                        glyph.height,
-                        &glyph.bitmap,
-                    );
-                    uploaded_keys.push(key);
-                },
-            );
-            for key in uploaded_keys {
-                rasterizer.release_bitmap(key);
-            }
-        }
-
-        self.flush_atlas(device, queue);
-    }
-
-    /// Level 1 warm-up — pre-shape and lay out a known static string at the
-    /// given font size, populating the shaping cache, the layout cache, and the
-    /// glyph atlas. After this, the string renders on the ~1 ms cache-hit path
-    /// from the very first frame instead of paying the cold Aimer
-    /// shaping + rasterization cost (the 27–86 ms spikes) on first paint.
-    ///
-    /// `layout_width` must match the wrapping width the string will be drawn
-    /// with (0.0 for non-wrapping `Clip` text) for the layout cache to hit;
-    /// even if it differs the width-independent shaping cache still hits,
-    /// so the expensive shaping work is warmed regardless.
-    pub fn warm_text(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        text: &str,
-        font_size: f32,
-        layout_width: f32,
-    ) {
-        self.warm_layout(device, queue, text, font_size, layout_width);
-        self.flush_atlas(device, queue);
-    }
-
-    /// Shared core of [`warm_text`](Self::warm_text): shape + lay out `text`,
-    /// populating both caches exactly like `prepare` does, then rasterize every
-    /// positioned glyph into the atlas. Does not upload/flush the atlas
-    /// (callers batch a single `flush_atlas` afterwards).
-    fn warm_layout(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        text: &str,
-        font_size: f32,
-        layout_width: f32,
-    ) {
-        let cache_key = LayoutCacheKey::new(
-            text,
-            font_size,
-            layout_width,
-            FontFamily::SANS_SERIF,
-            FontStyle::Normal,
-            FontWeight::Normal.numeric(),
-            None,
-        );
-
-        // Populate (or reuse) the layout/shaping caches, mirroring the hot path
-        // in `prepare`, then snapshot the glyph keys so the cache borrow ends
-        // before we touch the rasterizer/atlas again.
-        if !self.layout_cache.touch(&cache_key) {
-            let shaping_cache = &mut self.shaping_cache;
-            let rasterizer = &mut self.rasterizer;
-            let shaped_key = ShapingCacheKey::new(
-                text,
-                font_size,
-                FontFamily::SANS_SERIF,
-                FontStyle::Normal,
-                FontWeight::Normal.numeric(),
-                None,
-            );
-            let shaped_text = shaping_cache.entry(shaped_key).or_insert_with(|| {
-                Arc::new(shape_text_styled(
-                    rasterizer,
-                    text,
-                    font_size,
-                    FontFamily::SANS_SERIF,
-                    FontWeight::Normal,
-                    FontStyle::Normal,
-                    None,
-                ))
-            });
-            let positioned = layout_shaped_text_result(shaped_text, 0.0, 0.0, layout_width);
-            self.layout_cache.insert(cache_key.clone(), positioned);
-        }
-        let glyphs: Vec<(GlyphKey, f32)> = self
-            .layout_cache
-            .peek(&cache_key)
-            .expect("layout warmed above")
-            .iter()
-            .map(|pg| (pg.glyph_key, pg.font_size))
-            .collect();
-
-        for (key, glyph_font_size) in glyphs {
-            let (is_color, width, height) = {
-                let rg = self.rasterizer.rasterize_key(key, glyph_font_size);
-                (rg.is_color, rg.width, rg.height)
-            };
-            if width == 0 || height == 0 {
-                continue;
-            }
-            if is_color {
-                if self.color_atlas.get(&key).is_none() {
-                    let rg = self.rasterizer.rasterize_bitmap_key(key, glyph_font_size);
-                    self.color_atlas
-                        .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
-                    self.rasterizer.release_bitmap(key);
-                }
-            } else if self.atlas.get(&key).is_none() {
-                let rg = self.rasterizer.rasterize_bitmap_key(key, glyph_font_size);
-                self.atlas
-                    .get_or_insert(device, queue, key, rg.width, rg.height, &rg.bitmap);
-                self.rasterizer.release_bitmap(key);
-            }
-        }
-    }
-    /// Whether the last frame left text unprepared because it ran out of
-    /// budget.
-    ///
-    /// Only text that could not show a pixel is ever left behind, so a frame
-    /// that reports `true` rendered exactly what it owed the screen — but the
-    /// content a viewport asked for ahead of itself is not ready yet, and will
-    /// cost its owner the arrival frame unless another frame picks it up. A
-    /// presenter may use this as a hint while another frame source, such as
-    /// active scrolling, is already keeping the render loop alive.
-    #[inline]
-    pub fn has_postponed_preparation(&self) -> bool {
-        self.postponed_preparation
-    }
-
-    /// Returns whether an off-screen request is missing a final positioned
-    /// layout. A layout hit needs no ahead-of-view executor work; visible
-    /// requests still go through the mandatory path below because their glyphs
-    /// may have to be prepared for this frame.
-    #[inline]
-    fn request_has_layout_miss(&self, req: &TextDrawRequest) -> bool {
-        let synthesized: [RichTextSpan; 1];
-        let spans: &[RichTextSpan] = if req.spans.is_empty() {
-            synthesized = [RichTextSpan::new(req.text.clone())];
-            &synthesized
-        } else {
-            &req.spans
-        };
-
-        spans.iter().any(|span| {
-            let font_size = span.font_size.unwrap_or(req.font_size);
-            let font_weight = span
-                .font_weight
-                .or(req.font_weight)
-                .unwrap_or(FontWeight::Normal.numeric());
-            let layout_width = if req.writing_mode.is_vertical() {
-                // Vertical-rl uses the width to anchor the rightmost column
-                // even when overflow is clip-only and no wrapping is done.
-                req.bounds_width
-            } else {
-                match req.overflow {
-                    TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
-                    TextOverflowMode::Clip => 0.0,
-                }
-            };
-            let layout_height = if req.writing_mode.is_vertical() {
-                match req.overflow {
-                    TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_height,
-                    TextOverflowMode::Clip => 0.0,
-                }
-            } else {
-                0.0
-            };
-            let keys = span_layout_keys_with_writing_mode(
-                &self.shaping_cache,
-                &span.text,
-                font_size,
-                req.font_family,
-                req.font_style,
-                font_weight,
-                req.language,
-                layout_width,
-                layout_height,
-                req.writing_mode,
-            );
-            self.layout_cache
-                .peek_with_fallback(&keys.primary, keys.fallback.as_ref())
-                .is_none()
-        })
-    }
-
-    /// Shapes, lays out and rasterizes everything `requests` need that the
-    /// caches do not already hold, and commits the results.
-    ///
-    /// Returns `false` when a stage could not complete — a poisoned worker, a
-    /// batch that lost a result — in which case nothing was committed for
-    /// these requests and the caller must not assume their layouts exist.
-    fn prepare_content(
-        &mut self,
-        requests: &[&TextDrawRequest],
-        mut profile: Option<&mut TextPreparationProfile>,
-    ) -> bool {
-        let clear_shaping_cache = self.shaping_cache.len() > Self::SHAPING_CACHE_CAPACITY;
-
-        let mut shaping_batch = PreparationBatch::new();
-        let mut layout_batch = PreparationBatch::new();
-        let key_started = profile.is_some().then(Instant::now);
-        for req in requests {
-            let synthesized: [RichTextSpan; 1];
-            let spans: &[RichTextSpan] = if req.spans.is_empty() {
-                synthesized = [RichTextSpan::new(req.text.clone())];
-                &synthesized
-            } else {
-                &req.spans
-            };
-
-            for span in spans {
-                let font_size = span.font_size.unwrap_or(req.font_size);
-                let font_weight = span
-                    .font_weight
-                    .or(req.font_weight)
-                    .unwrap_or(FontWeight::Normal.numeric());
-                let layout_width = if req.writing_mode.is_vertical() {
-                    req.bounds_width
-                } else {
-                    match req.overflow {
-                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
-                        TextOverflowMode::Clip => 0.0,
-                    }
-                };
-                let layout_height = if req.writing_mode.is_vertical() {
-                    match req.overflow {
-                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_height,
-                        TextOverflowMode::Clip => 0.0,
-                    }
-                } else {
-                    0.0
-                };
-                let keys = span_layout_keys_with_writing_mode(
-                    &self.shaping_cache,
-                    &span.text,
-                    font_size,
-                    req.font_family,
-                    req.font_style,
-                    font_weight,
-                    req.language,
-                    layout_width,
-                    layout_height,
-                    req.writing_mode,
-                );
-                if self
-                    .layout_cache
-                    .get_with_fallback(&keys.primary, keys.fallback.as_ref())
-                    .is_some()
-                {
-                    continue;
-                }
-
-                if clear_shaping_cache || !self.shaping_cache.contains_key(&keys.shaping_key) {
-                    shaping_batch.push(
-                        keys.shaping_key.clone(),
-                        ShapingInput {
-                            text: span.text.clone(),
-                            font_size,
-                            font_family: req.font_family,
-                            font_style: req.font_style,
-                            font_weight,
-                            language: req.language,
-                            writing_mode: req.writing_mode,
-                        },
-                    );
-                }
-                layout_batch.push(
-                    keys.primary,
-                    LayoutInput {
-                        shaping_key: keys.shaping_key,
-                        layout_width: keys.layout_width,
-                        layout_height: keys.layout_height,
-                    },
-                );
-            }
-        }
-
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), key_started) {
-            profile.key_construction += started.elapsed();
-        }
-
-        let fallback_started = profile.is_some().then(Instant::now);
-        if !shaping_batch.jobs().is_empty() {
-            for req in requests {
-                let synthesized: [RichTextSpan; 1];
-                let spans: &[RichTextSpan] = if req.spans.is_empty() {
-                    synthesized = [RichTextSpan::new(req.text.clone())];
-                    &synthesized
-                } else {
-                    &req.spans
-                };
-                for span in spans {
-                    let font_size = span.font_size.unwrap_or(req.font_size);
-                    let font_weight = span
-                        .font_weight
-                        .or(req.font_weight)
-                        .unwrap_or(FontWeight::Normal.numeric());
-                    self.rasterizer.warm_fallbacks_for_text(
-                        &span.text,
-                        font_size,
-                        req.font_family,
-                        FontWeight::Value(u32::from(font_weight)),
-                        req.font_style,
-                        req.language,
-                    );
-                }
-            }
-        }
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), fallback_started) {
-            let fallback_elapsed = started.elapsed();
-            profile.fallback_resolution += fallback_elapsed;
-            profile.fallback_and_shaping += fallback_elapsed;
-        }
-
-        let snapshot_started = profile.is_some().then(Instant::now);
-        let font_snapshot = self.rasterizer.font_snapshot();
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), snapshot_started) {
-            let snapshot_elapsed = started.elapsed();
-            profile.font_snapshot += snapshot_elapsed;
-            profile.fallback_and_shaping += snapshot_elapsed;
-        }
-
-        let shaping_started = profile.is_some().then(Instant::now);
-        let shaping_jobs = shaping_batch.into_shared_jobs();
-        let shaping_snapshot = font_snapshot.clone();
-        let shaping_results = self.executor.execute_persistent_with_context(
-            shaping_jobs.clone(),
-            move || GlyphPreparationContext::new(shaping_snapshot.clone()),
-            move |context, job| {
-                let input = &job.input;
-                Some(prepare_shaped_text_with_writing_mode(
-                    context,
-                    &input.text,
-                    input.font_size,
-                    input.font_family,
-                    FontWeight::Value(u32::from(input.font_weight)),
-                    input.font_style,
-                    input.language,
-                    input.writing_mode,
-                ))
-            },
-        );
-        let Ok(shaping_results) = shaping_results else {
-            return false;
-        };
-        let Ok(prepared_shaping) = PreparationBatch::<ShapingCacheKey, ShapingInput>::merge_jobs(
-            &shaping_jobs,
-            shaping_results,
-        ) else {
-            return false;
-        };
-        let prepared_shaping = prepared_shaping
-            .into_iter()
-            .map(|(key, shaped)| (key, Arc::new(shaped)))
-            .collect::<HashMap<_, _>>();
-
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), shaping_started) {
-            let shaping_elapsed = started.elapsed();
-            profile.shaping += shaping_elapsed;
-            profile.fallback_and_shaping += shaping_elapsed;
-            profile.shaping_jobs += shaping_jobs.len();
-        }
-
-        // Positioning is pure arithmetic over the shaped clusters — the pixel
-        // box of every glyph was baked in at shaping time — so layout jobs need
-        // no rasterizer or font context. Transfer an owned, Arc-backed shaped
-        // result to the persistent workers so the callback does not borrow the
-        // pipeline and cached shaping results are never copied.
-        let layout_started = profile.is_some().then(Instant::now);
-        let mut owned_layout_jobs = Vec::with_capacity(layout_batch.jobs().len());
-        for job in layout_batch.jobs() {
-            let shaped = prepared_shaping
-                .get(&job.input.shaping_key)
-                .or_else(|| {
-                    (!clear_shaping_cache)
-                        .then(|| self.shaping_cache.get(&job.input.shaping_key))
-                        .flatten()
-                })
-                .cloned();
-            let Some(shaped) = shaped else {
-                return false;
-            };
-            owned_layout_jobs.push(IndexedJob::new(
-                job.order,
-                job.key.clone(),
-                OwnedLayoutInput {
-                    shaped,
-                    layout_width: job.input.layout_width,
-                    layout_height: job.input.layout_height,
-                },
-            ));
-        }
-        let owned_layout_jobs = Arc::<[_]>::from(owned_layout_jobs);
-        let layout_results = self.executor.execute_persistent_with_context(
-            owned_layout_jobs.clone(),
-            || (),
-            move |(), job| {
-                Some(layout_shaped_text_result_with_bounds(
-                    &job.input.shaped,
-                    0.0,
-                    0.0,
-                    job.input.layout_width,
-                    job.input.layout_height,
-                ))
-            },
-        );
-        let Ok(layout_results) = layout_results else {
-            return false;
-        };
-        let Ok(prepared_layouts) = PreparationBatch::<LayoutCacheKey, OwnedLayoutInput>::merge_jobs(
-            &owned_layout_jobs,
-            layout_results,
-        ) else {
-            return false;
-        };
-        let prepared_layouts = prepared_layouts.into_iter().collect::<HashMap<_, _>>();
-
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), layout_started) {
-            profile.layout += started.elapsed();
-            profile.layout_jobs += owned_layout_jobs.len();
-        }
-
-        let mut fresh_glyphs = Vec::new();
-        let mut queued_glyphs = HashSet::new();
-        let glyph_key_started = profile.is_some().then(Instant::now);
-        for req in requests {
-            let synthesized: [RichTextSpan; 1];
-            let spans: &[RichTextSpan] = if req.spans.is_empty() {
-                synthesized = [RichTextSpan::new(req.text.clone())];
-                &synthesized
-            } else {
-                &req.spans
-            };
-
-            for span in spans {
-                let font_size = span.font_size.unwrap_or(req.font_size);
-                let font_weight = span
-                    .font_weight
-                    .or(req.font_weight)
-                    .unwrap_or(FontWeight::Normal.numeric());
-                let layout_width = if req.writing_mode.is_vertical() {
-                    req.bounds_width
-                } else {
-                    match req.overflow {
-                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
-                        TextOverflowMode::Clip => 0.0,
-                    }
-                };
-                let layout_height = if req.writing_mode.is_vertical() {
-                    match req.overflow {
-                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_height,
-                        TextOverflowMode::Clip => 0.0,
-                    }
-                } else {
-                    0.0
-                };
-                let keys = span_layout_keys_with_writing_mode(
-                    &self.shaping_cache,
-                    &span.text,
-                    font_size,
-                    req.font_family,
-                    req.font_style,
-                    font_weight,
-                    req.language,
-                    layout_width,
-                    layout_height,
-                    req.writing_mode,
-                );
-                let Some(positioned) = prepared_layouts
-                    .get(&keys.primary)
-                    .map(|layout| layout.glyphs.as_slice())
-                    .or_else(|| {
-                        self.layout_cache
-                            .peek_with_fallback(&keys.primary, keys.fallback.as_ref())
-                    })
-                else {
-                    return false;
-                };
-
-                for glyph in positioned {
-                    let key = glyph.glyph_key;
-                    let needs_bitmap =
-                        self.atlas.get(&key).is_none() && self.color_atlas.get(&key).is_none();
-                    if self.rasterizer.needs_prepared_glyph(key, needs_bitmap)
-                        && queued_glyphs.insert(key)
-                    {
-                        fresh_glyphs.push((key, glyph.font_size));
-                    }
-                }
-            }
-        }
-
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), glyph_key_started) {
-            profile.key_construction += started.elapsed();
-        }
-
-        // Glyphs are prepared in runs sharing a face and a size, so the work
-        // that belongs to the face — mapping the file, parsing its tables,
-        // building the scaler and reading the metrics — is done once per run
-        // instead of once per glyph. The runs are bounded, so a page of one
-        // face at one size still spreads across the workers.
-        let glyph_started = profile.is_some().then(Instant::now);
-        let mut glyph_batch = PreparationBatch::new();
-        for (order, run) in glyph_runs(fresh_glyphs).into_iter().enumerate() {
-            glyph_batch.push(order, run);
-        }
-
-        let glyph_jobs = glyph_batch.into_shared_jobs();
-        let glyph_results = self.executor.execute_persistent_with_context(
-            glyph_jobs.clone(),
-            move || GlyphPreparationContext::new(font_snapshot.clone()),
-            move |context, job| Some(context.prepare_glyph_run(&job.input)),
-        );
-        let Ok(glyph_results) = glyph_results else {
-            return false;
-        };
-        let Ok(prepared_glyphs) = PreparationBatch::merge_jobs(&glyph_jobs, glyph_results) else {
-            return false;
-        };
-
-        if clear_shaping_cache {
-            self.shaping_cache.clear();
-        }
-        self.shaping_cache.extend(prepared_shaping);
-        self.layout_cache.extend(prepared_layouts);
-        for (_, glyphs) in prepared_glyphs {
-            for (key, glyph) in glyphs {
-                self.rasterizer.commit_prepared_glyph(key, glyph);
-            }
-        }
-
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), glyph_started) {
-            profile.glyph_preparation += started.elapsed();
-            profile.glyph_jobs += glyph_jobs.len();
-        }
-
-        true
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn build_text_paint_template(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        request: &TextDrawRequest,
-        keys: &SpanLayoutKeys,
-        font_weight: u16,
-        italic: bool,
-        mut profile: Option<&mut TextPreparationProfile>,
-    ) -> Option<Arc<CachedTextPaint>> {
-        let positioned = self
-            .layout_cache
-            .peek_with_fallback(&keys.primary, keys.fallback.as_ref())?;
-        let line_offsets = if request.writing_mode.is_vertical() {
-            None
-        } else {
-            match request.horizontal_align {
-                TextHorizontalAlign::Left => None,
-                _ => Some(line_alignment_offsets(
-                    &positioned_line_widths(positioned),
-                    request.bounds_width,
-                    request.horizontal_align,
-                )),
-            }
-        };
-        let shadow = sanitize_shadow(request.shadow);
-        let sample_count: usize = shadow.map_or(0, |shadow| {
-            if shadow.blur == 0.0 { 1 } else { 8 }
-        });
-        let shadow_coverage_exponent = shadow
-            .map(|shadow| coverage_exponent(shadow.color.to_unorm_array()))
-            .unwrap_or(1.0);
-        let mut glyphs = Vec::with_capacity(
-            positioned
-                .len()
-                .saturating_mul(sample_count.saturating_add(1)),
-        );
-
-        for pg in positioned {
-            let key = pg.glyph_key;
-            let (region, target_color_list) = if let Some(region) = self.atlas.get(&key) {
-                (region, false)
-            } else if let Some(region) = self.color_atlas.get(&key) {
-                (region, true)
-            } else {
-                let atlas_population_started = profile.is_some().then(Instant::now);
-                let rg = self.rasterizer.rasterize_bitmap_key(key, pg.font_size);
-                let (is_color, glyph_width, glyph_height) =
-                    (rg.is_color, rg.width, rg.height);
-                let region = if is_color {
-                    self.color_atlas.get_or_insert(
-                        device,
-                        queue,
-                        key,
-                        glyph_width,
-                        glyph_height,
-                        &rg.bitmap,
-                    )
-                } else {
-                    self.atlas.get_or_insert(
-                        device,
-                        queue,
-                        key,
-                        glyph_width,
-                        glyph_height,
-                        &rg.bitmap,
-                    )
-                };
-                self.rasterizer.release_bitmap(key);
-                if let (Some(profile), Some(started)) =
-                    (profile.as_deref_mut(), atlas_population_started)
-                {
-                    profile.atlas_population += started.elapsed();
-                }
-                (region, is_color)
-            };
-
-            let size = glyph_quad_size((region.width, region.height));
-            let line_offset = line_offsets
-                .as_ref()
-                .map_or(0.0, |offsets| offsets[pg.line_index]);
-            let local_position = [pg.x + line_offset, pg.y];
-            let skew = if italic { 0.25 } else { 0.0 };
-
-            if let Some(shadow) = shadow {
-                for sample in 0..sample_count {
-                    let (blur_x, blur_y) = if sample_count == 1 {
-                        (0.0, 0.0)
-                    } else {
-                        let angle =
-                            sample as f32 * std::f32::consts::TAU / sample_count as f32;
-                        (angle.cos() * shadow.blur, angle.sin() * shadow.blur)
-                    };
-                    glyphs.push(CachedPaintGlyph {
-                        local_position,
-                        offset: [
-                            shadow.offset_x + blur_x,
-                            shadow.offset_y + blur_y,
-                        ],
-                        size,
-                        region,
-                        color_atlas: target_color_list,
-                        skew,
-                        kind: CachedPaintKind::Shadow,
-                    });
-                }
-            }
-
-            glyphs.push(CachedPaintGlyph {
-                local_position,
-                offset: [0.0, 0.0],
-                size,
-                region,
-                color_atlas: target_color_list,
-                skew,
-                kind: CachedPaintKind::Foreground,
-            });
-            if !target_color_list {
-                if let Some(plan) = self.rasterizer.synthetic_weight_plan_for_codepoint(
-                    key,
-                    font_weight,
-                    pg.font_size,
-                    pg.codepoint,
-                ) {
-                    for &offset in plan.extra_offsets() {
-                        glyphs.push(CachedPaintGlyph {
-                            local_position,
-                            offset: [offset, 0.0],
-                            size,
-                            region,
-                            color_atlas: false,
-                            skew,
-                            kind: CachedPaintKind::Foreground,
-                        });
-                    }
-                }
-            }
-        }
-
-        let (advance_x, advance_y) = if request.writing_mode.is_vertical() {
-            (
-                0.0,
-                positioned
-                    .iter()
-                    .map(|glyph| glyph.y + glyph.height as f32)
-                    .max_by(f32::total_cmp)
-                    .unwrap_or(0.0)
-                    .max(0.0),
-            )
-        } else {
-            positioned.last().map_or((0.0, 0.0), |last| {
-                (last.x + last.width as f32, last.y)
-            })
-        };
-
-        Some(Arc::new(CachedTextPaint {
-            glyphs,
-            advance_x,
-            advance_y,
-            shadow,
-            shadow_coverage_exponent,
-        }))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn prepare(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        width: u32,
-        height: u32,
-        is_srgb: bool,
-        requests: &[TextDrawRequest],
-        decorations: &[TextDecorationDraw],
-    ) {
-        self.prepare_inner(
-            device,
-            queue,
-            width,
-            height,
-            is_srgb,
-            requests,
-            decorations,
-            None,
-        );
-    }
-
-    /// Runs [`prepare`](Self::prepare) and returns a CPU-stage timing snapshot.
-    ///
-    /// This method is intended for diagnostics and benchmark binaries. It
-    /// adds timer reads to the call, so render loops should use [`prepare`]
-    /// instead. The returned breakdown covers fallback/shaping, request-key
-    /// construction, glyph preparation, atlas work, and instance uploads.
-    #[allow(clippy::too_many_arguments)]
-    pub fn prepare_profiled(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        width: u32,
-        height: u32,
-        is_srgb: bool,
-        requests: &[TextDrawRequest],
-        decorations: &[TextDecorationDraw],
-    ) -> TextPreparationProfile {
-        let mut profile = TextPreparationProfile::default();
-        self.prepare_inner(
-            device,
-            queue,
-            width,
-            height,
-            is_srgb,
-            requests,
-            decorations,
-            Some(&mut profile),
-        );
-        profile
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn prepare_inner(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        width: u32,
-        height: u32,
-        is_srgb: bool,
-        requests: &[TextDrawRequest],
-        decorations: &[TextDecorationDraw],
-        mut profile: Option<&mut TextPreparationProfile>,
-    ) {
-        let started = AnimInstant::now();
-        let profile_started = profile.is_some().then(Instant::now);
-
-        let atlas_generation = self.atlas.generation();
-        let color_atlas_generation = self.color_atlas.generation();
-        self.paint_cache.ensure_generations(
-            atlas_generation,
-            color_atlas_generation,
-            FontRegistry::revision(),
-        );
-        let frame_cache_hit = !self.postponed_preparation
-            && self.prepared_frame_generation == self.frame_generation
-            && self.prepared_frame.as_ref().is_some_and(|cached| {
-                cached.matches(
-                    width,
-                    height,
-                    is_srgb,
-                    atlas_generation,
-                    color_atlas_generation,
-                    FontRegistry::revision(),
-                    requests,
-                    decorations,
-                )
-            });
-        if frame_cache_hit {
-            if let Some(profile) = profile.as_deref_mut() {
-                profile.cache_hit = true;
-                if let Some(started) = profile_started {
-                    profile.total = started.elapsed();
-                }
-            }
-            return;
-        }
-        self.frame_generation = self.frame_generation.wrapping_add(1);
-
-        // A scroll viewport hands its child more than it can show, so that a
-        // line is prepared a few frames before it scrolls in instead of on the
-        // frame its edge crosses the boundary. That moves the work rather than
-        // removing it: during a fling fresh content arrives every frame, and
-        // preparing all of it turns one visible stall into a continuous one.
-        // What the frame owes the screen is prepared whatever it costs; the
-        // rest is offered the time that is left, and what does not fit waits
-        // for the frame this asks for. Dropping a visible glyph shows a blank,
-        // dropping one the clip discards shows nothing at all.
-        //
-        // The same split bounds the *drawing* below: a request that cannot
-        // show a pixel builds no glyph instances and reserves no atlas room,
-        // so scrolling a text-heavy document costs the frame what is on
-        // screen, not what the viewport asked for ahead of itself.
-
-        // A layout the frame reads is stamped as used; opening the frame is
-        // also when a cache that outgrew its capacity sheds the entries no
-        // recent frame read — a resize's flood of transient widths, a closed
-        // screen's lines — without touching the current screen's layouts.
-        let request_analysis_started = profile.is_some().then(Instant::now);
-        self.layout_cache.begin_frame();
-
-        // A frame whose surface size changed is one step of a live resize:
-        // every wrapped layout is keyed by a width that will be different
-        // again next frame.
-        let resizing = self.last_prepared_surface != (width, height);
-        self.last_prepared_surface = (width, height);
-
-        let surface = (width as f32, height as f32);
-        let mut on_screen = Vec::with_capacity(requests.len());
-        let mut ahead_of_view = Vec::new();
-        let mut visible = vec![true; requests.len()];
-        for (index, req) in requests.iter().enumerate() {
-            // Glyphs can render slightly outside the box the request declares:
-            // an ascender or italic left-bearing reaches above/left of the
-            // origin, and a tight box can clip glyphs that overflow it. The
-            // coarse on-screen test below would then drop a request whose
-            // glyphs have already scrolled into (or not yet out of) the clip.
-            // Inflate the box by the request's largest font size so the test
-            // only ever errs toward keeping text — `glyph_intersects_clip`
-            // does the precise per-glyph check afterwards. Non-positive extents
-            // are left alone so `known_extent` still reads them as unbounded.
-            let glyph_pad = req
-                .spans
-                .iter()
-                .map(|span| span.font_size.unwrap_or(req.font_size))
-                .fold(req.font_size, f32::max);
-            let shadow_pad = req.shadow.map_or(0.0, shadow_padding);
-            let pad = glyph_pad + shadow_pad;
-            let bounds = [
-                req.x - pad,
-                req.y - pad,
-                if req.bounds_width > 0.0 {
-                    req.bounds_width + 2.0 * pad
-                } else {
-                    req.bounds_width
-                },
-                if req.bounds_height > 0.0 {
-                    req.bounds_height + 2.0 * pad
-                } else {
-                    req.bounds_height
-                },
-            ];
-            if request_is_on_screen(bounds, req.clip_rect, surface) {
-                on_screen.push(req);
-            } else {
-                visible[index] = false;
-                // The scroll cache window deliberately includes nearby
-                // content, but a cache hit must not start shaping/layout
-                // executor work just because it is off-screen.
-                if self.request_has_layout_miss(req) {
-                    ahead_of_view.push((index, req));
-                }
-            }
-        }
-
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), request_analysis_started) {
-            profile.request_analysis += started.elapsed();
-        }
-
-        if !self.prepare_content(&on_screen, profile.as_deref_mut()) {
-            return;
-        }
-
-        self.postponed_preparation = false;
-        if !ahead_of_view.is_empty() {
-            if resizing {
-                // Laying the tail out now would spend the budget on layouts
-                // keyed by a width the next resize frame invalidates, and
-                // flood the layout cache with entries nothing will read. The
-                // tail is postponed instead: a later real frame prepares it
-                // at the width that will actually be drawn.
-                self.postponed_preparation = true;
-            } else {
-                let mut chunk_requests = Vec::with_capacity(PREPARATION_CHUNK);
-                let prepared = prepare_ahead_of_view(
-                    &ahead_of_view,
-                    PreparationBudget::starting_at(started, PREPARATION_BUDGET),
-                    AnimInstant::now,
-                    |chunk| {
-                        chunk_requests.clear();
-                        chunk_requests.extend(chunk.iter().map(|(_, req)| *req));
-                        self.prepare_content(&chunk_requests, profile.as_deref_mut())
-                    },
-                );
-
-                self.postponed_preparation = prepared < ahead_of_view.len();
-            }
-        }
-
-        let post_content_key_started = profile.is_some().then(Instant::now);
-        self.visible_span_ranges.clear();
-        self.visible_span_ranges.resize(requests.len(), 0..0);
-        self.visible_span_keys.clear();
-        for (index, req) in requests.iter().enumerate() {
-            // An off-screen request contributes no pixel this frame, so it
-            // reserves no atlas room either; its glyphs claim theirs on the
-            // frame they scroll in, from the bitmaps preparation cached.
-            if !visible[index] {
-                continue;
-            }
-
-            let start = self.visible_span_keys.len();
-            let synthesized: [RichTextSpan; 1];
-            let spans: &[RichTextSpan] = if req.spans.is_empty() {
-                synthesized = [RichTextSpan::new(req.text.clone())];
-                &synthesized
-            } else {
-                &req.spans
-            };
-
-            for span in spans {
-                let font_size = span.font_size.unwrap_or(req.font_size);
-                let font_weight = span
-                    .font_weight
-                    .or(req.font_weight)
-                    .unwrap_or(FontWeight::Normal.numeric());
-                let layout_width = if req.writing_mode.is_vertical() {
-                    req.bounds_width
-                } else {
-                    match req.overflow {
-                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_width,
-                        TextOverflowMode::Clip => 0.0,
-                    }
-                };
-                let layout_height = if req.writing_mode.is_vertical() {
-                    match req.overflow {
-                        TextOverflowMode::Wrap | TextOverflowMode::Ellipsis => req.bounds_height,
-                        TextOverflowMode::Clip => 0.0,
-                    }
-                } else {
-                    0.0
-                };
-                self.visible_span_keys.push(span_layout_keys_with_writing_mode(
-                    &self.shaping_cache,
-                    &span.text,
-                    font_size,
-                    req.font_family,
-                    req.font_style,
-                    font_weight,
-                    req.language,
-                    layout_width,
-                    layout_height,
-                    req.writing_mode,
-                ));
-            }
-            self.visible_span_ranges[index] = start..self.visible_span_keys.len();
-        }
-
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), post_content_key_started) {
-            profile.key_construction += started.elapsed();
-        }
-
-        self.alpha_glyph_descriptors.clear();
-        self.color_glyph_descriptors.clear();
-        self.seen_glyphs.clear();
-        for (index, range) in self.visible_span_ranges.iter().enumerate() {
-            if !visible[index] {
-                continue;
-            }
-
-            for keys in &self.visible_span_keys[range.clone()] {
-                // The stamping read: this is the loop that walks exactly the
-                // layouts the frame draws, so it is where the working set is
-                // marked as alive.
-                let Some(positioned) = self
-                    .layout_cache
-                    .get_with_fallback(&keys.primary, keys.fallback.as_ref())
-                else {
-                    return;
-                };
-
-                for glyph in positioned {
-                    let key = glyph.glyph_key;
-                    if !self.seen_glyphs.insert(key) {
-                        continue;
-                    }
-                    let Some((is_color, glyph_width, glyph_height)) =
-                        self.rasterizer.cached_glyph_descriptor(key)
-                    else {
-                        return;
-                    };
-                    let descriptor = (key, glyph_width, glyph_height);
-                    if is_color {
-                        self.color_glyph_descriptors.push(descriptor);
-                    } else {
-                        self.alpha_glyph_descriptors.push(descriptor);
-                    }
-                }
-            }
-        }
-
-        let atlas_planning_started = profile.is_some().then(Instant::now);
-        let alpha_needs_plan = self.planned_alpha_atlas_generation != self.atlas.generation()
-            || self.planned_alpha_descriptors != self.alpha_glyph_descriptors;
-        let color_needs_plan = self.planned_color_atlas_generation
-            != self.color_atlas.generation()
-            || self.planned_color_descriptors != self.color_glyph_descriptors;
-        if alpha_needs_plan {
-            let alpha_plan = self.atlas.plan_batch(&self.alpha_glyph_descriptors);
-            if alpha_plan == BatchCapacityPlan::Reject {
-                return;
-            }
-            self.atlas.apply_batch_plan(alpha_plan);
-            self.planned_alpha_descriptors
-                .clone_from(&self.alpha_glyph_descriptors);
-            self.planned_alpha_atlas_generation = self.atlas.generation();
-        }
-        if color_needs_plan {
-            let color_plan = self.color_atlas.plan_batch(&self.color_glyph_descriptors);
-            if color_plan == BatchCapacityPlan::Reject {
-                return;
-            }
-            self.color_atlas.apply_batch_plan(color_plan);
-            self.planned_color_descriptors
-                .clone_from(&self.color_glyph_descriptors);
-            self.planned_color_atlas_generation = self.color_atlas.generation();
-        }
-
-        // Planning can repack a full atlas before the assembly loop starts.
-        // Refresh the paint cache after that decision as well as at frame
-        // entry, otherwise a reset could leave cached quads pointing at the
-        // old glyph coordinates for this very frame.
-        self.paint_cache.ensure_generations(
-            self.atlas.generation(),
-            self.color_atlas.generation(),
-            FontRegistry::revision(),
-        );
-
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), atlas_planning_started) {
-            profile.atlas_planning += started.elapsed();
-            profile.alpha_glyphs += self.alpha_glyph_descriptors.len();
-            profile.color_glyphs += self.color_glyph_descriptors.len();
-        }
-
-        self.instances.clear();
-        self.color_instances.clear();
-        self.decoration_instances.clear();
-        self.decoration_instances.extend(
-            decorations
-                .iter()
-                .map(|decoration| decoration.to_instance()),
-        );
-        self.request_ranges.clear();
-        self.request_ranges.reserve(requests.len());
-
-        let instance_build_started = profile.is_some().then(Instant::now);
-        for (index, req) in requests.iter().enumerate() {
-            // Record the glyph ranges this request will own. Both instance lists
-            // are appended to in request order, so the slice for this request is
-            // `[start, len_after)` in each list.
-            let alpha_start = self.instances.len() as u32;
-            let color_start = self.color_instances.len() as u32;
-
-            // Off-screen text draws nothing this frame. Its range stays empty
-            // so the ranges still line up with `requests`, which is what lets
-            // a caller address one request's instances by index.
-            if !visible[index] {
-                self.request_ranges.push(TextRequestRange {
-                    alpha_start,
-                    alpha_end: alpha_start,
-                    color_start,
-                    color_end: color_start,
-                });
-                continue;
-            }
-
-            // Avoid cloning the span list on every frame (it ran even on a pure
-            // cache hit). Borrow `req.spans` directly when present and only
-            // allocate a one-element fallback when the request has no spans.
-            let synthesized: [RichTextSpan; 1];
-            let spans: &[RichTextSpan] = if req.spans.is_empty() {
-                synthesized = [RichTextSpan::new(req.text.clone())];
-                &synthesized
-            } else {
-                &req.spans
-            };
-            let span_key_range = self.visible_span_ranges[index].clone();
-
-            let mut cursor_x = req.x;
-            let mut cursor_y = req.y;
-
-            for (span_index, span) in spans.iter().enumerate() {
-                let key_index = span_key_range.start + span_index;
-                debug_assert!(key_index < span_key_range.end);
-                let color = span.color.unwrap_or(req.color);
-                let font_weight = span
-                    .font_weight
-                    .or(req.font_weight)
-                    .unwrap_or(FontWeight::Normal.numeric());
-                // ponytail: synthetic (faux) italic via a horizontal shear in
-                // the glyph shaders (0.25 ≈ 14°). Ceiling: not a real italic
-                // face (no cursive glyph forms, advances unchanged). Upgrade
-                // path: load a real italic/oblique face and key the atlas by it.
-                let italic = span.italic.unwrap_or(req.italic);
-                let paint_key = TextPaintCacheKey::new(
-                    &self.visible_span_keys[key_index],
-                    req,
-                    font_weight,
-                    italic,
-                );
-                let cached = if let Some(cached) = self.paint_cache.get(&paint_key) {
-                    if let Some(profile) = profile.as_deref_mut() {
-                        profile.paint_cache_hits += 1;
-                    }
-                    cached
-                } else {
-                    if let Some(profile) = profile.as_deref_mut() {
-                        profile.paint_cache_misses += 1;
-                    }
-                    // Cloning is limited to misses so cache hits never hold
-                    // an immutable borrow of the pipeline across template
-                    // construction.
-                    let keys = self.visible_span_keys[key_index].clone();
-                    let Some(paint) = self.build_text_paint_template(
-                        device,
-                        queue,
-                        req,
-                        &keys,
-                        font_weight,
-                        italic,
-                        profile.as_deref_mut(),
-                    ) else {
-                        return;
-                    };
-                    self.paint_cache.insert(paint_key, paint.clone());
-                    paint
-                };
-
-                let span_coverage_exponent = coverage_exponent(color.to_unorm_array());
-                let shadow = cached.shadow;
-                let mut cull_key = None;
-                let mut foreground_visible = false;
-                let mut shadow_visible = false;
-                for paint_glyph in &cached.glyphs {
-                    if paint_glyph.kind == CachedPaintKind::Foreground && !req.draw_glyphs {
-                        continue;
-                    }
-
-                    // The cached position is relative to the span origin. It
-                    // must be snapped after the current request translation is
-                    // added so scrolling preserves the original pixel-grid
-                    // behavior without rebuilding the template.
-                    let position = snap_to_pixel_grid([
-                        paint_glyph.local_position[0] + cursor_x,
-                        paint_glyph.local_position[1] + cursor_y,
-                    ]);
-                    let next_cull_key = (position, paint_glyph.size);
-                    if cull_key != Some(next_cull_key) {
-                        foreground_visible = glyph_intersects_clip(
-                            position,
-                            paint_glyph.size,
-                            req.clip_rect,
-                        );
-                        shadow_visible = shadow.is_some_and(|shadow| {
-                            shadow_intersects_clip(
-                                position,
-                                paint_glyph.size,
-                                shadow,
-                                req.clip_rect,
-                            )
-                        });
-                        cull_key = Some(next_cull_key);
-                    }
-                    let visible = match paint_glyph.kind {
-                        CachedPaintKind::Shadow => shadow_visible,
-                        CachedPaintKind::Foreground => foreground_visible,
-                    };
-                    if !visible {
-                        continue;
-                    }
-
-                    let (color, coverage_exponent) = match paint_glyph.kind {
-                        CachedPaintKind::Shadow => {
-                            let shadow = shadow.expect("cached shadow glyph requires a shadow");
-                            (shadow.color, cached.shadow_coverage_exponent)
-                        }
-                        CachedPaintKind::Foreground => (color, span_coverage_exponent),
-                    };
-                    let instance = GlyphInstance {
-                        position: [
-                            position[0] + paint_glyph.offset[0],
-                            position[1] + paint_glyph.offset[1],
-                        ],
-                        size: paint_glyph.size,
-                        uv_rect: [
-                            paint_glyph.region.x as f32,
-                            paint_glyph.region.y as f32,
-                            (paint_glyph.region.x + paint_glyph.region.width) as f32,
-                            (paint_glyph.region.y + paint_glyph.region.height) as f32,
-                        ],
-                        color,
-                        clip_rect: req.clip_rect,
-                        clip_border_radius: req.clip_border_radius,
-                        skew: paint_glyph.skew,
-                        coverage_exponent,
-                        _pad: [0.0; 2],
-                    };
-
-                    if paint_glyph.color_atlas {
-                        self.color_instances.push(instance);
-                    } else {
-                        self.instances.push(instance);
-                    }
-                }
-
-                cursor_x += cached.advance_x;
-                cursor_y += cached.advance_y;
-            }
-
-            self.request_ranges.push(TextRequestRange {
-                alpha_start,
-                alpha_end: self.instances.len() as u32,
-                color_start,
-                color_end: self.color_instances.len() as u32,
-            });
-        }
-
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), instance_build_started) {
-            profile.instance_build += started.elapsed();
-        }
-
-        // Now that every glyph has been inserted, the atlases have reached
-        // their final dimensions for this frame. Resolve UVs against those
-        // final dimensions so glyphs inserted before a mid-frame `grow()` are
-        // not left referencing stale (smaller) atlas sizes.
-        let (aw, ah) = (self.atlas.width, self.atlas.height);
-        for instance in &mut self.instances {
-            instance.uv_rect = normalize_pixel_uv_rect(instance.uv_rect, aw, ah);
-        }
-        let (cw, ch) = (self.color_atlas.width, self.color_atlas.height);
-        for instance in &mut self.color_instances {
-            instance.uv_rect = normalize_pixel_uv_rect(instance.uv_rect, cw, ch);
-        }
-
-        // Upload both atlases if new glyphs were added.
-        let atlas_upload_started = profile.is_some().then(Instant::now);
-        self.atlas.upload(device, queue);
-        self.color_atlas.upload(device, queue);
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), atlas_upload_started) {
-            profile.atlas_upload += started.elapsed();
-        }
-
-        // Rebuild bind groups only when their atlas texture was recreated (grow).
-        let atlas_gen = self.atlas.generation();
-        if atlas_gen != self.atlas_generation {
-            self.atlas_generation = atlas_gen;
-            self.bind_group = Self::create_bind_group(
-                device,
-                &self.bind_group_layout,
-                &self.viewport_buffer,
-                &self.atlas.view,
-                &self.sampler,
-            );
-        }
-        let color_gen = self.color_atlas.generation();
-        if color_gen != self.color_atlas_generation {
-            self.color_atlas_generation = color_gen;
-            self.color_bind_group = Self::create_bind_group(
-                device,
-                &self.bind_group_layout,
-                &self.viewport_buffer,
-                &self.color_atlas.view,
-                &self.sampler,
-            );
-        }
-        #[cfg(target_os = "android")]
-        let is_srgb_f32 = 2.0_f32;
-        #[cfg(not(target_os = "android"))]
-        let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
-        if self.last_viewport != (width, height) {
-            self.last_viewport = (width, height);
-            queue.write_buffer(
-                &self.viewport_buffer,
-                0,
-                bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
-            );
-        }
-
-        let instance_upload_started = profile.is_some().then(Instant::now);
-        let previous_capacity = self.instance_policy.capacity();
-        self.instance_policy.record_usage(self.instances.len());
-        if self.instance_policy.capacity() != previous_capacity {
-            self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("text instance buffer"),
-                size: (self.instance_policy.capacity() * size_of::<GlyphInstance>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.instance_upload.invalidate();
-        }
-
-        let previous_color_capacity = self.color_instance_policy.capacity();
-        self.color_instance_policy
-            .record_usage(self.color_instances.len());
-        if self.color_instance_policy.capacity() != previous_color_capacity {
-            self.color_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("text color instance buffer"),
-                size: (self.color_instance_policy.capacity() * size_of::<GlyphInstance>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.color_instance_upload.invalidate();
-        }
-
-        let previous_decoration_capacity = self.decoration_instance_policy.capacity();
-        self.decoration_instance_policy
-            .record_usage(self.decoration_instances.len());
-        if self.decoration_instance_policy.capacity() != previous_decoration_capacity {
-            self.decoration_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("text decoration instance buffer"),
-                size: (self.decoration_instance_policy.capacity() * size_of::<DecorationInstance>())
-                    as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.decoration_instance_upload.invalidate();
-        }
-
-        // Upload the instance lists — each in one write, and only when their
-        // bytes differ from what the GPU buffer already holds. Static text is
-        // the common case, and it now costs no upload at all.
-        self.instance_upload
-            .upload(queue, &self.instance_buffer, &self.instances);
-        self.color_instance_upload
-            .upload(queue, &self.color_instance_buffer, &self.color_instances);
-        self.decoration_instance_upload.upload(
-            queue,
-            &self.decoration_instance_buffer,
-            &self.decoration_instances,
-        );
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), instance_upload_started) {
-            profile.instance_upload += started.elapsed();
-        }
-        if self.postponed_preparation {
-            // A partial ahead-of-view prepare is deliberately not cacheable:
-            // the next identical frame must be allowed to continue the
-            // deferred work rather than reusing only the visible prefix.
-            self.prepared_frame = None;
-        } else {
-            self.prepared_frame = Some(PreparedFrameCache::new(
-                width,
-                height,
-                is_srgb,
-                self.atlas.generation(),
-                self.color_atlas.generation(),
-                FontRegistry::revision(),
-                requests,
-                decorations,
-            ));
-            self.prepared_frame_generation = self.frame_generation;
-        }
-        if let (Some(profile), Some(started)) = (profile.as_deref_mut(), profile_started) {
-            profile.total = started.elapsed();
-        }
-    }
-
-    /// How many glyph quads the last [`prepare`] committed for drawing, as
-    /// `(alpha, color)` counts.
-    ///
-    /// Diagnostics: lets tests and tooling observe how much of a frame's text
-    /// actually reached the instance buffers — a request that cannot show a
-    /// pixel must contribute zero.
-    ///
-    /// [`prepare`]: TextPipelineV2::prepare
-    pub fn frame_glyph_instances(&self) -> (usize, usize) {
-        (self.instances.len(), self.color_instances.len())
-    }
-
-    /// How many positioned layouts the cache currently holds.
-    ///
-    /// Diagnostics: lets tests and tooling observe how layout work scales —
-    /// a resize that wraps nothing must reuse its layouts instead of minting
-    /// a fresh set per width.
-    pub fn layout_cache_entries(&self) -> usize {
-        self.layout_cache.len()
-    }
-
-    /// Returns the source-aware layout retained for a prepared text span.
-    ///
-    /// The layout is available after [`prepare`](Self::prepare) has committed
-    /// the span. It is borrowed from the same cache entry the renderer reads,
-    /// so caret, hit-test, and selection consumers observe the renderer's
-    /// shaped advances and wrapping decisions. A missing result means the span
-    /// has not been prepared yet or was evicted.
-    #[allow(clippy::too_many_arguments)]
-    pub fn interaction_layout(
-        &self,
-        text: &str,
-        font_size: f32,
-        bounds_width: f32,
-        font_family: FontFamily,
-        font_style: FontStyle,
-        font_weight: u16,
-        language: Option<TextLanguage>,
-    ) -> Option<&TextInteractionLayout> {
-        self.interaction_layout_with_writing_mode(
-            text,
-            font_size,
-            bounds_width,
-            0.0,
-            font_family,
-            font_style,
-            font_weight,
-            language,
-            TextWritingMode::HorizontalTb,
         )
     }
 
-    /// Returns source-aware geometry for a prepared horizontal or vertical
-    /// span. Vertical callers must pass the same `bounds_height` used by the
-    /// corresponding [`TextDrawRequest`].
-    #[allow(clippy::too_many_arguments)]
-    pub fn interaction_layout_with_writing_mode(
-        &self,
-        text: &str,
-        font_size: f32,
-        bounds_width: f32,
-        bounds_height: f32,
-        font_family: FontFamily,
-        font_style: FontStyle,
-        font_weight: u16,
-        language: Option<TextLanguage>,
-        writing_mode: TextWritingMode,
-    ) -> Option<&TextInteractionLayout> {
-        let text: Arc<str> = Arc::from(text);
-        let keys = span_layout_keys_with_writing_mode(
-            &self.shaping_cache,
-            &text,
-            font_size,
-            font_family,
-            font_style,
-            font_weight,
-            language,
-            bounds_width,
-            if writing_mode.is_vertical() {
-                bounds_height
-            } else {
-                0.0
-            },
-            writing_mode,
+    /// Backend-driven equivalent of [`TextPipelineV2::flush_atlas`].
+    ///
+    /// Uploads any pending atlas changes and rebuilds the bind groups if
+    /// either atlas texture was reallocated (generation changed).
+    pub fn flush_atlas(&mut self, backend: &B) {
+        self.atlas.upload(backend);
+        self.color_atlas.upload(backend);
+
+        let atlas_gen = self.atlas.generation();
+        if atlas_gen != self.atlas_generation {
+            self.atlas_generation = atlas_gen;
+            self.bind_group = Self::create_bind_group(
+                backend,
+                &self.bind_group_layout,
+                &self.viewport_buffer,
+                &self.atlas.view,
+                &self.sampler,
+            );
+        }
+
+        let color_gen = self.color_atlas.generation();
+        if color_gen != self.color_atlas_generation {
+            self.color_atlas_generation = color_gen;
+            self.color_bind_group = Self::create_bind_group(
+                backend,
+                &self.bind_group_layout,
+                &self.viewport_buffer,
+                &self.color_atlas.view,
+                &self.sampler,
+            );
+        }
+    }
+
+    /// Backend-driven viewport-uniform write.
+    ///
+    /// Writes `[width, height, is_srgb, 0.0]` to the viewport buffer through
+    /// [`GpuBackend::write_buffer`], skipping the write when the viewport
+    /// size is unchanged since the last call (mirrors the `last_viewport`
+    /// gate inside the concrete [`TextPipelineV2::prepare_inner`]).
+    pub fn write_viewport(
+        &mut self,
+        backend: &B,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+    ) {
+        if self.last_viewport == (width, height) {
+            return;
+        }
+        self.last_viewport = (width, height);
+        let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
+        backend.write_buffer(
+            &self.viewport_buffer,
+            0,
+            bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
         );
-        self.layout_cache
-            .interaction_with_fallback(&keys.primary, keys.fallback.as_ref())
     }
 
-    pub fn instance_buffer_bytes(&self) -> u64 {
-        (self.instance_policy.capacity() * size_of::<GlyphInstance>()) as u64
-            + (self.color_instance_policy.capacity() * size_of::<GlyphInstance>()) as u64
-            + (self.decoration_instance_policy.capacity() * size_of::<DecorationInstance>()) as u64
-    }
-
-    pub fn glyph_bitmap_cache_bytes(&self) -> usize {
-        self.rasterizer.bitmap_cache_bytes()
-    }
-
-    pub fn glyph_atlas_bytes(&self) -> u64 {
-        self.atlas.memory_bytes() + self.color_atlas.memory_bytes()
-    }
-
-    pub fn cached_glyph_count(&self) -> usize {
-        self.rasterizer.cached_glyph_count()
-    }
-
-    /// Draw a single text request's glyphs at the current point in the render
-    /// pass: alpha-coverage glyphs first, then color emoji so they ride on top
-    /// of any monochrome glyphs sharing the same line. Drawing per request —
-    /// instead of all text in one final pass — is what lets text obey z-order
-    /// against rects/images (e.g. a `Stack`'s upper layer can now cover text
-    /// belonging to a lower layer). `index` matches the request order passed to
-    /// `prepare`.
-    pub fn render_request(&self, pass: &mut wgpu::RenderPass<'_>, index: usize) {
+    pub fn render_request<'a>(
+        &'a self,
+        pass: &mut B::RenderPass<'a>,
+        index: usize,
+    ) where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::GpuRenderPass;
         let Some(range) = self.request_ranges.get(index) else {
             return;
         };
-
         if range.alpha_end > range.alpha_start {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+            pass.set_vertex_buffer(0, &self.instance_buffer, 0);
             pass.draw(0..6, range.alpha_start..range.alpha_end);
         }
-
         if range.color_end > range.color_start {
             pass.set_pipeline(&self.color_pipeline);
             pass.set_bind_group(0, &self.color_bind_group, &[]);
-            pass.set_vertex_buffer(0, self.color_instance_buffer.slice(..));
+            pass.set_vertex_buffer(0, &self.color_instance_buffer, 0);
             pass.draw(0..6, range.color_start..range.color_end);
         }
     }
 
-    /// Draws one contiguous decoration range at its position in the draw
-    /// stream so it layers with its text. The range retains request order and
-    /// maps each decoration request to one instance, but sets the pipeline and
-    /// vertex buffer only once for the whole range.
-    pub(crate) fn render_decoration_range(
-        &self,
-        pass: &mut wgpu::RenderPass<'_>,
+    pub(crate) fn render_decoration_range<'a>(
+        &'a self,
+        pass: &mut B::RenderPass<'a>,
         start: usize,
         end: usize,
-    ) {
+    ) where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::GpuRenderPass;
         let end = end.min(self.decoration_instances.len());
         if start >= end {
             return;
         }
         pass.set_pipeline(&self.decoration_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_vertex_buffer(0, self.decoration_instance_buffer.slice(..));
+        pass.set_vertex_buffer(0, &self.decoration_instance_buffer, 0);
         pass.draw(0..6, start as u32..end as u32);
     }
 
-    /// Draws a single decoration line (underline/overline/strike) at its
-    /// position in the draw stream. This compatibility wrapper retains the
-    /// old one-line interface for callers outside the renderer.
-    pub fn render_decoration(&self, pass: &mut wgpu::RenderPass<'_>, index: usize) {
-        self.render_decoration_range(pass, index, index.saturating_add(1));
+    /// Whether the last generic render left viewport-ahead text unprepared.
+    #[inline]
+    pub fn has_postponed_preparation(&self) -> bool {
+        self.postponed_preparation
     }
 
-    /// Measure text width using the rasterizer.
-    pub fn measure_text(&mut self, text: &str, font_size: f32) -> f32 {
-        self.rasterizer.measure_text(text, font_size)
+    /// Returns the capacity-backed GPU allocation for text instance buffers.
+    pub fn instance_buffer_bytes(&self) -> u64 {
+        (self.instance_policy.capacity() * size_of::<GlyphInstance>()) as u64
+            + (self.color_instance_policy.capacity() * size_of::<GlyphInstance>()) as u64
+            + (self.decoration_instance_policy.capacity() * size_of::<DecorationInstance>()) as u64
+    }
+
+    /// Returns bytes held by the CPU-side glyph bitmap cache.
+    pub fn glyph_bitmap_cache_bytes(&self) -> usize {
+        self.rasterizer.bitmap_cache_bytes()
+    }
+
+    /// Returns GPU atlas texture bytes.
+    pub fn glyph_atlas_bytes(&self) -> u64 {
+        self.atlas.memory_bytes() + self.color_atlas.memory_bytes()
+    }
+
+    /// Returns the number of cached glyphs.
+    pub fn cached_glyph_count(&self) -> usize {
+        self.rasterizer.cached_glyph_count()
+    }
+
+    /// Returns the number of alpha and color glyph instances prepared last.
+    pub fn frame_glyph_instances(&self) -> (usize, usize) {
+        (self.instances.len(), self.color_instances.len())
+    }
+
+    /// Returns the number of retained layout-cache entries.
+    pub fn layout_cache_entries(&self) -> usize {
+        self.layout_cache.len()
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "wgpu"))]
 mod tests {
     use std::sync::Arc;
 
@@ -3117,6 +1549,190 @@ mod tests {
         assert_eq!(
             DecorationInstance::ATTRIBS[2].offset,
             std::mem::offset_of!(DecorationInstance, color) as u64
+        );
+    }
+
+    // ── Generic backend path (stable backend-generic path) ───────────────────────
+    //
+    // Exercises `TextPipelineV2::new`, `GlyphAtlas::get_or_insert`
+    // / `flush_atlas` (atlas insertion + upload through the backend
+    // trait), and `write_viewport` (viewport uniform write through the
+    // backend trait), then renders the resulting instance through the same
+    // `render_request` the concrete path uses (valid because
+    // `WgpuBackend::RenderPass == wgpu::RenderPass`) and reads back a pixel to
+    // prove the whole chain actually ran on the GPU. Lives here (rather than in
+    // `lib.rs`'s `generic_backend_tests`) because it needs direct access to
+    // private fields (`atlas`, `instances`, `request_ranges`, …) to bypass the
+    // full CPU text-shaping pipeline, which is out of scope for this pass.
+        #[test]
+    fn generic_text_pipeline_renders_opaque_glyph_quad() {
+        use aimer_utils::SyncFuture;
+        use crate::backend::GpuBackend;
+        use crate::backend::wgpu::WgpuBackend;
+        use crate::text_pipeline::glyph_rasterizer::GlyphKey;
+
+        const SIZE: u32 = 64;
+        const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+        let gpu = (|| {
+            let instance = wgpu::Instance::default();
+            let adapter = instance
+                .request_adapter(&wgpu::RequestAdapterOptions::default())
+                .block()
+                .ok()?;
+            adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("cupid text generic-backend device"),
+                    ..Default::default()
+                })
+                .block()
+                .ok()
+        })();
+        let Some((device, queue)) = gpu else {
+            eprintln!("skipping: no GPU adapter available");
+            return;
+        };
+
+        let backend = WgpuBackend::new(device, queue);
+
+        let mut pipeline =
+            super::TextPipelineV2::new(&backend, FORMAT, crate::AntiAlias::Analytic);
+
+        // Insert a fully opaque 8×8 alpha glyph into the atlas and flush it to
+        // the GPU texture through the backend-driven upload path.
+        let key = GlyphKey::new(1, 1, 16.0);
+        let bitmap = vec![255u8; 8 * 8];
+        let region = pipeline
+            .atlas
+            .get_or_insert(&backend, key, 8, 8, &bitmap);
+        pipeline.flush_atlas(&backend);
+        pipeline.write_viewport(&backend, SIZE, SIZE, false);
+
+        let uv_rect = region.uvs(pipeline.atlas.width, pipeline.atlas.height);
+        let instance = GlyphInstance {
+            position: [0.0, 0.0],
+            size: [SIZE as f32, SIZE as f32],
+            uv_rect,
+            color: Rgba8::new(255, 0, 0, 255),
+            // width < 0 disables clipping.
+            clip_rect: [0.0, 0.0, -1.0, 0.0],
+            clip_border_radius: [0.0; 4],
+            skew: 0.0,
+            coverage_exponent: 1.0,
+            _pad: [0.0; 2],
+        };
+        pipeline.instances.push(instance);
+        pipeline.request_ranges.push(super::TextRequestRange {
+            alpha_start: 0,
+            alpha_end: 1,
+            color_start: 0,
+            color_end: 0,
+        });
+        backend.write_buffer(
+            &pipeline.instance_buffer,
+            0,
+            bytemuck::cast_slice(&pipeline.instances),
+        );
+
+        let target = backend.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("text generic test target"),
+            size: wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = backend
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("text generic test pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pipeline.render_request(&mut pass, 0);
+        }
+        backend.queue.submit(Some(encoder.finish()));
+
+        let readback = backend.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("text generic test readback"),
+            size: (SIZE * SIZE * 4) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut copy_encoder = backend
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        copy_encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &target,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(SIZE * 4),
+                    rows_per_image: Some(SIZE),
+                },
+            },
+            wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+        backend.queue.submit(Some(copy_encoder.finish()));
+
+        let slice = readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |result| {
+            result.expect("the readback buffer to map");
+        });
+        backend
+            .device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("the device to finish the readback");
+        let pixels = slice
+            .get_mapped_range()
+            .expect("the mapped readback range")
+            .to_vec();
+        readback.unmap();
+
+        let stride = SIZE as usize * 4;
+        let (cx, cy) = (SIZE as usize / 2, SIZE as usize / 2);
+        let offset = cy * stride + cx * 4;
+        let pixel = [
+            pixels[offset],
+            pixels[offset + 1],
+            pixels[offset + 2],
+            pixels[offset + 3],
+        ];
+        assert_eq!(
+            pixel,
+            [255, 0, 0, 255],
+            "expected the generic backend path to render an opaque red glyph quad, got {pixel:?}"
         );
     }
 }

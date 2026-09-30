@@ -1,9 +1,9 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use aimer::callback::VoidCallback;
-use aimer::gesture::gesture_detector::GestureDetector;
-use aimer::mouse_region::{MouseRegion, PointerState};
+use aimer::input::callback::VoidCallback;
+use aimer::input::gesture::gesture_detector::GestureDetector;
+use aimer::input::mouse_region::{MouseRegion, PointerState};
 use aimer::style::{TextAlign, TextDecoration, TextStyle, Theme, ThemeData};
 use aimer::{
     BuildContext, Color, Row, SizedBox, State, StateUpdater, StatefulWidget, Svg, SvgDocument,

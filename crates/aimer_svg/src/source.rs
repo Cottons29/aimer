@@ -19,6 +19,23 @@ pub enum SvgSource {
     Network(Arc<str>),
 }
 
+fn load_failure_message(source: &SvgSource, error: &str) -> String {
+    let source = match source {
+        SvgSource::Memory(_) => "in-memory SVG",
+        SvgSource::Asset(_) => "SVG asset",
+        SvgSource::File(_) => "SVG file",
+        SvgSource::Network(_) => "network SVG",
+    };
+    format!("SVG load failed for {source}: {error}")
+}
+
+pub(crate) fn report_load_result(source: &SvgSource, state: SvgLoadState) -> SvgLoadState {
+    if let SvgLoadState::Error(error) = &state {
+        aimer_utils::warn!("{}", load_failure_message(source, error));
+    }
+    state
+}
+
 #[derive(Clone)]
 pub enum SvgLoadState {
     Loading,
@@ -103,22 +120,23 @@ impl SvgLoader {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn load_source(source: &SvgSource) -> SvgLoadState {
     let Some(venus) = Venus::current() else {
-        return venus_unavailable();
+        return report_load_result(source, venus_unavailable());
     };
-    let source = source.clone();
-    venus
-        .spawn_blocking(move || load_source_blocking(&source))
-        .await
+    let source_to_load = source.clone();
+    let state = venus
+        .spawn_blocking(move || load_source_blocking(&source_to_load))
+        .await;
+    report_load_result(source, state)
 }
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) async fn load_source(source: &SvgSource) -> SvgLoadState {
-    load_document(load_bytes(source).await)
+    report_load_result(source, load_document(load_bytes(source).await))
 }
 
 fn load_document(bytes: Result<Vec<u8>, String>) -> SvgLoadState {
     match bytes {
-        Ok(bytes) => match SvgDocument::from_svg(bytes) {
+        Ok(bytes) => match SvgDocument::from_svg_for_loader(bytes) {
             Ok(document) => SvgLoadState::Ready(document),
             Err(error) => SvgLoadState::Error(Arc::from(error.to_string())),
         },
@@ -265,6 +283,19 @@ fn js_error(error: wasm_bindgen::JsValue) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn load_failure_message_includes_error_without_dumping_memory_source() {
+        use std::sync::Arc;
+        use super::{SvgSource, load_failure_message};
+
+        let source = SvgSource::Memory(Arc::from(b"<svg>secret bytes</svg>".as_slice()));
+
+        assert_eq!(
+            load_failure_message(&source, "invalid SVG"),
+            "SVG load failed for in-memory SVG: invalid SVG"
+        );
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn memory_source_transitions_from_loading_to_ready() {

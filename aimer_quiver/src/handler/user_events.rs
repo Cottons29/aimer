@@ -26,10 +26,8 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
                 };
                 let result = app.dispatch_element_event(app.cursor_pos, &ev);
                 let handled = result.is_consumed();
-                if let Some(window) = &app.window
-                    && (handled || result.needs_redraw())
-                {
-                    window.request_redraw();
+                if handled || result.needs_redraw() {
+                    app.request_full_redraw();
                 }
             }
         }
@@ -61,10 +59,8 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
                     app.cursor_pos,
                     &ElementEvent::TextEditingDelta(delta),
                 );
-                if let Some(window) = &app.window
-                    && (result.is_consumed() || result.needs_redraw())
-                {
-                    window.request_redraw();
+                if result.is_consumed() || result.needs_redraw() {
+                    app.request_full_redraw();
                 }
             }
         }
@@ -76,24 +72,21 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
                 let ev = shortcut.to_event();
                 let result = app.dispatch_element_event(app.cursor_pos, &ev);
                 let handled = result.is_consumed();
-                if let Some(window) = &app.window
-                    && (handled || result.needs_redraw())
-                {
-                    window.request_redraw();
+                if handled || result.needs_redraw() {
+                    app.request_full_redraw();
                 }
             }
         }
         AimerNativePlatformEvent::FrameReady => {
-            crate::aimer_app::frame_ready_delivered();
+            let kind = crate::aimer_app::frame_ready_delivered();
+            app.note_frame_request(kind);
             if let Some(window) = &app.window {
-                window.request_redraw();
+                crate::aimer_app::with_frame_request_kind(kind, || window.request_redraw());
             }
         }
         AimerNativePlatformEvent::HotReloadCallbackReady => {
             crate::aimer_app::callback_ready_delivered();
-            if let Some(window) = &app.window {
-                window.request_redraw();
-            }
+            app.request_full_redraw();
         }
     }
 }

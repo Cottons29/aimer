@@ -299,7 +299,13 @@ impl Drawable for RawTextWidget {
         let ascent = metrics.ascent;
         let descent = -metrics.descent;
         let x = 0.0;
-        let y = vertical_alignment_baseline(self.text_align, height, metrics.height, ascent);
+        let baseline_offset = ascent + metrics.line_gap * 0.5;
+        let y = vertical_alignment_baseline(
+            self.text_align,
+            height,
+            metrics.height,
+            baseline_offset,
+        );
         let horizontal_align = match self.text_align {
             TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => {
                 TextHorizontalAlign::Left

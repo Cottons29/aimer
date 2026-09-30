@@ -30,6 +30,7 @@ use aimer::{
     Element, EventElement, HeadlessOptions, LayoutElement, Rebuildable, ResolvedSize, Size,
     Vec2d, VisitorElement, Widget,
 };
+use aimer::modal::ModalHost;
 
 const FRAME_WIDTH: u32 = 1_150;
 const FRAME_HEIGHT: u32 = 800;
@@ -235,7 +236,7 @@ fn scrollable_page(child: AnyWidget) -> AnyWidget {
 
 fn headless(
     child: AnyWidget,
-) -> aimer::HeadlessAimerApp<aimer::ModalHost<AnyWidget>> {
+) -> aimer::HeadlessAimerApp<ModalHost<AnyWidget>> {
     AimerApp::start_headless_with(
         scrollable_page(child),
         HeadlessOptions {

@@ -13,7 +13,7 @@ use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 use aimer_events::window::request_animation_frame;
 use aimer_focus::{FocusCandidate, FocusCandidates, FocusManager, FocusNode, FocusTrapId};
-use aimer_rubick::ErasedFrom;
+use aimer_rubick::{ErasedFrom, UiAllocator};
 use smallvec::SmallVec;
 use hashbrown::{HashMap, HashSet};
 
@@ -758,6 +758,24 @@ pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable +
             id: Cell::new(ElementId::next()),
             element: self,
         })
+    }
+
+    /// Erases this element using the supplied application UI allocator.
+    ///
+    /// The resulting retained element keeps its allocation source alive until
+    /// the element is dropped, including when it outlives the allocator scope.
+    #[inline]
+    fn boxed_in(self, allocator: &UiAllocator) -> AnyElement
+    where
+        Self: Sized + 'static,
+    {
+        AnyElement::erase_in(
+            ElementNode {
+                id: Cell::new(ElementId::next()),
+                element: self,
+            },
+            allocator,
+        )
     }
 }
 
@@ -4279,7 +4297,7 @@ mod tests {
 
     use aimer_events::element::{KeyAction, Modifiers, NamedKey};
     use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
-    use aimer_rubick::INLINE_CAPACITY;
+    use aimer_rubick::{INLINE_CAPACITY, UiMemory};
 
     use super::*;
     use crate::focus::FocusTrap;
@@ -4521,6 +4539,16 @@ mod tests {
                 .option_any()
                 .is_some_and(|value| { value.is::<StorageElement<{ INLINE_CAPACITY + 1 }>>() })
         );
+    }
+
+    #[test]
+    fn boxed_in_uses_the_supplied_ui_memory() {
+        let memory = UiMemory::new(2 * 1024 * 1024);
+        let allocator = memory.allocator();
+        let element = StorageElement([0; INLINE_CAPACITY + 1]).boxed_in(&allocator);
+
+        assert!(element.is_heap());
+        assert_eq!(allocator.committed_bytes(), 2 * 1024 * 1024);
     }
 
     struct IdentityLeaf {

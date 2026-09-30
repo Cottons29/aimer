@@ -43,6 +43,33 @@ thread_local! {
     /// made it.
     static THREAD_REDRAW_REQUESTER: RefCell<Option<Rc<dyn Fn()>>> =
         const { RefCell::new(None) };
+    static THREAD_REDRAW_OBSERVER: RefCell<Option<Rc<dyn Fn()>>> =
+        const { RefCell::new(None) };
+}
+
+/// Installs an internal observer for direct redraw requests on this thread.
+#[doc(hidden)]
+pub fn set_thread_redraw_observer<F>(observer: F) -> Option<Rc<dyn Fn()>>
+where
+    F: Fn() + 'static,
+{
+    THREAD_REDRAW_OBSERVER.with(|slot| slot.borrow_mut().replace(Rc::new(observer)))
+}
+
+/// Restores the observer returned by [`set_thread_redraw_observer`].
+#[doc(hidden)]
+pub fn restore_thread_redraw_observer(previous: Option<Rc<dyn Fn()>>) {
+    THREAD_REDRAW_OBSERVER.with(|slot| *slot.borrow_mut() = previous);
+}
+
+/// Notifies the active application's frame scheduler that a window requested a
+/// redraw directly, without going through [`request_animation_frame`].
+#[doc(hidden)]
+pub fn notify_redraw_requested() {
+    let observer = THREAD_REDRAW_OBSERVER.with(|slot| slot.borrow().clone());
+    if let Some(observer) = observer {
+        observer();
+    }
 }
 
 /// Install a redraw requester for the current thread, replacing any previous

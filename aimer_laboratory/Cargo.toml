@@ -12,6 +12,7 @@ force-scalar = ["aimer/force-scalar"]
 # Enable the framework's experimental sparse event-routing path while running
 # the parity and routing benchmarks in `new_event_tree`.
 event-tree-exp = ["aimer/event-tree-exp"]
+wgpu = ["aimer/wgpu"]
 # The before/after benchmark depends on the historical framework revision,
 # which is intentionally not part of this checkout.
 legacy-benchmark = []
@@ -19,6 +20,10 @@ legacy-benchmark = []
 [[example]]
 name = "production_widget_benchmark"
 required-features = ["legacy-benchmark"]
+
+[[test]]
+name = "compositor_gpu_e2e"
+required-features = ["wgpu"]
 
 [dependencies]
 aimer_rubick.workspace = true

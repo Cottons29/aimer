@@ -2,11 +2,18 @@
 
 mod erase;
 mod operations;
+mod page_backend;
 mod pool;
 mod storage;
+mod ui_memory;
+pub mod shared;
 pub mod test;
 
-use std::alloc::Layout;
+pub use allocator_api2;
+pub use crate::ui_memory::{UiAllocator, UiMemory};
+pub use crate::shared::{RcProjectExt, ShareRef, Shared, Weak};
+
+use std::alloc::{Layout, handle_alloc_error};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
@@ -45,8 +52,8 @@ pub const INLINE_ALIGNMENT: usize = align_of::<*mut u8>();
 ///
 /// `Rubick<T, WORDS>` exclusively owns one concrete value. If the concrete
 /// storage type fits `WORDS` machine words and [`INLINE_ALIGNMENT`], the value
-/// is embedded in the owner. Otherwise `Rubick` takes one block from a
-/// thread-local pool sized for the concrete layout.
+/// is embedded in the owner. Otherwise `Rubick` takes one block from the
+/// active application UI heap or, outside an app scope, the thread-local pool.
 ///
 /// # Representation
 ///
@@ -99,7 +106,7 @@ pub const INLINE_ALIGNMENT: usize = align_of::<*mut u8>();
 ///
 /// The owner is conservatively `!Send` and `!Sync`: after concrete type
 /// erasure, its operation table cannot express all auto traits of the hidden
-/// value, and the payload pool is thread local.
+/// value, and UI allocations are confined to their owning thread.
 pub struct Rubick<T: ?Sized + 'static, const WORDS: usize = DEFAULT_WORDS> {
     storage: InlineStorage<WORDS>,
     operations: &'static Operations<T>,
@@ -110,7 +117,8 @@ impl<T: 'static> Rubick<T, DEFAULT_WORDS> {
     /// Creates an owner for a sized value at the default capacity.
     ///
     /// The value is stored inline when both its size and alignment fit
-    /// [`INLINE_CAPACITY`]. Otherwise this method takes one pooled heap block.
+    /// [`INLINE_CAPACITY`]. Otherwise this method takes one block from the
+    /// active UI heap or thread-local pool.
     /// Zero-sized values are always inline when their alignment fits.
     ///
     /// This constructor deliberately fixes the capacity so that `Rubick::new`
@@ -131,6 +139,16 @@ impl<T: 'static> Rubick<T, DEFAULT_WORDS> {
     #[inline]
     pub fn new(value: T) -> Self {
         Self::from_parts(value, IdentityTable::<T, DEFAULT_WORDS>::REF)
+    }
+
+    /// Creates an owner whose heap fallback uses `allocator`.
+    ///
+    /// Inline values remain allocation-free. Heap blocks retain the allocator
+    /// that created them, so the owner may outlive the call and the allocator
+    /// scope used during construction.
+    #[inline]
+    pub fn new_in(value: T, allocator: &UiAllocator) -> Self {
+        allocator.scope(|| Self::new(value))
     }
 }
 
@@ -183,6 +201,18 @@ impl<T: ?Sized + 'static, const WORDS: usize> Rubick<T, WORDS> {
         T: ErasedFrom<U>,
     {
         Self::from_parts(value, ErasedTable::<U, T, WORDS>::REF)
+    }
+
+    /// Creates an erased owner whose heap fallback uses `allocator`.
+    ///
+    /// The allocation remains associated with this allocator after the
+    /// construction scope ends. Inline values do not request memory from it.
+    #[inline]
+    pub fn erase_in<U: 'static>(value: U, allocator: &UiAllocator) -> Self
+    where
+        T: ErasedFrom<U>,
+    {
+        allocator.scope(|| Self::erase(value))
     }
 
     /// Creates an owner and explicitly projects its concrete value to `T`.
@@ -330,16 +360,22 @@ impl<T: ?Sized + 'static, const WORDS: usize> Rubick<T, WORDS> {
         );
 
         let operations = self.operations;
+        let base = if operations.inline {
+            None
+        } else {
+            // SAFETY: Heap mode initialized the first storage word with the
+            // header pointer returned by `allocate_rubick`.
+            Some(unsafe { NonNull::new_unchecked(self.storage.pointer()) })
+        };
         let data = self.data_mut();
         // From here the owner owns storage rather than a value, so its own
         // destructor is a no-op and cannot reach the moved-out payload.
         self.operations = Operations::VACANT_REF;
 
         let block = PooledBlock {
-            data,
-            layout: operations.layout,
+            base,
+            layout: operations.heap_layout,
             heap_class: operations.heap_class,
-            pooled: !operations.inline,
         };
         // SAFETY: `self` is owned here, so no other borrow of the payload
         // exists, and the projection describes the value stored at `data`.
@@ -393,9 +429,12 @@ impl<T: ?Sized + 'static, const WORDS: usize> Rubick<T, WORDS> {
         let destination = if operations.inline {
             owner.storage.as_mut_ptr()
         } else {
-            let block = pool::allocate(operations.heap_class, operations.layout);
+            let layout = operations
+                .heap_layout
+                .unwrap_or_else(|| handle_alloc_error(operations.layout));
+            let block = pool::allocate_rubick(operations.heap_class, layout);
             owner.storage.set_pointer(block);
-            block.as_ptr()
+            pool::heap_data_pointer(block.as_ptr(), operations.heap_data_offset)
         };
         // SAFETY: `operations` was built for `U`, so it selected a destination
         // with `U`'s size and alignment. The destination is uninitialized and
@@ -406,6 +445,13 @@ impl<T: ?Sized + 'static, const WORDS: usize> Rubick<T, WORDS> {
 
     fn replace_parts<U: 'static>(&mut self, value: U, operations: &'static Operations<T>) {
         let previous = self.operations;
+        let previous_base = if previous.inline {
+            None
+        } else {
+            // SAFETY: Heap mode initialized the first storage word with the
+            // header pointer returned by `allocate_rubick`.
+            Some(unsafe { NonNull::new_unchecked(self.storage.pointer()) })
+        };
         let data = self.data_mut();
         // A vacant table keeps the owner droppable while no value is stored,
         // so a panicking destructor cannot lead to a second drop.
@@ -414,6 +460,7 @@ impl<T: ?Sized + 'static, const WORDS: usize> Rubick<T, WORDS> {
         unsafe { (previous.drop_in_place)(data) };
 
         let reusable = !previous.inline
+            && !operations.inline
             && pool::reuses(
                 previous.heap_class,
                 operations.heap_class,
@@ -421,34 +468,37 @@ impl<T: ?Sized + 'static, const WORDS: usize> Rubick<T, WORDS> {
                     && previous.layout.align() == operations.layout.align(),
             );
         let destination = if operations.inline {
-            if !previous.inline {
-                // SAFETY: The block came from the pool with `previous`'s class
-                // and layout, and its value has just been destroyed.
-                unsafe {
-                    pool::deallocate(
-                        NonNull::new_unchecked(data),
-                        previous.heap_class,
-                        previous.layout,
-                    )
-                };
+            if let Some(base) = previous_base {
+                let layout = previous
+                    .heap_layout
+                    .unwrap_or_else(|| handle_alloc_error(previous.layout));
+                // SAFETY: The block came from the pool or UI allocator with
+                // `previous`'s recorded block layout and is now empty.
+                unsafe { pool::deallocate_rubick(base, previous.heap_class, layout) };
             }
             self.storage.as_mut_ptr()
         } else if reusable {
-            data
+            // Both layouts share a pooled class (whose payload offset is 16)
+            // or are identical unpooled layouts, so the block can be reused.
+            pool::heap_data_pointer(
+                previous_base.expect("heap reuse requires the previous block").as_ptr(),
+                operations.heap_data_offset,
+            )
         } else {
-            if !previous.inline {
-                // SAFETY: As above; the old block is no longer referenced.
-                unsafe {
-                    pool::deallocate(
-                        NonNull::new_unchecked(data),
-                        previous.heap_class,
-                        previous.layout,
-                    )
-                };
+            if let Some(base) = previous_base {
+                let layout = previous
+                    .heap_layout
+                    .unwrap_or_else(|| handle_alloc_error(previous.layout));
+                // SAFETY: The old payload is destroyed and its origin header
+                // identifies the allocator that owns this block.
+                unsafe { pool::deallocate_rubick(base, previous.heap_class, layout) };
             }
-            let block = pool::allocate(operations.heap_class, operations.layout);
+            let layout = operations
+                .heap_layout
+                .unwrap_or_else(|| handle_alloc_error(operations.layout));
+            let block = pool::allocate_rubick(operations.heap_class, layout);
             self.storage.set_pointer(block);
-            block.as_ptr()
+            pool::heap_data_pointer(block.as_ptr(), operations.heap_data_offset)
         };
         // SAFETY: The destination has `U`'s size and alignment and currently
         // holds no value.
@@ -461,8 +511,10 @@ impl<T: ?Sized + 'static, const WORDS: usize> Rubick<T, WORDS> {
         if self.operations.inline {
             self.storage.as_ptr()
         } else {
-            // SAFETY: Heap mode always initializes the pointer word.
-            unsafe { self.storage.pointer() }
+            // SAFETY: Heap mode initializes the pointer word with the block
+            // header address; its operation table carries the payload offset.
+            let base = unsafe { self.storage.pointer() };
+            pool::heap_data_pointer(base, self.operations.heap_data_offset)
         }
     }
 
@@ -471,8 +523,10 @@ impl<T: ?Sized + 'static, const WORDS: usize> Rubick<T, WORDS> {
         if self.operations.inline {
             self.storage.as_mut_ptr()
         } else {
-            // SAFETY: Heap mode always initializes the pointer word.
-            unsafe { self.storage.pointer() }
+            // SAFETY: Heap mode initializes the pointer word with the block
+            // header address; its operation table carries the payload offset.
+            let base = unsafe { self.storage.pointer() };
+            pool::heap_data_pointer(base, self.operations.heap_data_offset)
         }
     }
 }
@@ -482,25 +536,21 @@ impl<T: ?Sized + 'static, const WORDS: usize> Rubick<T, WORDS> {
 /// [`Rubick::take`] holds one of these across the caller-supplied move, so the
 /// block is recycled even when that move unwinds.
 struct PooledBlock {
-    data: *mut u8,
-    layout: Layout,
+    base: Option<NonNull<u8>>,
+    layout: Option<Layout>,
     heap_class: u8,
-    pooled: bool,
 }
 
 impl Drop for PooledBlock {
     #[inline]
     fn drop(&mut self) {
-        if self.pooled {
-            // SAFETY: The block came from the pool with this exact class and
-            // layout, and its value has been moved out by the consumer.
-            unsafe {
-                pool::deallocate(
-                    NonNull::new_unchecked(self.data),
-                    self.heap_class,
-                    self.layout,
-                )
-            };
+        if let Some(base) = self.base {
+            let layout = self
+                .layout
+                .expect("a heap block always has a combined allocation layout");
+            // SAFETY: The block's payload was moved out, and its operation
+            // table supplied the exact layout and pool class used at creation.
+            unsafe { pool::deallocate_rubick(base, self.heap_class, layout) };
         }
     }
 }
@@ -556,13 +606,15 @@ impl<T: ?Sized + 'static, const WORDS: usize> Drop for Rubick<T, WORDS> {
         // an owner is dropped once, so the value is destroyed once.
         unsafe { (operations.drop_in_place)(data) };
         if !operations.inline {
-            // SAFETY: The block came from the pool with this exact class and
-            // layout, and its value has just been destroyed.
+            // SAFETY: The payload is destroyed and its header identifies the
+            // pool or UI allocator that owns the combined block.
             unsafe {
-                pool::deallocate(
-                    NonNull::new_unchecked(data),
+                pool::deallocate_rubick(
+                    NonNull::new_unchecked(self.storage.pointer()),
                     operations.heap_class,
-                    operations.layout,
+                    operations
+                        .heap_layout
+                        .unwrap_or_else(|| handle_alloc_error(operations.layout)),
                 )
             };
         }

@@ -72,6 +72,20 @@ wgpu.workspace = true
 winit.workspace = true
 
 [features]
+default = ["native", "web"]
+# Enables the platform's native backend dependencies. Backend selection is
+# determined by target cfgs, not by this feature.
+native = ["aimer_quiver/native", "aimer_cupid/native"]
+wgpu = ["aimer_quiver/wgpu"]
+# Enables the direct browser WebGPU/WebGL2 APIs. Target cfgs select the browser
+# path; WebGPU is tried first and WebGL2 is the initialization fallback.
+web = ["aimer_quiver/web", "aimer_cupid/web"]
+# Deprecated feature forwards kept only because the untouched Jaime workspace
+# manifest still requests these names. They enable dependency groups; target
+# cfgs select the actual backend.
+metal = ["native"]
+dx12 = ["native"]
+webgl = ["web"]
 markdown = []
 # Experimental sparse event routing. Disabled by default while parity and
 # performance are evaluated against the general element-tree dispatcher.
@@ -105,8 +119,10 @@ force-scalar = ["aimer_flex/force-scalar"]
 # Present frames from a dedicated raster thread. Off by default — see the
 # feature notes in `aimer_quiver/Cargo.toml`.
 raster-thread = ["aimer_quiver/raster-thread"]
+
 # Collect the per-frame build / encode / present breakdown.
 frame-stats = ["aimer_quiver/frame-stats"]
+# Present the native Quiver window through Cupid's direct Metal backend.
 # Compile ordinary widgets through the hidden portable guest conversion path.
 # Generated shadow applications enable this feature; native applications do not.
 portable-guest = [
@@ -132,10 +148,14 @@ portable-guest = [
 ]
 # Compile the native development host with the authenticated reload listener.
 # The CLI enables this only for `aimer +nightly run -Z hot-reload`.
-wasm-hot-reload = ["aimer_quiver/wasm-hot-reload"]
+wasm-hot-reload = ["aimer_quiver/wasm-hot-reload", "aimer_macro/hot-reload"]
 # Highlight fenced code blocks with the tree-sitter backed `arborium` instead
 # of the lightweight `synoptic` default. Better highlighting, heavier build.
 markdown-arborium = ["aimer_markdown/arborium"]
+
+[[test]]
+name = "glass_backdrop"
+required-features = ["wgpu"]
 
 [workspace]
 resolver = "3"
@@ -198,10 +218,14 @@ members = [
 ]
 
 [workspace.dependencies]
-aimer_cupid = { path = "aimer_cupid" }
+allocator-api2 = "0.2.21"
+dlmalloc = "0.2.14"
+libc = "0.2.189"
+windows-sys = { version = "0.61.2", features = ["Win32_System_Memory", "Win32_System_SystemInformation"] }
+aimer_cupid = { path = "aimer_cupid", default-features = false, features = ["apple-core-text", "native"] }
 aimer_rubick = { path = "aimer_rubick" }
 aimer_venus = { path = "aimer_venus" }
-aimer_quiver = { path = "aimer_quiver" }
+aimer_quiver = { path = "aimer_quiver", default-features = false }
 aimer_canvas = { path = "crates/aimer_canvas" }
 aimer_animation = { path = "crates/aimer_animation" }
 aimer_input = { path = "crates/aimer_input" }
@@ -264,6 +288,8 @@ url = "2.5.8"
 serde = { version = "1.0.228", features = ["default", "derive"] }
 serde_json = "1.0.150"
 wgpu = { version = "30.0.0", features = ["gles", "webgl", "web"] }
+ash = "0.38.0"
+ash-window = "0.13.0"
 image = { version = "0.25.10", default-features = false }
 reqwest = { version = "0.13.4", default-features = false, features = ["native-tls", "http2"] }
 ureq = { version = "3.4.2", default-features = false, features = ["native-tls"] }
@@ -271,8 +297,6 @@ openssl = { version = "0.10.81", features = ["vendored"] }
 uuid = { version = "1.23.5", features = ["js", "v4", "serde"] }
 dirs = "6.0.0"
 webbrowser = "1.2.4"
-lyon = "1.0.19"
-usvg = { version = "0.47.0", default-features = false }
 naga = { version = "30.0.0", features = ["wgsl-in"] }
 
 # Markdown - Optinal Feature
@@ -321,11 +345,27 @@ ndk-context = "0.1.1"
 objc = { version = "0.2.7" }
 muda = "0.19.3"
 objc2-ui-kit = "0.3.2"
-objc2-app-kit = "0.3.2"
+objc2-app-kit = { version = "0.3.2", default-features = false }
 objc2 = "0.6.4"
 objc2-core-text = { version = "0.3.2", default-features = false }
 objc2-core-foundation = { version = "0.3.2", default-features = false }
 objc2-core-graphics = { version = "0.3.2", default-features = false }
+objc2-foundation = { version = "0.3.2", default-features = false }
+# Cupid's native Metal backend. Default features are off because they drag in
+# dispatch2 and every MTL4* module; member crates opt into the specific
+# MTL* submodules they need, mirroring wgpu-hal's own selection.
+objc2-metal = { version = "0.3.2", default-features = false }
+objc2-quartz-core = { version = "0.3.2", default-features = false }
+# Opt-in native Direct3D 12 bindings used by Cupid and Quiver on Windows.
+windows = { version = "0.62.2", default-features = false, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Direct3D_Fxc",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_Threading",
+] }
 
 # Aimer cli dependencies
 

@@ -1,4 +1,4 @@
-# Aimer
+f# Aimer
 
 <div align="center">
 
@@ -10,10 +10,9 @@
 
 [Getting Started](#getting-started) •
 [Architecture](#architecture) •
-[Features](#key-features) •
 [Platform Support](#platform-support) •
+[Features](#key-features) •
 [Showcase](#running-the-showcase) •
-[Documentation](#documentation)
 
 </div>
 
@@ -24,8 +23,10 @@
 **Aimer** is a cross-platform GUI framework inspired by the declarative, composable widget tree architecture, engineered
 from the ground up for Rust's zero-cost abstractions, strict ownership model, and concurrent execution guarantees.
 
-Unlike web-wrapper frameworks or heavyweight browser runtimes, Aimer renders directly through its custom
-hardware-accelerated 2D vector and typography engine (**Cupid**) atop **wgpu**, driven by a frame-budget-aware async UI
+Aimer renders directly through its custom
+hardware-accelerated 2D vector and typography engine (**Cupid**) on pluggable GPU backends. Native defaults use Metal on
+Apple platforms, Direct3D 12 on Windows, and Vulkan with OpenGL fallback on Linux and Android. Browser builds try WebGPU
+first and fall back to WebGL2. Rendering is driven by a frame-budget-aware async UI
 scheduler (**Venus**) and small-object optimized memory buffers (**Rubick**).
 
 ### Core Philosophy
@@ -39,6 +40,21 @@ scheduler (**Venus**) and small-object optimized memory buffers (**Rubick**).
 - **Self-Implemented Typography & 2D Vector Engine:** 100% self-contained text rendering and vector rasterization inside
   `Cupid` without any third-party dependencies—featuring an in-house TrueType/OpenType parser, complex script shaper
   (GSUB/GPOS), and subpixel curve rasterizer.
+
+---
+
+## Platform Support
+
+| Platform       | Graphics Backend            |    Status    |
+|:---------------|:----------------------------|:------------:|
+| **macOS**      | Metal                       | ✅ Supported |
+| **iOS**        | Metal                       | ✅ Supported |
+| **Android**    | Vulkan with OpenGL fallback | ✅ Supported |
+| **Web (WASM)** | WebGPU with WebGL2 fallback | ✅ Supported |
+| **Windows**    | Direct3D 12                 | ✅ Supported |
+| **Linux**      | Vulkan with OpenGL fallback | ✅ Supported |
+
+> Aimer provide `wgpu` feature that enables the Wgpu backend instead of native graphic API.
 
 ---
 
@@ -76,12 +92,12 @@ cosmic-text. Its typography engine inside `aimer_cupid` is engineered from scrat
 
 ### Tailored Engine Subsystems
 
-| Subsystem                  | Crate          | Role & Capabilities                                                                                                                                                                                                                                    |
-|:---------------------------|:---------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Rendering & Typography** | `aimer_cupid`  | Fully self-implemented 2D vector renderer and typography engine (pure-Rust font parser, complex script shaper, subpixel curve rasterizer, GPU glyph atlas; zero external text dependencies), gradients, shadow blurs, and glass backdrops atop `wgpu`. |
-| **Async Scheduler**        | `aimer_venus`  | Frame-aligned async runtime managing microtasks, UI animation frame hooks, budgeted idle tasks (e.g. image decoding, background glyph rasterization), and threadpool task offloading (`spawn_blocking`).                                               |
-| **Memory & Pool**          | `aimer_rubick` | Small-object optimization smart pointer (`Rubick<T, WORDS>`) providing inline storage (e.g. 8 words for `AnyWidget`) and thread-local element pooling to prevent heap allocations on hot rebuild paths.                                                |
-| **Window & Shell**         | `aimer_quiver` | Cross-platform window lifecycle, multi-window surface management via `winit` and `wgpu`, dedicated raster thread synchronization, and native macOS custom titlebar integration.                                                                        |
+| Subsystem                  | Crate          | Role & Capabilities                                                                                                                                                                                                                                                                  |
+|:---------------------------|:---------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Rendering & Typography** | `aimer_cupid`  | Fully self-implemented 2D vector renderer and typography engine (pure-Rust font parser, complex script shaper, subpixel curve rasterizer, GPU glyph atlas; zero external text dependencies), gradients, shadow blurs, and glass backdrops on WGPU, direct WebGL2, or browser WebGPU. |
+| **Async Scheduler**        | `aimer_venus`  | Frame-aligned async runtime managing microtasks, UI animation frame hooks, budgeted idle tasks (e.g. image decoding, background glyph rasterization), and threadpool task offloading (`spawn_blocking`).                                                                             |
+| **Memory & Pool**          | `aimer_rubick` | Small-object optimization smart pointer (`Rubick<T, WORDS>`) providing inline storage (e.g. 8 words for `AnyWidget`) and thread-local element pooling to prevent heap allocations on hot rebuild paths.                                                                              |
+| **Window & Shell**         | `aimer_quiver` | Cross-platform window lifecycle, multi-window surface management via `winit` and GPU backend adapters, dedicated raster thread synchronization, and native macOS custom titlebar integration.                                                                                        | |
 
 ### Ergonomic Macro Ecosystem
 
@@ -135,19 +151,6 @@ Supports shell routes, nested route hierarchies, positional or named parameters,
 - **Rich Media & Content:** `MarkdownViewer` (with syntax highlighting), `SvgImage`, `Image`, custom `Canvas2D`.
 - **Theming & Effects:** `ThemeData`, dark/light mode palette transitions, blurred backdrop glass materials
   (`BackdropFilter`), and spring animations.
-
----
-
-## Platform Support
-
-| Platform       | Windowing / Host        | Graphics Backend              |     Status     |
-|:---------------|:------------------------|:------------------------------|:--------------:|
-| **macOS**      | Native Cocoa / `winit`  | Metal (`wgpu`)                |  ✅ Supported  |
-| **iOS**        | UIKit / Native Bridge   | Metal (`wgpu`)                |  ✅ Supported  |
-| **Android**    | NDK / NativeActivity    | Vulkan / OpenGL ES (`wgpu`)   |  ✅ Supported  |
-| **Web (WASM)** | `web-sys` / Canvas      | Canvas 2D / WebGPU            |  ✅ Supported  |
-| **Windows**    | Win32 / `winit`         | Direct3D 12 / Vulkan (`wgpu`) | 🚧 In Progress |
-| **Linux**      | X11 / Wayland / `winit` | Vulkan (`wgpu`)               | 🚧 In Progress |
 
 ---
 
@@ -328,9 +331,18 @@ cargo run --example text_field
 # Multiline text area demo
 cargo run --example text_area
 
-# Web target (requires wasm-pack)
-wasm-pack build --target web website
+# Browser default: WebGPU primary, WebGL2 fallback (omits the `wgpu` crate)
+wasm-pack build --target web --no-default-features --features web website
+
+# Use the wgpu crate instead of target-selected native/browser APIs
+cargo check -p aimer --no-default-features --features wgpu
+wasm-pack build --target web --no-default-features --features wgpu website
 ```
+
+The workspace opts into web-sys's unstable WebGPU bindings for the wasm target
+in `.cargo/config.toml`. Downstream builds that enable `web` must also pass
+`--cfg=web_sys_unstable_apis` for wasm, as described in the
+[wasm-bindgen guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html).
 
 ---
 
@@ -346,7 +358,7 @@ flowchart TD
     WidgetEngine -->|frame & async tasks| Venus[aimer_venus]
     Venus -->|render pass| Quiver[aimer_quiver / Shell]
     Quiver -->|2D drawing & shaping| Cupid[aimer_cupid]
-    Cupid -->|GPU commands| WGPU[wgpu / Hardware Surface]
+    Cupid -->|GPU commands| GPU[WGPU or direct WebGL2]
 ```
 
 ### Workspace Structure
@@ -404,17 +416,6 @@ cargo test -p aimer_flex
 
 # Run the complete workspace test suite
 cargo test --workspace
-```
-
----
-
-## Documentation
-
-The project includes an mdBook guide in `aimer_book/`:
-
-```bash
-cd aimer_book
-mdbook serve --open
 ```
 
 ---

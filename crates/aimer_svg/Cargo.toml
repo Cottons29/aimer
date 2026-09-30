@@ -16,7 +16,6 @@ aimer_widget.workspace = true
 aimer_venus.workspace = true
 crossbeam.workspace = true
 thiserror.workspace = true
-usvg.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq.workspace = true

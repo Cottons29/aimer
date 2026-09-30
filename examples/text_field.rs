@@ -1,4 +1,5 @@
-use aimer::{AimerApp, FocusNode, InputType, TextEditingController, TextField};
+use aimer::input::{input::InputType, input::TextField, TextEditingController};
+use aimer::{AimerApp, FocusNode};
 
 fn main() {
     let controller = TextEditingController::with_text("Aimer");

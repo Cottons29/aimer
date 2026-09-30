@@ -1,16 +1,89 @@
-#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeBackendChoice {
+    Vulkan,
+    OpenGl,
+}
+
+fn choose_native_backend(
+    initialize_vulkan: impl FnOnce() -> bool,
+    initialize_opengl: impl FnOnce() -> bool,
+) -> Option<NativeBackendChoice> {
+    if initialize_vulkan() {
+        Some(NativeBackendChoice::Vulkan)
+    } else if initialize_opengl() {
+        Some(NativeBackendChoice::OpenGl)
+    } else {
+        None
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", any(feature = "wgpu", feature = "web")))]
 mod h5canva;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", any(feature = "wgpu", feature = "web")))]
 pub use h5canva::render_ctx::H5CanvasApi;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "wgpu"))]
 mod wgpu_ctx;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "wgpu"))]
 pub use wgpu_ctx::render_ctx::WgpuApi;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
+mod metal_ctx;
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
+pub use metal_ctx::render_ctx::MetalApi;
+
+#[cfg(all(feature = "native", not(feature = "wgpu"), target_os = "windows"))]
+mod dx12_ctx;
+#[cfg(all(feature = "native", not(feature = "wgpu"), target_os = "windows"))]
+pub use dx12_ctx::render_ctx::Dx12Api;
+
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+mod opengl_ctx;
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+pub use opengl_ctx::render_ctx::OpenGlApi;
+
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+mod native_auto_ctx;
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+pub use native_auto_ctx::NativeAutoApi;
+
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+mod vulkan_ctx;
+#[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
+pub use vulkan_ctx::render_ctx::VulkanApi;
+
+#[cfg(all(feature = "native", not(feature = "wgpu"), feature = "raster-thread", any(target_os = "macos", target_os = "ios")))]
+compile_error!("aimer_quiver's Metal renderer does not support `raster-thread` yet");
+#[cfg(all(feature = "native", not(feature = "wgpu"), feature = "raster-thread", target_os = "windows"))]
+compile_error!("aimer_quiver's DirectX renderer does not support `raster-thread`");
+#[cfg(all(feature = "native", not(feature = "wgpu"), feature = "raster-thread", any(target_os = "linux", target_os = "android")))]
+compile_error!("aimer_quiver's OpenGL renderer does not support `raster-thread`");
+#[cfg(all(feature = "wgpu", feature = "raster-thread", not(target_arch = "wasm32")))]
+compile_error!("the WGPU renderer's custom pipeline trait is not `Send`, so it cannot use `raster-thread`");
+#[cfg(all(target_arch = "wasm32", not(feature = "wgpu"), not(feature = "web")))]
+compile_error!("enable the `web` or `wgpu` feature for wasm rendering");
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "wgpu"), not(feature = "native")))]
+compile_error!("enable the `native` or `wgpu` feature for native rendering");
+#[cfg(all(
+    not(feature = "wgpu"),
+    not(any(
+        all(feature = "native", any(target_os = "macos", target_os = "ios", target_os = "windows", target_os = "linux", target_os = "android")),
+        all(feature = "web", target_arch = "wasm32")
+    ))
+))]
+compile_error!("no default renderer is available for this target");
+
+#[cfg(all(feature = "wgpu", not(target_arch = "wasm32")))]
 pub type AimerRenderContext = WgpuApi;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(feature = "wgpu", target_arch = "wasm32"))]
+pub type AimerRenderContext = H5CanvasApi;
+#[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "macos", target_os = "ios")))]
+pub type AimerRenderContext = MetalApi;
+#[cfg(all(not(feature = "wgpu"), feature = "native", target_os = "windows"))]
+pub type AimerRenderContext = Dx12Api;
+#[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "linux", target_os = "android")))]
+pub type AimerRenderContext = NativeAutoApi;
+#[cfg(all(not(feature = "wgpu"), feature = "web", target_arch = "wasm32"))]
 pub type AimerRenderContext = H5CanvasApi;
 
 /// What happened to a frame the renderer was handed.
@@ -45,6 +118,57 @@ pub enum PresentOutcome {
     /// through the `on_present` callback, which is where a retry or a
     /// first-frame notification has to come from.
     Deferred,
+}
+
+#[cfg(test)]
+mod backend_selection_tests {
+    use std::cell::RefCell;
+
+    use super::{NativeBackendChoice, choose_native_backend};
+
+    #[test]
+    fn native_selection_uses_vulkan_when_it_initializes() {
+        let calls = RefCell::new(Vec::new());
+        let selected = choose_native_backend(
+            || {
+                calls.borrow_mut().push("vulkan");
+                true
+            },
+            || {
+                calls.borrow_mut().push("opengl");
+                true
+            },
+        );
+
+        assert_eq!(selected, Some(NativeBackendChoice::Vulkan));
+        assert_eq!(*calls.borrow(), ["vulkan"]);
+    }
+
+    #[test]
+    fn native_selection_tries_opengl_after_vulkan_failure() {
+        let calls = RefCell::new(Vec::new());
+        let selected = choose_native_backend(
+            || {
+                calls.borrow_mut().push("vulkan");
+                false
+            },
+            || {
+                calls.borrow_mut().push("opengl");
+                true
+            },
+        );
+
+        assert_eq!(selected, Some(NativeBackendChoice::OpenGl));
+        assert_eq!(*calls.borrow(), ["vulkan", "opengl"]);
+    }
+
+    #[test]
+    fn native_selection_reports_failure_when_both_backends_fail() {
+        assert_eq!(
+            choose_native_backend(|| false, || false),
+            None,
+        );
+    }
 }
 
 impl PresentOutcome {

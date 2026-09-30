@@ -3,7 +3,7 @@
 `aimer_rubick` provides [`Rubick<T, WORDS>`](https://docs.rs/aimer_rubick/latest/aimer_rubick/struct.Rubick.html),
 an exclusive owner with small-object optimization. A fitting value is embedded
 inside its `Rubick`; a larger or over-aligned value transparently takes one
-block from a thread-local pool. The crate has no third-party dependency.
+block from a thread-local pool or an application-owned [`UiMemory`] heap.
 
 ## Representation
 
@@ -197,18 +197,57 @@ concrete value and count toward the inline capacity.
 
 ## Heap payloads are pooled and reusable
 
-Heap mode does not call the global allocator on the common path. Blocks come
-from a thread-local free list of size classes (16 to 512 bytes); allocation
-pops a pointer and deallocation pushes it back, both without a lock, and the
-class is resolved once per concrete type in its operation table. The pool is
-sound precisely because `Rubick` is `!Send`: a payload is always freed on the
-thread that allocated it. Layouts that no class can serve fall through to the
-global allocator with their exact layout.
+Outside an application UI allocation scope, blocks come from a thread-local
+free list of size classes. Inside a scope, Rubick blocks use that application's
+independent `dlmalloc` heap. Its page backend requests 2 MiB regions lazily
+from `mmap`/`VirtualAlloc`, or grows WebAssembly linear memory. Heap blocks
+carry a small private header naming their owning allocator; the Rubick owner
+still keeps the same `WORDS + 1` word representation. This lets an owner be
+dropped after its build scope or app has ended without returning memory to the
+wrong pool.
+
+Layouts that do not fit a thread-local size class use their exact layout. The
+UI heap reports allocation errors through `allocator-api2`; infallible Rubick
+constructors fail through Rust's allocation-error handler when that heap limit
+is reached.
 
 `Rubick::replace` builds on the same information. Reconciliation regenerates a
 tree whose nodes usually keep their concrete types, so the replacement normally
 lands in the same size class and the existing block is reused in place — no
 allocator traffic at all, not even a free list operation.
+
+## Application UI memory
+
+`UiMemory` owns one UI heap with a hard limit. Applications can get an
+allocator-aware `Box` or `Vec` from the re-exported `allocator_api2` crate, or
+build a Rubick owner directly in the pool:
+
+```rust
+use aimer_rubick::allocator_api2::{boxed::Box, vec::Vec};
+use aimer_rubick::{Rubick, UiMemory};
+
+let memory = UiMemory::new(32 * 1024 * 1024);
+let allocator = memory.allocator();
+
+let mut values = Vec::new_in(allocator.clone());
+values.extend([2_u64, 3, 5, 7]);
+let label = Box::new_in(*b"Aimer", allocator.clone());
+let owner: Rubick<[u8; 64], 1> = Rubick::erase_in([7; 64], &allocator);
+
+assert_eq!(&*label, b"Aimer");
+assert_eq!(owner[0], 7);
+```
+
+`AimerApp::ui_memory_limit` sets the same limit for the running app. Aimer
+activates its allocator while it builds and rebuilds the retained tree, so
+`AnyWidget::boxed` and `AnyElement::boxed` use the app pool on those paths.
+`BuildContext::ui_allocator` exposes a clone for explicit collections and
+`boxed_in` conversions outside the automatic frame scope.
+
+`UiAllocator::allocate` returns an allocation error at the hard limit. Existing
+infallible Rubick constructors use `handle_alloc_error` and do not fall back to
+the global allocator. On WebAssembly, freed blocks and whole regions are reused
+by later UI pools, while linear memory itself remains at its high-water size.
 
 ```rust
 use aimer_rubick::{ErasedFrom, Rubick};
@@ -255,8 +294,8 @@ an implementor must uphold. The implementation maintains these invariants:
 
 - Inline bytes contain exactly one initialized concrete value whose size and
   alignment fit the buffer.
-- Heap storage comes from the pool with the concrete layout and is returned
-  with the same class and layout.
+- Heap storage includes an origin header and is returned to the same allocator
+  with its complete block layout.
 - Projection, drop, layout, and class are installed for that exact concrete
   storage type.
 - Every borrow derives a fresh pointer from the owner's current storage; a
@@ -267,7 +306,7 @@ an implementor must uphold. The implementation maintains these invariants:
 
 `Rubick` is conservatively neither `Send` nor `Sync`. A projected owner erases
 the concrete type, the operation table cannot express every auto trait of that
-hidden type, and the payload pool is thread local.
+hidden type, and the allocator handles are confined to their owning UI thread.
 
 ## Limitations and non-goals
 

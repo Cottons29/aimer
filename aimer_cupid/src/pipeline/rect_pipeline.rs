@@ -19,7 +19,8 @@ pub struct RectInstance {
     /// Per-side outline width: [top, right, bottom, left]
     pub outline_width: [f32; 4],
     pub outline_color: Rgba8,
-    /// Clip rect: [x, y, width, height]. If width <= 0, no clip is applied.
+    /// Clip rect: [x, y, width, height]. If width < 0, no clip is applied.
+    /// A non-negative width of ~0 fully clips (shader returns alpha 0).
     pub clip_rect: [f32; 4],
     /// Border radius for the clip rect: [top-left, top-right, bottom-right,
     /// bottom-left].
@@ -33,6 +34,7 @@ pub struct RectInstance {
 }
 
 impl RectInstance {
+    #[cfg(feature = "wgpu")]
     const ATTRIBS: [wgpu::VertexAttribute; 13] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
@@ -49,6 +51,7 @@ impl RectInstance {
         12 => Float32x4,
     ];
 
+    #[cfg(feature = "wgpu")]
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: size_of::<RectInstance>() as wgpu::BufferAddress,
@@ -56,155 +59,154 @@ impl RectInstance {
             attributes: &Self::ATTRIBS,
         }
     }
+
+        const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 13] = [
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, position) as u64, shader_location: 0 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, size) as u64, shader_location: 1 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, color) as u64, shader_location: 2 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, border_radius) as u64, shader_location: 3 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, border_width) as u64, shader_location: 4 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, border_color) as u64, shader_location: 5 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, outline_width) as u64, shader_location: 6 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, outline_color) as u64, shader_location: 7 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 8 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 9 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, shadow_params) as u64, shader_location: 10 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Unorm8x4, offset: std::mem::offset_of!(Self, shadow_color) as u64, shader_location: 11 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, shadow_flags) as u64, shader_location: 12 },
+    ];
 }
 
-pub struct RectPipeline {
-    pipeline: wgpu::RenderPipeline,
-    clear_pipeline: wgpu::RenderPipeline,
-    viewport_buffer: wgpu::Buffer,
-    viewport_bind_group: wgpu::BindGroup,
-    instance_buffer: wgpu::Buffer,
+pub struct RectPipeline<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
+    pipeline: B::RenderPipeline,
+    clear_pipeline: B::RenderPipeline,
+    viewport_buffer: B::Buffer,
+    viewport_bind_group: B::BindGroup,
+    instance_buffer: B::Buffer,
     instance_policy: InstanceBufferPolicy,
-    /// Every rect instance of the current frame, in draw order. The vector
-    /// only grows during a frame; each flush records a draw over the tail it
-    /// has not covered yet, and [`end_frame`] uploads the whole thing in one
-    /// `write_buffer` — one staging allocation and one blit per frame instead
-    /// of one per z-order split.
-    ///
-    /// [`end_frame`]: RectPipeline::end_frame
     instances: Vec<RectInstance>,
-    /// Number of instances already covered by recorded draw calls this frame.
-    /// The pipeline may be flushed multiple times per frame (e.g. when an
-    /// image or custom-pipeline command splits the rect stream); each flush
-    /// draws from a distinct region of the shared buffer so no batch aliases
-    /// another.
     frame_instance_offset: usize,
-    /// Skips the frame's single upload when the buffer already holds the
-    /// frame's exact bytes — the common case for a static scene.
     upload: FrameUpload<RectInstance>,
-    /// The `(width, height, is_srgb)` the viewport uniform was last written
-    /// for, so an unchanged viewport costs no upload at all.
+    immediate_uploads: bool,
     last_viewport: Option<(u32, u32, bool)>,
 }
 
-impl RectPipeline {
+
+
+// ── Backend-agnostic generic path ──────────────────────────────────────────
+//
+// Pipeline resources and draw operations use the selected backend's associated types.
+impl<B: crate::backend::GpuBackend> RectPipeline<B> {
     const INITIAL_CAPACITY: usize = 256;
 
+    #[inline]
+    pub fn push(&mut self, instance: RectInstance) {
+        self.instances.push(instance);
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.instances.clear();
+        self.frame_instance_offset = 0;
+        self.immediate_uploads = false;
+    }
+
+    #[inline]
+    pub fn instance_buffer_bytes(&self) -> u64 {
+        (self.instance_policy.capacity() * size_of::<RectInstance>()) as u64
+    }
+
+    /// Creates a rect pipeline through the selected backend.
     pub fn new(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        pipeline_cache: Option<&wgpu::PipelineCache>,
+        backend: &B,
+        format: B::TextureFormat,
         antialiasing: crate::AntiAlias,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("rect shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("./shaders/rect.wgsl").into()),
+        use crate::backend::*;
+
+        let shader = backend.create_shader_module(backend.rect_shader_source(), "rect shader");
+
+        let viewport_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("rect viewport uniform".to_string()),
+            size: 16,
+            usage: vec![BufferUsage::Uniform, BufferUsage::CopyDst],
         });
 
-        let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rect viewport uniform"),
-            size: 16, /* vec2<f32> + padding
-                       * to 16 bytes */
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let bind_group_layout = backend.create_bind_group_layout(&[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: vec![ShaderStage::Vertex, ShaderStage::Fragment],
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }]);
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("rect bind group layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let viewport_bind_group = backend.create_bind_group(
+            &bind_group_layout,
+            &[BindGroupEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
+                resource: BindingResource::Buffer(&viewport_buffer),
             }],
-        });
+        );
 
-        let viewport_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rect viewport bind group"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: viewport_buffer.as_entire_binding(),
-            }],
-        });
+        let pipeline_layout = backend.create_pipeline_layout(&[&bind_group_layout]);
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("rect pipeline layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
+        let vertex_buffers = [Some(VertexBufferLayout {
+            array_stride: size_of::<RectInstance>() as u64,
+            step_mode: VertexStepMode::Instance,
+            attributes: &RectInstance::GENERIC_ATTRIBUTES,
+        })];
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("rect pipeline"),
+        let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("rect pipeline".to_string()),
             layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
+            vertex: VertexState {
                 module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Some(RectInstance::layout())],
-                compilation_options: Default::default(),
+                entry_point: "vs_main",
+                buffers: &vertex_buffers,
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(FragmentState {
                 module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: ColorWriteMask::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
+            primitive: PrimitiveState::default(),
             depth_stencil: None,
             multisample: crate::pipeline::multisample_state(antialiasing),
-            multiview_mask: None,
-            cache: pipeline_cache,
         });
 
-        // A partial repaint first clears its damaged pixels while preserving
-        // the rest of the persistent target. The ordinary rect pipeline uses
-        // alpha blending, so a transparent rect would be a no-op; this twin
-        // pipeline writes the same transparent fragment with replacement.
-        let clear_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("rect clear pipeline"),
+        let clear_pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("rect clear pipeline".to_string()),
             layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
+            vertex: VertexState {
                 module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Some(RectInstance::layout())],
-                compilation_options: Default::default(),
+                entry_point: "vs_main",
+                buffers: &vertex_buffers,
             },
-            fragment: Some(wgpu::FragmentState {
+            fragment: Some(FragmentState {
                 module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
                     format,
                     blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
+                    write_mask: ColorWriteMask::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
+            primitive: PrimitiveState::default(),
             depth_stencil: None,
             multisample: crate::pipeline::multisample_state(antialiasing),
-            multiview_mask: None,
-            cache: pipeline_cache,
         });
 
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rect instance buffer"),
+        let instance_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("rect instance buffer".to_string()),
             size: (Self::INITIAL_CAPACITY * size_of::<RectInstance>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+            usage: vec![BufferUsage::Vertex, BufferUsage::CopyDst],
         });
 
         Self {
@@ -217,34 +219,15 @@ impl RectPipeline {
             instances: Vec::new(),
             frame_instance_offset: 0,
             upload: FrameUpload::new(),
+            immediate_uploads: false,
             last_viewport: None,
         }
     }
 
-    pub fn push(&mut self, instance: RectInstance) {
-        self.instances.push(instance);
-    }
-
-    pub fn clear(&mut self) {
-        self.instances.clear();
-        // A fresh frame starts writing at the beginning of the instance buffer.
-        self.frame_instance_offset = 0;
-    }
-
-    /// Opens a new frame: sizes the instance buffer for `total_rects`, writes
-    /// the viewport uniform when it changed, and resets the per-frame state.
-    ///
-    /// Sizing the buffer up-front — the renderer knows the frame's full rect
-    /// count from its resolved command list — is what lets the whole frame's
-    /// instances travel in a single upload at [`end_frame`]: no flush can ever
-    /// outgrow the buffer mid-pass, so every recorded draw references the same
-    /// buffer the deferred write lands in.
-    ///
-    /// [`end_frame`]: RectPipeline::end_frame
+    /// Starts a frame using the selected backend.
     pub fn begin_frame(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        backend: &B,
         total_rects: usize,
         width: u32,
         height: u32,
@@ -255,24 +238,28 @@ impl RectPipeline {
             .record_usage(self.frame_instance_offset);
         self.instance_policy.grow_to_fit(total_rects);
         if self.instance_policy.capacity() != previous_capacity {
-            self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("rect instance buffer (resized)"),
-                size: (self.instance_policy.capacity() * size_of::<RectInstance>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
+            self.instance_buffer = backend.create_buffer(&crate::backend::BufferDescriptor {
+                label: Some("rect instance buffer (resized)".to_string()),
+                size: (self.instance_policy.capacity() * size_of::<RectInstance>())
+                    as u64,
+                usage: vec![
+                    crate::backend::BufferUsage::Vertex,
+                    crate::backend::BufferUsage::CopyDst,
+                ],
             });
             self.upload.invalidate();
         }
 
-        // Update the viewport uniform only when it actually changed.
-        // On Android, pass 2.0 to signal shaders to skip sRGB conversion entirely.
+        // Match concrete begin_frame: only size the buffer + write viewport.
+        // Queued backends upload instances in end_frame; immediate
+        // backends upload each pending range in flush before drawing it.
         #[cfg(target_os = "android")]
         let is_srgb_f32 = 2.0_f32;
         #[cfg(not(target_os = "android"))]
         let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
         if self.last_viewport != Some((width, height, is_srgb)) {
             self.last_viewport = Some((width, height, is_srgb));
-            queue.write_buffer(
+            backend.write_buffer(
                 &self.viewport_buffer,
                 0,
                 bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
@@ -282,76 +269,67 @@ impl RectPipeline {
         self.clear();
     }
 
-    pub fn instance_buffer_bytes(&self) -> u64 {
-        (self.instance_policy.capacity() * size_of::<RectInstance>()) as u64
+    /// Uploads pending instance data through the selected backend.
+    pub fn end_frame(&mut self, backend: &B) {
+        if self.immediate_uploads {
+            self.upload.mark_uploaded(&self.instances);
+        } else {
+            self.upload
+                .upload(backend, &self.instance_buffer, &self.instances);
+        }
     }
 
-    /// Records a draw call for the rects pushed since the previous flush.
-    ///
-    /// Nothing is uploaded here. The draw references this batch's region of
-    /// the shared instance buffer — batches must not alias, since every
-    /// `write_buffer` is applied on the queue timeline *before* the pass
-    /// executes — and the bytes for all regions land together in
-    /// [`end_frame`]'s single write. A text-heavy frame (rect/text/rect/text
-    /// …) therefore no longer pays a staging allocation and a blit per
-    /// z-order split.
-    ///
-    /// [`end_frame`]: RectPipeline::end_frame
-    pub fn flush(&mut self, pass: &mut wgpu::RenderPass<'_>) {
+    /// Records the pending rectangle batch through the backend render pass.
+    pub fn flush<'a>(&mut self, pass: &mut B::RenderPass<'a>)
+    where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::GpuRenderPass;
         let pending = self.instances.len() - self.frame_instance_offset;
         if pending == 0 {
             return;
         }
-        debug_assert!(
-            self.instances.len() <= self.instance_policy.capacity(),
-            "begin_frame must be told the frame's full rect count"
-        );
-
+        debug_assert!(self.instances.len() <= self.instance_policy.capacity());
         let byte_offset = (self.frame_instance_offset * size_of::<RectInstance>()) as u64;
+        self.immediate_uploads |= pass.write_buffer_before_draw(
+            &self.instance_buffer,
+            byte_offset,
+            bytemuck::cast_slice(&self.instances[self.frame_instance_offset..]),
+        );
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
-        pass.set_vertex_buffer(0, self.instance_buffer.slice(byte_offset..));
+        pass.set_vertex_buffer(0, &self.instance_buffer, byte_offset);
         pass.draw(0..6, 0..pending as u32);
-
         self.frame_instance_offset = self.instances.len();
     }
 
-    /// Records a replacement draw for the pending transparent rects. The
-    /// caller must set a scissor covering the damage before invoking this
-    /// method; the same instance buffer is then reused by the normal blended
-    /// pipeline for the scene replay.
-    pub fn flush_clear(&mut self, pass: &mut wgpu::RenderPass<'_>) {
+    /// Clears the pending damaged rectangle using replacement blending.
+    pub fn flush_clear<'a>(&mut self, pass: &mut B::RenderPass<'a>)
+    where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::GpuRenderPass;
         let pending = self.instances.len() - self.frame_instance_offset;
         if pending == 0 {
             return;
         }
-        debug_assert!(
-            self.instances.len() <= self.instance_policy.capacity(),
-            "begin_frame must be told the clear rect plus frame rect count"
-        );
-
+        debug_assert!(self.instances.len() <= self.instance_policy.capacity());
         let byte_offset = (self.frame_instance_offset * size_of::<RectInstance>()) as u64;
+        self.immediate_uploads |= pass.write_buffer_before_draw(
+            &self.instance_buffer,
+            byte_offset,
+            bytemuck::cast_slice(&self.instances[self.frame_instance_offset..]),
+        );
         pass.set_pipeline(&self.clear_pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
-        pass.set_vertex_buffer(0, self.instance_buffer.slice(byte_offset..));
+        pass.set_vertex_buffer(0, &self.instance_buffer, byte_offset);
         pass.draw(0..6, 0..pending as u32);
-
         self.frame_instance_offset = self.instances.len();
-    }
-
-    /// Uploads the frame's rect instances in a single write, or not at all
-    /// when the buffer already holds these exact bytes (a static frame).
-    ///
-    /// Must run after the frame's flushes and before the queue submit; a
-    /// `write_buffer` issued here is applied before the submitted pass
-    /// executes, so the draws recorded earlier read the fresh data.
-    pub fn end_frame(&mut self, queue: &wgpu::Queue) {
-        self.upload
-            .upload(queue, &self.instance_buffer, &self.instances);
     }
 }
 
-#[cfg(test)]
+/// Helper: convert a wgpu vertex format to the backend-agnostic equivalent.
+#[cfg(all(test, feature = "wgpu"))]
 mod tests {
     use super::RectInstance;
 

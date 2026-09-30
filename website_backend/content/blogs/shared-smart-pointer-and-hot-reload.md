@@ -1,6 +1,6 @@
 # Shared Ownership and Experimental Hot Reload
 
-Two recent Aimer experiments look unrelated at first glance. One adds `Shared<T>`, a small single-threaded smart pointer in `aimer_std`. The other adds a feature-gated hot-reload path that builds a guest WebAssembly module and keeps a native application alive while its widget code changes.
+Two recent Aimer experiments look unrelated at first glance. One adds `Shared<T>`, a small single-threaded smart pointer in `aimer_rubick`, integrated with Rubick's UI memory pool. The other adds a feature-gated hot-reload path that builds a guest WebAssembly module and keeps a native application alive while its widget code changes.
 
 They are connected by one boundary: ownership is useful only when it is explicit about where it ends.
 
@@ -9,7 +9,7 @@ They are connected by one boundary: ownership is useful only when it is explicit
 `Shared<T>` is an owning, reference-counted pointer for code that intentionally stays on one thread. It stores the value and its strong and weak counters in one allocation. Cloning a handle is cheap, and the value is dropped when the final strong handle disappears.
 
 ```rust
-use aimer_std::read_only::Shared;
+use aimer_rubick::Shared;
 
 let state = Shared::new(String::from("Aimer"));
 let another_view = state.clone();
@@ -27,7 +27,7 @@ That choice is different from saying that Aimer cannot do background work. It ca
 A strong `Shared<T>` keeps `T` alive. A `Weak<T>` keeps only the allocation alive and can be upgraded while the value still has a strong owner:
 
 ```rust
-use aimer_std::read_only::{Shared, Weak};
+use aimer_rubick::{Shared, Weak};
 
 let state = Shared::new(42_u32);
 let observer: Weak<u32> = Shared::downgrade(&state);

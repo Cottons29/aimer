@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::ShaderSource;
 
 use super::frame_upload::FrameUpload;
 use crate::utilities::TextureId;
@@ -91,34 +90,6 @@ const fn image_mip_level_count() -> u32 {
     1
 }
 
-fn upload_rgba8(
-    queue: &wgpu::Queue,
-    texture: &wgpu::Texture,
-    width: u32,
-    height: u32,
-    data: &[u8],
-) {
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        data,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * width),
-            rows_per_image: Some(height),
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
-}
-
 pub(crate) struct InstanceBufferPolicy {
     initial_capacity: usize,
     capacity: usize,
@@ -184,6 +155,7 @@ pub struct ImageInstance {
 }
 
 impl ImageInstance {
+    #[cfg(feature = "wgpu")]
     const ATTRIBS: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x2,
@@ -195,6 +167,7 @@ impl ImageInstance {
         7 => Float32,
     ];
 
+    #[cfg(feature = "wgpu")]
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: size_of::<ImageInstance>() as wgpu::BufferAddress,
@@ -202,18 +175,30 @@ impl ImageInstance {
             attributes: &Self::ATTRIBS,
         }
     }
+
+        const GENERIC_ATTRIBUTES: [crate::backend::VertexAttribute; 8] = [
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, position) as u64, shader_location: 0 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, size) as u64, shader_location: 1 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, uv_offset) as u64, shader_location: 2 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x2, offset: std::mem::offset_of!(Self, uv_scale) as u64, shader_location: 3 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_rect) as u64, shader_location: 4 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32x4, offset: std::mem::offset_of!(Self, clip_border_radius) as u64, shader_location: 5 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32, offset: std::mem::offset_of!(Self, alpha) as u64, shader_location: 6 },
+        crate::backend::VertexAttribute { format: crate::backend::VertexFormat::Float32, offset: std::mem::offset_of!(Self, source_premultiplied) as u64, shader_location: 7 },
+    ];
 }
 
-struct TextureEntry {
-    bind_group: wgpu::BindGroup,
+struct TextureEntry<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
+    bind_group: B::BindGroup,
     #[allow(dead_code)]
-    texture: wgpu::Texture,
+    texture: B::Texture,
+    width: u32,
+    height: u32,
     bytes: u64,
     last_used_frame: u64,
-    /// Explicitly addressed textures are owned by the caller and cannot be
-    /// reconstructed by an image source after eviction.
     evictable: bool,
 }
+
 
 const IMAGE_TEXTURE_CACHE_BUDGET_BYTES: u64 = 128 * 1024 * 1024;
 const IMAGE_TEXTURE_IDLE_FRAMES: u64 = 120;
@@ -248,38 +233,30 @@ fn select_texture_evictions(
     evictions
 }
 
-pub struct ImagePipeline {
-    pipeline: wgpu::RenderPipeline,
-    viewport_buffer: wgpu::Buffer,
-    viewport_bind_group: wgpu::BindGroup,
-    texture_bind_group_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
-    textures: HashMap<TextureId, TextureEntry>,
+pub struct ImagePipeline<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
+    pipeline: B::RenderPipeline,
+    viewport_buffer: B::Buffer,
+    viewport_bind_group: B::BindGroup,
+    texture_bind_group_layout: B::BindGroupLayout,
+    sampler: B::Sampler,
+    textures: HashMap<TextureId, TextureEntry<B>>,
     next_id: TextureId,
-    instance_buffer: wgpu::Buffer,
+    instance_buffer: B::Buffer,
     instance_policy: InstanceBufferPolicy,
-    /// Running write offset (in instances) into `instance_buffer` for the
-    /// current frame. Reset by `begin_frame`. Each `draw_batch` draws from a
-    /// distinct region so that multiple image batches within a single render
-    /// pass do not alias the same buffer memory.
     frame_instance_offset: usize,
-    /// Every image instance of the frame, batch after batch, in the exact
-    /// layout the recorded draws expect. Uploaded once by [`end_frame`]
-    /// instead of once per batch.
-    ///
-    /// [`end_frame`]: ImagePipeline::end_frame
     frame_instances: Vec<ImageInstance>,
-    /// Skips the frame's single upload when the buffer already holds the
-    /// frame's exact bytes — the common case for a static scene.
     upload: FrameUpload<ImageInstance>,
-    /// The `(width, height, is_srgb)` the viewport uniform was last written
-    /// for, so an unchanged viewport costs no upload at all.
+    immediate_uploads: bool,
     last_viewport: Option<(u32, u32, bool)>,
-    /// Monotonic frame number used by the image cache's idle-age policy.
     frame_index: u64,
 }
 
-impl ImagePipeline {
+
+
+// ── Backend-agnostic generic path ──────────────────────────────────────────
+//
+// Pipeline resources and uploads use the selected backend's associated types.
+impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
     const INITIAL_CAPACITY: usize = 64;
 
     #[inline]
@@ -300,388 +277,17 @@ impl ImagePipeline {
         }
     }
 
-    pub fn new(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        pipeline_cache: Option<&wgpu::PipelineCache>,
-        antialiasing: crate::AntiAlias,
-    ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("image shader"),
-            source: ShaderSource::Wgsl(Self::get_source().into()),
-        });
-
-        let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("image viewport uniform"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let viewport_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("image viewport layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let viewport_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("image viewport bind group"),
-            layout: &viewport_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: viewport_buffer.as_entire_binding(),
-            }],
-        });
-
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("image texture layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("image pipeline layout"),
-            bind_group_layouts: &[Some(&viewport_layout), Some(&texture_bind_group_layout)],
-            immediate_size: 0,
-        });
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("image pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Some(ImageInstance::layout())],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: crate::pipeline::multisample_state(antialiasing),
-            multiview_mask: None,
-            cache: pipeline_cache,
-        });
-
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("image sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: 4,
-            ..Default::default()
-        });
-
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("image instance buffer"),
-            size: (Self::INITIAL_CAPACITY * size_of::<ImageInstance>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        Self {
-            pipeline,
-            viewport_buffer,
-            viewport_bind_group,
-            texture_bind_group_layout,
-            sampler,
-            textures: HashMap::new(),
-            next_id: 1,
-            instance_buffer,
-            instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
-            frame_instance_offset: 0,
-            frame_instances: Vec::new(),
-            upload: FrameUpload::new(),
-            last_viewport: None,
-            frame_index: 0,
-        }
-    }
-
-    /// Upload RGBA8 image data and return a TextureId.
-    pub fn upload_image(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        width: u32,
-        height: u32,
-        data: &[u8],
-    ) -> TextureId {
-        let id = self.next_id;
-        self.next_id += 1;
-        // The caller owns this generated ID and may not retain the source
-        // bytes, so keep it alongside other explicit uploads.
-        self.upload_image_with_id_internal(device, queue, id, width, height, data, false);
-        id
-    }
-
+    #[inline]
     pub fn has_texture(&self, id: TextureId) -> bool {
         self.textures.contains_key(&id)
     }
 
-    /// Upload RGBA8 image data only if the texture ID does not already exist.
-    /// Returns `true` if a new texture was uploaded, `false` if it already
-    /// existed. Uses a single HashMap lookup instead of `has_texture` +
-    /// `upload_image_with_id`.
-    pub fn upload_if_absent(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        id: TextureId,
-        width: u32,
-        height: u32,
-        data: &[u8],
-    ) -> bool {
-        use std::collections::hash_map::Entry;
-        match self.textures.entry(id) {
-            Entry::Occupied(_) => false,
-            Entry::Vacant(vacant) => {
-                let (width, height, data) = constrain_rgba8(
-                    width,
-                    height,
-                    data,
-                    device.limits().max_texture_dimension_2d,
-                );
-                // Use create_texture + write_texture instead of create_texture_with_data
-                // so the copy is deferred to the GPU timeline (non-blocking).
-                let texture = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("uploaded image"),
-                    size: wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: image_mip_level_count(),
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
-                upload_rgba8(queue, &texture, width, height, data.as_ref());
-
-                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("image bind group"),
-                    layout: &self.texture_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
-                        },
-                    ],
-                });
-
-                vacant.insert(TextureEntry {
-                    bind_group,
-                    texture,
-                    bytes: width as u64 * height as u64 * 4,
-                    last_used_frame: self.frame_index,
-                    evictable: true,
-                });
-                true
-            }
-        }
-    }
-
-    /// Prepare the pipeline for a new frame's image batches.
-    ///
-    /// Resets the per-frame instance write offset, writes the viewport uniform
-    /// once (instead of per batch), and ensures the shared instance buffer is
-    /// large enough to hold *all* image instances of the frame at once.
-    pub fn begin_frame(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        total_instances: usize,
-        width: u32,
-        height: u32,
-        is_srgb: bool,
-    ) {
-        self.frame_index = self.frame_index.saturating_add(1);
-        self.frame_instance_offset = 0;
-        self.frame_instances.clear();
-        let previous_capacity = self.instance_policy.capacity();
-        self.instance_policy.record_usage(total_instances);
-        if self.instance_policy.capacity() != previous_capacity {
-            self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("image instance buffer (resized)"),
-                size: (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.upload.invalidate();
-        }
-
-        // Write the viewport uniform only when it actually changed.
-        #[cfg(target_os = "android")]
-        let is_srgb_f32 = 2.0_f32;
-        #[cfg(not(target_os = "android"))]
-        let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
-        if self.last_viewport != Some((width, height, is_srgb)) {
-            self.last_viewport = Some((width, height, is_srgb));
-            queue.write_buffer(
-                &self.viewport_buffer,
-                0,
-                bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
-            );
-        }
-    }
-
-    pub fn upload_image_with_id(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        id: TextureId,
-        width: u32,
-        height: u32,
-        data: &[u8],
-    ) {
-        self.upload_image_with_id_internal(device, queue, id, width, height, data, false);
-    }
-
-    fn upload_image_with_id_internal(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        id: TextureId,
-        width: u32,
-        height: u32,
-        data: &[u8],
-        evictable: bool,
-    ) {
-        let (width, height, data) = constrain_rgba8(
-            width,
-            height,
-            data,
-            device.limits().max_texture_dimension_2d,
-        );
-        // In-place update if the texture exists and dimensions match.
-        if let Some(entry) = self.textures.get_mut(&id) {
-            let size = entry.texture.size();
-            if size.width == width && size.height == height {
-                upload_rgba8(queue, &entry.texture, width, height, data.as_ref());
-                entry.last_used_frame = self.frame_index;
-                entry.evictable = evictable;
-                return;
-            }
-        }
-
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("uploaded image"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: image_mip_level_count(),
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        upload_rgba8(queue, &texture, width, height, data.as_ref());
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("image bind group"),
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        });
-
-        self.textures.insert(
-            id,
-            TextureEntry {
-                bind_group,
-                texture,
-                bytes: width as u64 * height as u64 * 4,
-                last_used_frame: self.frame_index,
-                evictable,
-            },
-        );
-    }
-
+    #[inline]
     pub fn remove_texture(&mut self, id: TextureId) -> bool {
         self.textures.remove(&id).is_some()
     }
 
-    /// Creates an image bind group for a renderer-owned texture view.
-    ///
-    /// Retained scroll layers use the same sampling shader as ordinary images,
-    /// but their textures are render targets owned by [`Renderer`](crate::renderer::Renderer)
-    /// rather than decoded image-cache entries. Keeping bind-group creation
-    /// here makes both paths share the sampler and layout without registering a
-    /// compositor texture in the evictable image cache.
-    pub(crate) fn create_external_bind_group(
-        &self,
-        device: &wgpu::Device,
-        view: &wgpu::TextureView,
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("retained layer image bind group"),
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        })
-    }
-
+    #[inline]
     pub fn texture_count(&self) -> usize {
         self.textures.len()
     }
@@ -690,12 +296,6 @@ impl ImagePipeline {
         self.textures.values().map(|entry| entry.bytes).sum()
     }
 
-    /// Selects old, reconstructible textures for deferred removal.
-    ///
-    /// Current-frame textures are protected so a large cache cannot evict an
-    /// image while its render pass is still being assembled. Older textures
-    /// are reclaimed after a grace period, and the same candidates are used to
-    /// bring the cache back under its byte budget.
     pub(crate) fn eviction_candidates(&self) -> Vec<TextureId> {
         let entries = self
             .textures
@@ -720,111 +320,491 @@ impl ImagePipeline {
         (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64
     }
 
-    /// Draw a batch of instances with the same texture_id.
+    /// Creates the image pipeline through the selected backend.
     ///
-    /// Nothing is uploaded here: the batch is appended to the frame's CPU-side
-    /// instance list and the recorded draw references its region of the shared
-    /// buffer — each batch a distinct region, since every `write_buffer` is
-    /// applied on the queue timeline *before* the pass executes. The bytes for
-    /// all batches land together in [`end_frame`]'s single write.
+    /// The pipeline uses the backend's GPU operations while keeping image
+    /// handling independent of the concrete graphics API.
+    pub fn new(
+        backend: &B,
+        format: B::TextureFormat,
+        antialiasing: crate::AntiAlias,
+    ) -> Self {
+        use crate::backend::*;
+
+        let shader = backend.create_shader_module(
+            backend.builtin_shader_source(BuiltinShader::Image),
+            "image shader",
+        );
+
+        let viewport_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("image viewport uniform".to_string()),
+            size: 16,
+            usage: vec![BufferUsage::Uniform, BufferUsage::CopyDst],
+        });
+
+        let viewport_layout = backend.create_bind_group_layout(&[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: vec![ShaderStage::Vertex, ShaderStage::Fragment],
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }]);
+
+        let viewport_bind_group = backend.create_bind_group(
+            &viewport_layout,
+            &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::Buffer(&viewport_buffer),
+            }],
+        );
+
+        let texture_bind_group_layout = backend.create_bind_group_layout(&[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: vec![ShaderStage::Fragment],
+                ty: BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: TextureViewDimension::D2,
+                    sample_type: TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: vec![ShaderStage::Fragment],
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+        ]);
+
+        let pipeline_layout = backend.create_pipeline_layout(&[
+            &viewport_layout,
+            &texture_bind_group_layout,
+        ]);
+
+        let vertex_buffers = [Some(VertexBufferLayout {
+            array_stride: size_of::<ImageInstance>() as u64,
+            step_mode: VertexStepMode::Instance,
+            attributes: &ImageInstance::GENERIC_ATTRIBUTES,
+        })];
+
+        let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("image pipeline".to_string()),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &vertex_buffers,
+            },
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: ColorWriteMask::ALL,
+                })],
+            }),
+            primitive: PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: crate::pipeline::multisample_state(antialiasing),
+        });
+
+        let sampler = backend.create_sampler(&SamplerDescriptor {
+            label: Some("image sampler".to_string()),
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            address_mode_w: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mipmap_filter: FilterMode::Linear,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 32.0,
+            compare: None,
+            max_anisotropy: 4,
+        });
+
+        let instance_buffer = backend.create_buffer(&BufferDescriptor {
+            label: Some("image instance buffer".to_string()),
+            size: (Self::INITIAL_CAPACITY * size_of::<ImageInstance>()) as u64,
+            usage: vec![BufferUsage::Vertex, BufferUsage::CopyDst],
+        });
+
+        Self {
+            pipeline,
+            viewport_buffer,
+            viewport_bind_group,
+            texture_bind_group_layout,
+            sampler,
+            textures: HashMap::new(),
+            next_id: 1,
+            instance_buffer,
+            instance_policy: InstanceBufferPolicy::new(Self::INITIAL_CAPACITY),
+            frame_instance_offset: 0,
+            frame_instances: Vec::new(),
+            upload: FrameUpload::new(),
+            immediate_uploads: false,
+            last_viewport: None,
+            frame_index: 0,
+        }
+    }
+
+    /// Starts a frame through the selected backend.
     ///
-    /// [`end_frame`]: ImagePipeline::end_frame
-    pub fn draw_batch(
+    /// Equivalent to [`ImagePipeline::begin_frame`] but routes all GPU
+    /// operations through the backend trait.
+    pub fn begin_frame(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        pass: &mut wgpu::RenderPass<'_>,
-        texture_id: TextureId,
-        instances: &[ImageInstance],
+        backend: &B,
+        total_instances: usize,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
     ) {
-        if instances.is_empty() {
-            return;
+        self.frame_index = self.frame_index.saturating_add(1);
+        self.frame_instance_offset = 0;
+        self.frame_instances.clear();
+        self.immediate_uploads = false;
+        let previous_capacity = self.instance_policy.capacity();
+        self.instance_policy.record_usage(total_instances);
+        if self.instance_policy.capacity() != previous_capacity {
+            self.instance_buffer = backend.create_buffer(&crate::backend::BufferDescriptor {
+                label: Some("image instance buffer (resized)".to_string()),
+                size: (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64,
+                usage: vec![
+                    crate::backend::BufferUsage::Vertex,
+                    crate::backend::BufferUsage::CopyDst,
+                ],
+            });
+            self.upload.invalidate();
         }
 
+        #[cfg(target_os = "android")]
+        let is_srgb_f32 = 2.0_f32;
+        #[cfg(not(target_os = "android"))]
+        let is_srgb_f32 = if is_srgb { 1.0_f32 } else { 0.0 };
+        if self.last_viewport != Some((width, height, is_srgb)) {
+            self.last_viewport = Some((width, height, is_srgb));
+            backend.write_buffer(
+                &self.viewport_buffer,
+                0,
+                bytemuck::cast_slice(&[width as f32, height as f32, is_srgb_f32, 0.0]),
+            );
+        }
+    }
+
+    /// Upload RGBA8 image data through the backend and return a TextureId.
+    ///
+    /// Equivalent to [`ImagePipeline::upload_image`] but routes all GPU
+    /// operations through the backend trait.
+    pub fn upload_image(
+        &mut self,
+        backend: &B,
+        width: u32,
+        height: u32,
+        data: &[u8],
+    ) -> TextureId {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.upload_image_with_id_internal_generic(backend, id, width, height, data, false);
+        id
+    }
+
+    /// Upload RGBA8 image data only if the texture ID does not already exist.
+    ///
+    /// Equivalent to [`ImagePipeline::upload_if_absent`] but routes all GPU
+    /// operations through the backend trait.
+    pub fn upload_if_absent(
+        &mut self,
+        backend: &B,
+        id: TextureId,
+        width: u32,
+        height: u32,
+        data: &[u8],
+    ) -> bool {
+        use std::collections::hash_map::Entry;
+        match self.textures.entry(id) {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(vacant) => {
+                let (width, height, data) = constrain_rgba8(
+                    width,
+                    height,
+                    data,
+                    backend.limits().max_texture_dimension_2d,
+                );
+                let texture = backend.create_texture(&crate::backend::TextureDescriptor {
+                    label: Some("uploaded image".to_string()),
+                    size: (width, height, 1),
+                    mip_level_count: image_mip_level_count(),
+                    sample_count: 1,
+                    dimension: crate::backend::TextureDimension::D2,
+                    format: B::rgba8_unorm_format(),
+                    usage: vec![
+                        crate::backend::TextureUsage::TextureBinding,
+                        crate::backend::TextureUsage::CopyDst,
+                    ],
+                });
+                upload_rgba8(backend, &texture, width, height, data.as_ref());
+
+                let view = backend.create_texture_view(&texture, "uploaded image view");
+                let bind_group = backend.create_bind_group(
+                    &self.texture_bind_group_layout,
+                    &[
+                        crate::backend::BindGroupEntry {
+                            binding: 0,
+                            resource: crate::backend::BindingResource::TextureView(&view),
+                        },
+                        crate::backend::BindGroupEntry {
+                            binding: 1,
+                            resource: crate::backend::BindingResource::Sampler(&self.sampler),
+                        },
+                    ],
+                );
+
+                vacant.insert(TextureEntry {
+                    bind_group,
+                    texture,
+                    width,
+                    height,
+                    bytes: width as u64 * height as u64 * 4,
+                    last_used_frame: self.frame_index,
+                    evictable: true,
+                });
+                true
+            }
+        }
+    }
+
+    /// Upload RGBA8 image data with an explicit TextureId through the backend.
+    ///
+    /// Equivalent to [`ImagePipeline::upload_image_with_id`] but routes all
+    /// GPU operations through the backend trait.
+    pub fn upload_image_with_id(
+        &mut self,
+        backend: &B,
+        id: TextureId,
+        width: u32,
+        height: u32,
+        data: &[u8],
+    ) {
+        self.upload_image_with_id_internal_generic(backend, id, width, height, data, false);
+    }
+
+    /// Internal upload helper using the selected backend.
+    fn upload_image_with_id_internal_generic(
+        &mut self,
+        backend: &B,
+        id: TextureId,
+        width: u32,
+        height: u32,
+        data: &[u8],
+        evictable: bool,
+    ) {
+        let (width, height, data) = constrain_rgba8(
+            width,
+            height,
+            data,
+            backend.limits().max_texture_dimension_2d,
+        );
+        // In-place update if the texture exists and dimensions match.
+        if let Some(entry) = self.textures.get_mut(&id) {
+            if entry.width == width && entry.height == height {
+                upload_rgba8(backend, &entry.texture, width, height, data.as_ref());
+                entry.last_used_frame = self.frame_index;
+                entry.evictable = evictable;
+                return;
+            }
+        }
+
+        let texture = backend.create_texture(&crate::backend::TextureDescriptor {
+            label: Some("uploaded image".to_string()),
+            size: (width, height, 1),
+            mip_level_count: image_mip_level_count(),
+            sample_count: 1,
+            dimension: crate::backend::TextureDimension::D2,
+            format: B::rgba8_unorm_format(),
+            usage: vec![
+                crate::backend::TextureUsage::TextureBinding,
+                crate::backend::TextureUsage::CopyDst,
+            ],
+        });
+        upload_rgba8(backend, &texture, width, height, data.as_ref());
+
+        let view = backend.create_texture_view(&texture, "uploaded image view");
+        let bind_group = backend.create_bind_group(
+            &self.texture_bind_group_layout,
+            &[
+                crate::backend::BindGroupEntry {
+                    binding: 0,
+                    resource: crate::backend::BindingResource::TextureView(&view),
+                },
+                crate::backend::BindGroupEntry {
+                    binding: 1,
+                    resource: crate::backend::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        );
+
+        self.textures.insert(
+            id,
+            TextureEntry {
+                bind_group,
+                texture,
+                width,
+                height,
+                bytes: width as u64 * height as u64 * 4,
+                last_used_frame: self.frame_index,
+                evictable,
+            },
+        );
+    }
+
+    /// Creates an image bind group for a renderer-owned texture view using the
+    /// selected backend.
+    ///
+    /// Equivalent to [`ImagePipeline::create_external_bind_group`] but routes
+    /// bind-group creation through the backend trait.
+    pub fn create_external_bind_group(
+        &self,
+        backend: &B,
+        view: &B::TextureView,
+    ) -> B::BindGroup {
+        backend.create_bind_group(
+            &self.texture_bind_group_layout,
+            &[
+                crate::backend::BindGroupEntry {
+                    binding: 0,
+                    resource: crate::backend::BindingResource::TextureView(view),
+                },
+                crate::backend::BindGroupEntry {
+                    binding: 1,
+                    resource: crate::backend::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        )
+    }
+
+    /// Uploads frame instance data through the selected backend.
+    pub fn end_frame(&mut self, backend: &B) {
+        if self.immediate_uploads {
+            self.upload.mark_uploaded(&self.frame_instances);
+        } else {
+            self.upload
+                .upload(backend, &self.instance_buffer, &self.frame_instances);
+        }
+    }
+
+    pub fn draw_batch<'a>(
+        &mut self,
+        backend: &B,
+        pass: &mut B::RenderPass<'a>,
+        texture_id: TextureId,
+        instances: &[ImageInstance],
+    ) where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
         let Some(bind_group) = self.textures.get_mut(&texture_id).map(|entry| {
             entry.last_used_frame = self.frame_index;
             entry.bind_group.clone()
         }) else {
             return;
         };
-
-        self.draw_batch_with_bind_group(device, queue, pass, &bind_group, instances);
+        self.draw_batch_with_bind_group_generic(backend, pass, &bind_group, instances);
     }
 
-    /// Draws a batch with a renderer-owned texture view that is not part of the
-    /// decoded-image cache.
-    pub(crate) fn draw_external_batch(
+    pub(crate) fn draw_external_batch<'a>(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        pass: &mut wgpu::RenderPass<'_>,
-        bind_group: &wgpu::BindGroup,
+        backend: &B,
+        pass: &mut B::RenderPass<'a>,
+        bind_group: &B::BindGroup,
         instances: &[ImageInstance],
-    ) {
-        self.draw_batch_with_bind_group(device, queue, pass, bind_group, instances);
+    ) where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        self.draw_batch_with_bind_group_generic(backend, pass, bind_group, instances);
     }
 
-    fn draw_batch_with_bind_group(
+    fn draw_batch_with_bind_group_generic<'a>(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        pass: &mut wgpu::RenderPass<'_>,
-        bind_group: &wgpu::BindGroup,
+        backend: &B,
+        pass: &mut B::RenderPass<'a>,
+        bind_group: &B::BindGroup,
         instances: &[ImageInstance],
-    ) {
+    ) where
+        B::RenderPass<'a>: crate::backend::GpuRenderPass<B>,
+    {
+        use crate::backend::{BufferDescriptor, BufferUsage, GpuRenderPass};
         if instances.is_empty() {
             return;
         }
 
         let end = self.frame_instance_offset + instances.len();
         if end > self.instance_policy.capacity() {
-            // Fallback safety net: `begin_frame` sizes the buffer for the whole
-            // frame, so this only runs if it was skipped. The draws already
-            // recorded reference the *old* buffer, which the deferred upload
-            // would never fill — so give it the bytes those draws expect before
-            // switching to a bigger buffer.
-            if !self.frame_instances.is_empty() {
-                queue.write_buffer(
+            if !self.immediate_uploads && !self.frame_instances.is_empty() {
+                backend.write_buffer(
                     &self.instance_buffer,
                     0,
                     bytemuck::cast_slice(&self.frame_instances),
                 );
             }
             self.instance_policy.grow_to_fit(end);
-            self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("image instance buffer (resized)"),
+            self.instance_buffer = backend.create_buffer(&BufferDescriptor {
+                label: Some("image instance buffer (resized)".to_string()),
                 size: (self.instance_policy.capacity() * size_of::<ImageInstance>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
+                usage: vec![BufferUsage::Vertex, BufferUsage::CopyDst],
             });
             self.upload.invalidate();
         }
 
         let byte_offset = (self.frame_instance_offset * size_of::<ImageInstance>()) as u64;
         self.frame_instances.extend_from_slice(instances);
-
+        self.immediate_uploads |= pass.write_buffer_before_draw(
+            &self.instance_buffer,
+            byte_offset,
+            bytemuck::cast_slice(instances),
+        );
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.viewport_bind_group, &[]);
         pass.set_bind_group(1, bind_group, &[]);
-        pass.set_vertex_buffer(0, self.instance_buffer.slice(byte_offset..));
+        pass.set_vertex_buffer(0, &self.instance_buffer, byte_offset);
         pass.draw(0..6, 0..instances.len() as u32);
-
         self.frame_instance_offset = end;
-    }
-
-    /// Uploads the frame's image instances in a single write, or not at all
-    /// when the buffer already holds these exact bytes (a static frame).
-    ///
-    /// Must run after the frame's batches and before the queue submit; a
-    /// `write_buffer` issued here is applied before the submitted pass
-    /// executes, so the draws recorded earlier read the fresh data.
-    pub fn end_frame(&mut self, queue: &wgpu::Queue) {
-        self.upload
-            .upload(queue, &self.instance_buffer, &self.frame_instances);
     }
 }
 
-#[cfg(test)]
+/// Backend-agnostic RGBA8 texture upload via the GpuBackend trait.
+fn upload_rgba8<B: crate::backend::GpuBackend>(
+    backend: &B,
+    texture: &B::Texture,
+    width: u32,
+    height: u32,
+    data: &[u8],
+) {
+    backend.write_texture(&crate::backend::WriteTextureDescriptor {
+        texture,
+        mip_level: 0,
+        origin: crate::backend::Origin3d { x: 0, y: 0, z: 0 },
+        aspect: crate::backend::TextureAspect::All,
+        data,
+        buffer_layout: crate::backend::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * width),
+            rows_per_image: Some(height),
+        },
+        extent: crate::backend::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    });
+}
+
+/// Helper: convert a wgpu vertex format to the backend-agnostic equivalent
+/// for formats used by ImageInstance.
+#[cfg(all(test, feature = "wgpu"))]
 mod tests {
     use std::hint::black_box;
     use std::time::Instant;

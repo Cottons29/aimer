@@ -15,5 +15,5 @@ aimer_canvas.workspace = true
 aimer_utils.workspace = true
 
 [dev-dependencies]
-aimer_cupid.workspace = true
+aimer_cupid = {workspace = true, features = ["native"]}
 tokio = { workspace = true, features = ["full"] }

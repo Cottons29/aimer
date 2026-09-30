@@ -2,7 +2,7 @@ use std::fmt;
 use std::ops::Deref;
 use std::rc::Rc;
 
-use aimer_std::read_only::ShareRef;
+use aimer_rubick::ShareRef;
 use aimer_widget::portable::{
     PortableMaterializeError, PortableMaterializeProperty, PortableProperty,
     PortablePropertyReflection,
@@ -199,7 +199,7 @@ impl PortableEncodeProperty for TextSource {
 
 #[cfg(test)]
 mod tests {
-    use aimer_std::read_only::{ShareRef, Shared};
+    use aimer_rubick::{ShareRef, Shared};
     use super::*;
 
     #[test]
@@ -249,8 +249,7 @@ mod tests {
         let state = Shared::new(State {
             title: String::from("projected"),
         });
-        let title = ShareRef::from_shared_ref(state.project(|state| &state.title))
-            .project(String::as_str);
+        let title = state.project(|state| &state.title).project(String::as_str);
         let source = TextSource::from(title);
 
         drop(state);

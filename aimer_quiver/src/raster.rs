@@ -27,7 +27,7 @@ use winit::dpi::PhysicalSize;
 /// raster thread takes ownership of. Keeping it a trait is what lets the worker's
 /// scheduling — ordering, backpressure, buffer recycling, shutdown — be tested on
 /// a machine with no GPU at all.
-pub trait FramePresenter: Send {
+pub trait FramePresenter {
     /// Reconfigure the surface for a new size.
     ///
     /// Delivered in order with respect to frames, so a frame built for the old
@@ -89,7 +89,7 @@ impl RasterThread {
     /// or count a completed one; keep it short — it runs in the present path.
     pub fn spawn<P, F>(mut presenter: P, on_present: F) -> Self
     where
-        P: FramePresenter + 'static,
+        P: FramePresenter + Send + 'static,
         F: Fn(bool) + Send + 'static,
     {
         let (messages, inbox) = sync_channel::<RasterMessage>(1);

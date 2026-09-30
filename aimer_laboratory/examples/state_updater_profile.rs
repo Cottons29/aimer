@@ -18,8 +18,9 @@ use std::hint::black_box;
 use std::rc::Rc;
 use std::time::Instant;
 
-use aimer::{AnyElement, BuildContext, Button, Column, ResolvedSize, State, StateUpdater,
+use aimer::{AnyElement, BuildContext, Column, ResolvedSize, State, StateUpdater,
     StatefulElement, StatefulWidget, SizedBox, Vec2d, Widget};
+use aimer::input::button::Button;
 use aimer_canvas::{Canvas, InnerCanvas};
 use aimer_events::window::{restore_thread_redraw_requester, set_thread_redraw_requester};
 use aimer::quiver::winit::dpi::PhysicalSize;

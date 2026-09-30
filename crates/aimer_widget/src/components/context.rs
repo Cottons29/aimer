@@ -219,6 +219,7 @@ impl WindowHandle {
 
     pub fn request_redraw(&self) {
         crate::frame_work_stats::record_redraw_request();
+        aimer_events::window::notify_redraw_requested();
         match self {
             #[cfg(not(aimer_portable_guest))]
             Self::Native(window) => window.request_redraw(),
@@ -239,6 +240,7 @@ impl WindowHandle {
     /// direct redraw operation used by event-loop handling code.
     pub fn request_animation_frame(&self) {
         crate::frame_work_stats::record_redraw_request();
+        aimer_events::window::notify_redraw_requested();
         match self {
             #[cfg(not(aimer_portable_guest))]
             Self::Native(_) => aimer_events::window::request_animation_frame(),
@@ -487,6 +489,16 @@ impl<'a> BuildContext<'a> {
             async_handle: BuildAsyncHandle::native(async_handle),
             inherited_states: Rc::new(RefCell::new(HashMap::new())),
         }
+    }
+
+    /// Returns the UI allocator active while this build context is in use.
+    ///
+    /// Aimer activates the owning application's allocator around widget
+    /// construction and rebuilds. The returned handle can also be used for
+    /// explicit `allocator-api2` collections or `boxed_in` conversions.
+    #[inline]
+    pub fn ui_allocator(&self) -> Option<aimer_rubick::UiAllocator> {
+        aimer_rubick::UiAllocator::current()
     }
 
     /// Replaces the canvas used by this build context.

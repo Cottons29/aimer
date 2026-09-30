@@ -14,6 +14,7 @@
 use std::hint::black_box;
 
 use aimer_cupid::draw_cmd::DrawList;
+use aimer_cupid::backend::wgpu::WgpuBackend;
 use aimer_cupid::renderer::{Renderer, RendererMemoryStats};
 use aimer_cupid::utilities::Rect;
 use aimer_utils::SyncFuture;
@@ -58,9 +59,8 @@ fn image_data(index: usize) -> Vec<u8> {
 }
 
 fn render_viewport(
-    renderer: &mut Renderer,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    renderer: &mut Renderer<WgpuBackend>,
+    backend: &WgpuBackend,
     view: &wgpu::TextureView,
     first_image: usize,
 ) -> RendererMemoryStats {
@@ -81,8 +81,7 @@ fn render_viewport(
         );
     }
     renderer.render(
-        device,
-        queue,
+        backend,
         view,
         SURFACE_WIDTH,
         SURFACE_HEIGHT,
@@ -114,14 +113,14 @@ fn main() {
         view_formats: &[],
     });
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    let mut renderer = Renderer::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+    let backend = WgpuBackend::new(device.clone(), queue.clone());
+    let mut renderer = Renderer::new(&backend, wgpu::TextureFormat::Rgba8Unorm);
 
     let mut peak = RendererMemoryStats::default();
     for frame in 0..SCROLL_FRAMES {
         let stats = render_viewport(
             &mut renderer,
-            &device,
-            &queue,
+            &backend,
             &view,
             frame * VISIBLE_IMAGES,
         );
@@ -134,8 +133,7 @@ fn main() {
     for _ in 0..SETTLE_FRAMES {
         settled = render_viewport(
             &mut renderer,
-            &device,
-            &queue,
+            &backend,
             &view,
             final_viewport,
         );
