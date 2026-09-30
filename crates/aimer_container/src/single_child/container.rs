@@ -163,17 +163,23 @@ impl Container {
 impl<W: Widget> Widget for Container<W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
+        let box_decoration = self.box_decoration;
+        if let Some(color) = self.color
+            && box_decoration.background_color.get().is_none()
+        {
+            box_decoration.update_color(color);
+        }
         RawContainer {
             width: self.width,
             height: self.height,
             child,
             padding: self.padding,
             margin: self.margin,
-            box_decoration: self.box_decoration,
+            box_decoration,
             cache: LayoutCache::new(),
             debug_name: "Container",
             bounds: std::cell::Cell::new(None),
-            color: self.color,
+            color: None,
         }
         .boxed()
     }
@@ -272,8 +278,8 @@ impl<E: Element> RawContainer<E> {
     }
 }
 
-impl<T: Element> Drawable for RawContainer<T> {
-    fn draw(&self, ctx: &BuildContext) {
+impl<T: Element> RawContainer<T> {
+    fn render(&self, ctx: &BuildContext, paint_only: bool) {
         ctx.canvas.save();
 
         let constraint = ctx.box_constraint;
@@ -311,7 +317,7 @@ impl<T: Element> Drawable for RawContainer<T> {
         // without live bounds an opaque container could never occlude an event
         // at a specific position (see `on_event`). Bounds start after the margin
         // translate and span the actually-drawn size (`draw_width`/`draw_height`).
-        {
+        if !paint_only {
             let (start_x, start_y) = ctx.canvas.get_transform_translation();
             let l_start = Vec2d {
                 x: (start_x + m_left) / scale,
@@ -322,13 +328,6 @@ impl<T: Element> Drawable for RawContainer<T> {
                 y: (start_y + m_top + draw_height) / scale,
             };
             self.bounds.set(Some((l_start, l_end)));
-        }
-
-        if let Some(color) = self.color
-            && self.box_decoration.background_color.get().is_none()
-        {
-            // debug!("updated color to {color:?}");
-            self.box_decoration.update_color(color)
         }
 
         // Translate to the decorated box before painting. Margin is layout
@@ -437,10 +436,24 @@ impl<T: Element> Drawable for RawContainer<T> {
             clip_w,
             clip_h,
         ) {
-            self.child.draw(&child_ctx);
+            if paint_only {
+                self.child.paint(&child_ctx);
+            } else {
+                self.child.draw(&child_ctx);
+            }
         }
         ctx.canvas.clear_clip();
         ctx.canvas.restore();
+    }
+}
+
+impl<T: Element> Drawable for RawContainer<T> {
+    fn draw(&self, ctx: &BuildContext) {
+        self.render(ctx, false);
+    }
+
+    fn paint(&self, ctx: &BuildContext) {
+        self.render(ctx, true);
     }
 
     #[inline]
@@ -453,47 +466,96 @@ impl<T: Element> Drawable for RawContainer<T> {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        // `is_paint_stable` only returns true for this transparent, zero-inset
-        // shape, so retaining it does not need the live bounds/clip bookkeeping
-        // performed by `draw`.
-        self.child.paint(ctx);
-    }
-
-    #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
-        if !self.can_delegate_paint_islands() {
-            return;
-        }
-        let size = self.content_size(ctx);
-        let (start_x, start_y) = ctx.canvas.get_transform_translation();
+        let constraint = ctx.box_constraint;
         let scale = ctx.scale;
-        if size.width.is_finite()
-            && size.height.is_finite()
-            && scale.is_finite()
-            && scale > 0.0
-        {
+        let (m_left, m_top, m_right, m_bottom) = self.margin(ctx);
+        let box_width = match self.width {
+            Dimension::Px(width) => width * scale,
+            Dimension::Percent(percent) => {
+                constraint.max_width * (percent / 100.0) - (m_left + m_right)
+            }
+            Dimension::Auto => constraint.max_width - m_left - m_right,
+        }
+        .max(0.0);
+        let box_height = match self.height {
+            Dimension::Px(height) => height * scale,
+            Dimension::Percent(percent) => {
+                constraint.max_height * (percent / 100.0) - (m_top + m_bottom)
+            }
+            Dimension::Auto => constraint.max_height - m_top - m_bottom,
+        }
+        .max(0.0);
+        let computed = self.computed_size(ctx);
+        let draw_width = (computed.width - m_left - m_right).max(0.0);
+        let draw_height = (computed.height - m_top - m_bottom).max(0.0);
+        let (start_x, start_y) = ctx.canvas.get_transform_translation();
+        if scale.is_finite() && scale > 0.0 {
             self.bounds.set(Some((
                 Vec2d {
-                    x: start_x / scale,
-                    y: start_y / scale,
+                    x: (start_x + m_left) / scale,
+                    y: (start_y + m_top) / scale,
                 },
                 Vec2d {
-                    x: (start_x + size.width) / scale,
-                    y: (start_y + size.height) / scale,
+                    x: (start_x + m_left + draw_width) / scale,
+                    y: (start_y + m_top + draw_height) / scale,
                 },
             )));
         }
-        self.child.sync_paint_geometry(ctx);
+
+        let padding_left = self.padding.left.value(box_width, scale);
+        let padding_top = self.padding.top.value(box_height, scale);
+        let border = self.box_decoration.border;
+        let get_stroke = |dimension: Dimension, parent: f32| -> f32 {
+            match dimension {
+                Dimension::Px(width) => width * scale,
+                Dimension::Percent(percent) => parent * (percent / 100.0),
+                Dimension::Auto => 0.0,
+            }
+        };
+        let border_left = get_stroke(border.left.stroke, box_width).max(0.0);
+        let border_top = get_stroke(border.top.stroke, box_height).max(0.0);
+        let content_width = (box_width
+            - padding_left
+            - border_left
+            - self.padding.right.value(box_width, scale)
+            - get_stroke(border.right.stroke, box_width).max(0.0))
+            .max(0.0);
+        let content_height = (box_height
+            - padding_top
+            - border_top
+            - self.padding.bottom.value(box_height, scale)
+            - get_stroke(border.bottom.stroke, box_height).max(0.0))
+            .max(0.0);
+        let inset_x = m_left + padding_left + border_left;
+        let inset_y = m_top + padding_top + border_top;
+
+        let mut child_ctx = ctx.clone();
+        child_ctx.box_constraint.max_width = content_width;
+        child_ctx.box_constraint.max_height = content_height;
+        child_ctx.parent_size = ResolvedSize {
+            width: content_width,
+            height: content_height,
+        };
+        child_ctx.visible_rect = ctx
+            .visible_rect
+            .map(|(x, y, width, height)| (x - inset_x, y - inset_y, width, height));
+
+        ctx.canvas.save();
+        ctx.canvas.translate(Vec2d {
+            x: inset_x,
+            y: inset_y,
+        });
+        self.child.sync_paint_geometry(&child_ctx);
+        ctx.canvas.restore();
     }
 
     #[inline]
     fn is_paint_stable(&self) -> bool {
-        // Only a completely transparent, zero-inset wrapper can disappear
-        // from the retained draw stream without changing its layout or
-        // occlusion contract. Decorated containers still need their ordinary
-        // draw to keep bounds and clipping current.
-        self.can_delegate_paint_islands() && self.child.is_paint_stable()
+        self.color.is_none()
+            && self.box_decoration.box_shadow.is_empty()
+            && self.box_decoration.outline == Default::default()
+            && self.child.is_paint_stable()
     }
 
     #[doc(hidden)]
@@ -943,6 +1005,55 @@ mod tests {
         fn debug_name(&self) -> &'static str {
             "DrawProbe"
         }
+    }
+
+    struct PaintStableProbe;
+
+    impl Drawable for PaintStableProbe {
+        fn draw(&self, _ctx: &BuildContext) {}
+
+        fn is_paint_stable(&self) -> bool {
+            true
+        }
+    }
+
+    impl EventElement for PaintStableProbe {}
+    impl LayoutElement for PaintStableProbe {}
+    impl Rebuildable for PaintStableProbe {}
+
+    impl VisitorElement for PaintStableProbe {
+        fn debug_name(&self) -> &'static str {
+            "PaintStableProbe"
+        }
+    }
+
+    #[test]
+    fn a_decorated_container_can_retain_its_stable_child_paint() {
+        let mut container = RawContainer::new(PaintStableProbe);
+        container.box_decoration = BoxDecoration::new()
+            .background_color(Color::BLACK)
+            .border_radius(8.0);
+
+        assert!(container.is_paint_stable());
+    }
+
+    #[tokio::test]
+    async fn retained_container_paint_includes_its_decoration() {
+        let (ctx, inner) = recording_context();
+        let mut element = RawContainer::new(PaintStableProbe);
+        element.width = Dimension::Px(80.0);
+        element.height = Dimension::Px(40.0);
+        element.box_decoration = BoxDecoration::new()
+            .background_color(Color::BLACK)
+            .border_radius(8.0);
+
+        element.paint(&ctx);
+
+        assert!(inner
+            .draw_list()
+            .commands()
+            .iter()
+            .any(|command| matches!(command, DrawCommand::FillRect { .. })));
     }
 
     #[cfg(feature = "event-tree-exp")]

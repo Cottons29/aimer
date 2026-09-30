@@ -537,6 +537,8 @@ impl<E: Element> RawScrollableContainer<E> {
             return;
         }
 
+        self.child.sync_paint_geometry(child_ctx);
+
         let key = self.paint_key(ctx, content_size);
         if can_use_retained_layer(content_size) {
             self.paint_cache.clear_tiles();
@@ -665,6 +667,11 @@ impl<E: Element> RawScrollableContainer<E> {
                   island_ctx: &BuildContext,
                   offset: Vec2d,
                   clip: Option<ResolvedSize>| {
+                island_ctx.canvas.save();
+                island_ctx.canvas.translate(offset);
+                element.sync_paint_geometry(island_ctx);
+                island_ctx.canvas.restore();
+
                 let mut state = state.borrow_mut();
                 if state.static_content.is_some() {
                     return;
@@ -2136,7 +2143,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_decorated_container_stays_on_the_direct_paint_path() {
+    async fn a_decorated_container_can_reuse_stable_paint() {
         use aimer_widget::Widget as _;
 
         let ctx = drawing_context(None);
@@ -2152,7 +2159,7 @@ mod tests {
             })
             .to_element(&ctx);
 
-        assert!(!element.is_paint_stable());
+        assert!(element.is_paint_stable());
     }
 
     #[tokio::test]

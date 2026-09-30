@@ -568,6 +568,26 @@ impl Drawable for RawFocusable {
     fn draw(&self, ctx: &BuildContext) {
         self.child.draw(ctx);
     }
+
+    #[inline]
+    fn paint(&self, ctx: &BuildContext) {
+        self.child.paint(ctx);
+    }
+
+    #[inline]
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.child.sync_paint_geometry(ctx);
+    }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        self.child.is_paint_stable()
+    }
+
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        self.child.is_paint_bounded()
+    }
 }
 
 impl LayoutElement for RawFocusable {
@@ -680,6 +700,22 @@ mod tests {
 
     impl Drawable for Bounded {
         fn draw(&self, _ctx: &BuildContext) {}
+
+        fn is_paint_stable(&self) -> bool {
+            true
+        }
+
+        fn is_paint_bounded(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn focusable_preserves_its_stable_child_paint_contract() {
+        let focusable = RawFocusable::new(FocusNode::new(), Bounded.boxed());
+
+        assert!(focusable.is_paint_stable());
+        assert!(focusable.is_paint_bounded());
     }
 
     impl LayoutElement for Bounded {

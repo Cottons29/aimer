@@ -2061,6 +2061,11 @@ impl Drawable for StatefulElement {
     fn is_paint_bounded(&self) -> bool {
         unsafe { &*self.child.0.get() }.is_paint_bounded()
     }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        unsafe { &*self.child.0.get() }.is_paint_stable()
+    }
 }
 
 impl VisitorElement for StatefulElement {

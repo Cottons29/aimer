@@ -420,7 +420,6 @@ impl RawFlex {
         &self,
         ctx: &BuildContext,
     ) -> Option<(Rc<FlexLayout>, (f32, f32))> {
-        let (gap_x, gap_y) = self.resole_gaps(ctx);
         let mut layout = self.flex_layout(ctx);
         let mut distribution = self.main_distribution(ctx, layout.total(), layout.len());
         let mut range = self.painted_range(ctx, &layout, distribution);
@@ -555,6 +554,11 @@ impl RawFlex {
 /// rounds settle any single correction; the third only exists so a cascade
 /// terminates rather than being chased forever.
 const RECONCILE_PASSES: usize = 3;
+
+// Scanning a large eager child list every frame would cost more than keeping
+// its children on the live path. Small, already-laid-out rows and groups are
+// the useful cases for retained paint replay.
+const MAX_STABLE_PAINT_CHILDREN: usize = 64;
 
 /// Outcome of comparing the children about to be painted with the cached table.
 enum Reconciled {
@@ -992,6 +996,140 @@ impl RawFlex {
 }
 
 impl Drawable for RawFlex {
+    fn paint(&self, ctx: &BuildContext) {
+        if !self.is_paint_stable() || self.overflow_behavior == OverflowBehavior::Wrap {
+            return;
+        }
+        let (layout, distribution) = if let Some(layout) =
+            self.layout.get(ctx.box_constraint, scale_bits_of(ctx))
+        {
+            let distribution = self.main_distribution(ctx, layout.total(), layout.len());
+            (layout, distribution)
+        } else {
+            // A parent may have measured this flex under a different child
+            // constraint. Paint must resolve the table for the context it is
+            // about to use instead of silently omitting this subtree.
+            let Some(prepared) = self.prepare_paint_partition(ctx) else {
+                return;
+            };
+            prepared
+        };
+        let range = 0..layout.len();
+        let order = self.layout.cached_layer_order(range.clone(), |index| {
+            self.children.get(index).map(|child| child.layer())
+        });
+        let mut retained_ctx = ctx.clone();
+        retained_ctx.visible_rect = None;
+
+        let mut paint_stable = |element: &dyn Element,
+                                child_ctx: &BuildContext,
+                                offset: Vec2d,
+                                clip: Option<ResolvedSize>| {
+            child_ctx.canvas.save();
+            if let Some(clip) = clip {
+                child_ctx.canvas.set_clip(Vec2d::ZERO, clip);
+            }
+            child_ctx.canvas.translate(offset);
+            element.paint(child_ctx);
+            if clip.is_some() {
+                child_ctx.canvas.clear_clip();
+            }
+            child_ctx.canvas.restore();
+        };
+        let mut paint_dynamic = |element: &dyn Element,
+                                 child_ctx: &BuildContext,
+                                 offset: Vec2d,
+                                 clip: Option<ResolvedSize>| {
+            child_ctx.canvas.save();
+            if let Some(clip) = clip {
+                child_ctx.canvas.set_clip(Vec2d::ZERO, clip);
+            }
+            child_ctx.canvas.translate(offset);
+            element.paint(child_ctx);
+            if clip.is_some() {
+                child_ctx.canvas.clear_clip();
+            }
+            child_ctx.canvas.restore();
+        };
+
+        self.visit_paint_partition(
+            &retained_ctx,
+            &retained_ctx,
+            &layout,
+            distribution,
+            &order,
+            range,
+            &mut paint_stable,
+            &mut paint_dynamic,
+        );
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        if !self.is_paint_stable() || self.overflow_behavior == OverflowBehavior::Wrap {
+            return;
+        }
+        let (layout, distribution) = if let Some(layout) =
+            self.layout.get(ctx.box_constraint, scale_bits_of(ctx))
+        {
+            let distribution = self.main_distribution(ctx, layout.total(), layout.len());
+            (layout, distribution)
+        } else {
+            let Some(prepared) = self.prepare_paint_partition(ctx) else {
+                return;
+            };
+            prepared
+        };
+        let range = self.painted_range(ctx, &layout, distribution);
+        let order = self.layout.cached_layer_order(range.clone(), |index| {
+            self.children.get(index).map(|child| child.layer())
+        });
+        self.layout.set_painted(&range);
+
+        let mut sync_stable = |element: &dyn Element,
+                               child_ctx: &BuildContext,
+                               offset: Vec2d,
+                               _clip: Option<ResolvedSize>| {
+            child_ctx.canvas.save();
+            child_ctx.canvas.translate(offset);
+            element.sync_paint_geometry(child_ctx);
+            child_ctx.canvas.restore();
+        };
+        let mut sync_dynamic = |element: &dyn Element,
+                                child_ctx: &BuildContext,
+                                offset: Vec2d,
+                                _clip: Option<ResolvedSize>| {
+            child_ctx.canvas.save();
+            child_ctx.canvas.translate(offset);
+            element.sync_paint_geometry(child_ctx);
+            child_ctx.canvas.restore();
+        };
+        self.visit_paint_partition(
+            ctx,
+            ctx,
+            &layout,
+            distribution,
+            &order,
+            range.clone(),
+            &mut sync_stable,
+            &mut sync_dynamic,
+        );
+        self.rebuild_hit_test_index(range);
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        if self.overflow_behavior == OverflowBehavior::Wrap
+            || self.children.is_windowed()
+            || self.children.len() > MAX_STABLE_PAINT_CHILDREN
+            || !self.layout.has_table()
+        {
+            return false;
+        }
+        let mut stable = true;
+        self.children
+            .visit(&mut |child| stable &= child.is_paint_stable());
+        stable
+    }
+
     #[doc(hidden)]
     fn prepare_layout(&self, ctx: &BuildContext) -> bool {
         if self.overflow_behavior != OverflowBehavior::Wrap {
@@ -1137,16 +1275,6 @@ impl Drawable for RawFlex {
         ctx.canvas.restore();
     }
 
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        // `draw` also maintains the live layout/hit-test index, reconciles
-        // windowed children, and may request another frame. Those effects are
-        // part of the container's frame bookkeeping, not paint, so retaining
-        // the whole RawFlex would violate the Drawable paint contract even
-        // when every leaf reports stable paint.
-        false
-    }
-
     #[doc(hidden)]
     fn draw_paint_islands(
         &self,
@@ -1184,12 +1312,12 @@ impl Drawable for RawFlex {
                 self.children.get(index).map(|child| child.layer())
             });
 
-        // One retained layer is emitted before the dynamic suffix. A dynamic
-        // child interleaved with a later stable child would require several
-        // independent layers (and can multiply the texture budget), so it is
-        // deliberately rejected before either callback can paint.
+        // One retained layer holds the stable content before the dynamic
+        // suffix. A fully stable list uses that same layer for all its rows. A
+        // dynamic child interleaved with a later stable child would require
+        // several independent layers (and can multiply the texture budget),
+        // so reject it before either callback can paint.
         let mut saw_stable = false;
-        let mut saw_dynamic = false;
         let mut dynamic_started = false;
         let mut stable_after_dynamic = false;
         order.visit(range.clone(), |index| {
@@ -1200,11 +1328,10 @@ impl Drawable for RawFlex {
                 saw_stable = true;
                 stable_after_dynamic |= dynamic_started;
             } else {
-                saw_dynamic = true;
                 dynamic_started = true;
             }
         });
-        if !saw_stable || !saw_dynamic || stable_after_dynamic {
+        if !saw_stable || stable_after_dynamic {
             return false;
         }
 

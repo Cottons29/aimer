@@ -794,7 +794,12 @@ impl Drawable for RotationTransitionElement {
 
     #[inline]
     fn paint(&self, ctx: &BuildContext) {
+        let frame = self.settled_frame(ctx);
+        ctx.canvas.save();
+        frame.apply(ctx);
         self.child.paint(ctx);
+        frame.clear(ctx);
+        ctx.canvas.restore();
     }
 
     #[inline]
@@ -805,6 +810,11 @@ impl Drawable for RotationTransitionElement {
     #[inline]
     fn is_paint_bounded(&self) -> bool {
         self.child.is_paint_bounded()
+    }
+
+    #[inline]
+    fn is_paint_stable(&self) -> bool {
+        !self.animating.get() && self.child.is_paint_stable()
     }
 
     #[inline]
@@ -858,6 +868,22 @@ impl RotationTransitionElement {
         let active = self.controller.is_animating();
         self.animating.set(active);
 
+        self.frame_at(ctx, progress, active)
+    }
+
+    #[inline]
+    fn settled_frame(&self, ctx: &BuildContext) -> CompositorAnimationFrame {
+        let progress = self.controller.curve().transform(self.controller.value());
+        self.frame_at(ctx, progress, false)
+    }
+
+    #[inline]
+    fn frame_at(
+        &self,
+        ctx: &BuildContext,
+        progress: f32,
+        active: bool,
+    ) -> CompositorAnimationFrame {
         let turns = interpolate_turns(self.begin_turns, self.end_turns, progress);
         let angle = turns * std::f32::consts::TAU;
         let cx = ctx.box_constraint.max_width / 2.0;
@@ -1188,6 +1214,53 @@ mod tests {
         assert_eq!(interpolate_turns(0.0, -0.25, 0.0), 0.0);
         assert_eq!(interpolate_turns(0.0, -0.25, 0.5), -0.125);
         assert_eq!(interpolate_turns(0.0, -0.25, 1.0), -0.25);
+    }
+
+    #[test]
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+    fn a_settled_rotation_retains_the_child_with_its_final_transform() {
+        let child_ctx = dummy_build_context();
+        let (child, _, _) = counting_child(true);
+        let child = child.to_element(&child_ctx);
+        child.paint(&child_ctx);
+        let child_commands = child_ctx
+            .canvas
+            .get_inner_canvas()
+            .take_draw_list()
+            .stats()
+            .commands;
+
+        let ctx = dummy_build_context();
+        let (child, _, _) = counting_child(true);
+        let controller = AnimationController::with_millis(100, Curve::Linear);
+        controller.set_value(1.0);
+        let rotation = RotationTransition::new(controller, child)
+            .turn_range(0.0, -0.25)
+            .to_element(&ctx);
+
+        assert!(rotation.is_paint_stable());
+        rotation.paint(&ctx);
+        let rotation_commands = ctx
+            .canvas
+            .get_inner_canvas()
+            .take_draw_list()
+            .stats()
+            .commands;
+        assert!(rotation_commands > child_commands);
+    }
+
+    #[test]
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+    fn an_active_rotation_stays_on_the_live_paint_path() {
+        let ctx = dummy_build_context();
+        let (child, _, _) = counting_child(true);
+        let controller = AnimationController::with_millis(100, Curve::Linear);
+        controller.forward_from_first_tick();
+        let rotation = RotationTransition::new(controller, child)
+            .turn_range(0.0, -0.25)
+            .to_element(&ctx);
+
+        assert!(!rotation.is_paint_stable());
     }
 
     #[test]

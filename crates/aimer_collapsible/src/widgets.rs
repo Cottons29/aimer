@@ -207,6 +207,37 @@ impl Drawable for AnimatedCollapseElement {
             request_animation_frame();
         }
     }
+
+    fn paint(&self, ctx: &BuildContext) {
+        let progress = animation_progress(self.controller.value());
+        let natural = self.natural_size(ctx);
+        let size = ResolvedSize {
+            width: nonnegative_extent(natural.width),
+            height: collapsed_height(natural.height, progress),
+        };
+        if size.width > 0.0 && size.height > 0.0 {
+            ctx.canvas.save();
+            ctx.canvas.set_clip(Vec2d::ZERO, size);
+            self.child.paint(&self.child_context(ctx, natural));
+            ctx.canvas.clear_clip();
+            ctx.canvas.restore();
+        }
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let progress = animation_progress(self.controller.value());
+        let natural = self.natural_size(ctx);
+        let size = ResolvedSize {
+            width: nonnegative_extent(natural.width),
+            height: collapsed_height(natural.height, progress),
+        };
+        self.update_bounds(ctx, size);
+        self.child.sync_paint_geometry(&self.child_context(ctx, natural));
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        !self.controller.is_animating() && self.child.is_paint_stable()
+    }
 }
 
 impl VisitorElement for AnimatedCollapseElement {
@@ -685,5 +716,41 @@ for CollapsibleListState<H, B>
             );
         }
         Column::new().children(children)
+    }
+}
+
+#[cfg(test)]
+mod paint_stability_tests {
+    use super::*;
+
+    struct StablePaintElement;
+
+    impl VisitorElement for StablePaintElement {
+        fn debug_name(&self) -> &'static str {
+            "StablePaintElement"
+        }
+    }
+    impl EventElement for StablePaintElement {}
+    impl LayoutElement for StablePaintElement {}
+    impl Drawable for StablePaintElement {
+        fn draw(&self, _ctx: &BuildContext<'_>) {}
+
+        fn is_paint_stable(&self) -> bool {
+            true
+        }
+    }
+    impl Rebuildable for StablePaintElement {}
+
+    #[test]
+    fn a_settled_collapse_reuses_stable_child_paint() {
+        let element = AnimatedCollapseElement {
+            child: aimer_widget::Element::boxed(StablePaintElement),
+            controller: AnimationController::new(Duration::from_millis(100), Curve::Linear),
+            damage: PaintDamageTracker::new(),
+            last_progress: Cell::new(None),
+            bounds: Cell::new(None),
+        };
+
+        assert!(element.is_paint_stable());
     }
 }
