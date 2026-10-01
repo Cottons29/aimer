@@ -1,4 +1,5 @@
 mod cache;
+pub mod copy_button;
 mod custom;
 mod document;
 mod markdown_theme;
@@ -17,16 +18,18 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use aimer_container::Container;
+use aimer_macro::PortableWidget;
+use aimer_rubick::{ShareRef, Shared};
 use aimer_scroll::{ScrollAxis, Scrollable};
 use aimer_style::LayoutSpacing;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyElement, AnyWidget, Key, Widget};
 use cache::LruCache;
-pub use document::{Alignment, Block, Document, Inline, ListItem, MarkdownError, TableRow};
 pub use custom::{
     BlockRule, BlockSyntax, CustomBlock, CustomBlockBuilder, CustomBlockData, CustomBlockInput,
     CustomInline, CustomInlineBuilder, CustomInlineData, InlineRule, InlineSyntax,
 };
+pub use document::{Alignment, Block, Document, Inline, ListItem, MarkdownError, TableRow};
 pub use markdown_theme::MarkdownTheme;
 pub use renderer::{ImageResolver, LinkHandler, MarkdownImage, default_image_resolver};
 pub use syntax::{CaptureSpan, highlight};
@@ -38,7 +41,7 @@ thread_local! {
 }
 
 struct DocumentCache {
-    entries: LruCache<Rc<str>, Rc<Result<Document, MarkdownError>>>,
+    entries: LruCache<ShareRef<str>, Shared<Result<Document, MarkdownError>>>,
 }
 
 impl DocumentCache {
@@ -48,13 +51,15 @@ impl DocumentCache {
         }
     }
 
-    fn parse(&mut self, source: Rc<str>) -> Rc<Result<Document, MarkdownError>> {
+    fn parse(&mut self, source: ShareRef<str>) -> Shared<Result<Document, MarkdownError>> {
         self.entries
-            .get_or_insert_with(source, |source| Rc::new(Document::parse(source)))
+            .get_or_insert_with(source, |source| {
+                Shared::new(Document::parse_shared(source.clone()))
+            })
     }
 }
 
-fn parse_document(source: Rc<str>) -> Rc<Result<Document, MarkdownError>> {
+fn parse_document(source: ShareRef<str>) -> Shared<Result<Document, MarkdownError>> {
     DOCUMENT_CACHE.with(|cache| cache.borrow_mut().parse(source))
 }
 
@@ -88,13 +93,14 @@ fn open_web_link(_target: Rc<str>) {}
 /// a language name. The internal viewport follows normal [`Scrollable`]
 /// reconciliation by default; use [`MarkdownViewer::key`] when it needs an
 /// application-defined identity.
-#[derive(Clone, aimer_widget::PortableWidget)]
+#[derive(Clone, PortableWidget)]
 #[portable_widget(
     id = "aimer_markdown::MarkdownViewer",
     materializer = materialize_markdown_viewer,
 )]
 pub struct MarkdownViewer {
-    source: Option<String>,
+    #[portable_skip]
+    source: Option<Shared<str>>,
     #[portable_skip]
     theme: MarkdownTheme,
     #[portable_skip]
@@ -122,10 +128,12 @@ fn materialize_markdown_viewer(
     children: Vec<AnyWidget>,
 ) -> Result<AnyWidget, aimer_widget::portable::PortableMaterializeError> {
     if !children.is_empty() {
-        return Err(aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
-            expected: 0,
-            actual: children.len(),
-        });
+        return Err(
+            aimer_widget::portable::PortableMaterializeError::InvalidChildCount {
+                expected: 0,
+                actual: children.len(),
+            },
+        );
     }
     let source = aimer_widget::portable::optional_materialized_property::<String>(
         document,
@@ -189,14 +197,14 @@ impl MarkdownViewer {
     }
 
     /// Sets the Markdown source rendered by this viewer.
-    pub fn markdown(mut self, source: impl Into<Rc<str>>) -> Self {
-        self.source = Some(source.into().to_string());
+    pub fn markdown(mut self, source: impl Into<Shared<str>>) -> Self {
+        self.source = Some(source.into());
         self
     }
 
     #[inline]
-    fn source(mut self, source: String) -> Self {
-        self.source = Some(source);
+    fn source(mut self, source: impl Into<Shared<str>>) -> Self {
+        self.source = Some(source.into());
         self
     }
 
@@ -268,11 +276,9 @@ impl MarkdownViewer {
                 content: &data.content,
             }) {
                 Ok(props) => T::build(&props, ctx),
-                Err(error) => aimer_text::Text::new(format!(
-                    "custom block '{}': {error}",
-                    T::NAME
-                ))
-                .boxed(),
+                Err(error) => {
+                    aimer_text::Text::new(format!("custom block '{}': {error}", T::NAME)).boxed()
+                }
             }
         });
         self.typed_custom_blocks.push((rule, builder));
@@ -289,16 +295,16 @@ impl MarkdownViewer {
                 closing: T::CLOSING,
             },
         );
-        let builder = Rc::new(|data: &CustomInlineData, ctx: &BuildContext| {
-            match T::parse(&data.text) {
-                Ok(props) => T::build(&props, ctx),
-                Err(error) => aimer_text::Text::new(format!(
-                    "custom inline '{}': {error}",
-                    T::NAME
-                ))
-                .boxed(),
-            }
-        });
+        let builder =
+            Rc::new(
+                |data: &CustomInlineData, ctx: &BuildContext| match T::parse(&data.text) {
+                    Ok(props) => T::build(&props, ctx),
+                    Err(error) => {
+                        aimer_text::Text::new(format!("custom inline '{}': {error}", T::NAME))
+                            .boxed()
+                    }
+                },
+            );
         self.typed_custom_inlines.push((rule, builder));
         self
     }
@@ -321,7 +327,7 @@ impl Widget for MarkdownViewer {
             .custom_blocks
             .iter()
             .map(|(rule, _)| rule.clone())
-            .collect::<Vec<_>>();
+            .collect::<Vec<BlockRule>>();
         let inline_rules = self
             .custom_inlines
             .iter()
@@ -345,12 +351,12 @@ impl Widget for MarkdownViewer {
             .into_iter()
             .chain(typed_inline_rules)
             .collect::<Vec<_>>();
-        let source = Rc::from(self.source.as_deref().unwrap_or(""));
+        let source = self.source.unwrap_or_default().as_share_ref();
         let document = if block_rules.is_empty() && inline_rules.is_empty() {
             parse_document(source)
         } else {
-            Rc::new(Document::parse_with_rules(
-                &source,
+            Shared::new(Document::parse_shared_with_rules(
+                source.clone(),
                 &block_rules,
                 &inline_rules,
             ))
@@ -402,30 +408,28 @@ impl Widget for MarkdownViewer {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     use super::*;
+    use std::cell::RefCell;
 
     #[test]
     fn document_cache_reuses_unchanged_markdown() {
         let mut cache = DocumentCache::new(2);
-        let source: Rc<str> = Rc::from("# Cached");
+        let source: Shared<str> = Shared::from("# Cached");
 
-        let first = cache.parse(source.clone());
-        let second = cache.parse(Rc::from("# Cached"));
+        let first = cache.parse(source.as_share_ref());
+        let second = cache.parse(Shared::<str>::from("# Cached").as_share_ref());
 
-        assert!(Rc::ptr_eq(&first, &second));
+        assert!(Shared::ptr_eq(&first, &second));
     }
 
     #[test]
     fn document_cache_parses_updated_markdown() {
         let mut cache = DocumentCache::new(2);
 
-        let first = cache.parse(Rc::from("# Before"));
-        let second = cache.parse(Rc::from("# After"));
+        let first = cache.parse(Shared::<str>::from("# Before").as_share_ref());
+        let second = cache.parse(Shared::<str>::from("# After").as_share_ref());
 
-        assert!(!Rc::ptr_eq(&first, &second));
+        assert!(!Shared::ptr_eq(&first, &second));
         assert_ne!(first.as_ref(), second.as_ref());
     }
 
@@ -433,23 +437,23 @@ mod tests {
     fn document_cache_reuses_parse_errors() {
         let mut cache = DocumentCache::new(2);
 
-        let first = cache.parse(Rc::from("<div>unsupported</div>"));
-        let second = cache.parse(Rc::from("<div>unsupported</div>"));
+        let first = cache.parse(Shared::<str>::from("<div>unsupported</div>").as_share_ref());
+        let second = cache.parse(Shared::<str>::from("<div>unsupported</div>").as_share_ref());
 
         assert!(first.is_err());
-        assert!(Rc::ptr_eq(&first, &second));
+        assert!(Shared::ptr_eq(&first, &second));
     }
 
     #[test]
     fn document_cache_evicts_the_least_recently_used_source() {
         let mut cache = DocumentCache::new(2);
-        let first = cache.parse(Rc::from("First"));
-        cache.parse(Rc::from("Second"));
-        cache.parse(Rc::from("Third"));
+        let first = cache.parse(Shared::<str>::from("First").as_share_ref());
+        cache.parse(Shared::<str>::from("Second").as_share_ref());
+        cache.parse(Shared::<str>::from("Third").as_share_ref());
 
-        let reparsed = cache.parse(Rc::from("First"));
+        let reparsed = cache.parse(Shared::<str>::from("First").as_share_ref());
 
-        assert!(!Rc::ptr_eq(&first, &reparsed));
+        assert!(!Shared::ptr_eq(&first, &reparsed));
     }
 
     #[test]
@@ -541,18 +545,20 @@ mod tests {
         let schema = <MarkdownViewer as PortableWidgetSchema>::SCHEMA;
         let properties = schema.properties();
 
-        assert_eq!(properties.len(), 3);
+        assert_eq!(properties.len(), 2);
         assert_eq!(
             properties
                 .iter()
                 .map(|property| property.canonical_name())
                 .collect::<Vec<_>>(),
             vec![
-                "aimer.property:aimer_markdown::MarkdownViewer:source",
                 "aimer.property:aimer_markdown::MarkdownViewer:padding",
                 "aimer.property:aimer_markdown::MarkdownViewer:scrollable",
             ]
         );
-        assert_eq!(schema.widget().canonical_name(), "aimer.widget:aimer_markdown::MarkdownViewer");
+        assert_eq!(
+            schema.widget().canonical_name(),
+            "aimer.widget:aimer_markdown::MarkdownViewer"
+        );
     }
 }

@@ -5,6 +5,7 @@ use aimer_attribute::size::ResolvedSize;
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::*;
 use aimer_utils::debug;
+use aimer_utils::log::debug;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{TextOverflowMode, *};
 
@@ -121,7 +122,7 @@ impl RawTextWidget {
             let auxiliary = slot.get_or_insert_with(RawTextAuxCache::default);
             let paragraph = auxiliary.paragraph.get_or_insert_with(|| {
                 Paragraph::with_layout(
-                    vec![ResolvedTextSpan::plain(self.text.to_rc(), self.text_style)],
+                    vec![ResolvedTextSpan::plain_source(self.text.clone(), self.text_style)],
                     self.text_align,
                     self.text_style.text_overflow,
                     self.line_height,
@@ -157,7 +158,7 @@ impl RawTextWidget {
             height_bits: height.to_bits(),
             scale_bits: ctx.scale.to_bits(),
             font_size_bits: font_size.to_bits(),
-            layout_generation: layout_invalidation_generation(),
+            layout_generation: aimer_widget::layout_invalidation_generation(),
         };
 
         self.cache.with_extra(|slot: &mut Option<RawTextAuxCache>| {
@@ -271,6 +272,10 @@ impl RawTextWidget {
 
 impl Drawable for RawTextWidget {
     fn draw(&self, ctx: &BuildContext) {
+
+        if self.text.contains("Accessibility semantics") {
+            debug("AccessibilityExample::to_element()");
+        }
         // println!("Drawing text widget : {:?}", self.text);
 
         self.paint(ctx);
@@ -289,12 +294,6 @@ impl Drawable for RawTextWidget {
             self.draw_paragraph(ctx);
             return;
         }
-
-        if self.text.contains("Published nodes:" ) {
-            debug!("drawing the Text")
-
-        }
-
         let font_size = self.font_size(ctx.scale);
         let width = ctx.parent_size.width;
         let height = ctx.parent_size.height;

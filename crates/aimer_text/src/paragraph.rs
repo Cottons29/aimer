@@ -236,7 +236,7 @@ fn shadow_padding_for_spans(spans: &[ResolvedTextSpan]) -> RetainedLayerPadding 
 /// its own color only.
 pub(crate) fn display_color(
     span: &ResolvedTextSpan,
-    hovered_link: Option<&Rc<str>>,
+    hovered_link: Option<&crate::TextSource>,
     link_hover_color: Option<Color>,
 ) -> Color {
     if hovered_link.is_some() && span.link.as_ref() == hovered_link {
@@ -1411,10 +1411,10 @@ mod tests {
 
     #[test]
     fn hovered_link_uses_the_configured_color_only_for_its_spans() {
-        let hovered = Rc::<str>::from("https://aimer.dev");
+        let hovered = crate::TextSource::from("https://aimer.dev");
         let hover_color = Color::Hex(0x388BFD);
         let linked = ResolvedTextSpan {
-            text: Rc::from("Aimer"),
+            text: crate::TextSource::from("Aimer"),
             style: TextStyle::new().color(Color::Hex(0x0969DA)),
             link: Some(hovered.clone()),
         };
@@ -1437,9 +1437,9 @@ mod tests {
     #[test]
     fn static_paint_mode_accepts_only_a_leading_base_and_link_suffix() {
         let linked = ResolvedTextSpan {
-            text: Rc::from("link"),
+            text: crate::TextSource::from("link"),
             style: TextStyle::default(),
-            link: Some(Rc::from("target")),
+            link: Some(crate::TextSource::from("target")),
         };
         let plain = ResolvedTextSpan::plain(Rc::from("plain"), TextStyle::default());
 
@@ -1486,7 +1486,7 @@ mod tests {
             WindowHandle::headless(winit::dpi::PhysicalSize::new(240, 80), 1.0),
             runtime.handle().clone(),
         );
-        let link_target: Rc<str> = Rc::from("https://aimer.dev");
+        let link_target = crate::TextSource::from("https://aimer.dev");
         let paragraph = Paragraph::new(
             vec![
                 ResolvedTextSpan::plain(
@@ -1494,7 +1494,7 @@ mod tests {
                     TextStyle::new().text_shadow(TextShadow::new()),
                 ),
                 ResolvedTextSpan {
-                    text: Rc::from("link"),
+                    text: crate::TextSource::from("link"),
                     style: TextStyle::default(),
                     link: Some(link_target),
                 },

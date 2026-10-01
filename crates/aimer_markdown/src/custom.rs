@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use aimer_rubick::ShareRef;
 use aimer_widget::base::BuildContext;
 use aimer_widget::AnyWidget;
 
@@ -26,7 +27,7 @@ impl BlockSyntax {
 /// Identifies and describes a custom block syntax.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockRule {
-    name: String,
+    name: ShareRef<str>,
     syntax: BlockSyntax,
 }
 
@@ -35,7 +36,7 @@ impl BlockRule {
     #[inline]
     pub fn new(name: impl Into<String>, syntax: BlockSyntax) -> Self {
         Self {
-            name: name.into(),
+            name: ShareRef::from(name.into()),
             syntax,
         }
     }
@@ -44,6 +45,10 @@ impl BlockRule {
     #[inline]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub(crate) fn shared_name(&self) -> ShareRef<str> {
+        self.name.clone()
     }
 
     pub(crate) fn delimiters(&self) -> (&'static str, &'static str) {
@@ -79,7 +84,7 @@ impl InlineSyntax {
 /// Identifies and describes a custom inline syntax.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InlineRule {
-    name: String,
+    name: ShareRef<str>,
     syntax: InlineSyntax,
 }
 
@@ -88,7 +93,7 @@ impl InlineRule {
     #[inline]
     pub fn new(name: impl Into<String>, syntax: InlineSyntax) -> Self {
         Self {
-            name: name.into(),
+            name: ShareRef::from(name.into()),
             syntax,
         }
     }
@@ -97,6 +102,10 @@ impl InlineRule {
     #[inline]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub(crate) fn shared_name(&self) -> ShareRef<str> {
+        self.name.clone()
     }
 
     pub(crate) fn delimiters(&self) -> (&'static str, &'static str) {
@@ -115,9 +124,9 @@ impl From<InlineSyntax> for InlineRule {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CustomBlockData {
     /// The name of the rule that matched this block.
-    pub name: String,
+    pub name: ShareRef<str>,
     /// The source between the opening and closing delimiters.
-    pub text: String,
+    pub text: ShareRef<str>,
     /// The block body parsed as Markdown, including nested custom syntax.
     pub content: Document,
 }
@@ -126,11 +135,11 @@ pub struct CustomBlockData {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomInlineData {
     /// The name of the rule that matched this value.
-    pub name: String,
+    pub name: ShareRef<str>,
     /// The source between the opening and closing delimiters.
-    pub text: String,
+    pub text: ShareRef<str>,
     /// An alias for [`CustomInlineData::text`] useful for label-like syntax.
-    pub label: String,
+    pub label: ShareRef<str>,
 }
 
 /// A callback that turns parsed custom block data into a widget.

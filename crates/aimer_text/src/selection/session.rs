@@ -11,13 +11,13 @@ use crate::selection::handles::HandleSide;
 use crate::selection::selectable::{Selectable, SelectionCoordinator};
 use crate::selection::ui::SelectionUi;
 use crate::selection::{PointSelection, SelectionPoint, SelectionState};
+use crate::TextSource;
 
 /// A participant's registration inside a [`SelectionSession`].
 ///
 /// The slot is created when a selectable text element is built and dropped with
-/// it. It holds the participant's text as a cloned `Rc<str>` handle — the very
-/// allocation the widget already owns — so registering costs a pointer and a
-/// refcount, never a string copy.
+/// it. It holds the participant's `TextSource` handle, so registering shared
+/// text costs a pointer and a refcount, never a string copy.
 ///
 /// # Examples
 ///
@@ -28,17 +28,17 @@ use crate::selection::{PointSelection, SelectionPoint, SelectionState};
 /// ```
 pub(crate) struct SelectionSlot {
     session: Weak<SelectionSession>,
-    text: RefCell<Rc<str>>,
+    text: RefCell<TextSource>,
     draw_stamp: Cell<u64>,
     pending_stamp: Cell<u64>,
     selectable: Weak<dyn Selectable>,
 }
 
 impl SelectionSlot {
-    /// The shared text handle. Cheap: clones an `Rc`.
+    /// The shared text source. Cloning retains its backing handle.
     #[inline]
-    pub fn text(&self) -> Rc<str> {
-        Rc::clone(&self.text.borrow())
+    pub fn text(&self) -> TextSource {
+        self.text.borrow().clone()
     }
 
     /// The session this participant belongs to, while it is still alive.
@@ -49,7 +49,8 @@ impl SelectionSlot {
 
     /// Replaces the text snapshot after a rebuild, clamping a live selection
     /// endpoint in this slot to the new length.
-    pub fn set_text(&self, text: Rc<str>) {
+    pub fn set_text(&self, text: impl Into<TextSource>) {
+        let text = text.into();
         if *self.text.borrow() == text {
             return;
         }
@@ -196,12 +197,12 @@ impl SelectionSession {
     /// Registers a participant with its text handle and its geometry provider.
     pub fn register(
         self: &Rc<Self>,
-        text: Rc<str>,
+        text: impl Into<TextSource>,
         selectable: Weak<dyn Selectable>,
     ) -> Rc<SelectionSlot> {
         let slot = Rc::new(SelectionSlot {
             session: Rc::downgrade(self),
-            text: RefCell::new(text),
+            text: RefCell::new(text.into()),
             draw_stamp: Cell::new(0),
             pending_stamp: Cell::new(0),
             selectable,
@@ -740,12 +741,14 @@ mod tests {
 
     use aimer_attribute::Bounds;
     use aimer_events::pointer::PointerSource;
+    use aimer_rubick::ShareRef;
     use aimer_widget::PointerKey;
     use aimer_widget::base::{Color, WindowHandle};
 
     use super::{SelectionSession, SelectionSlot};
     use crate::selection::selectable::{SelectionCoordinator, TextGeometry};
     use crate::selection::{SelectionPoint, TextHitRegion};
+    use crate::TextSource;
 
     const SELECTION_COLOR: Color = Color::Rgba(51, 153, 255, 96);
 
@@ -783,6 +786,23 @@ mod tests {
             .collect();
         let slot = session.register(Rc::from(text), Rc::downgrade(&geometry) as _);
         (geometry, slot)
+    }
+
+    #[test]
+    fn registering_share_ref_text_preserves_its_source() {
+        let window = window();
+        let session = session(&window);
+        let source = ShareRef::from_static("shared selectable text");
+        let geometry = Rc::new(TextGeometry::new(window));
+        let slot = session.register(
+            TextSource::from(source.clone()),
+            Rc::downgrade(&geometry) as _,
+        );
+        let TextSource::ShareRef(slot_source) = slot.text() else {
+            panic!("selection registration should retain the ShareRef source")
+        };
+
+        assert!(ShareRef::ptr_eq(&source, &slot_source));
     }
 
     fn mouse() -> PointerKey {

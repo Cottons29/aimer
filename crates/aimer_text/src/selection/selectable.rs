@@ -421,7 +421,11 @@ pub(crate) struct SelectionBinding {
 impl SelectionBinding {
     /// Registers `text` with the ambient session of `ctx`, or with a fresh
     /// private one when the element sits outside a selection region.
-    pub fn new(ctx: &BuildContext, text: Rc<str>, fallback_color: Color) -> Self {
+    pub fn new(
+        ctx: &BuildContext,
+        text: impl Into<crate::TextSource>,
+        fallback_color: Color,
+    ) -> Self {
         let window = ctx.window.clone();
         let (session, owns_session) = match ctx.get_state::<SelectionScope>() {
             Some(scope) => (Rc::clone(&scope.0), false),
@@ -442,8 +446,8 @@ impl SelectionBinding {
 
     /// Clones the registration of the element being replaced and refreshes its
     /// text, which clamps any live endpoint inside it.
-    pub fn adopt(&self, text: Rc<str>) -> Self {
-        self.slot.set_text(text);
+    pub fn adopt(&self, text: impl Into<crate::TextSource>) -> Self {
+        self.slot.set_text(text.into());
         Self {
             geometry: Rc::clone(&self.geometry),
             session: Rc::clone(&self.session),

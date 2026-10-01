@@ -27,6 +27,7 @@ fn code_font_family() -> FontFamily {
 #[derive(Clone, Copy, Debug)]
 /// Visual styles, colors, and spacing used by [`crate::MarkdownViewer`].
 pub struct MarkdownTheme {
+    pub icon_color: Color,
     pub body: TextStyle,
     pub headings: [TextStyle; 6],
     pub blockquote: TextStyle,
@@ -208,6 +209,7 @@ impl Default for MarkdownTheme {
             comment_color: Color::Hex(0x6E7781),
             number_color: Color::Hex(0x0550AE),
             block_spacing: 8,
+            icon_color: Color::Hex(0x0969DA),
         }
     }
 }

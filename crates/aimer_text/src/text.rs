@@ -268,7 +268,7 @@ impl Widget for Text {
         if ctx.get_state::<SelectionScope>().is_some() {
             return RawSelectableText::new(
                 ctx,
-                self.text.to_rc(),
+                self.text,
                 self.text_style,
                 self.text_align,
                 self.line_height,

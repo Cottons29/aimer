@@ -72,10 +72,9 @@ impl TextSource {
     ///
     /// [`TextSource::Shared`] is cloned for free; [`TextSource::Static`]
     /// allocates once to produce the handle. [`TextSource::ShareRef`] copies
-    /// into a new `Rc<str>` because the current selection boundary requires
-    /// that concrete handle. Use this only at the boundary that actually
-    /// needs an `Rc<str>` — for example, registering selectable text with a
-    /// selection session — rather than on every rebuild.
+    /// into a new `Rc<str>` when a concrete handle is required. Use this only
+    /// at that boundary — for example, when invoking a link callback — rather
+    /// than on every rebuild.
     #[inline]
     pub fn to_rc(&self) -> Rc<str> {
         match self {

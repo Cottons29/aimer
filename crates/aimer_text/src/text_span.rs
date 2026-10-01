@@ -1,12 +1,15 @@
 use std::ops::Range;
 use std::rc::Rc;
 
+use aimer_rubick::ShareRef;
 use aimer_style::{
     FontFamily, FontStyle, FontWeight, TextDecoration, TextShadow, TextStyle, TextTransform,
 };
 use aimer_widget::base::Color;
 use unicode_linebreak::linebreaks;
 use unicode_segmentation::UnicodeSegmentation;
+
+use crate::TextSource;
 
 /// Optional run-level overrides for a [`TextSpan`].
 ///
@@ -141,17 +144,27 @@ impl SpanStyle {
 
 #[derive(Clone)]
 pub struct TextSpan {
-    pub text: Rc<str>,
+    pub text: TextSource,
     pub style: SpanStyle,
     pub children: Vec<TextSpan>,
-    pub link: Option<Rc<str>>,
+    pub link: Option<TextSource>,
 }
 
 impl TextSpan {
     #[inline]
     pub fn new(text: impl Into<Rc<str>>) -> Self {
+        Self::from_text_source(TextSource::from(text.into()))
+    }
+
+    /// Creates a span that retains a shared string without copying its text.
+    #[inline]
+    pub fn new_shared(text: ShareRef<str>) -> Self {
+        Self::from_text_source(TextSource::from(text))
+    }
+
+    fn from_text_source(text: TextSource) -> Self {
         Self {
-            text: text.into(),
+            text,
             style: SpanStyle::new(),
             children: Vec::new(),
             link: None,
@@ -183,7 +196,14 @@ impl TextSpan {
 
     #[inline]
     pub fn link(mut self, target: impl Into<Rc<str>>) -> Self {
-        self.link = Some(target.into());
+        self.link = Some(TextSource::from(target.into()));
+        self
+    }
+
+    /// Sets a link target while retaining its shared string handle.
+    #[inline]
+    pub fn link_shared(mut self, target: ShareRef<str>) -> Self {
+        self.link = Some(TextSource::from(target));
         self
     }
 
@@ -206,7 +226,7 @@ impl TextSpan {
     fn flatten_into(
         &self,
         inherited_style: TextStyle,
-        inherited_link: Option<Rc<str>>,
+        inherited_link: Option<TextSource>,
         result: &mut Vec<ResolvedTextSpan>,
     ) {
         let style = self.style.resolve(inherited_style);
@@ -226,14 +246,26 @@ impl TextSpan {
 
 #[derive(Clone)]
 pub struct ResolvedTextSpan {
-    pub text: Rc<str>,
+    pub text: TextSource,
     pub style: TextStyle,
-    pub link: Option<Rc<str>>,
+    pub link: Option<TextSource>,
 }
 
 impl ResolvedTextSpan {
     #[inline]
     pub fn plain(text: Rc<str>, style: TextStyle) -> Self {
+        Self::plain_source(TextSource::from(text), style)
+    }
+
+    /// Creates a plain resolved span that retains a shared string handle.
+    #[inline]
+    pub fn plain_shared(text: ShareRef<str>, style: TextStyle) -> Self {
+        Self::plain_source(TextSource::from(text), style)
+    }
+
+    /// Creates a plain resolved span without changing its text source.
+    #[inline]
+    pub fn plain_source(text: TextSource, style: TextStyle) -> Self {
         Self {
             text,
             style,
@@ -793,10 +825,49 @@ pub(crate) fn ellipsize_first_line(
 
 #[cfg(test)]
 mod tests {
+    use aimer_rubick::ShareRef;
     use aimer_style::{FontFamily, FontWeight, TextShadow, TextStyle, TextTransform};
     use aimer_widget::base::Color;
 
     use super::*;
+    use crate::TextSource;
+
+    #[test]
+    fn plain_source_keeps_share_ref_backing() {
+        let source = ShareRef::from_static("shared plain span text");
+        let span = ResolvedTextSpan::plain_source(
+            TextSource::from(source.clone()),
+            TextStyle::default(),
+        );
+        let TextSource::ShareRef(span_source) = span.text else {
+            panic!("plain resolved span should retain its shared source")
+        };
+
+        assert!(ShareRef::ptr_eq(&source, &span_source));
+    }
+
+    #[test]
+    fn flatten_preserves_shared_text_and_link_storage() {
+        let text = ShareRef::from_static("shared span text");
+        let link = ShareRef::from_static("https://aimer.dev");
+        let span = TextSpan::new_shared(text.clone()).link_shared(link.clone());
+
+        let TextSource::ShareRef(span_text) = &span.text else {
+            panic!("ShareRef input should remain shared in the span")
+        };
+        assert!(ShareRef::ptr_eq(&text, span_text));
+
+        let flattened = span.flatten(&TextStyle::default());
+        assert_eq!(flattened.len(), 1);
+        let TextSource::ShareRef(flattened_text) = &flattened[0].text else {
+            panic!("flattening should preserve the shared text source")
+        };
+        let Some(TextSource::ShareRef(flattened_link)) = &flattened[0].link else {
+            panic!("flattening should preserve the shared link source")
+        };
+        assert!(ShareRef::ptr_eq(&text, flattened_text));
+        assert!(ShareRef::ptr_eq(&link, flattened_link));
+    }
 
     #[test]
     fn nested_spans_inherit_and_override_parent_style() {

@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aimer_rubick.workspace = true
+aimer_macro.workspace = true
 aimer_utils.workspace = true
 aimer_widget.workspace = true
 aimer_text.workspace = true
@@ -20,6 +22,7 @@ aimer_svg.workspace = true
 aimer_input.workspace = true
 aimer_native.workspace = true
 synoptic.workspace = true
+aimer_std.workspace = true
 arborium = { workspace = true, features = [
     "all-languages",
 ], optional = true }

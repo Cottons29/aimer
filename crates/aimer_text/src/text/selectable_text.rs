@@ -35,7 +35,7 @@ use crate::text_span::ResolvedTextSpan;
 /// `RawTextWidget`, which pays nothing for selection.
 pub struct RawSelectableText {
     paragraph: Paragraph,
-    text: Rc<str>,
+    text: crate::TextSource,
     selection_color: Color,
     binding: RefCell<SelectionBinding>,
     hover_cursor: HoverCursor,
@@ -47,18 +47,18 @@ impl RawSelectableText {
     /// Builds the element, registering `text` with the ambient session.
     pub(crate) fn new(
         ctx: &BuildContext,
-        text: Rc<str>,
+        text: crate::TextSource,
         text_style: TextStyle,
         text_align: TextAlign,
         line_height: LineHeight,
         text_indent: f32,
         fallback_color: Color,
     ) -> Self {
-        let binding = SelectionBinding::new(ctx, Rc::clone(&text), fallback_color);
+        let binding = SelectionBinding::new(ctx, text.clone(), fallback_color);
         let selection_color = binding.session.selection_color();
         Self {
             paragraph: Paragraph::with_layout(
-                vec![ResolvedTextSpan::plain(Rc::clone(&text), text_style)],
+                vec![ResolvedTextSpan::plain_source(text.clone(), text_style)],
                 text_align,
                 text_style.text_overflow,
                 line_height,
@@ -120,7 +120,7 @@ impl aimer_widget::Rebuildable for RawSelectableText {
         else {
             return;
         };
-        let adopted = old.binding.borrow().adopt(Rc::clone(&self.text));
+        let adopted = old.binding.borrow().adopt(self.text.clone());
         *self.binding.borrow_mut() = adopted;
     }
 }
@@ -403,8 +403,9 @@ impl RawSelectableText {
         regions: Vec<crate::selection::TextHitRegion>,
         bounds: aimer_attribute::Bounds,
     ) -> Self {
+        let text = crate::TextSource::from(text);
         let geometry = Rc::new(TextGeometry::new(window.clone()));
-        let slot = session.register(Rc::clone(&text), Rc::downgrade(&geometry) as _);
+        let slot = session.register(text.clone(), Rc::downgrade(&geometry) as _);
         slot.stamp();
         *geometry.regions.borrow_mut() = regions;
         geometry
@@ -412,7 +413,10 @@ impl RawSelectableText {
             .save(1.0, bounds.x, bounds.y, bounds.width, bounds.height);
         Self {
             paragraph: Paragraph::new(
-                vec![ResolvedTextSpan::plain(Rc::clone(&text), TextStyle::default())],
+                vec![ResolvedTextSpan::plain_source(
+                    text.clone(),
+                    TextStyle::default(),
+                )],
                 TextAlign::TopLeft,
                 aimer_style::TextOverflow::Clip,
             ),

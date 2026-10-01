@@ -1,5 +1,8 @@
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 
+use aimer_rubick::ShareRef;
 use aimer_utils::error;
 use markdown::mdast::{AlignKind, Node};
 use markdown::{Constructs, ParseOptions};
@@ -25,9 +28,9 @@ pub enum Block {
         items: Vec<ListItem>,
     },
     Code {
-        value: String,
-        language: Option<String>,
-        meta: Option<String>,
+        value: ShareRef<str>,
+        language: Option<ShareRef<str>>,
+        meta: Option<ShareRef<str>>,
     },
     ThematicBreak,
     Table {
@@ -35,7 +38,7 @@ pub enum Block {
         rows: Vec<TableRow>,
     },
     FootnoteDefinition {
-        identifier: String,
+        identifier: ShareRef<str>,
         blocks: Vec<Block>,
     },
     Custom(CustomBlockData),
@@ -62,25 +65,25 @@ pub struct TableRow {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Inline {
-    Text(String),
+    Text(ShareRef<str>),
     SoftBreak,
     HardBreak,
     Emphasis(Vec<Inline>),
     Strong(Vec<Inline>),
     Delete(Vec<Inline>),
-    Code(String),
+    Code(ShareRef<str>),
     Link {
-        url: String,
-        title: Option<String>,
+        url: ShareRef<str>,
+        title: Option<ShareRef<str>>,
         content: Vec<Inline>,
     },
     Image {
-        url: String,
-        title: Option<String>,
-        alt: String,
+        url: ShareRef<str>,
+        title: Option<ShareRef<str>>,
+        alt: ShareRef<str>,
     },
     FootnoteReference {
-        identifier: String,
+        identifier: ShareRef<str>,
     },
     Custom(CustomInlineData),
 }
@@ -111,9 +114,15 @@ impl Display for MarkdownError {
 
 impl std::error::Error for MarkdownError {}
 
-struct PreparedSource {
-    source: String,
-    blocks: Vec<(String, CustomBlockData)>,
+struct PreparedSource<'a> {
+    source: Cow<'a, str>,
+    blocks: HashMap<String, CustomBlockData>,
+}
+
+pub(crate) fn share_ref_range(source: &ShareRef<str>, start: usize, end: usize) -> ShareRef<str> {
+    source
+        .clone()
+        .project(move |source| &source[start..end])
 }
 
 fn validate_rules(
@@ -159,44 +168,56 @@ fn validate_rules(
     Ok(())
 }
 
-fn prepare_source(
-    source: &str,
+fn prepare_source<'a>(
+    source: &'a str,
+    source_owner: Option<&ShareRef<str>>,
     block_rules: &[BlockRule],
     inline_rules: &[InlineRule],
-) -> Result<PreparedSource, MarkdownError> {
-    let mut prepared = String::with_capacity(source.len());
-    let mut blocks = Vec::new();
-    let mut lines = source.split_inclusive('\n').peekable();
+) -> Result<PreparedSource<'a>, MarkdownError> {
+    let mut prepared: Option<String> = None;
+    let mut blocks = HashMap::new();
+    let mut lines = source.split_inclusive('\n');
+    let mut source_offset = 0;
     let mut token_index = 0;
 
     while let Some(line) = lines.next() {
+        let line_offset = source_offset;
+        source_offset += line.len();
         let line_content = line.trim_matches(['\r', '\n']);
         let Some(rule) = block_rules
             .iter()
             .find(|rule| rule.delimiters().0 == line_content.trim())
         else {
-            prepared.push_str(line);
+            if let Some(prepared) = &mut prepared {
+                prepared.push_str(line);
+            }
             continue;
         };
 
+        if prepared.is_none() {
+            let mut prepared_source = String::with_capacity(source.len());
+            prepared_source.push_str(&source[..line_offset]);
+            prepared = Some(prepared_source);
+        }
+
         let (_, closing) = rule.delimiters();
-        let mut body = String::new();
+        let body_start = source_offset;
         let mut nesting = 1_usize;
         let mut closed = false;
+        let mut body_end = 0;
         while let Some(inner_line) = lines.next() {
+            let inner_line_offset = source_offset;
+            source_offset += inner_line.len();
             let inner_content = inner_line.trim_matches(['\r', '\n']);
             if inner_content.trim() == rule.delimiters().0 {
                 nesting += 1;
-                body.push_str(inner_line);
             } else if inner_content.trim() == closing {
                 nesting -= 1;
                 if nesting == 0 {
                     closed = true;
+                    body_end = inner_line_offset;
                     break;
                 }
-                body.push_str(inner_line);
-            } else {
-                body.push_str(inner_line);
             }
         }
         if !closed {
@@ -206,8 +227,13 @@ fn prepare_source(
             )));
         }
 
-        let body = body.trim_end_matches(['\r', '\n']);
-        let content = Document::parse_with_rules(body, block_rules, inline_rules)?;
+        let raw_body = &source[body_start..body_end];
+        let body = raw_body.trim_end_matches(['\r', '\n']);
+        let body_end = body_start + body.len();
+        let text = source_owner
+            .map(|source| share_ref_range(source, body_start, body_end))
+            .unwrap_or_else(|| ShareRef::from(body.to_owned()));
+        let content = Document::parse_shared_with_rules(text.clone(), block_rules, inline_rules)?;
         let token = loop {
             let token = format!("AIMER_CUSTOM_BLOCK_{token_index}");
             token_index += 1;
@@ -215,27 +241,39 @@ fn prepare_source(
                 break token;
             }
         };
+        let prepared = prepared
+            .as_mut()
+            .expect("custom block should have an owned prepared source");
         prepared.push_str(&token);
         prepared.push('\n');
-        blocks.push((token, CustomBlockData {
-            name: rule.name().to_string(),
-            text: body.to_string(),
-            content,
-        }));
+        blocks.insert(
+            token,
+            CustomBlockData {
+                name: rule.shared_name(),
+                text,
+                content,
+            },
+        );
     }
 
-    Ok(PreparedSource { source: prepared, blocks })
+    Ok(PreparedSource {
+        source: prepared.map_or(Cow::Borrowed(source), Cow::Owned),
+        blocks,
+    })
 }
 
-fn replace_custom_blocks(blocks: &mut [Block], captures: &[(String, CustomBlockData)]) {
+fn replace_custom_blocks(
+    blocks: &mut [Block],
+    captures: &mut HashMap<String, CustomBlockData>,
+) {
     for block in blocks {
         match block {
             Block::Paragraph(inlines) if inlines.len() == 1 => {
                 let Some(Inline::Text(token)) = inlines.first() else {
                     continue;
                 };
-                if let Some((_, data)) = captures.iter().find(|(candidate, _)| candidate == token) {
-                    *block = Block::Custom(data.clone());
+                if let Some(data) = captures.remove(token.as_ref()) {
+                    *block = Block::Custom(data);
                 }
             }
             Block::Blockquote(children) => replace_custom_blocks(children, captures),
@@ -250,12 +288,26 @@ fn replace_custom_blocks(blocks: &mut [Block], captures: &[(String, CustomBlockD
 
 fn split_custom_inlines(
     result: &mut Vec<Inline>,
-    mut remaining: &str,
+    value: ShareRef<str>,
     rules: &[InlineRule],
 ) -> Result<(), MarkdownError> {
-    while let Some((start, rule)) = find_custom_opening(remaining, rules) {
+    let source = value.as_ref();
+    let Some((mut start, mut rule)) = find_custom_opening(source, rules) else {
+        if !source.is_empty() {
+            result.push(Inline::Text(value));
+        }
+        return Ok(());
+    };
+
+    let mut offset = 0;
+    loop {
+        let remaining = &source[offset..];
         if start > 0 {
-            split_custom_inlines(result, &remaining[..start], rules)?;
+            result.push(Inline::Text(share_ref_range(
+                &value,
+                offset,
+                offset + start,
+            )));
         }
         let (opening, closing) = rule.delimiters();
         let value_start = start + opening.len();
@@ -266,24 +318,35 @@ fn split_custom_inlines(
             )));
         };
         let value_end = value_start + relative_end;
-        let value = &remaining[value_start..value_end];
+        let custom_value = &remaining[value_start..value_end];
         if rules.iter().any(|nested| {
-            find_unescaped(value.as_bytes(), nested.delimiters().0).is_some()
+            find_unescaped(custom_value.as_bytes(), nested.delimiters().0).is_some()
         }) {
             return Err(MarkdownError::new(format!(
                 "Nested custom inline '{}' is not supported",
                 rule.name()
             )));
         }
+        let custom_value = share_ref_range(
+            &value,
+            offset + value_start,
+            offset + value_end,
+        );
         result.push(Inline::Custom(CustomInlineData {
-            name: rule.name().to_string(),
-            text: value.to_string(),
-            label: value.to_string(),
+            name: rule.shared_name(),
+            text: custom_value.clone(),
+            label: custom_value,
         }));
-        remaining = &remaining[value_end + closing.len()..];
+        offset += value_end + closing.len();
+        let remaining = &source[offset..];
+        let Some((next_start, next_rule)) = find_custom_opening(remaining, rules) else {
+            break;
+        };
+        start = next_start;
+        rule = next_rule;
     }
-    if !remaining.is_empty() {
-        result.push(Inline::Text(remaining.to_string()));
+    if offset < source.len() {
+        result.push(Inline::Text(share_ref_range(&value, offset, source.len())));
     }
     Ok(())
 }
@@ -321,8 +384,20 @@ fn find_unescaped(value: &[u8], needle: &str) -> Option<usize> {
 }
 
 impl Document {
-    pub fn parse(source: &str) -> Result<Self, MarkdownError> {
-        Self::parse_with_rules(source, &[], &[])
+    pub fn parse(source: impl AsRef<str>) -> Result<Self, MarkdownError> {
+        Self::parse_with_rules(source.as_ref(), &[], &[])
+    }
+
+    pub(crate) fn parse_shared(source: ShareRef<str>) -> Result<Self, MarkdownError> {
+        Self::parse_shared_with_rules(source, &[], &[])
+    }
+
+    pub(crate) fn parse_shared_with_rules(
+        source: ShareRef<str>,
+        block_rules: &[BlockRule],
+        inline_rules: &[InlineRule],
+    ) -> Result<Self, MarkdownError> {
+        Self::parse_with_source(&source, Some(&source), block_rules, inline_rules)
     }
 
     pub(crate) fn parse_with_rules(
@@ -330,51 +405,65 @@ impl Document {
         block_rules: &[BlockRule],
         inline_rules: &[InlineRule],
     ) -> Result<Self, MarkdownError> {
+        Self::parse_with_source(source, None, block_rules, inline_rules)
+    }
+
+    fn parse_with_source(
+        source: &str,
+        source_owner: Option<&ShareRef<str>>,
+        block_rules: &[BlockRule],
+        inline_rules: &[InlineRule],
+    ) -> Result<Self, MarkdownError> {
         validate_rules(block_rules, inline_rules)?;
-        let prepared = prepare_source(source, block_rules, inline_rules)?;
+        let mut prepared = prepare_source(source, source_owner, block_rules, inline_rules)?;
         let options = ParseOptions {
             constructs: Constructs::gfm(),
             gfm_strikethrough_single_tilde: false,
             ..ParseOptions::default()
         };
-        let root = markdown::to_mdast(&prepared.source, &options)
+        let root = markdown::to_mdast(prepared.source.as_ref(), &options)
             .map_err(|error| MarkdownError::new(error.to_string()))?;
         let Node::Root(root) = root else {
             return Err(MarkdownError::new(
                 "Markdown parser did not produce a document root",
             ));
         };
-        let mut blocks = convert_blocks(&root.children, inline_rules)?;
-        replace_custom_blocks(&mut blocks, &prepared.blocks);
+        let mut blocks = convert_blocks(root.children, inline_rules)?;
+        replace_custom_blocks(&mut blocks, &mut prepared.blocks);
         Ok(Self { blocks })
     }
 }
 
-fn convert_blocks(nodes: &[Node], inline_rules: &[InlineRule]) -> Result<Vec<Block>, MarkdownError> {
+fn convert_blocks(
+    nodes: Vec<Node>,
+    inline_rules: &[InlineRule],
+) -> Result<Vec<Block>, MarkdownError> {
     nodes
-        .iter()
+        .into_iter()
         .map(|node| convert_block(node, inline_rules))
         .collect()
 }
 
-fn convert_block(node: &Node, inline_rules: &[InlineRule]) -> Result<Block, MarkdownError> {
+fn convert_block(node: Node, inline_rules: &[InlineRule]) -> Result<Block, MarkdownError> {
     match node {
         Node::Heading(heading) => Ok(Block::Heading {
             depth: heading.depth,
-            content: convert_inlines(&heading.children, inline_rules)?,
+            content: convert_inlines(heading.children, inline_rules)?,
         }),
         Node::Paragraph(paragraph) => Ok(Block::Paragraph(convert_inlines(
-            &paragraph.children,
+            paragraph.children,
             inline_rules,
         )?)),
         Node::Blockquote(quote) => Ok(Block::Blockquote(convert_blocks(
-            &quote.children,
+            quote.children,
             inline_rules,
         )?)),
         Node::List(list) => {
+            let ordered = list.ordered;
+            let start = list.start;
             let items = list
                 .children
-                .iter()
+                .into_iter()
                 .map(|node| {
                     let Node::ListItem(item) = node else {
                         return Err(MarkdownError::new(
@@ -383,86 +472,93 @@ fn convert_block(node: &Node, inline_rules: &[InlineRule]) -> Result<Block, Mark
                     };
                     Ok(ListItem {
                         checked: item.checked,
-                        blocks: convert_blocks(&item.children, inline_rules)?,
+                        blocks: convert_blocks(item.children, inline_rules)?,
                     })
                 })
                 .collect::<Result<_, MarkdownError>>()?;
             Ok(Block::List {
-                ordered: list.ordered,
-                start: list.start,
+                ordered,
+                start,
                 items,
             })
         }
         Node::Code(code) => Ok(Block::Code {
-            value: code.value.clone(),
-            language: code.lang.clone(),
-            meta: code.meta.clone(),
+            value: code.value.into(),
+            language: code.lang.map(ShareRef::from),
+            meta: code.meta.map(ShareRef::from),
         }),
         Node::ThematicBreak(_) => Ok(Block::ThematicBreak),
         Node::Table(table) => {
+            let alignments = table.align.into_iter().map(Alignment::from).collect();
             let rows = table
                 .children
-                .iter()
+                .into_iter()
                 .map(|node| {
                     let Node::TableRow(row) = node else {
                         return Err(MarkdownError::new("Markdown table contains a non-row node"));
                     };
                     let cells = row
                         .children
-                        .iter()
+                        .into_iter()
                         .map(|node| {
                             let Node::TableCell(cell) = node else {
                                 return Err(MarkdownError::new(
                                     "Markdown table row contains a non-cell node",
                                 ));
                             };
-                            convert_inlines(&cell.children, inline_rules)
+                            convert_inlines(cell.children, inline_rules)
                         })
                         .collect::<Result<_, MarkdownError>>()?;
                     Ok(TableRow { cells })
                 })
                 .collect::<Result<_, MarkdownError>>()?;
-            let alignments = table.align.iter().copied().map(Alignment::from).collect();
             Ok(Block::Table { alignments, rows })
         }
         Node::FootnoteDefinition(footnote) => Ok(Block::FootnoteDefinition {
-            identifier: footnote.identifier.clone(),
-            blocks: convert_blocks(&footnote.children, inline_rules)?,
+            identifier: footnote.identifier.into(),
+            blocks: convert_blocks(footnote.children, inline_rules)?,
         }),
         Node::Html(_) => Err(MarkdownError::new(
             "Raw HTML is not supported in MarkdownViewer",
         )),
         other => Err(MarkdownError::new(format!(
             "Unsupported Markdown block node: {}",
-            node_name(other)
+            node_name(&other)
         ))),
     }
 }
 
-fn convert_inlines(nodes: &[Node], inline_rules: &[InlineRule]) -> Result<Vec<Inline>, MarkdownError> {
+fn convert_inlines(
+    nodes: Vec<Node>,
+    inline_rules: &[InlineRule],
+) -> Result<Vec<Inline>, MarkdownError> {
     let mut result = Vec::new();
     for node in nodes {
         match node {
-            Node::Text(text) => push_text_with_soft_breaks(&mut result, &text.value, inline_rules)?,
+            Node::Text(text) => push_text_with_soft_breaks(&mut result, text.value, inline_rules)?,
             Node::Break(_) => result.push(Inline::HardBreak),
             Node::Emphasis(emphasis) => {
-                result.push(Inline::Emphasis(convert_inlines(&emphasis.children, inline_rules)?))
+                result.push(Inline::Emphasis(convert_inlines(emphasis.children, inline_rules)?))
             }
-            Node::Strong(strong) => result.push(Inline::Strong(convert_inlines(&strong.children, inline_rules)?)),
-            Node::Delete(delete) => result.push(Inline::Delete(convert_inlines(&delete.children, inline_rules)?)),
-            Node::InlineCode(code) => result.push(Inline::Code(code.value.clone())),
+            Node::Strong(strong) => {
+                result.push(Inline::Strong(convert_inlines(strong.children, inline_rules)?))
+            }
+            Node::Delete(delete) => {
+                result.push(Inline::Delete(convert_inlines(delete.children, inline_rules)?))
+            }
+            Node::InlineCode(code) => result.push(Inline::Code(code.value.into())),
             Node::Link(link) => result.push(Inline::Link {
-                url: link.url.clone(),
-                title: link.title.clone(),
-                content: convert_inlines(&link.children, inline_rules)?,
+                url: link.url.into(),
+                title: link.title.map(ShareRef::from),
+                content: convert_inlines(link.children, inline_rules)?,
             }),
             Node::Image(image) => result.push(Inline::Image {
-                url: image.url.clone(),
-                title: image.title.clone(),
-                alt: image.alt.clone(),
+                url: image.url.into(),
+                title: image.title.map(ShareRef::from),
+                alt: image.alt.into(),
             }),
             Node::FootnoteReference(reference) => result.push(Inline::FootnoteReference {
-                identifier: reference.identifier.clone(),
+                identifier: reference.identifier.into(),
             }),
             Node::Html(item) => {
                 error!("Raw HTML is not supported in MarkdownViewer : {:?}", item);
@@ -471,10 +567,10 @@ fn convert_inlines(nodes: &[Node], inline_rules: &[InlineRule]) -> Result<Vec<In
                 ));
             }
             other => {
-                error!("Unsupported Markdown inline node: {}", node_name(other));
+                error!("Unsupported Markdown inline node: {}", node_name(&other));
                 return Err(MarkdownError::new(format!(
                     "Unsupported Markdown inline node: {}",
-                    node_name(other)
+                    node_name(&other)
                 )));
             }
         }
@@ -484,51 +580,99 @@ fn convert_inlines(nodes: &[Node], inline_rules: &[InlineRule]) -> Result<Vec<In
 
 fn push_text_with_soft_breaks(
     result: &mut Vec<Inline>,
-    value: &str,
+    value: String,
     inline_rules: &[InlineRule],
 ) -> Result<(), MarkdownError> {
-    let mut parts = value.split('\n').peekable();
+    let value = ShareRef::from(value);
+    if !value.contains('\n') {
+        return push_extended_image_text(result, value, inline_rules);
+    }
+
+    let mut parts = value.as_ref().split('\n').peekable();
+    let mut offset = 0;
     while let Some(part) = parts.next() {
-        push_extended_image_text(result, part, inline_rules)?;
-        if parts.peek().is_some() {
+        let part_length = part.len();
+        let has_next = parts.peek().is_some();
+        push_extended_image_text(
+            result,
+            share_ref_range(&value, offset, offset + part_length),
+            inline_rules,
+        )?;
+        offset += part_length;
+        if has_next {
             result.push(Inline::SoftBreak);
+            offset += 1;
         }
     }
     Ok(())
 }
 
+fn find_extended_image(value: &str) -> Option<(usize, usize, usize, usize)> {
+    let start = value.find("![")?;
+    let alt_end = start + 2 + value[start + 2..].find("](")?;
+    let destination_start = alt_end + 2;
+    let destination_end = destination_start + value[destination_start..].find(')')?;
+    let destination = value[destination_start..destination_end].trim();
+    if destination.contains(' ') && !destination.is_empty() {
+        Some((start, alt_end, destination_start, destination_end))
+    } else {
+        None
+    }
+}
+
 fn push_extended_image_text(
     result: &mut Vec<Inline>,
-    value: &str,
+    value: ShareRef<str>,
     inline_rules: &[InlineRule],
 ) -> Result<(), MarkdownError> {
-    let mut remaining = value;
-    while let Some(start) = remaining.find("![") {
-        let Some(alt_end_relative) = remaining[start + 2..].find("](") else {
-            break;
-        };
-        let alt_end = start + 2 + alt_end_relative;
-        let destination_start = alt_end + 2;
-        let Some(destination_end_relative) = remaining[destination_start..].find(')') else {
-            break;
-        };
-        let destination_end = destination_start + destination_end_relative;
-        let destination = remaining[destination_start..destination_end].trim();
-        if !destination.contains(' ') || destination.is_empty() {
-            break;
-        }
+    let source = value.as_ref();
+    let Some((mut start, mut alt_end, mut destination_start, mut destination_end)) =
+        find_extended_image(source)
+    else {
+        return split_custom_inlines(result, value, inline_rules);
+    };
+    let mut offset = 0;
+    loop {
+        let remaining = &source[offset..];
+        let raw_destination_start = destination_start;
+        let raw_destination_end = destination_end;
+        let raw_destination = &remaining[raw_destination_start..raw_destination_end];
+        let destination_start_offset = offset
+            + raw_destination_start
+            + raw_destination.len()
+            - raw_destination.trim_start().len();
+        let destination_end_offset =
+            offset + raw_destination_start + raw_destination.trim_end().len();
         if start > 0 {
-            result.push(Inline::Text(remaining[..start].to_string()));
+            result.push(Inline::Text(share_ref_range(
+                &value,
+                offset,
+                offset + start,
+            )));
         }
         result.push(Inline::Image {
-            url: destination.to_string(),
+            url: share_ref_range(&value, destination_start_offset, destination_end_offset),
             title: None,
-            alt: remaining[start + 2..alt_end].to_string(),
+            alt: share_ref_range(&value, offset + start + 2, offset + alt_end),
         });
-        remaining = &remaining[destination_end + 1..];
+        offset += raw_destination_end + 1;
+        let remaining = &source[offset..];
+        let Some((next_start, next_alt_end, next_destination_start, next_destination_end)) =
+            find_extended_image(remaining)
+        else {
+            break;
+        };
+        start = next_start;
+        alt_end = next_alt_end;
+        destination_start = next_destination_start;
+        destination_end = next_destination_end;
     }
-    if !remaining.is_empty() {
-        split_custom_inlines(result, remaining, inline_rules)?;
+    if offset < source.len() {
+        split_custom_inlines(
+            result,
+            share_ref_range(&value, offset, source.len()),
+            inline_rules,
+        )?;
     }
     Ok(())
 }
@@ -586,10 +730,157 @@ impl From<AlignKind> for Alignment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aimer_rubick::ShareRef;
     use crate::{BlockRule, BlockSyntax, InlineRule, InlineSyntax};
 
     fn parse(source: &str) -> Document {
         Document::parse(source).expect("fixture should parse")
+    }
+
+    fn push_text_storage(value: &ShareRef<str>, output: &mut Vec<(*const u8, usize)>) {
+        output.push((value.as_ref().as_ptr(), value.len()));
+    }
+
+    fn collect_inline_text_storage(inlines: &[Inline], output: &mut Vec<(*const u8, usize)>) {
+        for inline in inlines {
+            match inline {
+                Inline::Text(value) | Inline::Code(value) => push_text_storage(value, output),
+                Inline::SoftBreak | Inline::HardBreak => {}
+                Inline::Emphasis(children)
+                | Inline::Strong(children)
+                | Inline::Delete(children) => collect_inline_text_storage(children, output),
+                Inline::Link {
+                    url,
+                    title,
+                    content,
+                } => {
+                    push_text_storage(url, output);
+                    if let Some(title) = title {
+                        push_text_storage(title, output);
+                    }
+                    collect_inline_text_storage(content, output);
+                }
+                Inline::Image { url, title, alt } => {
+                    push_text_storage(url, output);
+                    if let Some(title) = title {
+                        push_text_storage(title, output);
+                    }
+                    push_text_storage(alt, output);
+                }
+                Inline::FootnoteReference { identifier } => {
+                    push_text_storage(identifier, output);
+                }
+                Inline::Custom(data) => {
+                    push_text_storage(&data.name, output);
+                    push_text_storage(&data.text, output);
+                    push_text_storage(&data.label, output);
+                }
+            }
+        }
+    }
+
+    fn collect_block_text_storage(blocks: &[Block], output: &mut Vec<(*const u8, usize)>) {
+        for block in blocks {
+            match block {
+                Block::Heading { content, .. } | Block::Paragraph(content) => {
+                    collect_inline_text_storage(content, output);
+                }
+                Block::Blockquote(children) => collect_block_text_storage(children, output),
+                Block::List { items, .. } => {
+                    for item in items {
+                        collect_block_text_storage(&item.blocks, output);
+                    }
+                }
+                Block::Code {
+                    value,
+                    language,
+                    meta,
+                } => {
+                    push_text_storage(value, output);
+                    if let Some(language) = language {
+                        push_text_storage(language, output);
+                    }
+                    if let Some(meta) = meta {
+                        push_text_storage(meta, output);
+                    }
+                }
+                Block::ThematicBreak => {}
+                Block::Table { rows, .. } => {
+                    for row in rows {
+                        for cell in &row.cells {
+                            collect_inline_text_storage(cell, output);
+                        }
+                    }
+                }
+                Block::FootnoteDefinition { identifier, blocks } => {
+                    push_text_storage(identifier, output);
+                    collect_block_text_storage(blocks, output);
+                }
+                Block::Custom(data) => {
+                    push_text_storage(&data.name, output);
+                    push_text_storage(&data.text, output);
+                    collect_block_text_storage(&data.content.blocks, output);
+                }
+            }
+        }
+    }
+
+    fn assert_cloned_document_shares_text_storage(document: &Document) {
+        let cloned = document.clone();
+        let mut original_storage = Vec::new();
+        let mut cloned_storage = Vec::new();
+        collect_block_text_storage(&document.blocks, &mut original_storage);
+        collect_block_text_storage(&cloned.blocks, &mut cloned_storage);
+        assert_eq!(original_storage, cloned_storage);
+    }
+
+    #[test]
+    fn cloning_a_parsed_document_reuses_code_block_storage() {
+        let document = parse("```rust\nlet answer = 42;\n```");
+        let cloned = document.clone();
+        let Block::Code { value, .. } = &document.blocks[0] else {
+            panic!("expected a fenced code block")
+        };
+        let Block::Code {
+            value: cloned_value,
+            ..
+        } = &cloned.blocks[0]
+        else {
+            panic!("expected a cloned fenced code block")
+        };
+
+        assert!(
+            std::ptr::eq(value.as_ptr(), cloned_value.as_ptr()),
+            "cloning a parsed document should share immutable code text"
+        );
+    }
+
+    #[test]
+    fn cloning_parsed_documents_reuses_all_text_storage() {
+        let document = parse(
+            "# heading *styled*\n\nparagraph `inline` [link](https://example.test \"title\") ![alt text](image.png \"image title\") ref[^note].\n\n```rust meta=demo\nlet value = 42;\n```\n\n> quote *text*\n\n- list **item**\n\n[^note]: footnote text\n\n| cell |\n| --- |\n| value |",
+        );
+        assert_cloned_document_shares_text_storage(&document);
+
+        let custom_document = Document::parse_with_rules(
+            ":::alert\nblock body\n:::\n\nClick {{button:continue}}.",
+            &[BlockRule::new(
+                "alert",
+                crate::BlockSyntax::Paired {
+                    opening: ":::alert",
+                    closing: ":::",
+                },
+            )],
+            &[InlineRule::new(
+                "button",
+                crate::InlineSyntax::Paired {
+                    opening: "{{button:",
+                    closing: "}}",
+                },
+            )],
+        )
+        .expect("custom Markdown should parse");
+        assert_cloned_document_shares_text_storage(&custom_document);
     }
 
     #[test]
@@ -619,8 +910,8 @@ mod tests {
         assert!(matches!(
             &document.blocks[0],
             Block::Custom(data)
-                if data.name == "alert"
-                    && data.text == "**Important**"
+                if data.name.as_ref() == "alert"
+                    && data.text.as_ref() == "**Important**"
                     && matches!(data.content.blocks.as_slice(), [Block::Paragraph(_)])
         ));
         let Block::Paragraph(inlines) = &document.blocks[1] else {
@@ -629,7 +920,10 @@ mod tests {
         assert!(matches!(
             inlines.as_slice(),
             [Inline::Text(prefix), Inline::Custom(data), Inline::Text(suffix)]
-                if prefix == "Click " && data.name == "button" && data.text == "continue" && suffix == "."
+                if prefix.as_ref() == "Click "
+                    && data.name.as_ref() == "button"
+                    && data.text.as_ref() == "continue"
+                    && suffix.as_ref() == "."
         ));
     }
 
@@ -677,15 +971,15 @@ mod tests {
         inlines
             .iter()
             .map(|inline| match inline {
-                Inline::Text(value) | Inline::Code(value) => value.clone(),
+                Inline::Text(value) | Inline::Code(value) => value.to_string(),
                 Inline::SoftBreak | Inline::HardBreak => "\n".to_string(),
                 Inline::Emphasis(children)
                 | Inline::Strong(children)
                 | Inline::Delete(children) => inline_text(children),
                 Inline::Link { content, .. } => inline_text(content),
-                Inline::Image { alt, .. } => alt.clone(),
-                Inline::FootnoteReference { identifier } => identifier.clone(),
-                Inline::Custom(data) => data.text.clone(),
+                Inline::Image { alt, .. } => alt.to_string(),
+                Inline::FootnoteReference { identifier } => identifier.to_string(),
+                Inline::Custom(data) => data.text.to_string(),
             })
             .collect()
     }
@@ -752,14 +1046,14 @@ mod tests {
         let Block::Paragraph(inlines) = &document.blocks[0] else {
             panic!("expected paragraph")
         };
-        assert!(inlines.iter().any(|inline| matches!(inline, Inline::Link { url, title: None, .. } if url == "https://example.com")));
+        assert!(inlines.iter().any(|inline| matches!(inline, Inline::Link { url, title: None, .. } if url.as_ref() == "https://example.com")));
         assert!(inlines.iter().any(
-            |inline| matches!(inline, Inline::Link { title: Some(title), .. } if title == "title")
+            |inline| matches!(inline, Inline::Link { title: Some(title), .. } if title.as_ref() == "title")
         ));
-        assert!(inlines.iter().any(|inline| matches!(inline, Inline::Image { url, title: Some(title), alt } if url == "image.jpg" && title == "caption" && alt == "alt")));
-        assert!(inlines.iter().any(|inline| matches!(inline, Inline::FootnoteReference { identifier } if identifier == "one")));
+        assert!(inlines.iter().any(|inline| matches!(inline, Inline::Image { url, title: Some(title), alt } if url.as_ref() == "image.jpg" && title.as_ref() == "caption" && alt.as_ref() == "alt")));
+        assert!(inlines.iter().any(|inline| matches!(inline, Inline::FootnoteReference { identifier } if identifier.as_ref() == "one")));
         assert!(
-            matches!(&document.blocks[1], Block::FootnoteDefinition { identifier, .. } if identifier == "one")
+            matches!(&document.blocks[1], Block::FootnoteDefinition { identifier, .. } if identifier.as_ref() == "one")
         );
     }
 
@@ -769,7 +1063,7 @@ mod tests {
         assert!(matches!(
             &document.blocks[0],
             Block::Paragraph(inlines)
-                if matches!(inlines.as_slice(), [Inline::Image { url, alt, .. }] if url == "image line here" && alt == "alt text")
+                if matches!(inlines.as_slice(), [Inline::Image { url, alt, .. }] if url.as_ref() == "image line here" && alt.as_ref() == "alt text")
         ));
     }
 
@@ -782,13 +1076,13 @@ mod tests {
             matches!(&document.blocks[0], Block::Blockquote(children) if matches!(children.get(1), Some(Block::Blockquote(_))))
         );
         assert!(
-            matches!(&document.blocks[1], Block::Paragraph(inlines) if matches!(inlines.as_slice(), [Inline::Code(value)] if value == "inline"))
+            matches!(&document.blocks[1], Block::Paragraph(inlines) if matches!(inlines.as_slice(), [Inline::Code(value)] if value.as_ref() == "inline"))
         );
         assert!(
-            matches!(&document.blocks[2], Block::Code { language: Some(language), meta: Some(meta), value } if language == "python" && meta == "title=demo" && value == "print('ok')")
+            matches!(&document.blocks[2], Block::Code { language: Some(language), meta: Some(meta), value } if language.as_ref() == "python" && meta.as_ref() == "title=demo" && value.as_ref() == "print('ok')")
         );
         assert!(
-            matches!(&document.blocks[3], Block::Code { language: None, value, .. } if value == "indented")
+            matches!(&document.blocks[3], Block::Code { language: None, value, .. } if value.as_ref() == "indented")
         );
         assert!(matches!(&document.blocks[4], Block::ThematicBreak));
         assert!(
@@ -819,7 +1113,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(matches!(rows[1].cells[0].as_slice(), [Inline::Emphasis(_)]));
         assert!(matches!(rows[1].cells[1].as_slice(), [Inline::Strong(_)]));
-        assert!(matches!(rows[1].cells[2].as_slice(), [Inline::Code(value)] if value == "c"));
+        assert!(matches!(rows[1].cells[2].as_slice(), [Inline::Code(value)] if value.as_ref() == "c"));
     }
 
     #[test]
@@ -827,5 +1121,17 @@ mod tests {
         let error = Document::parse("<script>alert('no')</script>")
             .expect_err("raw HTML is intentionally unsupported");
         assert!(error.to_string().contains("HTML"));
+    }
+
+    #[test]
+    fn preparing_source_without_custom_blocks_borrows_the_shared_source() {
+        let source = ShareRef::from_static("plain Markdown");
+        let prepared = prepare_source(&source, Some(&source), &[], &[])
+            .expect("plain source should prepare");
+
+        assert!(matches!(
+            prepared.source,
+            std::borrow::Cow::Borrowed("plain Markdown")
+        ));
     }
 }

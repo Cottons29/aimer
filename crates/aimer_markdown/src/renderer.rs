@@ -2,11 +2,13 @@ use std::rc::Rc;
 
 use aimer_assets::{AssetImage, NetworkImage};
 use aimer_color::prelude::Color;
-use aimer_container::{Container, SizedBox, ZeroSizedBox};
+use aimer_container::{Container, SizedBox};
 use aimer_flex::{BoxAlignment, Column, Expanded, OverflowBehavior, Row};
 use aimer_grid::{Grid, GridItem, GridTrack};
 use aimer_input::button::Button;
+use aimer_rubick::ShareRef;
 use aimer_scroll::{ScrollAxis, Scrollable};
+use aimer_std::case;
 use aimer_style::{
     BorderSlice, BorderStyle, BoxBorder, BoxDecoration, FontStyle, FontWeight, LayoutSpacing,
     TextAlign, TextDecoration, TextDecorationLine, TextOverflow, TextStyle,
@@ -16,13 +18,14 @@ use aimer_text::{RichText, SelectionArea, SpanStyle, Text, TextSpan};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{AnyWidget, Widget};
 
+use crate::custom::{TypedCustomBlockBuilder, TypedCustomInlineBuilder};
+use crate::document::share_ref_range;
 pub(crate) use crate::markdown_theme::MarkdownTheme;
 use crate::syntax::highlight_cached;
 use crate::{
     Alignment, Block, CaptureSpan, CustomBlockBuilder, CustomInlineBuilder, Document, Inline,
     TableRow,
 };
-use crate::custom::{TypedCustomBlockBuilder, TypedCustomInlineBuilder};
 
 const TICK_SVG_DATA: &[u8] = include_bytes!("../tick-checkbox-svgrepo-com.svg");
 const COPY_SVG_DATA: &[u8] = include_bytes!("../copy-2-svgrepo-com.svg");
@@ -30,9 +33,9 @@ const COPY_SVG_DATA: &[u8] = include_bytes!("../copy-2-svgrepo-com.svg");
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Metadata passed to a [`ImageResolver`] for each image node.
 pub struct MarkdownImage {
-    pub source: String,
-    pub alt: String,
-    pub title: Option<String>,
+    pub source: ShareRef<str>,
+    pub alt: ShareRef<str>,
+    pub title: Option<ShareRef<str>>,
 }
 
 /// Shared callback invoked when a rendered link is activated.
@@ -40,31 +43,28 @@ pub type LinkHandler = Rc<dyn Fn(Rc<str>)>;
 /// Shared resolver that maps image metadata to a native Aimer widget.
 pub type ImageResolver = Rc<dyn Fn(&MarkdownImage) -> AnyWidget>;
 
-fn build_tick_box(ticked: bool) -> AnyWidget {
+fn build_tick_box(ticked: bool, theme: &MarkdownTheme) -> AnyWidget {
     match SvgDocument::from_svg(TICK_SVG_DATA) {
         Ok(doc) => Container::new()
             .margin(LayoutSpacing::new().top(2))
             .width(16)
             .height(18)
-            .child(Svg::new(doc).style(
-                "#tick",
-                SvgStyle::new().fill(if ticked {
-                    Color::BLACK
-                } else {
-                    Color::Transparent
-                }),
-            ))
+            .child(
+                Svg::new(doc)
+                    .style("#box", SvgStyle::new().fill(theme.icon_color))
+                    .style(
+                        "#tick",
+                        SvgStyle::new().fill(case!(ticked, theme.icon_color, Color::Transparent)),
+                    ),
+            )
             .boxed(),
-        Err(_) => Text::new(if ticked {
-            "[✔]".to_string()
-        } else {
-            "[ ]".to_string()
-        })
-        .boxed(),
+        Err(_) => Text::new(if ticked { "[✔]" } else { "[ ]" })
+            .text_style(TextStyle::new().color(theme.icon_color))
+            .boxed(),
     }
 }
 
-fn code_block_language_label(language: Option<&str>) -> Option<&str> {
+fn code_block_language_label(language: Option<&ShareRef<str>>) -> Option<&ShareRef<str>> {
     language.filter(|language| !language.trim().is_empty())
 }
 
@@ -72,30 +72,32 @@ fn copy_code_with<E>(source: &str, copy: impl FnOnce(&str) -> Result<(), E>) -> 
     copy(source)
 }
 
-fn build_code_header(value: &str, language: Option<&str>, theme: &MarkdownTheme) -> AnyWidget {
+fn build_code_header(
+    value: &ShareRef<str>,
+    language: Option<&ShareRef<str>>,
+    theme: &MarkdownTheme,
+) -> AnyWidget {
     let language = match code_block_language_label(language) {
-        Some(language) => Text::new(language.to_string())
-            .text_style(
-                theme
-                    .code_block
-                    .font_family(aimer_assets::FontFamily::SANS_SERIF)
-                    .color(theme.code_block.color.with_opacity(160)),
-            )
-            .boxed(),
-        None => ZeroSizedBox.boxed(),
-    };
-    let source: Rc<str> = Rc::from(value);
+        Some(language) => Text::new(language.clone()),
+        None => Text::new("text"),
+    }
+    .text_style(
+        theme
+            .code_block
+            .font_family(aimer_assets::FontFamily::SANS_SERIF)
+            .color(theme.code_block.color.with_opacity(160)),
+    )
+    .boxed();
+    let decoration = BoxDecoration::new().border_radius(6);
+    let source = value.clone();
     let copy = match SvgDocument::from_svg(COPY_SVG_DATA) {
         Ok(document) => Container::new()
             .width(28)
             .height(28)
             .child(
                 Button::new()
-                    .decoration(
-                        BoxDecoration::new()
-                            .background_color(theme.body.color.with_alpha(0.1).darken(0.4))
-                            .border_radius(4),
-                    )
+                    .decoration(decoration.clone())
+                    .hover_decoration(decoration.background_color(theme.icon_color.with_alpha(0.3)))
                     .on_press(move || {
                         if let Err(error) =
                             copy_code_with(&source, aimer_native::clipboard::set_text)
@@ -109,7 +111,7 @@ fn build_code_header(value: &str, language: Option<&str>, theme: &MarkdownTheme)
                             .horizontal_alignment(BoxAlignment::Center)
                             .children([Svg::new(document).width(20.0).height(20.0).style(
                                 "path",
-                                SvgStyle::new().stroke(theme.code_block.color),
+                                SvgStyle::new().stroke(theme.code_background.invert()),
                             )]),
                     ),
             )
@@ -135,25 +137,34 @@ pub fn default_image_resolver(image: &MarkdownImage) -> AnyWidget {
 
         Container::new()
             // .height(400)
-            .child(Row::new().children([NetworkImage::new(image.source.clone()).height(400)]))
+            .child(
+                Row::new().children([NetworkImage::new(image.source.to_string()).height(400)]),
+            )
             .boxed()
     } else {
         // debug!("Loading asset image {}", image.source);
 
         Container::new()
             // .height(400)
-            .child(Row::new().children([AssetImage::new(image.source.clone()).height(400)]))
+            .child(Row::new().children([AssetImage::new(image.source.to_string()).height(400)]))
             .boxed()
     }
 }
 
-pub(crate) fn inline_spans(inlines: &[Inline], theme: &MarkdownTheme) -> TextSpan {
-    TextSpan::root(inlines.iter().map(|inline| inline_span(inline, theme)))
+pub(crate) fn inline_spans<'a>(
+    inlines: impl IntoIterator<Item = &'a Inline>,
+    theme: &MarkdownTheme,
+) -> TextSpan {
+    TextSpan::root(
+        inlines
+            .into_iter()
+            .map(|inline| inline_span(inline, theme)),
+    )
 }
 
 fn inline_span(inline: &Inline, theme: &MarkdownTheme) -> TextSpan {
     match inline {
-        Inline::Text(text) => TextSpan::new(text.clone()),
+        Inline::Text(text) => TextSpan::new_shared(text.clone()),
         Inline::SoftBreak => TextSpan::new(" "),
         Inline::HardBreak => TextSpan::new("\n"),
         Inline::Emphasis(children) => TextSpan::new("")
@@ -168,18 +179,29 @@ fn inline_span(inline: &Inline, theme: &MarkdownTheme) -> TextSpan {
                     .text_decoration(TextDecoration::new().line(TextDecorationLine::LINE_THROUGH)),
             )
             .children(children.iter().map(|inline| inline_span(inline, theme))),
-        Inline::Code(code) => TextSpan::new(code.clone()).style(theme.inline_code),
+        Inline::Code(code) => TextSpan::new_shared(code.clone()).style(theme.inline_code),
         Inline::Link { url, content, .. } => TextSpan::new("")
             .style(theme.link)
             .children(content.iter().map(|inline| inline_span(inline, theme)))
-            .link(url.clone()),
-        Inline::Image { alt, .. } => {
-            TextSpan::new(format!("[{alt}]")).style(SpanStyle::new().font_style(FontStyle::Italic))
+            .link_shared(url.clone()),
+        Inline::Image { alt, .. } => TextSpan::new("")
+            .style(SpanStyle::new().font_style(FontStyle::Italic))
+            .children([
+                TextSpan::new("["),
+                TextSpan::new_shared(alt.clone()),
+                TextSpan::new("]"),
+            ]),
+        Inline::FootnoteReference { identifier } => {
+            TextSpan::new("")
+                .style(theme.link)
+                .children([
+                    TextSpan::new("["),
+                    TextSpan::new_shared(identifier.clone()),
+                    TextSpan::new("]"),
+                ])
+                .link(format!("#footnote-{identifier}"))
         }
-        Inline::FootnoteReference { identifier } => TextSpan::new(format!("[{identifier}]"))
-            .style(theme.link)
-            .link(format!("#footnote-{identifier}")),
-        Inline::Custom(data) => TextSpan::new(data.text.clone()),
+        Inline::Custom(data) => TextSpan::new_shared(data.text.clone()),
     }
 }
 
@@ -368,19 +390,17 @@ fn render_block(
             typed_custom_inlines,
             ctx,
         ),
-        Block::Paragraph(content) => {
-            render_inline_flow(
-                content,
-                theme.body,
-                None,
-                theme,
-                link_handler,
-                image_resolver,
-                custom_inlines,
-                typed_custom_inlines,
-                ctx,
-            )
-        }
+        Block::Paragraph(content) => render_inline_flow(
+            content,
+            theme.body,
+            None,
+            theme,
+            link_handler,
+            image_resolver,
+            custom_inlines,
+            typed_custom_inlines,
+            ctx,
+        ),
         Block::Blockquote(blocks) => Container::new()
             .padding(LayoutSpacing::all(8_u32))
             .box_decoration(
@@ -436,7 +456,7 @@ fn render_block(
                                 Some(marker) => Text::new(marker)
                                     .text_style(theme.body.font_weight(FontWeight::Bold))
                                     .boxed(),
-                                None => build_tick_box(is_complete),
+                                None => build_tick_box(is_complete, theme),
                             },
                             Expanded::new().box_child(render_blocks(
                                 &item.blocks,
@@ -473,7 +493,7 @@ fn render_block(
                     Column::new()
                         .horizontal_alignment(BoxAlignment::Start)
                         .children([
-                            build_code_header(value, language.as_deref(), theme),
+                            build_code_header(value, language.as_ref(), theme),
                             Container::new()
                                 .padding(LayoutSpacing::new().left(16).right(16).bottom(16))
                                 .box_child(
@@ -482,8 +502,7 @@ fn render_block(
                                         .vertical_scroll_bar(None)
                                         .horizontal_scroll_bar(None)
                                         .child(
-                                            SizedBox::new()
-                                                .child(
+                                            SizedBox::new().child(
                                                 SelectionArea::new().child(
                                                     RichText::new(TextSpan::root(spans))
                                                         .text_style(theme.code_block),
@@ -508,9 +527,17 @@ fn render_block(
         Block::FootnoteDefinition { identifier, blocks } => Row::new()
             .gaps(LayoutSpacing::all(6_u32))
             .children(vec![
-                Text::new(format!("[{identifier}]"))
-                    .text_style(theme.body.font_weight(FontWeight::Bold))
-                    .boxed(),
+                RichText::new(
+                    TextSpan::new("")
+                        .style(SpanStyle::new().font_weight(FontWeight::Bold))
+                        .children([
+                            TextSpan::new("["),
+                            TextSpan::new_shared(identifier.clone()),
+                            TextSpan::new("]"),
+                        ]),
+                )
+                .text_style(theme.body)
+                .boxed(),
                 render_blocks(
                     blocks,
                     theme,
@@ -526,22 +553,22 @@ fn render_block(
             .boxed(),
         Block::Custom(data) => typed_custom_blocks
             .iter()
-            .find(|(rule, _)| rule.name() == data.name)
+            .find(|(rule, _)| rule.name() == data.name.as_ref())
             .and_then(|(_, builder)| ctx.map(|ctx| builder(data, ctx)))
             .or_else(|| {
                 custom_blocks
                     .iter()
-                    .find(|(rule, _)| rule.name() == data.name)
+                    .find(|(rule, _)| rule.name() == data.name.as_ref())
                     .map(|(_, builder)| builder(data))
             })
             .unwrap_or_else(|| Text::new(data.text.clone()).text_style(theme.body).boxed()),
     }
 }
 
-fn highlighted_code_spans(value: &str, language: Option<&str>) -> Vec<TextSpan> {
+fn highlighted_code_spans(value: &ShareRef<str>, language: Option<&str>) -> Vec<TextSpan> {
     let mut offset = 0;
     let mut spans = Vec::new();
-    for capture in highlight_cached(value, language).iter() {
+    for capture in highlight_cached(value.as_ref(), language).iter() {
         let (start, end) = capture.range();
         let (start, end) = (start as usize, end as usize);
         if start < offset
@@ -553,7 +580,7 @@ fn highlighted_code_spans(value: &str, language: Option<&str>) -> Vec<TextSpan> 
             continue;
         }
         if offset < start {
-            spans.push(TextSpan::new(&value[offset..start]));
+            spans.push(TextSpan::new_shared(share_ref_range(value, offset, start)));
         }
         let mut style = SpanStyle::new().color(capture.color());
         if matches!(capture, CaptureSpan::Keyword { .. }) {
@@ -561,11 +588,11 @@ fn highlighted_code_spans(value: &str, language: Option<&str>) -> Vec<TextSpan> 
         } else if matches!(capture, CaptureSpan::Comment { .. }) {
             style = style.font_style(FontStyle::Italic);
         }
-        spans.push(TextSpan::new(&value[start..end]).style(style));
+        spans.push(TextSpan::new_shared(share_ref_range(value, start, end)).style(style));
         offset = end;
     }
     if offset < value.len() {
-        spans.push(TextSpan::new(&value[offset..]));
+        spans.push(TextSpan::new_shared(share_ref_range(value, offset, value.len())));
     }
     spans
 }
@@ -585,19 +612,17 @@ fn render_blocks_with_style(
     let children = blocks
         .iter()
         .map(|block| match block {
-            Block::Paragraph(inlines) => {
-                render_inline_flow(
-                    inlines,
-                    style,
-                    None,
-                    theme,
-                    link_handler,
-                    image_resolver,
-                    custom_inlines,
-                    typed_custom_inlines,
-                    ctx,
-                )
-            }
+            Block::Paragraph(inlines) => render_inline_flow(
+                inlines,
+                style,
+                None,
+                theme,
+                link_handler,
+                image_resolver,
+                custom_inlines,
+                typed_custom_inlines,
+                ctx,
+            ),
             _ => render_block(
                 block,
                 theme,
@@ -628,51 +653,45 @@ fn render_inline_flow(
     typed_custom_inlines: &[(crate::InlineRule, TypedCustomInlineBuilder)],
     ctx: Option<&BuildContext>,
 ) -> AnyWidget {
-    let mut plain_text = Some(String::new());
+    let mut has_plain_content = true;
     let mut has_image = false;
     let mut has_custom_inline = false;
     for inline in inlines {
         match inline {
-            Inline::Text(value) => {
-                if let Some(text) = plain_text.as_mut() {
-                    text.push_str(value);
-                }
-            }
-            Inline::SoftBreak => {
-                if let Some(text) = plain_text.as_mut() {
-                    text.push(' ');
-                }
-            }
-            Inline::HardBreak => {
-                if let Some(text) = plain_text.as_mut() {
-                    text.push('\n');
-                }
-            }
+            Inline::Text(_) | Inline::SoftBreak | Inline::HardBreak => {}
             Inline::Image { .. } => {
                 has_image = true;
-                plain_text = None;
+                has_plain_content = false;
             }
             Inline::Custom(_) => {
                 has_custom_inline = true;
-                plain_text = None;
+                has_plain_content = false;
             }
-            _ => plain_text = None,
+            _ => has_plain_content = false,
         }
     }
-    if let Some(text) = plain_text {
-        // Syntax-free flows can use RawTextWidget, which is safe for retained
-        // paint reuse. Rich syntax still follows the span-based path below.
-        let text = Text::new(text).text_style(style.text_overflow(TextOverflow::Wrap));
-        return match alignment {
-            Some(alignment) => text.text_align(alignment).boxed(),
-            None => text.boxed(),
+    if has_plain_content {
+        let text = match inlines {
+            [] => Some(Text::new("")),
+            [Inline::Text(text)] => Some(Text::new(text.clone())),
+            _ => None,
         };
+        if let Some(text) = text {
+            // Syntax-free flows can use RawTextWidget, which is safe for retained
+            // paint reuse. Rich syntax still follows the span-based path below.
+            let text = text.text_style(style.text_overflow(TextOverflow::Wrap));
+            return match alignment {
+                Some(alignment) => text.text_align(alignment).boxed(),
+                None => text.boxed(),
+            };
+        }
+        return rich_text_aligned(inlines, style, alignment, theme, link_handler);
     }
     if !has_image && !has_custom_inline {
         return rich_text_aligned(inlines, style, alignment, theme, link_handler);
     }
     let mut children = Vec::new();
-    let mut text = Vec::new();
+    let mut text: Vec<&Inline> = Vec::new();
     for inline in inlines {
         if let Inline::Image { url, title, alt } = inline {
             if !text.is_empty() {
@@ -705,18 +724,18 @@ fn render_inline_flow(
             }
             let widget = custom_inlines
                 .iter()
-                .find(|(rule, _)| rule.name() == data.name)
+                .find(|(rule, _)| rule.name() == data.name.as_ref())
                 .map(|(_, builder)| builder(data))
                 .or_else(|| {
                     typed_custom_inlines
                         .iter()
-                        .find(|(rule, _)| rule.name() == data.name)
+                        .find(|(rule, _)| rule.name() == data.name.as_ref())
                         .and_then(|(_, builder)| ctx.map(|ctx| builder(data, ctx)))
                 })
                 .unwrap_or_else(|| Text::new(data.text.clone()).text_style(style).boxed());
             children.push(widget);
         } else {
-            text.push(inline.clone());
+            text.push(inline);
         }
     }
     if !text.is_empty() {
@@ -748,7 +767,7 @@ fn render_inline_flow(
 }
 
 fn rich_text_for_inline_flow(
-    inlines: &[Inline],
+    inlines: &[&Inline],
     style: TextStyle,
     alignment: Option<TextAlign>,
     theme: &MarkdownTheme,
@@ -756,14 +775,14 @@ fn rich_text_for_inline_flow(
     has_custom_inline: bool,
 ) -> AnyWidget {
     if has_custom_inline {
-        rich_text_aligned_wrappable(inlines, style, alignment, theme, link_handler)
+        rich_text_aligned_wrappable(inlines.iter().copied(), style, alignment, theme, link_handler)
     } else {
-        rich_text_aligned(inlines, style, alignment, theme, link_handler)
+        rich_text_aligned(inlines.iter().copied(), style, alignment, theme, link_handler)
     }
 }
 
-fn rich_text_aligned_wrappable(
-    inlines: &[Inline],
+fn rich_text_aligned_wrappable<'a>(
+    inlines: impl IntoIterator<Item = &'a Inline>,
     style: TextStyle,
     alignment: Option<TextAlign>,
     theme: &MarkdownTheme,
@@ -784,8 +803,8 @@ fn rich_text_aligned_wrappable(
     }
 }
 
-fn rich_text_aligned(
-    inlines: &[Inline],
+fn rich_text_aligned<'a>(
+    inlines: impl IntoIterator<Item = &'a Inline>,
     style: TextStyle,
     alignment: Option<TextAlign>,
     theme: &MarkdownTheme,
@@ -817,8 +836,8 @@ mod tests {
     use aimer_canvas::{Canvas, InnerCanvas};
     use aimer_cupid::draw_cmd::DrawCommand;
     use aimer_style::{TextAlign, TextDecorationLine, TextStyle};
-    use aimer_widget::base::{BuildContext, WindowHandle};
     use aimer_widget::VisitorElement;
+    use aimer_widget::base::{BuildContext, WindowHandle};
 
     use super::*;
 
@@ -883,8 +902,14 @@ mod tests {
         );
 
         let document = Document::parse("> one line\n\nafter").unwrap();
-        let widget =
-            render_document(&document, &MarkdownTheme::default(), None, &resolver, &[], &[]);
+        let widget = render_document(
+            &document,
+            &MarkdownTheme::default(),
+            None,
+            &resolver,
+            &[],
+            &[],
+        );
         let ctx = layout_context(320.0, 200.0);
 
         let size = widget.to_element(&ctx).computed_size(&ctx);
@@ -910,16 +935,28 @@ mod tests {
         let single_quote = Document::parse("> outer").unwrap();
         let nested_quote = Document::parse("> outer\n>> inner").unwrap();
 
-        let single_height =
-            render_document(&single_quote, &MarkdownTheme::default(), None, &resolver, &[], &[])
-                .to_element(&ctx)
-                .computed_size(&ctx)
-                .height;
-        let nested_height =
-            render_document(&nested_quote, &MarkdownTheme::default(), None, &resolver, &[], &[])
-                .to_element(&ctx)
-                .computed_size(&ctx)
-                .height;
+        let single_height = render_document(
+            &single_quote,
+            &MarkdownTheme::default(),
+            None,
+            &resolver,
+            &[],
+            &[],
+        )
+        .to_element(&ctx)
+        .computed_size(&ctx)
+        .height;
+        let nested_height = render_document(
+            &nested_quote,
+            &MarkdownTheme::default(),
+            None,
+            &resolver,
+            &[],
+            &[],
+        )
+        .to_element(&ctx)
+        .computed_size(&ctx)
+        .height;
 
         assert!(
             nested_height > single_height + 30.0,
@@ -1000,18 +1037,23 @@ mod tests {
             ("anything <goes>\n", Some("unknown")),
             ("unlabelled\n", None),
         ] {
-            let text = TextSpan::root(highlighted_code_spans(source, language))
+            let source = ShareRef::from(source.to_owned());
+            let text = TextSpan::root(highlighted_code_spans(&source, language))
                 .flatten(&TextStyle::default())
                 .into_iter()
                 .map(|span| span.text.to_string())
                 .collect::<String>();
-            assert_eq!(text, source);
+            assert_eq!(text, source.as_ref());
         }
     }
 
     #[test]
     fn code_block_header_preserves_the_fence_language() {
-        assert_eq!(code_block_language_label(Some("rust")), Some("rust"));
+        let rust = ShareRef::from_static("rust");
+        assert_eq!(
+            code_block_language_label(Some(&rust)).map(|language| language.as_ref()),
+            Some("rust")
+        );
         assert_eq!(code_block_language_label(None), None);
     }
 
@@ -1038,9 +1080,15 @@ mod tests {
         let resolver: ImageResolver = Rc::new(default_image_resolver);
         let document = Document::parse("```rust\nfn main() {}\n```").unwrap();
         let (ctx, canvas) = layout_context_with_canvas(320.0, 200.0);
-        let element =
-            render_document(&document, &MarkdownTheme::default(), None, &resolver, &[], &[])
-                .to_element(&ctx);
+        let element = render_document(
+            &document,
+            &MarkdownTheme::default(),
+            None,
+            &resolver,
+            &[],
+            &[],
+        )
+        .to_element(&ctx);
         element.layout(&ctx);
         element.draw(&ctx);
         let text = canvas
@@ -1088,9 +1136,11 @@ mod tests {
                     if text.as_ref() == "A plain Markdown paragraph"
             )
         }));
-        assert!(!commands
-            .iter()
-            .any(|command| matches!(command, DrawCommand::DrawRichText { .. })));
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, DrawCommand::DrawRichText { .. }))
+        );
     }
 
     #[test]
@@ -1137,7 +1187,7 @@ mod tests {
         let custom_inlines = vec![(
             rule,
             Rc::new(|data: &CustomInlineData| {
-                assert_eq!(data.label, "continue");
+                assert_eq!(data.label.as_ref(), "continue");
                 SizedBox::new().width(72).height(24).boxed()
             }) as CustomInlineBuilder,
         )];
@@ -1171,9 +1221,15 @@ mod tests {
         let document = Document::parse("```rust\nfn main() {}\n```").unwrap();
         let (mut ctx, canvas) = layout_context_with_canvas(1700.0, 200.0);
         ctx.scale = 2.0;
-        let element =
-            render_document(&document, &MarkdownTheme::default(), None, &resolver, &[], &[])
-                .to_element(&ctx);
+        let element = render_document(
+            &document,
+            &MarkdownTheme::default(),
+            None,
+            &resolver,
+            &[],
+            &[],
+        )
+        .to_element(&ctx);
 
         element.layout(&ctx);
         element.draw(&ctx);
@@ -1192,16 +1248,30 @@ mod tests {
         let document = Document::parse(
             "```rust\nlet message = \"this line is deliberately wider than the narrow viewport\";\n```",
         )
-        .unwrap();
+            .unwrap();
 
         let narrow_ctx = layout_context(180.0, 200.0);
-        let narrow_size = render_document(&document, &MarkdownTheme::default(), None, &resolver, &[], &[])
-            .to_element(&narrow_ctx)
-            .computed_size(&narrow_ctx);
+        let narrow_size = render_document(
+            &document,
+            &MarkdownTheme::default(),
+            None,
+            &resolver,
+            &[],
+            &[],
+        )
+        .to_element(&narrow_ctx)
+        .computed_size(&narrow_ctx);
         let wide_ctx = layout_context(800.0, 200.0);
-        let wide_size = render_document(&document, &MarkdownTheme::default(), None, &resolver, &[], &[])
-            .to_element(&wide_ctx)
-            .computed_size(&wide_ctx);
+        let wide_size = render_document(
+            &document,
+            &MarkdownTheme::default(),
+            None,
+            &resolver,
+            &[],
+            &[],
+        )
+        .to_element(&wide_ctx)
+        .computed_size(&wide_ctx);
 
         assert!(
             narrow_size.width <= 180.0,
@@ -1313,19 +1383,28 @@ mod tests {
         let calls = Rc::new(Cell::new(0));
         let observed = calls.clone();
         let resolver: ImageResolver = Rc::new(move |image| {
-            assert_eq!(image.source, "asset.png");
-            assert_eq!(image.alt, "alt");
+            assert_eq!(image.source.as_ref(), "asset.png");
+            assert_eq!(image.alt.as_ref(), "alt");
             observed.set(observed.get() + 1);
             SizedBox::new().boxed()
         });
 
-        let _widget = render_document(&document, &MarkdownTheme::default(), None, &resolver, &[], &[]);
+        let _widget = render_document(
+            &document,
+            &MarkdownTheme::default(),
+            None,
+            &resolver,
+            &[],
+            &[],
+        );
         assert_eq!(calls.get(), 1);
     }
 
     #[test]
     fn document_rendering_invokes_custom_block_and_inline_builders() {
-        use crate::{BlockRule, BlockSyntax, CustomBlockData, CustomInlineData, InlineRule, InlineSyntax};
+        use crate::{
+            BlockRule, BlockSyntax, CustomBlockData, CustomInlineData, InlineRule, InlineSyntax,
+        };
 
         let document = Document::parse_with_rules(
             ":::alert\nblock body\n:::\n\nClick {{button:continue}}.",
@@ -1349,38 +1428,34 @@ mod tests {
         let inline_calls = Rc::new(Cell::new(0));
         let observed_block = block_calls.clone();
         let observed_inline = inline_calls.clone();
-        let blocks = vec![
-            (
-                BlockRule::new(
-                    "alert",
-                    BlockSyntax::Paired {
-                        opening: ":::alert",
-                        closing: ":::",
-                    },
-                ),
-                Rc::new(move |data: &CustomBlockData| {
-                    assert_eq!(data.text, "block body");
-                    observed_block.set(observed_block.get() + 1);
-                    Text::new(data.text.clone()).boxed()
-                }) as CustomBlockBuilder,
+        let blocks = vec![(
+            BlockRule::new(
+                "alert",
+                BlockSyntax::Paired {
+                    opening: ":::alert",
+                    closing: ":::",
+                },
             ),
-        ];
-        let inlines = vec![
-            (
-                InlineRule::new(
-                    "button",
-                    InlineSyntax::Paired {
-                        opening: "{{button:",
-                        closing: "}}",
-                    },
-                ),
-                Rc::new(move |data: &CustomInlineData| {
-                    assert_eq!(data.label, "continue");
-                    observed_inline.set(observed_inline.get() + 1);
-                    Text::new(data.label.clone()).boxed()
-                }) as CustomInlineBuilder,
+            Rc::new(move |data: &CustomBlockData| {
+                assert_eq!(data.text.as_ref(), "block body");
+                observed_block.set(observed_block.get() + 1);
+                Text::new(data.text.clone()).boxed()
+            }) as CustomBlockBuilder,
+        )];
+        let inlines = vec![(
+            InlineRule::new(
+                "button",
+                InlineSyntax::Paired {
+                    opening: "{{button:",
+                    closing: "}}",
+                },
             ),
-        ];
+            Rc::new(move |data: &CustomInlineData| {
+                assert_eq!(data.label.as_ref(), "continue");
+                observed_inline.set(observed_inline.get() + 1);
+                Text::new(data.label.clone()).boxed()
+            }) as CustomInlineBuilder,
+        )];
         let resolver: ImageResolver = Rc::new(default_image_resolver);
 
         let _widget = render_document(

@@ -10,6 +10,7 @@ use aimer::accessibility::{
 };
 
 use aimer::{AnyElement, BuildContext, Column, Container, Text, Widget};
+use aimer::console::log::debug;
 
 /// Builds a settings subtree with a merged label, a range value, and an
 /// actionable switch.
@@ -50,6 +51,7 @@ pub struct AccessibilityExample;
 
 impl Widget for AccessibilityExample {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
+
         let snapshot = settings_semantics_example();
         Container::new()
             .child(
