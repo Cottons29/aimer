@@ -131,15 +131,15 @@ fn svg_shader_source() -> &'static str {
     #[cfg(target_os = "android")]
     {
         concat!(
-            include_str!("./shaders/android_color.wgsl"),
-            include_str!("./shaders/svg.wgsl")
+            include_str!("./shaders/wgsl/android_color.wgsl"),
+            include_str!("./shaders/wgsl/svg.wgsl")
         )
     }
     #[cfg(not(target_os = "android"))]
     {
         concat!(
-            include_str!("./shaders/color.wgsl"),
-            include_str!("./shaders/svg.wgsl")
+            include_str!("./shaders/wgsl/color.wgsl"),
+            include_str!("./shaders/wgsl/svg.wgsl")
         )
     }
 }

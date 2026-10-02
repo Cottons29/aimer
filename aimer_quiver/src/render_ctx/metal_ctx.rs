@@ -211,13 +211,10 @@ pub mod render_ctx {
             &mut self,
             draw_fn: impl FnOnce(&CupidCanvas, u32, u32),
         ) -> PresentOutcome {
-            match self.build_frame_packet(|canvas, width, height| {
+            self.render_frame_packet(|canvas, width, height| {
                 draw_fn(canvas, width, height);
                 (1.0, DamageSet::full(width, height))
-            }) {
-                Some(packet) => self.present_packet(packet),
-                None => PresentOutcome::Dropped,
-            }
+            })
         }
 
         /// Records and presents a frame with damage metadata from the widget walk.
@@ -225,8 +222,9 @@ pub mod render_ctx {
             &mut self,
             draw_fn: impl FnOnce(&CupidCanvas, u32, u32) -> (f32, DamageSet),
         ) -> PresentOutcome {
+            let cpu_frame = PhaseTimer::start();
             match self.build_frame_packet(draw_fn) {
-                Some(packet) => self.present_packet(packet),
+                Some(packet) => self.present_packet_timed(packet, Some(cpu_frame)),
                 None => PresentOutcome::Dropped,
             }
         }
@@ -293,14 +291,22 @@ pub mod render_ctx {
 
         /// Presents a frame packet and returns its draw-list storage to the canvas.
         pub fn present_packet(&mut self, packet: FramePacket) -> PresentOutcome {
-            let presented = self.present_inner(packet.frame());
+            self.present_packet_timed(packet, None)
+        }
+
+        fn present_packet_timed(
+            &mut self,
+            packet: FramePacket,
+            cpu_frame: Option<PhaseTimer>,
+        ) -> PresentOutcome {
+            let presented = self.present_inner(packet.frame(), cpu_frame);
             if let Some(canvas) = &self.canvas {
                 canvas.recycle_draw_list(packet.into_frame().into_draw_list());
             }
             PresentOutcome::from_presented(presented)
         }
 
-        fn present_inner(&mut self, frame: &Frame) -> bool {
+        fn present_inner(&mut self, frame: &Frame, cpu_frame: Option<PhaseTimer>) -> bool {
             let (Some(backend), Some(surface), Some(renderer)) = (
                 self.backend.as_ref(),
                 self.surface.as_ref(),
@@ -317,6 +323,8 @@ pub mod render_ctx {
             }
 
             let encode = PhaseTimer::start();
+            #[cfg(any(debug_assertions, feature = "frame-stats"))]
+            backend.begin_gpu_frame_timing(crate::frame_stats::record_gpu_frame_time);
             renderer.render(
                 backend,
                 drawable.view(),
@@ -326,6 +334,13 @@ pub mod render_ctx {
                 &frame.draw_list,
             );
             encode.finish(FramePhase::Encode);
+            #[cfg(any(debug_assertions, feature = "frame-stats"))]
+            {
+                backend.end_gpu_frame_timing();
+            }
+            if let Some(cpu_frame) = cpu_frame {
+                cpu_frame.finish_cpu_frame();
+            }
 
             let present = PhaseTimer::start();
             drawable.present(backend);

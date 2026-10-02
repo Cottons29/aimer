@@ -24,6 +24,10 @@ use crate::components::event_element::{
 use crate::components::layout_element::LayoutElement;
 use crate::components::rebuildable::Rebuildable;
 pub(crate) use crate::components::visitor_element::VisitorElement;
+use crate::element_invalidation::{
+    ElementChangeKind, ElementInvalidationBatch, ElementInvalidationBounds,
+    ElementInvalidationRevisions,
+};
 use crate::pointer_claim;
 use crate::components::drawable::{CompositorAnimationDecision, CompositorAnimationFrame};
 #[cfg(feature = "event-tree-exp")]
@@ -71,6 +75,7 @@ thread_local! {
     static REBUILD_FORCE_DESCEND_DEPTH: Cell<usize> = const { Cell::new(0) };
     static REBUILD_MARK_DEPTH: Cell<usize> = const { Cell::new(0) };
     static DRAW_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static DRAW_INVALIDATION_OWNER: Cell<Option<ElementId>> = const { Cell::new(None) };
     /// Paint invalidation metadata is retained for the current pair of
     /// rebuild/tree generations so a retained scroll tile can distinguish a
     /// local dirty element from an unrelated branch's rebuild.
@@ -147,6 +152,14 @@ pub fn take_paint_frame_damage(width: u32, height: u32) -> DamageSet {
 /// Adds one conservative device-pixel footprint to the current frame.
 #[doc(hidden)]
 pub fn mark_paint_damage(rectangle: DamageRect) {
+    if let Some(owner) = DRAW_INVALIDATION_OWNER.with(Cell::get) {
+        queue_element_invalidation_for(
+            Some(owner),
+            None,
+            ElementChangeKind::Paint,
+            Some(rectangle),
+        );
+    }
     FRAME_PAINT_DAMAGE.with(|damage| {
         if let Some(damage) = damage.borrow_mut().as_mut() {
             damage.add(rectangle);
@@ -160,6 +173,19 @@ pub fn mark_paint_damage(rectangle: DamageRect) {
 /// call to [`begin_paint_frame`].
 #[doc(hidden)]
 pub fn mark_paint_damage_full() {
+    if let Some(owner) = DRAW_INVALIDATION_OWNER.with(Cell::get) {
+        queue_element_invalidation_for(
+            Some(owner),
+            None,
+            ElementChangeKind::Unknown,
+            None,
+        );
+    } else if FRAME_PAINT_DAMAGE.with(|damage| damage.borrow().is_none()) {
+        // External readiness and platform changes can request a full repaint
+        // without an element owner. Preserve that fact for the next frame's
+        // invalidation batch as an explicit unknown record.
+        queue_element_invalidation(None, ElementChangeKind::Unknown);
+    }
     FRAME_PAINT_DAMAGE.with(|damage| {
         if let Some(damage) = damage.borrow_mut().as_mut() {
             damage.mark_full();
@@ -208,6 +234,32 @@ fn record_paint_invalidation_path(path: &[ElementId]) {
     });
 }
 
+fn queue_element_invalidation(
+    path: Option<Rc<[ElementId]>>,
+    change: ElementChangeKind,
+) {
+    let element_id = path.as_deref().and_then(|path| path.last().copied());
+    queue_element_invalidation_for(element_id, path, change, None);
+}
+
+fn queue_element_invalidation_for(
+    element_id: Option<ElementId>,
+    path: Option<Rc<[ElementId]>>,
+    change: ElementChangeKind,
+    damage_hint: Option<DamageRect>,
+) {
+    let revisions = current_element_invalidation_revisions();
+    let queued_during_frame = FRAME_PAINT_DAMAGE.with(|damage| damage.borrow().is_some());
+    crate::element_invalidation::enqueue(
+        element_id,
+        path,
+        change,
+        revisions,
+        queued_during_frame,
+        damage_hint,
+    );
+}
+
 fn record_current_paint_invalidation(element: ElementId) {
     REBUILD_PATH.with(|path| {
         let path = path.borrow();
@@ -219,9 +271,33 @@ fn record_current_paint_invalidation(element: ElementId) {
     });
 }
 
+fn current_element_invalidation_revisions() -> ElementInvalidationRevisions {
+    ElementInvalidationRevisions {
+        tree: element_tree_generation(),
+        rebuild: rebuild_invalidation_generation(),
+        layout: layout_invalidation_generation(),
+        resource: None,
+    }
+}
+
+fn element_invalidation_bounds(element: &dyn Element) -> Option<ElementInvalidationBounds> {
+    let (start, end) = element.event_tree_bounds()?;
+    if !start.x.is_finite()
+        || !start.y.is_finite()
+        || !end.x.is_finite()
+        || !end.y.is_finite()
+        || end.x < start.x
+        || end.y < start.y
+    {
+        return None;
+    }
+    Some(ElementInvalidationBounds { start, end })
+}
+
 fn mark_paint_invalidations_unknown() {
     sync_paint_invalidation_epoch();
     PAINT_INVALIDATION_UNKNOWN.with(|unknown| unknown.set(true));
+    queue_element_invalidation(None, ElementChangeKind::Unknown);
 }
 
 /// Starts collecting the logical element identities reached by one retained
@@ -371,6 +447,26 @@ impl Drop for DrawGuard {
     }
 }
 
+struct DrawInvalidationOwnerGuard {
+    previous: Option<ElementId>,
+}
+
+impl DrawInvalidationOwnerGuard {
+    #[inline]
+    fn enter(owner: ElementId) -> Self {
+        Self {
+            previous: DRAW_INVALIDATION_OWNER.with(|current| current.replace(Some(owner))),
+        }
+    }
+}
+
+impl Drop for DrawInvalidationOwnerGuard {
+    #[inline]
+    fn drop(&mut self) {
+        DRAW_INVALIDATION_OWNER.with(|current| current.set(self.previous));
+    }
+}
+
 fn begin_draw() -> (DrawGuard, bool) {
     let outermost = DRAW_DEPTH.with(|depth| {
         let outermost = depth.get() == 0;
@@ -428,6 +524,11 @@ impl DirtySource {
     #[inline]
     pub(crate) fn mark(&self) -> bool {
         if self.dirty.get() {
+            if let Some(path) = self.path.borrow().clone() {
+                queue_element_invalidation(Some(path), ElementChangeKind::Unknown);
+            } else {
+                mark_paint_invalidations_unknown();
+            }
             if !self.indexed.get() {
                 invalidate_dirty_paths();
             }
@@ -438,9 +539,10 @@ impl DirtySource {
             first = !self.dirty.replace(true);
             if first {
                 let path = self.path.borrow().clone();
-                if let Some(path) = path.as_deref() {
-                    record_paint_invalidation_path(path);
-                    add_dirty_path(path);
+                if let Some(path) = path {
+                    queue_element_invalidation(Some(path.clone()), ElementChangeKind::Unknown);
+                    record_paint_invalidation_path(&path);
+                    add_dirty_path(&path);
                     self.indexed.set(true);
                 } else {
                     mark_paint_invalidations_unknown();
@@ -1106,6 +1208,8 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
         let priority = self.element.compositor_priority();
         let stable = self.element.is_paint_stable() && self.element.is_layout_stable();
         let bounded = self.element.is_paint_bounded();
+        let _invalidation_owner = (!stable || !bounded)
+            .then(|| DrawInvalidationOwnerGuard::enter(self.id.get()));
 
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
         if !stable && bounded {
@@ -1808,6 +1912,7 @@ pub(crate) fn advance_layout_invalidation_generation() {
             generation.checked_add(1)
         })
         .expect("exhausted all layout invalidation generations");
+    queue_element_invalidation(None, ElementChangeKind::Layout);
 }
 
 /// Returns the generation of the most recent rebuild invalidation.
@@ -3076,6 +3181,118 @@ impl EventDispatcher {
         }
     }
 
+    /// Drains pending element mutations and resolves their pre-frame owners
+    /// through the generation-checked structural index.
+    #[doc(hidden)]
+    pub fn take_pending_element_invalidations(
+        &mut self,
+        root: &dyn Element,
+    ) -> ElementInvalidationBatch {
+        self.synchronize_paths_for_current_tree(root);
+        let mut batch = crate::element_invalidation::take_pending();
+        if batch.records().is_empty() {
+            return batch;
+        }
+
+        let before_frame = current_element_invalidation_revisions();
+        for invalidation in batch.records_mut() {
+            invalidation.before_frame_revisions = Some(before_frame);
+            if invalidation.queued_during_frame && invalidation.damage_hint.is_none() {
+                // A draw-time mutation without a tracked damage footprint has
+                // no reliable pre-walk bounds.
+                invalidation.requires_full_fallback = true;
+            }
+
+            let Some(id) = invalidation.element_id else {
+                invalidation.requires_full_fallback = true;
+                continue;
+            };
+            crate::frame_work_stats::record_element_index_lookup();
+            match self.resolve_indexed_element(root, id) {
+                Some(element) => {
+                    invalidation.old_bounds = element_invalidation_bounds(element);
+                    if invalidation.old_bounds.is_none() && invalidation.damage_hint.is_none() {
+                        invalidation.requires_full_fallback = true;
+                    }
+                }
+                None => {
+                    invalidation.stale_id = true;
+                    invalidation.requires_full_fallback = true;
+                    crate::frame_work_stats::record_stale_element_id();
+                }
+            }
+        }
+        batch
+    }
+
+    /// Resolves post-rebuild bounds for invalidations captured before the frame
+    /// walk. Removed IDs retain their old footprint and have no new footprint.
+    #[doc(hidden)]
+    pub fn complete_pending_element_invalidations(
+        &mut self,
+        root: &dyn Element,
+        batch: &mut ElementInvalidationBatch,
+    ) {
+        if batch.records().is_empty() {
+            return;
+        }
+
+        self.synchronize_paths_for_current_tree(root);
+        let after_frame = current_element_invalidation_revisions();
+        for invalidation in batch.records_mut() {
+            invalidation.after_frame_revisions = Some(after_frame);
+            if invalidation.stale_id {
+                continue;
+            }
+            let Some(id) = invalidation.element_id else {
+                continue;
+            };
+            crate::frame_work_stats::record_element_index_lookup();
+            match self.resolve_indexed_element(root, id) {
+                Some(element) => {
+                    invalidation.new_bounds = element_invalidation_bounds(element);
+                    if invalidation.new_bounds.is_none() && invalidation.damage_hint.is_none() {
+                        invalidation.requires_full_fallback = true;
+                    }
+                }
+                None if invalidation.old_bounds.is_some() => {
+                    invalidation.removed = true;
+                    // Dirty-region consumption is not enabled yet, so removal
+                    // stays on the full-frame path even with a known old box.
+                    invalidation.requires_full_fallback = true;
+                }
+                None => {
+                    invalidation.stale_id = true;
+                    invalidation.requires_full_fallback = true;
+                    crate::frame_work_stats::record_stale_element_id();
+                }
+            }
+        }
+    }
+
+    fn synchronize_paths_for_current_tree(&mut self, root: &dyn Element) {
+        if self.indexed_subtree_generation != root.subtree_generation()
+            || self.indexed_root != root.element_id()
+        {
+            self.paths_dirty = true;
+        }
+        self.synchronize_paths(root);
+    }
+
+    fn resolve_indexed_element<'a>(
+        &self,
+        root: &'a dyn Element,
+        id: ElementId,
+    ) -> Option<&'a dyn Element> {
+        if self.indexed_subtree_generation != root.subtree_generation()
+            || self.indexed_root != root.element_id()
+        {
+            return None;
+        }
+        let element = resolve_element_path(root, id, &self.path_indices, &self.path_links)?;
+        (element.element_id() == Some(id)).then_some(element)
+    }
+
     fn synchronize_paths(&mut self, root: &dyn Element) {
         let root_id = root.element_id();
         #[cfg(feature = "event-tree-exp")]
@@ -3136,17 +3353,22 @@ impl EventDispatcher {
         if self.paths_dirty {
             self.invalidate_hit_chain();
             self.hover_chains.clear();
-            self.path_indices.clear();
-            self.path_links.clear();
-            self.focus_scope = None;
+            let mut next_path_indices = HashMap::with_capacity(self.path_indices.len());
+            let mut next_path_links = Vec::with_capacity(self.path_links.len());
+            let mut next_focus_scope = None;
             index_element_links(
                 root,
                 None,
                 0,
-                &mut self.path_links,
-                &mut self.path_indices,
-                &mut self.focus_scope,
+                &mut next_path_links,
+                &mut next_path_indices,
+                &mut next_focus_scope,
             );
+            // Commit the new ID/path index only after the full structural walk
+            // succeeds. A partial walk never becomes a usable lookup table.
+            self.path_indices = next_path_indices;
+            self.path_links = next_path_links;
+            self.focus_scope = next_focus_scope;
             self.captures
                 .retain(|_, owner| self.path_indices.contains_key(owner));
             let path_indices = &self.path_indices;

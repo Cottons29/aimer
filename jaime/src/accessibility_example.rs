@@ -56,7 +56,7 @@ impl Widget for AccessibilityExample {
         Container::new()
             .child(
                 Column::new().children(vec![
-                    Text::new("Accessibility semantics").boxed(),
+                    Text::new("Accessibility semantics title").boxed(),
                     Text::new(format!("Published nodes: {}", snapshot.len())).boxed(),
                     Text::new(snapshot.canonical_string()).wrapped().boxed(),
                 ]),

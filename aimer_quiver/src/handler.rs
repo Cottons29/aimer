@@ -30,7 +30,9 @@ use aimer_attribute::size::ResolvedSize;
 use aimer_venus::Venus;
 use aimer_rubick::{UiAllocator, UiMemory};
 use aimer_widget::base::{BuildContext, WindowHandle};
-use aimer_widget::{AnyElement, EventDispatcher, EventResult, Widget, begin_event_frame};
+use aimer_widget::{
+    AnyElement, ElementInvalidationBatch, EventDispatcher, EventResult, Widget, begin_event_frame,
+};
 use std::any::Any;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -474,45 +476,74 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         // epoch also reaches dispatchers nested inside scrollables and regions.
         begin_event_frame();
 
-        // #[cfg(debug_assertions)]
-        // if let Some((breakdown, content)) = crate::frame_stats::take_debug_report() {
-        //     let request_stats = crate::frame_stats::frame_request_stats();
-        //     crate::frame_stats::reset_frame_request_stats();
-        //     debug!(
-        //         "[frame-stats] frames={} build={:.2}ms encode={:.2}ms present={:.2}ms nodes/frame={:.1} commands/frame={:.1} retained-layers/frame={:.1} text/frame={:.1} image-draws/frame={:.1} image-uploads/frame={:.1} text-cache-hit/frame={:.1} text-cache-miss/frame={:.1} rebuild-visits/frame={:.1} rebuild-pruned/frame={:.1} stateful-checks/frame={:.1} stateless-checks/frame={:.1} stateful-builds/frame={:.1} stateless-builds/frame={:.1} layout/frame={:.1} hit-test/frame={:.1} paint/frame={:.1} root-draw/frame={:.1} scroll-events/frame={:.1} scroll-steps/frame={:.1} smoothing-steps/frame={:.1} state-updates/frame={:.1} scroll-offset-updates/frame={:.1} redraw-requests/frame={:.1} frame-ready-accepted={} frame-ready-coalesced={} display-ticks={}",
-        //         content.frames,
-        //         breakdown.build.average().as_secs_f64() * 1_000.0,
-        //         breakdown.encode.average().as_secs_f64() * 1_000.0,
-        //         breakdown.present.average().as_secs_f64() * 1_000.0,
-        //         content.average_drawn_nodes(),
-        //         content.average_draw_commands(),
-        //         content.average_retained_layers(),
-        //         content.average_text_commands(),
-        //         content.average_image_draws(),
-        //         content.average_image_uploads(),
-        //         content.text_cache_hits as f64 / content.frames as f64,
-        //         content.average_text_cache_misses(),
-        //         content.rebuild_visits as f64 / content.frames as f64,
-        //         content.rebuild_pruned as f64 / content.frames as f64,
-        //         content.stateful_rebuild_checks as f64 / content.frames as f64,
-        //         content.stateless_rebuild_checks as f64 / content.frames as f64,
-        //         content.stateful_builds as f64 / content.frames as f64,
-        //         content.stateless_builds as f64 / content.frames as f64,
-        //         content.layout_calls as f64 / content.frames as f64,
-        //         content.hit_test_visits as f64 / content.frames as f64,
-        //         content.paint_calls as f64 / content.frames as f64,
-        //         content.root_draw_calls as f64 / content.frames as f64,
-        //         content.scroll_events as f64 / content.frames as f64,
-        //         content.scroll_steps as f64 / content.frames as f64,
-        //         content.smoothing_steps as f64 / content.frames as f64,
-        //         content.state_updates as f64 / content.frames as f64,
-        //         content.scroll_offset_updates as f64 / content.frames as f64,
-        //         content.redraw_requests as f64 / content.frames as f64,
-        //         request_stats.accepted,
-        //         request_stats.coalesced,
-        //         request_stats.display_ticks,
-        //     );
-        // }
+        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        if let Some((breakdown, content, timing)) = crate::frame_stats::take_debug_report() {
+            let request_stats = crate::frame_stats::frame_request_stats();
+            crate::frame_stats::reset_frame_request_stats();
+            let target_size = self
+                .window
+                .as_ref()
+                .map(|window| window.inner_size())
+                .unwrap_or_default();
+            let scale_factor = self
+                .window
+                .as_ref()
+                .map_or(self.window_scale, |window| window.scale_factor());
+            let refresh_millihertz = self
+                .native_window()
+                .and_then(|window| window.current_monitor().or_else(|| window.primary_monitor()))
+                .and_then(|monitor| monitor.refresh_rate_millihertz());
+            aimer_utils::debug!(
+                "[frame-stats] frames={} build={:.2}ms encode={:.2}ms present={:.2}ms cpu-frame-samples={} cpu-frame={:.2}ms cpu-frame-p95<={:.2}ms cpu-frame-p95-saturated={} gpu-frame-samples={} gpu-frame={:.2}ms gpu-frame-p95<={:.2}ms gpu-frame-p95-saturated={} target={}x{}px scale={:.3} refresh-millihz={:?} nodes/frame={:.1} commands/frame={:.1} retained-layers/frame={:.1} text/frame={:.1} image-draws/frame={:.1} image-uploads/frame={:.1} text-cache-hit/frame={:.1} text-cache-miss/frame={:.1} rebuild-visits/frame={:.1} rebuild-pruned/frame={:.1} stateful-checks/frame={:.1} stateless-checks/frame={:.1} stateful-builds/frame={:.1} stateless-builds/frame={:.1} layout/frame={:.1} hit-test/frame={:.1} paint/frame={:.1} root-draw/frame={:.1} scroll-events/frame={:.1} scroll-steps/frame={:.1} smoothing-steps/frame={:.1} state-updates/frame={:.1} invalidations-queued/frame={:.1} invalidations-coalesced/frame={:.1} element-index-lookups/frame={:.1} stale-element-ids/frame={:.1} scroll-offset-updates/frame={:.1} redraw-requests/frame={:.1} frame-ready-accepted={} frame-ready-coalesced={} display-ticks={}",
+                content.frames,
+                breakdown.build.average().as_secs_f64() * 1_000.0,
+                breakdown.encode.average().as_secs_f64() * 1_000.0,
+                breakdown.present.average().as_secs_f64() * 1_000.0,
+                timing.cpu_frame.samples,
+                timing.cpu_frame.average().as_secs_f64() * 1_000.0,
+                timing.cpu_frame_p95.as_secs_f64() * 1_000.0,
+                timing.cpu_frame_p95_saturated,
+                timing.gpu_frame.samples,
+                timing.gpu_frame.average().as_secs_f64() * 1_000.0,
+                timing.gpu_frame_p95.as_secs_f64() * 1_000.0,
+                timing.gpu_frame_p95_saturated,
+                target_size.width,
+                target_size.height,
+                scale_factor,
+                refresh_millihertz,
+                content.average_drawn_nodes(),
+                content.average_draw_commands(),
+                content.average_retained_layers(),
+                content.average_text_commands(),
+                content.average_image_draws(),
+                content.average_image_uploads(),
+                content.text_cache_hits as f64 / content.frames as f64,
+                content.average_text_cache_misses(),
+                content.rebuild_visits as f64 / content.frames as f64,
+                content.rebuild_pruned as f64 / content.frames as f64,
+                content.stateful_rebuild_checks as f64 / content.frames as f64,
+                content.stateless_rebuild_checks as f64 / content.frames as f64,
+                content.stateful_builds as f64 / content.frames as f64,
+                content.stateless_builds as f64 / content.frames as f64,
+                content.layout_calls as f64 / content.frames as f64,
+                content.hit_test_visits as f64 / content.frames as f64,
+                content.paint_calls as f64 / content.frames as f64,
+                content.root_draw_calls as f64 / content.frames as f64,
+                content.scroll_events as f64 / content.frames as f64,
+                content.scroll_steps as f64 / content.frames as f64,
+                content.smoothing_steps as f64 / content.frames as f64,
+                content.state_updates as f64 / content.frames as f64,
+                content.invalidations_queued as f64 / content.frames as f64,
+                content.invalidations_coalesced as f64 / content.frames as f64,
+                content.element_index_lookups as f64 / content.frames as f64,
+                content.stale_element_ids as f64 / content.frames as f64,
+                content.scroll_offset_updates as f64 / content.frames as f64,
+                content.redraw_requests as f64 / content.frames as f64,
+                request_stats.accepted,
+                request_stats.coalesced,
+                request_stats.display_ticks,
+            );
+        }
 
         if self.venus.has_ready_work() {
             self.request_animation_frame();
@@ -615,6 +646,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 pub(crate) struct FrameDrawer<'a, W: Widget + 'static> {
     widget_root: &'a mut Option<AnyElement>,
     pending_widget: &'a mut Option<W>,
+    event_dispatcher: &'a mut EventDispatcher,
     #[cfg(feature = "wasm-hot-reload")]
     live_reload: &'a mut Option<crate::hot_reload::LiveReloadHost>,
     window: WindowHandle,
@@ -701,6 +733,19 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
         #[cfg(not(feature = "wasm-hot-reload"))]
         let root = self.widget_root.as_ref();
 
+        let mut invalidations = if let Some(root) = root {
+            self.event_dispatcher
+                .take_pending_element_invalidations(root.as_ref())
+        } else {
+            ElementInvalidationBatch::default()
+        };
+        if invalidations.requires_full_fallback() {
+            // Phase 1 records mutations and owner bounds, but does not yet patch
+            // retained commands. Unknown, stale, or unbounded records therefore
+            // stay on the established full-target path.
+            aimer_widget::mark_paint_damage_full();
+        }
+
         #[cfg(any(debug_assertions, feature = "frame-stats"))]
         aimer_widget::reset_draw_traversal_count();
         #[cfg(any(debug_assertions, feature = "frame-stats"))]
@@ -720,6 +765,14 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                 root.draw(&build_ctx);
                 build_ctx.canvas.restore();
             }
+        }
+
+        if let Some(root) = root {
+            self.event_dispatcher
+                .complete_pending_element_invalidations(root.as_ref(), &mut invalidations);
+        }
+        if invalidations.requires_full_fallback() {
+            aimer_widget::mark_paint_damage_full();
         }
 
         #[cfg(feature = "wasm-hot-reload")]
@@ -985,6 +1038,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             render_ctx,
             widget_root,
             pending_widget,
+            event_dispatcher,
             #[cfg(feature = "wasm-hot-reload")]
             live_reload,
             #[cfg(not(target_arch = "wasm32"))]
@@ -999,6 +1053,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             FrameDrawer {
                 widget_root,
                 pending_widget,
+                event_dispatcher,
                 #[cfg(feature = "wasm-hot-reload")]
                 live_reload,
                 window,

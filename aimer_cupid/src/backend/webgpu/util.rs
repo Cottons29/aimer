@@ -15,7 +15,7 @@ pub(super) fn set(object: &Object, name: &str, value: &JsValue) {
         &JsValue::from_str(name),
         value,
     )
-    .unwrap_or_else(|error| panic!("set WebGPU descriptor field {name}: {error:?}"));
+        .unwrap_or_else(|error| panic!("set WebGPU descriptor field {name}: {error:?}"));
 }
 
 pub(super) fn set_ref<T: AsRef<JsValue>>(object: &Object, name: &str, value: &T) {

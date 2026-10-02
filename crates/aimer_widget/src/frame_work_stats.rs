@@ -28,6 +28,14 @@ pub struct FrameWorkStats {
     pub smoothing_steps: u64,
     /// State mutation requests queued by StateUpdater::set_state.
     pub state_updates: u64,
+    /// New coalesced element invalidation records queued during the interval.
+    pub invalidations_queued: u64,
+    /// Additional invalidations merged into an already queued element record.
+    pub invalidations_coalesced: u64,
+    /// Direct ElementId-to-element path lookups performed for invalidations.
+    pub element_index_lookups: u64,
+    /// Queued ElementIds that did not resolve in the current tree generation.
+    pub stale_element_ids: u64,
     /// Scroll-state offset changes that altered the stored position.
     pub scroll_offset_updates: u64,
     /// Direct redraw requests sent through a WindowHandle.
@@ -45,6 +53,10 @@ thread_local! {
         scroll_steps: 0,
         smoothing_steps: 0,
         state_updates: 0,
+        invalidations_queued: 0,
+        invalidations_coalesced: 0,
+        element_index_lookups: 0,
+        stale_element_ids: 0,
         scroll_offset_updates: 0,
         redraw_requests: 0,
     }) };
@@ -79,6 +91,10 @@ record_counter!(record_scroll_event, scroll_events);
 record_counter!(record_scroll_step, scroll_steps);
 record_counter!(record_smoothing_step, smoothing_steps);
 record_counter!(record_state_update, state_updates);
+record_counter!(record_invalidation_queued, invalidations_queued);
+record_counter!(record_invalidation_coalesced, invalidations_coalesced);
+record_counter!(record_element_index_lookup, element_index_lookups);
+record_counter!(record_stale_element_id, stale_element_ids);
 record_counter!(record_scroll_offset_update, scroll_offset_updates);
 record_counter!(record_redraw_request, redraw_requests);
 
@@ -132,6 +148,7 @@ mod tests {
                 state_updates: 1,
                 scroll_offset_updates: 1,
                 redraw_requests: 1,
+                ..FrameWorkStats::default()
             }
         );
         assert_eq!(take_frame_work_stats(), FrameWorkStats::default());

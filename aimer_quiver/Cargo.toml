@@ -31,7 +31,7 @@ web = ["aimer_cupid/web"]
 raster-thread = []
 # Measure build / encode / present per frame. Release builds read no clock when
 # this is off; native debug builds keep timing enabled for scroll profiling.
-frame-stats = ["aimer_widget/frame-stats"]
+frame-stats = ["aimer_widget/frame-stats", "aimer_cupid/frame-stats"]
 # Enable the guest-side reflected lowering for integration tests that build an
 # AWIR document and feed it through the native hot-reload materializer.
 portable-guest = [

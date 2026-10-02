@@ -477,11 +477,6 @@ fn vertical_alignment_baseline(
 }
 
 impl LayoutElement for RawTextWidget {
-    #[inline]
-    fn is_layout_stable(&self) -> bool {
-        true
-    }
-
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         if self.uses_paragraph_layout() {
             return self.with_paragraph(|paragraph| paragraph.prepare(ctx).size);
@@ -533,6 +528,11 @@ impl LayoutElement for RawTextWidget {
         self.cache
             .set_computed(ctx.box_constraint, scale_bits, result);
         result
+    }
+
+    #[inline]
+    fn is_layout_stable(&self) -> bool {
+        true
     }
     fn invalidate_layout(&self) {
         self.cache.invalidate();

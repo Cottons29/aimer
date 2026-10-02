@@ -630,7 +630,7 @@ impl MaterialShader {
     /// Returns the bundled shader source without exposing a GPU handle.
     #[inline]
     pub const fn source() -> &'static str {
-        include_str!("./material/shaders/material.wgsl")
+        include_str!("shaders/wgsl/material.wgsl")
     }
 }
 
