@@ -1278,7 +1278,7 @@ impl StatefulElement {
     /// This avoids destroying and recreating the entire subtree when only a
     /// deeply-nested element's state has changed.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         crate::rebuild_stats::record_stateful_check();
         let invalidation_generation =
             crate::components::element::rebuild_invalidation_generation();
@@ -1336,7 +1336,7 @@ impl StatefulElement {
         // look up state the provider has not re-inserted yet this frame and
         // panic ("No Navigator found in context").
         let new_child = {
-            #[cfg(any(debug_assertions, feature = "frame-stats"))]
+            #[cfg(feature = "frame-stats")]
             crate::rebuild_stats::record_stateful_build();
             let rf = unsafe { &*self.rebuild_fn.0.get() };
             rf(ctx)

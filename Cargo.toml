@@ -72,7 +72,7 @@ wgpu.workspace = true
 winit.workspace = true
 
 [features]
-default = ["native", "web"]
+default = ["native", "web", "event-tree"]
 # Enables the platform's native backend dependencies. Backend selection is
 # determined by target cfgs, not by this feature.
 native = ["aimer_quiver/native", "aimer_cupid/native"]
@@ -87,9 +87,9 @@ metal = ["native"]
 dx12 = ["native"]
 webgl = ["web"]
 markdown = []
-# Experimental sparse event routing. Disabled by default while parity and
-# performance are evaluated against the general element-tree dispatcher.
-event-tree-exp = [
+# Sparse event routing is the framework default. `event-tree-exp` remains as a
+# compatibility alias for existing applications.
+event-tree = [
     "aimer_widget/event-tree-exp",
     "aimer_flex/event-tree-exp",
     "aimer_input/event-tree-exp",
@@ -98,6 +98,7 @@ event-tree-exp = [
     "aimer_collapsible/event-tree-exp",
     "aimer_modal/event-tree-exp",
 ]
+event-tree-exp = ["event-tree"]
 # Forward opt-in Venus microtask diagnostics through the umbrella crate.
 venus-debug = ["aimer_venus/venus-debug"]
 provider = []

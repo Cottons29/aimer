@@ -5,6 +5,7 @@ edition = "2024"
 resolver = "3"
 
 [features]
+default = ["event-tree-exp"]
 portable-guest = []
 event-tree-exp = []
 # Keep the allocation-free draw traversal counter available to release

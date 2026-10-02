@@ -323,7 +323,7 @@ pub mod render_ctx {
             }
 
             let encode = PhaseTimer::start();
-            #[cfg(any(debug_assertions, feature = "frame-stats"))]
+            #[cfg(feature = "frame-stats")]
             backend.begin_gpu_frame_timing(crate::frame_stats::record_gpu_frame_time);
             renderer.render(
                 backend,
@@ -334,7 +334,7 @@ pub mod render_ctx {
                 &frame.draw_list,
             );
             encode.finish(FramePhase::Encode);
-            #[cfg(any(debug_assertions, feature = "frame-stats"))]
+            #[cfg(feature = "frame-stats")]
             {
                 backend.end_gpu_frame_timing();
             }

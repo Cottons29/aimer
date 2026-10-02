@@ -10,7 +10,6 @@ use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventDispatchContext, EventElement, EventResult,
     EventTreeRole, LayoutElement, PointerKey, Rebuildable, RequiredChild, VisitorElement, Widget,
-    dispatch_event,
 };
 
 use crate::callback::{CallbackExecutor, VoidCallback};
@@ -288,7 +287,7 @@ impl<E: Element> RawMouseRegion<E> {
         let result = if let Some(context) = context.as_mut() {
             context.dispatch_child(&self.child, pos, event)
         } else {
-            dispatch_event(&self.child, pos, event)
+            EventResult::ignored()
         };
         let is_captured = pointer.is_some_and(|pointer| {
             context
@@ -339,7 +338,7 @@ impl<E: Element> VisitorElement for RawMouseRegion<E> {
 
 impl<E: Element> EventElement for RawMouseRegion<E> {
     fn event_tree_role(&self) -> EventTreeRole {
-        EventTreeRole::IndexedTarget
+        EventTreeRole::IndexedHitTestBoundary
     }
 
     fn on_event(&self, event: &ElementEvent) -> EventResult {
@@ -353,7 +352,11 @@ impl<E: Element> EventElement for RawMouseRegion<E> {
     ) -> EventResult {
         self.handle_event(event, Some(context))
     }
-    fn event_children<'b>(&'b self, _visitor: &mut dyn FnMut(&'b dyn Element)) {}
+    fn event_children<'b>(&'b self, visitor: &mut dyn FnMut(&'b dyn Element)) {
+        visitor(&self.child);
+    }
+
+    fn hit_test_children_at<'b>(&'b self, _pos: Vec2d, _visitor: &mut dyn FnMut(&'b dyn Element)) {}
 }
 
 impl<E: Element> LayoutElement for RawMouseRegion<E> {

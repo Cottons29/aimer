@@ -20,10 +20,8 @@
 //! buys nothing unless they are a meaningful share of the frame, and it costs an
 //! extra frame of latency. This module is the measurement that decides it.
 //!
-//! Release instrumentation is compiled out unless the `frame-stats` feature is
-//! enabled. Native debug builds collect the timing and content counters used
-//! by the scroll profiling workflow; with both debug assertions and the
-//! feature off, [`PhaseTimer::start`] reads no clock and
+//! Runtime instrumentation is inactive unless the `frame-stats` feature is
+//! enabled; without it, [`PhaseTimer::start`] reads no clock and
 //! [`PhaseTimer::finish`] does nothing.
 //!
 //! # Examples
@@ -108,7 +106,7 @@ pub struct FrameBreakdown {
 }
 
 /// Timing summaries for the native Metal frame window.
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct FrameTimingStats {
     pub cpu_frame: PhaseSamples,
@@ -263,6 +261,7 @@ struct FrameRequestAccumulator {
     display_ticks: AtomicU64,
 }
 
+#[cfg_attr(not(feature = "frame-stats"), allow(dead_code))]
 impl FrameRequestAccumulator {
     #[inline]
     fn accepted(&self) {
@@ -348,9 +347,9 @@ struct FrameAccumulator {
     build: AtomicPhase,
     encode: AtomicPhase,
     present: AtomicPhase,
-    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    #[cfg(feature = "frame-stats")]
     cpu_frame: AtomicPhase,
-    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    #[cfg(feature = "frame-stats")]
     gpu_frame: AtomicPhase,
 }
 
@@ -380,7 +379,7 @@ impl FrameAccumulator {
         }
     }
 
-    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    #[cfg(feature = "frame-stats")]
     fn timing_snapshot(&self) -> FrameTimingStats {
         let (cpu_frame_p95, cpu_frame_p95_saturated) = self.cpu_frame.p95_bucket();
         let (gpu_frame_p95, gpu_frame_p95_saturated) = self.gpu_frame.p95_bucket();
@@ -398,23 +397,23 @@ impl FrameAccumulator {
         self.build.reset();
         self.encode.reset();
         self.present.reset();
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         self.cpu_frame.reset();
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         self.gpu_frame.reset();
     }
 }
 
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 const PERCENTILE_BUCKET_WIDTH_NANOS: u64 = 500_000;
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 const PERCENTILE_BUCKET_COUNT: usize = 512;
 
 #[derive(Debug)]
 struct AtomicPhase {
     samples: AtomicU64,
     nanos: AtomicU64,
-    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    #[cfg(feature = "frame-stats")]
     percentile_buckets: [AtomicU64; PERCENTILE_BUCKET_COUNT],
 }
 
@@ -430,7 +429,7 @@ impl AtomicPhase {
         Self {
             samples: AtomicU64::new(0),
             nanos: AtomicU64::new(0),
-            #[cfg(any(debug_assertions, feature = "frame-stats"))]
+            #[cfg(feature = "frame-stats")]
             percentile_buckets: [const { AtomicU64::new(0) }; PERCENTILE_BUCKET_COUNT],
         }
     }
@@ -438,10 +437,10 @@ impl AtomicPhase {
     #[inline]
     fn record(&self, elapsed: Duration) {
         let nanos = elapsed.as_nanos().min(u64::MAX as u128) as u64;
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         let bucket = (nanos / PERCENTILE_BUCKET_WIDTH_NANOS)
             .min((PERCENTILE_BUCKET_COUNT - 1) as u64) as usize;
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         self.percentile_buckets[bucket].fetch_add(1, Ordering::Relaxed);
         // Relaxed is enough: the counters are statistics, not a happens-before
         // edge for any other data, and a snapshot that catches a phase mid-update
@@ -457,7 +456,7 @@ impl AtomicPhase {
         }
     }
 
-    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    #[cfg(feature = "frame-stats")]
     fn p95_bucket(&self) -> (Duration, bool) {
         let sample_count = self.samples.load(Ordering::Relaxed);
         if sample_count == 0 {
@@ -486,7 +485,7 @@ impl AtomicPhase {
     fn reset(&self) {
         self.samples.store(0, Ordering::Relaxed);
         self.nanos.store(0, Ordering::Relaxed);
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         for bucket in &self.percentile_buckets {
             bucket.store(0, Ordering::Relaxed);
         }
@@ -527,6 +526,7 @@ struct FrameContentAccumulator {
     redraw_requests: AtomicU64,
 }
 
+#[cfg_attr(not(feature = "frame-stats"), allow(dead_code))]
 impl FrameContentAccumulator {
     #[inline]
     fn record(
@@ -667,9 +667,9 @@ static FRAME_STATS: FrameAccumulator = FrameAccumulator {
     build: AtomicPhase::new(),
     encode: AtomicPhase::new(),
     present: AtomicPhase::new(),
-    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    #[cfg(feature = "frame-stats")]
     cpu_frame: AtomicPhase::new(),
-    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    #[cfg(feature = "frame-stats")]
     gpu_frame: AtomicPhase::new(),
 };
 
@@ -711,13 +711,13 @@ static FRAME_REQUEST_STATS: FrameRequestAccumulator = FrameRequestAccumulator {
     display_ticks: AtomicU64::new(0),
 };
 
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 const DEBUG_REPORT_INTERVAL: u64 = 30;
 
 /// The frame breakdown accumulated so far.
 ///
 /// Every phase reads zero unless the crate was built with the `frame-stats`
-/// feature or with native debug assertions enabled.
+/// feature.
 #[inline]
 pub fn frame_breakdown() -> FrameBreakdown {
     FRAME_STATS.snapshot()
@@ -751,7 +751,7 @@ pub fn frame_request_stats() -> FrameRequestStats {
 }
 
 /// Record one completed Metal GPU frame interval.
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 #[inline]
 pub(crate) fn record_gpu_frame_time(elapsed: Duration) {
     FRAME_STATS.gpu_frame.record(elapsed);
@@ -767,7 +767,7 @@ pub fn reset_frame_request_stats() {
 #[doc(hidden)]
 #[inline]
 pub fn record_frame_request_accepted() {
-    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    #[cfg(feature = "frame-stats")]
     FRAME_REQUEST_STATS.accepted();
 }
 
@@ -775,7 +775,7 @@ pub fn record_frame_request_accepted() {
 #[doc(hidden)]
 #[inline]
 pub fn record_frame_request_coalesced() {
-    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    #[cfg(feature = "frame-stats")]
     FRAME_REQUEST_STATS.coalesced();
 }
 
@@ -783,7 +783,7 @@ pub fn record_frame_request_coalesced() {
 #[doc(hidden)]
 #[inline]
 pub fn record_display_tick() {
-    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    #[cfg(feature = "frame-stats")]
     FRAME_REQUEST_STATS.display_tick();
 }
 
@@ -798,6 +798,7 @@ pub fn record_frame_content(
     rebuild: aimer_widget::RebuildStats,
     work: aimer_widget::FrameWorkStats,
 ) {
+    #[cfg(feature = "frame-stats")]
     FRAME_CONTENT_STATS.record(
         drawn_nodes,
         draw_list,
@@ -806,6 +807,8 @@ pub fn record_frame_content(
         rebuild,
         work,
     );
+    #[cfg(not(feature = "frame-stats"))]
+    let _ = (drawn_nodes, draw_list, text_cache_hits, text_cache_misses, rebuild, work);
 }
 
 /// Takes a periodic debug report and resets the two frame accumulators.
@@ -814,7 +817,7 @@ pub fn record_frame_content(
 /// every thirty build frames keeps the terminal useful during a long scroll
 /// without adding a log call to the hot path itself.
 #[doc(hidden)]
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 pub(crate) fn take_debug_report() -> Option<(FrameBreakdown, FrameContentStats, FrameTimingStats)> {
     let content = FRAME_CONTENT_STATS.snapshot();
     if content.frames < DEBUG_REPORT_INTERVAL {
@@ -829,9 +832,8 @@ pub(crate) fn take_debug_report() -> Option<(FrameBreakdown, FrameContentStats, 
 
 /// A running measurement of one [`FramePhase`].
 ///
-/// Zero-sized and inert in release builds unless the `frame-stats` feature is
-/// enabled, so the render path can time itself unconditionally. Native debug
-/// builds keep the timers active for scroll profiling.
+/// Zero-sized and inert unless the `frame-stats` feature is enabled, so the
+/// render path can time itself unconditionally.
 ///
 /// # Examples
 ///
@@ -846,7 +848,7 @@ pub(crate) fn take_debug_report() -> Option<(FrameBreakdown, FrameContentStats, 
 pub struct PhaseTimer {
     // `AnimInstant` rather than `std::time::Instant`: the web backend times the
     // same phases, and `std`'s clock is unsupported there.
-    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    #[cfg(feature = "frame-stats")]
     started: aimer_utils::AnimInstant,
 }
 
@@ -855,7 +857,7 @@ impl PhaseTimer {
     #[inline]
     pub fn start() -> Self {
         Self {
-            #[cfg(any(feature = "frame-stats", debug_assertions))]
+            #[cfg(feature = "frame-stats")]
             started: aimer_utils::AnimInstant::now(),
         }
     }
@@ -863,18 +865,18 @@ impl PhaseTimer {
     /// Attribute the elapsed time to `phase`.
     #[inline]
     pub fn finish(self, phase: FramePhase) {
-        #[cfg(any(feature = "frame-stats", debug_assertions))]
+        #[cfg(feature = "frame-stats")]
         FRAME_STATS.record(phase, self.started.elapsed());
-        #[cfg(not(any(feature = "frame-stats", debug_assertions)))]
+        #[cfg(not(feature = "frame-stats"))]
         let _ = phase;
     }
 
     /// Record the elapsed CPU interval through native Metal command submission.
     #[inline]
     pub(crate) fn finish_cpu_frame(self) {
-        #[cfg(any(feature = "frame-stats", debug_assertions))]
+        #[cfg(feature = "frame-stats")]
         FRAME_STATS.cpu_frame.record(self.started.elapsed());
-        #[cfg(not(any(feature = "frame-stats", debug_assertions)))]
+        #[cfg(not(feature = "frame-stats"))]
         let _ = self;
     }
 }

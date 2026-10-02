@@ -465,7 +465,7 @@ impl LayoutElement for RetainedChildElement {
 impl EventElement for RetainedChildElement {
     fn event_tree_role(&self) -> EventTreeRole {
         self.child()
-            .map(EventElement::event_tree_role)
+            .map(|_| EventTreeRole::IndexedHitTestBoundary)
             .unwrap_or(EventTreeRole::Transparent)
     }
 
@@ -544,12 +544,9 @@ impl EventElement for RetainedChildElement {
 
     fn hit_test_children_at<'a>(
         &'a self,
-        pos: Vec2d,
-        visitor: &mut dyn FnMut(&'a dyn Element),
+        _pos: Vec2d,
+        _visitor: &mut dyn FnMut(&'a dyn Element),
     ) {
-        if let Some(child) = self.child() {
-            child.hit_test_children_at(pos, visitor);
-        }
     }
 
     fn hit_test_children_at_reversed<'a>(

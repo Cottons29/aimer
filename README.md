@@ -182,13 +182,16 @@ Or configure optional features:
 aimer = { git = "https://github.com/Cottons29/aimer.git", features = ["markdown", "svg", "provider"] }
 ```
 
-The experimental event-tree path is off by default. Enable `event-tree-exp` on
-the `aimer` umbrella crate or directly on `aimer_widget`; custom elements stay
-on legacy routing unless they explicitly report an `EventTreeRole`.
+Indexed event routing is enabled by default in the `aimer` framework and
+`aimer_widget`. The `event-tree-exp` feature remains as a compatibility alias
+for existing builds. Custom elements default to conservative indexed
+hit-testing; implement `EventTreeRole::Transparent` or `IndexedTarget` when the
+element's routing behavior permits a sparser event tree. `Legacy` is an alias
+for indexed hit-test-boundary routing.
 The laboratory parity cases can be run with:
 
 ```bash
-cargo test -p aimer_laboratory --features event-tree-exp framework_dispatch_comparison
+cargo test -p aimer_laboratory dense_sparse_framework_dispatch
 ```
 
 ---

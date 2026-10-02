@@ -476,7 +476,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         // epoch also reaches dispatchers nested inside scrollables and regions.
         begin_event_frame();
 
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         if let Some((breakdown, content, timing)) = crate::frame_stats::take_debug_report() {
             let request_stats = crate::frame_stats::frame_request_stats();
             crate::frame_stats::reset_frame_request_stats();
@@ -685,7 +685,7 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
         let rebuild_generation_before = aimer_widget::rebuild_invalidation_generation();
         let layout_generation_before = aimer_widget::layout_invalidation_generation();
         let texture_epoch_before = canvas.texture_cache_epoch();
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         let inner_canvas = canvas;
         let canvas = aimer_canvas::Canvas::new(canvas);
         let mut build_ctx = BuildContext::new(
@@ -746,9 +746,9 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             aimer_widget::mark_paint_damage_full();
         }
 
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         aimer_widget::reset_draw_traversal_count();
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         aimer_widget::reset_rebuild_stats();
 
         {
@@ -788,7 +788,7 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             build_ctx.canvas.restore();
         }
 
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         {
             let draw_list = inner_canvas.draw_list();
             let draw_list_stats = draw_list.stats();

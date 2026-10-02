@@ -220,7 +220,7 @@ impl StatelessElement {
     /// If dirty, rebuild the child and preserve live state from the old
     /// subtree.
     pub fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         crate::rebuild_stats::record_stateless_check();
         let invalidation_generation =
             crate::components::element::rebuild_invalidation_generation();
@@ -246,7 +246,7 @@ impl StatelessElement {
             return;
         }
 
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         crate::rebuild_stats::record_stateless_build();
         let new_child = rebuild_fn(ctx);
 

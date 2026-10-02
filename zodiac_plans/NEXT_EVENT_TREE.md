@@ -127,16 +127,15 @@ sidebar and about 5× fewer in the scaled case. In these runs, event lookup was
 roughly 6–8× faster. These are debug-profile measurements from this machine;
 the operation counts are the more repeatable result.
 
-## Real Framework Dispatch Comparison
+## Dense and Sparse Framework Event Trees
 
-`new_event_tree::tests::framework_dispatch_comparison` builds paired Aimer
-`Element` trees from the same `ElementTree` fixture. The general fixture keeps
-all layout wrappers. The sparse fixture keeps event participants and their
-nearest event ancestors; each participant asks the same spatial index for its
-direct event children. Both trees use Aimer's real `EventDispatcher`,
-`ElementEvent`, `dispatch_focused_event`, and `broadcast_event` APIs. The sparse
-side opts into the production `event-tree-exp` route; the general side remains
-on the legacy path.
+`new_event_tree::tests::dense_sparse_framework_dispatch` builds paired Aimer
+`Element` trees from the same `ElementTree` fixture. The dense fixture indexes
+every element as a hit-test boundary. The sparse fixture keeps event
+participants and their nearest event ancestors; each participant asks the same
+spatial index for its direct event children. Both trees use Aimer's real
+`EventDispatcher`, `ElementEvent`, `dispatch_focused_event`, and
+`broadcast_event` APIs. Both sides now use indexed routing.
 
 The built-in role audit currently opts in the retained `StatefulElement` and
 `StatelessElement` wrappers and `FocusScope` as transparent nodes. Their event
@@ -148,27 +147,27 @@ routing without a custom hit-test boundary. `TextButton` currently reports no
 layout bounds, so it remains an unbounded indexed target and still applies its
 existing per-line hit test in the callback.
 
-Elements with custom routing stay `Legacy`, including `MouseRegion`, gesture
-detectors, scrollable containers, and `Stack`'s layer-sorted hit order. `Flex`
-uses the indexed hit-test-boundary role: positional routing intersects spatial
-index hits with its current painted-child hit-test view, while focus and
-broadcast delivery retain the full event-child view. Any remaining `Legacy`
-element keeps that dispatch root on the general path until its boundary can be
-represented faithfully.
+Elements with custom routing use the default indexed hit-test-boundary role,
+including `MouseRegion`, gesture detectors, scrollable containers, and
+`Stack`'s layer-sorted hit order. Positional routing intersects spatial index
+hits with each boundary's current child hit-test view, while focus and
+broadcast delivery retain the full event-child view. `Legacy` remains an
+alias for the indexed hit-test-boundary role.
 
-`aimer_flex::flex::lazy_tests::indexed_flex_dispatch_matches_general_painted_child_and_broadcast_views`
-compares a public `Column` widget, lowered to `RawFlex`, with a fallback tree
-containing one legacy child. It verifies that an unpainted child receives no
-positional event and still receives a broadcast. The ignored
-`compare_warmed_indexed_flex_dispatch_with_general_routing` benchmark uses
+`aimer_flex::flex::lazy_tests::indexed_flex_dispatch_matches_boundary_child_and_broadcast_views`
+compares a public `Column` widget, lowered to `RawFlex`, with one child using
+the conservative boundary role. It verifies that an unpainted child receives
+no positional event and still receives a broadcast. The ignored
+`compare_warmed_direct_and_boundary_indexed_flex_dispatch` benchmark uses
 10,000 eager children, six transparent wrappers per child, finite child bounds,
-and a 40 px viewport. A local debug-profile run measured setup at about 83 ms
-for each view and warmed routing at 2.01 µs indexed versus 2.21 µs general for
-2,000 routes. Treat these as a small local result, not a general speedup claim.
-Rerun it with:
+and a 40 px viewport. A pre-promotion debug-profile run measured setup at
+about 83 ms per view and warmed routing at 2.01 µs indexed versus 2.21 µs
+general for 2,000 routes. Those timings compare the earlier legacy route and
+are historical; rerun the renamed benchmark before drawing conclusions about
+the two indexed configurations. Run it with:
 
 ```bash
-cargo test -p aimer_flex --features event-tree-exp compare_warmed_indexed_flex_dispatch_with_general_routing -- --ignored --nocapture
+cargo test -p aimer_flex --features event-tree-exp compare_warmed_direct_and_boundary_indexed_flex_dispatch -- --ignored --nocapture
 ```
 
 Parity tests cover pointer hit order and overlap, simultaneous mouse and touch
@@ -209,13 +208,15 @@ complete layout pass: normal layout still computes geometry for the general
 tree, while `EventTree` adds an O(log H) refit for each event target whose bound
 changes. The per-update times are very small and fluctuate between runs.
 
-### Integrated `event-tree-exp` measurement
+### Integrated event-tree measurement
 
 After the framework integration, the ignored comparison was rerun with
-`event-tree-exp` enabled. The sparse framework adapter opts into
+the default event-tree feature. The sparse framework adapter opts into
 `IndexedTarget`, and the benchmark exercises `EventDispatcher`'s retained event
 index. This remains a debug-profile measurement using laboratory adapter
-elements, not the showcase application's production widgets.
+elements, not the showcase application's production widgets. These figures
+were collected before the dense fixture also used the event tree and are kept
+as historical results.
 
 | Scenario | General nodes / targets / event roots | Build: model / general / sparse | Bounds update: general / indexed | Warm route: general / indexed | Callback visits: general / indexed | Bounds reads: general / indexed |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -276,12 +277,12 @@ cargo test -p aimer_laboratory
 The showcase fixture mirrors the source widget topology and authored bounds; it
 does not build or render the production `jaime` widgets. The scaled case uses
 100 horizontally separated roots in one index and is a handler-count stress
-case, not a claim about one real app screen. The integration is opt-in: any
-`Legacy` element in an event subtree sends that subtree through the general
-dispatcher, and built-in widgets remain `Legacy` until their event-child order
-and hit-test boundaries are verified for indexed routing. Indexed elements
-must report bounds in the same coordinate space as layout; transparent
-ancestors cannot add clipping or custom hit-test boundaries.
+case, not a claim about one real app screen. Indexed event routing is now the
+framework default. `Legacy` is a compatibility alias for the conservative
+indexed hit-test-boundary role; it no longer selects a separate tree walk.
+Elements marked `Transparent` must not add clipping or custom hit-test
+boundaries, and indexed elements must report bounds in the same coordinate
+space as layout.
 
 The spatial hierarchy groups targets by registration order, so paint orders
 whose bounds are spatially scattered can create broad branch unions. The

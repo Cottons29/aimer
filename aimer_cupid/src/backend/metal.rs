@@ -28,14 +28,14 @@
 
 use std::ops::Range;
 use std::sync::Mutex;
-#[cfg(any(feature = "frame-stats", debug_assertions))]
+#[cfg(feature = "frame-stats")]
 use std::ptr::NonNull;
-#[cfg(any(feature = "frame-stats", debug_assertions))]
+#[cfg(feature = "frame-stats")]
 use std::sync::Arc;
-#[cfg(any(feature = "frame-stats", debug_assertions))]
+#[cfg(feature = "frame-stats")]
 use std::time::Duration;
 
-#[cfg(any(feature = "frame-stats", debug_assertions))]
+#[cfg(feature = "frame-stats")]
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -90,18 +90,18 @@ pub struct MetalBackend {
     device: Retained<ProtocolObject<dyn MTLDevice>>,
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pending_uploads: Mutex<Vec<PendingUpload>>,
-    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    #[cfg(feature = "frame-stats")]
     active_gpu_frame: Mutex<Option<Arc<GpuFrameCapture>>>,
 }
 
-#[cfg(any(feature = "frame-stats", debug_assertions))]
+#[cfg(feature = "frame-stats")]
 #[derive(Debug)]
 struct GpuFrameCapture {
     report: fn(Duration),
     state: Mutex<GpuFrameCaptureState>,
 }
 
-#[cfg(any(feature = "frame-stats", debug_assertions))]
+#[cfg(feature = "frame-stats")]
 #[derive(Debug, Default)]
 struct GpuFrameCaptureState {
     pending_submissions: usize,
@@ -113,7 +113,7 @@ struct GpuFrameCaptureState {
     reported: bool,
 }
 
-#[cfg(any(feature = "frame-stats", debug_assertions))]
+#[cfg(feature = "frame-stats")]
 impl GpuFrameCapture {
     fn new(report: fn(Duration)) -> Self {
         Self {
@@ -175,7 +175,7 @@ impl GpuFrameCapture {
     }
 }
 
-#[cfg(any(feature = "frame-stats", debug_assertions))]
+#[cfg(feature = "frame-stats")]
 fn ready_gpu_duration(state: &mut GpuFrameCaptureState) -> Option<Duration> {
     if !state.encoding_finished || state.pending_submissions != 0 || state.reported {
         return None;
@@ -324,7 +324,7 @@ impl MetalBackend {
             device,
             queue,
             pending_uploads: Mutex::new(Vec::new()),
-            #[cfg(any(feature = "frame-stats", debug_assertions))]
+            #[cfg(feature = "frame-stats")]
             active_gpu_frame: Mutex::new(None),
         })
     }
@@ -332,7 +332,7 @@ impl MetalBackend {
     /// Starts collecting GPU intervals for command buffers submitted until
     /// [`Self::end_gpu_frame_timing`] is called. `report` runs once after every
     /// submission in the captured frame has completed with valid timestamps.
-    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    #[cfg(feature = "frame-stats")]
     #[doc(hidden)]
     pub fn begin_gpu_frame_timing(&self, report: fn(Duration)) {
         let capture = Arc::new(GpuFrameCapture::new(report));
@@ -348,7 +348,7 @@ impl MetalBackend {
 
     /// Closes the current GPU frame capture; its timestamp is reported after
     /// all command buffers submitted by the renderer have completed.
-    #[cfg(any(feature = "frame-stats", debug_assertions))]
+    #[cfg(feature = "frame-stats")]
     #[doc(hidden)]
     pub fn end_gpu_frame_timing(&self) {
         let capture = self
@@ -1300,7 +1300,7 @@ impl GpuBackend for MetalBackend {
         self.commit_pending_uploads(&mut pending_uploads);
         let mut encoder = encoder;
         encoder.end_blit();
-        #[cfg(any(feature = "frame-stats", debug_assertions))]
+        #[cfg(feature = "frame-stats")]
         if let Some(capture) = self
             .active_gpu_frame
             .lock()

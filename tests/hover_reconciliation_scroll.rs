@@ -48,7 +48,7 @@ impl Drawable for PointerMoveProbe {
 }
 impl Rebuildable for PointerMoveProbe {}
 
-#[cfg(feature = "event-tree-exp")]
+#[cfg(feature = "event-tree")]
 #[test]
 fn scrolling_reconciles_stationary_mouse_hover_through_the_child_dispatcher() {
     let moves = Rc::new(Cell::new(0));

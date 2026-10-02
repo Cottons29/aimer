@@ -272,20 +272,11 @@ impl RawTextWidget {
 
 impl Drawable for RawTextWidget {
     fn draw(&self, ctx: &BuildContext) {
-
-        if self.text.contains("Accessibility semantics") {
-            debug("AccessibilityExample::to_element()");
-        }
-        // println!("Drawing text widget : {:?}", self.text);
-
         self.paint(ctx);
     }
 
     #[inline]
     fn paint(&self, ctx: &BuildContext) {
-
-
-
         if self.uses_paragraph_layout() {
             if self.text.contains("Published nodes:" ) {
                 debug!("drawing the Text (cached)")
@@ -293,6 +284,11 @@ impl Drawable for RawTextWidget {
             }
             self.draw_paragraph(ctx);
             return;
+        }
+
+        if self.text.contains("Published nodes:" ) {
+            debug!("drawing the Text (uncached)")
+
         }
         let font_size = self.font_size(ctx.scale);
         let width = ctx.parent_size.width;

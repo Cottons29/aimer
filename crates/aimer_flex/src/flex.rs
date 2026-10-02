@@ -513,7 +513,7 @@ mod lazy_tests {
     fn build_dispatch_fixture(
         child_count: usize,
         wrapper_depth: usize,
-        legacy_child: Option<usize>,
+        boundary_child: Option<usize>,
         viewport_height: f32,
     ) -> (
         AnyElement,
@@ -532,8 +532,8 @@ mod lazy_tests {
         );
         let children: Vec<DispatchProbeWidget> = (0..child_count)
             .map(|id| {
-                let role = if legacy_child == Some(id) {
-                    EventTreeRole::Legacy
+                let role = if boundary_child == Some(id) {
+                    EventTreeRole::IndexedHitTestBoundary
                 } else {
                     EventTreeRole::IndexedTarget
                 };
@@ -561,9 +561,9 @@ mod lazy_tests {
     }
 
     #[cfg(feature = "event-tree-exp")]
-    fn dispatch_through_test_column(force_legacy_fallback: bool) -> (Vec<usize>, Vec<usize>) {
+    fn dispatch_through_test_column(add_boundary_child: bool) -> (Vec<usize>, Vec<usize>) {
         let (column, mut dispatcher, events, pos, event, _) =
-            build_dispatch_fixture(5, 0, force_legacy_fallback.then_some(4), 15.0);
+            build_dispatch_fixture(5, 0, add_boundary_child.then_some(4), 15.0);
         let _ = dispatcher.dispatch(column.as_ref(), pos, &event);
         let pointer_hits = std::mem::take(&mut *events.borrow_mut());
 
@@ -575,7 +575,7 @@ mod lazy_tests {
 
     #[cfg(feature = "event-tree-exp")]
     #[test]
-    fn indexed_flex_dispatch_matches_general_painted_child_and_broadcast_views() {
+    fn indexed_flex_dispatch_matches_boundary_child_and_broadcast_views() {
         let indexed = dispatch_through_test_column(false);
         let general = dispatch_through_test_column(true);
 
@@ -587,7 +587,7 @@ mod lazy_tests {
     #[cfg(feature = "event-tree-exp")]
     #[test]
     #[ignore = "manual debug-profile comparison of warmed production RawFlex routes"]
-    fn compare_warmed_indexed_flex_dispatch_with_general_routing() {
+    fn compare_warmed_direct_and_boundary_indexed_flex_dispatch() {
         const CHILD_COUNT: usize = 10_000;
         const WRAPPER_DEPTH: usize = 6;
         const ROUTES: usize = 2_000;
@@ -595,7 +595,7 @@ mod lazy_tests {
 
         // Warm the headless canvas and allocator before measuring either path.
         let _ = build_dispatch_fixture(8, 1, Some(7), VIEWPORT_HEIGHT);
-        let (general_root, mut general_dispatcher, general_events, pos, event, general_setup) =
+        let (boundary_root, mut boundary_dispatcher, boundary_events, pos, event, boundary_setup) =
             build_dispatch_fixture(
                 CHILD_COUNT,
                 WRAPPER_DEPTH,
@@ -603,51 +603,51 @@ mod lazy_tests {
                 VIEWPORT_HEIGHT,
             );
         let (
-            indexed_root,
-            mut indexed_dispatcher,
-            indexed_events,
+            direct_root,
+            mut direct_dispatcher,
+            direct_events,
             _,
             _,
             indexed_setup,
         ) = build_dispatch_fixture(CHILD_COUNT, WRAPPER_DEPTH, None, VIEWPORT_HEIGHT);
 
-        let mut indexed_samples = Vec::new();
+        let mut direct_samples = Vec::new();
         for _ in 0..ROUTES {
-            indexed_events.borrow_mut().clear();
-            let result = indexed_dispatcher.dispatch(indexed_root.as_ref(), pos, &event);
+            direct_events.borrow_mut().clear();
+            let result = direct_dispatcher.dispatch(direct_root.as_ref(), pos, &event);
             assert_eq!(result, EventResult::ignored());
-            indexed_samples.push(std::mem::take(&mut *indexed_events.borrow_mut()));
+            direct_samples.push(std::mem::take(&mut *direct_events.borrow_mut()));
         }
-        let mut general_samples = Vec::new();
+        let mut boundary_samples = Vec::new();
         for _ in 0..ROUTES {
-            general_events.borrow_mut().clear();
-            let result = general_dispatcher.dispatch(general_root.as_ref(), pos, &event);
+            boundary_events.borrow_mut().clear();
+            let result = boundary_dispatcher.dispatch(boundary_root.as_ref(), pos, &event);
             assert_eq!(result, EventResult::ignored());
-            general_samples.push(std::mem::take(&mut *general_events.borrow_mut()));
+            boundary_samples.push(std::mem::take(&mut *boundary_events.borrow_mut()));
         }
-        assert_eq!(indexed_samples, general_samples);
+        assert_eq!(direct_samples, boundary_samples);
 
-        let indexed_elapsed = {
+        let direct_elapsed = {
             let start = Instant::now();
             for _ in 0..ROUTES {
-                indexed_events.borrow_mut().clear();
-                let _ = indexed_dispatcher.dispatch(indexed_root.as_ref(), pos, &event);
+                direct_events.borrow_mut().clear();
+                let _ = direct_dispatcher.dispatch(direct_root.as_ref(), pos, &event);
             }
             start.elapsed()
         };
-        let general_elapsed = {
+        let boundary_elapsed = {
             let start = Instant::now();
             for _ in 0..ROUTES {
-                general_events.borrow_mut().clear();
-                let _ = general_dispatcher.dispatch(general_root.as_ref(), pos, &event);
+                boundary_events.borrow_mut().clear();
+                let _ = boundary_dispatcher.dispatch(boundary_root.as_ref(), pos, &event);
             }
             start.elapsed()
         };
 
         eprintln!(
-            "RawFlex {CHILD_COUNT} children, {WRAPPER_DEPTH} transparent wrappers/item, {ROUTES} warmed routes: setup general={general_setup:?}, indexed={indexed_setup:?}; route indexed={:.2} us, general={:.2} us",
-            indexed_elapsed.as_secs_f64() * 1_000_000.0 / ROUTES as f64,
-            general_elapsed.as_secs_f64() * 1_000_000.0 / ROUTES as f64,
+            "RawFlex {CHILD_COUNT} children, {WRAPPER_DEPTH} transparent wrappers/item, {ROUTES} warmed routes: setup boundary={boundary_setup:?}, direct={indexed_setup:?}; route direct={:.2} us, boundary={:.2} us",
+            direct_elapsed.as_secs_f64() * 1_000_000.0 / ROUTES as f64,
+            boundary_elapsed.as_secs_f64() * 1_000_000.0 / ROUTES as f64,
         );
     }
 

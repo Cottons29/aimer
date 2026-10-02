@@ -23,9 +23,10 @@ aimer_attribute.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [features]
-default = ["desktop-bin", "event-tree-exp"]
+default = ["desktop-bin", "event-tree"]
 desktop-bin = []
-event-tree-exp = ["aimer/event-tree-exp"]
+event-tree = ["aimer/event-tree"]
+event-tree-exp = ["event-tree"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.50"

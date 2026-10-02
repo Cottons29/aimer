@@ -6,7 +6,7 @@
 //! the UI/render thread and the frame drawer takes the counters on that same
 //! thread.
 
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 use std::cell::Cell;
 
 /// Work observed between two frame-drawer samples.
@@ -42,7 +42,7 @@ pub struct FrameWorkStats {
     pub redraw_requests: u64,
 }
 
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 thread_local! {
     static STATS: Cell<FrameWorkStats> = const { Cell::new(FrameWorkStats {
         layout_calls: 0,
@@ -62,7 +62,7 @@ thread_local! {
     }) };
 }
 
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 #[inline]
 fn update(update: impl FnOnce(&mut FrameWorkStats)) {
     STATS.with(|stats| {
@@ -77,7 +77,7 @@ macro_rules! record_counter {
         #[doc(hidden)]
         #[inline]
         pub fn $name() {
-            #[cfg(any(debug_assertions, feature = "frame-stats"))]
+            #[cfg(feature = "frame-stats")]
             update(|stats| stats.$field = stats.$field.saturating_add(1));
         }
     };
@@ -102,7 +102,7 @@ record_counter!(record_redraw_request, redraw_requests);
 #[doc(hidden)]
 #[inline]
 pub fn reset_frame_work_stats() {
-    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    #[cfg(feature = "frame-stats")]
     STATS.with(|stats| stats.set(FrameWorkStats::default()));
 }
 
@@ -110,14 +110,14 @@ pub fn reset_frame_work_stats() {
 #[doc(hidden)]
 #[inline]
 pub fn take_frame_work_stats() -> FrameWorkStats {
-    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    #[cfg(feature = "frame-stats")]
     return STATS.with(|stats| stats.replace(FrameWorkStats::default()));
 
-    #[cfg(not(any(debug_assertions, feature = "frame-stats")))]
+    #[cfg(not(feature = "frame-stats"))]
     FrameWorkStats::default()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "frame-stats"))]
 mod tests {
     use super::*;
 

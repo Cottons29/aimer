@@ -127,12 +127,12 @@ pub use crate::hover_reconciliation::{
     mouse_region_hover_reconciliation_deferred, request_mouse_region_hover_reconciliation,
     with_deferred_mouse_region_hover_reconciliation,
 };
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 pub use crate::components::element::{
     reset_draw_traversal_count, reset_routed_event_visit_count, take_draw_traversal_count,
     take_routed_event_visit_count,
 };
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 pub use crate::rebuild_stats::{reset as reset_rebuild_stats, take as take_rebuild_stats};
 pub use crate::components::event_element::{
     CaptureRequest, EventElement, EventResult, EventTreeRole, FollowUp, PointerKey,

@@ -17,23 +17,23 @@ pub struct PointerKey {
     pub id: u64,
 }
 
-/// Describes how an element participates in event delivery.
+/// Describes how an element participates in indexed event delivery.
 ///
-/// Custom elements default to [`Legacy`](Self::Legacy), which preserves the
-/// existing callback and child-routing behavior. The other roles are explicit
-/// promises to the dispatcher and should be used only when their documented
-/// routing semantics match the element.
+/// Custom elements default to [`IndexedHitTestBoundary`](Self::IndexedHitTestBoundary),
+/// which keeps their callback and custom child hit-test behavior in the index.
+/// Use [`Transparent`](Self::Transparent) for wrappers that do not handle
+/// events, or [`IndexedTarget`](Self::IndexedTarget) when event-child order is
+/// also the correct positional hit-test order.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum EventTreeRole {
-    /// Use the general event tree and preserve this element's normal callback.
-    #[default]
+    /// Compatibility alias for [`IndexedHitTestBoundary`](Self::IndexedHitTestBoundary).
+    /// New elements should choose an explicit indexed role.
     Legacy,
     /// This element is an event target and may participate in indexed routing.
     ///
     /// It still receives its ordinary callback. Use this role only when its
     /// `event_children` order is also a correct positional hit-test order and
-    /// it has no custom child hit-test boundary. A tree containing any
-    /// `Legacy` element falls back to general routing.
+    /// it has no custom child hit-test boundary.
     IndexedTarget,
     /// This event target applies its custom child hit-test view during indexed
     /// positional routing.
@@ -42,12 +42,11 @@ pub enum EventTreeRole {
     /// broadcast delivery, then intersects positional candidates with the
     /// children returned by `hit_test_children_at`. That hit-test view must be
     /// a subset of `event_children` in the same paint order. The element still
-    /// receives its ordinary callback. A tree containing any `Legacy` element
-    /// falls back to general routing.
+    /// receives its ordinary callback.
+    #[default]
     IndexedHitTestBoundary,
     /// This element does not handle events; descendants may be routed through
-    /// it when `event-tree-exp` is enabled. It must not impose a custom hit-test
-    /// boundary. Without that feature, dispatch keeps the legacy traversal.
+    /// it through the index. It must not impose a custom hit-test boundary.
     Transparent,
 }
 
@@ -269,10 +268,10 @@ impl From<bool> for EventResult {
 pub trait EventElement: VisitorElement {
     /// Returns this element's event-routing role.
     ///
-    /// `Legacy` is the compatibility default for custom implementations.
+    /// Custom implementations default to conservative indexed hit testing.
     #[inline]
     fn event_tree_role(&self) -> EventTreeRole {
-        EventTreeRole::Legacy
+        EventTreeRole::IndexedHitTestBoundary
     }
 
     /// Returns the focus handle attached to this element, if it is focusable.

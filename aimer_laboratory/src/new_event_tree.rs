@@ -1510,7 +1510,7 @@ mod tests {
         println!("general/event elapsed ratio: {relative_time:.2}x");
     }
 
-    mod framework_dispatch_comparison {
+    mod dense_sparse_framework_dispatch {
         use super::*;
         use aimer_events::element::{
             ElementEvent as FrameworkEvent, KeyAction, Modifiers, NamedKey,
@@ -1582,7 +1582,7 @@ mod tests {
                 match (self.spatial_index.is_some(), self.participant) {
                     (true, true) => EventTreeRole::IndexedTarget,
                     (true, false) => EventTreeRole::Transparent,
-                    (false, _) => EventTreeRole::Legacy,
+                    (false, _) => EventTreeRole::IndexedHitTestBoundary,
                 }
             }
 
@@ -2687,7 +2687,7 @@ mod tests {
         }
 
         #[test]
-        fn legacy_hit_test_boundaries_keep_indexed_descendants_on_general_routing() {
+        fn indexed_hit_test_boundaries_keep_descendants_inside_parent_branch() {
             let mut general = build_legacy_boundary_case(false);
             let mut sparse = build_legacy_boundary_case(true);
             begin_event_frame();

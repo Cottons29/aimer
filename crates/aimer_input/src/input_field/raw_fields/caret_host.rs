@@ -150,8 +150,7 @@ impl EventElement for RawTextFieldHost {
         visitor(&self.field);
     }
 
-    fn hit_test_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(&self.field);
+    fn hit_test_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
     }
 }
 

@@ -97,9 +97,9 @@ thread_local! {
     /// nested scroll's recording isolated from the tile currently being
     /// recorded by its parent.
     static PAINT_TRACKING_STACK: RefCell<Vec<HashSet<ElementId>>> = const { RefCell::new(Vec::new()) };
-    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    #[cfg(feature = "frame-stats")]
     static DRAW_TRAVERSAL_COUNT: Cell<u64> = const { Cell::new(0) };
-    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    #[cfg(feature = "frame-stats")]
     static ROUTED_EVENT_VISIT_COUNT: Cell<u64> = const { Cell::new(0) };
     #[cfg(test)]
     static HOVER_MEMBERSHIP_CHECK_COUNT: Cell<u64> = const { Cell::new(0) };
@@ -355,7 +355,7 @@ pub fn paint_invalidations_are_known() -> bool {
 }
 
 /// Resets the draw traversal counter for the next measured frame.
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 pub fn reset_draw_traversal_count() {
     DRAW_TRAVERSAL_COUNT.with(|count| count.set(0));
 }
@@ -363,13 +363,13 @@ pub fn reset_draw_traversal_count() {
 /// Takes the number of retained element draw calls observed since the last
 /// reset. A draw call is counted for every element reached by the drawable
 /// traversal, including a scroll container whose children may be culled.
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 pub fn take_draw_traversal_count() -> u64 {
     DRAW_TRAVERSAL_COUNT.with(Cell::get)
 }
 
 /// Resets the routed-event visit counter for the next measured input sample.
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 #[doc(hidden)]
 pub fn reset_routed_event_visit_count() {
     ROUTED_EVENT_VISIT_COUNT.with(|count| count.set(0));
@@ -379,7 +379,7 @@ pub fn reset_routed_event_visit_count() {
 /// last reset. Cached hit-chain replay contributes one visit per delivered
 /// element, so this counter measures the work visible to the event path rather
 /// than only calls into the uncached recursive walker.
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 #[doc(hidden)]
 pub fn take_routed_event_visit_count() -> u64 {
     ROUTED_EVENT_VISIT_COUNT.with(Cell::get)
@@ -388,7 +388,7 @@ pub fn take_routed_event_visit_count() -> u64 {
 #[inline]
 fn record_routed_event_visit() {
     crate::frame_work_stats::record_hit_test_visit();
-    #[cfg(any(debug_assertions, feature = "frame-stats"))]
+    #[cfg(feature = "frame-stats")]
     ROUTED_EVENT_VISIT_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 }
 
@@ -408,7 +408,7 @@ fn take_hover_membership_check_count() -> u64 {
     HOVER_MEMBERSHIP_CHECK_COUNT.with(Cell::get)
 }
 
-#[cfg(any(debug_assertions, feature = "frame-stats"))]
+#[cfg(feature = "frame-stats")]
 #[inline]
 fn record_draw_traversal() {
     DRAW_TRAVERSAL_COUNT.with(|count| count.set(count.get().saturating_add(1)));
@@ -971,7 +971,7 @@ impl<E: Element + 'static> LayoutElement for ElementNode<E> {
 
 impl<E: Element + 'static> Rebuildable for ElementNode<E> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         crate::rebuild_stats::record_visit();
         let mut traversal = begin_rebuild_traversal(self.id.get());
         let _path = RebuildPathGuard::push(self.id.get());
@@ -986,7 +986,7 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
             && !dirty_path_contains(self.id.get())
         {
             traversal.complete = true;
-            #[cfg(any(debug_assertions, feature = "frame-stats"))]
+            #[cfg(feature = "frame-stats")]
             crate::rebuild_stats::record_pruned();
             return;
         }
@@ -1194,7 +1194,7 @@ impl<E: Element + 'static> EventElement for ElementNode<E> {
 impl<E: Element + 'static> Drawable for ElementNode<E> {
     fn draw(&self, ctx: &BuildContext) {
         crate::frame_work_stats::record_paint_call();
-        #[cfg(any(debug_assertions, feature = "frame-stats"))]
+        #[cfg(feature = "frame-stats")]
         record_draw_traversal();
         record_paint_element(self.id.get());
         let (_draw, outermost) = begin_draw();
@@ -2214,7 +2214,7 @@ impl HitChainRecorder {
             return;
         }
         #[cfg(feature = "event-tree-exp")]
-        if element.event_tree_role() == EventTreeRole::IndexedHitTestBoundary {
+        if is_indexed_hit_test_boundary(element.event_tree_role()) {
             // A boundary can change its eligible child branches without any
             // target bounds moving. Replaying a single cached chain would skip
             // its position-aware child selection on the next pointer move.
@@ -2451,8 +2451,6 @@ pub struct EventDispatcher {
     #[cfg(feature = "event-tree-exp")]
     indexed_root_address: Option<*const ()>,
     #[cfg(feature = "event-tree-exp")]
-    event_tree_eligible: bool,
-    #[cfg(feature = "event-tree-exp")]
     event_hit_frames: Vec<EventHitFrame>,
     #[cfg(feature = "event-tree-exp")]
     event_hit_depth: Rc<Cell<usize>>,
@@ -2495,8 +2493,6 @@ impl EventDispatcher {
             event_target_elements: HashMap::new(),
             #[cfg(feature = "event-tree-exp")]
             indexed_root_address: None,
-            #[cfg(feature = "event-tree-exp")]
-            event_tree_eligible: false,
             #[cfg(feature = "event-tree-exp")]
             event_hit_frames: Vec::new(),
             #[cfg(feature = "event-tree-exp")]
@@ -2849,18 +2845,15 @@ impl EventDispatcher {
             if let Some(boundary) = boundary {
                 self.cancel_nested_captures(path_root, boundary, event)
             } else {
-                let mut children = EventChildren::new();
-                dispatch_routed_event_inner(
-                    self,
-                    path_root,
-                    root,
-                    pos,
-                    event,
-                    &mut children,
-                )
+                dispatch_nested_event(self, path_root, boundary, root, pos, event)
             }
         } else if let Some(owner) = captured_owner {
-            match self.dispatch_nested_captured(path_root, owner, event) {
+            match self.dispatch_nested_captured(
+                path_root,
+                boundary.expect("nested capture always has a forwarding boundary"),
+                owner,
+                event,
+            ) {
                 Some(outcome) => outcome,
                 None => {
                     if let (Some(boundary), Some(pointer)) = (boundary, pointer) {
@@ -2874,8 +2867,7 @@ impl EventDispatcher {
                 }
             }
         } else {
-            let mut children = EventChildren::new();
-            dispatch_routed_event_inner(self, path_root, root, pos, event, &mut children)
+            dispatch_nested_event(self, path_root, boundary, root, pos, event)
         };
 
         if let Some(boundary) = boundary {
@@ -2906,6 +2898,7 @@ impl EventDispatcher {
     fn dispatch_nested_captured(
         &mut self,
         path_root: &dyn Element,
+        boundary: ElementId,
         owner: ElementId,
         event: &ElementEvent,
     ) -> Option<RoutedEventResult> {
@@ -2916,7 +2909,7 @@ impl EventDispatcher {
 
         let result = {
             if event_callback_enabled(target) {
-                let mut context = EventDispatchContext::new(self, path_root, Some(owner));
+                let mut context = EventDispatchContext::new(self, path_root, Some(boundary));
                 target.on_event_with_context(event, &mut context)
             } else {
                 EventResult::ignored()
@@ -2946,7 +2939,7 @@ impl EventDispatcher {
             .collect();
         let mut result = EventResult::ignored();
         for owner in owners {
-            if let Some(outcome) = self.dispatch_nested_captured(path_root, owner, event) {
+            if let Some(outcome) = self.dispatch_nested_captured(path_root, boundary, owner, event) {
                 result = result.merge(outcome.result);
             }
         }
@@ -3386,7 +3379,6 @@ impl EventDispatcher {
             self.event_tree = EventTree::new();
             self.event_target_by_element.clear();
             self.event_target_elements.clear();
-            let mut eligible = true;
             build_indexed_event_tree(
                 root,
                 None,
@@ -3395,11 +3387,9 @@ impl EventDispatcher {
                 &mut self.event_target_by_element,
                 &mut self.event_target_elements,
                 &self.path_indices,
-                &mut eligible,
             );
-            self.event_tree_eligible = eligible && !self.event_tree.elements().is_empty();
             self.indexed_root_address = Some(root_address);
-        } else if event_layout_changed && self.event_tree_eligible {
+        } else if event_layout_changed && !self.event_tree.elements().is_empty() {
             for (element_id, target) in &self.event_target_by_element {
                 let bounds = resolve_element_path(
                     root,
@@ -3658,15 +3648,16 @@ fn event_pointer_key(event: &ElementEvent) -> Option<PointerKey> {
 
 #[inline]
 fn event_callback_enabled(element: &dyn Element) -> bool {
-    #[cfg(feature = "event-tree-exp")]
-    {
-        element.event_tree_role() != EventTreeRole::Transparent
-    }
-    #[cfg(not(feature = "event-tree-exp"))]
-    {
-        let _ = element;
-        true
-    }
+    element.event_tree_role() != EventTreeRole::Transparent
+}
+
+#[cfg(feature = "event-tree-exp")]
+#[inline]
+fn is_indexed_hit_test_boundary(role: EventTreeRole) -> bool {
+    matches!(
+        role,
+        EventTreeRole::Legacy | EventTreeRole::IndexedHitTestBoundary
+    )
 }
 
 #[cfg(feature = "event-tree-exp")]
@@ -3678,28 +3669,25 @@ fn build_indexed_event_tree(
     target_by_element: &mut HashMap<ElementId, EventTargetId>,
     target_elements: &mut HashMap<ElementId, *const (dyn Element + 'static)>,
     path_indices: &HashMap<ElementId, usize>,
-    eligible: &mut bool,
 ) {
     let role = element.event_tree_role();
-    if role == EventTreeRole::Legacy {
-        *eligible = false;
-        return;
-    }
 
     let is_indexed_target = matches!(
         role,
-        EventTreeRole::IndexedTarget | EventTreeRole::IndexedHitTestBoundary
+        EventTreeRole::Legacy
+            | EventTreeRole::IndexedTarget
+            | EventTreeRole::IndexedHitTestBoundary
     );
     let mut child_branch = parent_branch;
     let parent = if is_indexed_target {
-        let Some(id) = element.element_id().filter(|id| path_indices.contains_key(id)) else {
-            *eligible = false;
-            return;
-        };
-        if parent.is_some() && parent_branch.is_none() {
-            *eligible = false;
-            return;
-        }
+        let id = element
+            .element_id()
+            .filter(|id| path_indices.contains_key(id))
+            .expect("event participants must belong to the retained structural tree");
+        assert!(
+            parent.is_none() || parent_branch.is_some(),
+            "indexed event descendants must be reachable through an event branch"
+        );
         let target = tree.register_under(id, parent, parent_branch);
         target_by_element.insert(id, target);
         target_elements.insert(id, retained_element_pointer(element));
@@ -3726,9 +3714,8 @@ fn build_indexed_event_tree(
             target_by_element,
             target_elements,
             path_indices,
-            eligible,
         );
-        if role == EventTreeRole::IndexedHitTestBoundary
+        if is_indexed_hit_test_boundary(role)
             && let (Some(boundary), Some(branch)) = (parent, child.element_id())
         {
             tree.register_boundary_branch(boundary, branch, branch_start..tree.elements().len());
@@ -3815,14 +3802,17 @@ fn dispatch_routed_event(
     event: &ElementEvent,
 ) -> RoutedEventResult {
     #[cfg(feature = "event-tree-exp")]
-    if dispatcher.event_tree_eligible
-        && dispatcher.indexed_root == root.element_id()
-        && dispatcher.indexed_root_address
-            == Some(root as *const dyn Element as *const ())
     {
+        debug_assert_eq!(dispatcher.indexed_root, root.element_id());
+        debug_assert_eq!(
+            dispatcher.indexed_root_address,
+            Some(root as *const dyn Element as *const ())
+        );
         return dispatch_indexed_event(dispatcher, root, pos, event);
     }
+    #[cfg(not(feature = "event-tree-exp"))]
     let mut children = EventChildren::new();
+    #[cfg(not(feature = "event-tree-exp"))]
     dispatch_routed_event_inner(dispatcher, root, root, pos, event, &mut children)
 }
 
@@ -3854,7 +3844,7 @@ fn dispatch_indexed_event(
             continue;
         }
 
-        if root_element.event_tree_role() == EventTreeRole::IndexedHitTestBoundary {
+        if is_indexed_hit_test_boundary(root_element.event_tree_role()) {
             dispatcher.event_hit_frames[frame_index].mark_hit_path(event_tree, root_target, epoch);
             let mut branch_ranges: SmallVec<[(usize, usize); 16]> = SmallVec::new();
             root_element.hit_test_children_at(pos, &mut |child| {
@@ -3924,6 +3914,203 @@ fn dispatch_indexed_event(
     result
 }
 
+/// Routes a forwarding element's private event-child view through the retained
+/// event index when the child has an indexed target.
+fn dispatch_nested_event(
+    dispatcher: &mut EventDispatcher,
+    path_root: &dyn Element,
+    boundary: Option<ElementId>,
+    root: &dyn Element,
+    pos: Vec2d,
+    event: &ElementEvent,
+) -> RoutedEventResult {
+    #[cfg(feature = "event-tree-exp")]
+    if let Some(target) = root
+        .element_id()
+        .and_then(|id| dispatcher.event_target_by_element.get(&id).copied())
+    {
+        return dispatch_indexed_event_subtree(dispatcher, path_root, target, pos, event);
+    }
+
+    #[cfg(feature = "event-tree-exp")]
+    if let Some(target) = boundary
+        .and_then(|id| dispatcher.event_target_by_element.get(&id).copied())
+    {
+        return dispatch_indexed_event_children(
+            dispatcher,
+            path_root,
+            target,
+            boundary.expect("indexed forwarding target has an element ID"),
+            root,
+            pos,
+            event,
+        );
+    }
+
+    let _ = boundary;
+    let mut children = EventChildren::new();
+    dispatch_routed_event_inner(dispatcher, path_root, root, pos, event, &mut children)
+}
+
+#[cfg(feature = "event-tree-exp")]
+fn dispatch_indexed_event_subtree(
+    dispatcher: &mut EventDispatcher,
+    path_root: &dyn Element,
+    target: EventTargetId,
+    pos: Vec2d,
+    event: &ElementEvent,
+) -> RoutedEventResult {
+    let frame_index = dispatcher.event_hit_depth.get();
+    let _depth_guard = EventHitDepthGuard::enter(dispatcher.event_hit_depth.clone());
+    if dispatcher.event_hit_frames.len() <= frame_index {
+        dispatcher
+            .event_hit_frames
+            .resize_with(frame_index + 1, EventHitFrame::default);
+    }
+
+    let tree = &dispatcher.event_tree;
+    let Some(entry) = tree.get(target) else {
+        return RoutedEventResult {
+            result: EventResult::ignored(),
+            capture_owner: None,
+            focus_owner: None,
+        };
+    };
+    let id = entry.element_id();
+    let Some(element) = resolve_indexed_event_element(path_root, dispatcher, id) else {
+        return RoutedEventResult {
+            result: EventResult::ignored(),
+            capture_owner: None,
+            focus_owner: None,
+        };
+    };
+    if !contains(element, pos) {
+        return RoutedEventResult {
+            result: EventResult::ignored(),
+            capture_owner: None,
+            focus_owner: None,
+        };
+    }
+
+    let range = entry.subtree_range(target);
+    let epoch = dispatcher.event_hit_frames[frame_index].prepare(tree.elements().len());
+    dispatcher.event_hit_frames[frame_index].mark_hit_path(tree, target, epoch);
+    for candidate in tree.hit_test_range(range, pos.x, pos.y) {
+        dispatcher.event_hit_frames[frame_index].mark_hit_path(tree, candidate, epoch);
+    }
+    // `mark_hit_path` also marks the indexed ancestors of this private view.
+    // Start at the requested child so sibling event branches stay private to
+    // the forwarding boundary.
+    dispatcher.event_hit_frames[frame_index].roots.clear();
+    dispatcher.event_hit_frames[frame_index].roots.push(target);
+
+    dispatch_indexed_target_inner(
+        dispatcher,
+        frame_index,
+        epoch,
+        path_root,
+        target,
+        pos,
+        event,
+    )
+}
+
+#[cfg(feature = "event-tree-exp")]
+fn dispatch_indexed_event_children(
+    dispatcher: &mut EventDispatcher,
+    path_root: &dyn Element,
+    boundary: EventTargetId,
+    boundary_id: ElementId,
+    root: &dyn Element,
+    pos: Vec2d,
+    event: &ElementEvent,
+) -> RoutedEventResult {
+    if !contains(root, pos) {
+        return RoutedEventResult {
+            result: EventResult::ignored(),
+            capture_owner: None,
+            focus_owner: None,
+        };
+    }
+
+    let frame_index = dispatcher.event_hit_depth.get();
+    let _depth_guard = EventHitDepthGuard::enter(dispatcher.event_hit_depth.clone());
+    if dispatcher.event_hit_frames.len() <= frame_index {
+        dispatcher
+            .event_hit_frames
+            .resize_with(frame_index + 1, EventHitFrame::default);
+    }
+    let tree = &dispatcher.event_tree;
+    if tree.get(boundary).is_none() {
+        return RoutedEventResult {
+            result: EventResult::ignored(),
+            capture_owner: None,
+            focus_owner: None,
+        };
+    }
+    let epoch = dispatcher.event_hit_frames[frame_index].prepare(tree.elements().len());
+    let mut branches: SmallVec<[ElementId; 16]> = SmallVec::new();
+    root.hit_test_children_at(pos, &mut |child| {
+        if let Some(id) = child.element_id() {
+            branches.push(id);
+        }
+    });
+    for branch in branches {
+        if let Some(range) = tree.boundary_branch_range(boundary, branch) {
+            for candidate in tree.hit_test_range(range, pos.x, pos.y) {
+                dispatcher.event_hit_frames[frame_index].mark_hit_path(tree, candidate, epoch);
+            }
+        }
+    }
+
+    let mut outcome = RoutedEventResult {
+        result: EventResult::ignored(),
+        capture_owner: None,
+        focus_owner: None,
+    };
+    let child_count = dispatcher.event_hit_frames[frame_index].active_children[boundary.index()].len();
+    for child_index in 0..child_count {
+        let child = dispatcher.event_hit_frames[frame_index].active_children[boundary.index()][child_index];
+        let child_outcome = dispatch_indexed_target_inner(
+            dispatcher,
+            frame_index,
+            epoch,
+            path_root,
+            child,
+            pos,
+            event,
+        );
+        outcome.result = outcome.result.merge(child_outcome.result);
+        if outcome.focus_owner.is_none() {
+            outcome.focus_owner = child_outcome.focus_owner;
+        }
+        if outcome.capture_owner.is_none() {
+            outcome.capture_owner = child_outcome.capture_owner.or_else(|| {
+                (!matches!(child_outcome.result.capture_request(), CaptureRequest::None))
+                    .then_some(boundary_id)
+            });
+        }
+        if child_outcome.result.is_consumed() {
+            break;
+        }
+    }
+
+    let child_result = {
+        let mut context = EventDispatchContext::new(dispatcher, path_root, Some(boundary_id));
+        root.on_event_with_context(event, &mut context)
+    };
+    if outcome.capture_owner.is_none()
+        && !matches!(child_result.capture_request(), CaptureRequest::None)
+    {
+        outcome.capture_owner = root.element_id();
+    }
+    outcome.result = outcome.result.merge(child_result);
+    if outcome.focus_owner.is_none() {
+        outcome.focus_owner = focus_candidate_at(root, pos);
+    }
+    outcome
+}
+
 #[cfg(feature = "event-tree-exp")]
 fn dispatch_indexed_target_inner(
     dispatcher: &mut EventDispatcher,
@@ -3972,7 +4159,7 @@ fn dispatch_indexed_target_inner(
         capture_owner: None,
         focus_owner: None,
     };
-    let hit_test_boundary = element.event_tree_role() == EventTreeRole::IndexedHitTestBoundary
+    let hit_test_boundary = is_indexed_hit_test_boundary(element.event_tree_role())
         && !dispatcher.event_hit_frames[frame_index].boundary_was_filtered(target, epoch);
     let mut hit_test_branches: SmallVec<[ElementId; 16]> = SmallVec::new();
     if hit_test_boundary {
@@ -4294,14 +4481,15 @@ pub fn dispatch_event(root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> E
     {
         let mut dispatcher = EventDispatcher::new();
         dispatcher.synchronize_paths(root);
-        if dispatcher.event_tree_eligible {
-            return dispatch_indexed_event(&mut dispatcher, root, pos, event).result;
-        }
+        return dispatch_indexed_event(&mut dispatcher, root, pos, event).result;
     }
+    #[cfg(not(feature = "event-tree-exp"))]
     let mut children = EventChildren::new();
+    #[cfg(not(feature = "event-tree-exp"))]
     dispatch_event_inner(root, pos, event, &mut children)
 }
 
+#[cfg(any(not(feature = "event-tree-exp"), test))]
 fn dispatch_event_inner<'a>(
     root: &'a dyn Element,
     pos: Vec2d,
@@ -4347,22 +4535,22 @@ pub fn broadcast_event(root: &dyn Element, event: &ElementEvent) -> EventResult 
     {
         let mut dispatcher = EventDispatcher::new();
         dispatcher.synchronize_paths(root);
-        if dispatcher.event_tree_eligible {
-            let mut result = EventResult::ignored();
-            for target in dispatcher.event_tree.roots().iter().rev().copied() {
-                result = result.merge(broadcast_indexed_target(
-                    root,
-                    &dispatcher.event_tree,
-                    &dispatcher.path_indices,
-                    &dispatcher.path_links,
-                    target,
-                    event,
-                ));
-            }
-            return result;
+        let mut result = EventResult::ignored();
+        for target in dispatcher.event_tree.roots().iter().rev().copied() {
+            result = result.merge(broadcast_indexed_target(
+                root,
+                &dispatcher.event_tree,
+                &dispatcher.path_indices,
+                &dispatcher.path_links,
+                target,
+                event,
+            ));
         }
+        return result;
     }
+    #[cfg(not(feature = "event-tree-exp"))]
     let mut children = EventChildren::new();
+    #[cfg(not(feature = "event-tree-exp"))]
     broadcast_event_inner(root, event, &mut children)
 }
 
@@ -4396,6 +4584,7 @@ fn broadcast_indexed_target(
     }
 }
 
+#[cfg(any(not(feature = "event-tree-exp"), test))]
 fn broadcast_event_inner<'a>(
     root: &'a dyn Element,
     event: &ElementEvent,
@@ -4432,24 +4621,24 @@ pub fn dispatch_focused_event(root: &dyn Element, event: &ElementEvent) -> Event
     {
         let mut dispatcher = EventDispatcher::new();
         dispatcher.synchronize_paths(root);
-        if dispatcher.event_tree_eligible {
-            for target in dispatcher.event_tree.roots().iter().rev().copied() {
-                let result = dispatch_focused_indexed_target(
-                    root,
-                    &dispatcher.event_tree,
-                    &dispatcher.path_indices,
-                    &dispatcher.path_links,
-                    target,
-                    event,
-                );
-                if result.is_consumed() {
-                    return result;
-                }
+        for target in dispatcher.event_tree.roots().iter().rev().copied() {
+            let result = dispatch_focused_indexed_target(
+                root,
+                &dispatcher.event_tree,
+                &dispatcher.path_indices,
+                &dispatcher.path_links,
+                target,
+                event,
+            );
+            if result.is_consumed() {
+                return result;
             }
-            return EventResult::ignored();
         }
+        return EventResult::ignored();
     }
+    #[cfg(not(feature = "event-tree-exp"))]
     let mut children = EventChildren::new();
+    #[cfg(not(feature = "event-tree-exp"))]
     dispatch_focused_event_inner(root, event, &mut children)
 }
 
@@ -4483,6 +4672,7 @@ fn dispatch_focused_indexed_target(
         .unwrap_or_else(EventResult::ignored)
 }
 
+#[cfg(any(not(feature = "event-tree-exp"), test))]
 fn dispatch_focused_event_inner<'a>(
     root: &'a dyn Element,
     event: &ElementEvent,
@@ -6913,7 +7103,7 @@ mod tests {
         .boxed();
         let mut dispatcher = EventDispatcher::new();
         dispatcher.synchronize_paths(root.as_ref());
-        assert!(dispatcher.event_tree_eligible);
+        assert!(!dispatcher.event_tree.elements().is_empty());
 
         let event = ElementEvent::DragOver {
             pos: Vec2d { x: 1.0, y: 1.0 },
@@ -7072,7 +7262,7 @@ mod tests {
         let mut dispatcher = EventDispatcher::new();
         dispatcher.synchronize_paths(root.as_ref());
 
-        assert!(dispatcher.event_tree_eligible);
+        assert!(!dispatcher.event_tree.elements().is_empty());
         assert_eq!(dispatcher.event_tree.hit_test(50.0, 50.0).count(), 1);
 
         let pos = Vec2d { x: 50.0, y: 50.0 };
