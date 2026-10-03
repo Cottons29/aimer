@@ -214,7 +214,7 @@ members = [
     "crates/aimer_media",
     "crates/aimer_storage",
     "crates/aimer_shape",
-    "crates/aimer_collapsible",
+    "crates/aimer_collapsible", "crates/aimer_simd",
 ]
 
 [workspace.dependencies]

@@ -2,10 +2,9 @@
 
 These instructions apply to the entire repository. A nested `AGENTS.md` takes precedence for files in its directory.
 
-
 ## Explorer
 
-When exploring the projects, consider using subagent to work with these rules: 
+When exploring the projects, consider using subagent to work with these rules:
 
 - if you are ChatGPT: using chat-gpt-6-luna (high) for subagents
 
@@ -26,8 +25,7 @@ scope.
 ## Before Editing
 
 - Read the relevant implementation, tests, and any nested `AGENTS.md` before changing code.
-- Use available IDE context or Codegraph MCP when it is relevant, but do not assume an IDE integration exists. CLI
-  inspection is valid.
+- Use Aimer MCP when it is relevant, but do not assume an IDE integration exists. CLI inspection is valid.
 - Use the aimer mcp or cli tool to search the documents from the docs.rs if the aimer is existed.
 - Do not invent missing facts. First, inspect the repository, compiler output, tests, or documentation. Ask the user only
   when the ambiguity cannot be resolved locally and different answers would materially change the implementation.
