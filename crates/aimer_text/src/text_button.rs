@@ -249,10 +249,10 @@ impl TextHitBounds {
 impl RawTextButton {
     const DOUBLE_TAP_INTERVAL: Duration = Duration::from_millis(500);
 
-    fn active_style(&self) -> TextStyle {
+    fn active_style_for(&self, hovered: bool) -> TextStyle {
         let (mut style, color) = if self.widget.disabled {
             (self.widget.disabled_style, self.widget.disabled_color)
-        } else if self.hovered.get() {
+        } else if hovered {
             (self.widget.hover_style, self.widget.hover_color)
         } else {
             (self.widget.style, self.widget.color)
@@ -263,10 +263,15 @@ impl RawTextButton {
         style
     }
 
+    #[cfg(test)]
     fn text_element(&self) -> RawTextWidget {
+        self.text_element_for(self.hovered.get())
+    }
+
+    fn text_element_for(&self, hovered: bool) -> RawTextWidget {
         RawTextWidget {
             text: self.widget.label.clone(),
-            text_style: self.active_style(),
+            text_style: self.active_style_for(hovered),
             text_align: Default::default(),
             line_height: Default::default(),
             text_indent: 0.0,
@@ -285,7 +290,21 @@ impl RawTextButton {
         Vec<f32>,
         f32,
     ) {
-        let mut intrinsic_text = self.text_element();
+        self.text_layout_for(ctx, self.hovered.get())
+    }
+
+    fn text_layout_for<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        hovered: bool,
+    ) -> (
+        RawTextWidget,
+        BuildContext<'a>,
+        aimer_attribute::ResolvedSize,
+        Vec<f32>,
+        f32,
+    ) {
+        let mut intrinsic_text = self.text_element_for(hovered);
         let wraps = matches!(intrinsic_text.text_style.text_overflow, TextOverflow::Wrap);
         intrinsic_text.text_style.text_overflow = TextOverflow::Clip;
         let intrinsic_size = intrinsic_text.computed_size(ctx);
@@ -302,7 +321,7 @@ impl RawTextButton {
             text_ctx.parent_size.width = width;
         }
 
-        let text = self.text_element();
+        let text = self.text_element_for(hovered);
         let size = if wraps {
             text.computed_size(&text_ctx)
         } else {
@@ -331,6 +350,58 @@ impl RawTextButton {
             (vec![size.width], size.height)
         };
         (text, text_ctx, size, line_widths, line_height)
+    }
+
+    fn local_v2_text<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+    ) -> Option<(RawTextWidget, BuildContext<'a>, aimer_attribute::ResolvedSize)> {
+        let normal = self.text_layout_for(ctx, false);
+        if normal.0.text_style.text_shadow.is_some()
+            || normal.0.text_style.background_color.is_some()
+            || !normal.0.can_paint_local_v2(&normal.1)
+        {
+            return None;
+        }
+        let hover = (!self.widget.disabled).then(|| self.text_layout_for(ctx, true));
+        if let Some((hover_text, hover_ctx, hover_size, _, _)) = &hover {
+            if normal.2.width != hover_size.width || normal.2.height != hover_size.height {
+                return None;
+            }
+            if hover_text.text_style.text_shadow.is_some()
+                || hover_text.text_style.background_color.is_some()
+                || !hover_text.can_paint_local_v2(hover_ctx)
+            {
+                return None;
+            }
+        }
+
+        let hovered = !self.widget.disabled
+            && self.bounds.is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y);
+        let (text, text_ctx, size, _, _) = if hovered {
+            hover.expect("enabled buttons have a hover layout")
+        } else {
+            normal
+        };
+        Some((text, text_ctx, size))
+    }
+
+    fn hover_style_changes_bounds(&self) -> bool {
+        if self.widget.disabled {
+            return false;
+        }
+        let normal = self.active_style_for(false);
+        let hover = self.active_style_for(true);
+        normal.font_size != hover.font_size
+            || normal.font_family != hover.font_family
+            || normal.font_style != hover.font_style
+            || normal.font_weight != hover.font_weight
+            || normal.text_overflow != hover.text_overflow
+            || normal.text_decoration != hover.text_decoration
+            || normal.text_transform != hover.text_transform
+            || normal.letter_spacing != hover.letter_spacing
+            || normal.word_spacing != hover.word_spacing
+            || normal.text_shadow != hover.text_shadow
     }
 
     fn save_bounds(
@@ -372,11 +443,9 @@ impl RawTextButton {
     fn set_hovered(&self, hovered: bool) -> bool {
         let changed = self.hovered.replace(hovered) != hovered;
         if changed {
-            // A hover transition changes glyph metrics and may add or remove
-            // decoration lines. TextButton is a live, unbounded leaf rather
-            // than a retained paint owner, so its event-time redraw request
-            // must also invalidate the compositor target.
-            aimer_widget::mark_paint_damage_full();
+            if self.hover_style_changes_bounds() {
+                aimer_widget::mark_paint_damage_full();
+            }
             request_animation_frame();
         }
         changed
@@ -473,6 +542,32 @@ impl Drawable for RawTextButton {
         }
         text.draw(&text_ctx);
     }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.local_v2_text(ctx).is_some()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let (text, text_ctx, _) = self
+            .local_v2_text(ctx)
+            .expect("TextButton v2 support must be checked before painting");
+        text.paint_local_v2(&text_ctx);
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        self.widget.disabled || self.active_style_for(false) == self.active_style_for(true)
+    }
+
+    fn is_paint_bounded(&self) -> bool {
+        let normal = self.text_element_for(false);
+        if !normal.is_paint_bounded() || normal.text_style.text_shadow.is_some() {
+            return false;
+        }
+        self.widget.disabled || {
+            let hover = self.text_element_for(true);
+            hover.is_paint_bounded() && hover.text_style.text_shadow.is_none()
+        }
+    }
 }
 
 impl Rebuildable for RawTextButton {}
@@ -498,7 +593,7 @@ mod tests {
         let canvas = aimer_canvas::InnerCanvas::new();
         let inner = Box::leak(Box::new(canvas.clone()));
         let mut ctx = BuildContext::new(
-            aimer_canvas::Canvas::new(inner),
+            aimer_canvas::FrameCanvas::new(inner),
             ResolvedSize {
                 width: max_width,
                 height: 100.0,
@@ -700,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn text_button_hover_transition_requests_a_redraw() {
+    fn text_button_hover_transition_requests_redraw_without_full_damage() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -722,7 +817,7 @@ mod tests {
         assert!(result.needs_redraw());
         assert!(!result.is_consumed());
         aimer_widget::begin_paint_frame(300, 100);
-        assert!(aimer_widget::take_paint_frame_damage(300, 100).is_full());
+        assert!(aimer_widget::take_paint_frame_damage(300, 100).is_empty());
     }
 
     #[cfg(feature = "portable-guest")]

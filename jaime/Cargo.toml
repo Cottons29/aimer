@@ -3,6 +3,9 @@ name = "jaime"
 version = "0.1.0"
 edition = "2024"
 
+
+
+
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
 path = "src/main.rs"
@@ -23,10 +26,12 @@ aimer_attribute.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [features]
-default = ["desktop-bin", "event-tree"]
+default = ["desktop-bin"]
 desktop-bin = []
-event-tree = ["aimer/event-tree"]
-event-tree-exp = ["event-tree"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.50"
+
+
+[profile.dev]
+debug = "full"

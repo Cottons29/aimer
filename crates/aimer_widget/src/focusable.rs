@@ -569,6 +569,12 @@ impl Drawable for RawFocusable {
         self.child.draw(ctx);
     }
 
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
     #[inline]
     fn paint(&self, ctx: &BuildContext) {
         self.child.paint(ctx);
@@ -949,7 +955,7 @@ mod tests {
     fn context() -> BuildContext<'static> {
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         BuildContext::new(
             canvas,

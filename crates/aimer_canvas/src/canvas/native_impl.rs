@@ -326,6 +326,23 @@ impl CanvasRendering for CupidCanvas {
     }
 
     #[inline]
+    fn draw_image_with_resource(
+        &self,
+        resource: Arc<aimer_cupid::draw_cmd_v2::ImageResource>,
+        pos: Vec2d,
+        size: ResolvedSize,
+    ) {
+        CupidCanvas::draw_image_with_resource(
+            self,
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
+            resource,
+        );
+    }
+
+    #[inline]
     fn draw_svg(
         &self,
         scene: Arc<SvgScene>,

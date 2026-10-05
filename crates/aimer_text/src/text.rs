@@ -292,11 +292,13 @@ impl Widget for Text {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::rc::Rc;
 
     use aimer_attribute::{ResolvedSize, Vec2d};
-    use aimer_canvas::{Canvas, InnerCanvas};
-    use aimer_style::{LineHeight, TextStyle, TextTransform};
+    use aimer_canvas::{FrameCanvas, InnerCanvas};
+    use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect, RenderPaintSource, RenderTree};
+    use aimer_style::{LineHeight, TextAlign, TextStyle, TextTransform};
     #[cfg(feature = "portable-guest")]
     use aimer_anteros::{
         PROPERTY_TEXT_ALIGN, PROPERTY_TEXT_CONTENT, PROPERTY_TEXT_INDENT,
@@ -316,13 +318,14 @@ mod tests {
         PortableBuildContext, PortableBuildError, PortableLimits, PortableWidgetLimits,
         PortableWidgetResource, SourceFingerprint, StableId128,
     };
-    use aimer_widget::Widget;
+    use aimer_widget::{Drawable, LayoutCache, LayoutElement, Rebuildable, Widget};
     #[cfg(feature = "portable-guest")]
     use aimer_widget::PortableWidget;
 
-    use super::Text;
+    use super::{RawTextWidget, Text};
     use crate::selection::selectable::{SelectionCoordinator, SelectionScope};
     use crate::selection::session::SelectionSession;
+    use crate::text_source::TextSource;
 
     /// The debug name of the non-selectable fast path.
     const RAW_TEXT_NAME: &str = "RawTextWidget";
@@ -344,17 +347,28 @@ mod tests {
         assert_eq!(text.text_indent, -8.0);
     }
 
-    fn context<'a>(canvas: Canvas<'a>, runtime: &'a tokio::runtime::Runtime) -> BuildContext<'a> {
+    fn context<'a>(canvas: FrameCanvas<'a>, runtime: &'a tokio::runtime::Runtime) -> BuildContext<'a> {
+        context_with_scale(canvas, runtime, 1.0)
+    }
+
+    fn context_with_scale<'a>(
+        canvas: FrameCanvas<'a>,
+        runtime: &'a tokio::runtime::Runtime,
+        scale: f32,
+    ) -> BuildContext<'a> {
         BuildContext::new(
             canvas,
             ResolvedSize {
-                width: 200.0,
-                height: 100.0,
+                width: 200.0 * scale,
+                height: 100.0 * scale,
             },
-            1.0,
+            scale,
             Vec2d::default(),
             Vec2d::default(),
-            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            WindowHandle::headless(
+                winit::dpi::PhysicalSize::new((200.0 * scale) as u32, (100.0 * scale) as u32),
+                f64::from(scale),
+            ),
             runtime.handle().clone(),
         )
     }
@@ -554,7 +568,7 @@ mod tests {
     fn text_outside_a_region_stays_on_the_non_selectable_fast_path() {
         let inner = InnerCanvas::new();
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        let ctx = context(Canvas::new(&inner), &runtime);
+        let ctx = context(FrameCanvas::new(&inner), &runtime);
 
         let element = Text::new("plain").to_element(&ctx);
 
@@ -562,10 +576,86 @@ mod tests {
     }
 
     #[test]
+    fn plain_text_records_a_local_v2_run_and_repaints_without_dirtifying_its_sibling() {
+        let inner = InnerCanvas::new();
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let ctx = context_with_scale(FrameCanvas::new(&inner), &runtime, 2.0);
+        let scale = ctx.scale;
+        let raw_text = |text| RawTextWidget {
+            text: TextSource::Static(text),
+            text_style: TextStyle::default(),
+            text_align: TextAlign::TopLeft,
+            line_height: LineHeight::Normal,
+            text_indent: 0.0,
+            cache: LayoutCache::new(),
+            _typeface: Cell::new(None),
+        };
+        let original = raw_text("before");
+        let sibling = raw_text("sibling");
+        let original_size = original.computed_size(&ctx);
+        let sibling_size = sibling.computed_size(&ctx);
+        let original_bounds = Rect::new(
+            0.0,
+            0.0,
+            original_size.width / scale,
+            original_size.height / scale,
+        );
+        let tree = RenderTree::new();
+        let text_node = tree.add_root(original_bounds).unwrap();
+        let sibling_node = tree
+            .add_root(Rect::new(
+                original_bounds.width + 20.0,
+                0.0,
+                sibling_size.width / scale,
+                sibling_size.height / scale,
+            ))
+            .unwrap();
+
+        let local_context = tree.context(text_node).unwrap();
+        assert!(original.can_paint_local_v2(&ctx));
+        ctx.with_local_v2_paint_context(local_context, |ctx| original.paint_local_v2(ctx));
+        tree.set_paint_source(text_node, RenderPaintSource::LocalV2)
+            .unwrap();
+        let sibling_context = tree.context(sibling_node).unwrap();
+        assert!(sibling.can_paint_local_v2(&ctx));
+        ctx.with_local_v2_paint_context(sibling_context, |ctx| sibling.paint_local_v2(ctx));
+        tree.set_paint_source(sibling_node, RenderPaintSource::LocalV2)
+            .unwrap();
+
+        let first_recording = tree.draw_list_snapshot(text_node).unwrap();
+        assert_eq!(first_recording.revision, 1);
+        assert_eq!(
+            tree.paint_source(text_node).unwrap(),
+            RenderPaintSource::LocalV2
+        );
+        assert!(matches!(
+            first_recording.commands.as_ref(),
+            [DrawCommand::DrawText { text, font_size, .. }]
+                if text.as_ref() == "before" && *font_size == 13.0
+        ));
+
+        tree.take_damage();
+        tree.invalidate_paint(text_node).unwrap();
+        let updated = raw_text("after");
+        let updated_context = tree.context(text_node).unwrap();
+        assert!(updated.can_paint_local_v2(&ctx));
+        ctx.with_local_v2_paint_context(updated_context, |ctx| updated.paint_local_v2(ctx));
+
+        let updated_recording = tree.draw_list_snapshot(text_node).unwrap();
+        assert_eq!(updated_recording.revision, 2);
+        assert!(matches!(
+            updated_recording.commands.as_ref(),
+            [DrawCommand::DrawText { text, .. }] if text.as_ref() == "after"
+        ));
+        assert_eq!(tree.draw_list_revision(sibling_node).unwrap(), 1);
+        assert_eq!(tree.take_damage(), vec![original_bounds]);
+    }
+
+    #[test]
     fn text_inside_a_region_becomes_selectable() {
         let inner = InnerCanvas::new();
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        let ctx = context(Canvas::new(&inner), &runtime);
+        let ctx = context(FrameCanvas::new(&inner), &runtime);
         let session = SelectionSession::new(
             ctx.window.clone(),
             Rc::new(SelectionCoordinator::default()),
@@ -585,7 +675,7 @@ mod tests {
     fn toggling_a_region_around_a_text_swaps_the_element_without_panicking() {
         let inner = InnerCanvas::new();
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        let ctx = context(Canvas::new(&inner), &runtime);
+        let ctx = context(FrameCanvas::new(&inner), &runtime);
         let session = SelectionSession::new(
             ctx.window.clone(),
             Rc::new(SelectionCoordinator::default()),

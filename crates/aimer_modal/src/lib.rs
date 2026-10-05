@@ -1,4 +1,5 @@
 mod anchor;
+mod animated_content;
 mod animation;
 mod floating;
 pub(crate) mod host;
@@ -11,7 +12,7 @@ pub use animation::ModalAnimation;
 pub use floating::Floating;
 pub use host::{
     ModalController, ModalHandle, ModalHost, ModalId, OverlayLayer, OverlayLayerHandle,
-    OverlayPainter,
+    OverlayPainter, prepare_retained_render_tree,
 };
 pub use modal::Modal;
 pub use placement::{

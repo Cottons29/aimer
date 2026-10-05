@@ -215,6 +215,15 @@ impl<T> Autocomplete<T> {
             .map(ChoiceOption::key)
     }
 
+    pub(crate) fn set_focused_key(&mut self, key: &str) {
+        let Some(index) = self.options.iter().position(|option| option.key() == key) else {
+            return;
+        };
+        if self.is_available(index) {
+            self.focused_index = Some(index);
+        }
+    }
+
     /// Opens the suggestions surface and focuses the selected or first visible
     /// enabled option.
     pub fn open_menu(&mut self) -> ControlAction<T>

@@ -438,6 +438,32 @@ impl Drawable for RawCalendar {
             &self.tokens,
         );
     }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite() && ctx.scale > 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let calendar = self.runtime.calendar.borrow();
+        paint::record_local_v2(ctx, |painter| {
+            paint::draw_calendar(
+                painter,
+                &calendar,
+                Vec2d::default(),
+                size.width,
+                size.height,
+                self.runtime.focused.get(),
+                &self.tokens,
+            );
+        });
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let (x, y) = ctx.canvas.get_transform_translation();
+        self.bounds.save(ctx.scale, x, y, size.width, size.height);
+    }
 }
 impl Rebuildable for RawCalendar {}
 impl PortableWidget for RawCalendar {}
@@ -914,6 +940,56 @@ impl Drawable for RawDatePicker {
                 &self.tokens,
             );
         }
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite() && ctx.scale > 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let picker = self.runtime.picker.borrow();
+        paint::record_local_v2(ctx, |painter| {
+            if self.popup {
+                paint::draw_calendar(
+                    painter,
+                    picker.calendar(),
+                    Vec2d::default(),
+                    size.width,
+                    (size.height - PICKER_FOOTER_HEIGHT * ctx.scale).max(0.0),
+                    self.runtime.focused.get(),
+                    &self.tokens,
+                );
+                paint::draw_footer(
+                    painter,
+                    size.width,
+                    size.height,
+                    self.runtime.focused.get(),
+                    &self.tokens,
+                );
+                paint::draw_overlay_border(painter, size.width, size.height, &self.tokens);
+            } else {
+                paint::draw_picker_field(
+                    painter,
+                    "Date",
+                    selection_label(if picker.is_open() {
+                        picker.draft()
+                    } else {
+                        picker.selection()
+                    }),
+                    size.width,
+                    picker.is_open(),
+                    self.runtime.focused.get(),
+                    &self.tokens,
+                );
+            }
+        });
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let (x, y) = ctx.canvas.get_transform_translation();
+        self.bounds.save(ctx.scale, x, y, size.width, size.height);
     }
 }
 impl Rebuildable for RawDatePicker {}
@@ -1730,6 +1806,84 @@ impl Drawable for RawDateTimePicker {
                 &self.tokens,
             );
         }
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite() && ctx.scale > 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let picker = self.runtime.picker.borrow();
+        let value = picker.draft().expect("date-time picker always has a value");
+        let field = self.runtime.field.get();
+        let (label, display) = if field.is_date() {
+            ("Date", format_datetime(value))
+        } else {
+            ("Time", format_time(value.time(), self.use_24_hours))
+        };
+        paint::record_local_v2(ctx, |painter| {
+            if self.popup {
+                paint::draw_segmented_picker_header(
+                    painter,
+                    size.width,
+                    field.is_date(),
+                    &self.tokens,
+                );
+                if field.is_date() {
+                    let calendar = self.calendar();
+                    paint::draw_calendar(
+                        painter,
+                        &calendar,
+                        Vec2d {
+                            x: 0.0,
+                            y: PICKER_FIELD_HEIGHT * ctx.scale,
+                        },
+                        size.width,
+                        (size.height
+                            - (PICKER_FIELD_HEIGHT + PICKER_FOOTER_HEIGHT) * ctx.scale)
+                            .max(0.0),
+                        self.runtime.focused.get(),
+                        &self.tokens,
+                    );
+                } else {
+                    paint::draw_time_picker(
+                        painter,
+                        value.time(),
+                        size.width,
+                        size.height,
+                        PICKER_FIELD_HEIGHT,
+                        field.time_column(),
+                        self.use_24_hours,
+                        &self.tokens,
+                    );
+                }
+                paint::draw_done_footer(
+                    painter,
+                    size.width,
+                    size.height,
+                    self.runtime.focused.get(),
+                    &self.tokens,
+                );
+                paint::draw_overlay_border(painter, size.width, size.height, &self.tokens);
+            } else {
+                paint::draw_picker_field(
+                    painter,
+                    label,
+                    display,
+                    size.width,
+                    picker.is_open(),
+                    self.runtime.focused.get(),
+                    &self.tokens,
+                );
+            }
+        });
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let (x, y) = ctx.canvas.get_transform_translation();
+        self.bounds.save(ctx.scale, x, y, size.width, size.height);
     }
 }
 

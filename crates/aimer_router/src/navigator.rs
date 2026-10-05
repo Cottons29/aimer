@@ -295,6 +295,38 @@ impl<R: 'static> Drawable for NavigatorElement<R> {
     fn draw(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.draw(ctx));
     }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn retained_v2_child_context<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        _child: &dyn Element,
+    ) -> Option<BuildContext<'a>> {
+        self.route_context.with(ctx, |ctx| {
+            Some(ctx.fork_with_state(self.controller.clone()))
+        })
+    }
+
+    fn paint(&self, ctx: &BuildContext) {
+        self.scoped(ctx, |ctx| self.child.paint(ctx));
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.scoped(ctx, |ctx| self.child.sync_paint_geometry(ctx));
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        self.child.is_paint_stable()
+    }
+
+    fn is_paint_bounded(&self) -> bool {
+        self.child.is_paint_bounded()
+    }
 }
 
 impl<R: 'static> LayoutElement for NavigatorElement<R> {
@@ -952,7 +984,7 @@ mod tests {
         });
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         let _guard = runtime.enter();
         BuildContext::new(

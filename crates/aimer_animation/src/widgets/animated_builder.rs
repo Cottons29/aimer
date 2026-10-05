@@ -539,6 +539,7 @@ impl Widget for AnimatedBuilder {
             controller: self.controller.clone(),
             builder: self.builder.clone(),
             last_value: Cell::new(curved_value),
+            output_changed: Cell::new(false),
             window,
             damage: PaintDamageTracker::new(),
         }
@@ -548,15 +549,16 @@ impl Widget for AnimatedBuilder {
 
 /// The element produced by `AnimatedBuilder`.
 ///
-/// On each draw, it ticks the controller, rebuilds the child from the
-/// builder closure (which was captured at construction), and draws the result.
-/// This approach means the child is rebuilt every frame while animating,
-/// which is the intended behavior for responsive animations.
+/// Before the retained render tree synchronizes, it ticks the controller and
+/// rebuilds the child from the builder closure when the value changes. The new
+/// child is therefore present in the render tree for the same frame that uses
+/// its value.
 struct AnimatedBuilderElement {
     child: UnsafeCell<AnyElement>,
     controller: AnimationController,
     builder: Rc<AnimatedElementBuilder>,
     last_value: Cell<f32>,
+    output_changed: Cell<bool>,
     window: WindowHandle,
     damage: PaintDamageTracker,
 }
@@ -567,18 +569,7 @@ unsafe impl Sync for AnimatedBuilderElement {}
 
 impl Drawable for AnimatedBuilderElement {
     fn draw(&self, ctx: &BuildContext) {
-        let curved_value = self.controller.tick(AnimInstant::now());
-        let output_changed = curved_value != self.last_value.get();
-        if output_changed {
-            let child = (self.builder)(curved_value, ctx);
-            // The builder is called fresh whenever the curved value changes,
-            // but its element still owns runtime state an ordinary rebuild
-            // would hand over — carry it across so a new value does not also
-            // wipe everything nested below it.
-            carry_element_state(unsafe { &*self.child.get() }.as_ref(), child.as_ref(), ctx);
-            unsafe { *self.child.get() = child };
-            self.last_value.set(curved_value);
-        }
+        let output_changed = self.output_changed.replace(false);
 
         crate::widgets::damage::mark_dynamic_animation_damage(
             &self.damage,
@@ -587,6 +578,33 @@ impl Drawable for AnimatedBuilderElement {
 
         unsafe { &*self.child.get() }.draw(ctx);
 
+        if self.controller.is_animating() {
+            self.window.request_redraw();
+        }
+    }
+
+    #[inline]
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        let child = unsafe { &*self.child.get() };
+        child.can_paint_local_v2(ctx) && child.is_paint_bounded()
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        let child = unsafe { &*self.child.get() };
+        if !child.can_paint_local_v2(ctx) || !child.is_paint_bounded() {
+            return false;
+        }
+        child.sync_paint_geometry(ctx);
+        true
+    }
+
+    #[inline]
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.output_changed.set(false);
+        unsafe { &*self.child.get() }.draw(ctx);
         if self.controller.is_animating() {
             self.window.request_redraw();
         }
@@ -615,6 +633,17 @@ impl EventElement for AnimatedBuilderElement {
 
 impl Rebuildable for AnimatedBuilderElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        let curved_value = self.controller.tick(AnimInstant::now());
+        let output_changed = curved_value != self.last_value.get();
+        if output_changed {
+            let child = (self.builder)(curved_value, ctx);
+            // Preserve state through the replacement, then publish the new
+            // child before the retained render tree synchronizes its nodes.
+            carry_element_state(unsafe { &*self.child.get() }.as_ref(), child.as_ref(), ctx);
+            unsafe { *self.child.get() = child };
+            self.last_value.set(curved_value);
+            self.output_changed.set(true);
+        }
         unsafe { &*self.child.get() }.rebuild_if_dirty(ctx);
     }
 }

@@ -10,7 +10,8 @@ use std::sync::Arc;
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_canvas::Canvas;
+use aimer_canvas::{CanvasContext, FrameCanvas};
+use aimer_cupid::draw_cmd_v2::CurrentBuildContext;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Handle;
 use winit::window::Window;
@@ -27,12 +28,12 @@ use crate::components::element::DirtySource;
 #[cfg(feature = "portable-guest")]
 #[doc(hidden)]
 #[derive(Clone)]
-pub struct BuildCanvas<'a>(Option<Canvas<'a>>);
+pub struct BuildCanvas<'a>(Option<FrameCanvas<'a>>);
 
 #[cfg(feature = "portable-guest")]
 impl<'a> BuildCanvas<'a> {
     #[inline]
-    fn native(canvas: Canvas<'a>) -> Self {
+    fn native(canvas: FrameCanvas<'a>) -> Self {
         Self(Some(canvas))
     }
 
@@ -44,7 +45,7 @@ impl<'a> BuildCanvas<'a> {
 
 #[cfg(feature = "portable-guest")]
 impl<'a> Deref for BuildCanvas<'a> {
-    type Target = Canvas<'a>;
+    type Target = FrameCanvas<'a>;
 
     #[track_caller]
     fn deref(&self) -> &Self::Target {
@@ -365,7 +366,7 @@ impl WindowHandle {
 pub struct BuildContext<'a> {
     pub parent_size: ResolvedSize,
     #[cfg(not(feature = "portable-guest"))]
-    pub canvas: Canvas<'a>,
+    pub canvas: FrameCanvas<'a>,
     #[cfg(feature = "portable-guest")]
     pub canvas: BuildCanvas<'a>,
     pub scale: f32,
@@ -379,6 +380,14 @@ pub struct BuildContext<'a> {
     #[cfg(all(not(target_arch = "wasm32"), feature = "portable-guest"))]
     pub async_handle: BuildAsyncHandle,
     pub inherited_states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
+}
+
+impl<'a> CanvasContext for BuildContext<'a> {
+    fn current_canvas_context(&self) -> CurrentBuildContext {
+        self.get_state::<CurrentLocalV2PaintContext>()
+            .map(|context| context.0.clone())
+            .unwrap_or_else(|| panic!("Canvas::of(ctx) requires an active local-v2 paint callback"))
+    }
 }
 
 #[doc(hidden)]
@@ -432,6 +441,12 @@ impl Drop for BuildConsumer {
 #[derive(Clone)]
 struct CurrentBuildConsumer(Rc<BuildConsumer>);
 
+#[derive(Clone)]
+struct CurrentLocalV2PaintContext(CurrentBuildContext);
+
+#[derive(Clone, Copy)]
+struct CurrentLocalV2CompatibilityPaint(bool);
+
 struct StateScopeGuard {
     states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
     type_id: TypeId,
@@ -463,7 +478,7 @@ impl<'a> std::fmt::Debug for BuildContext<'a> {
 
 impl<'a> BuildContext<'a> {
     pub fn new(
-        canvas: Canvas<'a>,
+        canvas: FrameCanvas<'a>,
         size: ResolvedSize,
         scale: f32,
         parent_pos: Vec2d,
@@ -507,7 +522,7 @@ impl<'a> BuildContext<'a> {
     /// wrappers. This method keeps callers that fork a recording context
     /// independent of that implementation detail.
     #[inline]
-    pub fn replace_canvas(&mut self, canvas: Canvas<'a>) {
+    pub fn replace_canvas(&mut self, canvas: FrameCanvas<'a>) {
         #[cfg(feature = "portable-guest")]
         {
             self.canvas = BuildCanvas::native(canvas);
@@ -631,6 +646,65 @@ impl<'a> BuildContext<'a> {
             previous,
         };
         callback(self)
+    }
+
+    /// Creates a child context with a snapshot of inherited state and `state`
+    /// installed for its full lifetime.
+    ///
+    /// Unlike [`BuildContext::with_state`], the new value remains available
+    /// after this method returns. The copied map is isolated from later scoped
+    /// changes to either context, while its stored values continue to share
+    /// their own `Rc`-backed state.
+    #[doc(hidden)]
+    pub fn fork_with_state<T: Any>(&self, state: T) -> Self {
+        let mut context = self.clone();
+        let mut inherited_states = self.inherited_states.borrow().clone();
+        inherited_states.insert(TypeId::of::<T>(), Rc::new(state));
+        context.inherited_states = Rc::new(RefCell::new(inherited_states));
+        context
+    }
+
+    /// Provides the retained element context to `Canvas::of` for one local
+    /// paint callback.
+    #[doc(hidden)]
+    pub fn with_local_v2_paint_context<R>(
+        &self,
+        context: CurrentBuildContext,
+        callback: impl FnOnce(&Self) -> R,
+    ) -> R {
+        self.with_state(CurrentLocalV2PaintContext(context), callback)
+    }
+
+    /// Updates one direct retained child's transform and opacity during local
+    /// v2 state synchronization.
+    #[doc(hidden)]
+    pub fn set_local_v2_child_presentation_at(
+        &self,
+        child_index: usize,
+        transform: aimer_cupid::utilities::Mat3,
+        opacity: f32,
+    ) -> bool {
+        self.get_state::<CurrentLocalV2PaintContext>()
+            .is_some_and(|context| {
+                context
+                    .0
+                    .set_child_presentation_at(child_index, transform, opacity)
+            })
+    }
+
+    #[doc(hidden)]
+    pub(crate) fn with_local_v2_compatibility_paint<R>(
+        &self,
+        active: bool,
+        callback: impl FnOnce(&Self) -> R,
+    ) -> R {
+        self.with_state(CurrentLocalV2CompatibilityPaint(active), callback)
+    }
+
+    #[doc(hidden)]
+    pub(crate) fn is_local_v2_compatibility_paint(&self) -> bool {
+        self.get_state::<CurrentLocalV2CompatibilityPaint>()
+            .is_some_and(|state| state.0)
     }
 
     #[doc(hidden)]
@@ -829,7 +903,7 @@ mod tests {
     fn context() -> BuildContext<'static> {
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         BuildContext::new(
             canvas,

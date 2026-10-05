@@ -1209,7 +1209,7 @@ mod tests {
         fn context() -> BuildContext<'static> {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
             BuildContext::new(
-                aimer_canvas::Canvas::new(inner),
+                aimer_canvas::FrameCanvas::new(inner),
                 Default::default(),
                 1.0,
                 Default::default(),
@@ -1309,7 +1309,7 @@ mod tests {
         fn context() -> BuildContext<'static> {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
             BuildContext::new(
-                aimer_canvas::Canvas::new(inner),
+                aimer_canvas::FrameCanvas::new(inner),
                 Default::default(),
                 1.0,
                 Default::default(),
@@ -1602,7 +1602,7 @@ mod tests {
         fn context() -> BuildContext<'static> {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
             BuildContext::new(
-                aimer_canvas::Canvas::new(inner),
+                aimer_canvas::FrameCanvas::new(inner),
                 Default::default(),
                 1.0,
                 Default::default(),
@@ -2858,7 +2858,7 @@ mod tests {
         fn context() -> BuildContext<'static> {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
             BuildContext::new(
-                aimer_canvas::Canvas::new(inner),
+                aimer_canvas::FrameCanvas::new(inner),
                 Default::default(),
                 1.0,
                 Default::default(),
@@ -3939,7 +3939,7 @@ mod tests {
         fn context() -> BuildContext<'static> {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
             BuildContext::new(
-                aimer_canvas::Canvas::new(inner),
+                aimer_canvas::FrameCanvas::new(inner),
                 Default::default(),
                 1.0,
                 Default::default(),

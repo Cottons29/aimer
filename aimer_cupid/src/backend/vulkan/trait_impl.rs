@@ -360,6 +360,9 @@ fn align_up(value: u64, alignment: u64) -> u64 {
 mod tests {
     use super::*;
     use crate::draw_cmd::DrawList;
+    use crate::draw_cmd_v2::{DrawCommand as V2DrawCommand, RenderFrame, RenderNodeId, RenderTree};
+    use crate::damage_region::DamageSet;
+    use crate::frame::{Frame, FramePacket, FrameRenderMetadata};
     use crate::renderer::RendererImpl;
     use crate::utilities::{Color, Rect, Vec2d};
     use std::sync::Arc;
@@ -396,6 +399,129 @@ mod tests {
         let center = ((SIZE / 2 * SIZE + SIZE / 2) * 4) as usize;
         let colored_pixels = pixels.chunks_exact(4).filter(|pixel| pixel.iter().any(|channel| *channel != 0)).count();
         assert_eq!(&pixels[center..center + 4], &[255, 0, 0, 255], "non-clear pixel count: {colored_pixels}; corner: {:?}", &pixels[..4]);
+    }
+
+    #[test]
+    fn cropped_opacity_groups_composite_nested_damage_at_target_edges_on_native_vulkan() {
+        const SIZE: u32 = 80;
+        let Ok(backend) = VulkanBackend::new_headless() else {
+            eprintln!("skipping: no Vulkan graphics device is available");
+            return;
+        };
+        let mut renderer = RendererImpl::<VulkanBackend>::new(
+            &backend,
+            VulkanBackend::rgba8_unorm_format(),
+        );
+        let target = create_target(&backend, SIZE, SIZE);
+        let view = backend.create_texture_view(&target, "Cupid Vulkan opacity-group target");
+        let tree = RenderTree::new();
+        let root = tree
+            .add_root(Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32))
+            .unwrap();
+        tree.set_clip(root, Some(Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32)))
+            .unwrap();
+        tree.set_opacity(root, 0.5).unwrap();
+        let nested = tree
+            .add_child(root, Rect::new(8.0, 8.0, 56.0, 56.0))
+            .unwrap();
+        tree.set_clip(nested, Some(Rect::new(0.0, 0.0, 40.0, 40.0)))
+            .unwrap();
+        tree.set_opacity(nested, 0.5).unwrap();
+        let green = tree
+            .add_child(nested, Rect::new(8.0, 8.0, 32.0, 32.0))
+            .unwrap();
+        let edge_group = tree
+            .add_child(root, Rect::new(48.0, 48.0, 32.0, 32.0))
+            .unwrap();
+        tree.set_clip(edge_group, Some(Rect::new(0.0, 0.0, 32.0, 32.0)))
+            .unwrap();
+        tree.set_opacity(edge_group, 0.5).unwrap();
+        let yellow = tree
+            .add_child(edge_group, Rect::new(0.0, 0.0, 32.0, 32.0))
+            .unwrap();
+        record_v2_fill(
+            &tree,
+            green,
+            Rect::new(0.0, 0.0, 32.0, 32.0),
+            Color::rgba8(0, 255, 0, 255),
+        );
+        record_v2_fill(
+            &tree,
+            yellow,
+            Rect::new(0.0, 0.0, 32.0, 32.0),
+            Color::rgba8(255, 255, 0, 255),
+        );
+
+        let metadata = || {
+            FrameRenderMetadata::new(1.0, 401, 1, 1, 1, DamageSet::new(SIZE, SIZE))
+        };
+        let first_packet = FramePacket::from_v2_direct(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, SIZE as f32, SIZE as f32)],
+                operations: tree.render_all(),
+            },
+            metadata(),
+        )
+        .expect("lower Vulkan opacity groups");
+        renderer.render_packet(&backend, &view, &first_packet, false);
+        let first_pixels = read_target(&backend, &target, SIZE, SIZE);
+        assert_pixel_near(&first_pixels, SIZE, 20, 20, [0, 64, 0, 64]);
+        assert_pixel_near(&first_pixels, SIZE, 70, 70, [64, 64, 0, 64]);
+        assert_eq!(pixel(&first_pixels, SIZE, 2, 2), [0, 0, 0, 0]);
+        let _ = tree.take_damage();
+
+        tree.set_opacity(edge_group, 0.25).unwrap();
+        let edge_damage = tree.take_damage();
+        assert!(edge_damage.iter().any(|rect| {
+            (rect.x + rect.width - SIZE as f32).abs() < f32::EPSILON
+                && (rect.y + rect.height - SIZE as f32).abs() < f32::EPSILON
+        }), "edge-group damage reaches both target edges: {edge_damage:?}");
+        let update_packet = FramePacket::from_v2_direct_with_legacy(
+            RenderFrame {
+                damage: edge_damage,
+                operations: tree.render_all(),
+            },
+            metadata(),
+            Frame::new(DrawList::new(), SIZE, SIZE),
+        )
+        .expect("lower Vulkan edge-opacity update");
+        renderer.render_packet(&backend, &view, &update_packet, false);
+        let updated_pixels = read_target(&backend, &target, SIZE, SIZE);
+        assert_pixel_near(&updated_pixels, SIZE, 70, 70, [32, 32, 0, 32]);
+        assert_pixel_near(&updated_pixels, SIZE, 20, 20, [0, 64, 0, 64]);
+        assert_eq!(pixel(&updated_pixels, SIZE, 2, 2), [0, 0, 0, 0]);
+    }
+
+    fn record_v2_fill(tree: &RenderTree, node: RenderNodeId, rect: Rect, color: Color) {
+        tree.context(node)
+            .unwrap()
+            .begin_recording()
+            .unwrap()
+            .commit(vec![V2DrawCommand::FillRect {
+                rect,
+                color,
+                border_radius: [0.0; 4],
+                border_width: [0.0; 4],
+                border_color: Color::transparent(),
+                outline_width: [0.0; 4],
+                outline_color: Color::transparent(),
+            }])
+            .unwrap();
+    }
+
+    fn pixel(data: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+        let offset = ((y * width + x) * 4) as usize;
+        data[offset..offset + 4].try_into().expect("RGBA pixel")
+    }
+
+    fn assert_pixel_near(data: &[u8], width: u32, x: u32, y: u32, expected: [u8; 4]) {
+        let actual = pixel(data, width, x, y);
+        for (channel, (actual, expected)) in actual.into_iter().zip(expected).enumerate() {
+            assert!(
+                actual.abs_diff(expected) <= 2,
+                "pixel ({x}, {y}) channel {channel}: expected {expected}, got {actual}"
+            );
+        }
     }
 
     #[test]

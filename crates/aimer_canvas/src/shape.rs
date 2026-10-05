@@ -17,7 +17,7 @@ use aimer_shape::{
     ShapeSize, ShapeTransform, StrokeStyle,
 };
 
-use crate::{Canvas, CanvasRendering};
+use crate::{Canvas, CanvasRendering, FrameCanvas};
 
 /// A bounded, typed request to draw one validated shape.
 #[derive(Clone, Debug, PartialEq)]
@@ -253,7 +253,7 @@ pub enum ShapeDrawResult {
 }
 
 /// An inherent canvas bridge for typed shapes.
-impl<'a> Canvas<'a> {
+impl<'a> FrameCanvas<'a> {
     /// Submits a typed shape for a target viewport in logical units.
     ///
     /// The native implementation reuses Cupid's retained SVG command path and
@@ -317,6 +317,60 @@ impl<'a> Canvas<'a> {
     }
 }
 
+/// An inherent canvas bridge for typed shapes recorded in a retained v2 list.
+impl Canvas {
+    /// Records a typed shape as an SVG-backed local draw command.
+    ///
+    /// The request is validated and converted with Cupid's existing shape
+    /// tessellation path. Unsupported clipping or strokes return a safe skip
+    /// result without adding commands to the local list.
+    pub fn draw_shape(&self, request: &DrawShape, viewport: ShapeSize) -> ShapeDrawResult {
+        if request.validate().is_err() || !viewport.is_valid() {
+            return request.safe_fallback();
+        }
+        let render_request = ShapeRenderRequest {
+            path: request.path(),
+            transform: request.transform_value(),
+            fill: request.fill_style(),
+            stroke: request.stroke_style(),
+            clip: request.clip_policy(),
+            opacity: request.opacity_value(),
+            hit_test: request.hit_test_policy(),
+        };
+        let scene = match build_scene(&render_request, viewport) {
+            Ok(scene) => scene,
+            Err(_) => return ShapeDrawResult::Fallback(ShapeFallback::Skip),
+        };
+        let destination = aimer_cupid::utilities::Rect::new(
+            0.0,
+            0.0,
+            viewport.width,
+            viewport.height,
+        );
+        if matches!(request.clip_policy(), ShapeClip::Bounds) {
+            let Some((clip_pos, clip_size)) =
+                transformed_bounds(request.path().bounds(), request.transform_value())
+            else {
+                return ShapeDrawResult::Fallback(ShapeFallback::Skip);
+            };
+            self.push_clip(
+                aimer_cupid::utilities::Rect::new(
+                    clip_pos.x,
+                    clip_pos.y,
+                    clip_size.width,
+                    clip_size.height,
+                ),
+                [0.0; 4],
+            );
+            self.draw_svg(scene, destination, Arc::from([]));
+            self.pop_clip();
+        } else {
+            self.draw_svg(scene, destination, Arc::from([]));
+        }
+        ShapeDrawResult::Submitted
+    }
+}
+
 /// Returns the axis-aligned bounds of a path after applying its local shape
 /// transform. The canvas clip is expressed in the same local coordinates as
 /// the SVG destination, so all four corners are considered for rotations and
@@ -362,7 +416,7 @@ pub trait ShapeCanvasRendering: CanvasRendering {
 
 impl ShapeCanvasRendering for CupidCanvas {
     fn draw_typed_shape(&self, request: &DrawShape, viewport: ShapeSize) -> ShapeDrawResult {
-        let canvas = Canvas::new(self);
+        let canvas = FrameCanvas::new(self);
         canvas.draw_shape(request, viewport)
     }
 }

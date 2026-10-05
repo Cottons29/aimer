@@ -833,7 +833,7 @@ mod tests {
     use std::sync::OnceLock;
 
     use aimer_attribute::{BoxConstraint, ResolvedSize};
-    use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_canvas::{FrameCanvas, InnerCanvas};
     use aimer_cupid::draw_cmd::DrawCommand;
     use aimer_style::{TextAlign, TextDecorationLine, TextStyle};
     use aimer_widget::VisitorElement;
@@ -860,7 +860,7 @@ mod tests {
 
     fn layout_context_with_canvas(width: f32, height: f32) -> (BuildContext<'static>, InnerCanvas) {
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(Box::leak(Box::new(inner.clone())));
+        let canvas = FrameCanvas::new(Box::leak(Box::new(inner.clone())));
         let size = ResolvedSize { width, height };
         let mut ctx = BuildContext::new(
             canvas,

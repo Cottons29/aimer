@@ -167,7 +167,7 @@ are historical; rerun the renamed benchmark before drawing conclusions about
 the two indexed configurations. Run it with:
 
 ```bash
-cargo test -p aimer_flex --features event-tree-exp compare_warmed_direct_and_boundary_indexed_flex_dispatch -- --ignored --nocapture
+cargo test -p aimer_flex compare_warmed_direct_and_boundary_indexed_flex_dispatch -- --ignored --nocapture
 ```
 
 Parity tests cover pointer hit order and overlap, simultaneous mouse and touch
@@ -211,9 +211,9 @@ changes. The per-update times are very small and fluctuate between runs.
 ### Integrated event-tree measurement
 
 After the framework integration, the ignored comparison was rerun with
-the default event-tree feature. The sparse framework adapter opts into
-`IndexedTarget`, and the benchmark exercises `EventDispatcher`'s retained event
-index. This remains a debug-profile measurement using laboratory adapter
+indexed routing enabled. The sparse framework adapter uses `IndexedTarget`,
+and the benchmark exercises `EventDispatcher`'s retained event index. This
+remains a debug-profile measurement using laboratory adapter
 elements, not the showcase application's production widgets. These figures
 were collected before the dense fixture also used the event tree and are kept
 as historical results.
@@ -235,7 +235,7 @@ root list or rewalking wide structural sibling lists to resolve each target.
 Rerun with:
 
 ```bash
-cargo test -p aimer_laboratory --features event-tree-exp compare_real_framework_dispatch_build_layout_and_warm_routes -- --ignored --nocapture
+cargo test -p aimer_laboratory compare_real_framework_dispatch_build_layout_and_warm_routes -- --ignored --nocapture
 ```
 
 ## Synthetic General-Tree Comparison

@@ -204,6 +204,45 @@ impl Drawable for RawCustomShape {
         self.child.sync_paint_geometry(ctx);
     }
 
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite() && ctx.scale > 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        let scale = if ctx.scale.is_finite() && ctx.scale > 0.0 {
+            ctx.scale
+        } else {
+            1.0
+        };
+        let size = self.child.computed_size(ctx);
+        let viewport = ShapeSize::new(size.width / scale, size.height / scale);
+        if size.width > 0.0
+            && size.height > 0.0
+            && viewport.is_valid()
+            && let Some(path) = self.path.as_ref()
+            && let Ok(transform) = self.fit.transform(path.bounds(), viewport)
+        {
+            let mut request = DrawShape::new(Arc::clone(path))
+                .transform(transform)
+                .opacity(self.opacity)
+                .hit_test(self.hit_test)
+                .clip(self.clip.clone());
+            if let Some(fill) = self.fill {
+                request = request.fill(fill);
+            }
+            if let Some(stroke) = self.stroke.as_ref() {
+                request = request.stroke(stroke.clone());
+            }
+            let _ = canvas.draw_shape(&request, viewport);
+        }
+        canvas.finish();
+    }
+
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.child.draw(ctx);
+    }
+
     #[inline]
     fn is_paint_stable(&self) -> bool {
         self.child.is_paint_stable()

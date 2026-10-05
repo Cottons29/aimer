@@ -1,7 +1,9 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
 use aimer_attribute::size::ResolvedSize;
+use aimer_attribute::Vec2d;
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::*;
 use aimer_utils::debug;
@@ -61,6 +63,26 @@ pub struct RawTextWidget {
     pub _typeface: Cell<Option<()>>,
 }
 
+struct LocalV2TextPaint {
+    scale: f32,
+    width: f32,
+    height: f32,
+    font_size: f32,
+    baseline: f32,
+    overflow: TextOverflowMode,
+    horizontal_align: TextHorizontalAlign,
+    origin_offset: Vec2d,
+}
+
+struct LocalV2ParagraphPaint {
+    layout: Rc<crate::paragraph::PreparedLayout>,
+    scale: f32,
+    width: f32,
+    height: f32,
+    outsets: [f32; 4],
+    vertical_offset: f32,
+}
+
 impl RawTextWidget {
     pub(crate) fn font_size(&self, scale: f32) -> f32 {
         let base = if self.text_style.font_size == 0 {
@@ -69,6 +91,271 @@ impl RawTextWidget {
             self.text_style.font_size as f32
         };
         base * scale
+    }
+
+    fn local_v2_paint_data(&self, ctx: &BuildContext) -> Option<LocalV2TextPaint> {
+        if !self.is_paint_bounded() {
+            return None;
+        }
+
+        let scale = ctx.scale;
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let overflow = match self.text_style.text_overflow {
+            TextOverflow::Clip => TextOverflowMode::Clip,
+            TextOverflow::Ellipsis => TextOverflowMode::Ellipsis,
+            TextOverflow::Wrap => TextOverflowMode::Wrap,
+            TextOverflow::Value(_) => TextOverflowMode::Clip,
+        };
+
+        let size = self.computed_size(ctx);
+        let width = ctx.parent_size.width;
+        let height = ctx.parent_size.height;
+        if !width.is_finite()
+            || !height.is_finite()
+            || !size.width.is_finite()
+            || !size.height.is_finite()
+            || width < 0.0
+            || height < 0.0
+            || size.width < 0.0
+            || size.height < 0.0
+            || (overflow == TextOverflowMode::Wrap && width != size.width)
+        {
+            return None;
+        }
+
+        let font_size = self.font_size(scale);
+        if !font_size.is_finite() {
+            return None;
+        }
+        let max_width = if overflow == TextOverflowMode::Wrap {
+            width
+        } else {
+            0.0
+        };
+        let metrics = ctx.canvas.measure_text_metrics_styled(
+            self.text.as_str(),
+            font_size,
+            max_width,
+            self.text_style.font_family,
+            self.text_style.font_style,
+            self.text_style.font_weight.numeric(),
+        );
+        let baseline_offset = metrics.ascent + metrics.line_gap * 0.5;
+        let baseline = vertical_alignment_baseline(
+            self.text_align,
+            height,
+            metrics.height,
+            baseline_offset,
+        );
+        if !baseline.is_finite() || !metrics.height.is_finite() {
+            return None;
+        }
+        let horizontal_align = match self.text_align {
+            TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => {
+                TextHorizontalAlign::Left
+            }
+            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
+                TextHorizontalAlign::Center
+            }
+            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => {
+                TextHorizontalAlign::Right
+            }
+        };
+        let italic_outset = if self.text_style.font_style == FontStyle::Italic {
+            font_size / scale * 0.5
+        } else {
+            0.0
+        };
+
+        Some(LocalV2TextPaint {
+            scale,
+            width,
+            height,
+            font_size,
+            baseline,
+            overflow,
+            horizontal_align,
+            origin_offset: Vec2d {
+                x: italic_outset,
+                y: 0.0,
+            },
+        })
+    }
+
+    fn local_v2_paragraph_paint_data(
+        &self,
+        ctx: &BuildContext,
+    ) -> Option<LocalV2ParagraphPaint> {
+        if !self.uses_paragraph_layout() {
+            return None;
+        }
+        let scale = ctx.scale;
+        let (width, height) = self.with_paragraph(|paragraph| {
+            (paragraph.available_width(ctx), ctx.parent_size.height)
+        });
+        if !scale.is_finite()
+            || scale <= 0.0
+            || !width.is_finite()
+            || !height.is_finite()
+            || width < 0.0
+            || height < 0.0
+            || width > 1_000_000.0
+            || height > 1_000_000.0
+        {
+            return None;
+        }
+        let layout = self.with_paragraph(|paragraph| {
+            paragraph
+                .supports_retained_v2_rich_text()
+                .then(|| paragraph.cached_for_paint(ctx))
+                .flatten()
+        })?;
+        if !layout.size.width.is_finite()
+            || !layout.size.height.is_finite()
+            || layout.size.width < 0.0
+            || layout.size.height < 0.0
+            || layout.size.width > 1_000_000.0
+            || layout.size.height > 1_000_000.0
+            || layout.fragments.iter().any(|fragment| {
+                !fragment.x.is_finite()
+                    || !fragment.baseline.is_finite()
+                    || !fragment.width.is_finite()
+                    || !fragment.height.is_finite()
+                    || fragment.width < 0.0
+                    || fragment.height < 0.0
+            })
+        {
+            return None;
+        }
+        let paint_outsets = self.with_paragraph(|paragraph| {
+            paragraph.retained_v2_paint_outsets(&layout, scale)
+        });
+        let vertical_offset = match self.text_align {
+            TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => 0.0,
+            TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => {
+                (height - layout.size.height).max(0.0) / 2.0
+            }
+            TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => {
+                (height - layout.size.height).max(0.0)
+            }
+        };
+        Some(LocalV2ParagraphPaint {
+            layout,
+            scale,
+            width,
+            height,
+            outsets: paint_outsets,
+            vertical_offset,
+        })
+    }
+
+    /// Records this widget's text into an existing local v2 canvas.
+    ///
+    /// `origin_offset` is in logical pixels within the caller's element list.
+    /// The callback runs after span backgrounds and before glyphs, which lets
+    /// editing fields insert selection fills in the same paint order. Passing
+    /// `include_paint_outsets = false` keeps the text within an enclosing
+    /// viewport that supplies its own clip.
+    #[doc(hidden)]
+    pub fn record_local_v2_into(
+        &self,
+        canvas: &aimer_canvas::Canvas,
+        ctx: &BuildContext,
+        origin_offset: Vec2d,
+        include_paint_outsets: bool,
+        before_foreground: impl FnOnce(&aimer_canvas::Canvas),
+    ) -> bool {
+        let mut before_foreground = Some(before_foreground);
+        if let Some(data) = self.local_v2_paragraph_paint_data(ctx) {
+            let outset_left = if include_paint_outsets {
+                data.outsets[0]
+            } else {
+                0.0
+            };
+            let outset_top = if include_paint_outsets {
+                data.outsets[1]
+            } else {
+                0.0
+            };
+            let draw_origin = Vec2d {
+                x: origin_offset.x + outset_left,
+                y: origin_offset.y + outset_top + data.vertical_offset / data.scale,
+            };
+            let clipped = self.with_paragraph(|paragraph| paragraph.needs_clip());
+            if clipped {
+                canvas.push_clip(
+                    aimer_cupid::utilities::Rect::new(
+                        draw_origin.x,
+                        draw_origin.y,
+                        data.width / data.scale,
+                        data.height / data.scale,
+                    ),
+                    [0.0; 4],
+                );
+            }
+            self.with_paragraph(|paragraph| {
+                paragraph.record_retained_v2_backgrounds(
+                    canvas,
+                    &data.layout,
+                    data.scale,
+                    draw_origin,
+                );
+            });
+            before_foreground
+                .take()
+                .expect("foreground callback is used once")(canvas);
+            self.with_paragraph(|paragraph| {
+                paragraph.record_retained_v2_foreground(
+                    canvas,
+                    &data.layout,
+                    data.scale,
+                    draw_origin,
+                    None,
+                    None,
+                );
+            });
+            if clipped {
+                canvas.pop_clip();
+            }
+            return true;
+        }
+
+        let Some(data) = self.local_v2_paint_data(ctx) else {
+            return false;
+        };
+        let draw_origin = Vec2d {
+            x: origin_offset.x
+                + if include_paint_outsets {
+                    data.origin_offset.x
+                } else {
+                    0.0
+                },
+            y: origin_offset.y,
+        };
+        before_foreground
+            .take()
+            .expect("foreground callback is used once")(canvas);
+        canvas.draw_text_styled(
+            std::sync::Arc::<str>::from(self.text.as_str()),
+            aimer_cupid::utilities::Vec2d::new(
+                draw_origin.x,
+                draw_origin.y + data.baseline / data.scale,
+            ),
+            data.font_size / data.scale,
+            self.text_style.color.into(),
+            Some(data.width / data.scale),
+            Some(data.height / data.scale),
+            data.overflow,
+            data.horizontal_align,
+            self.text_style.font_family,
+            self.text_style.font_style,
+            self.text_style.font_weight.numeric(),
+            None,
+            true,
+        );
+        true
     }
 
     /// Returns the source-aware interaction layout used by this text widget.
@@ -115,6 +402,8 @@ impl RawTextWidget {
             || self.text_style.letter_spacing != 0.0
             || self.text_style.word_spacing != 0.0
             || self.text_style.text_shadow.is_some()
+            || self.text_style.background_color.is_some()
+            || !self.text_style.text_decoration.line.is_none()
     }
 
     fn with_paragraph<R>(&self, callback: impl FnOnce(&Paragraph) -> R) -> R {
@@ -227,7 +516,7 @@ impl RawTextWidget {
 
     fn draw_paragraph(&self, ctx: &BuildContext) {
         self.with_paragraph(|paragraph| {
-            let layout = paragraph.prepare(ctx);
+            let layout = paragraph.prepare_for_paint(ctx);
             let vertical_offset = match self.text_align {
                 TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => 0.0,
                 TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => {
@@ -272,7 +561,40 @@ impl RawTextWidget {
 
 impl Drawable for RawTextWidget {
     fn draw(&self, ctx: &BuildContext) {
+        if aimer_widget::has_active_v2_render_presentation() {
+            return;
+        }
         self.paint(ctx);
+    }
+
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        if let Some(data) = self.local_v2_paragraph_paint_data(ctx) {
+            return data.outsets.iter().any(|outset| *outset > 0.0).then_some(data.outsets);
+        }
+        let data = self.local_v2_paint_data(ctx)?;
+        (data.origin_offset.x > 0.0).then_some([
+            data.origin_offset.x,
+            0.0,
+            data.origin_offset.x,
+            0.0,
+        ])
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.local_v2_paint_data(ctx).is_some()
+            || self.local_v2_paragraph_paint_data(ctx).is_some()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        assert!(self.record_local_v2_into(
+            &canvas,
+            ctx,
+            Vec2d { x: 0.0, y: 0.0 },
+            true,
+            |_| {},
+        ));
+        canvas.finish();
     }
 
     #[inline]
@@ -438,6 +760,14 @@ impl Drawable for RawTextWidget {
         // layout, scale, or other inputs change.
         self.text_style.text_shadow.is_none()
     }
+
+    #[inline]
+    fn is_paint_bounded(&self) -> bool {
+        // Decorations and paragraph effects use the prepared fragment painter
+        // so their outsets can be included in the retained node bounds.
+        !self.uses_paragraph_layout()
+            && self.text_style.text_decoration.line.is_none()
+    }
 }
 
 impl VisitorElement for RawTextWidget {
@@ -475,7 +805,7 @@ fn vertical_alignment_baseline(
 impl LayoutElement for RawTextWidget {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
         if self.uses_paragraph_layout() {
-            return self.with_paragraph(|paragraph| paragraph.prepare(ctx).size);
+            return self.with_paragraph(|paragraph| paragraph.prepare_for_paint(ctx).size);
         }
         let scale_bits = ctx.scale.to_bits();
         if let Some(cached) = self.cache.get_computed(ctx.box_constraint, scale_bits) {
@@ -597,12 +927,12 @@ mod tests {
     #[test]
     fn plain_text_decoration_cache_reuses_measured_lines() {
         use aimer_attribute::{ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_style::{TextDecoration, TextDecorationLine};
         use aimer_widget::base::{BuildContext, WindowHandle};
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();

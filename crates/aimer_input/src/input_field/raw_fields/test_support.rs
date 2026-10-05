@@ -2,7 +2,7 @@
 
     use aimer_attribute::BoxConstraint;
     use aimer_attribute::size::ResolvedSize;
-    use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_canvas::{FrameCanvas, InnerCanvas};
     use aimer_events::element::{ElementEvent, KeyAction, Modifiers};
     use aimer_style::{BoxDecoration, LayoutSpacing, Spacing, TextAlign, TextStyle};
     use aimer_widget::base::{BuildContext, Color, Colors, WindowHandle};
@@ -120,7 +120,7 @@
     pub(crate) fn dummy_build_context(width: f32, height: f32) -> BuildContext<'static> {
         let canvas = {
             let leaked: &'static InnerCanvas = Box::leak(Box::new(InnerCanvas::new()));
-            Canvas::new(leaked)
+            FrameCanvas::new(leaked)
         };
 
         let mut context = BuildContext::new(

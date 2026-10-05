@@ -3,7 +3,7 @@ pub mod material;
 pub mod shape;
 
 pub use canvas::{
-    AimerCanvas as Canvas, CanvasRendering, FontFamily, FontStyle, InnerCanvas,
+    Canvas, CanvasContext, FrameCanvas, CanvasRendering, FontFamily, FontStyle, InnerCanvas,
     Mat3, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION,
     RETAINED_LAYER_MAX_TILES_PER_FRAME, RETAINED_LAYER_TILE_SIZE, RetainedDrawList,
     RetainedLayerContent, RetainedLayerPadding, TextHorizontalAlign, TextOverflowMode,

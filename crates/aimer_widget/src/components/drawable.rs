@@ -143,6 +143,150 @@ pub enum CompositorAnimationDecision {
 pub trait Drawable {
     fn draw(&self, ctx: &BuildContext);
 
+    /// Returns whether this element can record its own visual commands into a
+    /// retained v2 list for the current context. Returning `false` keeps the
+    /// complete subtree on the legacy paint path during migration. This check
+    /// should be side-effect-free. The default opts existing elements out.
+    #[doc(hidden)]
+    #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        false
+    }
+
+    /// Records this element's own visual commands into the retained v2 list.
+    ///
+    /// This hook must not draw or record children; child elements keep their
+    /// own render nodes. It must remain paint-only and avoid layout, event,
+    /// animation, or external side effects. Direct retained-presentation
+    /// frames use this list for the node's pixels; legacy islands keep using
+    /// the frame-wide command stream. Open the list with `Canvas::of(ctx)`; it
+    /// commits when explicitly finished or dropped.
+    #[doc(hidden)]
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    /// Updates state and interaction geometry needed by the current local v2
+    /// paint before that list is recorded. This hook must not emit visual
+    /// commands. Return `false` when the element needs one legacy frame to
+    /// settle state that depends on its live draw path. State updates performed
+    /// before returning `false` must be safe for the fallback draw to observe.
+    #[doc(hidden)]
+    #[inline]
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        self.sync_paint_geometry(ctx);
+        true
+    }
+
+    /// Runs the compatibility traversal after local v2 paint is recorded.
+    ///
+    /// The default preserves existing draw-time behavior and visits children.
+    /// A leaf may override this when `sync_local_v2_state` has already done all
+    /// of its required work and it has no children to traverse.
+    #[doc(hidden)]
+    #[inline]
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.draw(ctx);
+    }
+
+    /// Reports whether an already recorded local v2 list must be refreshed.
+    ///
+    /// The retained walker calls this for local-v2 nodes before replay. It is
+    /// for paint values that can change without a rebuild or routed event,
+    /// such as a clock-driven fade. The default keeps an unchanged list cached.
+    #[doc(hidden)]
+    #[inline]
+    fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
+        false
+    }
+
+    /// Returns a rectangular clip owned by this retained render node.
+    ///
+    /// The clip applies to this node and its descendants. Paint-affecting
+    /// wrappers can expose clips here so v2 child lists preserve their legacy
+    /// clipping behavior without recording the wrapper's entire subtree.
+    #[doc(hidden)]
+    #[inline]
+    fn retained_clip(&self, _ctx: &BuildContext) -> Option<aimer_cupid::draw_cmd_v2::Rect> {
+        None
+    }
+
+    /// Overrides this node's v2 render bounds while keeping its layout size.
+    ///
+    /// Containers whose paint is limited to a viewport can use this to keep
+    /// their retained damage bounds independent of the larger content extent.
+    #[doc(hidden)]
+    #[inline]
+    fn retained_v2_bounds(&self, _ctx: &BuildContext) -> Option<ResolvedSize> {
+        None
+    }
+
+    /// Adds local paint space around this node without changing its layout or
+    /// hit-test bounds. Values are logical pixels in `[left, top, right,
+    /// bottom]` order. Text shadows and glyph overhang use this to keep damage
+    /// tracking around every painted pixel.
+    #[doc(hidden)]
+    #[inline]
+    fn retained_v2_paint_outsets(&self, _ctx: &BuildContext) -> Option<[f32; 4]> {
+        None
+    }
+
+    /// Supplies a specialized context for one direct child during retained
+    /// tree synchronization. Scroll viewports use it to preserve their
+    /// unbounded scroll-axis constraint and visible window for virtualization.
+    #[doc(hidden)]
+    #[inline]
+    fn retained_v2_child_context<'a>(
+        &self,
+        _ctx: &BuildContext<'a>,
+        _child: &dyn Element,
+    ) -> Option<BuildContext<'a>> {
+        None
+    }
+
+    /// Supplies a child context when its visitation ordinal affects layout.
+    ///
+    /// The default preserves [`Self::retained_v2_child_context`]. Indexed
+    /// containers such as flex layouts can use `child_index` to recover a
+    /// materialized child's exact slot without searching the full data source.
+    #[doc(hidden)]
+    #[inline]
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+        _child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        self.retained_v2_child_context(ctx, child)
+    }
+
+    /// Overrides one direct child's v2 bounds and clip during tree sync.
+    ///
+    /// The returned rectangle is local to `self`. This lets a viewport keep a
+    /// moving child clipped to its fixed bounds in the same geometry update,
+    /// so synchronization damages the old and new visible footprints only.
+    #[doc(hidden)]
+    #[inline]
+    fn retained_v2_child_geometry(
+        &self,
+        _ctx: &BuildContext,
+        _child: &dyn Element,
+    ) -> Option<(aimer_cupid::draw_cmd_v2::Rect, Option<aimer_cupid::draw_cmd_v2::Rect>)> {
+        None
+    }
+
+    /// Overrides one direct child's geometry when its visitation ordinal
+    /// affects layout. The default preserves [`Self::retained_v2_child_geometry`].
+    #[doc(hidden)]
+    #[inline]
+    fn retained_v2_child_geometry_at(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+        _child_index: usize,
+    ) -> Option<(aimer_cupid::draw_cmd_v2::Rect, Option<aimer_cupid::draw_cmd_v2::Rect>)> {
+        self.retained_v2_child_geometry(ctx, child)
+    }
+
     /// Emits only the visual commands for this element.
     ///
     /// This is the paint-only half of [`Self::draw`]. It may be recorded and
@@ -309,6 +453,11 @@ impl Drawable for Box<dyn Drawable> {
     #[inline]
     fn is_paint_bounded(&self) -> bool {
         self.as_ref().is_paint_bounded()
+    }
+
+    #[inline]
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        self.as_ref().retained_v2_paint_outsets(ctx)
     }
 
     #[inline]

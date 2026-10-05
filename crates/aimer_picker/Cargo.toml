@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 aimer_attribute.workspace = true
+aimer_canvas.workspace = true
+aimer_cupid.workspace = true
 aimer_events.workspace = true
 aimer_modal.workspace = true
 aimer_provider.workspace = true
@@ -13,7 +15,5 @@ aimer_style.workspace = true
 aimer_widget.workspace = true
 
 [dev-dependencies]
-aimer_cupid.workspace = true
-aimer_canvas.workspace = true
 aimer_style.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }

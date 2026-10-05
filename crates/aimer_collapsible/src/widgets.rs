@@ -208,6 +208,74 @@ impl Drawable for AnimatedCollapseElement {
         }
     }
 
+    #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        let progress = self.progress();
+        let natural = self.natural_size(ctx);
+        let size = ResolvedSize {
+            width: nonnegative_extent(natural.width),
+            height: collapsed_height(natural.height, progress),
+        };
+        self.update_bounds(ctx, size);
+        self.child
+            .sync_paint_geometry(&self.child_context(ctx, natural));
+        true
+    }
+
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        let progress = animation_progress(self.controller.value());
+        let natural = self.natural_size(ctx);
+        let size = ResolvedSize {
+            width: nonnegative_extent(natural.width),
+            height: collapsed_height(natural.height, progress),
+        };
+        self.update_bounds(ctx, size);
+        if size.width > 0.0 && size.height > 0.0 {
+            self.child.draw(&self.child_context(ctx, natural));
+        }
+        if self.controller.is_animating() {
+            request_animation_frame();
+        }
+    }
+
+    fn retained_clip(&self, ctx: &BuildContext) -> Option<aimer_cupid::draw_cmd_v2::Rect> {
+        let natural = self.natural_size(ctx);
+        let size = ResolvedSize {
+            width: nonnegative_extent(natural.width),
+            height: collapsed_height(natural.height, self.progress()),
+        };
+        Some(aimer_cupid::draw_cmd_v2::Rect::new(
+            0.0,
+            0.0,
+            size.width,
+            size.height,
+        ))
+    }
+
+    fn retained_v2_bounds(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        let natural = self.natural_size(ctx);
+        Some(ResolvedSize {
+            width: nonnegative_extent(natural.width),
+            height: collapsed_height(natural.height, self.progress()),
+        })
+    }
+
+    fn retained_v2_child_context<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+    ) -> Option<BuildContext<'a>> {
+        std::ptr::eq(child, self.child.as_ref())
+            .then(|| self.child_context(ctx, self.natural_size(ctx)))
+    }
+
     fn paint(&self, ctx: &BuildContext) {
         let progress = animation_progress(self.controller.value());
         let natural = self.natural_size(ctx);

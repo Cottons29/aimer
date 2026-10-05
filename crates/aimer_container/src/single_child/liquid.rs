@@ -6,7 +6,10 @@ use aimer_widget::{
 
 use aimer_canvas::MaterialKind;
 
-use super::glass::{GlassMaterial, MaterialMotionPolicy, build_material_request};
+use super::glass::{
+    GlassMaterial, MaterialMotionPolicy, build_material_request, logical_size, resolved_radii,
+    shadow_outsets, v2_color,
+};
 
 /// Bounded values for a [`Liquid`] water-droplet surface.
 ///
@@ -820,6 +823,78 @@ impl Drawable for RawLiquid {
         ctx.canvas.restore();
     }
 
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite()
+            && ctx.scale > 0.0
+            && logical_size(ctx, self.child.computed_size(ctx)).is_some()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        let material = self.material.normalized();
+        let base = material.glass_material();
+        if let Some(size) = logical_size(ctx, self.child.computed_size(ctx))
+            && size.width > 0.0
+            && size.height > 0.0
+        {
+            let radii = resolved_radii(base.corner_radii_value(), size);
+            let shadow = with_opacity(base.shadow_color_value(), base.opacity_value());
+            if shadow.alpha() != 0 && base.shadow_blur_value() > 0.0 {
+                canvas.draw_shadow_rect(
+                    aimer_cupid::utilities::Rect::new(0.0, 0.0, size.width, size.height),
+                    v2_color(shadow),
+                    [0.0, base.elevation_value(), base.shadow_blur_value(), 0.0],
+                    radii,
+                    false,
+                    [0.0; 3],
+                );
+            }
+            let border = with_opacity(base.border_color_value(), base.opacity_value());
+            let border_width = if border.alpha() == 0 {
+                [0.0; 4]
+            } else {
+                [base.border_width_value(); 4]
+            };
+            canvas.fill_rect_styled(
+                aimer_cupid::utilities::Rect::new(0.0, 0.0, size.width, size.height),
+                v2_color(with_opacity(base.tint_color(), base.opacity_value())),
+                radii,
+                border_width,
+                v2_color(border),
+                [0.0; 4],
+                aimer_cupid::utilities::Color::transparent(),
+            );
+            canvas.draw_material(build_material_request(
+                MaterialKind::Liquid,
+                base,
+                size,
+                material.effective_distortion(),
+                material.edge_lighting_value(),
+                material.specular_highlight_value(),
+                material.effective_animation_speed(),
+                material.animation_time_value(),
+                material.interaction_value(),
+                [
+                    material.blob_amount_value(),
+                    material.blob_seed_value(),
+                    material.magnification_value(),
+                    material.tip_pull_value(),
+                    material.chromatic_aberration_value(),
+                    material.bevel_radius_value(),
+                ],
+            ));
+        }
+        canvas.finish();
+    }
+
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.child.draw(ctx);
+    }
+
+    fn retained_v2_paint_outsets(&self, _ctx: &BuildContext) -> Option<[f32; 4]> {
+        shadow_outsets(self.material.normalized().glass_material())
+    }
+
     #[inline]
     fn is_paint_stable(&self) -> bool {
         // Liquid is an effect surface: its material request can depend on
@@ -907,12 +982,6 @@ fn with_opacity(color: Color, opacity: f32) -> Color {
         .round()
         .clamp(0.0, 255.0) as u8;
     Color::Rgba(red, green, blue, alpha)
-}
-
-#[inline]
-fn resolved_radii(radii: [f32; 4], size: ResolvedSize) -> [f32; 4] {
-    let limit = (size.width.min(size.height) * 0.5).max(0.0);
-    radii.map(|radius| radius.min(limit))
 }
 
 #[cfg(test)]

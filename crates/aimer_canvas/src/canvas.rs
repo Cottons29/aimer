@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -221,6 +222,13 @@ pub trait CanvasRendering: Clone {
         period: f32,
     );
     fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize);
+    /// Draws an image while retaining pixels needed to restore its texture.
+    fn draw_image_with_resource(
+        &self,
+        resource: Arc<aimer_cupid::draw_cmd_v2::ImageResource>,
+        pos: Vec2d,
+        size: ResolvedSize,
+    );
     fn draw_svg(
         &self,
         scene: Arc<SvgScene>,
@@ -416,47 +424,62 @@ pub trait CanvasRendering: Clone {
     }
 }
 
-use aimer_cupid::canvas::CupidCanvas as Canvas;
+use aimer_cupid::canvas::CupidCanvas;
 
-pub type InnerCanvas = Canvas;
+pub type InnerCanvas = CupidCanvas;
 
 #[allow(dead_code)]
 // #[derive(Clone)]
 #[derive(Clone)]
-pub struct AimerCanvas<'a> {
-    inner: &'a Canvas,
+pub struct FrameCanvas<'a> {
+    inner: &'a CupidCanvas,
 }
 
-impl<'a> AimerCanvas<'a> {
+impl<'a> FrameCanvas<'a> {
     #[allow(dead_code)]
     #[inline]
-    /// Provides low level control to AimerCanvas
+    /// Provides low level control to FrameCanvas
     ///
     /// # Safety
     /// This function is marked as `unsafe` because it directly returns a
-    /// reference to an internal `Canvas` object. The caller need to write
+    /// reference to an internal `FrameCanvas` object. The caller need to write
     /// platform-specific code for making platform-specific operations.
     ///
     /// # Returns
-    /// * `&'a Canvas` - A reference to the internal `Canvas` object.
+    /// * `&'a FrameCanvas` - A reference to the internal `FrameCanvas` object.
     ///
     /// # Example
     /// ```rust ignore
     /// let canvas = my_object.get_canvas();
     /// // Ensure no mutable operations on `my_object` while using `canvas`.
     /// ```
-    unsafe fn get_canvas(&'a self) -> &'a Canvas {
+    unsafe fn get_canvas(&'a self) -> &'a CupidCanvas {
         self.inner
     }
 
     #[allow(dead_code)]
     #[inline]
-    pub fn new(canvas: &'a Canvas) -> Self {
+    pub fn new(canvas: &'a CupidCanvas) -> Self {
         Self { inner: canvas }
     }
 
-    pub fn get_inner_canvas(&self) -> &Canvas {
+    pub fn get_inner_canvas(&self) -> &CupidCanvas {
         self.inner
+    }
+
+    /// Omits paint commands while legacy traversal continues to update canvas
+    /// state and visit child elements for the retained renderer.
+    #[doc(hidden)]
+    #[inline]
+    pub fn with_paint_commands_suppressed<R>(&self, callback: impl FnOnce() -> R) -> R {
+        self.inner.with_paint_commands_suppressed(callback)
+    }
+
+    /// Resumes paint command recording for one legacy-island replay.
+    #[doc(hidden)]
+    #[inline]
+    pub fn with_paint_commands_enabled<R>(&self, callback: impl FnOnce() -> R) -> R {
+        self.inner.with_paint_commands_enabled(callback)
     }
 
     /// Creates a short-lived canvas for recording a static subtree in local
@@ -522,7 +545,7 @@ impl<'a> AimerCanvas<'a> {
     }
 }
 
-impl<'a> AimerCanvas<'a> {
+impl<'a> FrameCanvas<'a> {
     /// Prepares the canvas for a new frame, clearing any previous draw
     /// commands.
     #[allow(dead_code)]
@@ -863,6 +886,17 @@ impl<'a> AimerCanvas<'a> {
     #[inline]
     pub fn draw_image(&self, image_id: u32, pos: Vec2d, size: ResolvedSize) {
         CanvasRendering::draw_image(self.inner, image_id, pos, size);
+    }
+
+    /// Draws an image and retains its pixels for renderer-side upload.
+    #[inline]
+    pub fn draw_image_with_resource(
+        &self,
+        resource: Arc<aimer_cupid::draw_cmd_v2::ImageResource>,
+        pos: Vec2d,
+        size: ResolvedSize,
+    ) {
+        CanvasRendering::draw_image_with_resource(self.inner, resource, pos, size);
     }
 
     #[inline]
@@ -1273,5 +1307,416 @@ impl<'a> AimerCanvas<'a> {
         border_radius: [f32; 4],
     ) {
         CanvasRendering::fill_color_rect_per_corner(self.inner, pos, size, color, border_radius);
+    }
+}
+
+/// A short-lived recorder for one element's v2 retained draw list.
+///
+/// Commands are staged locally and committed by [`Canvas::finish`],
+/// [`Canvas::try_finish`], or automatically when the canvas is dropped.
+/// Dropping during panic unwinding abandons the staged commands and leaves the
+/// retained list dirty, avoiding a second panic from `Drop`. A commit error
+/// during an ordinary drop panics.
+pub struct Canvas {
+    writer: Option<aimer_cupid::draw_cmd_v2::DrawListWriter>,
+    commands: RefCell<Vec<aimer_cupid::draw_cmd_v2::DrawCommand>>,
+}
+
+/// Resolves the active element-local command list used by [`Canvas::of`].
+#[doc(hidden)]
+pub trait CanvasContext {
+    /// Returns the retained paint context active for this framework context.
+    fn current_canvas_context(&self) -> aimer_cupid::draw_cmd_v2::CurrentBuildContext;
+}
+
+impl CanvasContext for aimer_cupid::draw_cmd_v2::CurrentBuildContext {
+    #[inline]
+    fn current_canvas_context(&self) -> aimer_cupid::draw_cmd_v2::CurrentBuildContext {
+        self.clone()
+    }
+}
+
+impl Canvas {
+    /// Opens a recorder for the active element in `context`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the context has no active element-local recorder or if its
+    /// retained list cannot be opened.
+    pub fn of(context: &impl CanvasContext) -> Self {
+        let context = context.current_canvas_context();
+        let writer = context.begin_recording().unwrap_or_else(|error| {
+            panic!("Canvas::of could not open the active element list: {error:?}")
+        });
+        Self {
+            writer: Some(writer),
+            commands: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Adds a simple rectangle to this element's local paint list.
+    #[inline]
+    pub fn fill_rect(&self, rect: aimer_cupid::utilities::Rect, color: [u8; 4]) {
+        self.fill_rect_styled(
+            rect,
+            aimer_cupid::utilities::Color::rgba8(color[0], color[1], color[2], color[3]),
+            [0.0; 4],
+            [0.0; 4],
+            aimer_cupid::utilities::Color::transparent(),
+            [0.0; 4],
+            aimer_cupid::utilities::Color::transparent(),
+        );
+    }
+
+    /// Adds a solid local rectangle from widget geometry and a framework color.
+    #[inline]
+    pub fn fill_color_rect(&self, pos: Vec2d, size: ResolvedSize, color: Color) {
+        let rgba = color.as_u32();
+        self.fill_rect(
+            aimer_cupid::utilities::Rect::new(pos.x, pos.y, size.width, size.height),
+            [
+                ((rgba >> 16) & 0xff) as u8,
+                ((rgba >> 8) & 0xff) as u8,
+                (rgba & 0xff) as u8,
+                ((rgba >> 24) & 0xff) as u8,
+            ],
+        );
+    }
+
+    /// Adds a rectangle with per-corner radii and per-side border and outline.
+    #[allow(clippy::too_many_arguments)]
+    pub fn fill_rect_styled(
+        &self,
+        rect: aimer_cupid::utilities::Rect,
+        color: aimer_cupid::utilities::Color,
+        border_radius: [f32; 4],
+        border_width: [f32; 4],
+        border_color: aimer_cupid::utilities::Color,
+        outline_width: [f32; 4],
+        outline_color: aimer_cupid::utilities::Color,
+    ) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::FillRect {
+                rect,
+                color,
+                border_radius,
+                border_width,
+                border_color,
+                outline_width,
+                outline_color,
+            });
+    }
+
+    /// Adds a rectangle with one border width on all sides.
+    #[inline]
+    pub fn fill_rect_with_border(
+        &self,
+        rect: aimer_cupid::utilities::Rect,
+        color: aimer_cupid::utilities::Color,
+        border_radius: [f32; 4],
+        border_width: f32,
+        border_color: aimer_cupid::utilities::Color,
+    ) {
+        self.fill_rect_styled(
+            rect,
+            color,
+            border_radius,
+            [border_width; 4],
+            border_color,
+            [0.0; 4],
+            aimer_cupid::utilities::Color::transparent(),
+        );
+    }
+
+    /// Adds one text run to this element's local paint list.
+    pub fn draw_text(
+        &self,
+        text: impl Into<String>,
+        origin: [f32; 2],
+        font_size: f32,
+        color: [u8; 4],
+    ) {
+        self.draw_text_styled(
+            std::sync::Arc::<str>::from(text.into()),
+            aimer_cupid::utilities::Vec2d::new(origin[0], origin[1]),
+            font_size,
+            aimer_cupid::utilities::Color::rgba8(color[0], color[1], color[2], color[3]),
+            None,
+            None,
+            aimer_cupid::text_pipeline::TextOverflowMode::Clip,
+            aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign::Left,
+            aimer_cupid::font::FontFamily::SANS_SERIF,
+            aimer_cupid::font::FontStyle::Normal,
+            400,
+            None,
+            true,
+        );
+    }
+
+    /// Adds one text run with explicit family, style, overflow, and bounds.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_styled(
+        &self,
+        text: impl Into<std::sync::Arc<str>>,
+        position: aimer_cupid::utilities::Vec2d,
+        font_size: f32,
+        color: aimer_cupid::utilities::Color,
+        bounds_width: Option<f32>,
+        bounds_height: Option<f32>,
+        overflow: aimer_cupid::text_pipeline::TextOverflowMode,
+        horizontal_align: aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign,
+        font_family: aimer_cupid::font::FontFamily,
+        font_style: aimer_cupid::font::FontStyle,
+        font_weight: u16,
+        shadow: Option<aimer_cupid::text_pipeline::TextShadowRequest>,
+        draw_glyphs: bool,
+    ) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::DrawText {
+                position,
+                text: text.into(),
+                font_size,
+                color,
+                bounds_width,
+                bounds_height,
+                overflow,
+                horizontal_align,
+                font_family,
+                font_style,
+                font_weight,
+                shadow,
+                draw_glyphs,
+            });
+    }
+
+    /// Adds a rich text run with per-span styles.
+    pub fn draw_rich_text(
+        &self,
+        position: aimer_cupid::utilities::Vec2d,
+        spans: Vec<aimer_cupid::draw_cmd_v2::RichTextSegment>,
+        font_size: f32,
+        color: aimer_cupid::utilities::Color,
+        bounds_width: Option<f32>,
+        bounds_height: Option<f32>,
+        overflow: aimer_cupid::text_pipeline::TextOverflowMode,
+    ) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::DrawRichText {
+                position,
+                spans,
+                font_size,
+                color,
+                bounds_width,
+                bounds_height,
+                overflow,
+            });
+    }
+
+    /// Adds a text-decoration line.
+    pub fn draw_text_decoration(
+        &self,
+        rect: aimer_cupid::utilities::Rect,
+        color: aimer_cupid::utilities::Color,
+        style: u32,
+        thickness: f32,
+        period: f32,
+    ) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::DrawTextDecoration {
+                rect,
+                color,
+                style,
+                thickness,
+                period,
+            });
+    }
+
+    /// Adds a draw of an image resource that has already been uploaded.
+    #[inline]
+    pub fn draw_image(&self, rect: aimer_cupid::utilities::Rect, texture_id: u32) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::DrawImage { rect, texture_id });
+    }
+
+    /// Adds a draw that retains the image pixels for renderer-side upload.
+    #[inline]
+    pub fn draw_image_with_resource(
+        &self,
+        rect: aimer_cupid::utilities::Rect,
+        resource: std::sync::Arc<aimer_cupid::draw_cmd_v2::ImageResource>,
+    ) {
+        self.commands.borrow_mut().push(
+            aimer_cupid::draw_cmd_v2::DrawCommand::DrawImageWithResource { rect, resource },
+        );
+    }
+
+    /// Adds a draw of an SVG scene.
+    pub fn draw_svg(
+        &self,
+        scene: std::sync::Arc<aimer_cupid::svg::SvgScene>,
+        destination: aimer_cupid::utilities::Rect,
+        overrides: std::sync::Arc<[aimer_cupid::svg::SvgNodeStyleOverride]>,
+    ) {
+        self.commands.borrow_mut().push(aimer_cupid::draw_cmd_v2::DrawCommand::Svg {
+            scene,
+            destination,
+            overrides,
+        });
+    }
+
+    /// Adds a custom-pipeline request to this element's retained command list.
+    #[inline]
+    pub fn draw_custom(
+        &self,
+        pipeline_name: impl Into<std::sync::Arc<str>>,
+        data: std::sync::Arc<[u8]>,
+    ) {
+        self.push_command(aimer_cupid::draw_cmd_v2::DrawCommand::DrawCustom {
+            pipeline_name: pipeline_name.into(),
+            data,
+        });
+    }
+
+    /// Adds a retained Glass/Liquid material request.
+    #[inline]
+    pub fn draw_material(&self, request: MaterialDrawRequest) {
+        self.draw_custom(
+            crate::material::MATERIAL_PIPELINE_NAME,
+            std::sync::Arc::<[u8]>::from(request.encode()),
+        );
+    }
+
+    /// Adds a shadow rectangle.
+    pub fn draw_shadow_rect(
+        &self,
+        rect: aimer_cupid::utilities::Rect,
+        shadow_color: aimer_cupid::utilities::Color,
+        shadow_params: [f32; 4],
+        border_radius: [f32; 4],
+        inset: bool,
+        side_params: [f32; 3],
+    ) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::DrawShadowRect {
+                rect,
+                shadow_color,
+                shadow_params,
+                border_radius,
+                inset,
+                side_params,
+            });
+    }
+
+    /// Adds an explicit local command. State scopes are checked by `finish`.
+    #[inline]
+    pub fn push_command(&self, command: aimer_cupid::draw_cmd_v2::DrawCommand) {
+        self.commands.borrow_mut().push(command);
+    }
+
+    /// Begins a clip scope for subsequent commands in this element.
+    #[inline]
+    pub fn push_clip(&self, rect: aimer_cupid::utilities::Rect, border_radius: [f32; 4]) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::PushClip { rect, border_radius });
+    }
+
+    /// Ends the most recent element-local clip scope.
+    #[inline]
+    pub fn pop_clip(&self) {
+        self.commands.borrow_mut().push(aimer_cupid::draw_cmd_v2::DrawCommand::PopClip);
+    }
+
+    /// Begins a transform scope for subsequent commands in this element.
+    #[inline]
+    pub fn push_transform(&self, matrix: aimer_cupid::utilities::Mat3) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::PushTransform { matrix });
+    }
+
+    /// Ends the most recent element-local transform scope.
+    #[inline]
+    pub fn pop_transform(&self) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::PopTransform);
+    }
+
+    /// Sets alpha for subsequent local commands until `restore_alpha`.
+    #[inline]
+    pub fn set_alpha(&self, alpha: f32) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::SetAlpha { alpha });
+    }
+
+    /// Restores default alpha for subsequent local commands.
+    #[inline]
+    pub fn restore_alpha(&self) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::RestoreAlpha);
+    }
+
+    /// Sets italic styling for subsequent plain text commands.
+    #[inline]
+    pub fn set_italic(&self, italic: bool) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::SetItalic { italic });
+    }
+
+    /// Sets the language hint for subsequent text commands.
+    #[inline]
+    pub fn set_text_language(&self, language: Option<aimer_cupid::font::TextLanguage>) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::SetTextLanguage { language });
+    }
+
+    /// Sets the current local transform.
+    #[inline]
+    pub fn set_transform(&self, matrix: aimer_cupid::utilities::Mat3) {
+        self.commands.borrow_mut()
+            .push(aimer_cupid::draw_cmd_v2::DrawCommand::SetTransform { matrix });
+    }
+
+    /// Commits this element's local commands and returns their new revision.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the commands have unbalanced state scopes or the retained
+    /// element no longer exists.
+    pub fn finish(self) -> u64 {
+        self.try_finish().unwrap_or_else(|error| {
+            panic!("Canvas::finish could not commit the element list: {error:?}")
+        })
+    }
+
+    /// Commits this element's local commands and returns their new revision.
+    ///
+    /// Returns an error if the commands have unbalanced state scopes or the
+    /// retained element no longer exists. If this is not called, dropping the
+    /// canvas attempts the same commit automatically.
+    pub fn try_finish(mut self) -> Result<u64, aimer_cupid::draw_cmd_v2::RenderTreeError> {
+        self.commit_pending()
+            .expect("Canvas recording was already finished")
+    }
+
+    fn commit_pending(
+        &mut self,
+    ) -> Option<Result<u64, aimer_cupid::draw_cmd_v2::RenderTreeError>> {
+        let writer = self.writer.take()?;
+        let commands = std::mem::take(self.commands.get_mut());
+        Some(writer.commit(commands))
+    }
+}
+
+impl Drop for Canvas {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            // Dropping the writer marks its previous list dirty so recording
+            // can be retried after the paint panic is handled.
+            drop(self.writer.take());
+            return;
+        }
+
+        if let Some(Err(error)) = self.commit_pending() {
+            panic!("Canvas dropped with an invalid element list: {error:?}");
+        }
     }
 }

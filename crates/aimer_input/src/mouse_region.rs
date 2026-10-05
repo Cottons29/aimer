@@ -391,6 +391,15 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
         self.child.draw(ctx);
     }
 
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        canvas.finish();
+    }
+
     fn paint(&self, ctx: &BuildContext<'_>) {
         self.child.paint(ctx);
     }
@@ -554,7 +563,6 @@ mod tests {
         assert!(Rc::ptr_eq(&region.current_state, &current_state));
     }
 
-    #[cfg(feature = "event-tree-exp")]
     #[test]
     fn mouse_region_is_an_indexed_target_while_keeping_its_private_child_view() {
         let events = Rc::new(Cell::new(0));

@@ -101,6 +101,12 @@ impl Drawable for RawOpacity {
         ctx.canvas.restore_alpha();
     }
 
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        self.opacity == 1.0
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
     #[inline]
     fn paint(&self, ctx: &BuildContext) {
         ctx.canvas.set_alpha(self.opacity);

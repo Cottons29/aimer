@@ -10,7 +10,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 #[cfg(not(feature = "portable-guest"))]
 use aimer_canvas::{
-    Canvas, InnerCanvas, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION,
+    FrameCanvas, InnerCanvas, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION,
     RETAINED_LAYER_MAX_TILES_PER_FRAME, RETAINED_LAYER_TILE_SIZE, next_retained_layer_id,
 };
 use aimer_widget::base::*;
@@ -147,7 +147,7 @@ impl DynamicIslandPaintState {
         }
     }
 
-    fn begin_recording(&mut self, canvas: &Canvas) {
+    fn begin_recording(&mut self, canvas: &FrameCanvas) {
         if self.recording.is_none() {
             self.recording = Some(canvas.fork_for_recording());
             aimer_widget::components::element::begin_paint_tracking();
@@ -568,7 +568,7 @@ impl<E: Element> RawScrollableContainer<E> {
 
             let recording_canvas = ctx.canvas.fork_for_recording();
             let mut recording_ctx = child_ctx.clone();
-            recording_ctx.replace_canvas(Canvas::new(&recording_canvas));
+            recording_ctx.replace_canvas(FrameCanvas::new(&recording_canvas));
             // A retained stream must contain all content. The outer viewport clip
             // still prevents it from reaching the framebuffer when replayed.
             recording_ctx.visible_rect = None;
@@ -682,7 +682,7 @@ impl<E: Element> RawScrollableContainer<E> {
                     return;
                 };
                 let mut paint_ctx = island_ctx.clone();
-                paint_ctx.replace_canvas(Canvas::new(recording));
+                paint_ctx.replace_canvas(FrameCanvas::new(recording));
                 recording.save();
                 if let Some(clip) = clip {
                     recording.set_clip(0.0, 0.0, clip.width, clip.height);
@@ -879,7 +879,7 @@ impl<E: Element> RawScrollableContainer<E> {
         let recording_canvas = ctx.canvas.fork_for_recording();
         recording_canvas.translate(-rect.x, -rect.y);
         let mut recording_ctx = child_ctx.clone();
-        recording_ctx.replace_canvas(Canvas::new(&recording_canvas));
+        recording_ctx.replace_canvas(FrameCanvas::new(&recording_canvas));
         recording_ctx.visible_rect = Some((
             (rect.x - RETAINED_LAYER_TILE_OVERLAP_PX).max(0.0),
             (rect.y - RETAINED_LAYER_TILE_OVERLAP_PX).max(0.0),
@@ -1939,7 +1939,6 @@ mod tests {
         assert_eq!(outer.ctrl.scroll_offset.get().y, 0.0);
     }
 
-    #[cfg(feature = "event-tree-exp")]
     #[test]
     fn scrollable_is_an_indexed_target_while_keeping_its_child_dispatch_private() {
         let child = FixedSizeChild {
@@ -2151,7 +2150,7 @@ mod tests {
     fn drawing_context(visible_rect: Option<(f32, f32, f32, f32)>) -> BuildContext<'static> {
         let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
         let mut context = BuildContext::new(
-            aimer_canvas::Canvas::new(inner),
+            aimer_canvas::FrameCanvas::new(inner),
             ResolvedSize {
                 width: 100.0,
                 height: 100.0,
@@ -2624,7 +2623,7 @@ mod tests {
         let scrollable = counting_scrollable(measures.clone());
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         let mut ctx = BuildContext::new(
             canvas,
@@ -3031,7 +3030,7 @@ mod tests {
 
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         let mut ctx = BuildContext::new(
             canvas,
@@ -3069,7 +3068,7 @@ mod tests {
 
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         let mut ctx = BuildContext::new(
             canvas,
@@ -3134,7 +3133,7 @@ mod tests {
         scrollable.vertical_bar_width = 12.0;
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         let mut ctx = BuildContext::new(
             canvas,
@@ -3175,7 +3174,7 @@ mod tests {
 
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         let mut ctx = BuildContext::new(
             canvas,
@@ -3217,7 +3216,7 @@ mod tests {
 
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         let mut ctx = BuildContext::new(
             canvas,

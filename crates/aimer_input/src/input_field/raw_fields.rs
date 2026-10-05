@@ -17,13 +17,14 @@ use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_events::pointer::PointerButton;
 use aimer_events::text_editing::TextEditingDelta;
 use aimer_events::window::get_window;
-use aimer_style::{BoxDecoration, LayoutSpacing, TextAlign, TextOverflow, TextStyle};
+use aimer_style::{BorderStyle, BoxDecoration, LayoutSpacing, TextAlign, TextOverflow, TextStyle};
 use aimer_text::{RawTextWidget, SelectionParticipant, TextSource};
 use aimer_venus::ScopeId;
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::{
     AnyElement, ChildBuilder, Drawable, Element, EventDispatchContext, EventElement, EventResult,
-    LayoutCache, LayoutElement, FocusNode, PointerKey, Rebuildable, VisitorElement, Widget,
+    EventTreeRole, FocusNode, LayoutCache, LayoutElement, PointerKey, Rebuildable, VisitorElement,
+    Widget,
 };
 
 use crate::input_field::caret::{

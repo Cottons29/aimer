@@ -21,7 +21,7 @@ mod tests {
     use super::widgets::collapsed_height;
     use super::{CollapsibleList, ListBody, ListHeader};
     use aimer_animation::Curve;
-    use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_canvas::{FrameCanvas, InnerCanvas};
     use aimer_events::element::ElementEvent;
     use aimer_text::Text;
     use aimer_widget::base::{BuildContext, ResolvedSize, Vec2d, WindowHandle};
@@ -33,7 +33,7 @@ mod tests {
     fn context() -> BuildContext<'static> {
         let inner = Box::leak(Box::new(InnerCanvas::new()));
         BuildContext::new(
-            Canvas::new(inner),
+            FrameCanvas::new(inner),
             ResolvedSize::default(),
             1.0,
             Vec2d::ZERO,

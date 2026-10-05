@@ -6,6 +6,7 @@ use crate::draw_cmd::{DrawList, RetainedDrawList, RetainedLayerContent, TextureR
 use crate::compositor::{
     CompositorScene, SceneNodeDescriptor, SceneNodeGuard, SceneRecorder,
 };
+use crate::frame::RetainedRenderPlan;
 use crate::font::{FontFamily, FontStyle, FontWeight, TextLanguage};
 use crate::lru_map::LruMap;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
@@ -130,6 +131,7 @@ const UNWRAPPED_LAYOUT_CACHE_CAPACITY: usize = 2048;
 pub struct CupidCanvas {
     draw_list: Rc<RefCell<DrawList>>,
     scene_recorder: Rc<RefCell<Option<SceneRecorder>>>,
+    retained_render_plan: Rc<RefCell<Option<RetainedRenderPlan>>>,
     texture_registry: Arc<TextureRegistry>,
     rasterizer: Rc<RefCell<GlyphRasterizer>>,
     metrics_cache: Rc<RefCell<LruMap<TextMetricsKey, CachedTextMetrics>>>,
@@ -152,6 +154,19 @@ pub struct CupidCanvas {
     metrics_cache_misses: Rc<Cell<u64>>,
 }
 
+struct PaintCommandSuppressionGuard {
+    draw_list: Rc<RefCell<DrawList>>,
+    previous_depth: usize,
+}
+
+impl Drop for PaintCommandSuppressionGuard {
+    fn drop(&mut self) {
+        self.draw_list
+            .borrow_mut()
+            .restore_paint_command_suppression(self.previous_depth);
+    }
+}
+
 impl CupidCanvas {
     pub fn new() -> Self {
         let texture_registry = Arc::new(TextureRegistry::default());
@@ -160,6 +175,7 @@ impl CupidCanvas {
                 texture_registry.clone(),
             ))),
             scene_recorder: Rc::new(RefCell::new(None)),
+            retained_render_plan: Rc::new(RefCell::new(None)),
             texture_registry,
             rasterizer: Rc::new(RefCell::new(GlyphRasterizer::new())),
             metrics_cache: Rc::new(RefCell::new(LruMap::new(METRICS_CACHE_CAPACITY))),
@@ -189,6 +205,7 @@ impl CupidCanvas {
                 self.texture_registry.clone(),
             ))),
             scene_recorder: Rc::new(RefCell::new(None)),
+            retained_render_plan: Rc::new(RefCell::new(None)),
             texture_registry: self.texture_registry.clone(),
             rasterizer: self.rasterizer.clone(),
             metrics_cache: self.metrics_cache.clone(),
@@ -207,11 +224,39 @@ impl CupidCanvas {
         self.scene_recorder
             .borrow_mut()
             .replace(SceneRecorder::new());
+        self.retained_render_plan.borrow_mut().take();
         #[cfg(debug_assertions)]
         {
             self.metrics_cache_hits.set(0);
             self.metrics_cache_misses.set(0);
         }
+    }
+
+    /// Runs legacy traversal while omitting paint commands from the
+    /// compatibility list. Canvas state commands still record, so nested
+    /// legacy islands can reconstruct their incoming transform and clip.
+    #[doc(hidden)]
+    pub fn with_paint_commands_suppressed<R>(&self, callback: impl FnOnce() -> R) -> R {
+        let previous_depth = self.draw_list.borrow_mut().suppress_paint_commands();
+        let _guard = PaintCommandSuppressionGuard {
+            draw_list: self.draw_list.clone(),
+            previous_depth,
+        };
+        callback()
+    }
+
+    /// Temporarily resumes paint command recording inside a legacy island.
+    #[doc(hidden)]
+    pub fn with_paint_commands_enabled<R>(&self, callback: impl FnOnce() -> R) -> R {
+        let previous_depth = self
+            .draw_list
+            .borrow_mut()
+            .suspend_paint_command_suppression();
+        let _guard = PaintCommandSuppressionGuard {
+            draw_list: self.draw_list.clone(),
+            previous_depth,
+        };
+        callback()
     }
 
     /// Moves the frame recorded so far out of the canvas.
@@ -278,6 +323,29 @@ impl CupidCanvas {
             target_height,
             damage,
         ))
+    }
+
+    /// Discards scene markers recorded alongside a compatibility command list.
+    ///
+    /// A mixed v2 packet replaces that list with commands assembled from local
+    /// render nodes and legacy ranges. Its compositor scene must be rebuilt
+    /// from the composed list instead of reusing offsets from the discarded
+    /// compatibility stream.
+    #[doc(hidden)]
+    pub fn discard_scene_recording(&self) {
+        self.scene_recorder.borrow_mut().take();
+    }
+
+    /// Stores the retained render plan for the frame being assembled.
+    #[doc(hidden)]
+    pub fn set_retained_render_plan(&self, plan: Option<RetainedRenderPlan>) {
+        *self.retained_render_plan.borrow_mut() = plan;
+    }
+
+    /// Takes the retained render plan for the frame being assembled.
+    #[doc(hidden)]
+    pub fn take_retained_render_plan(&self) -> Option<RetainedRenderPlan> {
+        self.retained_render_plan.borrow_mut().take()
     }
 
     /// Replays a local-coordinate retained stream under the canvas's current
@@ -639,6 +707,20 @@ impl CupidCanvas {
         self.draw_list
             .borrow_mut()
             .draw_image(Rect::new(x, y, width, height), texture_id);
+    }
+
+    /// Draws an image while retaining pixels needed to restore its texture.
+    pub fn draw_image_with_resource(
+        &self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        resource: Arc<crate::draw_cmd_v2::ImageResource>,
+    ) {
+        self.draw_list
+            .borrow_mut()
+            .draw_image_with_resource(Rect::new(x, y, width, height), resource);
     }
 
     pub fn draw_svg(

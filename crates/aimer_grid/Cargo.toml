@@ -10,11 +10,11 @@ portable-guest = ["aimer_widget/portable-guest"]
 aimer_attribute.workspace = true
 aimer_macro.workspace = true
 aimer_widget.workspace = true
+aimer_cupid = { workspace = true }
 
 [dev-dependencies]
 aimer_canvas.workspace = true
 aimer_container.workspace = true
-aimer_cupid.workspace = true
 winit.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

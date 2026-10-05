@@ -665,6 +665,54 @@ impl Drawable for RawTimePicker {
             );
         }
     }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite() && ctx.scale > 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let picker = self.runtime.picker.borrow();
+        let value = picker.draft();
+        paint::record_local_v2(ctx, |painter| {
+            if self.popup {
+                paint::draw_time_picker(
+                    painter,
+                    value,
+                    size.width,
+                    size.height,
+                    0.0,
+                    self.runtime.active_column.get(),
+                    self.use_24_hours,
+                    &self.tokens,
+                );
+                paint::draw_done_footer(
+                    painter,
+                    size.width,
+                    size.height,
+                    self.runtime.focused.get(),
+                    &self.tokens,
+                );
+                paint::draw_overlay_border(painter, size.width, size.height, &self.tokens);
+            } else {
+                paint::draw_picker_field(
+                    painter,
+                    "Time",
+                    format_time(value, self.use_24_hours),
+                    size.width,
+                    picker.is_open(),
+                    self.runtime.focused.get(),
+                    &self.tokens,
+                );
+            }
+        });
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let (x, y) = ctx.canvas.get_transform_translation();
+        self.bounds.save(ctx.scale, x, y, size.width, size.height);
+    }
 }
 
 impl Rebuildable for RawTimePicker {}

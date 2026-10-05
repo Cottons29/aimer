@@ -113,8 +113,10 @@ impl<'a> ReconciliationPlan<'a> {
         let new_root = self.new_root;
         drop(self);
         crate::widget::stateful::carry_child_state(old_root, new_root, ctx);
-        plan_element_reconciliation(old_root, new_root).apply_identities();
+        let plan = plan_element_reconciliation(old_root, new_root);
+        plan.apply_identities();
         complete_generated_tree_reconciliation(old_root, new_root);
+        plan.refresh_reconciled_paint_state();
         Ok(())
     }
 
@@ -122,7 +124,19 @@ impl<'a> ReconciliationPlan<'a> {
         self.validate()?;
         self.apply_identities();
         complete_generated_tree_reconciliation(self.old_root, self.new_root);
+        self.refresh_reconciled_paint_state();
         Ok(())
+    }
+
+    fn refresh_reconciled_paint_state(&self) {
+        let generation = crate::components::element::element_tree_generation();
+        for element_match in &self.matches {
+            let Some(id) = element_match.new.element_id() else {
+                continue;
+            };
+            element_match.new.set_subtree_generation(generation);
+            crate::components::element::mark_paint_element_invalidated(id);
+        }
     }
 
     pub(crate) fn apply_identities(&self) {

@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::size::ResolvedSize;
-use aimer_canvas::{Canvas, InnerCanvas};
+use aimer_canvas::{FrameCanvas, InnerCanvas};
 use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable, StatelessElement,
@@ -43,7 +43,7 @@ pub(crate) fn dummy_build_context(
 ) -> BuildContext<'static> {
     let canvas = {
         let leaked: &'static InnerCanvas = Box::leak(Box::new(InnerCanvas::new()));
-        Canvas::new(leaked)
+        FrameCanvas::new(leaked)
     };
 
     let mut context = BuildContext::new(

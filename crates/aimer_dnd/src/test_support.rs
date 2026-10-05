@@ -7,7 +7,7 @@
 
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::size::ResolvedSize;
-use aimer_canvas::{Canvas, InnerCanvas};
+use aimer_canvas::{FrameCanvas, InnerCanvas};
 use aimer_widget::base::{BuildContext, WindowHandle};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -29,7 +29,7 @@ fn dummy_async_handle() -> tokio::runtime::Handle {
 pub(crate) fn headless_context(width: f32, height: f32) -> BuildContext<'static> {
     let canvas = {
         let leaked: &'static InnerCanvas = Box::leak(Box::new(InnerCanvas::new()));
-        Canvas::new(leaked)
+        FrameCanvas::new(leaked)
     };
 
     let mut context = BuildContext::new(

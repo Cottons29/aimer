@@ -12,7 +12,7 @@ use aimer_widget::{
     Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey, VisitorElement,
 };
 
-use crate::paragraph::{Paragraph, geometry};
+use crate::paragraph::{Paragraph, PreparedLayout, geometry};
 use crate::selection::TextHitRegion;
 use crate::selection::SelectionPoint;
 use crate::selection::cursor::HoverCursor;
@@ -41,6 +41,13 @@ pub struct RawSelectableText {
     hover_cursor: HoverCursor,
     /// Keeps a finger from selecting until it has rested; a mouse never waits.
     pub(crate) touch_hold: TouchHoldGate,
+}
+
+struct LocalV2SelectableTextPaint {
+    layout: Rc<PreparedLayout>,
+    scale: f32,
+    width: f32,
+    height: f32,
 }
 
 impl RawSelectableText {
@@ -98,6 +105,51 @@ impl RawSelectableText {
             .geometry
             .accessibility_snapshot(binding.slot.selected_range())
     }
+
+    fn local_v2_paint_data(&self, ctx: &BuildContext) -> Option<LocalV2SelectableTextPaint> {
+        if !self.paragraph.supports_retained_v2_rich_text() {
+            return None;
+        }
+        let scale = ctx.scale;
+        let width = self.paragraph.available_width(ctx);
+        let height = ctx.parent_size.height;
+        if !scale.is_finite()
+            || scale <= 0.0
+            || !width.is_finite()
+            || !height.is_finite()
+            || width < 0.0
+            || height < 0.0
+            || width > 1_000_000.0
+            || height > 1_000_000.0
+        {
+            return None;
+        }
+        let layout = self.paragraph.cached_for_paint(ctx)?;
+        if !layout.size.width.is_finite()
+            || !layout.size.height.is_finite()
+            || layout.size.width < 0.0
+            || layout.size.height < 0.0
+            || layout.size.width > 1_000_000.0
+            || layout.size.height > 1_000_000.0
+            || layout.line_heights.iter().any(|height| !height.is_finite())
+            || layout.fragments.iter().any(|fragment| {
+                !fragment.x.is_finite()
+                    || !fragment.baseline.is_finite()
+                    || !fragment.width.is_finite()
+                    || !fragment.height.is_finite()
+                    || fragment.width < 0.0
+                    || fragment.height < 0.0
+            })
+        {
+            return None;
+        }
+        Some(LocalV2SelectableTextPaint {
+            layout,
+            scale,
+            width,
+            height,
+        })
+    }
 }
 
 impl VisitorElement for RawSelectableText {
@@ -127,7 +179,7 @@ impl aimer_widget::Rebuildable for RawSelectableText {
 
 impl LayoutElement for RawSelectableText {
     fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
-        self.paragraph.prepare(ctx).size
+        self.paragraph.prepare_for_paint(ctx).size
     }
 
     fn invalidate_layout(&self) {
@@ -140,11 +192,25 @@ impl LayoutElement for RawSelectableText {
 }
 
 impl Drawable for RawSelectableText {
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        self.slot().stamp();
+        self.sync_paint_geometry(ctx);
+        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
+        let origin = frame_origin(abs_x, abs_y, ctx.scale);
+        if let Some((pointer, offset)) = self.touch_hold.poll_stationary(AnimInstant::now(), origin)
+        {
+            enter_hold(&self.session(), &self.slot(), offset, pointer);
+        }
+        true
+    }
+
+    fn draw_local_v2_compatibility(&self, _ctx: &BuildContext) {}
+
     fn draw(&self, ctx: &BuildContext) {
         let slot = self.slot();
         let geometry_state = self.geometry();
         slot.stamp();
-        let layout = self.paragraph.prepare(ctx);
+        let layout = self.paragraph.prepare_for_paint(ctx);
         let paint_mode = self.paragraph.static_paint_mode();
         let shared_layout = layout.aimer_interaction.clone();
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
@@ -263,6 +329,160 @@ impl Drawable for RawSelectableText {
         if clipped {
             ctx.canvas.clear_clip();
             ctx.canvas.restore();
+        }
+    }
+
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        let data = self.local_v2_paint_data(ctx)?;
+        let outsets = self
+            .paragraph
+            .retained_v2_paint_outsets(&data.layout, data.scale);
+        outsets.iter().any(|outset| *outset > 0.0).then_some(outsets)
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.local_v2_paint_data(ctx).is_some()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let data = self
+            .local_v2_paint_data(ctx)
+            .expect("RawSelectableText v2 support must be checked before painting");
+        let selected_range = self.slot().selected_range().unwrap_or(0..0);
+        let outsets = self
+            .paragraph
+            .retained_v2_paint_outsets(&data.layout, data.scale);
+        let origin_offset = aimer_attribute::Vec2d {
+            x: outsets[0],
+            y: outsets[1],
+        };
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        if self.paragraph.needs_clip() {
+            canvas.push_clip(
+                aimer_cupid::utilities::Rect::new(
+                    origin_offset.x,
+                    origin_offset.y,
+                    data.width / data.scale,
+                    data.height / data.scale,
+                ),
+                [0.0; 4],
+            );
+        }
+        self.paragraph
+            .record_retained_v2_backgrounds(
+                &canvas,
+                &data.layout,
+                data.scale,
+                origin_offset,
+            );
+        let (red, green, blue, alpha) = self.selection_color.to_rgba();
+        if let Some(layout) = data.layout.aimer_interaction.as_ref() {
+            for rect in layout.selection_rects(selected_range.clone()) {
+                canvas.fill_rect(
+                    aimer_cupid::utilities::Rect::new(
+                        rect.x / data.scale + origin_offset.x,
+                        rect.y / data.scale + origin_offset.y,
+                        rect.width / data.scale,
+                        rect.height / data.scale,
+                    ),
+                    [red, green, blue, alpha],
+                );
+            }
+        } else {
+            for rect in geometry::selection_runs(
+                &data.layout,
+                selected_range.clone(),
+                ctx.visible_rect,
+            ) {
+                canvas.fill_rect(
+                    aimer_cupid::utilities::Rect::new(
+                        rect.x / data.scale + origin_offset.x,
+                        rect.y / data.scale + origin_offset.y,
+                        rect.width / data.scale,
+                        rect.height / data.scale,
+                    ),
+                    [red, green, blue, alpha],
+                );
+            }
+        }
+        self.paragraph.record_retained_v2_foreground(
+            &canvas,
+            &data.layout,
+            data.scale,
+            origin_offset,
+            None,
+            None,
+        );
+        if self.paragraph.needs_clip() {
+            canvas.pop_clip();
+        }
+        canvas.finish();
+        *self.geometry().retained_v2_selection.borrow_mut() = Some(selected_range);
+    }
+
+    fn local_v2_paint_needs_recording(&self, ctx: &BuildContext) -> bool {
+        if self.local_v2_paint_data(ctx).is_none() {
+            return false;
+        }
+        let selection = Some(self.slot().selected_range().unwrap_or(0..0));
+        selection != *self.geometry().retained_v2_selection.borrow()
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let Some(data) = self.local_v2_paint_data(ctx) else {
+            return;
+        };
+        let transform = ctx.canvas.get_transform();
+        let geometry_state = self.geometry();
+        geometry_state.save_painted_bounds(
+            data.scale,
+            transform,
+            data.layout.size.width,
+            data.layout.size.height,
+        );
+        geometry_state.regions.borrow_mut().clear();
+        geometry_state.set_shared_interaction_layout(
+            data.layout.aimer_interaction.clone(),
+            transform,
+            data.scale,
+        );
+        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
+        if let Some(shared) = data.layout.aimer_interaction.as_ref() {
+            let mut regions = geometry_state.regions.borrow_mut();
+            for cluster in &shared.clusters {
+                let left = cluster.start_x.min(cluster.end_x);
+                let right = cluster.start_x.max(cluster.end_x);
+                let is_hard_break = shared
+                    .text
+                    .get(cluster.text_range.clone())
+                    .is_some_and(|text| text == "\n" || text == "\r\n");
+                regions.push(TextHitRegion::new(
+                    if is_hard_break {
+                        cluster.text_range.start..cluster.text_range.start
+                    } else {
+                        cluster.text_range.clone()
+                    },
+                    Bounds::new(
+                        (abs_x + left) / data.scale,
+                        (abs_y + cluster.y) / data.scale,
+                        if is_hard_break {
+                            (shared.metrics.width - left).max(data.scale) / data.scale
+                        } else {
+                            (right - left) / data.scale
+                        },
+                        cluster.height / data.scale,
+                    ),
+                ));
+            }
+        } else {
+            geometry::hit_regions(
+                &data.layout,
+                abs_x,
+                abs_y,
+                data.scale,
+                ctx.visible_rect,
+                &mut geometry_state.regions.borrow_mut(),
+            );
         }
     }
 }

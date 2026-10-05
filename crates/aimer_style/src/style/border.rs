@@ -487,6 +487,135 @@ impl Drawable for RawBoxBorder {
             );
         }
     }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite()
+            && ctx.scale > 0.0
+            && ctx.parent_size.width.is_finite()
+            && ctx.parent_size.height.is_finite()
+            && ctx.parent_size.width >= 0.0
+            && ctx.parent_size.height >= 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let scale = ctx.scale;
+        let box_width = ctx.parent_size.width;
+        let box_height = ctx.parent_size.height;
+        let is_outline = self.mode == BorderMode::Outside;
+        let left = resolve_dim(self.left.stroke, box_width, scale).max(0.0);
+        let right = resolve_dim(self.right.stroke, box_width, scale).max(0.0);
+        let top = resolve_dim(self.top.stroke, box_height, scale).max(0.0);
+        let bottom = resolve_dim(self.bottom.stroke, box_height, scale).max(0.0);
+        let radii = self.radius.map(|radius| radius / scale);
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        let uniform_color = self.left.color == self.right.color
+            && self.left.color == self.top.color
+            && self.left.color == self.bottom.color;
+
+        if uniform_color && self.left.style != BorderStyle::None {
+            let (x, y, width, height) = if is_outline {
+                (
+                    -left / scale,
+                    -top / scale,
+                    (box_width + left + right) / scale,
+                    (box_height + top + bottom) / scale,
+                )
+            } else {
+                (0.0, 0.0, box_width / scale, box_height / scale)
+            };
+            canvas.fill_rect_styled(
+                aimer_cupid::utilities::Rect::new(x, y, width, height),
+                Color::Transparent.into(),
+                radii,
+                [top / scale, right / scale, bottom / scale, left / scale],
+                self.left.color.into(),
+                [0.0; 4],
+                Color::Transparent.into(),
+            );
+        } else {
+            let mut fill_side = |slice: BorderSlice, x: f32, y: f32, width: f32, height: f32| {
+                if slice.style != BorderStyle::None && width > 0.0 && height > 0.0 {
+                    canvas.fill_rect_styled(
+                        aimer_cupid::utilities::Rect::new(
+                            x / scale,
+                            y / scale,
+                            width / scale,
+                            height / scale,
+                        ),
+                        slice.color.into(),
+                        radii,
+                        [0.0; 4],
+                        Color::Transparent.into(),
+                        [0.0; 4],
+                        Color::Transparent.into(),
+                    );
+                }
+            };
+            if is_outline {
+                fill_side(
+                    self.top,
+                    -left,
+                    -top,
+                    box_width + left + right,
+                    top,
+                );
+                fill_side(
+                    self.bottom,
+                    -left,
+                    box_height,
+                    box_width + left + right,
+                    bottom,
+                );
+                fill_side(
+                    self.left,
+                    -left,
+                    -top,
+                    left,
+                    box_height + top + bottom,
+                );
+                fill_side(
+                    self.right,
+                    box_width,
+                    -top,
+                    right,
+                    box_height + top + bottom,
+                );
+            } else {
+                fill_side(self.top, 0.0, 0.0, box_width, top);
+                fill_side(
+                    self.bottom,
+                    0.0,
+                    box_height - bottom,
+                    box_width,
+                    bottom,
+                );
+                fill_side(self.left, 0.0, 0.0, left, box_height);
+                fill_side(
+                    self.right,
+                    box_width - right,
+                    0.0,
+                    right,
+                    box_height,
+                );
+            }
+        }
+        canvas.finish();
+    }
+
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        if self.mode != BorderMode::Outside {
+            return Some([0.0; 4]);
+        }
+        let scale = ctx.scale;
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let left = resolve_dim(self.left.stroke, ctx.parent_size.width, scale).max(0.0);
+        let right = resolve_dim(self.right.stroke, ctx.parent_size.width, scale).max(0.0);
+        let top = resolve_dim(self.top.stroke, ctx.parent_size.height, scale).max(0.0);
+        let bottom = resolve_dim(self.bottom.stroke, ctx.parent_size.height, scale).max(0.0);
+        Some([left / scale, top / scale, right / scale, bottom / scale])
+    }
 }
 
 #[cfg(test)]

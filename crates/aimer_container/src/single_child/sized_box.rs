@@ -1,6 +1,7 @@
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_cupid::draw_cmd_v2::Rect;
 use aimer_macro::{PortableWidget, Rebuildable};
 use aimer_widget::base::{Color, *};
 use aimer_widget::{
@@ -175,6 +176,21 @@ pub struct RawSizedBox<E: Element> {
     pub(crate) debug_name: &'static str,
 }
 
+impl<E: Element> RawSizedBox<E> {
+    fn local_v2_paint_size(&self, ctx: &BuildContext) -> Option<(f32, f32)> {
+        let scale = ctx.scale;
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+
+        let size = self.computed_size(ctx);
+        let width = size.width / scale;
+        let height = size.height / scale;
+        (width.is_finite() && height.is_finite() && width >= 0.0 && height >= 0.0)
+            .then_some((width, height))
+    }
+}
+
 impl<E: Element> EventElement for RawSizedBox<E> {
     fn event_tree_role(&self) -> EventTreeRole {
         EventTreeRole::IndexedTarget
@@ -199,6 +215,24 @@ impl<E: Element> Drawable for RawSizedBox<E> {
         child_ctx.box_constraint.max_width = width;
         child_ctx.box_constraint.max_height = height;
         self.child.draw(&child_ctx);
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.local_v2_paint_size(ctx).is_some()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let (width, height) = self
+            .local_v2_paint_size(ctx)
+            .expect("SizedBox v2 support must be checked before painting");
+        let canvas = aimer_canvas::Canvas::of(ctx);
+
+        let (red, green, blue, alpha) = self.color.to_rgba();
+        if alpha != 0 {
+            // SizedBox layout sizes are device-scaled; v2 commands use local logical pixels.
+            canvas.fill_rect(Rect::new(0.0, 0.0, width, height), [red, green, blue, alpha]);
+        }
+        canvas.finish();
     }
 }
 
@@ -296,6 +330,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+    use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect as RenderRect, RenderPaintSource, RenderTree};
     use aimer_widget::base::WindowHandle;
     use aimer_widget::{Drawable, EventElement, EventTreeRole, Rebuildable, VisitorElement};
 
@@ -366,17 +401,21 @@ mod tests {
     }
 
     fn context() -> BuildContext<'static> {
+        context_with_scale(1.0)
+    }
+
+    fn context_with_scale(scale: f32) -> BuildContext<'static> {
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         BuildContext::new(
             canvas,
             ResolvedSize::default(),
-            1.0,
+            scale,
             Vec2d::default(),
             Vec2d::default(),
-            WindowHandle::headless(Default::default(), 1.0),
+            WindowHandle::headless(Default::default(), f64::from(scale)),
             tokio::runtime::Handle::current(),
         )
     }
@@ -406,6 +445,76 @@ mod tests {
         element.draw(&ctx);
 
         assert_eq!(draws.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn sized_box_background_records_and_invalidates_only_its_local_v2_list() {
+        let ctx = context_with_scale(2.0);
+        let background = SizedBox::new()
+            .width(24.0)
+            .height(12.0)
+            .color(Color::RED)
+            .to_element(&ctx);
+        let sibling = SizedBox::new()
+            .width(16.0)
+            .height(10.0)
+            .color(Color::BLUE)
+            .to_element(&ctx);
+        let background_id = background.id();
+        let sibling_id = sibling.id();
+        let tree = RenderTree::new();
+        let background_node = tree
+            .add_root(RenderRect::new(0.0, 0.0, 24.0, 12.0))
+            .unwrap();
+        let sibling_node = tree
+            .add_root(RenderRect::new(40.0, 0.0, 16.0, 10.0))
+            .unwrap();
+        let element_nodes = Rc::new(std::collections::HashMap::from([
+            (background_id, background_node),
+            (sibling_id, sibling_node),
+        ]));
+
+        ctx.canvas.begin_frame();
+        aimer_widget::begin_paint_frame(100, 80);
+        tree.begin_legacy_frame();
+        aimer_widget::with_v2_render_tree_context(
+            tree.clone(),
+            element_nodes.clone(),
+            Some(background_id),
+            || {
+                background.draw(&ctx);
+                sibling.draw(&ctx);
+            },
+        );
+
+        let background_commands = tree.draw_list_snapshot(background_node).unwrap();
+        let sibling_commands = tree.draw_list_snapshot(sibling_node).unwrap();
+        assert_eq!(background_commands.revision, 1);
+        assert_eq!(sibling_commands.revision, 1);
+        assert!(matches!(
+            background_commands.commands.as_ref(),
+            [DrawCommand::FillRect { rect, color, .. }]
+                if *rect == RenderRect::new(0.0, 0.0, 24.0, 12.0)
+                    && (color.r, color.g, color.b, color.a) == (255, 0, 0, 255)
+        ));
+        assert_eq!(
+            tree.paint_source(background_node).unwrap(),
+            RenderPaintSource::LocalV2
+        );
+
+        tree.take_damage();
+        tree.invalidate_paint(background_node).unwrap();
+        ctx.canvas.begin_frame();
+        aimer_widget::begin_paint_frame(100, 80);
+        tree.begin_legacy_frame();
+        aimer_widget::with_v2_render_tree_context(tree.clone(), element_nodes, None, || {
+            background.draw(&ctx);
+            sibling.draw(&ctx);
+        });
+
+        assert_eq!(tree.draw_list_revision(background_node).unwrap(), 2);
+        assert_eq!(tree.draw_list_revision(sibling_node).unwrap(), 1);
+        assert_eq!(tree.take_damage(), vec![RenderRect::new(0.0, 0.0, 24.0, 12.0)]);
     }
 
     #[tokio::test]

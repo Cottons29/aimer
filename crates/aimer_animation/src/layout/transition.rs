@@ -1046,6 +1046,49 @@ impl aimer_widget::Drawable for AnimatedLayoutElement {
             request_animation_frame()
         }
     }
+
+    fn can_paint_local_v2(&self, _ctx: &aimer_widget::base::BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, _ctx: &aimer_widget::base::BuildContext) {}
+
+    fn sync_local_v2_state(&self, ctx: &aimer_widget::base::BuildContext) -> bool {
+        if !self.child.is_paint_bounded() {
+            return false;
+        }
+        let geometry = self.geometry(ctx, AnimInstant::now());
+        let natural = self.child.computed_size(ctx);
+        let scale_x = if natural.width > 0.0 {
+            (geometry.width / natural.width).max(0.0)
+        } else {
+            1.0
+        };
+        let scale_y = if natural.height > 0.0 {
+            (geometry.height / natural.height).max(0.0)
+        } else {
+            1.0
+        };
+        if !scale_x.is_finite() || !scale_y.is_finite() {
+            return false;
+        }
+
+        if self.transition.borrow().is_animating() {
+            request_animation_frame();
+        }
+        ctx.set_local_v2_child_presentation_at(
+            0,
+            aimer_canvas::Mat3::scale(scale_x, scale_y),
+            1.0,
+        )
+    }
+
+    fn draw_local_v2_compatibility(&self, ctx: &aimer_widget::base::BuildContext) {
+        self.child.draw(ctx);
+        if self.transition.borrow().is_animating() {
+            request_animation_frame();
+        }
+    }
 }
 
 impl aimer_widget::VisitorElement for AnimatedLayoutElement {

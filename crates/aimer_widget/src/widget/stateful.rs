@@ -2003,6 +2003,15 @@ impl Drawable for StatefulElement {
         // Safety: single-threaded rendering pipeline
         let child = unsafe { &*self.child.0.get() };
 
+        if ctx.is_local_v2_compatibility_paint() {
+            // The retained tree draws the generated child through its own
+            // render nodes, so do not collapse them into the state owner's
+            // legacy scene cache while collecting v2 compatibility commands.
+            child.sync_paint_geometry(ctx);
+            child.draw(ctx);
+            return;
+        }
+
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
         {
             child.sync_paint_geometry(ctx);
@@ -2040,6 +2049,66 @@ impl Drawable for StatefulElement {
         }
 
         child.draw(ctx);
+    }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        // This wrapper owns state and rebuilds its child, but paints nothing.
+        true
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        canvas.finish();
+    }
+
+    #[inline]
+    fn retained_v2_bounds(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        // A state owner is visually transparent. Preserve a child's
+        // viewport-sized render bounds instead of expanding the wrapper to
+        // the child's scrollable content extent.
+        unsafe { &*self.child.0.get() }.retained_v2_bounds(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        unsafe { &*self.child.0.get() }.retained_v2_paint_outsets(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_child_geometry(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn aimer_widget::Element,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        unsafe { &*self.child.0.get() }.retained_v2_child_geometry(ctx, child)
+    }
+
+    #[inline]
+    fn retained_v2_child_geometry_at(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn aimer_widget::Element,
+        child_index: usize,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        unsafe { &*self.child.0.get() }
+            .retained_v2_child_geometry_at(ctx, child, child_index)
+    }
+
+    #[inline]
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &aimer_widget::base::BuildContext<'a>,
+        child: &dyn aimer_widget::Element,
+        child_index: usize,
+    ) -> Option<aimer_widget::base::BuildContext<'a>> {
+        unsafe { &*self.child.0.get() }
+            .retained_v2_child_context_at(ctx, child, child_index)
     }
 
     #[inline]
@@ -2200,7 +2269,7 @@ mod tests {
     fn dummy_build_context() -> BuildContext<'static> {
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         BuildContext::new(
             canvas,

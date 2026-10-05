@@ -21,7 +21,7 @@ use std::time::Instant;
 use aimer::{AnyElement, BuildContext, Column, ResolvedSize, State, StateUpdater,
     StatefulElement, StatefulWidget, SizedBox, Vec2d, Widget};
 use aimer::input::button::Button;
-use aimer_canvas::{Canvas, InnerCanvas};
+use aimer_canvas::{FrameCanvas, InnerCanvas};
 use aimer_events::window::{restore_thread_redraw_requester, set_thread_redraw_requester};
 use aimer::quiver::winit::dpi::PhysicalSize;
 use aimer_widget::base::WindowHandle;
@@ -92,7 +92,7 @@ fn runtime() -> tokio::runtime::Runtime {
 fn context(runtime: &tokio::runtime::Runtime) -> BuildContext<'static> {
     let inner = Box::leak(Box::new(InnerCanvas::new()));
     let mut context = BuildContext::new(
-        Canvas::new(inner),
+        FrameCanvas::new(inner),
         ResolvedSize {
             width: FRAME_WIDTH,
             height: FRAME_HEIGHT,

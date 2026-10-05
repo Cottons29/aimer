@@ -516,6 +516,7 @@ where
         let build = |index: usize| -> Box<AnyElement> { self.build_row(index, ctx) };
 
         let live = unsafe { self.window_mut() };
+        let previous_range = live.start..live.end();
         // Grow around what is already there, so the rows currently on screen
         // keep their element — and with it their state and layout cache.
         if live.elements.is_empty() {
@@ -535,6 +536,9 @@ where
                 live.elements.push_back(element);
             }
         }
+        if previous_range != (0..len) {
+            aimer_widget::notify_retained_render_structure_changed();
+        }
         self.clear_recycled();
         self.eager.set(true);
     }
@@ -552,6 +556,9 @@ where
         let build = |index: usize| -> Box<AnyElement> { self.build_row(index, ctx) };
 
         let live = unsafe { self.window_mut() };
+        if live.start == wanted.start && live.end() == wanted.end {
+            return;
+        }
 
         // A jump — the scroll bar was dragged, or this is the first frame —
         // shares nothing with the live run, so rebuilding it outright is both
@@ -566,6 +573,7 @@ where
             for index in wanted {
                 live.elements.push_back(build(index));
             }
+            aimer_widget::notify_retained_render_structure_changed();
             return;
         }
 
@@ -592,6 +600,7 @@ where
                 self.retire(leaving, element);
             }
         }
+        aimer_widget::notify_retained_render_structure_changed();
     }
 
     fn take_retained(&self) -> Vec<RetainedRow> {

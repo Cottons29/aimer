@@ -18,8 +18,8 @@ fn request_next_frame() {
 }
 
 #[inline]
-fn child_can_be_composited(child: &dyn Element) -> bool {
-    child.is_paint_stable() && child.is_layout_stable() && child.is_paint_bounded()
+fn child_paint_is_bounded(child: &dyn Element) -> bool {
+    child.is_paint_bounded()
 }
 
 #[inline]
@@ -147,6 +147,19 @@ macro_rules! impl_transition_element {
             }
 
             #[inline]
+            fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+                true
+            }
+
+            #[inline]
+            fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+            #[inline]
+            fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+                self.child.draw(ctx);
+            }
+
+            #[inline]
             fn paint(&self, ctx: &BuildContext) {
                 self.child.paint(ctx);
             }
@@ -163,11 +176,8 @@ macro_rules! impl_transition_element {
 
             #[inline]
             fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
-                if !child_can_be_composited(self.child.as_ref()) {
-                    return CompositorAnimationDecision::None;
-                }
                 let frame = self.sample_frame(ctx);
-                if frame.valid {
+                if frame.valid && child_paint_is_bounded(self.child.as_ref()) {
                     CompositorAnimationDecision::Compositor(frame)
                 } else {
                     CompositorAnimationDecision::Live(frame)
@@ -361,6 +371,19 @@ impl Drawable for SlideTransitionElement {
     }
 
     #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    #[inline]
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.child.draw(ctx);
+    }
+
+    #[inline]
     fn paint(&self, ctx: &BuildContext) {
         self.child.paint(ctx);
     }
@@ -377,11 +400,8 @@ impl Drawable for SlideTransitionElement {
 
     #[inline]
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
-        if !child_can_be_composited(self.child.as_ref()) {
-            return CompositorAnimationDecision::None;
-        }
         let frame = self.sample_frame(ctx);
-        if frame.valid {
+        if frame.valid && child_paint_is_bounded(self.child.as_ref()) {
             CompositorAnimationDecision::Compositor(frame)
         } else {
             CompositorAnimationDecision::Live(frame)
@@ -563,6 +583,19 @@ impl Drawable for ScaleTransitionElement {
     }
 
     #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    #[inline]
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.child.draw(ctx);
+    }
+
+    #[inline]
     fn paint(&self, ctx: &BuildContext) {
         self.child.paint(ctx);
     }
@@ -579,11 +612,8 @@ impl Drawable for ScaleTransitionElement {
 
     #[inline]
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
-        if !child_can_be_composited(self.child.as_ref()) {
-            return CompositorAnimationDecision::None;
-        }
         let frame = self.sample_frame(ctx);
-        if frame.valid {
+        if frame.valid && child_paint_is_bounded(self.child.as_ref()) {
             CompositorAnimationDecision::Compositor(frame)
         } else {
             CompositorAnimationDecision::Live(frame)
@@ -793,6 +823,19 @@ impl Drawable for RotationTransitionElement {
     }
 
     #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    #[inline]
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.child.draw(ctx);
+    }
+
+    #[inline]
     fn paint(&self, ctx: &BuildContext) {
         let frame = self.settled_frame(ctx);
         ctx.canvas.save();
@@ -813,17 +856,9 @@ impl Drawable for RotationTransitionElement {
     }
 
     #[inline]
-    fn is_paint_stable(&self) -> bool {
-        !self.animating.get() && self.child.is_paint_stable()
-    }
-
-    #[inline]
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
-        if !child_can_be_composited(self.child.as_ref()) {
-            return CompositorAnimationDecision::None;
-        }
         let frame = self.sample_frame(ctx);
-        if frame.valid {
+        if frame.valid && child_paint_is_bounded(self.child.as_ref()) {
             CompositorAnimationDecision::Compositor(frame)
         } else {
             CompositorAnimationDecision::Live(frame)
@@ -1137,7 +1172,7 @@ mod tests {
         let canvas = {
             let leaked: &'static aimer_canvas::InnerCanvas =
                 Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(leaked)
+            aimer_canvas::FrameCanvas::new(leaked)
         };
         let mut context = BuildContext::new(
             canvas,

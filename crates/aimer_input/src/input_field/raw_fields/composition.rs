@@ -240,6 +240,40 @@ impl RawTextField {
             );
         }
     }
+
+    pub(super) fn sync_preedit_caret(
+        &self,
+        preedit: &str,
+        cursor: Option<(usize, usize)>,
+        origin_x: f32,
+        top: f32,
+        height: f32,
+        content_ctx: &BuildContext,
+        scale: f32,
+    ) {
+        let (preedit, cursor) = presentation_preedit(self.input_type, preedit, cursor);
+        let Some((start, end)) = cursor else {
+            return;
+        };
+        let start = floor_char_boundary(preedit.as_ref(), start);
+        let end = floor_char_boundary(preedit.as_ref(), end.max(start));
+        if end > start {
+            return;
+        }
+        let layout = self.preedit_layout(content_ctx, preedit.as_ref());
+        let start_x = origin_x
+            + layout
+                .caret_geometry(start)
+                .map_or(layout.metrics.width, |caret| caret.x);
+        let (caret_top, caret_height) = caret_band(top, height);
+        self.publish_composition_caret(
+            start_x,
+            caret_top,
+            1.5 * scale,
+            caret_height,
+            scale,
+        );
+    }
 }
 
 #[cfg(test)]

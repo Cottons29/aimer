@@ -780,6 +780,49 @@ impl<E: Element> LayoutElement for RawResizable<E> {
 }
 
 impl<E: Element> Drawable for RawResizable<E> {
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        let size = self.effective_size(ctx);
+        ctx.scale.is_finite()
+            && ctx.scale > 0.0
+            && size.width.is_finite()
+            && size.height.is_finite()
+            && size.width >= 0.0
+            && size.height >= 0.0
+            && size.width <= 1_000_000.0
+            && size.height <= 1_000_000.0
+    }
+
+    fn retained_clip(&self, ctx: &BuildContext) -> Option<aimer_cupid::draw_cmd_v2::Rect> {
+        if !self.can_paint_local_v2(ctx) {
+            return None;
+        }
+        let size = self.effective_size(ctx);
+        Some(aimer_cupid::draw_cmd_v2::Rect::new(
+            0.0,
+            0.0,
+            size.width / ctx.scale,
+            size.height / ctx.scale,
+        ))
+    }
+
+    fn retained_v2_child_context<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        _child: &dyn Element,
+    ) -> Option<BuildContext<'a>> {
+        if !self.can_paint_local_v2(ctx) {
+            return None;
+        }
+        let size = self.effective_size(ctx);
+        let mut child_ctx = ctx.clone();
+        child_ctx.box_constraint.max_width = size.width;
+        child_ctx.box_constraint.max_height = size.height;
+        child_ctx.parent_size = size;
+        Some(child_ctx)
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
     fn draw(&self, ctx: &BuildContext) {
         let size = self.effective_size(ctx);
 
@@ -855,7 +898,7 @@ mod tests {
     fn draw_context(visible_rect: Option<(f32, f32, f32, f32)>) -> BuildContext<'static> {
         let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
         let mut context = BuildContext::new(
-            aimer_canvas::Canvas::new(inner),
+            aimer_canvas::FrameCanvas::new(inner),
             ResolvedSize {
                 width: 100.0,
                 height: 100.0,

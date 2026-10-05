@@ -456,7 +456,7 @@ mod tests {
         let canvas = {
             let leaked: &'static aimer_canvas::InnerCanvas =
                 Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(leaked)
+            aimer_canvas::FrameCanvas::new(leaked)
         };
         BuildContext::new(
             canvas,

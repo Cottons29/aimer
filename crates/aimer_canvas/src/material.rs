@@ -1,7 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 
-use crate::canvas::AimerCanvas;
+use crate::canvas::FrameCanvas;
 
 /// The custom-pipeline name reserved for the W14 material bridge.
 ///
@@ -295,7 +295,7 @@ impl MaterialDrawRequest {
     /// is intentionally isolated here while Cupid resolves the active
     /// transform, clip, and alpha state at render time.
     #[inline]
-    pub fn record(self, canvas: &AimerCanvas<'_>) {
+    pub fn record(self, canvas: &FrameCanvas<'_>) {
         let inner = canvas.get_inner_canvas();
         let mut draw_list = inner.take_draw_list();
         draw_list.draw_custom(MATERIAL_PIPELINE_NAME, self.encode());
@@ -306,7 +306,7 @@ impl MaterialDrawRequest {
 /// Records a material packet without requiring callers to name the bridge
 /// type in a widget builder.
 #[inline]
-pub fn record_material(canvas: &AimerCanvas<'_>, request: MaterialDrawRequest) {
+pub fn record_material(canvas: &FrameCanvas<'_>, request: MaterialDrawRequest) {
     request.record(canvas);
 }
 

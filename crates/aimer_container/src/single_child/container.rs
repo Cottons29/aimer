@@ -10,6 +10,8 @@ use aimer_widget::{
     EventTreeRole, LayoutElement, RequiredChild, VisitorElement, Widget,
 };
 
+const LOCAL_V2_CONTAINER_EXTENT_LIMIT: f32 = 1_000_000.0;
+
 #[cfg(feature = "portable-guest")]
 use aimer_widget::portable::{
     PortableBuildContext, PortableBuildError, SourceFingerprint,
@@ -180,6 +182,7 @@ impl<W: Widget> Widget for Container<W> {
             debug_name: "Container",
             bounds: std::cell::Cell::new(None),
             color: None,
+            local_v2_background_color: std::cell::Cell::new(None),
         }
         .boxed()
     }
@@ -224,6 +227,15 @@ pub struct RawContainer<T: Element> {
     pub debug_name: &'static str,
     pub color: Option<Color>,
     pub bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
+    local_v2_background_color: std::cell::Cell<Option<Option<(u8, u8, u8, u8)>>>,
+}
+
+#[derive(Clone, Copy)]
+struct LocalV2ContainerGeometry {
+    clip_origin: Vec2d,
+    clip_size: ResolvedSize,
+    child_origin: Vec2d,
+    content_size: ResolvedSize,
 }
 
 impl<E: Element> RawContainer<E> {
@@ -248,6 +260,63 @@ impl<E: Element> RawContainer<E> {
         self.color.is_some() || self.box_decoration.background_color.get().is_some()
     }
 
+    fn local_v2_paint_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        if self.color.is_some() {
+            return None;
+        }
+
+        let scale = ctx.scale;
+        let parent_width = ctx.box_constraint.max_width;
+        let parent_height = ctx.box_constraint.max_height;
+        if !scale.is_finite()
+            || scale <= 0.0
+            || !parent_width.is_finite()
+            || !parent_height.is_finite()
+            || parent_width < 0.0
+            || parent_height < 0.0
+        {
+            return None;
+        }
+
+        let (margin_left, margin_top, margin_right, margin_bottom) = self.margin(ctx);
+        let width = match self.width {
+            Dimension::Px(width) => width * scale,
+            Dimension::Percent(percent) => {
+                parent_width * (percent / 100.0) - margin_left - margin_right
+            }
+            Dimension::Auto => parent_width - margin_left - margin_right,
+        };
+        let height = match self.height {
+            Dimension::Px(height) => height * scale,
+            Dimension::Percent(percent) => {
+                parent_height * (percent / 100.0) - margin_top - margin_bottom
+            }
+            Dimension::Auto => parent_height - margin_top - margin_bottom,
+        };
+        if !width.is_finite()
+            || !height.is_finite()
+            || width > LOCAL_V2_CONTAINER_EXTENT_LIMIT
+            || height > LOCAL_V2_CONTAINER_EXTENT_LIMIT
+        {
+            return None;
+        }
+
+        if self
+            .box_decoration
+            .border_radius
+            .resolve(width, height, scale)
+            .into_iter()
+            .any(|radius| !radius.is_finite() || radius > 0.0)
+        {
+            return None;
+        }
+
+        Some(ResolvedSize {
+            width: width.max(0.0),
+            height: height.max(0.0),
+        })
+    }
+
     #[allow(dead_code)]
     pub(crate) fn new(child: E) -> Self {
         Self {
@@ -261,6 +330,7 @@ impl<E: Element> RawContainer<E> {
             debug_name: "RawContainer",
             color: None,
             bounds: std::cell::Cell::new(None),
+            local_v2_background_color: std::cell::Cell::new(None),
         }
     }
 
@@ -276,6 +346,88 @@ impl<E: Element> RawContainer<E> {
 
         (m_left, m_top, m_right, m_bottom)
     }
+
+    fn local_v2_geometry(&self, ctx: &BuildContext) -> Option<LocalV2ContainerGeometry> {
+        let scale = ctx.scale;
+        let size = self.local_v2_paint_size(ctx)?;
+        let (margin_left, margin_top, _, _) = self.margin(ctx);
+        let width = size.width;
+        let height = size.height;
+        let padding_left = self.padding.left.value(width, scale);
+        let padding_top = self.padding.top.value(height, scale);
+        let padding_right = self.padding.right.value(width, scale);
+        let padding_bottom = self.padding.bottom.value(height, scale);
+        let border = self.box_decoration.border;
+        let border_left = border_stroke(border.left.stroke, width, scale);
+        let border_right = border_stroke(border.right.stroke, width, scale);
+        let border_top = border_stroke(border.top.stroke, height, scale);
+        let border_bottom = border_stroke(border.bottom.stroke, height, scale);
+        let clip_size = ResolvedSize {
+            width: (width - border_left - border_right).max(0.0),
+            height: (height - border_top - border_bottom).max(0.0),
+        };
+        let child_origin = Vec2d {
+            x: margin_left + padding_left + border_left,
+            y: margin_top + padding_top + border_top,
+        };
+        let content_size = ResolvedSize {
+            width: (clip_size.width - padding_left - padding_right).max(0.0),
+            height: (clip_size.height - padding_top - padding_bottom).max(0.0),
+        };
+        Some(LocalV2ContainerGeometry {
+            clip_origin: Vec2d {
+                x: margin_left + border_left,
+                y: margin_top + border_top,
+            },
+            clip_size,
+            child_origin,
+            content_size,
+        })
+    }
+
+    fn local_v2_child_context<'a>(&self, ctx: &BuildContext<'a>) -> Option<BuildContext<'a>> {
+        let geometry = self.local_v2_geometry(ctx)?;
+        let mut child_ctx = ctx.clone();
+        child_ctx.box_constraint.max_width = geometry.content_size.width;
+        child_ctx.box_constraint.max_height = geometry.content_size.height;
+        child_ctx.parent_size = geometry.content_size;
+        child_ctx.visible_rect = ctx.visible_rect.map(|(x, y, width, height)| {
+            (
+                x - geometry.child_origin.x,
+                y - geometry.child_origin.y,
+                width,
+                height,
+            )
+        });
+        Some(child_ctx)
+    }
+}
+
+#[inline]
+fn border_stroke(dimension: Dimension, parent: f32, scale: f32) -> f32 {
+    match dimension {
+        Dimension::Px(width) => width * scale,
+        Dimension::Percent(percent) => parent * (percent / 100.0),
+        Dimension::Auto => 0.0,
+    }
+    .max(0.0)
+}
+
+#[inline]
+fn intersect_retained_clip(
+    left: aimer_cupid::draw_cmd_v2::Rect,
+    right: aimer_cupid::draw_cmd_v2::Rect,
+) -> aimer_cupid::draw_cmd_v2::Rect {
+    let x = left.x.max(right.x);
+    let y = left.y.max(right.y);
+    let right_edge = (left.x + left.width).min(right.x + right.width);
+    let bottom_edge = (left.y + left.height).min(right.y + right.height);
+    aimer_cupid::draw_cmd_v2::Rect::new(
+        x,
+        y,
+        (right_edge - x).max(0.0),
+        (bottom_edge - y).max(0.0),
+    )
 }
 
 impl<T: Element> RawContainer<T> {
@@ -450,6 +602,104 @@ impl<T: Element> RawContainer<T> {
 impl<T: Element> Drawable for RawContainer<T> {
     fn draw(&self, ctx: &BuildContext) {
         self.render(ctx, false);
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.local_v2_paint_size(ctx).is_some()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let Some(size) = self.local_v2_paint_size(ctx) else {
+            unreachable!("RawContainer v2 support must be checked before painting")
+        };
+
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        let (margin_left, margin_top, _, _) = self.margin(ctx);
+        self.box_decoration.record_local_v2(
+            &canvas,
+            Vec2d {
+                x: margin_left / ctx.scale,
+                y: margin_top / ctx.scale,
+            },
+            size.width,
+            size.height,
+            ctx.scale,
+        );
+        canvas.finish();
+        self.local_v2_background_color.set(Some(
+            self.box_decoration
+                .background_color
+                .get()
+                .map(|color| color.to_rgba()),
+        ));
+    }
+
+    fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
+        self.local_v2_background_color.get()
+            != Some(
+                self.box_decoration
+                    .background_color
+                    .get()
+                    .map(|color| color.to_rgba()),
+            )
+    }
+
+    fn retained_clip(&self, ctx: &BuildContext) -> Option<aimer_cupid::draw_cmd_v2::Rect> {
+        let _ = ctx;
+        None
+    }
+
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        let size = self.local_v2_paint_size(ctx)?;
+        Some(self.box_decoration.local_v2_paint_outsets(size.width, size.height, ctx.scale))
+    }
+
+    fn retained_v2_child_context<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+    ) -> Option<BuildContext<'a>> {
+        if !std::ptr::eq(child, &self.child as &dyn Element) {
+            return None;
+        }
+        self.local_v2_child_context(ctx)
+    }
+
+    fn retained_v2_child_geometry(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        if !std::ptr::eq(child, &self.child as &dyn Element) {
+            return None;
+        }
+        let scale = ctx.scale;
+        let geometry = self.local_v2_geometry(ctx)?;
+        let child_ctx = self.local_v2_child_context(ctx)?;
+        let child_size = child.content_size(&child_ctx);
+        let position = child.pos().unwrap_or_default();
+        let x = geometry.child_origin.x + position.x;
+        let y = geometry.child_origin.y + position.y;
+        let bounds = aimer_cupid::draw_cmd_v2::Rect::new(
+            x / scale,
+            y / scale,
+            child_size.width / scale,
+            child_size.height / scale,
+        );
+        let clip = aimer_cupid::draw_cmd_v2::Rect::new(
+            (geometry.clip_origin.x - x) / scale,
+            (geometry.clip_origin.y - y) / scale,
+            geometry.clip_size.width / scale,
+            geometry.clip_size.height / scale,
+        );
+        let clip = child
+            .retained_clip(&child_ctx)
+            .map(|child_clip| intersect_retained_clip(clip, child_clip))
+            .unwrap_or(clip);
+        Some((bounds, Some(clip)))
     }
 
     fn paint(&self, ctx: &BuildContext) {
@@ -1056,7 +1306,6 @@ mod tests {
             .any(|command| matches!(command, DrawCommand::FillRect { .. })));
     }
 
-    #[cfg(feature = "event-tree-exp")]
     #[test]
     fn containers_are_transparent_unless_they_occlude_scroll_and_never_cache_draw_bounds() {
         let child = DrawProbe {
@@ -1126,7 +1375,7 @@ mod tests {
     fn context() -> BuildContext<'static> {
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         BuildContext::new(
             canvas,
@@ -1142,7 +1391,7 @@ mod tests {
     fn recording_context() -> (BuildContext<'static>, &'static aimer_canvas::InnerCanvas) {
         let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
         let ctx = BuildContext::new(
-            aimer_canvas::Canvas::new(inner),
+            aimer_canvas::FrameCanvas::new(inner),
             ResolvedSize {
                 width: 200.0,
                 height: 160.0,

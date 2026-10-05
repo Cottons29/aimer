@@ -264,6 +264,19 @@ impl Drawable for AnimatedElement {
     }
 
     #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    #[inline]
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.child.draw(ctx);
+    }
+
+    #[inline]
     fn paint(&self, ctx: &BuildContext) {
         self.child.paint(ctx);
     }
@@ -280,15 +293,8 @@ impl Drawable for AnimatedElement {
 
     #[inline]
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
-        if !self.child.is_paint_stable()
-            || !self.child.is_layout_stable()
-            || !self.child.is_paint_bounded()
-        {
-            return CompositorAnimationDecision::None;
-        }
-
         let frame = self.sample_frame(ctx);
-        if frame.valid {
+        if frame.valid && self.child.is_paint_bounded() {
             CompositorAnimationDecision::Compositor(frame)
         } else {
             CompositorAnimationDecision::Live(frame)

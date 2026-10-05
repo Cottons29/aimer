@@ -423,6 +423,7 @@ pub mod render_ctx {
             let build = PhaseTimer::start();
             canvas.begin_frame();
             let (scale, damage) = draw_fn(canvas, width, height);
+            let render_plan = canvas.take_retained_render_plan();
             let damage = if damage.target_size() == (width, height) {
                 damage
             } else {
@@ -438,24 +439,31 @@ pub mod render_ctx {
                 self.resource_generation,
                 damage,
             );
-            let scene = canvas
-                .take_scene(
-                    &frame.draw_list,
-                    width,
-                    height,
-                    metadata.damage().clone(),
-                )
-                .unwrap_or_else(|| {
-                    CompositorScene::from_draw_list(
+            let scene = render_plan.is_none().then(|| {
+                canvas
+                    .take_scene(
                         &frame.draw_list,
                         width,
                         height,
                         metadata.damage().clone(),
                     )
-                });
+                    .unwrap_or_else(|| {
+                        CompositorScene::from_draw_list(
+                            &frame.draw_list,
+                            width,
+                            height,
+                            metadata.damage().clone(),
+                        )
+                    })
+            });
             build.finish(FramePhase::Build);
 
-            Some(FramePacket::with_scene(frame, metadata, scene))
+            Some(FramePacket::with_render_plan(
+                frame,
+                metadata,
+                scene,
+                render_plan,
+            ))
         }
 
         /// Put a recorded frame on screen, or hand it to the raster thread.
@@ -514,6 +522,7 @@ pub mod render_ctx {
 
         /// The raster thread can only take the presenter if it is `Send`; a
         /// non-`Send` field would otherwise fail far away, inside `spawn`.
+        #[cfg(feature = "raster-thread")]
         #[test]
         fn the_presenter_can_move_to_the_raster_thread() {
             const fn assert_send<T: Send>() {}

@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_container::{Container, ZeroSizedBox};
@@ -13,10 +14,10 @@ use aimer_widget::{
     RequiredChild, VisitorElement, Widget,
 };
 
+use crate::animated_content::wrap_animated_content;
 use crate::ModalAnimation;
-use crate::animation::visual_values;
 use crate::host::{self, ModalHandle, ModalId, ModalTimeline};
-use crate::paint::{contains, paint_overlay_content};
+use crate::paint::{contains, overlay_child_context};
 
 /// Displays content above the entire application render tree.
 ///
@@ -144,15 +145,26 @@ impl<W: Widget + 'static> Modal<W> {
         id: Option<ModalId>,
         timeline: Rc<RefCell<ModalTimeline>>,
     ) -> AnyElement {
+        let barrier = Container::new()
+            .color(self.barrier_color)
+            .child(ZeroSizedBox)
+            .to_element(ctx);
+        let barrier = wrap_animated_content(
+            barrier,
+            (self.barrier_color.to_rgba().3 != 0).then_some(self.animation).flatten(),
+            timeline.clone(),
+            false,
+        );
+        let child = wrap_animated_content(
+            self.child.to_element(ctx),
+            self.animation,
+            timeline.clone(),
+            true,
+        );
         RawModal {
-            barrier: Container::new()
-                .color(self.barrier_color)
-                .child(ZeroSizedBox)
-                .to_element(ctx),
-            child: self.child.to_element(ctx),
+            barrier,
+            child,
             alignment: self.alignment,
-            animation: self.animation,
-            timeline,
             id,
             barrier_dismissible: self.barrier_dismissible,
             escape_dismissible: self.escape_dismissible,
@@ -196,8 +208,6 @@ struct RawModal {
     barrier: AnyElement,
     child: AnyElement,
     alignment: Alignment,
-    animation: Option<ModalAnimation>,
-    timeline: Rc<RefCell<ModalTimeline>>,
     id: Option<ModalId>,
     barrier_dismissible: bool,
     escape_dismissible: bool,
@@ -206,30 +216,71 @@ struct RawModal {
 
 impl Drawable for RawModal {
     fn draw(&self, ctx: &BuildContext) {
-        let progress = self.timeline.borrow().progress();
-        let scale_from = self
-            .animation
-            .map(|animation| animation.content_scale_from)
-            .unwrap_or(1.0);
-        let (opacity, scale) = visual_values(progress, scale_from);
-
-        ctx.canvas.set_alpha(opacity);
         self.barrier.draw(ctx);
-        ctx.canvas.restore_alpha();
-
         let child_size = self.child.computed_size(ctx);
         let (offset_x, offset_y) = alignment_offset(self.alignment, ctx.parent_size, child_size);
-        paint_overlay_content(
+        let child_ctx = overlay_child_context(
             ctx,
-            &self.child,
             child_size,
             Vec2d {
                 x: offset_x,
                 y: offset_y,
             },
-            (opacity, scale),
             &self.child_bounds,
         );
+        ctx.canvas.save();
+        ctx.canvas.translate(Vec2d {
+            x: offset_x,
+            y: offset_y,
+        });
+        self.child.draw(&child_ctx);
+        ctx.canvas.restore();
+    }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        canvas.finish();
+    }
+
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        if child_index != 1 || !std::ptr::eq(child, self.child.as_ref()) {
+            return None;
+        }
+        self.retained_child_layout(ctx)
+            .map(|(_, _, child_context)| child_context)
+    }
+
+    fn retained_v2_child_geometry_at(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        if child_index != 1 || !std::ptr::eq(child, self.child.as_ref()) {
+            return None;
+        }
+        let (size, offset, _) = self.retained_child_layout(ctx)?;
+        Some((
+            aimer_cupid::draw_cmd_v2::Rect::new(
+                offset.x / ctx.scale,
+                offset.y / ctx.scale,
+                size.width / ctx.scale,
+                size.height / ctx.scale,
+            ),
+            None,
+        ))
     }
 }
 
@@ -264,6 +315,49 @@ impl RawModal {
     fn contains_child(&self, position: Vec2d) -> bool {
         contains(&self.child_bounds, position)
     }
+
+    fn retained_child_layout<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+    ) -> Option<(ResolvedSize, Vec2d, BuildContext<'a>)> {
+        if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
+            return None;
+        }
+
+        let child_size = self.child.computed_size(ctx);
+        if !child_size.width.is_finite()
+            || !child_size.height.is_finite()
+            || child_size.width < 0.0
+            || child_size.height < 0.0
+        {
+            return None;
+        }
+        let (offset_x, offset_y) = alignment_offset(self.alignment, ctx.parent_size, child_size);
+        if !offset_x.is_finite() || !offset_y.is_finite() {
+            return None;
+        }
+        let offset = Vec2d {
+            x: offset_x,
+            y: offset_y,
+        };
+
+        let mut child_context = ctx.clone();
+        child_context.parent_size = child_size;
+        child_context.parent_pos = Vec2d {
+            x: ctx.parent_pos.x + offset.x,
+            y: ctx.parent_pos.y + offset.y,
+        };
+        child_context.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: child_size.width,
+            max_height: child_size.height,
+        };
+        child_context.visible_rect = ctx
+            .visible_rect
+            .map(|(x, y, width, height)| (x - offset.x, y - offset.y, width, height));
+        Some((child_size, offset, child_context))
+    }
 }
 
 impl LayoutElement for RawModal {
@@ -284,6 +378,14 @@ impl VisitorElement for RawModal {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.barrier.as_ref());
         visitor(self.child.as_ref());
+    }
+
+    fn visit_retained_v2_children<'a>(
+        &'a self,
+        visitor: &mut dyn FnMut(usize, &'a dyn Element),
+    ) {
+        visitor(0, self.barrier.as_ref());
+        visitor(1, self.child.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {

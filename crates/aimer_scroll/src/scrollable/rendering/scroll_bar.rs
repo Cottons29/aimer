@@ -2,9 +2,12 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
+use aimer_canvas::Canvas;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
+use aimer_cupid::draw_cmd_v2::Rect;
+use aimer_cupid::utilities::Color as V2Color;
 use aimer_widget::base::{BuildContext, Color, Colors};
 use aimer_widget::portable::__anteros::{WidgetDocumentView, WidgetNodeView};
 use aimer_widget::portable::PortableMaterializeError;
@@ -191,6 +194,7 @@ struct ScrollBarRuntime {
     showing: Cell<bool>,
     transition_start: Cell<Option<aimer_utils::AnimInstant>>,
     transition_from: Cell<f32>,
+    v2_paint_snapshot: Cell<Option<ScrollBarPaint>>,
 }
 
 impl ScrollBarRuntime {
@@ -341,50 +345,122 @@ impl Drawable for RawScrollBar {
         };
         draw_scrollbar(ctx, ctrl, &self.config, self.runtime.as_ref());
     }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.ctrl.as_ref().is_none_or(|ctrl| {
+            scrollbar_geometry(ctx, ctrl, &self.config).is_ok()
+        })
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = Canvas::of(ctx);
+        let paint = self.ctrl.as_ref().and_then(|ctrl| {
+            prepare_scrollbar_paint(
+                ctx,
+                ctrl,
+                &self.config,
+                self.runtime.as_ref(),
+            )
+        });
+        if let Some(paint) = paint {
+            paint_scrollbar_local_v2(&canvas, ctx.scale, paint);
+        }
+        canvas.finish();
+        self.runtime.v2_paint_snapshot.set(paint);
+    }
+
+    fn local_v2_paint_needs_recording(&self, ctx: &BuildContext) -> bool {
+        let paint = self.ctrl.as_ref().and_then(|ctrl| {
+            prepare_scrollbar_paint(
+                ctx,
+                ctrl,
+                &self.config,
+                self.runtime.as_ref(),
+            )
+        });
+        self.runtime.v2_paint_snapshot.get() != paint
+    }
 }
 
-fn draw_scrollbar(
+#[derive(Clone, Copy, PartialEq)]
+struct ScrollBarButtonPaint {
+    pos: Vec2d,
+    size: ResolvedSize,
+    color: Color,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct ScrollBarPaint {
+    alpha: f32,
+    track_width: f32,
+    track_length: f32,
+    track_color: Color,
+    up_button: Option<ScrollBarButtonPaint>,
+    down_button: Option<ScrollBarButtonPaint>,
+    thumb_pos: Vec2d,
+    thumb_size: ResolvedSize,
+    thumb_radius: f32,
+    thumb_color: Color,
+    hit_rect: (f32, f32, f32, f32),
+    multiplier: f32,
+    is_vertical: bool,
+}
+
+fn resolve_button_extent(
+    button: &ScrollButton,
+    is_vertical: bool,
+    track_width: f32,
+    track_length: f32,
+    scale: f32,
+) -> f32 {
+    let dimension = if is_vertical {
+        button.height
+    } else {
+        button.width
+    };
+    match dimension {
+        Dimension::Px(value) => value * scale,
+        Dimension::Percent(percent) => track_length * (percent / 100.0),
+        Dimension::Auto => track_width,
+    }
+}
+
+fn scrollbar_geometry(
     ctx: &BuildContext,
     ctrl: &ScrollState,
     scroll_bar: &ScrollBar,
-    runtime: &ScrollBarRuntime,
-) {
+) -> Result<Option<ScrollBarPaint>, ()> {
+    let scale = ctx.scale;
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err(());
+    }
     let (viewport_w, viewport_h) = ctrl.cached_viewport.get();
     let offset = ctrl.visual_offset(ctrl.scroll_offset.get());
     let is_vertical = matches!(ctrl.axis, ScrollAxis::Vertical);
-    let scale = ctx.scale;
-    let track_width = track_width(scroll_bar, if is_vertical { viewport_w } else { viewport_h }, scale);
+    let track_width = track_width(
+        scroll_bar,
+        if is_vertical { viewport_w } else { viewport_h },
+        scale,
+    );
     let content_size = ctrl.cached_content_size.get();
     let (track_length, content_extent, scroll_pos) = if is_vertical {
         (viewport_h, content_size.height, -offset.y)
     } else {
         (viewport_w, content_size.width, -offset.x)
     };
+    if [viewport_w, viewport_h, track_width, track_length, content_extent, scroll_pos]
+        .iter()
+        .any(|value| !value.is_finite())
+        || viewport_w < 0.0
+        || viewport_h < 0.0
+        || track_width < 0.0
+        || track_length < 0.0
+        || content_extent < 0.0
+    {
+        return Err(());
+    }
     if content_extent <= track_length + 0.01 {
-        runtime.hide();
-        if is_vertical {
-            ctrl.v_thumb_rect.set(None);
-        } else {
-            ctrl.h_thumb_rect.set(None);
-        }
-        return;
-    }
-
-    let alpha = runtime.update(
-        ctrl.scroll_offset.get(),
-        ctrl.is_scrolling.get(),
-        aimer_utils::AnimInstant::now(),
-    );
-    if runtime.transition_start.get().is_some() {
-        ctrl.request_animation_frame();
-    }
-    if alpha <= 0.0 {
-        return;
-    }
-    if is_vertical {
-        ctrl.cached_v_track_width.set(track_width);
-    } else {
-        ctrl.cached_h_track_width.set(track_width);
+        return Ok(None);
     }
 
     let thumb_width = match scroll_bar.thumb.width {
@@ -392,27 +468,30 @@ fn draw_scrollbar(
         Dimension::Percent(percent) => track_width * (percent / 100.0),
         Dimension::Auto => (track_width * 0.6).max(4.0),
     };
-    let button_extent = if is_vertical {
-        let resolve = |button: &ScrollButton| match button.height {
-            Dimension::Px(value) => value * scale,
-            Dimension::Percent(percent) => track_length * (percent / 100.0),
-            Dimension::Auto => track_width,
-        };
-        (
-            scroll_bar.up_button.as_ref().map(resolve).unwrap_or(0.0),
-            scroll_bar.down_button.as_ref().map(resolve).unwrap_or(0.0),
-        )
-    } else {
-        let resolve = |button: &ScrollButton| match button.width {
-            Dimension::Px(value) => value * scale,
-            Dimension::Percent(percent) => track_length * (percent / 100.0),
-            Dimension::Auto => track_width,
-        };
-        (
-            scroll_bar.up_button.as_ref().map(resolve).unwrap_or(0.0),
-            scroll_bar.down_button.as_ref().map(resolve).unwrap_or(0.0),
-        )
+    let button_extent = (
+        scroll_bar
+            .up_button
+            .as_ref()
+            .map(|button| resolve_button_extent(button, is_vertical, track_width, track_length, scale))
+            .unwrap_or(0.0),
+        scroll_bar
+            .down_button
+            .as_ref()
+            .map(|button| resolve_button_extent(button, is_vertical, track_width, track_length, scale))
+            .unwrap_or(0.0),
+    );
+    let thumb_radius = match scroll_bar.thumb.radius {
+        Dimension::Px(value) => value * scale,
+        Dimension::Percent(percent) => thumb_width * (percent / 100.0),
+        Dimension::Auto => thumb_width / 2.0,
     };
+    if [thumb_width, button_extent.0, button_extent.1, thumb_radius]
+        .iter()
+        .any(|value| !value.is_finite() || *value < 0.0)
+    {
+        return Err(());
+    }
+
     let usable_track = (track_length - button_extent.0 - button_extent.1).max(0.0);
     let thumb_ratio = (track_length / content_extent).min(1.0);
     let thumb_length = (usable_track * thumb_ratio).max(20.0 * scale);
@@ -423,25 +502,17 @@ fn draw_scrollbar(
     } else {
         0.0
     };
-    if is_vertical {
-        ctrl.v_scroll_multiplier.set(multiplier);
-    } else {
-        ctrl.h_scroll_multiplier.set(multiplier);
-    }
     let scroll_ratio = if max_scroll > 0.0 {
         scroll_pos.clamp(0.0, max_scroll) / max_scroll
     } else {
         0.0
     };
     let thumb_offset = button_extent.0 + scroll_ratio * max_thumb_move;
-    let thumb_radius = match scroll_bar.thumb.radius {
-        Dimension::Px(value) => value * scale,
-        Dimension::Percent(percent) => thumb_width * (percent / 100.0),
-        Dimension::Auto => thumb_width / 2.0,
-    };
-
-    ctx.canvas.save();
-    ctx.canvas.set_alpha(alpha);
+    let thumb_cross_offset = (track_width - thumb_width) / 2.0;
+    let cross_offset = ctrl.scroll_bar_placement.cross_offset(
+        if is_vertical { viewport_w } else { viewport_h },
+        track_width,
+    );
     let is_active = if is_vertical {
         ctrl.drag_mode.get() == DragMode::VerticalScrollbar
     } else {
@@ -459,64 +530,6 @@ fn draw_scrollbar(
     } else {
         scroll_bar.track.color.into()
     };
-    let (track_w, track_h) = if is_vertical {
-        (track_width, track_length)
-    } else {
-        (track_length, track_width)
-    };
-    ctx.canvas.fill_color_rect(
-        Vec2d::ZERO,
-        ResolvedSize {
-            width: track_w,
-            height: track_h,
-        },
-        track_color,
-        [0.0; 4],
-    );
-
-    if let Some(button) = scroll_bar.up_button.as_ref() {
-        let color: Color = button.color.into();
-        let (width, height) = if is_vertical {
-            (track_width, button_extent.0)
-        } else {
-            (button_extent.0, track_width)
-        };
-        ctx.canvas.fill_color_rect(
-            Vec2d::ZERO,
-            ResolvedSize { width, height },
-            color,
-            [0.0; 4],
-        );
-    }
-    if let Some(button) = scroll_bar.down_button.as_ref() {
-        let color: Color = button.color.into();
-        let (pos, width, height) = if is_vertical {
-            (
-                Vec2d {
-                    x: 0.0,
-                    y: track_length - button_extent.1,
-                },
-                track_width,
-                button_extent.1,
-            )
-        } else {
-            (
-                Vec2d {
-                    x: track_length - button_extent.1,
-                    y: 0.0,
-                },
-                button_extent.1,
-                track_width,
-            )
-        };
-        ctx.canvas.fill_color_rect(
-            pos,
-            ResolvedSize { width, height },
-            color,
-            [0.0; 4],
-        );
-    }
-
     let thumb_color: Color = if is_active {
         scroll_bar.thumb.active_color.into()
     } else if is_hover {
@@ -524,18 +537,7 @@ fn draw_scrollbar(
     } else {
         scroll_bar.thumb.color.into()
     };
-    let thumb_cross_offset = (track_width - thumb_width) / 2.0;
-    let cross_offset = ctrl.scroll_bar_placement.cross_offset(
-        if is_vertical { viewport_w } else { viewport_h },
-        track_width,
-    );
-    let (thumb_pos, thumb_size, rect) = if is_vertical {
-        let rect = (
-            cross_offset + thumb_cross_offset,
-            thumb_offset,
-            thumb_width,
-            thumb_length,
-        );
+    let (thumb_pos, thumb_size, hit_rect) = if is_vertical {
         (
             Vec2d {
                 x: thumb_cross_offset,
@@ -545,15 +547,14 @@ fn draw_scrollbar(
                 width: thumb_width,
                 height: thumb_length,
             },
-            rect,
+            (
+                cross_offset + thumb_cross_offset,
+                thumb_offset,
+                thumb_width,
+                thumb_length,
+            ),
         )
     } else {
-        let rect = (
-            thumb_offset,
-            cross_offset + thumb_cross_offset,
-            thumb_length,
-            thumb_width,
-        );
         (
             Vec2d {
                 x: thumb_offset,
@@ -563,17 +564,242 @@ fn draw_scrollbar(
                 width: thumb_length,
                 height: thumb_width,
             },
-            rect,
+            (
+                thumb_offset,
+                cross_offset + thumb_cross_offset,
+                thumb_length,
+                thumb_width,
+            ),
         )
     };
-    if is_vertical {
-        ctrl.v_thumb_rect.set(Some(rect));
-    } else {
-        ctrl.h_thumb_rect.set(Some(rect));
+    let button_paint = |button: Option<&ScrollButton>, start: bool| {
+        button.map(|button| {
+            let extent = if start { button_extent.0 } else { button_extent.1 };
+            let (pos, size) = if is_vertical {
+                (
+                    if start {
+                        Vec2d::ZERO
+                    } else {
+                        Vec2d {
+                            x: 0.0,
+                            y: track_length - extent,
+                        }
+                    },
+                    ResolvedSize {
+                        width: track_width,
+                        height: extent,
+                    },
+                )
+            } else {
+                (
+                    if start {
+                        Vec2d::ZERO
+                    } else {
+                        Vec2d {
+                            x: track_length - extent,
+                            y: 0.0,
+                        }
+                    },
+                    ResolvedSize {
+                        width: extent,
+                        height: track_width,
+                    },
+                )
+            };
+            ScrollBarButtonPaint {
+                pos,
+                size,
+                color: button.color.into(),
+            }
+        })
+    };
+    let up_button = button_paint(scroll_bar.up_button.as_ref(), true);
+    let down_button = button_paint(scroll_bar.down_button.as_ref(), false);
+    let geometry_values = [
+        usable_track,
+        thumb_ratio,
+        thumb_length,
+        max_thumb_move,
+        max_scroll,
+        multiplier,
+        scroll_ratio,
+        thumb_offset,
+        thumb_cross_offset,
+        cross_offset,
+        thumb_pos.x,
+        thumb_pos.y,
+        thumb_size.width,
+        thumb_size.height,
+        hit_rect.0,
+        hit_rect.1,
+        hit_rect.2,
+        hit_rect.3,
+    ];
+    if geometry_values
+        .iter()
+        .any(|value| !value.is_finite() || !(value / scale).is_finite())
+        || [up_button, down_button]
+            .into_iter()
+            .flatten()
+            .flat_map(|button| {
+                [
+                    button.pos.x,
+                    button.pos.y,
+                    button.size.width,
+                    button.size.height,
+                ]
+            })
+            .any(|value| !value.is_finite() || !(value / scale).is_finite())
+    {
+        return Err(());
     }
-    ctx.canvas.fill_color_rect(thumb_pos, thumb_size, thumb_color, [thumb_radius; 4]);
+
+    Ok(Some(ScrollBarPaint {
+        alpha: 1.0,
+        track_width,
+        track_length,
+        track_color,
+        up_button,
+        down_button,
+        thumb_pos,
+        thumb_size,
+        thumb_radius,
+        thumb_color,
+        hit_rect,
+        multiplier,
+        is_vertical,
+    }))
+}
+
+fn prepare_scrollbar_paint(
+    ctx: &BuildContext,
+    ctrl: &ScrollState,
+    scroll_bar: &ScrollBar,
+    runtime: &ScrollBarRuntime,
+) -> Option<ScrollBarPaint> {
+    let paint = match scrollbar_geometry(ctx, ctrl, scroll_bar) {
+        Ok(Some(paint)) => paint,
+        Ok(None) => {
+            runtime.hide();
+            if matches!(ctrl.axis, ScrollAxis::Vertical) {
+                ctrl.v_thumb_rect.set(None);
+            } else {
+                ctrl.h_thumb_rect.set(None);
+            }
+            return None;
+        }
+        Err(()) => return None,
+    };
+    let alpha = runtime.update(
+        ctrl.scroll_offset.get(),
+        ctrl.is_scrolling.get(),
+        aimer_utils::AnimInstant::now(),
+    );
+    if runtime.transition_start.get().is_some() {
+        ctrl.request_animation_frame();
+    }
+    if alpha <= 0.0 {
+        return None;
+    }
+
+    if paint.is_vertical {
+        ctrl.cached_v_track_width.set(paint.track_width);
+        ctrl.v_scroll_multiplier.set(paint.multiplier);
+        ctrl.v_thumb_rect.set(Some(paint.hit_rect));
+    } else {
+        ctrl.cached_h_track_width.set(paint.track_width);
+        ctrl.h_scroll_multiplier.set(paint.multiplier);
+        ctrl.h_thumb_rect.set(Some(paint.hit_rect));
+    }
+    Some(ScrollBarPaint { alpha, ..paint })
+}
+
+fn local_rect(pos: Vec2d, size: ResolvedSize, scale: f32) -> Rect {
+    Rect::new(
+        pos.x / scale,
+        pos.y / scale,
+        size.width / scale,
+        size.height / scale,
+    )
+}
+
+fn draw_scrollbar(
+    ctx: &BuildContext,
+    ctrl: &ScrollState,
+    scroll_bar: &ScrollBar,
+    runtime: &ScrollBarRuntime,
+) {
+    let Some(paint) = prepare_scrollbar_paint(ctx, ctrl, scroll_bar, runtime) else {
+        return;
+    };
+    let track_size = if paint.is_vertical {
+        ResolvedSize {
+            width: paint.track_width,
+            height: paint.track_length,
+        }
+    } else {
+        ResolvedSize {
+            width: paint.track_length,
+            height: paint.track_width,
+        }
+    };
+    ctx.canvas.save();
+    ctx.canvas.set_alpha(paint.alpha);
+    ctx.canvas.fill_color_rect(Vec2d::ZERO, track_size, paint.track_color, [0.0; 4]);
+    if let Some(button) = paint.up_button {
+        ctx.canvas
+            .fill_color_rect(button.pos, button.size, button.color, [0.0; 4]);
+    }
+    if let Some(button) = paint.down_button {
+        ctx.canvas
+            .fill_color_rect(button.pos, button.size, button.color, [0.0; 4]);
+    }
+    ctx.canvas.fill_color_rect(
+        paint.thumb_pos,
+        paint.thumb_size,
+        paint.thumb_color,
+        [paint.thumb_radius; 4],
+    );
     ctx.canvas.restore_alpha();
     ctx.canvas.restore();
+}
+
+fn paint_scrollbar_local_v2(canvas: &Canvas, scale: f32, paint: ScrollBarPaint) {
+    let track_size = if paint.is_vertical {
+        ResolvedSize {
+            width: paint.track_width,
+            height: paint.track_length,
+        }
+    } else {
+        ResolvedSize {
+            width: paint.track_length,
+            height: paint.track_width,
+        }
+    };
+    canvas.set_alpha(paint.alpha);
+    let (track_red, track_green, track_blue, track_alpha) = paint.track_color.to_rgba();
+    canvas.fill_rect(
+        local_rect(Vec2d::ZERO, track_size, scale),
+        [track_red, track_green, track_blue, track_alpha],
+    );
+    for button in [paint.up_button, paint.down_button].into_iter().flatten() {
+        let (red, green, blue, alpha) = button.color.to_rgba();
+        canvas.fill_rect(
+            local_rect(button.pos, button.size, scale),
+            [red, green, blue, alpha],
+        );
+    }
+    let (thumb_red, thumb_green, thumb_blue, thumb_alpha) = paint.thumb_color.to_rgba();
+    canvas.fill_rect_styled(
+        local_rect(paint.thumb_pos, paint.thumb_size, scale),
+        V2Color::rgba8(thumb_red, thumb_green, thumb_blue, thumb_alpha),
+        [paint.thumb_radius / scale; 4],
+        [0.0; 4],
+        V2Color::transparent(),
+        [0.0; 4],
+        V2Color::transparent(),
+    );
+    canvas.restore_alpha();
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use hashbrown::DefaultHashBuilder;
 
+use crate::draw_cmd_v2::ImageResource;
 use crate::font::{FontFamily, FontStyle, TextLanguage};
 use crate::svg::{SvgNodeStyleOverride, SvgScene};
 use crate::text_pipeline::{TextOverflowMode, TextShadowRequest};
@@ -402,6 +403,11 @@ pub enum DrawCommand {
         rect: Rect,
         texture_id: TextureId,
     },
+    /// Draws an image while retaining the pixels needed to upload its texture.
+    DrawImageWithResource {
+        rect: Rect,
+        resource: Arc<ImageResource>,
+    },
     /// Composite a renderer-owned texture containing a retained static
     /// subtree. The content is kept alongside the command so the renderer can
     /// rasterize it on the first use or after invalidation, while later frames
@@ -656,6 +662,24 @@ fn retained_layer_size_is_supported(width: f32, height: f32) -> bool {
 }
 
 impl DrawCommand {
+    #[inline]
+    fn is_paint_command(&self) -> bool {
+        matches!(
+            self,
+            Self::FillRect { .. }
+                | Self::ClearRect { .. }
+                | Self::DrawText { .. }
+                | Self::DrawRichText { .. }
+                | Self::DrawTextDecoration { .. }
+                | Self::DrawImage { .. }
+                | Self::DrawImageWithResource { .. }
+                | Self::RetainedLayer { .. }
+                | Self::Svg { .. }
+                | Self::DrawShadowRect { .. }
+                | Self::Custom { .. }
+        )
+    }
+
     /// Clones only command payloads that are safe and cheap to replay.
     fn clone_for_retention(&self) -> Option<Self> {
         Some(match self {
@@ -748,6 +772,10 @@ impl DrawCommand {
                 rect: *rect,
                 texture_id: *texture_id,
             },
+            Self::DrawImageWithResource { rect, resource } => Self::DrawImageWithResource {
+                rect: *rect,
+                resource: resource.clone(),
+            },
             Self::RetainedLayer { .. } => return None,
             Self::Svg {
                 scene,
@@ -817,6 +845,7 @@ pub struct DrawList {
     commands: Vec<DrawCommand>,
     transform_stack: Vec<Mat3>,
     current_transform: Mat3,
+    paint_command_suppression_depth: usize,
     texture_sizes: HashMap<TextureId, TextureMetadata>,
     texture_registry: Arc<TextureRegistry>,
     referenced_textures: HashSet<TextureId>,
@@ -852,6 +881,7 @@ impl DrawList {
             commands: Vec::with_capacity(16),
             transform_stack: Vec::with_capacity(16),
             current_transform: Mat3::identity(),
+            paint_command_suppression_depth: 0,
             texture_sizes: HashMap::new(),
             texture_registry,
             referenced_textures: HashSet::new(),
@@ -865,8 +895,39 @@ impl DrawList {
         self.current_transform = Mat3::identity();
     }
 
+    #[inline]
     pub fn push(&mut self, cmd: DrawCommand) {
-        self.commands.push(cmd);
+        if self.paint_command_suppression_depth == 0 || !cmd.is_paint_command() {
+            self.commands.push(cmd);
+        }
+    }
+
+    #[inline]
+    fn push_paint_command(&mut self, cmd: DrawCommand) {
+        if !self.is_suppressing_paint_commands() {
+            self.commands.push(cmd);
+        }
+    }
+
+    pub(crate) fn suppress_paint_commands(&mut self) -> usize {
+        let previous_depth = self.paint_command_suppression_depth;
+        self.paint_command_suppression_depth = previous_depth.saturating_add(1);
+        previous_depth
+    }
+
+    pub(crate) fn suspend_paint_command_suppression(&mut self) -> usize {
+        let previous_depth = self.paint_command_suppression_depth;
+        self.paint_command_suppression_depth = 0;
+        previous_depth
+    }
+
+    pub(crate) fn restore_paint_command_suppression(&mut self, depth: usize) {
+        self.paint_command_suppression_depth = depth;
+    }
+
+    #[inline]
+    pub(crate) fn is_suppressing_paint_commands(&self) -> bool {
+        self.paint_command_suppression_depth != 0
     }
 
     pub fn fill_rect(
@@ -877,7 +938,7 @@ impl DrawList {
         border_width: [f32; 4],
         border_color: Color,
     ) {
-        self.commands.push(DrawCommand::FillRect {
+        self.push_paint_command(DrawCommand::FillRect {
             rect,
             color,
             border_radius,
@@ -892,6 +953,9 @@ impl DrawList {
     /// `pipeline_name` must match `CustomPipelineGeneric::name()` of a registered
     /// pipeline. `data` is forwarded to its `prepare_command()` hook.
     pub fn draw_custom(&mut self, pipeline_name: impl Into<String>, data: impl Any + Send) {
+        if self.is_suppressing_paint_commands() {
+            return;
+        }
         self.commands.push(DrawCommand::Custom {
             pipeline_name: pipeline_name.into(),
             data: Box::new(data),
@@ -907,7 +971,7 @@ impl DrawList {
         inset: bool,
         side_params: [f32; 3],
     ) {
-        self.commands.push(DrawCommand::DrawShadowRect {
+        self.push_paint_command(DrawCommand::DrawShadowRect {
             rect,
             shadow_color,
             shadow_params,
@@ -928,7 +992,7 @@ impl DrawList {
         outline_width: [f32; 4],
         outline_color: Color,
     ) {
-        self.commands.push(DrawCommand::FillRect {
+        self.push_paint_command(DrawCommand::FillRect {
             rect,
             color,
             border_radius,
@@ -940,13 +1004,25 @@ impl DrawList {
     }
 
     pub fn clear_rect(&mut self, rect: Rect) {
-        self.commands.push(DrawCommand::ClearRect { rect });
+        self.push_paint_command(DrawCommand::ClearRect { rect });
     }
 
     pub fn draw_image(&mut self, rect: Rect, texture_id: TextureId) {
+        if self.is_suppressing_paint_commands() {
+            return;
+        }
         self.retain_texture_reference(texture_id);
+        self.commands.push(DrawCommand::DrawImage { rect, texture_id });
+    }
+
+    /// Records a draw while retaining the pixels needed to restore its texture.
+    pub fn draw_image_with_resource(&mut self, rect: Rect, resource: Arc<ImageResource>) {
+        if self.is_suppressing_paint_commands() {
+            return;
+        }
+        self.retain_texture_reference(resource.texture_id());
         self.commands
-            .push(DrawCommand::DrawImage { rect, texture_id });
+            .push(DrawCommand::DrawImageWithResource { rect, resource });
     }
 
     /// Records one compositor layer draw without expanding its retained
@@ -957,6 +1033,9 @@ impl DrawList {
         rect: Rect,
         content: Arc<RetainedLayerContent>,
     ) {
+        if self.is_suppressing_paint_commands() {
+            return;
+        }
         if !retained_layer_size_is_supported(rect.width, rect.height)
             || !content.is_compositor_safe()
         {
@@ -980,7 +1059,7 @@ impl DrawList {
         destination: Rect,
         overrides: Arc<[SvgNodeStyleOverride]>,
     ) {
-        self.commands.push(DrawCommand::Svg {
+        self.push_paint_command(DrawCommand::Svg {
             scene,
             destination,
             overrides,
@@ -1045,7 +1124,7 @@ impl DrawList {
         font_weight: u16,
         shadow: TextShadowRequest,
     ) {
-        self.commands.push(DrawCommand::DrawText {
+        self.push_paint_command(DrawCommand::DrawText {
             position,
             text,
             font_size,
@@ -1105,7 +1184,7 @@ impl DrawList {
         font_style: FontStyle,
         font_weight: u16,
     ) {
-        self.commands.push(DrawCommand::DrawText {
+        self.push_paint_command(DrawCommand::DrawText {
             position,
             text,
             font_size,
@@ -1151,7 +1230,7 @@ impl DrawList {
         bounds_height: Option<f32>,
         overflow: TextOverflowMode,
     ) {
-        self.commands.push(DrawCommand::DrawRichText {
+        self.push_paint_command(DrawCommand::DrawRichText {
             position,
             spans,
             font_size,
@@ -1170,7 +1249,7 @@ impl DrawList {
         thickness: f32,
         period: f32,
     ) {
-        self.commands.push(DrawCommand::DrawTextDecoration {
+        self.push_paint_command(DrawCommand::DrawTextDecoration {
             rect,
             color,
             style,
@@ -1216,21 +1295,37 @@ impl DrawList {
         self.commands.push(DrawCommand::RestoreAlpha);
     }
 
-    pub fn load_image(&mut self, bytes: &[u8], width: u32, height: u32) -> TextureId {
+    /// Returns the content-based texture ID used by [`Self::load_image`].
+    #[doc(hidden)]
+    pub fn image_texture_id(bytes: &[u8], width: u32, height: u32) -> TextureId {
         // Hash only a small sample of the buffer to avoid O(n) cost on large images.
-        let texture_id = {
-            let mut hasher = IMAGE_TEXTURE_HASHER
-                .get_or_init(DefaultHashBuilder::default)
-                .build_hasher();
-            width.hash(&mut hasher);
-            height.hash(&mut hasher);
-            let sample_len = 256.min(bytes.len());
-            if sample_len > 0 {
-                bytes[..sample_len].hash(&mut hasher);
-                bytes[bytes.len() - sample_len..].hash(&mut hasher);
-            }
-            hasher.finish() as u32
-        };
+        let mut hasher = IMAGE_TEXTURE_HASHER
+            .get_or_init(DefaultHashBuilder::default)
+            .build_hasher();
+        width.hash(&mut hasher);
+        height.hash(&mut hasher);
+        let sample_len = 256.min(bytes.len());
+        if sample_len > 0 {
+            bytes[..sample_len].hash(&mut hasher);
+            bytes[bytes.len() - sample_len..].hash(&mut hasher);
+        }
+        hasher.finish() as u32
+    }
+
+    /// Returns a content revision for retained resources, hashing every pixel.
+    #[doc(hidden)]
+    pub fn image_content_revision(bytes: &[u8], width: u32, height: u32) -> u64 {
+        let mut hasher = IMAGE_TEXTURE_HASHER
+            .get_or_init(DefaultHashBuilder::default)
+            .build_hasher();
+        width.hash(&mut hasher);
+        height.hash(&mut hasher);
+        bytes.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    pub fn load_image(&mut self, bytes: &[u8], width: u32, height: u32) -> TextureId {
+        let texture_id = Self::image_texture_id(bytes, width, height);
         if self.has_queued_image(texture_id) {
             return texture_id;
         }
@@ -1378,6 +1473,56 @@ impl DrawList {
         &self.commands
     }
 
+    /// Moves the current command stream out while preserving its resource
+    /// registry and texture references for mixed v2/legacy frame composition.
+    pub(crate) fn take_commands_for_composition(&mut self) -> Vec<DrawCommand> {
+        self.transform_stack.clear();
+        self.current_transform = Mat3::identity();
+        std::mem::take(&mut self.commands)
+    }
+
+    /// Reconciles texture retention with the command stream after composition.
+    pub(crate) fn sync_composed_texture_references(&mut self) {
+        self.sync_composed_texture_references_with_ids(std::iter::empty());
+    }
+
+    /// Reconciles texture retention after composition and keeps IDs referenced
+    /// by element-local v2 lists alive even though they are not in this legacy
+    /// command stream.
+    pub(crate) fn sync_composed_texture_references_with_ids(
+        &mut self,
+        additional_texture_ids: impl IntoIterator<Item = TextureId>,
+    ) {
+        let mut needed = HashSet::new();
+        for command in &self.commands {
+            match command {
+                DrawCommand::DrawImage { texture_id, .. } => {
+                    needed.insert(*texture_id);
+                }
+                DrawCommand::DrawImageWithResource { resource, .. } => {
+                    needed.insert(resource.texture_id());
+                }
+                DrawCommand::RetainedLayer { content, .. } => {
+                    needed.extend(content.texture_ids().iter().copied());
+                }
+                _ => {}
+            }
+        }
+        needed.extend(additional_texture_ids);
+
+        let previous = std::mem::take(&mut self.referenced_textures);
+        for texture_id in previous {
+            if needed.contains(&texture_id) {
+                self.referenced_textures.insert(texture_id);
+            } else {
+                self.texture_registry.release_reference(texture_id);
+            }
+        }
+        for texture_id in needed {
+            self.retain_texture_reference(texture_id);
+        }
+    }
+
     /// Takes a snapshot when every command in this list can be replayed
     /// without cloning owned byte buffers or custom pipeline state.
     ///
@@ -1396,6 +1541,9 @@ impl DrawList {
     /// destination list so renderer eviction cannot remove a texture used by
     /// this frame's replay.
     pub(crate) fn append_retained(&mut self, retained: &RetainedDrawList, base: Mat3) {
+        if self.is_suppressing_paint_commands() {
+            return;
+        }
         for texture_id in retained.texture_ids() {
             self.retain_texture_reference(*texture_id);
         }
@@ -1420,7 +1568,9 @@ impl DrawList {
                 DrawCommand::DrawText { .. }
                 | DrawCommand::DrawRichText { .. }
                 | DrawCommand::DrawTextDecoration { .. } => stats.text_commands += 1,
-                DrawCommand::DrawImage { .. } => stats.image_draws += 1,
+                DrawCommand::DrawImage { .. } | DrawCommand::DrawImageWithResource { .. } => {
+                    stats.image_draws += 1;
+                }
                 DrawCommand::RetainedLayer { .. } => stats.retained_layers += 1,
                 DrawCommand::LoadImage { .. } | DrawCommand::LoadImageWithId { .. } => {
                     stats.image_uploads += 1;
@@ -1439,6 +1589,9 @@ impl DrawList {
     pub fn has_texture_id(&self, texture_id: TextureId) -> bool {
         self.commands.iter().any(|cmd| match cmd {
             DrawCommand::DrawImage { texture_id: id, .. } => *id == texture_id,
+            DrawCommand::DrawImageWithResource { resource, .. } => {
+                resource.texture_id() == texture_id
+            }
             DrawCommand::RetainedLayer { content, .. } => {
                 content.texture_ids().contains(&texture_id)
             }

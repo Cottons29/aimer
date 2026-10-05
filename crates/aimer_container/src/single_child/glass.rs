@@ -718,6 +718,70 @@ impl Drawable for RawGlass {
         ctx.canvas.restore();
     }
 
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite()
+            && ctx.scale > 0.0
+            && logical_size(ctx, self.child.computed_size(ctx)).is_some()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        let material = self.material.normalized();
+        if let Some(size) = logical_size(ctx, self.child.computed_size(ctx))
+            && size.width > 0.0
+            && size.height > 0.0
+        {
+            let radii = resolved_radii(material.corner_radii_value(), size);
+            let shadow = material.fallback_shadow();
+            if shadow.alpha() != 0 && material.shadow_blur_value() > 0.0 {
+                canvas.draw_shadow_rect(
+                    aimer_cupid::utilities::Rect::new(0.0, 0.0, size.width, size.height),
+                    v2_color(shadow),
+                    [0.0, material.elevation_value(), material.shadow_blur_value(), 0.0],
+                    radii,
+                    false,
+                    [0.0; 3],
+                );
+            }
+            let border = material.fallback_border();
+            let border_width = if border.alpha() == 0 {
+                [0.0; 4]
+            } else {
+                [material.border_width_value(); 4]
+            };
+            canvas.fill_rect_styled(
+                aimer_cupid::utilities::Rect::new(0.0, 0.0, size.width, size.height),
+                v2_color(material.fallback_tint()),
+                radii,
+                border_width,
+                v2_color(border),
+                [0.0; 4],
+                aimer_cupid::utilities::Color::transparent(),
+            );
+            canvas.draw_material(build_material_request(
+                MaterialKind::Glass,
+                material,
+                size,
+                0.0,
+                material.edge_lighting_value(),
+                material.specular_highlight_value(),
+                0.0,
+                0.0,
+                0.0,
+                [0.0; 6],
+            ));
+        }
+        canvas.finish();
+    }
+
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.child.draw(ctx);
+    }
+
+    fn retained_v2_paint_outsets(&self, _ctx: &BuildContext) -> Option<[f32; 4]> {
+        shadow_outsets(self.material.normalized())
+    }
+
     #[inline]
     fn is_paint_stable(&self) -> bool {
         // The material samples the current framebuffer backdrop and its
@@ -807,7 +871,32 @@ fn with_opacity(color: Color, opacity: f32) -> Color {
 }
 
 #[inline]
-fn resolved_radii(radii: [f32; 4], size: ResolvedSize) -> [f32; 4] {
+pub(super) fn logical_size(ctx: &BuildContext, size: ResolvedSize) -> Option<ResolvedSize> {
+    let scale = ctx.scale;
+    if !scale.is_finite() || scale <= 0.0 || !size.width.is_finite() || !size.height.is_finite() {
+        return None;
+    }
+    Some(ResolvedSize {
+        width: size.width / scale,
+        height: size.height / scale,
+    })
+}
+
+pub(super) fn shadow_outsets(material: GlassMaterial) -> Option<[f32; 4]> {
+    if material.fallback_shadow().alpha() == 0 || material.shadow_blur_value() <= 0.0 {
+        return None;
+    }
+    let blur = (material.shadow_blur_value() * 3.0).ceil();
+    let elevation = material.elevation_value();
+    Some([blur, blur, blur, blur + elevation])
+}
+
+pub(super) fn v2_color(color: Color) -> aimer_cupid::utilities::Color {
+    let (red, green, blue, alpha) = color.to_rgba();
+    aimer_cupid::utilities::Color::rgba8(red, green, blue, alpha)
+}
+
+pub(super) fn resolved_radii(radii: [f32; 4], size: ResolvedSize) -> [f32; 4] {
     let limit = (size.width.min(size.height) * 0.5).max(0.0);
     radii.map(|radius| radius.min(limit))
 }

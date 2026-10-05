@@ -437,7 +437,7 @@ fn a_stationary_touch_hold_selects_without_another_pointer_event() {
     use std::cell::Cell;
 
     use aimer_attribute::ResolvedSize;
-    use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_canvas::{FrameCanvas, InnerCanvas};
     use aimer_widget::Drawable;
     use aimer_widget::base::BuildContext;
 
@@ -447,7 +447,7 @@ fn a_stationary_touch_hold_selects_without_another_pointer_event() {
         counted.set(counted.get() + 1);
     });
     let inner = InnerCanvas::new();
-    let canvas = Canvas::new(&inner);
+    let canvas = FrameCanvas::new(&inner);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();

@@ -1,7 +1,7 @@
 //! TEMPORARY diagnostic: measures the `LayoutCache` hit rate across the
 //! measure pass and the draw pass of a scroll-list-shaped tree.
 
-use aimer::canvas::{Canvas, InnerCanvas};
+use aimer::canvas::{FrameCanvas, InnerCanvas};
 use aimer::widget::base::WindowHandle;
 use aimer::widget::layout_cache::probe;
 use aimer::style::LayoutSpacing;
@@ -15,7 +15,7 @@ use aimer::{ScrollAxis, ScrollController, Scrollable};
 const VIEWPORT_W: f32 = 400.0;
 const VIEWPORT_H: f32 = 800.0;
 
-fn context<'a>(canvas: Canvas<'a>, runtime: &tokio::runtime::Runtime) -> BuildContext<'a> {
+fn context<'a>(canvas: FrameCanvas<'a>, runtime: &tokio::runtime::Runtime) -> BuildContext<'a> {
     let mut ctx = BuildContext::new(
         canvas,
         ResolvedSize {
@@ -86,7 +86,7 @@ fn frame_cost_while_scrolling() {
 
     let bench = |label: &str, scrolling: bool, make: fn(usize) -> AnyWidget| {
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let context = context(canvas, &runtime);
 
         let controller = ScrollController::new();

@@ -1,12 +1,11 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-#[cfg(feature = "event-tree-exp")]
+use aimer_canvas::Canvas;
+use aimer_cupid::draw_cmd_v2::Rect;
 use aimer_events::element::ElementEvent;
-#[cfg(feature = "event-tree-exp")]
 use aimer_events::pointer::{PointerButton, PointerInfo};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{Drawable, Element, LayoutElement};
-#[cfg(feature = "event-tree-exp")]
 use aimer_widget::{
     request_mouse_region_hover_reconciliation, with_deferred_mouse_region_hover_reconciliation,
 };
@@ -41,12 +40,209 @@ fn visible_travel(previous: Option<Vec2d>, offset: Vec2d) -> Vec2d {
     }
 }
 
+fn intersect_rect(left: Rect, right: Rect) -> Rect {
+    let x = left.x.max(right.x);
+    let y = left.y.max(right.y);
+    let right_edge = (left.x + left.width).min(right.x + right.width);
+    let bottom_edge = (left.y + left.height).min(right.y + right.height);
+    Rect::new(x, y, (right_edge - x).max(0.0), (bottom_edge - y).max(0.0))
+}
+
+#[cfg(not(feature = "portable-guest"))]
 #[inline]
 const fn retained_scroll_paint_supported(is_wasm: bool) -> bool {
     !is_wasm
 }
 
 impl<E: Element> Drawable for RawScrollableContainer<E> {
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        let size = self.layout_size(ctx);
+        ctx.scale.is_finite()
+            && ctx.scale > 0.0
+            && size.width.is_finite()
+            && size.height.is_finite()
+            && size.width >= 0.0
+            && size.height >= 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        Canvas::of(ctx).finish();
+    }
+
+    fn retained_v2_bounds(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.layout_size(ctx))
+    }
+
+    fn retained_v2_child_context<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+    ) -> Option<BuildContext<'a>> {
+        let (viewport_w, viewport_h) = self.viewport_size(ctx);
+        let viewport_w = viewport_w.min(1e7_f32);
+        let viewport_h = viewport_h.min(1e7_f32);
+
+        if child.id() == self.child.id() {
+            let mut child_ctx = ctx.clone();
+            child_ctx.box_constraint.min_width = child_ctx.box_constraint.min_width.min(viewport_w);
+            child_ctx.box_constraint.min_height = child_ctx.box_constraint.min_height.min(viewport_h);
+            child_ctx.box_constraint.max_width = viewport_w;
+            child_ctx.box_constraint.max_height = viewport_h;
+            child_ctx.parent_size = ResolvedSize {
+                width: viewport_w,
+                height: viewport_h,
+            };
+            match self.ctrl.axis {
+                ScrollAxis::Vertical => child_ctx.box_constraint.max_height = f32::MAX,
+                ScrollAxis::Horizontal => child_ctx.box_constraint.max_width = f32::MAX,
+            }
+            let offset = snap_scroll_offset(
+                self.ctrl.visual_offset(self.ctrl.scroll_offset.get()),
+            );
+            child_ctx.parent_pos.x += offset.x;
+            child_ctx.parent_pos.y += offset.y;
+            child_ctx.visible_rect = Some(cache_rect(
+                self.ctrl.axis,
+                Vec2d {
+                    x: -offset.x,
+                    y: -offset.y,
+                },
+                (viewport_w, viewport_h),
+                Vec2d::ZERO,
+            ));
+            return Some(child_ctx);
+        }
+
+        let mut bar_ctx = ctx.clone();
+        if self
+            .vertical_scroll_bar
+            .as_ref()
+            .is_some_and(|bar| bar.id() == child.id())
+        {
+            bar_ctx.box_constraint.max_width = self.vertical_bar_width;
+            bar_ctx.box_constraint.max_height = viewport_h;
+            bar_ctx.parent_size = ResolvedSize {
+                width: self.vertical_bar_width,
+                height: viewport_h,
+            };
+            bar_ctx.parent_pos.x += self.ctrl.scroll_bar_placement.cross_offset(
+                viewport_w,
+                self.vertical_bar_width,
+            );
+            return Some(bar_ctx);
+        }
+        if self
+            .horizontal_scroll_bar
+            .as_ref()
+            .is_some_and(|bar| bar.id() == child.id())
+        {
+            bar_ctx.box_constraint.max_width = viewport_w;
+            bar_ctx.box_constraint.max_height = self.horizontal_bar_height;
+            bar_ctx.parent_size = ResolvedSize {
+                width: viewport_w,
+                height: self.horizontal_bar_height,
+            };
+            bar_ctx.parent_pos.y += self.ctrl.scroll_bar_placement.cross_offset(
+                viewport_h,
+                self.horizontal_bar_height,
+            );
+            return Some(bar_ctx);
+        }
+        None
+    }
+
+    fn retained_v2_child_geometry(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+    ) -> Option<(Rect, Option<Rect>)> {
+        let scale = ctx.scale;
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let (viewport_w, viewport_h) = self.viewport_size(ctx);
+        let viewport_w = viewport_w.min(1e7_f32);
+        let viewport_h = viewport_h.min(1e7_f32);
+        if !viewport_w.is_finite() || !viewport_h.is_finite() {
+            return None;
+        }
+
+        if child.id() == self.child.id() {
+            let child_ctx = self.retained_v2_child_context(ctx, child)?;
+            let size = child.content_size(&child_ctx);
+            let position = child.pos().unwrap_or_default();
+            let offset = snap_scroll_offset(
+                self.ctrl.visual_offset(self.ctrl.scroll_offset.get()),
+            );
+            let x = position.x + offset.x;
+            let y = position.y + offset.y;
+            let bounds = Rect::new(
+                x / scale,
+                y / scale,
+                size.width / scale,
+                size.height / scale,
+            );
+            let viewport_clip = Rect::new(
+                -x / scale,
+                -y / scale,
+                viewport_w / scale,
+                viewport_h / scale,
+            );
+            let clip = child
+                .retained_clip(&child_ctx)
+                .map(|child_clip| intersect_rect(viewport_clip, child_clip))
+                .unwrap_or(viewport_clip);
+            return Some((bounds, Some(clip)));
+        }
+
+        if self
+            .vertical_scroll_bar
+            .as_ref()
+            .is_some_and(|bar| bar.id() == child.id())
+        {
+            let bar_ctx = self.retained_v2_child_context(ctx, child)?;
+            let size = child.content_size(&bar_ctx);
+            let bounds = if matches!(self.ctrl.axis, ScrollAxis::Vertical) {
+                Rect::new(
+                    self.ctrl
+                        .scroll_bar_placement
+                        .cross_offset(viewport_w, self.vertical_bar_width)
+                        / scale,
+                    0.0,
+                    size.width / scale,
+                    size.height / scale,
+                )
+            } else {
+                Rect::new(0.0, 0.0, 0.0, 0.0)
+            };
+            return Some((bounds, child.retained_clip(&bar_ctx)));
+        }
+
+        if self
+            .horizontal_scroll_bar
+            .as_ref()
+            .is_some_and(|bar| bar.id() == child.id())
+        {
+            let bar_ctx = self.retained_v2_child_context(ctx, child)?;
+            let size = child.content_size(&bar_ctx);
+            let bounds = if matches!(self.ctrl.axis, ScrollAxis::Horizontal) {
+                Rect::new(
+                    0.0,
+                    self.ctrl
+                        .scroll_bar_placement
+                        .cross_offset(viewport_h, self.horizontal_bar_height)
+                        / scale,
+                    size.width / scale,
+                    size.height / scale,
+                )
+            } else {
+                Rect::new(0.0, 0.0, 0.0, 0.0)
+            };
+            return Some((bounds, child.retained_clip(&bar_ctx)));
+        }
+        None
+    }
+
     fn draw(&self, ctx: &BuildContext) {
         // println!("Scrollable drawing child: {})", self.child.debug_name() );
 
@@ -249,6 +445,28 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         }
 
         let offset = self.ctrl.visual_offset(offset);
+        let snapped_offset = snap_scroll_offset(offset);
+        let travel = visible_travel(self.ctrl.last_drawn_offset.get(), snapped_offset);
+        if travel != Vec2d::ZERO
+            && ctx.is_rect_visible(0.0, 0.0, layout_size.width, layout_size.height)
+        {
+            // Moving retained content changes the pixels in the fixed
+            // viewport even though no widget state or layout bounds changed.
+            // Report that viewport before child hover reconciliation can add
+            // smaller damage rectangles and accidentally promote them all to
+            // a full-target repaint.
+            aimer_widget::PaintDamageTracker::new().mark_current_bounds_clipped(
+                ctx,
+                layout_size,
+                ResolvedSize {
+                    width: viewport_w.round(),
+                    height: viewport_h.round(),
+                },
+                true,
+            );
+        }
+        let content_moved = travel != Vec2d::ZERO;
+        self.ctrl.last_drawn_offset.set(Some(snapped_offset));
 
         // Clip to viewport
         ctx.canvas.save();
@@ -263,7 +481,6 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // Scroll offsets are already scaled into physical canvas coordinates.
         // Snap them directly so text keeps a stable rasterization phase while
         // moving and adjacent child edges cannot develop sub-pixel seams.
-        let snapped_offset = snap_scroll_offset(offset);
         let offset_x = snapped_offset.x;
         let offset_y = snapped_offset.y;
 
@@ -292,10 +509,6 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         // crosses the boundary, and that frame is the pause the user feels.
         // The extra content is still clipped on the GPU by the viewport clip
         // set above, so it costs nothing to draw.
-        let travel = visible_travel(self.ctrl.last_drawn_offset.get(), snapped_offset);
-        #[cfg(feature = "event-tree-exp")]
-        let content_moved = travel != Vec2d::ZERO;
-        self.ctrl.last_drawn_offset.set(Some(snapped_offset));
         child_ctx.visible_rect = Some(cache_rect(
             self.ctrl.axis,
             Vec2d {
@@ -306,22 +519,102 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             travel,
         ));
 
+        if aimer_widget::has_active_v2_render_tree() {
+            let scale = ctx.scale;
+            let child_pos = self.child.pos().unwrap_or_default();
+            let child_x = child_pos.x + offset_x;
+            let child_y = child_pos.y + offset_y;
+            let bounds = Rect::new(
+                child_x / scale,
+                child_y / scale,
+                content_size.width / scale,
+                content_size.height / scale,
+            );
+            let viewport_clip = Rect::new(
+                -child_x / scale,
+                -child_y / scale,
+                viewport_w / scale,
+                viewport_h / scale,
+            );
+            let clip = self
+                .child
+                .retained_clip(&child_ctx)
+                .map(|child_clip| intersect_rect(viewport_clip, child_clip))
+                .or(Some(viewport_clip));
+            let _ = aimer_widget::update_v2_render_node_geometry(
+                self.child.id(),
+                bounds,
+                clip,
+            );
+
+            if let Some(vertical_bar) = &self.vertical_scroll_bar {
+                let active = matches!(self.ctrl.axis, ScrollAxis::Vertical);
+                let bounds = if active {
+                    Rect::new(
+                        self.ctrl
+                            .scroll_bar_placement
+                            .cross_offset(viewport_w, self.vertical_bar_width)
+                            / scale,
+                        0.0,
+                        self.vertical_bar_width / scale,
+                        viewport_h / scale,
+                    )
+                } else {
+                    Rect::new(0.0, 0.0, 0.0, 0.0)
+                };
+                let _ = aimer_widget::update_v2_render_node_geometry(
+                    vertical_bar.id(),
+                    bounds,
+                    None,
+                );
+            }
+            if let Some(horizontal_bar) = &self.horizontal_scroll_bar {
+                let active = matches!(self.ctrl.axis, ScrollAxis::Horizontal);
+                let bounds = if active {
+                    Rect::new(
+                        0.0,
+                        self.ctrl
+                            .scroll_bar_placement
+                            .cross_offset(viewport_h, self.horizontal_bar_height)
+                            / scale,
+                        viewport_w / scale,
+                        self.horizontal_bar_height / scale,
+                    )
+                } else {
+                    Rect::new(0.0, 0.0, 0.0, 0.0)
+                };
+                let _ = aimer_widget::update_v2_render_node_geometry(
+                    horizontal_bar.id(),
+                    bounds,
+                    None,
+                );
+            }
+        }
+
         // The viewport clip makes the content rectangle a known paint bound.
         // Check it before entering the erased child so an off-screen scrollable
         // still updates its physics and bounds without walking its content.
         if ctx.is_rect_visible(0.0, 0.0, viewport_w, viewport_h) {
             let draw_content = || {
-                #[cfg(not(feature = "portable-guest"))]
-                if retained_scroll_paint_supported(cfg!(target_arch = "wasm32")) {
-                    self.draw_child_with_retained_paint(ctx, &child_ctx, content_size);
+                if aimer_widget::has_active_v2_render_tree() {
+                    self.child.rebuild_if_dirty(&child_ctx);
+                    let mut v2_child_ctx = child_ctx.clone();
+                    v2_child_ctx.parent_pos.x += offset_x;
+                    v2_child_ctx.parent_pos.y += offset_y;
+                    self.child.draw(&v2_child_ctx);
                 } else {
-                    // Browser backends still have an unstable nested render-target
-                    // path for retained scroll paint. Live replay keeps SVG and text
-                    // in the main frame's compositor state until that path is safe.
+                    #[cfg(not(feature = "portable-guest"))]
+                    if retained_scroll_paint_supported(cfg!(target_arch = "wasm32")) {
+                        self.draw_child_with_retained_paint(ctx, &child_ctx, content_size);
+                    } else {
+                        // Browser backends still have an unstable nested render-target
+                        // path for retained scroll paint. Live replay keeps SVG and text
+                        // in the main frame's compositor state until that path is safe.
+                        self.child.draw(&child_ctx);
+                    }
+                    #[cfg(feature = "portable-guest")]
                     self.child.draw(&child_ctx);
                 }
-                #[cfg(feature = "portable-guest")]
-                self.child.draw(&child_ctx);
 
                 if provisional_extent || !self.child.is_layout_stable() {
                     self.refresh_content_size_after_draw(
@@ -334,7 +627,6 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                     );
                 }
             };
-            #[cfg(feature = "event-tree-exp")]
             let should_dispatch_hover = if content_moved
                 && self.ctrl.drag_mode.get() == DragMode::None
                 && self.event_dispatcher.borrow().capture_count() == 0
@@ -349,11 +641,6 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                 draw_content();
                 false
             };
-            #[cfg(not(feature = "event-tree-exp"))]
-            {
-                draw_content();
-            }
-            #[cfg(feature = "event-tree-exp")]
             if should_dispatch_hover {
                 let event = ElementEvent::PointerMove(PointerInfo::mouse(
                     ctx.cursor_pos,

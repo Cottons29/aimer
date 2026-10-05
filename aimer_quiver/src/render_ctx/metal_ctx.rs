@@ -28,8 +28,8 @@ pub mod render_ctx {
     /// This context owns the Metal backend, surface, and backend-generic Cupid
     /// renderer. Metal is selected on macOS by the native dependency feature or
     /// by explicitly enabling Quiver's `metal` feature.
-    /// The presenter currently renders each frame's complete draw list; packet
-    /// damage metadata remains available for API compatibility.
+    /// The presenter forwards packet damage to Cupid's retained-target
+    /// renderer, which keeps its full-repaint fallback when reuse is unsafe.
     pub struct MetalApi {
         backend: Option<MetalBackend>,
         surface: Option<MetalSurface>,
@@ -256,6 +256,7 @@ pub mod render_ctx {
             let build = PhaseTimer::start();
             canvas.begin_frame();
             let (scale, damage) = draw_fn(canvas, width, height);
+            let render_plan = canvas.take_retained_render_plan();
             let damage = if damage.target_size() == (width, height) {
                 damage
             } else {
@@ -273,7 +274,12 @@ pub mod render_ctx {
             );
             build.finish(FramePhase::Build);
 
-            Some(FramePacket::new(frame, metadata))
+            Some(FramePacket::with_render_plan(
+                frame,
+                metadata,
+                None,
+                render_plan,
+            ))
         }
 
         /// Presents a frame and returns its draw-list storage to the canvas.
@@ -299,14 +305,14 @@ pub mod render_ctx {
             packet: FramePacket,
             cpu_frame: Option<PhaseTimer>,
         ) -> PresentOutcome {
-            let presented = self.present_inner(packet.frame(), cpu_frame);
+            let presented = self.present_inner(&packet, cpu_frame);
             if let Some(canvas) = &self.canvas {
                 canvas.recycle_draw_list(packet.into_frame().into_draw_list());
             }
             PresentOutcome::from_presented(presented)
         }
 
-        fn present_inner(&mut self, frame: &Frame, cpu_frame: Option<PhaseTimer>) -> bool {
+        fn present_inner(&mut self, packet: &FramePacket, cpu_frame: Option<PhaseTimer>) -> bool {
             let (Some(backend), Some(surface), Some(renderer)) = (
                 self.backend.as_ref(),
                 self.surface.as_ref(),
@@ -314,6 +320,7 @@ pub mod render_ctx {
             ) else {
                 return false;
             };
+            let frame = packet.frame();
             let Some(drawable) = surface.next_drawable() else {
                 return false;
             };
@@ -325,14 +332,21 @@ pub mod render_ctx {
             let encode = PhaseTimer::start();
             #[cfg(feature = "frame-stats")]
             backend.begin_gpu_frame_timing(crate::frame_stats::record_gpu_frame_time);
-            renderer.render(
-                backend,
-                drawable.view(),
-                width,
-                height,
-                true,
-                &frame.draw_list,
-            );
+            if (width, height) == (frame.width, frame.height) {
+                renderer.render_packet(backend, drawable.view(), packet, true);
+            } else {
+                // A resize can race frame recording. Damage belongs to the
+                // packet's target dimensions, so redraw its complete retained
+                // plan against the drawable's current size.
+                renderer.render_packet_at_size(
+                    backend,
+                    drawable.view(),
+                    packet,
+                    width,
+                    height,
+                    true,
+                );
+            }
             encode.finish(FramePhase::Encode);
             #[cfg(feature = "frame-stats")]
             {

@@ -139,6 +139,7 @@ required-features = ["opengl-demo"]
 
 [dependencies]
 aimer_utils = { workspace = true, features = ["time-cost"] }
+aimer_rubick.workspace = true
 aimer_color.workspace = true
 aimer_shape.workspace = true
 

@@ -250,6 +250,94 @@ impl<P: ImageProvider> RawImageWidget<P> {
             .set(ctx.canvas.texture_cache_epoch());
         result
     }
+
+    fn local_v2_image_paint(
+        &self,
+        ctx: &BuildContext,
+    ) -> Option<(
+        u32,
+        ResolvedSize,
+        ImagePaintGeometry,
+        Option<std::sync::Arc<aimer_cupid::draw_cmd_v2::ImageResource>>,
+    )> {
+        let resource = self.source.retained_image_resource(ctx);
+        let id = if let Some(resource) = &resource {
+            resource.texture_id()
+        } else {
+            let cached = unsafe { &*self.cached_id.get() }.as_ref()?;
+            let Success(id) = cached else {
+                return None;
+            };
+            *id
+        };
+        let scale = ctx.scale;
+        if !scale.is_finite()
+            || scale <= 0.0
+            || ((self.cached_texture_epoch.get() != ctx.canvas.texture_cache_epoch()
+                || !ctx.canvas.is_texture_available(id))
+                && resource.is_none())
+        {
+            return None;
+        }
+
+        let target = self.computed_size(ctx);
+        if !target.width.is_finite()
+            || !target.height.is_finite()
+            || target.width < 0.0
+            || target.height < 0.0
+            || !self.scale.is_finite()
+            || self.scale < 0.0
+        {
+            return None;
+        }
+
+        let geometry = if self.keep_aspect_ratio {
+            let intrinsic_size = resource
+                .as_ref()
+                .map(|resource| (resource.intrinsic_width(), resource.intrinsic_height()))
+                .or_else(|| ctx.canvas.get_image_size(id));
+            image_paint_geometry(
+                target,
+                intrinsic_size,
+                self.fit,
+                self.scale,
+            )?
+        } else {
+            let width = target.width * self.scale;
+            let height = target.height * self.scale;
+            ImagePaintGeometry {
+                pos: Vec2d {
+                    x: (target.width - width) * 0.5,
+                    y: (target.height - height) * 0.5,
+                },
+                size: ResolvedSize { width, height },
+                use_cover: false,
+            }
+        };
+
+        if !geometry.pos.x.is_finite()
+            || !geometry.pos.y.is_finite()
+            || !geometry.size.width.is_finite()
+            || !geometry.size.height.is_finite()
+            || geometry.size.width < 0.0
+            || geometry.size.height < 0.0
+        {
+            return None;
+        }
+
+        let right = geometry.pos.x + geometry.size.width;
+        let bottom = geometry.pos.y + geometry.size.height;
+        if !geometry.use_cover
+            && (geometry.pos.x < 0.0
+                || geometry.pos.y < 0.0
+                || right > target.width
+                || bottom > target.height)
+        {
+            return None;
+        }
+
+        Some((id, target, geometry, resource))
+    }
 }
 
 impl<P: ImageProvider> Drawable for RawImageWidget<P> {
@@ -282,10 +370,23 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
 
         match image_result {
             Success(id) => {
+                let resource = self.source.retained_image_resource(ctx);
+                let intrinsic_size = resource
+                    .as_ref()
+                    .map(|resource| (resource.intrinsic_width(), resource.intrinsic_height()))
+                    .or_else(|| ctx.canvas.get_image_size(id));
+                let draw_image = |pos, size| {
+                    if let Some(resource) = &resource {
+                        ctx.canvas
+                            .draw_image_with_resource(resource.clone(), pos, size);
+                    } else {
+                        ctx.canvas.draw_image(id, pos, size);
+                    }
+                };
                 if self.keep_aspect_ratio {
                     let Some(geometry) = image_paint_geometry(
                         size,
-                        ctx.canvas.get_image_size(id),
+                        intrinsic_size,
                         self.fit,
                         self.scale,
                     ) else {
@@ -299,10 +400,10 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                     if geometry.use_cover {
                         // Clip to target box to emulate cover cropping.
                         ctx.canvas.set_clip(Vec2d { x: 0.0, y: 0.0 }, size);
-                        ctx.canvas.draw_image(id, geometry.pos, geometry.size);
+                        draw_image(geometry.pos, geometry.size);
                         ctx.canvas.clear_clip();
                     } else {
-                        ctx.canvas.draw_image(id, geometry.pos, geometry.size);
+                        draw_image(geometry.pos, geometry.size);
                     }
                 } else {
                     // Not preserving aspect ratio: fill allocated box
@@ -316,7 +417,7 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
                         width: final_w,
                         height: final_h,
                     };
-                    ctx.canvas.draw_image(id, draw_pos, draw_size)
+                    draw_image(draw_pos, draw_size)
                 }
             }
 
@@ -363,6 +464,44 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
         }
     }
 
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.local_v2_image_paint(ctx).is_some()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let (id, target, geometry, resource) = self
+            .local_v2_image_paint(ctx)
+            .expect("Image v2 support must be checked before painting");
+        let scale = ctx.scale;
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        if geometry.use_cover {
+            canvas.push_clip(
+                aimer_cupid::draw_cmd_v2::Rect::new(
+                    0.0,
+                    0.0,
+                    target.width / scale,
+                    target.height / scale,
+                ),
+                [0.0; 4],
+            );
+        }
+        let destination = aimer_cupid::draw_cmd_v2::Rect::new(
+            geometry.pos.x / scale,
+            geometry.pos.y / scale,
+            geometry.size.width / scale,
+            geometry.size.height / scale,
+        );
+        if let Some(resource) = resource {
+            canvas.draw_image_with_resource(destination, resource);
+        } else {
+            canvas.draw_image(destination, id);
+        }
+        if geometry.use_cover {
+            canvas.pop_clip();
+        }
+        canvas.finish();
+    }
+
     #[inline]
     fn is_paint_bounded(&self) -> bool {
         let image_is_bounded = match self.fit {
@@ -396,6 +535,7 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
+    use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect, RenderPaintSource, RenderTree};
     use super::*;
 
     #[derive(Clone, Debug)]
@@ -431,7 +571,7 @@ mod tests {
 
     fn context() -> BuildContext<'static> {
         use aimer_attribute::{BoxConstraint, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_widget::base::WindowHandle;
 
         static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> =
@@ -445,7 +585,7 @@ mod tests {
         let _guard = runtime.enter();
         let inner = Box::leak(Box::new(InnerCanvas::new()));
         let mut context = BuildContext::new(
-            Canvas::new(inner),
+            FrameCanvas::new(inner),
             ResolvedSize {
                 width: 32.0,
                 height: 32.0,
@@ -564,5 +704,84 @@ mod tests {
             2,
             "a retained success must be revalidated after the renderer cache changes"
         );
+    }
+
+    #[test]
+    fn cached_image_records_v2_draw_and_cover_clip_without_redirtying_sibling() {
+        use aimer_canvas::Canvas;
+
+        let ctx = context();
+        let calls = Rc::new(Cell::new(0));
+        let mut image = image_with_source(CountingSuccess {
+            calls: calls.clone(),
+        });
+        image.fit = BoxFit::Cover;
+        image.keep_aspect_ratio = true;
+        let texture_id = ctx
+            .canvas
+            .load_image(&[255, 0, 0, 255, 0, 255, 0, 255], 2, 1);
+        ctx.canvas.set_texture_size(texture_id, 2, 1);
+        image.cache_result(ImageResult::Success(texture_id), &ctx);
+
+        let image_bounds = Rect::new(0.0, 0.0, 16.0, 16.0);
+        let tree = RenderTree::new();
+        let image_node = tree.add_root(image_bounds).unwrap();
+        let sibling_bounds = Rect::new(30.0, 0.0, 8.0, 8.0);
+        let sibling_node = tree.add_root(sibling_bounds).unwrap();
+        assert!(image.can_paint_local_v2(&ctx));
+        let image_context = tree.context(image_node).unwrap();
+        ctx.with_local_v2_paint_context(image_context, |ctx| image.paint_local_v2(ctx));
+        tree.set_paint_source(image_node, RenderPaintSource::LocalV2)
+            .unwrap();
+
+        let sibling_context = tree.context(sibling_node).unwrap();
+        let sibling_canvas = Canvas::of(&sibling_context);
+        sibling_canvas.fill_rect(Rect::new(0.0, 0.0, 8.0, 8.0), [0, 255, 0, 255]);
+        sibling_canvas.finish();
+        tree.set_paint_source(sibling_node, RenderPaintSource::LocalV2)
+            .unwrap();
+
+        let first_image = tree.draw_list_snapshot(image_node).unwrap();
+        assert!(matches!(
+            first_image.commands.as_ref(),
+            [
+                DrawCommand::PushClip { rect, .. },
+                DrawCommand::DrawImage { rect: image_rect, texture_id: recorded_id },
+                DrawCommand::PopClip,
+            ] if *rect == image_bounds
+                && *image_rect == Rect::new(-8.0, 0.0, 32.0, 16.0)
+                && *recorded_id == texture_id
+        ));
+        assert_eq!(calls.get(), 0, "v2 recording must not request or upload images");
+
+        tree.take_damage();
+        tree.invalidate_paint(image_node).unwrap();
+        let image_context = tree.context(image_node).unwrap();
+        ctx.with_local_v2_paint_context(image_context, |ctx| image.paint_local_v2(ctx));
+
+        assert_eq!(tree.draw_list_revision(image_node).unwrap(), first_image.revision + 1);
+        assert_eq!(tree.draw_list_revision(sibling_node).unwrap(), 1);
+        assert_eq!(tree.take_damage(), vec![image_bounds]);
+    }
+
+    #[test]
+    fn loading_and_stale_images_decline_v2_without_touching_the_provider() {
+        let ctx = context();
+        let loading_calls = Rc::new(Cell::new(0));
+        let loading = loading_then_error_image(loading_calls.clone());
+        assert!(!loading.can_paint_local_v2(&ctx));
+        assert_eq!(loading_calls.get(), 0);
+
+        let stale_calls = Rc::new(Cell::new(0));
+        let stale = image_with_source(CountingSuccess {
+            calls: stale_calls.clone(),
+        });
+        let texture_id = ctx.canvas.load_image(&[1, 2, 3, 4], 1, 1);
+        stale.cache_result(ImageResult::Success(texture_id), &ctx);
+        assert!(stale.can_paint_local_v2(&ctx));
+
+        let _new_texture = ctx.canvas.load_image(&[5, 6, 7, 8], 1, 1);
+        assert!(!stale.can_paint_local_v2(&ctx));
+        assert_eq!(stale_calls.get(), 0);
     }
 }

@@ -821,6 +821,36 @@ impl<T: 'static> Drawable for ProviderElement<T> {
     fn draw(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.draw(ctx));
     }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn retained_v2_child_context<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        _child: &dyn Element,
+    ) -> Option<BuildContext<'a>> {
+        Some(ctx.fork_with_state(Provided(self.handle.clone())))
+    }
+
+    fn paint(&self, ctx: &BuildContext) {
+        self.scoped(ctx, |ctx| self.child.paint(ctx));
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.scoped(ctx, |ctx| self.child.sync_paint_geometry(ctx));
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        self.child.is_paint_stable()
+    }
+
+    fn is_paint_bounded(&self) -> bool {
+        self.child.is_paint_bounded()
+    }
 }
 
 impl<T: 'static> LayoutElement for ProviderElement<T> {
@@ -1081,6 +1111,39 @@ impl<T: 'static, A: 'static> VisitorElement for StoreElement<T, A> {
 impl<T: 'static, A: 'static> Drawable for StoreElement<T, A> {
     fn draw(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.draw(ctx));
+    }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn retained_v2_child_context<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        _child: &dyn Element,
+    ) -> Option<BuildContext<'a>> {
+        Some(
+            ctx.fork_with_state(Provided(self.handle.clone()))
+                .fork_with_state(self.dispatcher.clone()),
+        )
+    }
+
+    fn paint(&self, ctx: &BuildContext) {
+        self.scoped(ctx, |ctx| self.child.paint(ctx));
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.scoped(ctx, |ctx| self.child.sync_paint_geometry(ctx));
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        self.child.is_paint_stable()
+    }
+
+    fn is_paint_bounded(&self) -> bool {
+        self.child.is_paint_bounded()
     }
 }
 impl<T: 'static, A: 'static> LayoutElement for StoreElement<T, A> {
@@ -1456,7 +1519,7 @@ mod tests {
     fn context() -> BuildContext<'static> {
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         BuildContext::new(
             canvas,

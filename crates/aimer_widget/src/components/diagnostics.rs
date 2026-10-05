@@ -1,3 +1,6 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
 use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
 use aimer_canvas::{FontFamily, FontStyle};
 use aimer_color::prelude::Color;
@@ -127,6 +130,61 @@ impl Drawable for ErrorElement {
     fn draw(&self, ctx: &BuildContext) {
         Self::draw_message(ctx, &self.message);
     }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        let size = diagnostic_bounds(ctx);
+        ctx.scale.is_finite()
+            && ctx.scale > 0.0
+            && size.width.is_finite()
+            && size.height.is_finite()
+            && size.width >= 0.0
+            && size.height >= 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let size = diagnostic_bounds(ctx);
+        let scale = ctx.scale;
+        let (pos_y, font_size) = if cfg!(target_os = "ios") || cfg!(target_os = "android") {
+            (400.0, 40.0)
+        } else {
+            (200.0, 34.0)
+        };
+
+        #[cfg(debug_assertions)]
+        let text = self.message.as_str();
+        #[cfg(not(debug_assertions))]
+        let text = "A layout error occurred";
+
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        let (background_red, background_green, background_blue, background_alpha) =
+            Color::RED.to_rgba();
+        canvas.fill_rect(
+            aimer_cupid::utilities::Rect::new(
+                0.0,
+                0.0,
+                size.width / scale,
+                size.height / scale,
+            ),
+            [background_red, background_green, background_blue, background_alpha],
+        );
+        let (red, green, blue, alpha) = Color::YELLOW.to_rgba();
+        canvas.draw_text_styled(
+            std::sync::Arc::<str>::from(text),
+            aimer_cupid::utilities::Vec2d::new(24.0 / scale, pos_y / scale),
+            font_size / scale,
+            aimer_cupid::utilities::Color::rgba8(red, green, blue, alpha),
+            Some((size.width - 24.0).max(0.0) / scale),
+            None,
+            aimer_cupid::text_pipeline::TextOverflowMode::Wrap,
+            aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign::Left,
+            FontFamily::MONOSPACE,
+            FontStyle::Normal,
+            600,
+            None,
+            true,
+        );
+        canvas.finish();
+    }
 }
 
 impl EventElement for ErrorElement {}
@@ -196,10 +254,20 @@ impl<W: Widget + 'static> Widget for OverflowIndicator<W> {
             .label
             .unwrap_or_else(|| self.child.debug_name().to_string());
         let child = self.child.to_element(ctx);
+        let paint = Rc::new(Cell::new(OverflowPaintData::default()));
+        let decoration = RawOverflowDecoration {
+            #[cfg(debug_assertions)]
+            label: label.clone(),
+            paint: Rc::clone(&paint),
+            last_v2_paint: Cell::new(None),
+        }
+        .boxed();
         RawOverflowIndicator {
             child,
             label,
             clip: self.clip,
+            paint,
+            decoration,
         }
         .boxed()
     }
@@ -213,6 +281,14 @@ struct RawOverflowIndicator {
     child: AnyElement,
     label: String,
     clip: bool,
+    paint: Rc<Cell<OverflowPaintData>>,
+    decoration: AnyElement,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct OverflowPaintData {
+    bounds: ResolvedSize,
+    overflow: OverflowEdges,
 }
 
 impl Drawable for RawOverflowIndicator {
@@ -230,6 +306,85 @@ impl Drawable for RawOverflowIndicator {
 
         paint_overflow_indicator(ctx, bounds, overflow, &self.label);
     }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite() && ctx.scale > 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        aimer_canvas::Canvas::of(ctx).finish();
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let bounds = self.computed_size(ctx);
+        let child_size = self.child.computed_size(ctx);
+        self.paint.set(OverflowPaintData {
+            bounds,
+            overflow: detect_overflow(child_size, bounds, Vec2d::default()),
+        });
+    }
+
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        let expected = match child_index {
+            0 => self.child.id(),
+            1 => self.decoration.id(),
+            _ => return None,
+        };
+        (child.id() == expected).then(|| ctx.clone())
+    }
+
+    fn retained_v2_child_geometry_at(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        let child_ctx = self.retained_v2_child_context_at(ctx, child, child_index)?;
+        let scale = ctx.scale;
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let paint = self.paint.get();
+        if child_index == 0 {
+            let size = child
+                .retained_v2_bounds(&child_ctx)
+                .unwrap_or_else(|| child.content_size(&child_ctx));
+            let position = child.pos().unwrap_or_default();
+            return Some((
+                aimer_cupid::draw_cmd_v2::Rect::new(
+                    position.x / scale,
+                    position.y / scale,
+                    size.width / scale,
+                    size.height / scale,
+                ),
+                self.clip.then(|| {
+                    aimer_cupid::draw_cmd_v2::Rect::new(
+                        0.0,
+                        0.0,
+                        paint.bounds.width / scale,
+                        paint.bounds.height / scale,
+                    )
+                }),
+            ));
+        }
+        Some((
+            aimer_cupid::draw_cmd_v2::Rect::new(
+                0.0,
+                0.0,
+                paint.bounds.width / scale,
+                paint.bounds.height / scale,
+            ),
+            None,
+        ))
+    }
 }
 
 impl EventElement for RawOverflowIndicator {
@@ -243,10 +398,173 @@ impl Rebuildable for RawOverflowIndicator {}
 impl VisitorElement for RawOverflowIndicator {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.child.as_ref());
+        visitor(self.decoration.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {
         "OverflowIndicator"
+    }
+}
+
+struct RawOverflowDecoration {
+    #[cfg(debug_assertions)]
+    label: String,
+    paint: Rc<Cell<OverflowPaintData>>,
+    last_v2_paint: Cell<Option<(OverflowPaintData, u32)>>,
+}
+
+impl Drawable for RawOverflowDecoration {
+    fn draw(&self, _ctx: &BuildContext) {}
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        let paint = self.paint.get();
+        ctx.scale.is_finite()
+            && ctx.scale > 0.0
+            && paint.bounds.width.is_finite()
+            && paint.bounds.height.is_finite()
+            && paint.bounds.width >= 0.0
+            && paint.bounds.height >= 0.0
+    }
+
+    #[cfg(debug_assertions)]
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let paint = self.paint.get();
+        let scale = ctx.scale;
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        if !paint.overflow.has_overflow()
+            || paint.bounds.width <= 0.0
+            || paint.bounds.height <= 0.0
+        {
+            canvas.finish();
+            self.last_v2_paint
+                .set(Some((paint, scale.to_bits())));
+            return;
+        }
+
+        const THICKNESS: f32 = 8.0;
+        const STRIPE: f32 = 6.0;
+        let (yellow_red, yellow_green, yellow_blue, yellow_alpha) = Color::YELLOW.to_rgba();
+        let (black_red, black_green, black_blue, black_alpha) = Color::BLACK.to_rgba();
+        let paint_horizontal = |y: f32| {
+            let mut x = 0.0;
+            let mut yellow = true;
+            while x < paint.bounds.width {
+                let (red, green, blue, alpha) = if yellow {
+                    (yellow_red, yellow_green, yellow_blue, yellow_alpha)
+                } else {
+                    (black_red, black_green, black_blue, black_alpha)
+                };
+                canvas.fill_rect(
+                    aimer_cupid::utilities::Rect::new(
+                        x / scale,
+                        y / scale,
+                        STRIPE.min(paint.bounds.width - x) / scale,
+                        THICKNESS.min(paint.bounds.height) / scale,
+                    ),
+                    [red, green, blue, alpha],
+                );
+                yellow = !yellow;
+                x += STRIPE;
+            }
+        };
+        let paint_vertical = |x: f32| {
+            let mut y = 0.0;
+            let mut yellow = true;
+            while y < paint.bounds.height {
+                let (red, green, blue, alpha) = if yellow {
+                    (yellow_red, yellow_green, yellow_blue, yellow_alpha)
+                } else {
+                    (black_red, black_green, black_blue, black_alpha)
+                };
+                canvas.fill_rect(
+                    aimer_cupid::utilities::Rect::new(
+                        x / scale,
+                        y / scale,
+                        THICKNESS.min(paint.bounds.width) / scale,
+                        STRIPE.min(paint.bounds.height - y) / scale,
+                    ),
+                    [red, green, blue, alpha],
+                );
+                yellow = !yellow;
+                y += STRIPE;
+            }
+        };
+
+        if paint.overflow.top > 0.0 {
+            paint_horizontal(0.0);
+        }
+        if paint.overflow.bottom > 0.0 {
+            paint_horizontal((paint.bounds.height - THICKNESS).max(0.0));
+        }
+        if paint.overflow.left > 0.0 {
+            paint_vertical(0.0);
+        }
+        if paint.overflow.right > 0.0 {
+            paint_vertical((paint.bounds.width - THICKNESS).max(0.0));
+        }
+
+        let text = format!("{} overflowed by {:.1}px", self.label, paint.overflow.maximum());
+        let width = ((text.len() as f32 * 6.0) + 8.0).min(paint.bounds.width);
+        let (black_red, black_green, black_blue, black_alpha) = Color::BLACK.to_rgba();
+        canvas.fill_rect(
+            aimer_cupid::utilities::Rect::new(
+                0.0,
+                0.0,
+                width / scale,
+                18.0_f32.min(paint.bounds.height) / scale,
+            ),
+            [black_red, black_green, black_blue, black_alpha],
+        );
+        let (yellow_red, yellow_green, yellow_blue, yellow_alpha) = Color::YELLOW.to_rgba();
+        canvas.draw_text_styled(
+            std::sync::Arc::<str>::from(text),
+            aimer_cupid::utilities::Vec2d::new(4.0 / scale, 13.0 / scale),
+            10.0 / scale,
+            aimer_cupid::utilities::Color::rgba8(
+                yellow_red,
+                yellow_green,
+                yellow_blue,
+                yellow_alpha,
+            ),
+            None,
+            None,
+            aimer_cupid::text_pipeline::TextOverflowMode::Clip,
+            aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign::Left,
+            FontFamily::SANS_SERIF,
+            FontStyle::Normal,
+            600,
+            None,
+            true,
+        );
+        canvas.finish();
+        self.last_v2_paint
+            .set(Some((paint, scale.to_bits())));
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        aimer_canvas::Canvas::of(ctx).finish();
+        self.last_v2_paint
+            .set(Some((self.paint.get(), ctx.scale.to_bits())));
+    }
+
+    fn local_v2_paint_needs_recording(&self, ctx: &BuildContext) -> bool {
+        self.last_v2_paint.get() != Some((self.paint.get(), ctx.scale.to_bits()))
+    }
+}
+
+impl EventElement for RawOverflowDecoration {}
+impl Rebuildable for RawOverflowDecoration {}
+
+impl VisitorElement for RawOverflowDecoration {
+    fn debug_name(&self) -> &'static str {
+        "OverflowDecoration"
+    }
+}
+
+impl LayoutElement for RawOverflowDecoration {
+    fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+        self.paint.get().bounds
     }
 }
 
@@ -389,7 +707,7 @@ pub fn paint_overflow_indicator(
 #[cfg(test)]
 mod tests {
     use aimer_attribute::ResolvedSize;
-    use aimer_canvas::{Canvas, FontFamily, InnerCanvas};
+    use aimer_canvas::{FrameCanvas, FontFamily, InnerCanvas};
     use aimer_cupid::draw_cmd::DrawCommand;
 
     use super::{ErrorElement, OverflowEdges, detect_overflow};
@@ -399,7 +717,7 @@ mod tests {
     async fn the_diagnostic_message_is_written_in_the_bundled_monospace_face() {
         let canvas = Box::leak(Box::new(InnerCanvas::new()));
         let ctx = BuildContext::new(
-            Canvas::new(canvas),
+            FrameCanvas::new(canvas),
             ResolvedSize {
                 width: 800.0,
                 height: 600.0,

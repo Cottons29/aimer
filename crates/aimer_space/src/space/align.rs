@@ -122,7 +122,115 @@ struct RawAlign {
     alignment: Alignment,
 }
 
+impl RawAlign {
+    fn retained_child_layout<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+    ) -> Option<(Vec2d, BuildContext<'a>)> {
+        if !ctx.scale.is_finite()
+            || ctx.scale <= 0.0
+            || !ctx.parent_size.width.is_finite()
+            || !ctx.parent_size.height.is_finite()
+            || ctx.parent_size.width < 0.0
+            || ctx.parent_size.height < 0.0
+            || ctx.parent_size.width > 1_000_000.0
+            || ctx.parent_size.height > 1_000_000.0
+        {
+            return None;
+        }
+        let child_size = self.child.computed_size(ctx);
+        let (offset_x, offset_y) = alignment_offset(self.alignment, ctx.parent_size, child_size);
+        if !child_size.width.is_finite()
+            || !child_size.height.is_finite()
+            || child_size.width < 0.0
+            || child_size.height < 0.0
+            || child_size.width > 1_000_000.0
+            || child_size.height > 1_000_000.0
+            || !offset_x.is_finite()
+            || !offset_y.is_finite()
+        {
+            return None;
+        }
+
+        let child_ctx = BuildContext {
+            parent_size: child_size,
+            box_constraint: BoxConstraint {
+                min_width: 0.0,
+                min_height: 0.0,
+                max_width: child_size.width,
+                max_height: child_size.height,
+            },
+            visible_rect: ctx
+                .visible_rect
+                .map(|(x, y, width, height)| (x - offset_x, y - offset_y, width, height)),
+            ..ctx.clone()
+        };
+        Some((Vec2d { x: offset_x, y: offset_y }, child_ctx))
+    }
+}
+
 impl Drawable for RawAlign {
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        let Some((_, child_ctx)) = self.retained_child_layout(ctx) else {
+            return false;
+        };
+        let size = self
+            .child
+            .retained_v2_bounds(&child_ctx)
+            .unwrap_or_else(|| self.child.content_size(&child_ctx));
+        let position = self.child.pos().unwrap_or_default();
+        size.width.is_finite()
+            && size.height.is_finite()
+            && size.width >= 0.0
+            && size.height >= 0.0
+            && size.width <= 1_000_000.0
+            && size.height <= 1_000_000.0
+            && position.x.is_finite()
+            && position.y.is_finite()
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn retained_v2_child_context<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        _child: &dyn Element,
+    ) -> Option<BuildContext<'a>> {
+        self.retained_child_layout(ctx)
+            .map(|(_, child_ctx)| child_ctx)
+    }
+
+    fn retained_v2_child_geometry(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        let (offset, child_ctx) = self.retained_child_layout(ctx)?;
+        let position = child.pos().unwrap_or_default();
+        let size = child
+            .retained_v2_bounds(&child_ctx)
+            .unwrap_or_else(|| child.content_size(&child_ctx));
+        let bounds = aimer_cupid::draw_cmd_v2::Rect::new(
+            (offset.x + position.x) / ctx.scale,
+            (offset.y + position.y) / ctx.scale,
+            size.width / ctx.scale,
+            size.height / ctx.scale,
+        );
+        if !bounds.x.is_finite()
+            || !bounds.y.is_finite()
+            || !bounds.width.is_finite()
+            || !bounds.height.is_finite()
+            || bounds.width < 0.0
+            || bounds.height < 0.0
+        {
+            return None;
+        }
+        Some((bounds, child.retained_clip(&child_ctx)))
+    }
+
     fn draw(&self, ctx: &BuildContext) {
         let child_size = self.child.computed_size(ctx);
         let (offset_x, offset_y) = alignment_offset(self.alignment, ctx.parent_size, child_size);
@@ -159,6 +267,36 @@ impl Drawable for RawAlign {
             self.child.draw(&child_ctx);
         }
         ctx.canvas.restore();
+    }
+
+    fn paint(&self, ctx: &BuildContext) {
+        let Some((offset, child_ctx)) = self.retained_child_layout(ctx) else {
+            self.child.paint(ctx);
+            return;
+        };
+        ctx.canvas.save();
+        ctx.canvas.translate(offset);
+        self.child.paint(&child_ctx);
+        ctx.canvas.restore();
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let Some((offset, child_ctx)) = self.retained_child_layout(ctx) else {
+            self.child.sync_paint_geometry(ctx);
+            return;
+        };
+        ctx.canvas.save();
+        ctx.canvas.translate(offset);
+        self.child.sync_paint_geometry(&child_ctx);
+        ctx.canvas.restore();
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        self.child.is_paint_stable()
+    }
+
+    fn is_paint_bounded(&self) -> bool {
+        self.child.is_paint_bounded()
     }
 }
 

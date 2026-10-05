@@ -1,6 +1,7 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use aimer_attribute::BoxConstraint;
 use aimer_attribute::bounds::Bounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
@@ -14,10 +15,10 @@ use aimer_widget::{
     RequiredChild, VisitorElement, Widget,
 };
 
+use crate::animated_content::wrap_animated_content;
 use crate::anchor::AnchorHandle;
-use crate::animation::visual_values;
 use crate::host::{self, ModalHandle, ModalId, ModalTimeline};
-use crate::paint::{contains, paint_overlay_content};
+use crate::paint::{contains, overlay_child_context};
 use crate::placement::{FloatingAlign, FloatingSide, OverflowPolicy, PlacementSpec};
 use crate::{ModalAnimation, resolve_placement};
 
@@ -255,16 +256,32 @@ impl<W: Widget + 'static> Floating<W> {
         id: Option<ModalId>,
         timeline: Rc<RefCell<ModalTimeline>>,
     ) -> AnyElement {
+        let barrier_animation =
+            (self.barrier_color.to_rgba().3 != 0).then_some(self.animation).flatten();
+        let barrier = Container::new()
+            .color(self.barrier_color)
+            .child(ZeroSizedBox)
+            .to_element(ctx);
+        let barrier = wrap_animated_content(
+            barrier,
+            barrier_animation,
+            timeline.clone(),
+            false,
+        );
+        let child = wrap_animated_content(
+            self.child.to_element(ctx),
+            self.animation,
+            timeline.clone(),
+            true,
+        );
         RawFloating {
-            barrier: Container::new()
-                .color(self.barrier_color)
-                .child(ZeroSizedBox)
-                .to_element(ctx),
-            child: self.child.to_element(ctx),
+            barrier,
+            animate_barrier: barrier_animation.is_some(),
+            timeline,
+            last_barrier_progress: Cell::new(f32::NAN),
+            child,
             anchor: self.anchor.clone(),
             placement: self.placement,
-            animation: self.animation,
-            timeline,
             id,
             barrier_dismissible: self.barrier_dismissible,
             escape_dismissible: self.escape_dismissible,
@@ -316,11 +333,12 @@ impl<W: Widget + 'static> Widget for Floating<W> {
 #[derive(Rebuildable)]
 struct RawFloating {
     barrier: AnyElement,
+    animate_barrier: bool,
+    timeline: Rc<RefCell<ModalTimeline>>,
+    last_barrier_progress: Cell<f32>,
     child: AnyElement,
     anchor: AnchorHandle,
     placement: PlacementSpec,
-    animation: Option<ModalAnimation>,
-    timeline: Rc<RefCell<ModalTimeline>>,
     id: Option<ModalId>,
     barrier_dismissible: bool,
     escape_dismissible: bool,
@@ -375,6 +393,54 @@ impl RawFloating {
             })
             .safe_area(reserved)
     }
+
+    fn retained_child_layout<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+    ) -> Option<(ResolvedSize, Vec2d, BuildContext<'a>)> {
+        if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
+            return None;
+        }
+
+        let child_size = self.child.computed_size(ctx);
+        if !child_size.width.is_finite()
+            || !child_size.height.is_finite()
+            || child_size.width < 0.0
+            || child_size.height < 0.0
+        {
+            return None;
+        }
+        let placement = resolve_placement(
+            self.frame_placement(ctx),
+            self.anchor_bounds(ctx),
+            child_size,
+            ctx.parent_size,
+        );
+        let offset = Vec2d {
+            x: placement.origin.x - ctx.parent_pos.x,
+            y: placement.origin.y - ctx.parent_pos.y,
+        };
+        if !offset.x.is_finite() || !offset.y.is_finite() {
+            return None;
+        }
+
+        let mut child_ctx = ctx.clone();
+        child_ctx.parent_size = child_size;
+        child_ctx.parent_pos = Vec2d {
+            x: ctx.parent_pos.x + offset.x,
+            y: ctx.parent_pos.y + offset.y,
+        };
+        child_ctx.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: child_size.width,
+            max_height: child_size.height,
+        };
+        child_ctx.visible_rect = ctx
+            .visible_rect
+            .map(|(x, y, width, height)| (x - offset.x, y - offset.y, width, height));
+        Some((child_size, offset, child_ctx))
+    }
 }
 
 /// Merges the three reservations a panel has to respect — the system's, the
@@ -395,17 +461,7 @@ fn reserved_edges(
 
 impl Drawable for RawFloating {
     fn draw(&self, ctx: &BuildContext) {
-        let progress = self.timeline.borrow().progress();
-        let scale_from = self
-            .animation
-            .map(|animation| animation.content_scale_from)
-            .unwrap_or(1.0);
-        let (opacity, scale) = visual_values(progress, scale_from);
-
-        ctx.canvas.set_alpha(opacity);
         self.barrier.draw(ctx);
-        ctx.canvas.restore_alpha();
-
         let child_size = self.child.computed_size(ctx);
         let placement = resolve_placement(
             self.frame_placement(ctx),
@@ -413,17 +469,89 @@ impl Drawable for RawFloating {
             child_size,
             ctx.parent_size,
         );
-        paint_overlay_content(
-            ctx,
-            &self.child,
-            child_size,
-            Vec2d {
-                x: placement.origin.x - ctx.parent_pos.x,
-                y: placement.origin.y - ctx.parent_pos.y,
-            },
-            (opacity, scale),
-            &self.child_bounds,
-        );
+        let offset = Vec2d {
+            x: placement.origin.x - ctx.parent_pos.x,
+            y: placement.origin.y - ctx.parent_pos.y,
+        };
+        let child_ctx =
+            overlay_child_context(ctx, child_size, offset, &self.child_bounds);
+        ctx.canvas.save();
+        ctx.canvas.translate(offset);
+        self.child.draw(&child_ctx);
+        ctx.canvas.restore();
+    }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        canvas.finish();
+    }
+
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        // The barrier and hosted content have their own retained nodes. Keep
+        // the barrier's full-window background out of compatibility painting
+        // when a child such as a menu only changes a local row list.
+        let barrier_animation_needs_sync = if self.animate_barrier {
+            let (progress, active) = {
+                let timeline = self.timeline.borrow();
+                (timeline.progress(), timeline.is_active())
+            };
+            let changed = self.last_barrier_progress.replace(progress) != progress;
+            active || changed
+        } else {
+            false
+        };
+        if barrier_animation_needs_sync {
+            self.barrier.draw(ctx);
+        }
+        if let Some((_, offset, child_ctx)) = self.retained_child_layout(ctx) {
+            ctx.canvas.save();
+            ctx.canvas.translate(offset);
+            self.child.draw(&child_ctx);
+            ctx.canvas.restore();
+        } else {
+            self.draw(ctx);
+        }
+    }
+
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        if child_index != 1 || !std::ptr::eq(child, self.child.as_ref()) {
+            return None;
+        }
+        self.retained_child_layout(ctx)
+            .map(|(_, _, child_context)| child_context)
+    }
+
+    fn retained_v2_child_geometry_at(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        if child_index != 1 || !std::ptr::eq(child, self.child.as_ref()) {
+            return None;
+        }
+        let (size, offset, _) = self.retained_child_layout(ctx)?;
+        Some((
+            aimer_cupid::draw_cmd_v2::Rect::new(
+                offset.x / ctx.scale,
+                offset.y / ctx.scale,
+                size.width / ctx.scale,
+                size.height / ctx.scale,
+            ),
+            None,
+        ))
     }
 }
 
@@ -472,6 +600,14 @@ impl VisitorElement for RawFloating {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(self.barrier.as_ref());
         visitor(self.child.as_ref());
+    }
+
+    fn visit_retained_v2_children<'a>(
+        &'a self,
+        visitor: &mut dyn FnMut(usize, &'a dyn Element),
+    ) {
+        visitor(0, self.barrier.as_ref());
+        visitor(1, self.child.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {

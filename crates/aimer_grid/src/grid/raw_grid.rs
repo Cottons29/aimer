@@ -640,9 +640,226 @@ impl RawGrid {
         }
         ctx.canvas.restore();
     }
+
+    fn retained_child_layout<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<(
+        Vec2d,
+        Vec2d,
+        BuildContext<'a>,
+        ResolvedSize,
+        ResolvedSize,
+        ResolvedSize,
+        aimer_widget::OverflowEdges,
+    )> {
+        let item = self.children.get(child_index)?;
+        if item.child.id() != child.id() {
+            return None;
+        }
+        let layout = self.layout_grid(ctx).ok()?;
+        let placement = *layout.placements.get(child_index)?;
+        let cell_pos = Vec2d {
+            x: track_offset(&layout.columns, placement.column?, self.column_gap),
+            y: track_offset(&layout.rows, placement.row?, self.row_gap),
+        };
+        let cell_size = ResolvedSize {
+            width: span_size(
+                &layout.columns,
+                placement.column?,
+                placement.column_span,
+                self.column_gap,
+            ),
+            height: span_size(
+                &layout.rows,
+                placement.row?,
+                placement.row_span,
+                self.row_gap,
+            ),
+        };
+        let horizontal = item
+            .horizontal_alignment
+            .unwrap_or(self.horizontal_alignment);
+        let vertical = item.vertical_alignment.unwrap_or(self.vertical_alignment);
+        let mut child_ctx = ctx.clone();
+        child_ctx.parent_size = cell_size;
+        child_ctx.box_constraint = BoxConstraint {
+            min_width: if horizontal == GridAlignment::Stretch {
+                cell_size.width
+            } else {
+                0.0
+            },
+            min_height: if vertical == GridAlignment::Stretch {
+                cell_size.height
+            } else {
+                0.0
+            },
+            max_width: cell_size.width,
+            max_height: cell_size.height,
+        };
+        let child_size = if horizontal == GridAlignment::Stretch
+            && vertical == GridAlignment::Stretch
+        {
+            cell_size
+        } else {
+            child.computed_size(&child_ctx)
+        };
+        let offset = Vec2d {
+            x: alignment_offset(horizontal, cell_size.width, child_size.width),
+            y: alignment_offset(vertical, cell_size.height, child_size.height),
+        };
+        child_ctx.visible_rect = ctx.visible_rect.map(|(x, y, width, height)| {
+            (
+                x - cell_pos.x - offset.x,
+                y - cell_pos.y - offset.y,
+                width,
+                height,
+            )
+        });
+        let overflow = detect_overflow(child_size, cell_size, offset);
+        let render_size = child
+            .retained_v2_bounds(&child_ctx)
+            .unwrap_or_else(|| child.content_size(&child_ctx));
+        Some((
+            cell_pos,
+            offset,
+            child_ctx,
+            cell_size,
+            child_size,
+            render_size,
+            overflow,
+        ))
+    }
 }
 
 impl Drawable for RawGrid {
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
+            return false;
+        }
+        let Ok(layout) = self.layout_grid(ctx) else {
+            return false;
+        };
+        if !layout.size.width.is_finite()
+            || !layout.size.height.is_finite()
+            || layout.size.width < 0.0
+            || layout.size.height < 0.0
+            || layout.size.width > 1_000_000.0
+            || layout.size.height > 1_000_000.0
+        {
+            return false;
+        }
+        self.children.iter().enumerate().all(|(index, item)| {
+            let Some((
+                cell_pos,
+                offset,
+                child_ctx,
+                cell_size,
+                child_size,
+                render_size,
+                overflow,
+            )) =
+                self.retained_child_layout(ctx, item.child.as_ref(), index)
+            else {
+                return false;
+            };
+            let position = item.child.pos().unwrap_or_default();
+            [
+                cell_pos.x,
+                cell_pos.y,
+                offset.x,
+                offset.y,
+                position.x,
+                position.y,
+                cell_size.width,
+                cell_size.height,
+                child_size.width,
+                child_size.height,
+                render_size.width,
+                render_size.height,
+            ]
+            .into_iter()
+                .all(f32::is_finite)
+                && cell_size.width >= 0.0
+                && cell_size.height >= 0.0
+                && cell_size.width <= 1_000_000.0
+                && cell_size.height <= 1_000_000.0
+                && child_size.width >= 0.0
+                && child_size.height >= 0.0
+                && render_size.width >= 0.0
+                && render_size.height >= 0.0
+                && render_size.width <= 1_000_000.0
+                && render_size.height <= 1_000_000.0
+                && !overflow.has_overflow()
+                && item.child.retained_clip(&child_ctx).is_none_or(|clip| {
+                    clip.x.is_finite()
+                        && clip.y.is_finite()
+                        && clip.width.is_finite()
+                        && clip.height.is_finite()
+                        && clip.width >= 0.0
+                        && clip.height >= 0.0
+                })
+        })
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        self.retained_child_layout(ctx, child, child_index)
+            .map(|(_, _, child_ctx, _, _, _, _)| child_ctx)
+    }
+
+    fn retained_v2_child_geometry_at(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        let (cell_pos, offset, child_ctx, cell_size, _, render_size, _) =
+            self.retained_child_layout(ctx, child, child_index)?;
+        let position = child.pos().unwrap_or_default();
+        let scale = ctx.scale;
+        let bounds = aimer_cupid::draw_cmd_v2::Rect::new(
+            (cell_pos.x + offset.x + position.x) / scale,
+            (cell_pos.y + offset.y + position.y) / scale,
+            render_size.width / scale,
+            render_size.height / scale,
+        );
+        if !bounds.x.is_finite()
+            || !bounds.y.is_finite()
+            || !bounds.width.is_finite()
+            || !bounds.height.is_finite()
+        {
+            return None;
+        }
+
+        let grid_clip = (self.overflow == GridOverflow::Clip).then(|| {
+            aimer_cupid::draw_cmd_v2::Rect::new(
+                -(offset.x + position.x) / scale,
+                -(offset.y + position.y) / scale,
+                cell_size.width / scale,
+                cell_size.height / scale,
+            )
+        });
+        let child_clip = child.retained_clip(&child_ctx);
+        let clip = match (grid_clip, child_clip) {
+            (Some(grid), Some(child)) => Some(intersect_retained_clips(grid, child)),
+            (Some(grid), None) => Some(grid),
+            (None, child) => child,
+        };
+        Some((bounds, clip))
+    }
+
     fn draw(&self, ctx: &BuildContext) {
         match self.layout_grid(ctx) {
             Ok(layout) => {
@@ -804,6 +1021,17 @@ fn track_offset(tracks: &[f32], index: usize, gap: f32) -> f32 {
     tracks[..index].iter().sum::<f32>() + gap * index as f32
 }
 
+fn intersect_retained_clips(
+    first: aimer_cupid::draw_cmd_v2::Rect,
+    second: aimer_cupid::draw_cmd_v2::Rect,
+) -> aimer_cupid::draw_cmd_v2::Rect {
+    let x = first.x.max(second.x);
+    let y = first.y.max(second.y);
+    let right = (first.x + first.width).min(second.x + second.width);
+    let bottom = (first.y + first.height).min(second.y + second.height);
+    aimer_cupid::draw_cmd_v2::Rect::new(x, y, (right - x).max(0.0), (bottom - y).max(0.0))
+}
+
 fn alignment_offset(alignment: GridAlignment, available: f32, child: f32) -> f32 {
     match alignment {
         GridAlignment::Start | GridAlignment::Stretch => 0.0,
@@ -834,7 +1062,7 @@ mod tests {
     use std::sync::OnceLock;
 
     use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
-    use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_canvas::{FrameCanvas, InnerCanvas};
     use aimer_container::ZeroSizedBox;
     use aimer_cupid::draw_cmd::DrawCommand;
     use aimer_widget::base::{BuildContext, WindowHandle};
@@ -944,7 +1172,7 @@ mod tests {
 
     fn build_context(canvas: &'static InnerCanvas) -> BuildContext<'static> {
         let mut context = BuildContext::new(
-            Canvas::new(canvas),
+            FrameCanvas::new(canvas),
             ResolvedSize {
                 width: 200.0,
                 height: 100.0,

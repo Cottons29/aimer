@@ -5,8 +5,6 @@ edition = "2024"
 resolver = "3"
 
 [features]
-default = ["event-tree-exp"]
-event-tree-exp = ["aimer_widget/event-tree-exp"]
 portable-guest = [
     "dep:aimer_anteros",
     "aimer_style/portable-guest",

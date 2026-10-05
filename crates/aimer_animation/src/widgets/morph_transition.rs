@@ -299,6 +299,128 @@ struct MorphTransitionFrame {
     controller: AnimationController,
 }
 
+#[derive(Clone, Copy)]
+struct MorphBackgroundPaint {
+    size: ResolvedSize,
+    color: Rgba,
+}
+
+struct MorphBackgroundChild {
+    element: AnyElement,
+    paint: std::rc::Rc<Cell<MorphBackgroundPaint>>,
+}
+
+struct MorphBackgroundWidget {
+    paint: std::rc::Rc<Cell<MorphBackgroundPaint>>,
+}
+
+struct MorphBackgroundElement {
+    paint: std::rc::Rc<Cell<MorphBackgroundPaint>>,
+    recorded_signature: Cell<Option<[u32; 6]>>,
+}
+
+impl MorphBackgroundWidget {
+    fn new(ctx: &BuildContext, paint: MorphBackgroundPaint) -> MorphBackgroundChild {
+        let paint = std::rc::Rc::new(Cell::new(paint));
+        let element = Self {
+            paint: std::rc::Rc::clone(&paint),
+        }
+        .to_element(ctx);
+        MorphBackgroundChild { element, paint }
+    }
+}
+
+impl Widget for MorphBackgroundWidget {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+        MorphBackgroundElement {
+            paint: self.paint,
+            recorded_signature: Cell::new(None),
+        }
+        .boxed()
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "MorphBackground"
+    }
+}
+
+impl aimer_widget::PortableWidget for MorphBackgroundWidget {}
+
+impl MorphBackgroundElement {
+    #[inline]
+    fn paint_value(&self) -> MorphBackgroundPaint {
+        self.paint.get()
+    }
+
+    #[inline]
+    fn signature(paint: MorphBackgroundPaint) -> [u32; 6] {
+        [
+            paint.size.width.to_bits(),
+            paint.size.height.to_bits(),
+            paint.color.r.to_bits(),
+            paint.color.g.to_bits(),
+            paint.color.b.to_bits(),
+            paint.color.a.to_bits(),
+        ]
+    }
+}
+
+impl Drawable for MorphBackgroundElement {
+    fn draw(&self, ctx: &BuildContext) {
+        let paint = self.paint_value();
+        ctx.canvas
+            .fill_color_rect(Vec2d::ZERO, paint.size, paint.color.to_color(), [0.0; 4]);
+    }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let paint = self.paint_value();
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        canvas.fill_color_rect(Vec2d::ZERO, paint.size, paint.color.to_color());
+        canvas.finish();
+        self.recorded_signature.set(Some(Self::signature(paint)));
+    }
+
+    fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
+        self.recorded_signature.get() != Some(Self::signature(self.paint_value()))
+    }
+
+    fn is_paint_bounded(&self) -> bool {
+        true
+    }
+}
+
+impl VisitorElement for MorphBackgroundElement {
+    fn debug_name(&self) -> &'static str {
+        "MorphBackgroundElement"
+    }
+}
+
+impl EventElement for MorphBackgroundElement {
+    fn on_event(&self, _event: &ElementEvent) -> EventResult {
+        EventResult::ignored()
+    }
+}
+
+impl Rebuildable for MorphBackgroundElement {}
+
+impl LayoutElement for MorphBackgroundElement {
+    fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+        self.paint_value().size
+    }
+
+    fn content_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+        self.paint_value().size
+    }
+
+    fn is_layout_stable(&self) -> bool {
+        true
+    }
+}
+
 impl Widget for MorphTransitionFrame {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let current_child = self.current_child.build(ctx);
@@ -309,10 +431,31 @@ impl Widget for MorphTransitionFrame {
             .map(|child| child.computed_size(ctx))
             .unwrap_or(current_size);
         let morphing = old_child.is_some();
+        let has_background_color = self.current_color.is_some() || self.old_color.is_some();
+        let old_background = (morphing && has_background_color).then(|| {
+            MorphBackgroundWidget::new(
+                ctx,
+                MorphBackgroundPaint {
+                    size: old_size,
+                    color: self.old_color.unwrap_or(Rgba::TRANSPARENT),
+                },
+            )
+        });
+        let new_background = (morphing && has_background_color).then(|| {
+            MorphBackgroundWidget::new(
+                ctx,
+                MorphBackgroundPaint {
+                    size: current_size,
+                    color: self.current_color.unwrap_or(Rgba::TRANSPARENT),
+                },
+            )
+        });
 
         MorphTransitionElement {
             current_child: SyncChild::new(current_child),
             old_child: SyncChild(UnsafeCell::new(old_child)),
+            old_background: UnsafeCell::new(old_background),
+            new_background: UnsafeCell::new(new_background),
             controller: self.controller,
             window: ctx.window.clone(),
             old_snapshot: LocalCell::new(LayoutSnapshot {
@@ -325,7 +468,7 @@ impl Widget for MorphTransitionFrame {
                 position: (0.0, 0.0),
                 color: self.current_color.unwrap_or(Rgba::TRANSPARENT),
             }),
-            has_background_color: self.current_color.is_some() || self.old_color.is_some(),
+            has_background_color,
             morph_state: Cell::new(if morphing {
                 MorphState::MorphingIn
             } else {
@@ -388,6 +531,8 @@ impl SyncChild {
 struct MorphTransitionElement {
     current_child: SyncChild,
     old_child: SyncChild,
+    old_background: UnsafeCell<Option<MorphBackgroundChild>>,
+    new_background: UnsafeCell<Option<MorphBackgroundChild>>,
     controller: AnimationController,
     window: WindowHandle,
     old_snapshot: LocalCell<LayoutSnapshot>,
@@ -547,6 +692,151 @@ impl Drawable for MorphTransitionElement {
             self.morph_state.set(MorphState::Idle);
         }
     }
+
+    #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        if unsafe { self.current_child.get() }.is_some_and(|child| !child.is_paint_bounded())
+            || unsafe { self.old_child.get() }.is_some_and(|child| !child.is_paint_bounded())
+        {
+            return false;
+        }
+        let progress = self.controller.tick(AnimInstant::now());
+        if !progress.is_finite() {
+            return false;
+        }
+
+        if self.morph_state.get() == MorphState::Idle {
+            return ctx.set_local_v2_child_presentation_at(
+                0,
+                aimer_canvas::Mat3::identity(),
+                1.0,
+            );
+        }
+
+        if unsafe { self.old_child.get() }.is_none() {
+            return false;
+        }
+        let old_snapshot = self.old_snapshot.with(Clone::clone);
+        let layout = self.interpolated_layout(progress);
+        let new_size = unsafe {
+            self.current_child
+                .get()
+                .map(|child| child.computed_size(ctx))
+                .unwrap_or(ResolvedSize {
+                    width: 0.0,
+                    height: 0.0,
+                })
+        };
+        let scale_x = if new_size.width > 0.01 {
+            layout.size.0 / new_size.width
+        } else {
+            1.0
+        };
+        let scale_y = if new_size.height > 0.01 {
+            layout.size.1 / new_size.height
+        } else {
+            1.0
+        };
+        let sx = lerp_f32(scale_x, 1.0, progress);
+        let sy = lerp_f32(scale_y, 1.0, progress);
+        let cx = new_size.width / 2.0;
+        let cy = new_size.height / 2.0;
+        if ![sx, sy, cx, cy].into_iter().all(f32::is_finite) {
+            return false;
+        }
+
+        if let Some(background) = unsafe { (&*self.old_background.get()).as_ref() } {
+            background.paint.set(MorphBackgroundPaint {
+                size: ResolvedSize {
+                    width: old_snapshot.size.0,
+                    height: old_snapshot.size.1,
+                },
+                color: old_snapshot.color,
+            });
+        }
+        if let Some(background) = unsafe { (&*self.new_background.get()).as_ref() } {
+            background.paint.set(MorphBackgroundPaint {
+                size: new_size,
+                color: layout.color,
+            });
+        }
+
+        let old_alpha = if progress < 0.5 {
+            (1.0 - progress * 2.0).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let new_alpha = if progress < 0.5 {
+            (progress * 2.0).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let identity = aimer_canvas::Mat3::identity();
+        let mut child_index = 0;
+        if self.has_background_color {
+            if !ctx.set_local_v2_child_presentation_at(child_index, identity, 1.0) {
+                return false;
+            }
+            child_index += 1;
+        }
+        if !ctx.set_local_v2_child_presentation_at(child_index, identity, old_alpha) {
+            return false;
+        }
+        child_index += 1;
+        if self.has_background_color {
+            if !ctx.set_local_v2_child_presentation_at(child_index, identity, 1.0) {
+                return false;
+            }
+            child_index += 1;
+        }
+        let transform = aimer_canvas::Mat3::translate(cx, cy)
+            .mul(&aimer_canvas::Mat3::scale(sx, sy))
+            .mul(&aimer_canvas::Mat3::translate(-cx, -cy));
+        ctx.set_local_v2_child_presentation_at(child_index, transform, new_alpha)
+    }
+
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        if self.morph_state.get() == MorphState::MorphingIn {
+            unsafe {
+                if let Some(background) = (&*self.old_background.get()).as_ref() {
+                    background.element.draw(ctx);
+                }
+                if let Some(old) = self.old_child.get() {
+                    old.draw(ctx);
+                }
+                if let Some(background) = (&*self.new_background.get()).as_ref() {
+                    background.element.draw(ctx);
+                }
+                if let Some(child) = self.current_child.get() {
+                    child.draw(ctx);
+                }
+            }
+        } else {
+            unsafe {
+                if let Some(child) = self.current_child.get() {
+                    child.draw(ctx);
+                }
+            }
+        }
+
+        if self.controller.is_animating() {
+            self.window.request_redraw();
+        } else if self.morph_state.get() == MorphState::MorphingIn {
+            let _ = unsafe { self.old_child.take() };
+            unsafe {
+                let _ = (&mut *self.old_background.get()).take();
+                let _ = (&mut *self.new_background.get()).take();
+            }
+            self.morph_state.set(MorphState::Idle);
+        }
+    }
 }
 
 impl VisitorElement for MorphTransitionElement {
@@ -557,6 +847,34 @@ impl VisitorElement for MorphTransitionElement {
             }
             if let Some(old) = self.old_child.get() {
                 visitor(old);
+            }
+        }
+    }
+
+    fn visit_retained_v2_children<'a>(
+        &'a self,
+        visitor: &mut dyn FnMut(usize, &'a dyn Element),
+    ) {
+        let mut index = 0;
+        if self.morph_state.get() == MorphState::MorphingIn {
+            unsafe {
+                if let Some(background) = (&*self.old_background.get()).as_ref() {
+                    visitor(index, background.element.as_ref());
+                    index += 1;
+                }
+                if let Some(old) = self.old_child.get() {
+                    visitor(index, old);
+                    index += 1;
+                }
+                if let Some(background) = (&*self.new_background.get()).as_ref() {
+                    visitor(index, background.element.as_ref());
+                    index += 1;
+                }
+            }
+        }
+        unsafe {
+            if let Some(current) = self.current_child.get() {
+                visitor(index, current);
             }
         }
     }

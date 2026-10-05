@@ -30,10 +30,10 @@ impl RouteChildContext {
         }
     }
 
-    pub(crate) fn with<R>(
+    pub(crate) fn with<'a, R>(
         &self,
-        ctx: &BuildContext,
-        callback: impl FnOnce(&BuildContext) -> R,
+        ctx: &BuildContext<'a>,
+        callback: impl FnOnce(&BuildContext<'a>) -> R,
     ) -> R {
         let mut previous = Vec::new();
         {
@@ -160,7 +160,7 @@ mod tests {
         });
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         let _guard = runtime.enter();
         BuildContext::new(

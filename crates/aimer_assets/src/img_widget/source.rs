@@ -4,9 +4,11 @@ use std::hash::Hash;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use aimer_utils::error;
+use aimer_cupid::draw_cmd_v2::ImageResource;
 use aimer_widget::base::{BuildContext, WindowHandle};
 #[cfg(not(target_arch = "wasm32"))]
 use aimer_venus::Venus;
@@ -48,7 +50,7 @@ fn remove_cache_key<K: Eq + Hash>(access: &mut HashMap<K, u64>, key: &K) {
 enum ImageCacheState {
     Loading,
     Ready(Vec<u8>, u32, u32, u32, u32),
-    Loaded(u32, u32, u32),
+    Loaded(u32, u32, u32, Arc<ImageResource>),
     Error(String),
 }
 
@@ -179,7 +181,91 @@ fn prune_decoded_cache<K, S>(
 fn image_decoded_bytes(state: &ImageCacheState) -> usize {
     match state {
         ImageCacheState::Ready(bytes, ..) => bytes.capacity(),
-        ImageCacheState::Loading | ImageCacheState::Loaded(..) | ImageCacheState::Error(..) => 0,
+        ImageCacheState::Loaded(_, _, _, resource) => resource.rgba().len(),
+        ImageCacheState::Loading | ImageCacheState::Error(..) => 0,
+    }
+}
+
+fn new_retained_image_resource(
+    upload_width: u32,
+    upload_height: u32,
+    intrinsic_width: u32,
+    intrinsic_height: u32,
+    rgba: Vec<u8>,
+) -> Arc<ImageResource> {
+    let texture_id = aimer_cupid::draw_cmd::DrawList::image_texture_id(
+        &rgba,
+        upload_width,
+        upload_height,
+    );
+    let revision = aimer_cupid::draw_cmd::DrawList::image_content_revision(
+        &rgba,
+        upload_width,
+        upload_height,
+    );
+    Arc::new(
+        ImageResource::rgba8_with_intrinsic_size(
+            texture_id,
+            revision,
+            upload_width,
+            upload_height,
+            intrinsic_width,
+            intrinsic_height,
+            Arc::from(rgba),
+        )
+        .expect("decoded RGBA image dimensions match its pixel payload"),
+    )
+}
+
+fn materialize_retained_resource(state: &mut ImageCacheState) -> Option<Arc<ImageResource>> {
+    let current = std::mem::replace(state, ImageCacheState::Loading);
+    match current {
+        ImageCacheState::Ready(bytes, upload_width, upload_height, width, height) => {
+            let resource = new_retained_image_resource(
+                upload_width,
+                upload_height,
+                width,
+                height,
+                bytes,
+            );
+            let id = resource.texture_id();
+            *state = ImageCacheState::Loaded(id, width, height, resource.clone());
+            Some(resource)
+        }
+        ImageCacheState::Loaded(id, width, height, resource) => {
+            *state = ImageCacheState::Loaded(id, width, height, resource.clone());
+            Some(resource)
+        }
+        other => {
+            *state = other;
+            None
+        }
+    }
+}
+
+fn cached_retained_resource<K: Clone + Eq + Hash>(
+    cache: &mut HashMap<K, ImageCacheState>,
+    access: &mut HashMap<K, u64>,
+    key: &K,
+) -> Option<Arc<ImageResource>> {
+    if let Some(resource) = cache.get(key).and_then(loaded_retained_resource) {
+        return Some(resource);
+    }
+    if !cache.contains_key(key) {
+        return None;
+    }
+    let now = touch_cache_key(access, key);
+    let resource = cache
+        .get_mut(key)
+        .and_then(materialize_retained_resource);
+    prune_image_cache(cache, access, now);
+    resource
+}
+
+fn loaded_retained_resource(state: &ImageCacheState) -> Option<Arc<ImageResource>> {
+    match state {
+        ImageCacheState::Loaded(_, _, _, resource) => Some(resource.clone()),
+        ImageCacheState::Loading | ImageCacheState::Ready(..) | ImageCacheState::Error(..) => None,
     }
 }
 
@@ -231,7 +317,7 @@ fn lookup_cache<K: Clone + Eq + Hash>(
     }
 
     match cache.get(key).expect("cache entry was touched above") {
-        ImageCacheState::Loaded(id, width, height) => CacheLookup::Loaded {
+        ImageCacheState::Loaded(id, width, height, _) => CacheLookup::Loaded {
             id: *id,
             width: *width,
             height: *height,
@@ -255,6 +341,7 @@ fn set_cache_state<K: Clone + Eq + Hash>(
 }
 
 #[inline]
+#[cfg(test)]
 fn remove_cache_entry<K: Eq + Hash>(
     cache: &mut HashMap<K, ImageCacheState>,
     access: &mut HashMap<K, u64>,
@@ -284,23 +371,28 @@ impl ImageCaches {
         lookup_cache(&mut self.file, &mut self.file_access, path)
     }
 
-    fn file_texture_id(&self, path: &PathBuf) -> Option<u32> {
-        match self.file.get(path) {
-            Some(ImageCacheState::Loaded(id, ..)) => Some(*id),
-            _ => None,
-        }
+    fn retained_file_resource(&mut self, path: &PathBuf) -> Option<Arc<ImageResource>> {
+        cached_retained_resource(&mut self.file, &mut self.file_access, path)
     }
 
+    #[cfg(test)]
     fn remove_file(&mut self, path: &PathBuf) {
         remove_cache_entry(&mut self.file, &mut self.file_access, path);
     }
 
-    fn set_file_loaded(&mut self, path: PathBuf, id: u32, width: u32, height: u32) {
+    fn set_file_loaded(
+        &mut self,
+        path: PathBuf,
+        id: u32,
+        width: u32,
+        height: u32,
+        resource: Arc<ImageResource>,
+    ) {
         set_cache_state(
             &mut self.file,
             &mut self.file_access,
             path,
-            ImageCacheState::Loaded(id, width, height),
+            ImageCacheState::Loaded(id, width, height, resource),
         );
     }
 
@@ -308,23 +400,23 @@ impl ImageCaches {
         lookup_cache(&mut self.network, &mut self.network_access, url)
     }
 
-    fn network_texture_id(&self, url: &String) -> Option<u32> {
-        match self.network.get(url) {
-            Some(ImageCacheState::Loaded(id, ..)) => Some(*id),
-            _ => None,
-        }
+    fn retained_network_resource(&mut self, url: &String) -> Option<Arc<ImageResource>> {
+        cached_retained_resource(&mut self.network, &mut self.network_access, url)
     }
 
-    fn remove_network(&mut self, url: &String) {
-        remove_cache_entry(&mut self.network, &mut self.network_access, url);
-    }
-
-    fn set_network_loaded(&mut self, url: String, id: u32, width: u32, height: u32) {
+    fn set_network_loaded(
+        &mut self,
+        url: String,
+        id: u32,
+        width: u32,
+        height: u32,
+        resource: Arc<ImageResource>,
+    ) {
         set_cache_state(
             &mut self.network,
             &mut self.network_access,
             url,
-            ImageCacheState::Loaded(id, width, height),
+            ImageCacheState::Loaded(id, width, height, resource),
         );
     }
 
@@ -334,25 +426,24 @@ impl ImageCaches {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn asset_texture_id(&self, key: &String) -> Option<u32> {
-        match self.asset.get(key) {
-            Some(ImageCacheState::Loaded(id, ..)) => Some(*id),
-            _ => None,
-        }
+    fn retained_asset_resource(&mut self, key: &String) -> Option<Arc<ImageResource>> {
+        cached_retained_resource(&mut self.asset, &mut self.asset_access, key)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn remove_asset(&mut self, key: &String) {
-        remove_cache_entry(&mut self.asset, &mut self.asset_access, key);
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn set_asset_loaded(&mut self, key: String, id: u32, width: u32, height: u32) {
+    fn set_asset_loaded(
+        &mut self,
+        key: String,
+        id: u32,
+        width: u32,
+        height: u32,
+        resource: Arc<ImageResource>,
+    ) {
         set_cache_state(
             &mut self.asset,
             &mut self.asset_access,
             key,
-            ImageCacheState::Loaded(id, width, height),
+            ImageCacheState::Loaded(id, width, height, resource),
         );
     }
 }
@@ -497,16 +588,85 @@ impl ImageProvider for ImageSource {
             }
         }
     }
+
+    fn retained_image_resource(
+        &self,
+        _ctx: &BuildContext,
+    ) -> Option<Arc<ImageResource>> {
+        let cached = IMAGE_CACHES.with(|caches| {
+            let caches = caches.borrow();
+            match self {
+                ImageSource::Id(_) => None,
+                ImageSource::Asset(key) => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        caches
+                            .asset
+                            .get(key)
+                            .and_then(loaded_retained_resource)
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let url = if key.starts_with('/') {
+                            key.clone()
+                        } else {
+                            format!("/{key}")
+                        };
+                        caches
+                            .network
+                            .get(&url)
+                            .and_then(loaded_retained_resource)
+                    }
+                }
+                ImageSource::File(path) => caches
+                    .file
+                    .get(path)
+                    .and_then(loaded_retained_resource),
+                ImageSource::Network(url) | ImageSource::NetworkWithHeaders(url, _) => caches
+                    .network
+                    .get(url)
+                    .and_then(loaded_retained_resource),
+            }
+        });
+        if cached.is_some() || matches!(self, ImageSource::Id(_)) {
+            return cached;
+        }
+
+        drain_cache_updates();
+        match self {
+            ImageSource::Id(_) => None,
+            ImageSource::Asset(key) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    IMAGE_CACHES.with(|caches| caches.borrow_mut().retained_asset_resource(key))
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let url = if key.starts_with('/') {
+                        key.clone()
+                    } else {
+                        format!("/{key}")
+                    };
+                    IMAGE_CACHES.with(|caches| {
+                        caches.borrow_mut().retained_network_resource(&url)
+                    })
+                }
+            }
+            ImageSource::File(path) => {
+                IMAGE_CACHES.with(|caches| caches.borrow_mut().retained_file_resource(path))
+            }
+            ImageSource::Network(url) | ImageSource::NetworkWithHeaders(url, _) => {
+                IMAGE_CACHES.with(|caches| {
+                    caches.borrow_mut().retained_network_resource(url)
+                })
+            }
+        }
+    }
 }
 
 impl ImageSource {
     pub fn load_image(ctx: &BuildContext, path: &PathBuf) -> ImageResult {
         drain_cache_updates();
-
-        let stale_id = IMAGE_CACHES.with(|caches| caches.borrow().file_texture_id(path));
-        if stale_id.is_some_and(|id| !ctx.canvas.is_texture_available(id)) {
-            IMAGE_CACHES.with(|caches| caches.borrow_mut().remove_file(path));
-        }
 
         match IMAGE_CACHES.with(|caches| caches.borrow_mut().lookup_file(path)) {
             CacheLookup::Loaded {
@@ -524,14 +684,19 @@ impl ImageSource {
                 width,
                 height,
             } => {
-                // Decoded on a background thread; upload to the GPU here (on
-                // the render thread, where the canvas/GPU lives) and cache id.
-                let id = ctx.canvas.load_image(&bytes, upload_width, upload_height);
+                let resource = new_retained_image_resource(
+                    upload_width,
+                    upload_height,
+                    width,
+                    height,
+                    bytes,
+                );
+                let id = resource.texture_id();
                 ctx.canvas.set_texture_size(id, width, height);
                 IMAGE_CACHES.with(|caches| {
                     caches
                         .borrow_mut()
-                        .set_file_loaded(path.clone(), id, width, height)
+                        .set_file_loaded(path.clone(), id, width, height, resource)
                 });
                 Success(id)
             }
@@ -617,17 +782,12 @@ impl ImageSource {
     ///
     /// On native targets the bytes are read from the platform's asset store
     /// (Android `AssetManager`, or the app bundle / project dir on desktop &
-    /// iOS/macOS), decoded off the UI thread, uploaded to the GPU and cached by
-    /// key.
+    /// iOS/macOS), decoded off the UI thread, retained as RGBA pixels and
+    /// uploaded by the renderer on first draw.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load_asset_image(ctx: &BuildContext, key: &str) -> ImageResult {
         let key_owned = key.to_string();
         drain_cache_updates();
-
-        let stale_id = IMAGE_CACHES.with(|caches| caches.borrow().asset_texture_id(&key_owned));
-        if stale_id.is_some_and(|id| !ctx.canvas.is_texture_available(id)) {
-            IMAGE_CACHES.with(|caches| caches.borrow_mut().remove_asset(&key_owned));
-        }
 
         match IMAGE_CACHES.with(|caches| caches.borrow_mut().lookup_asset(&key_owned)) {
             CacheLookup::Loaded {
@@ -645,8 +805,14 @@ impl ImageSource {
                 width,
                 height,
             } => {
-                // Decoded on a background thread; upload on the render thread.
-                let id = ctx.canvas.load_image(&bytes, upload_width, upload_height);
+                let resource = new_retained_image_resource(
+                    upload_width,
+                    upload_height,
+                    width,
+                    height,
+                    bytes,
+                );
+                let id = resource.texture_id();
                 ctx.canvas.set_texture_size(id, width, height);
                 IMAGE_CACHES.with(|caches| {
                     caches.borrow_mut().set_asset_loaded(
@@ -654,6 +820,7 @@ impl ImageSource {
                         id,
                         width,
                         height,
+                        resource,
                     )
                 });
                 Success(id)
@@ -780,11 +947,6 @@ impl ImageSource {
         drain_cache_updates();
         let url_owned = url.to_string();
 
-        let stale_id = IMAGE_CACHES.with(|caches| caches.borrow().network_texture_id(&url_owned));
-        if stale_id.is_some_and(|id| !ctx.canvas.is_texture_available(id)) {
-            IMAGE_CACHES.with(|caches| caches.borrow_mut().remove_network(&url_owned));
-        }
-
         match IMAGE_CACHES.with(|caches| caches.borrow_mut().lookup_network(&url_owned)) {
             CacheLookup::Loaded {
                 id,
@@ -801,7 +963,14 @@ impl ImageSource {
                 width,
                 height,
             } => {
-                let id = ctx.canvas.load_image(&bytes, upload_width, upload_height);
+                let resource = new_retained_image_resource(
+                    upload_width,
+                    upload_height,
+                    width,
+                    height,
+                    bytes,
+                );
+                let id = resource.texture_id();
                 ctx.canvas.set_texture_size(id, width, height);
                 IMAGE_CACHES.with(|caches| {
                     caches.borrow_mut().set_network_loaded(
@@ -809,6 +978,7 @@ impl ImageSource {
                         id,
                         width,
                         height,
+                        resource,
                     )
                 });
                 Success(id)
@@ -1116,7 +1286,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     fn context() -> aimer_widget::base::BuildContext<'static> {
         use aimer_attribute::{BoxConstraint, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_widget::base::{BuildContext, ResolvedSize, WindowHandle};
 
         static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> =
@@ -1130,7 +1300,7 @@ mod tests {
         let _guard = runtime.enter();
         let inner = Box::leak(Box::new(InnerCanvas::new()));
         let mut context = BuildContext::new(
-            Canvas::new(inner),
+            FrameCanvas::new(inner),
             ResolvedSize {
                 width: 32.0,
                 height: 32.0,

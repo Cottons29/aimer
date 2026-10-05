@@ -17,10 +17,10 @@ impl RawTextField {
     /// Asks for a context menu, to be raised by the next frame.
     ///
     /// The verbs depend on what is selected, and what is selected is only known
-    /// once [`Drawable::draw`] has turned the deferred click into a caret
-    /// offset — the field has no canvas to measure with while handling an
-    /// event. Requesting here and raising there is what lets a hold over a word
-    /// offer `Copy` rather than only `Paste`.
+    /// once the next frame's pre-paint sync has turned a deferred click into a
+    /// caret offset — the field has no canvas to measure with while handling
+    /// an event. Requesting here and raising there is what lets a hold over a
+    /// word offer `Copy` rather than only `Paste`.
     pub(super) fn request_menu(&self, origin: MenuOrigin) {
         self.pending_menu.set(Some(origin));
     }
@@ -69,8 +69,8 @@ impl RawTextField {
 
         // The menu cannot reach back into the element — it holds no reference
         // to it and outlives no part of it — so a choice is recorded here and
-        // applied by the next `draw`, which is also where a deferred click
-        // becomes a caret offset.
+        // applied by the next pre-paint sync, which is also where a deferred
+        // click becomes a caret offset.
         let chosen = Rc::clone(&self.chosen_action);
         let rows = Rc::clone(&self.menu_actions);
         self.close_menu();
@@ -175,7 +175,7 @@ impl RawTextField {
     /// Selects the word under a deferred click, resolved by the next frame.
     ///
     /// Reuses the double-click path: the offset under a position is only
-    /// reachable with a canvas, and `draw` already resolves one that way.
+    /// reachable with a canvas, and pre-paint sync resolves one for drawing.
     pub(super) fn select_word_under(&self, pos: Vec2d) {
         self.pending_click.set(Some(pos));
         self.click_count.set(2);
@@ -201,9 +201,9 @@ mod tests {
     use aimer_ctxmenu::ContextMenuShape;
     use aimer_events::element::ElementEvent;
     use aimer_events::pointer::{PointerButton, PointerInfo, PointerSource};
-    use aimer_widget::EventElement;
+    use aimer_widget::{Drawable, EventElement};
 
-    use super::super::test_support::focused_field;
+    use super::super::test_support::{dummy_build_context, focused_field};
     use super::{FieldAction, MenuOrigin, RawTextField};
     use crate::gesture::LONG_PRESS_DURATION;
     use crate::input_field::controller::TextFieldController;
@@ -359,6 +359,20 @@ mod tests {
         );
         assert!(field.menu_is_open(), "the menu stays, reshaped");
         assert!(verbs(&field).contains(&FieldAction::Copy));
+    }
+
+    #[test]
+    fn retained_prepaint_sync_applies_a_queued_menu_action() {
+        let field = field("hello world");
+        let context = dummy_build_context(200.0, 32.0);
+        let end = field.controller.grapheme_count();
+        field.chosen_action.set(Some(FieldAction::SelectAll));
+
+        assert!(field.sync_local_v2_state(&context));
+
+        assert_eq!(field.cursor.selection_range(), Some((0, end)));
+        assert_eq!(field.controller.selection_graphemes(), (0, end));
+        assert_eq!(field.chosen_action.get(), None);
     }
 
     #[test]

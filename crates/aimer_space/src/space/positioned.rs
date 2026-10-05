@@ -262,9 +262,187 @@ impl<E: Element> RawPositionedElement<E> {
         self.top = top.into();
         self
     }
+
+    fn retained_child_layout<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+    ) -> Option<(Vec2d, BuildContext<'a>)> {
+        if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
+            return None;
+        }
+        let (transform_x, transform_y) = match self.transform {
+            Transform::Translate(x, y) => (x, y),
+            Transform::TranslateX(x) => (x, 0.0),
+            Transform::TranslateY(y) => (0.0, y),
+            Transform::None => (0.0, 0.0),
+            Transform::Scale(..)
+            | Transform::ScaleX(..)
+            | Transform::ScaleY(..)
+            | Transform::Rotate(..) => return None,
+        };
+        let is_auto = self.top == Dimension::Auto
+            && self.left == Dimension::Auto
+            && self.right == Dimension::Auto
+            && self.bottom == Dimension::Auto;
+        let child_size = self.child.content_size(ctx);
+        if !child_size.width.is_finite()
+            || !child_size.height.is_finite()
+            || child_size.width < 0.0
+            || child_size.height < 0.0
+            || child_size.width > 1_000_000.0
+            || child_size.height > 1_000_000.0
+            || !transform_x.is_finite()
+            || !transform_y.is_finite()
+        {
+            return None;
+        }
+
+        let mut offset_x = 0.0;
+        let mut offset_y = 0.0;
+        if !is_auto {
+            if !ctx.parent_size.width.is_finite() || !ctx.parent_size.height.is_finite() {
+                return None;
+            }
+            if self.left != Dimension::Auto {
+                offset_x = self.left.resolve(ctx.parent_size.width, ctx.scale);
+            } else if self.right != Dimension::Auto {
+                offset_x = ctx.parent_size.width
+                    - self.right.resolve(ctx.parent_size.width, ctx.scale)
+                    - child_size.width;
+            }
+            if self.top != Dimension::Auto {
+                offset_y = self.top.resolve(ctx.parent_size.height, ctx.scale);
+            } else if self.bottom != Dimension::Auto {
+                offset_y = ctx.parent_size.height
+                    - self.bottom.resolve(ctx.parent_size.height, ctx.scale)
+                    - child_size.height;
+            }
+        }
+        let offset = Vec2d {
+            x: offset_x + transform_x,
+            y: offset_y + transform_y,
+        };
+        if !offset.x.is_finite()
+            || !offset.y.is_finite()
+            || offset.x.abs() > 1_000_000.0
+            || offset.y.abs() > 1_000_000.0
+        {
+            return None;
+        }
+
+        let mut child_ctx = ctx.clone();
+        child_ctx.visible_rect =
+            shift_visible_rect(ctx.visible_rect, offset_x, offset_y, &self.transform);
+        if !is_auto {
+            child_ctx.parent_size = child_size;
+            child_ctx.box_constraint = BoxConstraint {
+                min_width: 0.0,
+                min_height: 0.0,
+                max_width: child_size.width,
+                max_height: child_size.height,
+            };
+        }
+        Some((offset, child_ctx))
+    }
 }
 
 impl<E: Element> Drawable for RawPositionedElement<E> {
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        let Some((_, child_ctx)) = self.retained_child_layout(ctx) else {
+            return false;
+        };
+        let size = self
+            .child
+            .retained_v2_bounds(&child_ctx)
+            .unwrap_or_else(|| self.child.content_size(&child_ctx));
+        let position = self.child.pos().unwrap_or_default();
+        size.width.is_finite()
+            && size.height.is_finite()
+            && size.width >= 0.0
+            && size.height >= 0.0
+            && size.width <= 1_000_000.0
+            && size.height <= 1_000_000.0
+            && position.x.is_finite()
+            && position.y.is_finite()
+            && position.x.abs() <= 1_000_000.0
+            && position.y.abs() <= 1_000_000.0
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        _child: &dyn Element,
+        _child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        self.retained_child_layout(ctx)
+            .map(|(_, child_ctx)| child_ctx)
+    }
+
+    fn retained_v2_child_geometry_at(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+        _child_index: usize,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        let (offset, child_ctx) = self.retained_child_layout(ctx)?;
+        let position = child.pos().unwrap_or_default();
+        let size = child
+            .retained_v2_bounds(&child_ctx)
+            .unwrap_or_else(|| child.content_size(&child_ctx));
+        let bounds = aimer_cupid::draw_cmd_v2::Rect::new(
+            (offset.x + position.x) / ctx.scale,
+            (offset.y + position.y) / ctx.scale,
+            size.width / ctx.scale,
+            size.height / ctx.scale,
+        );
+        if !bounds.x.is_finite()
+            || !bounds.y.is_finite()
+            || !bounds.width.is_finite()
+            || !bounds.height.is_finite()
+            || bounds.width < 0.0
+            || bounds.height < 0.0
+        {
+            return None;
+        }
+        Some((bounds, child.retained_clip(&child_ctx)))
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let Some((offset, child_ctx)) = self.retained_child_layout(ctx) else {
+            self.bounds.set(None);
+            return;
+        };
+        let size = self.child.content_size(&child_ctx);
+        let (start_x, start_y) = ctx.canvas.get_transform_translation();
+        self.bounds.set(Some((
+            Vec2d {
+                x: (start_x + offset.x) / ctx.scale,
+                y: (start_y + offset.y) / ctx.scale,
+            },
+            Vec2d {
+                x: (start_x + offset.x + size.width) / ctx.scale,
+                y: (start_y + offset.y + size.height) / ctx.scale,
+            },
+        )));
+        ctx.canvas.save();
+        ctx.canvas.translate(offset);
+        self.child.sync_paint_geometry(&child_ctx);
+        ctx.canvas.restore();
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        self.child.is_paint_stable()
+    }
+
+    fn is_paint_bounded(&self) -> bool {
+        self.child.is_paint_bounded()
+    }
+
     fn draw(&self, ctx: &BuildContext) {
         // A position or non-identity transform can change the wrapper's
         // screen rectangle. Unknown transforms stay uncached so bounded
@@ -426,6 +604,13 @@ impl<E: Element> VisitorElement for RawPositionedElement<E> {
         // Positioned handles its own child rendering in draw() with proper
         // offset, so we don't expose children here to avoid
         // double-rendering at (0,0).
+    }
+
+    fn visit_retained_v2_children<'a>(
+        &'a self,
+        visitor: &mut dyn FnMut(usize, &'a dyn Element),
+    ) {
+        visitor(0, &self.child);
     }
 
     fn debug_name(&self) -> &'static str {

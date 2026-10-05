@@ -23,10 +23,17 @@ When requirements compete, use this order:
 Do not stop at a superficial workaround. Find and fix the root cause while keeping the change within the requested
 scope.
 
+## Rust source layout
+
+- Keep every project-owned `.rs` file below 1,000 ~ 1600 physical lines, including tests and documentation comments.
+- When a file approaches the limit, move cohesive responsibilities into sibling modules and keep the parent module as a small facade.
+- Name modules after the responsibility they own. Re-export only the items needed by callers; keep implementation details private.
+- Keep tests beside the behavior they exercise, using child test modules when that keeps source files within the line limit.
+
 ## Before Editing
 
 - Read the relevant implementation, tests, and any nested `AGENTS.md` before changing code.
-- Use available IDE context or Codegraph MCP when it is relevant, but do not assume an IDE integration exists. CLI
+- Use available Aimer MCP or fallback to Codegraph MCP when Aimer MCP is unavailable, but do not assume an IDE integration exists. CLI
   inspection is valid.
 - Use the aimer mcp or cli tool to search the documents from the docs.rs if the aimer is existed.
 - Do not invent missing facts. First, inspect the repository, compiler output, tests, or documentation. Ask the user only
@@ -34,7 +41,7 @@ scope.
 - Preserve unrelated user changes. Do not revert or overwrite them.
 - Match existing module patterns unless this file or the user explicitly requires otherwise.
 
-## Scope and Autonomy
+## Sco
 
 - For requests to explain, review, diagnose, or plan: inspect and report; do not modify code unless asked.
 - For requests to build, change, or fix: make the in-scope local edits and run relevant non-destructive checks without
@@ -82,7 +89,7 @@ Additional test rules:
 - Route public umbrella-crate re-exports through `src/lib.rs`. Use `pub use aimer_xxxx as xxxx` when exposing a crate
   under a shorter public name.
 - Keep source files at or below 2,000 lines (inline-unittest excluded). Split by responsibility before exceeding that
-  limit. Prefer named module, the unittest is not count toward source LOD files such as `gesture.rs` plus
+  limit.
   `gesture/drag.rs`; do not introduce `mod.rs` files.
 - Add documentation comments to new public APIs. Document purpose, important invariants, panics/errors, safety
   requirements, and a useful example when appropriate. Follow Rust standard-library style, but keep documentation

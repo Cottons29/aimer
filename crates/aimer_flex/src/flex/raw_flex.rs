@@ -948,6 +948,67 @@ impl RawFlex {
         )
     }
 
+    fn retained_child_layout<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+        child_ordinal: usize,
+    ) -> Option<(Vec2d, BuildContext<'a>)> {
+        if self.overflow_behavior == OverflowBehavior::Wrap {
+            return None;
+        }
+        let index = self.children.live_start().unwrap_or(0).checked_add(child_ordinal)?;
+        if self.children.get(index)?.id() != child.id() {
+            return None;
+        }
+
+        let layout = self.flex_layout(ctx);
+        if index >= layout.len() {
+            return None;
+        }
+        let child_size = layout.size(index);
+        let distribution = self.main_distribution(ctx, layout.total(), layout.len());
+        let main = distribution.0
+            + layout.offset(index) as f32
+            + distribution.1 * index as f32;
+        let (offset_x, offset_y) = if self.is_row() {
+            (
+                main,
+                align_offset(
+                    self.vertical_alignment,
+                    (ctx.box_constraint.max_height - child_size.height).max(0.0),
+                ),
+            )
+        } else {
+            (
+                align_offset(
+                    self.horizontal_alignment,
+                    (ctx.box_constraint.max_width - child_size.width).max(0.0),
+                ),
+                main,
+            )
+        };
+        let scale = ctx.scale.max(1.0);
+        let offset = Vec2d {
+            x: (offset_x * scale).round() / scale,
+            y: (offset_y * scale).round() / scale,
+        };
+        let child_ctx = BuildContext {
+            parent_size: child_size,
+            box_constraint: BoxConstraint {
+                min_width: 0.0,
+                min_height: 0.0,
+                max_width: child_size.width,
+                max_height: child_size.height,
+            },
+            visible_rect: ctx
+                .visible_rect
+                .map(|(vx, vy, vw, vh)| (vx - offset.x, vy - offset.y, vw, vh)),
+            ..ctx.clone()
+        };
+        Some((offset, child_ctx))
+    }
+
     /// Resolves the children that `ctx.visible_rect` exposes.
     ///
     /// `base_main` is the main-axis shift the container's own alignment applies.
@@ -996,6 +1057,67 @@ impl RawFlex {
 }
 
 impl Drawable for RawFlex {
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.overflow_behavior != OverflowBehavior::Wrap
+            && ctx.scale.is_finite()
+            && ctx.scale > 0.0
+            && ctx.box_constraint.max_width.is_finite()
+            && ctx.box_constraint.max_height.is_finite()
+            && ctx.box_constraint.max_width >= 0.0
+            && ctx.box_constraint.max_height >= 0.0
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn retained_clip(&self, ctx: &BuildContext) -> Option<aimer_cupid::draw_cmd_v2::Rect> {
+        if !self.can_paint_local_v2(ctx) || self.overflow_behavior != OverflowBehavior::Hidden {
+            return None;
+        }
+
+        Some(aimer_cupid::draw_cmd_v2::Rect::new(
+            0.0,
+            0.0,
+            ctx.box_constraint.max_width / ctx.scale,
+            ctx.box_constraint.max_height / ctx.scale,
+        ))
+    }
+
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        self.retained_child_layout(ctx, child, child_index)
+            .map(|(_, child_ctx)| child_ctx)
+    }
+
+    fn retained_v2_child_geometry_at(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        let (offset, child_ctx) = self.retained_child_layout(ctx, child, child_index)?;
+        let size = child
+            .retained_v2_bounds(&child_ctx)
+            .unwrap_or_else(|| child.content_size(&child_ctx));
+        let position = child.pos().unwrap_or_default();
+        let scale = ctx.scale;
+        Some((
+            aimer_cupid::draw_cmd_v2::Rect::new(
+                (offset.x + position.x) / scale,
+                (offset.y + position.y) / scale,
+                size.width / scale,
+                size.height / scale,
+            ),
+            child.retained_clip(&child_ctx),
+        ))
+    }
+
     fn paint(&self, ctx: &BuildContext) {
         if !self.is_paint_stable() || self.overflow_behavior == OverflowBehavior::Wrap {
             return;

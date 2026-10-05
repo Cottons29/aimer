@@ -197,6 +197,7 @@ struct TextureEntry<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBa
     bytes: u64,
     last_used_frame: u64,
     evictable: bool,
+    retained_revision: Option<u64>,
 }
 
 
@@ -509,7 +510,7 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
     ) -> TextureId {
         let id = self.next_id;
         self.next_id += 1;
-        self.upload_image_with_id_internal_generic(backend, id, width, height, data, false);
+        self.upload_image_with_id_internal_generic(backend, id, width, height, data, false, None);
         id
     }
 
@@ -572,6 +573,7 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
                     bytes: width as u64 * height as u64 * 4,
                     last_used_frame: self.frame_index,
                     evictable: true,
+                    retained_revision: None,
                 });
                 true
             }
@@ -590,7 +592,36 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
         height: u32,
         data: &[u8],
     ) {
-        self.upload_image_with_id_internal_generic(backend, id, width, height, data, false);
+        self.upload_image_with_id_internal_generic(backend, id, width, height, data, false, None);
+    }
+
+    /// Uploads retained RGBA8 pixels only when this texture ID lacks the given
+    /// resource revision.
+    pub fn upload_retained_image_with_id(
+        &mut self,
+        backend: &B,
+        id: TextureId,
+        revision: u64,
+        width: u32,
+        height: u32,
+        data: &[u8],
+    ) {
+        if let Some(entry) = self.textures.get_mut(&id)
+            && entry.retained_revision == Some(revision)
+        {
+            entry.last_used_frame = self.frame_index;
+            entry.evictable = false;
+            return;
+        }
+        self.upload_image_with_id_internal_generic(
+            backend,
+            id,
+            width,
+            height,
+            data,
+            false,
+            Some(revision),
+        );
     }
 
     /// Internal upload helper using the selected backend.
@@ -602,6 +633,7 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
         height: u32,
         data: &[u8],
         evictable: bool,
+        retained_revision: Option<u64>,
     ) {
         let (width, height, data) = constrain_rgba8(
             width,
@@ -612,9 +644,15 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
         // In-place update if the texture exists and dimensions match.
         if let Some(entry) = self.textures.get_mut(&id) {
             if entry.width == width && entry.height == height {
+                if retained_revision.is_some() && entry.retained_revision == retained_revision {
+                    entry.last_used_frame = self.frame_index;
+                    entry.evictable = evictable;
+                    return;
+                }
                 upload_rgba8(backend, &entry.texture, width, height, data.as_ref());
                 entry.last_used_frame = self.frame_index;
                 entry.evictable = evictable;
+                entry.retained_revision = retained_revision;
                 return;
             }
         }
@@ -658,6 +696,7 @@ impl<B: crate::backend::GpuBackend> ImagePipeline<B> {
                 bytes: width as u64 * height as u64 * 4,
                 last_used_frame: self.frame_index,
                 evictable,
+                retained_revision,
             },
         );
     }

@@ -27,7 +27,7 @@ use crate::window_attr::WindowAttr;
 use winit::platform::android::activity::AndroidApp;
 
 use crate::handler::event_handler::{HeadlessEventAction, WindowEventHandler};
-use crate::handler::{AimerApplicationHandler, StartupHook};
+use crate::handler::{AimerApplicationHandler, StartupHook, WindowRenderTree};
 use crate::render_ctx::AimerRenderContext;
 #[cfg(feature = "wasm-hot-reload")]
 use crate::hot_reload::{LiveReloadConfig, LiveReloadHost};
@@ -703,6 +703,8 @@ pub struct HeadlessAimerApp<W: Widget + 'static> {
     /// The UI-thread runtime that was installed for this thread before this
     /// application took it over, put back when the application is dropped.
     previous_runtime: Option<std::rc::Rc<Venus>>,
+    #[cfg(test)]
+    last_frame_result: Option<(f32, aimer_cupid::damage_region::DamageSet)>,
 }
 
 impl<W: Widget + 'static> HeadlessAimerApp<W> {
@@ -764,6 +766,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 render_ctx: AimerRenderContext::new(antialiasing),
                 ui_memory: UiMemory::new(ui_memory_limit),
                 window_attr: WindowAttr::new(),
+                render_tree: WindowRenderTree::default(),
                 #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
                 show_window_after_first_frame: false,
                 widget_root: None,
@@ -807,6 +810,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 move || observe_frame_request(&frame_request_reason)
             }),
             previous_runtime,
+            #[cfg(test)]
+            last_frame_result: None,
         };
 
         // The windowed application runs its setup the moment the platform loop
@@ -845,6 +850,10 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         if self.exit_requested {
             return;
         }
+        #[cfg(test)]
+        {
+            self.last_frame_result = None;
+        }
 
         // Drawing is the pending request being delivered, exactly as a window
         // clears it when it hands over `RedrawRequested`. Whatever this frame
@@ -861,14 +870,21 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             .should_skip_scroll_frame(kind, &preparation, had_pending_resize);
         if !skip_draw {
             let build = crate::frame_stats::PhaseTimer::start();
-            let canvas = aimer_canvas::Canvas::new(&self.canvas);
+            let canvas = aimer_canvas::FrameCanvas::new(&self.canvas);
             canvas.begin_frame();
 
             let (width, height) = (self.size.width, self.size.height);
             let window = self.window.clone();
-            self.app
+            let frame_result = self
+                .app
                 .frame_drawer(window)
                 .draw(&self.canvas, width, height);
+            #[cfg(test)]
+            {
+                self.last_frame_result = Some(frame_result);
+            }
+            #[cfg(not(test))]
+            let _ = frame_result;
             build.finish(crate::frame_stats::FramePhase::Build);
         }
 
@@ -1447,6 +1463,7 @@ fn start_event_loop(
             render_ctx: AimerRenderContext::new(antialiasing),
             ui_memory: UiMemory::new(ui_memory_limit),
             window_attr,
+            render_tree: WindowRenderTree::default(),
             #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
             show_window_after_first_frame,
             widget_root: None,
@@ -1516,23 +1533,3109 @@ fn start_event_loop(
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::any::TypeId;
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
     use std::rc::Rc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use aimer_attribute::position::Vec2d;
-    use aimer_attribute::size::ResolvedSize;
+    use aimer_attribute::size::{ResolvedSize, Size};
+    use aimer_attribute::Dimension;
+    use aimer_canvas::Canvas;
+    use aimer_cupid::draw_cmd::DrawCommand;
+    use aimer_cupid::draw_cmd_v2::{Rect, RenderNodeId};
+    use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata, RetainedRenderPlan};
+    use aimer_container::SizedBox;
     use aimer_events::element::{ElementEvent, ScrollDeltaKind};
-    use aimer_widget::base::BuildContext;
+    use aimer_events::pointer::{PointerButton, PointerInfo};
+    use aimer_flex::{Column, Row};
+    use aimer_input::TextEditingController;
+    use aimer_input::input::{CaretContext, DefaultCaret, TextArea, TextField};
+    use aimer_scroll::{ScrollAxis, ScrollController, Scrollable};
+    use aimer_widget::base::{BuildContext, Color};
     use aimer_widget::{
-        AnyElement, Drawable, Element, EventElement, FocusNode, LayoutElement, Rebuildable,
-        VisitorElement,
+        AnyElement, Drawable, Element, ElementId, EventElement, FocusNode, LayoutElement,
+        Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget, VisitorElement,
     };
     use winit::dpi::{PhysicalPosition, PhysicalSize};
     use winit::event::{DeviceId, MouseScrollDelta, TouchPhase, WindowEvent};
 
     use super::*;
+
+    mod retained_modal;
+
+    static VIRTUALIZED_RENDER_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    struct RetainedTextInputWidget {
+        controller: TextEditingController,
+        focus_node: FocusNode,
+        caret_context: Rc<RefCell<Option<CaretContext>>>,
+        multiline: bool,
+    }
+
+    fn captured_caret(
+        slot: Rc<RefCell<Option<CaretContext>>>,
+    ) -> impl Fn(CaretContext) -> DefaultCaret + 'static {
+        move |context| {
+            *slot.borrow_mut() = Some(context.clone());
+            DefaultCaret::new(context, Color::BLACK)
+        }
+    }
+
+    impl Widget for RetainedTextInputWidget {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            let RetainedTextInputWidget {
+                controller,
+                focus_node,
+                caret_context,
+                multiline,
+            } = self;
+            if multiline {
+                let area = TextArea::new()
+                    .controller(controller)
+                    .focus_node(focus_node)
+                    .auto_focus(true)
+                    .min_lines(2)
+                    .max_lines(Some(2))
+                    .caret(captured_caret(caret_context));
+                SizedBox::new()
+                    .width(Dimension::Px(260.0))
+                    .height(Dimension::Px(64.0))
+                    .child(area)
+                    .to_element(ctx)
+            } else {
+                let field = TextField::new()
+                    .controller(controller)
+                    .focus_node(focus_node)
+                    .auto_focus(true)
+                    .caret(captured_caret(caret_context));
+                SizedBox::new()
+                    .width(Dimension::Px(260.0))
+                    .height(Dimension::Px(48.0))
+                    .child(field)
+                    .to_element(ctx)
+            }
+        }
+    }
+
+    impl aimer_widget::PortableWidget for RetainedTextInputWidget {}
+
+    struct MixedPacketWidget {
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl Widget for MixedPacketWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            MixedPacketElement {
+                paints: self.paints,
+                child: LegacyPacketElement.boxed(),
+            }
+            .boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for MixedPacketWidget {}
+
+    struct HeadlessVirtualizedWidget {
+        controller: ScrollController,
+        paints: Rc<Cell<usize>>,
+        item_count: u32,
+        viewport_width: Dimension,
+        viewport_height: Dimension,
+        updater: Rc<RefCell<Option<StateUpdater<HeadlessVerticalRowsState>>>>,
+    }
+
+    impl Widget for HeadlessVirtualizedWidget {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            let rows = HeadlessVerticalRowsWidget {
+                item_count: self.item_count,
+                paints: self.paints.clone(),
+                updater: self.updater.clone(),
+            };
+            SizedBox::new()
+                .width(self.viewport_width)
+                .height(self.viewport_height)
+                .child(
+                    Scrollable::new()
+                        .controller(self.controller)
+                        .vertical_scroll_bar(None)
+                        .horizontal_scroll_bar(None)
+                        .child(rows),
+                )
+                .to_element(ctx)
+        }
+    }
+
+    impl aimer_widget::PortableWidget for HeadlessVirtualizedWidget {}
+
+    struct HeadlessVerticalRowsWidget {
+        item_count: u32,
+        paints: Rc<Cell<usize>>,
+        updater: Rc<RefCell<Option<StateUpdater<HeadlessVerticalRowsState>>>>,
+    }
+
+    impl Widget for HeadlessVerticalRowsWidget {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            let updater_slot = self.updater.clone();
+            let (element, updater) = StatefulElement::new(
+                HeadlessVerticalRowsStateWidget {
+                    item_count: self.item_count,
+                    paints: self.paints,
+                },
+                ctx,
+            );
+            *updater_slot.borrow_mut() = Some(updater);
+            element.boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for HeadlessVerticalRowsWidget {}
+
+    struct HeadlessVerticalRowsStateWidget {
+        item_count: u32,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl StatefulWidget for HeadlessVerticalRowsStateWidget {
+        type State = HeadlessVerticalRowsState;
+
+        fn create_state(self) -> Self::State {
+            HeadlessVerticalRowsState {
+                item_count: self.item_count,
+                paints: self.paints,
+            }
+        }
+    }
+
+    struct HeadlessVerticalRowsState {
+        item_count: u32,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl State<HeadlessVerticalRowsStateWidget> for HeadlessVerticalRowsState {
+        fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            let paints = self.paints.clone();
+            Column::new()
+                .list(0..self.item_count)
+                .item_extent(Dimension::Px(20.0))
+                .builder(move |row_index| HeadlessVirtualizedRow {
+                    row_index: *row_index,
+                    paints: paints.clone(),
+                })
+        }
+    }
+
+    struct HeadlessVirtualizedRow {
+        row_index: u32,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl Widget for HeadlessVirtualizedRow {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            HeadlessVirtualizedRowElement {
+                row_index: self.row_index,
+                paints: self.paints,
+            }
+            .boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for HeadlessVirtualizedRow {}
+
+    struct HeadlessVirtualizedRowElement {
+        row_index: u32,
+        paints: Rc<Cell<usize>>,
+    }
+
+    fn headless_virtualized_row_color(row_index: u32) -> Color {
+        match row_index % 8 {
+            0 => Color::RED,
+            1 => Color::GREEN,
+            2 => Color::BLUE,
+            3 => Color::WHITE,
+            4 => Color::YELLOW,
+            5 => Color::MAGENTA,
+            6 => Color::CYAN,
+            _ => Color::ORANGE,
+        }
+    }
+
+    impl VisitorElement for HeadlessVirtualizedRowElement {
+        fn debug_name(&self) -> &'static str {
+            "HeadlessVirtualizedRow"
+        }
+    }
+
+    impl EventElement for HeadlessVirtualizedRowElement {}
+    impl Rebuildable for HeadlessVirtualizedRowElement {}
+
+    impl LayoutElement for HeadlessVirtualizedRowElement {
+        fn size(&self) -> Option<Size> {
+            Some(Size::new(Dimension::Px(100.0), Dimension::Px(20.0)))
+        }
+    }
+
+    impl Drawable for HeadlessVirtualizedRowElement {
+        fn draw(&self, ctx: &BuildContext) {
+            let color = headless_virtualized_row_color(self.row_index);
+            ctx.canvas.fill_color_rect(
+                Vec2d::ZERO,
+                ResolvedSize {
+                    width: 100.0 * ctx.scale,
+                    height: 20.0 * ctx.scale,
+                },
+                color,
+                [0.0; 4],
+            );
+        }
+
+        fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+            true
+        }
+
+        fn paint_local_v2(&self, ctx: &BuildContext) {
+            self.paints.set(self.paints.get() + 1);
+            let (red, green, blue, alpha) = headless_virtualized_row_color(self.row_index).to_rgba();
+            let canvas = Canvas::of(ctx);
+            canvas.fill_rect(Rect::new(0.0, 0.0, 100.0, 20.0), [red, green, blue, alpha]);
+            canvas.finish();
+        }
+
+        fn is_paint_bounded(&self) -> bool {
+            true
+        }
+    }
+
+    struct HeadlessHorizontalVirtualizedWidget {
+        controller: ScrollController,
+        paints: Rc<Cell<usize>>,
+        item_count: u32,
+        updater: Rc<RefCell<Option<StateUpdater<HeadlessHorizontalRowsState>>>>,
+    }
+
+    impl Widget for HeadlessHorizontalVirtualizedWidget {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            let rows = HeadlessHorizontalRowsWidget {
+                item_count: self.item_count,
+                paints: self.paints.clone(),
+                updater: self.updater.clone(),
+            };
+            SizedBox::new()
+                .width(Dimension::Percent(50.0))
+                .height(Dimension::Percent(50.0))
+                .child(
+                    Scrollable::new()
+                        .axis(ScrollAxis::Horizontal)
+                        .controller(self.controller)
+                        .vertical_scroll_bar(None)
+                        .horizontal_scroll_bar(None)
+                        .child(rows.boxed()),
+                )
+                .to_element(ctx)
+        }
+    }
+
+    impl aimer_widget::PortableWidget for HeadlessHorizontalVirtualizedWidget {}
+
+    struct HeadlessHorizontalRowsWidget {
+        item_count: u32,
+        paints: Rc<Cell<usize>>,
+        updater: Rc<RefCell<Option<StateUpdater<HeadlessHorizontalRowsState>>>>,
+    }
+
+    impl Widget for HeadlessHorizontalRowsWidget {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            let updater_slot = self.updater.clone();
+            let (element, updater) = StatefulElement::new(
+                HeadlessHorizontalRowsStateWidget {
+                    item_count: self.item_count,
+                    paints: self.paints,
+                },
+                ctx,
+            );
+            *updater_slot.borrow_mut() = Some(updater);
+            element.boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for HeadlessHorizontalRowsWidget {}
+
+    struct HeadlessHorizontalRowsStateWidget {
+        item_count: u32,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl StatefulWidget for HeadlessHorizontalRowsStateWidget {
+        type State = HeadlessHorizontalRowsState;
+
+        fn create_state(self) -> Self::State {
+            HeadlessHorizontalRowsState {
+                item_count: self.item_count,
+                paints: self.paints,
+            }
+        }
+    }
+
+    struct HeadlessHorizontalRowsState {
+        item_count: u32,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl State<HeadlessHorizontalRowsStateWidget> for HeadlessHorizontalRowsState {
+        fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            let paints = self.paints.clone();
+            Row::new()
+                .list(0..self.item_count)
+                .item_extent(Dimension::Px(20.0))
+                .builder(move |row_index| HeadlessHorizontalVirtualizedItem {
+                    row_index: *row_index,
+                    paints: paints.clone(),
+                })
+        }
+    }
+
+    struct HeadlessHorizontalVirtualizedItem {
+        row_index: u32,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl Widget for HeadlessHorizontalVirtualizedItem {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            HeadlessHorizontalVirtualizedItemElement {
+                row_index: self.row_index,
+                paints: self.paints,
+            }
+            .boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for HeadlessHorizontalVirtualizedItem {}
+
+    struct HeadlessHorizontalStatefulVirtualizedWidget {
+        controller: ScrollController,
+        paints: Rc<Cell<usize>>,
+        item_count: u32,
+        row_updaters: Rc<RefCell<HashMap<u32, StateUpdater<HeadlessHorizontalItemState>>>>,
+    }
+
+    impl Widget for HeadlessHorizontalStatefulVirtualizedWidget {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            let paints = self.paints.clone();
+            let row_updaters = self.row_updaters.clone();
+            let rows = Row::new()
+                .list(0..self.item_count)
+                .item_extent(Dimension::Px(20.0))
+                .builder(move |row_index| HeadlessHorizontalStatefulItemWidget {
+                    row_index: *row_index,
+                    paints: paints.clone(),
+                    row_updaters: row_updaters.clone(),
+                });
+            SizedBox::new()
+                .width(Dimension::Percent(50.0))
+                .height(Dimension::Percent(50.0))
+                .child(
+                    Scrollable::new()
+                        .axis(ScrollAxis::Horizontal)
+                        .controller(self.controller)
+                        .vertical_scroll_bar(None)
+                        .horizontal_scroll_bar(None)
+                        .child(rows),
+                )
+                .to_element(ctx)
+        }
+    }
+
+    impl aimer_widget::PortableWidget for HeadlessHorizontalStatefulVirtualizedWidget {}
+
+    struct HeadlessHorizontalStatefulItemWidget {
+        row_index: u32,
+        paints: Rc<Cell<usize>>,
+        row_updaters: Rc<RefCell<HashMap<u32, StateUpdater<HeadlessHorizontalItemState>>>>,
+    }
+
+    impl Widget for HeadlessHorizontalStatefulItemWidget {
+        fn to_element(self, ctx: &BuildContext) -> AnyElement {
+            let row_index = self.row_index;
+            let (element, updater) = StatefulElement::new(
+                HeadlessHorizontalItemStateWidget {
+                    row_index,
+                    paints: self.paints,
+                },
+                ctx,
+            );
+            self.row_updaters.borrow_mut().insert(row_index, updater);
+            element.boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for HeadlessHorizontalStatefulItemWidget {}
+
+    struct HeadlessHorizontalItemStateWidget {
+        row_index: u32,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl StatefulWidget for HeadlessHorizontalItemStateWidget {
+        type State = HeadlessHorizontalItemState;
+
+        fn create_state(self) -> Self::State {
+            HeadlessHorizontalItemState {
+                color: headless_virtualized_row_color(self.row_index),
+                height: 80.0,
+                paints: self.paints,
+            }
+        }
+    }
+
+    struct HeadlessHorizontalItemState {
+        color: Color,
+        height: f32,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl State<HeadlessHorizontalItemStateWidget> for HeadlessHorizontalItemState {
+        fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+
+        fn build(&self, _ctx: &BuildContext) -> impl Widget {
+            HeadlessHorizontalItemPaintWidget {
+                color: self.color,
+                height: self.height,
+                paints: self.paints.clone(),
+            }
+        }
+    }
+
+    struct HeadlessHorizontalItemPaintWidget {
+        color: Color,
+        height: f32,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl Widget for HeadlessHorizontalItemPaintWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            HeadlessHorizontalStatefulItemElement {
+                color: self.color,
+                height: self.height,
+                paints: self.paints,
+            }
+            .boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for HeadlessHorizontalItemPaintWidget {}
+
+    fn draw_horizontal_item(ctx: &BuildContext, color: Color, height: f32) {
+        ctx.canvas.fill_color_rect(
+            Vec2d::ZERO,
+            ResolvedSize {
+                width: 20.0 * ctx.scale,
+                height: height * ctx.scale,
+            },
+            color,
+            [0.0; 4],
+        );
+    }
+
+    fn paint_horizontal_item(ctx: &BuildContext, paints: &Cell<usize>, color: Color, height: f32) {
+        paints.set(paints.get() + 1);
+        let (red, green, blue, alpha) = color.to_rgba();
+        let canvas = Canvas::of(ctx);
+        canvas.fill_rect(Rect::new(0.0, 0.0, 20.0, height), [red, green, blue, alpha]);
+        canvas.finish();
+    }
+
+    struct HeadlessHorizontalVirtualizedItemElement {
+        row_index: u32,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for HeadlessHorizontalVirtualizedItemElement {
+        fn debug_name(&self) -> &'static str {
+            "HeadlessHorizontalVirtualizedItem"
+        }
+    }
+
+    impl EventElement for HeadlessHorizontalVirtualizedItemElement {}
+    impl Rebuildable for HeadlessHorizontalVirtualizedItemElement {}
+
+    impl LayoutElement for HeadlessHorizontalVirtualizedItemElement {
+        fn size(&self) -> Option<Size> {
+            Some(Size::new(Dimension::Px(20.0), Dimension::Px(80.0)))
+        }
+    }
+
+    impl Drawable for HeadlessHorizontalVirtualizedItemElement {
+        fn draw(&self, ctx: &BuildContext) {
+            draw_horizontal_item(ctx, headless_virtualized_row_color(self.row_index), 80.0);
+        }
+
+        fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+            true
+        }
+
+        fn paint_local_v2(&self, ctx: &BuildContext) {
+            paint_horizontal_item(
+                ctx,
+                self.paints.as_ref(),
+                headless_virtualized_row_color(self.row_index),
+                80.0,
+            );
+        }
+
+        fn is_paint_bounded(&self) -> bool {
+            true
+        }
+    }
+
+    struct HeadlessHorizontalStatefulItemElement {
+        color: Color,
+        height: f32,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl VisitorElement for HeadlessHorizontalStatefulItemElement {
+        fn debug_name(&self) -> &'static str {
+            "HeadlessHorizontalVirtualizedItem"
+        }
+    }
+
+    impl EventElement for HeadlessHorizontalStatefulItemElement {}
+    impl Rebuildable for HeadlessHorizontalStatefulItemElement {}
+
+    impl LayoutElement for HeadlessHorizontalStatefulItemElement {
+        fn size(&self) -> Option<Size> {
+            Some(Size::new(Dimension::Px(20.0), Dimension::Px(self.height)))
+        }
+    }
+
+    impl Drawable for HeadlessHorizontalStatefulItemElement {
+        fn draw(&self, ctx: &BuildContext) {
+            draw_horizontal_item(ctx, self.color, self.height);
+        }
+
+        fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+            true
+        }
+
+        fn paint_local_v2(&self, ctx: &BuildContext) {
+            paint_horizontal_item(ctx, self.paints.as_ref(), self.color, self.height);
+        }
+
+        fn is_paint_bounded(&self) -> bool {
+            true
+        }
+    }
+
+    fn direct_headless_frame_packet<W: Widget + 'static>(
+        app: &mut HeadlessAimerApp<W>,
+    ) -> (f32, FramePacket) {
+        let width = app.size.width;
+        let height = app.size.height;
+        app.canvas.begin_frame();
+        let window = app.window.clone();
+        let (scale, damage) = {
+            let (_render_ctx, mut drawer) = app.app.split_for_frame(window, true);
+            drawer.draw(&app.canvas, width, height)
+        };
+        app.app.end_frame();
+        let packet = headless_packet_from_canvas(app, scale, damage);
+        (scale, packet)
+    }
+
+    fn dispatch_headless_event<W: Widget + 'static>(
+        app: &mut HeadlessAimerApp<W>,
+        pos: Vec2d,
+        event: &ElementEvent,
+    ) {
+        let root = app
+            .app
+            .widget_root
+            .as_ref()
+            .expect("headless frame built the widget root");
+        let _ = app
+            .app
+            .event_dispatcher
+            .dispatch(root.as_ref(), pos, event);
+    }
+
+    fn focus_headless_field<W: Widget + 'static>(
+        app: &mut HeadlessAimerApp<W>,
+        focus_node: &FocusNode,
+    ) {
+        focus_node.request_focus();
+        dispatch_headless_event(
+            app,
+            Vec2d { x: 0.0, y: 0.0 },
+            &ElementEvent::Cancel,
+        );
+        assert!(focus_node.has_focus(), "headless dispatcher settled field focus");
+    }
+
+    fn retained_text_field_node<W: Widget + 'static>(
+        app: &HeadlessAimerApp<W>,
+        packet: &FramePacket,
+    ) -> (ElementId, RenderNodeId, u64, Rect) {
+        let plan = packet
+            .render_plan()
+            .expect("direct headless frame has a retained plan");
+        let root = app
+            .app
+            .widget_root
+            .as_ref()
+            .expect("headless frame built the widget root");
+        let mut pending = vec![root.as_ref() as &dyn Element];
+        while let Some(element) = pending.pop() {
+            if element.debug_name() == "TextField"
+                && element.element_type_id() != TypeId::of::<StatefulElement>()
+                && let Some(render_node) = app.app.render_node_for_element(element.id())
+                && let Some(revision) = plan.local_v2_revision(render_node)
+            {
+                let bounds = app
+                    .app
+                    .render_tree()
+                    .element_bounds(render_node)
+                    .expect("retained text field has render bounds");
+                return (element.id(), render_node, revision, bounds);
+            }
+            element.visit_retained_v2_children(&mut |_, child| pending.push(child));
+        }
+        panic!("retained plan has no local-v2 TextField node");
+    }
+
+    fn retained_element_id_named<W: Widget + 'static>(
+        app: &HeadlessAimerApp<W>,
+        name: &str,
+    ) -> Option<ElementId> {
+        let root = app
+            .app
+            .widget_root
+            .as_ref()
+            .expect("headless frame built the widget root");
+        let mut pending = vec![root.as_ref() as &dyn Element];
+        while let Some(element) = pending.pop() {
+            if element.debug_name() == name {
+                return Some(element.id());
+            }
+            element.visit_children(&mut |child| pending.push(child));
+        }
+        None
+    }
+
+    fn retained_element_ids_named<W: Widget + 'static>(
+        app: &HeadlessAimerApp<W>,
+        name: &str,
+    ) -> Vec<ElementId> {
+        let root = app
+            .app
+            .widget_root
+            .as_ref()
+            .expect("headless frame built the widget root");
+        let mut pending = vec![root.as_ref() as &dyn Element];
+        let mut ids = Vec::new();
+        while let Some(element) = pending.pop() {
+            if element.debug_name() == name {
+                ids.push(element.id());
+            }
+            element.visit_children(&mut |child| pending.push(child));
+        }
+        ids
+    }
+
+    fn legacy_text_command_count(packet: &FramePacket) -> usize {
+        packet
+            .frame()
+            .draw_list
+            .commands()
+            .iter()
+            .filter(|command| {
+                matches!(
+                    command,
+                    DrawCommand::DrawText { .. }
+                        | DrawCommand::DrawRichText { .. }
+                        | DrawCommand::DrawTextDecoration { .. }
+                )
+            })
+            .count()
+    }
+
+    fn headless_packet_from_canvas<W: Widget + 'static>(
+        app: &mut HeadlessAimerApp<W>,
+        scale: f32,
+        damage: aimer_cupid::damage_region::DamageSet,
+    ) -> FramePacket {
+        let width = app.size.width;
+        let height = app.size.height;
+        let plan = app
+            .canvas
+            .take_retained_render_plan()
+            .expect("the headless frame includes its retained plan");
+        let frame = Frame::new(app.canvas.take_draw_list(), width, height);
+        let metadata = FrameRenderMetadata::new(scale, 0, 0, 0, 0, damage);
+        FramePacket::with_render_plan(frame, metadata, None, Some(plan))
+    }
+
+    fn visible_horizontal_rows<W: Widget + 'static>(
+        app: &HeadlessAimerApp<W>,
+        plan: &RetainedRenderPlan,
+        viewport: (f32, f32),
+    ) -> Vec<RenderNodeId> {
+        let root = app.app.widget_root.as_ref().unwrap();
+        let mut visible_rows = Vec::new();
+        let mut pending = vec![root.as_ref() as &dyn Element];
+        while let Some(element) = pending.pop() {
+            if element.debug_name() == "HeadlessHorizontalVirtualizedItem"
+                && let Some(render_node) = app.app.render_node_for_element(element.id())
+                && let Ok(bounds) = app.app.render_tree().element_bounds(render_node)
+                && bounds.x < viewport.0
+                && bounds.x + bounds.width > 0.0
+                && bounds.y < viewport.1
+                && bounds.y + bounds.height > 0.0
+            {
+                assert!(plan.local_v2_revision(render_node).is_some());
+                visible_rows.push(render_node);
+            }
+            element.visit_children(&mut |child| pending.push(child));
+        }
+        visible_rows
+    }
+
+    #[test]
+    fn retained_text_field_resolves_clicks_and_native_preedit_before_paint() {
+        let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let text = "alpha beta";
+        let controller = TextEditingController::with_text(text);
+        let focus_node = FocusNode::new();
+        let caret_slot = Rc::new(RefCell::new(None));
+        let mut app = AimerApp::start_headless_with(
+            RetainedTextInputWidget {
+                controller: controller.clone(),
+                focus_node: focus_node.clone(),
+                caret_context: caret_slot.clone(),
+                multiline: false,
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(320, 120),
+                scale_factor: 1.0,
+            },
+        );
+
+        let (_, initial_packet) = direct_headless_frame_packet(&mut app);
+        assert!(initial_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        focus_headless_field(&mut app, &focus_node);
+        let (_, focused_packet) = direct_headless_frame_packet(&mut app);
+        let (field_id, field_node, focused_revision, bounds) =
+            retained_text_field_node(&app, &focused_packet);
+        assert_eq!(
+            app.app.render_tree().paint_source(field_node).unwrap(),
+            aimer_cupid::draw_cmd_v2::RenderPaintSource::LocalV2
+        );
+        let caret = caret_slot
+            .borrow()
+            .as_ref()
+            .expect("the retained caret factory ran")
+            .clone();
+        assert!(caret.is_focused());
+        assert!(caret.is_available());
+
+        let click = Vec2d {
+            x: bounds.x + 8.0,
+            y: bounds.y + bounds.height * 0.5,
+        };
+        for event in [
+            ElementEvent::PointerDown(PointerInfo::mouse(click, PointerButton::Primary)),
+            ElementEvent::PointerUp(PointerInfo::mouse(click, PointerButton::Primary)),
+        ] {
+            dispatch_headless_event(&mut app, click, &event);
+        }
+        let (_, click_packet) = direct_headless_frame_packet(&mut app);
+        let (updated_id, updated_node, click_revision, _) =
+            retained_text_field_node(&app, &click_packet);
+        assert_eq!(updated_id, field_id);
+        assert_eq!(updated_node, field_node);
+        assert_eq!(
+            app.app.render_tree().paint_source(field_node).unwrap(),
+            aimer_cupid::draw_cmd_v2::RenderPaintSource::LocalV2
+        );
+        assert!(
+            controller.value().selection().focus() < text.len(),
+            "deferred click moves the caret from the initial end position"
+        );
+        assert_ne!(click_revision, focused_revision);
+        assert_eq!(caret.offset(), controller.value().selection().focus());
+        assert!(caret.geometry().height.is_finite() && caret.geometry().height > 0.0);
+        assert_eq!(legacy_text_command_count(&click_packet), 0);
+
+        app.send_user_event(AimerNativePlatformEvent::SetPreedit {
+            text: "かな".to_owned(),
+            cursor: Some((6, 6)),
+        });
+        assert!(app.is_composing());
+        let (_, preedit_packet) = direct_headless_frame_packet(&mut app);
+        let (_, preedit_node, preedit_revision, _) =
+            retained_text_field_node(&app, &preedit_packet);
+        assert_eq!(preedit_node, field_node);
+        assert_eq!(
+            app.app.render_tree().paint_source(field_node).unwrap(),
+            aimer_cupid::draw_cmd_v2::RenderPaintSource::LocalV2
+        );
+        assert!(controller.value().composing().is_some());
+        assert!(caret.is_composing());
+        assert!(caret.is_available());
+        assert_ne!(preedit_revision, click_revision);
+        assert_eq!(legacy_text_command_count(&preedit_packet), 0);
+
+        app.send_user_event(AimerNativePlatformEvent::InsertText("仮".to_owned()));
+        assert!(!app.is_composing());
+        let (_, committed_packet) = direct_headless_frame_packet(&mut app);
+        let (_, committed_node, _, _) = retained_text_field_node(&app, &committed_packet);
+        assert_eq!(committed_node, field_node);
+        assert!(controller.value().composing().is_none());
+        assert!(!caret.is_composing());
+        assert_eq!(legacy_text_command_count(&committed_packet), 0);
+    }
+
+    #[test]
+    fn retained_text_area_keeps_scrolled_caret_and_native_preedit_local() {
+        let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let controller = TextEditingController::with_text(
+            "first line\nsecond line\nthird line\nfourth line\nfifth line",
+        );
+        let focus_node = FocusNode::new();
+        let caret_slot = Rc::new(RefCell::new(None));
+        let mut app = AimerApp::start_headless_with(
+            RetainedTextInputWidget {
+                controller: controller.clone(),
+                focus_node: focus_node.clone(),
+                caret_context: caret_slot.clone(),
+                multiline: true,
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(320, 120),
+                scale_factor: 1.0,
+            },
+        );
+
+        let (_, first_packet) = direct_headless_frame_packet(&mut app);
+        focus_headless_field(&mut app, &focus_node);
+        let (_, focused_packet) = direct_headless_frame_packet(&mut app);
+        let (field_id, field_node, focused_revision, bounds) =
+            retained_text_field_node(&app, &focused_packet);
+        let caret = caret_slot
+            .borrow()
+            .as_ref()
+            .expect("the retained text-area caret factory ran")
+            .clone();
+        let geometry = caret.geometry();
+        assert!(caret.is_focused());
+        assert!(caret.is_available());
+        assert!(geometry.height > 0.0);
+        assert!(geometry.y >= 0.0);
+        assert!(geometry.y + geometry.height <= bounds.height + 1.0);
+
+        app.send_user_event(AimerNativePlatformEvent::SetPreedit {
+            text: "かんじ".to_owned(),
+            cursor: Some((9, 9)),
+        });
+        let (_, preedit_packet) = direct_headless_frame_packet(&mut app);
+        let (updated_id, updated_node, preedit_revision, updated_bounds) =
+            retained_text_field_node(&app, &preedit_packet);
+        assert_eq!(updated_id, field_id);
+        assert_eq!(updated_node, field_node);
+        assert!(controller.value().composing().is_some());
+        assert!(caret.is_composing());
+        assert_eq!(
+            app.app.render_tree().paint_source(field_node).unwrap(),
+            aimer_cupid::draw_cmd_v2::RenderPaintSource::LocalV2
+        );
+        assert_ne!(preedit_revision, focused_revision);
+        let geometry = caret.geometry();
+        assert!(geometry.height > 0.0);
+        assert!(geometry.y >= 0.0);
+        assert!(geometry.y + geometry.height <= updated_bounds.height + 1.0);
+        assert_eq!(legacy_text_command_count(&preedit_packet), 0);
+        assert_eq!(legacy_text_command_count(&first_packet), 0);
+    }
+
+    #[test]
+    fn retained_text_field_context_menu_stays_in_a_separate_overlay() {
+        let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let text = "alpha beta";
+        let controller = TextEditingController::with_text(text);
+        let focus_node = FocusNode::new();
+        let caret_slot = Rc::new(RefCell::new(None));
+        let mut app = AimerApp::start_headless_with(
+            RetainedTextInputWidget {
+                controller: controller.clone(),
+                focus_node: focus_node.clone(),
+                caret_context: caret_slot,
+                multiline: false,
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(320, 160),
+                scale_factor: 1.0,
+            },
+        );
+        let (_, initial_packet) = direct_headless_frame_packet(&mut app);
+        focus_headless_field(&mut app, &focus_node);
+        let (_, focused_packet) = direct_headless_frame_packet(&mut app);
+        let (field_id, field_node, focused_revision, bounds) =
+            retained_text_field_node(&app, &focused_packet);
+
+        let secondary_click = Vec2d {
+            x: bounds.x + 18.0,
+            y: bounds.y + bounds.height * 0.5,
+        };
+        dispatch_headless_event(
+            &mut app,
+            secondary_click,
+            &ElementEvent::PointerDown(PointerInfo::mouse(
+                secondary_click,
+                PointerButton::Secondary,
+            )),
+        );
+        let (_, menu_packet) = direct_headless_frame_packet(&mut app);
+        let (selected_field_id, selected_field_node, menu_field_revision, _) =
+            retained_text_field_node(&app, &menu_packet);
+        assert_eq!(selected_field_id, field_id);
+        assert_eq!(selected_field_node, field_node);
+        assert_ne!(menu_field_revision, focused_revision);
+        assert!(!controller.value().selection().is_collapsed());
+        assert_eq!(
+            app.app.render_tree().paint_source(field_node).unwrap(),
+            aimer_cupid::draw_cmd_v2::RenderPaintSource::LocalV2
+        );
+
+        let panel_id = retained_element_id_named(&app, "ContextMenu")
+            .expect("the hosted panel is part of the overlay tree");
+        let panel_node = app
+            .app
+            .render_node_for_element(panel_id)
+            .expect("the hosted panel has an independent render node");
+        assert!(menu_packet
+            .render_plan()
+            .and_then(|plan| plan.local_v2_revision(panel_node))
+            .is_some());
+
+        let overlay_id = retained_element_id_named(&app, "ModalOverlay")
+            .expect("the modal overlay is a separate retained element");
+        let overlay_node = app
+            .app
+            .render_node_for_element(overlay_id)
+            .expect("the overlay has its own render node");
+        assert_ne!(overlay_node, field_node);
+        let mut ancestor = Some(overlay_node);
+        while let Some(node) = ancestor {
+            assert_ne!(node, field_node, "the overlay is outside the field subtree");
+            ancestor = app
+                .app
+                .render_tree()
+                .parent_of(node)
+                .expect("the overlay parent chain is valid");
+        }
+        let rows_id = retained_element_id_named(&app, "ContextMenuRows")
+            .expect("the hosted menu rows are part of the overlay tree");
+        let rows_node = app
+            .app
+            .render_node_for_element(rows_id)
+            .expect("the menu rows have an independent render node");
+        assert_ne!(rows_node, field_node);
+        let menu_plan = menu_packet.render_plan().unwrap();
+        assert!(menu_plan.local_v2_revision(rows_node).is_none());
+        let row_ids = retained_element_ids_named(&app, "ContextMenuRow");
+        assert!(!row_ids.is_empty());
+        for id in row_ids {
+            let row_node = app
+                .app
+                .render_node_for_element(id)
+                .expect("each menu row has its own retained render node");
+            assert!(menu_plan.local_v2_revision(row_node).is_some());
+            assert_ne!(row_node, field_node);
+        }
+        let mut ancestor = Some(rows_node);
+        let mut reached_overlay = false;
+        while let Some(node) = ancestor {
+            assert_ne!(node, field_node, "the rows are outside the field subtree");
+            reached_overlay |= node == overlay_node;
+            ancestor = app
+                .app
+                .render_tree()
+                .parent_of(node)
+                .expect("the row parent chain is valid");
+        }
+        assert!(reached_overlay, "the rows belong to the modal overlay subtree");
+        assert_eq!(
+            legacy_text_command_count(&menu_packet),
+            0,
+            "hosted context-menu labels use their retained row list"
+        );
+
+        assert_eq!(legacy_text_command_count(&initial_packet), 0);
+    }
+
+    #[test]
+    fn virtualized_single_row_state_update_damages_only_that_row() {
+        let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let controller = ScrollController::new();
+        let paints = Rc::new(Cell::new(0));
+        let row_updaters = Rc::new(RefCell::new(HashMap::new()));
+        let mut app = AimerApp::start_headless_with(
+            HeadlessHorizontalStatefulVirtualizedWidget {
+                controller,
+                paints: paints.clone(),
+                item_count: 1_000,
+                row_updaters: row_updaters.clone(),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(200, 160),
+                scale_factor: 1.0,
+            },
+        );
+
+        let (_, initial_packet) = direct_headless_frame_packet(&mut app);
+        assert!(initial_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        let (_, indexed_packet) = direct_headless_frame_packet(&mut app);
+        assert!(indexed_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        let visible_rows = visible_horizontal_rows(
+            &app,
+            indexed_packet.render_plan().unwrap(),
+            (100.0, 80.0),
+        );
+        assert_eq!(visible_rows.len(), 5);
+        let target_row = *visible_rows
+            .iter()
+            .find(|row| {
+                (app.app.render_tree().element_bounds(**row).unwrap().x - 40.0).abs()
+                    < f32::EPSILON
+            })
+            .expect("the third row is visible at x=40");
+        assert_eq!(
+            app.app.render_tree().element_bounds(target_row).unwrap(),
+            Rect::new(40.0, 0.0, 20.0, 80.0)
+        );
+        let before_plan = indexed_packet.render_plan().unwrap();
+        let revisions = visible_rows
+            .iter()
+            .map(|row| (*row, before_plan.local_v2_revision(*row).unwrap()))
+            .collect::<HashMap<_, _>>();
+        let paints_before_update = paints.get();
+
+        row_updaters
+            .borrow()
+            .get(&2)
+            .expect("the visible row has its own state updater")
+            .set_state(|state| state.color = Color::WHITE);
+        let (_, updated_packet) = direct_headless_frame_packet(&mut app);
+        assert!(updated_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        assert_eq!(paints.get(), paints_before_update + 1);
+
+        let damage = updated_packet.metadata().damage();
+        assert!(!damage.is_full(), "one row state update stayed local: {:?}", damage.regions());
+        assert!(!damage.regions().is_empty());
+        assert!(damage.regions().iter().all(|region| {
+            region.x >= 40
+                && region.y == 0
+                && region.x + region.width <= 60
+                && region.y + region.height <= 80
+        }), "row damage escaped the updated item's bounds: {:?}", damage.regions());
+
+        let updated_rows = visible_horizontal_rows(
+            &app,
+            updated_packet.render_plan().unwrap(),
+            (100.0, 80.0),
+        );
+        assert_eq!(updated_rows, visible_rows);
+        let updated_plan = updated_packet.render_plan().unwrap();
+        for row in updated_rows {
+            let expected_revision = revisions[&row] + u64::from(row == target_row);
+            assert_eq!(updated_plan.local_v2_revision(row), Some(expected_revision));
+        }
+
+        let old_bounds = app.app.render_tree().element_bounds(target_row).unwrap();
+        assert_eq!(old_bounds, Rect::new(40.0, 0.0, 20.0, 80.0));
+        let height_revisions = visible_rows
+            .iter()
+            .map(|row| (*row, updated_plan.local_v2_revision(*row).unwrap()))
+            .collect::<HashMap<_, _>>();
+        let paints_before_height_update = paints.get();
+        row_updaters
+            .borrow()
+            .get(&2)
+            .expect("the visible row has its own state updater")
+            .set_state(|state| state.height = 60.0);
+        let rebuild_before_height_frame = aimer_widget::rebuild_invalidation_generation();
+        let layout_before_height_frame = aimer_widget::layout_invalidation_generation();
+        let (_, height_packet) = direct_headless_frame_packet(&mut app);
+        assert!(height_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        assert_eq!(paints.get(), paints_before_height_update + 1);
+
+        let height_damage = height_packet.metadata().damage();
+        let concurrent_height_invalidation =
+            rebuild_before_height_frame != aimer_widget::rebuild_invalidation_generation()
+                || layout_before_height_frame != aimer_widget::layout_invalidation_generation();
+        if !concurrent_height_invalidation {
+            assert!(
+                !height_damage.is_full(),
+                "one row height update stayed partial: {:?}",
+                height_damage.regions()
+            );
+        }
+        if !height_damage.is_full() {
+            assert!(!height_damage.regions().is_empty());
+            assert!(height_damage.regions().iter().all(|region| {
+                region.x as f32 >= old_bounds.x
+                    && region.y as f32 >= old_bounds.y
+                    && (region.x + region.width) as f32
+                        <= old_bounds.x + old_bounds.width
+                    && (region.y + region.height) as f32
+                        <= old_bounds.y + old_bounds.height
+            }), "height-change damage escaped the old/new bounds union: {:?}", height_damage.regions());
+            assert!(height_damage.regions().iter().any(|region| {
+                region.x <= 50
+                    && region.x + region.width > 50
+                    && region.y <= 70
+                    && region.y + region.height > 70
+            }), "height-change damage missed the cleared old tail: {:?}", height_damage.regions());
+        }
+
+        let height_rows = visible_horizontal_rows(
+            &app,
+            height_packet.render_plan().unwrap(),
+            (100.0, 80.0),
+        );
+        assert_eq!(height_rows, visible_rows);
+        assert_eq!(
+            app.app.render_tree().element_bounds(target_row).unwrap(),
+            Rect::new(40.0, 0.0, 20.0, 60.0)
+        );
+        let height_plan = height_packet.render_plan().unwrap();
+        for row in height_rows {
+            let expected_revision = height_revisions[&row] + u64::from(row == target_row);
+            assert_eq!(height_plan.local_v2_revision(row), Some(expected_revision));
+        }
+
+        let shrunk_bounds = app.app.render_tree().element_bounds(target_row).unwrap();
+        let grow_revisions = visible_rows
+            .iter()
+            .map(|row| (*row, height_plan.local_v2_revision(*row).unwrap()))
+            .collect::<HashMap<_, _>>();
+        let paints_before_grow = paints.get();
+        row_updaters
+            .borrow()
+            .get(&2)
+            .expect("the visible row has its own state updater")
+            .set_state(|state| state.height = 80.0);
+        let rebuild_before_grow_frame = aimer_widget::rebuild_invalidation_generation();
+        let layout_before_grow_frame = aimer_widget::layout_invalidation_generation();
+        let (_, grow_packet) = direct_headless_frame_packet(&mut app);
+        assert!(grow_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        assert_eq!(paints.get(), paints_before_grow + 1);
+
+        let grow_damage = grow_packet.metadata().damage();
+        let concurrent_grow_invalidation =
+            rebuild_before_grow_frame != aimer_widget::rebuild_invalidation_generation()
+                || layout_before_grow_frame != aimer_widget::layout_invalidation_generation();
+        if !concurrent_grow_invalidation {
+            assert!(
+                !grow_damage.is_full(),
+                "one row height growth stayed partial: {:?}",
+                grow_damage.regions()
+            );
+        }
+        if !grow_damage.is_full() {
+            assert!(!grow_damage.regions().is_empty());
+            assert!(grow_damage.regions().iter().all(|region| {
+                region.x as f32 >= shrunk_bounds.x
+                    && region.y as f32 >= shrunk_bounds.y
+                    && (region.x + region.width) as f32
+                        <= shrunk_bounds.x + shrunk_bounds.width
+                    && (region.y + region.height) as f32
+                        <= 80.0
+            }), "height-growth damage escaped the old/new bounds union: {:?}", grow_damage.regions());
+            assert!(grow_damage.regions().iter().any(|region| {
+                region.x <= 50
+                    && region.x + region.width > 50
+                    && region.y <= 70
+                    && region.y + region.height > 70
+            }), "height-growth damage missed the newly exposed strip: {:?}", grow_damage.regions());
+        }
+
+        let grow_rows = visible_horizontal_rows(
+            &app,
+            grow_packet.render_plan().unwrap(),
+            (100.0, 80.0),
+        );
+        assert_eq!(grow_rows, visible_rows);
+        assert_eq!(
+            app.app.render_tree().element_bounds(target_row).unwrap(),
+            Rect::new(40.0, 0.0, 20.0, 80.0)
+        );
+        let grow_plan = grow_packet.render_plan().unwrap();
+        for row in grow_rows {
+            let expected_revision = grow_revisions[&row] + u64::from(row == target_row);
+            assert_eq!(grow_plan.local_v2_revision(row), Some(expected_revision));
+        }
+    }
+
+    struct MixedPacketElement {
+        paints: Rc<Cell<usize>>,
+        child: AnyElement,
+    }
+
+    impl Drawable for MixedPacketElement {
+        fn draw(&self, ctx: &BuildContext) {
+            ctx.canvas.fill_color_rect(
+                Vec2d::ZERO,
+                ResolvedSize {
+                    width: 20.0 * ctx.scale,
+                    height: 10.0 * ctx.scale,
+                },
+                aimer_widget::base::Color::BLUE,
+                [0.0; 4],
+            );
+            self.child.draw(ctx);
+        }
+
+        fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+            true
+        }
+
+        fn paint_local_v2(&self, ctx: &BuildContext) {
+            self.paints.set(self.paints.get() + 1);
+            let canvas = aimer_canvas::Canvas::of(ctx);
+            canvas.fill_rect(
+                aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 20.0, 10.0),
+                [220, 20, 20, 255],
+            );
+            canvas.finish();
+        }
+    }
+
+    impl VisitorElement for MixedPacketElement {
+        fn debug_name(&self) -> &'static str {
+            "MixedPacketElement"
+        }
+
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.child.as_ref());
+        }
+    }
+
+    impl EventElement for MixedPacketElement {}
+    impl Rebuildable for MixedPacketElement {}
+
+    impl LayoutElement for MixedPacketElement {
+        fn size(&self) -> Option<Size> {
+            Some(Size::new(Dimension::Px(20.0), Dimension::Px(10.0)))
+        }
+    }
+
+    struct LegacyPacketElement;
+
+    impl Drawable for LegacyPacketElement {
+        fn draw(&self, ctx: &BuildContext) {
+            ctx.canvas.fill_color_rect(
+                Vec2d::ZERO,
+                ResolvedSize {
+                    width: 10.0 * ctx.scale,
+                    height: 10.0 * ctx.scale,
+                },
+                aimer_widget::base::Color::GREEN,
+                [0.0; 4],
+            );
+        }
+    }
+
+    impl LayoutElement for LegacyPacketElement {
+        fn size(&self) -> Option<Size> {
+            Some(Size::new(Dimension::Px(10.0), Dimension::Px(10.0)))
+        }
+    }
+
+    impl Rebuildable for LegacyPacketElement {}
+
+    impl VisitorElement for LegacyPacketElement {
+        fn debug_name(&self) -> &'static str {
+            "LegacyPacketElement"
+        }
+    }
+
+    impl EventElement for LegacyPacketElement {}
+
+    struct LegacyModalWidget;
+
+    impl Widget for LegacyModalWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            LegacyModalElement.boxed()
+        }
+    }
+
+    impl aimer_widget::PortableWidget for LegacyModalWidget {}
+
+    struct LegacyModalElement;
+
+    impl Drawable for LegacyModalElement {
+        fn draw(&self, ctx: &BuildContext) {
+            ctx.canvas.fill_color_rect(
+                Vec2d::ZERO,
+                ResolvedSize {
+                    width: 12.0 * ctx.scale,
+                    height: 12.0 * ctx.scale,
+                },
+                aimer_widget::base::Color::PURPLE,
+                [0.0; 4],
+            );
+        }
+    }
+
+    impl LayoutElement for LegacyModalElement {
+        fn size(&self) -> Option<Size> {
+            Some(Size::new(Dimension::Px(12.0), Dimension::Px(12.0)))
+        }
+    }
+
+    impl Rebuildable for LegacyModalElement {}
+
+    impl VisitorElement for LegacyModalElement {
+        fn debug_name(&self) -> &'static str {
+            "LegacyModalElement"
+        }
+    }
+
+    impl EventElement for LegacyModalElement {}
+
+    #[test]
+    fn headless_frame_submits_mixed_local_v2_and_legacy_commands_at_device_scale() {
+        let paints = Rc::new(Cell::new(0));
+        let mut app = AimerApp::start_headless_with(
+            MixedPacketWidget {
+                paints: paints.clone(),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(200, 100),
+                scale_factor: 2.0,
+            },
+        );
+        let _modal = aimer_modal::Modal::new().child(LegacyModalWidget).show();
+        app.render_frame();
+        assert_eq!(paints.get(), 1);
+        let root_id = app.app.widget_root.as_ref().unwrap().id();
+        let render_node = app.app.render_node_for_element(root_id).unwrap();
+        assert_eq!(
+            app.app.render_tree.tree().paint_source(render_node).unwrap(),
+            aimer_cupid::draw_cmd_v2::RenderPaintSource::LocalV2
+        );
+
+        let colors = app
+            .canvas
+            .draw_list()
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                aimer_cupid::draw_cmd::DrawCommand::FillRect { color, .. } => Some(*color),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &colors[..2],
+            &[
+                aimer_cupid::utilities::Color::rgba8(220, 20, 20, 255),
+                aimer_cupid::utilities::Color::rgba8(0, 255, 0, 255),
+            ]
+        );
+        assert!(colors.contains(&aimer_cupid::utilities::Color::rgba8(128, 0, 128, 255)));
+        assert_eq!(
+            colors.last(),
+            Some(&aimer_cupid::utilities::Color::rgba8(128, 0, 128, 255))
+        );
+        assert!(!colors.contains(&aimer_cupid::utilities::Color::rgba8(0, 0, 255, 255)));
+        assert!(app.canvas.draw_list().commands().iter().any(|command| matches!(
+            command,
+            aimer_cupid::draw_cmd::DrawCommand::SetTransform { matrix }
+                if matrix.cols[0][0] == 2.0 && matrix.cols[1][1] == 2.0
+        )));
+    }
+
+    #[test]
+    fn windowed_drawer_keeps_the_legacy_frame_separate_from_the_complete_plan() {
+        let paints = Rc::new(Cell::new(0));
+        let mut app = AimerApp::start_headless_with(
+            MixedPacketWidget {
+                paints: paints.clone(),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(200, 100),
+                scale_factor: 2.0,
+            },
+        );
+        app.canvas.begin_frame();
+        let window = app.window.clone();
+        let (_, mut drawer) = app.app.split_for_frame(window, true);
+        let (scale, damage) = drawer.draw(&app.canvas, 200, 100);
+
+        assert_eq!(paints.get(), 1);
+        assert_eq!(scale, 2.0);
+        assert_eq!(damage.target_size(), (200, 100));
+        assert!(!damage.is_empty());
+        let plan = app
+            .canvas
+            .take_retained_render_plan()
+            .expect("windowed drawer stores a retained plan");
+        assert!(plan.is_complete());
+        let mixed_id = retained_element_id_named(&app, "MixedPacketElement")
+            .expect("the mixed widget has a retained element identity");
+        let mixed_node = app
+            .app
+            .render_node_for_element(mixed_id)
+            .expect("the mixed widget has a retained render node");
+        assert!(plan.local_v2_revision(mixed_node).is_some());
+        let legacy_colors = app.canvas.draw_list().commands().iter().filter_map(|command| match command {
+            aimer_cupid::draw_cmd::DrawCommand::FillRect { color, .. } => Some(*color),
+            _ => None,
+        }).collect::<Vec<_>>();
+        assert!(legacy_colors.iter().any(|color| {
+            *color == aimer_cupid::utilities::Color::rgba8(0, 255, 0, 255)
+        }));
+        assert!(!legacy_colors.iter().any(|color| {
+            *color == aimer_cupid::utilities::Color::blue()
+        }));
+    }
+
+    #[test]
+    fn virtualized_scroll_packet_contains_same_frame_v2_rows_and_viewport_damage() {
+        let controller = ScrollController::new();
+        let paints = Rc::new(Cell::new(0));
+        let mut app = AimerApp::start_headless_with(
+            HeadlessVirtualizedWidget {
+                controller: controller.clone(),
+                paints: paints.clone(),
+                item_count: 1_000,
+                viewport_width: Dimension::Px(100.0),
+                viewport_height: Dimension::Px(80.0),
+                updater: Rc::new(RefCell::new(None)),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(300, 200),
+                scale_factor: 1.0,
+            },
+        );
+        let (_, first_packet) = direct_headless_frame_packet(&mut app);
+        assert!(
+            first_packet
+                .render_plan()
+                .is_some_and(|plan| plan.is_complete())
+        );
+        assert!(controller.is_attached());
+        let initially_painted = paints.get();
+
+        controller.jump_to(Vec2d { x: 0.0, y: 400.0 });
+        let rebuild_before_frame = aimer_widget::rebuild_invalidation_generation();
+        let layout_before_frame = aimer_widget::layout_invalidation_generation();
+        let (scale, packet) = direct_headless_frame_packet(&mut app);
+        assert_eq!(scale, 1.0);
+        assert!(packet.render_plan().is_some_and(|plan| plan.is_complete()));
+        let damage = packet.metadata().damage();
+        assert_eq!(damage.target_size(), (300, 200));
+        assert!(!damage.regions().is_empty());
+        // These epochs are process-global. Another parallel unit test can
+        // legitimately trigger FrameDrawer's conservative full fallback, so
+        // check the viewport-only contract when this frame's epochs are stable.
+        let global_invalidation_during_frame =
+            rebuild_before_frame != aimer_widget::rebuild_invalidation_generation()
+                || layout_before_frame != aimer_widget::layout_invalidation_generation();
+        if !global_invalidation_during_frame {
+            assert!(
+                !damage.is_full(),
+                "a scroll-window update stays partial: regions={:?}",
+                damage.regions()
+            );
+            assert!(damage.regions().iter().all(|region| {
+                region.x + region.width <= 100 && region.y + region.height <= 80
+            }), "packet damage escaped the scroll viewport: {:?}", damage.regions());
+        }
+
+        let root = app.app.widget_root.as_ref().unwrap();
+        let mut pending = vec![root.as_ref() as &dyn Element];
+        let mut visible_row_nodes = Vec::new();
+        while let Some(element) = pending.pop() {
+            if element.debug_name() == "HeadlessVirtualizedRow"
+                && let Some(render_node) = app.app.render_node_for_element(element.id())
+                && let Ok(bounds) = app.app.render_tree().element_bounds(render_node)
+                && bounds.x < 100.0
+                && bounds.x + bounds.width > 0.0
+                && bounds.y < 80.0
+                && bounds.y + bounds.height > 0.0
+            {
+                visible_row_nodes.push(render_node);
+            }
+            element.visit_children(&mut |child| pending.push(child));
+        }
+        assert!(!visible_row_nodes.is_empty(), "the scroll frame has visible rows");
+        let plan = packet
+            .render_plan()
+            .expect("the submitted packet includes its retained plan");
+        assert!(plan.is_complete());
+        for node in visible_row_nodes {
+            assert_eq!(
+                plan.local_v2_revision(node),
+                Some(1),
+                "visible row {node:?} is present in the submitted plan"
+            );
+        }
+        assert!(
+            paints.get() > initially_painted,
+            "the newly visible rows were recorded in this frame"
+        );
+    }
+
+    #[cfg(all(feature = "wgpu", target_os = "macos"))]
+    #[test]
+    fn actual_headless_virtualized_scroll_packet_renders_and_resizes_on_metal() {
+        let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        const TARGET_WIDTH: u32 = 200;
+        const TARGET_HEIGHT: u32 = 160;
+        const RESIZED_WIDTH: u32 = 320;
+        const RESIZED_HEIGHT: u32 = 160;
+        const APP_RESIZED_WIDTH: u32 = 360;
+        const APP_RESIZED_HEIGHT: u32 = 240;
+
+        let require_gpu = std::env::var_os("AIMER_REQUIRE_GPU_E2E").is_some();
+        let gpu_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("create headless-scroll GPU runtime");
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            flags: wgpu::InstanceFlags::default(),
+            backend_options: wgpu::BackendOptions::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            display: None,
+        });
+        let adapter = gpu_runtime
+            .block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+                apply_limit_buckets: true,
+            }))
+            .ok();
+        let Some(adapter) = adapter else {
+            if require_gpu {
+                panic!("Metal adapter unavailable; run this test in a host GPU session");
+            }
+            eprintln!("skipping: Metal adapter unavailable");
+            return;
+        };
+        assert_eq!(adapter.get_info().backend, wgpu::Backend::Metal);
+        let device_queue = gpu_runtime.block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("Aimer headless virtualized scroll acceptance test"),
+            ..Default::default()
+        }));
+        let Ok((device, queue)) = device_queue else {
+            if require_gpu {
+                panic!("could not request a Metal device for the headless scroll test");
+            }
+            eprintln!("skipping: Metal device unavailable");
+            return;
+        };
+
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Aimer headless virtualized scroll target"),
+            size: wgpu::Extent3d {
+                width: TARGET_WIDTH,
+                height: TARGET_HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let backend = aimer_cupid::WgpuBackend::new(device.clone(), queue.clone());
+        let mut renderer = aimer_cupid::renderer::Renderer::new(
+            &backend,
+            wgpu::TextureFormat::Rgba8Unorm,
+        );
+
+        let controller = ScrollController::new();
+        let paints = Rc::new(Cell::new(0));
+        let vertical_updater = Rc::new(RefCell::new(None));
+        let mut app = AimerApp::start_headless_with(
+            HeadlessVirtualizedWidget {
+                controller: controller.clone(),
+                paints: paints.clone(),
+                item_count: 1_000,
+                viewport_width: Dimension::Percent(50.0),
+                viewport_height: Dimension::Percent(50.0),
+                updater: vertical_updater.clone(),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(TARGET_WIDTH, TARGET_HEIGHT),
+                scale_factor: 1.0,
+            },
+        );
+        let (_, first_packet) = direct_headless_frame_packet(&mut app);
+        assert!(first_packet.render_plan().is_some_and(|plan| plan.is_complete()));
+        renderer.render_packet(&backend, &view, &first_packet, false);
+
+        let read_target = |target: &wgpu::Texture, width: u32, height: u32| {
+            let unpadded_bytes_per_row = width * 4;
+            let bytes_per_row = unpadded_bytes_per_row.div_ceil(256) * 256;
+            let readback = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Aimer headless virtualized scroll readback"),
+                size: u64::from(bytes_per_row) * u64::from(height),
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Aimer headless virtualized scroll readback encoder"),
+            });
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: target,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &readback,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(bytes_per_row),
+                        rows_per_image: Some(height),
+                    },
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit(Some(encoder.finish()));
+            let slice = readback.slice(..);
+            slice.map_async(wgpu::MapMode::Read, |result| {
+                result.expect("map headless-scroll readback buffer");
+            });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("wait for headless-scroll GPU readback");
+            let pixels = {
+                let mapped = slice
+                    .get_mapped_range()
+                    .expect("map headless-scroll readback range");
+                let mut pixels = vec![0; (unpadded_bytes_per_row * height) as usize];
+                for row in 0..height as usize {
+                    let source_start = row * bytes_per_row as usize;
+                    let target_start = row * unpadded_bytes_per_row as usize;
+                    pixels[target_start..target_start + unpadded_bytes_per_row as usize]
+                        .copy_from_slice(
+                            &mapped[source_start..source_start + unpadded_bytes_per_row as usize],
+                        );
+                }
+                pixels
+            };
+            readback.unmap();
+            pixels
+        };
+        let read_pixel = |pixels: &[u8], width: u32, x: u32, y: u32| {
+            let offset = ((y * width + x) * 4) as usize;
+            <[u8; 4]>::try_from(&pixels[offset..offset + 4]).expect("RGBA pixel")
+        };
+        let color_bytes = |color: Color| {
+            let (red, green, blue, alpha) = color.to_rgba();
+            [red, green, blue, alpha]
+        };
+
+        let row_target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Aimer single-row state update target"),
+            size: wgpu::Extent3d {
+                width: TARGET_WIDTH,
+                height: TARGET_HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let row_view = row_target.create_view(&wgpu::TextureViewDescriptor::default());
+        let row_controller = ScrollController::new();
+        let row_paints = Rc::new(Cell::new(0));
+        let row_updaters = Rc::new(RefCell::new(HashMap::new()));
+        let mut row_app = AimerApp::start_headless_with(
+            HeadlessHorizontalStatefulVirtualizedWidget {
+                controller: row_controller.clone(),
+                paints: row_paints.clone(),
+                item_count: 1_000,
+                row_updaters: row_updaters.clone(),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(TARGET_WIDTH, TARGET_HEIGHT),
+                scale_factor: 1.0,
+            },
+        );
+        let (_, row_initial_packet) = direct_headless_frame_packet(&mut row_app);
+        assert!(row_initial_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        let mut row_renderer = aimer_cupid::renderer::Renderer::new(
+            &backend,
+            wgpu::TextureFormat::Rgba8Unorm,
+        );
+        row_renderer.render_packet(&backend, &row_view, &row_initial_packet, false);
+
+        // The event index picks up newly materialized row state owners at the
+        // next frame boundary, before the programmatic row update below.
+        let (_, indexed_row_packet) = direct_headless_frame_packet(&mut row_app);
+        assert!(indexed_row_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        let indexed_rows = visible_horizontal_rows(
+            &row_app,
+            indexed_row_packet.render_plan().unwrap(),
+            (100.0, 80.0),
+        );
+        assert_eq!(indexed_rows.len(), 5);
+        row_renderer.render_packet(&backend, &row_view, &indexed_row_packet, false);
+        let row_before_pixels = read_target(&row_target, TARGET_WIDTH, TARGET_HEIGHT);
+        assert_eq!(
+            read_pixel(&row_before_pixels, TARGET_WIDTH, 50, 10),
+            color_bytes(Color::BLUE)
+        );
+
+        let row_2 = *indexed_rows
+            .iter()
+            .find(|node| {
+                (row_app.app.render_tree().element_bounds(**node).unwrap().x - 40.0).abs()
+                    < f32::EPSILON
+            })
+            .expect("row 2 is visible at x=40");
+        let row_2_bounds = row_app.app.render_tree().element_bounds(row_2).unwrap();
+        assert_eq!(row_2_bounds, Rect::new(40.0, 0.0, 20.0, 80.0));
+        let indexed_plan = indexed_row_packet.render_plan().unwrap();
+        let row_revisions = indexed_rows
+            .iter()
+            .map(|row| {
+                (
+                    *row,
+                    indexed_plan
+                        .local_v2_revision(*row)
+                        .expect("visible rows keep their local draw lists"),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let paints_before_row_update = row_paints.get();
+        row_updaters
+            .borrow()
+            .get(&2)
+            .expect("the visible row has its own state updater")
+            .set_state(|state| state.color = Color::WHITE);
+        let rebuild_before_row_frame = aimer_widget::rebuild_invalidation_generation();
+        let layout_before_row_frame = aimer_widget::layout_invalidation_generation();
+        let (row_update_scale, row_update_packet) = direct_headless_frame_packet(&mut row_app);
+        assert_eq!(row_update_scale, 1.0);
+        assert!(row_update_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        assert_eq!(row_paints.get(), paints_before_row_update + 1);
+        let row_update_damage = row_update_packet.metadata().damage();
+        let concurrent_row_invalidation =
+            rebuild_before_row_frame != aimer_widget::rebuild_invalidation_generation()
+                || layout_before_row_frame != aimer_widget::layout_invalidation_generation();
+        if !concurrent_row_invalidation {
+            assert!(
+                !row_update_damage.is_full(),
+                "one row state update should remain partial: {:?}",
+                row_update_damage.regions()
+            );
+        }
+        if !row_update_damage.is_full() {
+            assert!(!row_update_damage.regions().is_empty());
+            assert!(row_update_damage.regions().iter().all(|region| {
+                region.x as f32 >= row_2_bounds.x
+                    && region.y as f32 >= row_2_bounds.y
+                    && (region.x + region.width) as f32
+                        <= row_2_bounds.x + row_2_bounds.width
+                    && (region.y + region.height) as f32
+                        <= row_2_bounds.y + row_2_bounds.height
+            }), "single-row state damage escaped its element bounds: {:?}", row_update_damage.regions());
+        }
+        let updated_rows = visible_horizontal_rows(
+            &row_app,
+            row_update_packet.render_plan().unwrap(),
+            (100.0, 80.0),
+        );
+        assert_eq!(updated_rows, indexed_rows);
+        let updated_plan = row_update_packet.render_plan().unwrap();
+        for row in &updated_rows {
+            let expected_revision = row_revisions[row] + u64::from(*row == row_2);
+            assert_eq!(updated_plan.local_v2_revision(*row), Some(expected_revision));
+        }
+        row_renderer.render_packet(&backend, &row_view, &row_update_packet, false);
+        let row_after_pixels = read_target(&row_target, TARGET_WIDTH, TARGET_HEIGHT);
+        if !concurrent_row_invalidation && !row_update_damage.is_full() {
+            assert!(!row_renderer.compositor_stats().full_repaint);
+        }
+        assert_eq!(
+            read_pixel(&row_after_pixels, TARGET_WIDTH, 50, 10),
+            color_bytes(Color::WHITE)
+        );
+        for y in 0..TARGET_HEIGHT {
+            for x in 0..TARGET_WIDTH {
+                if !(40..60).contains(&x) || y >= 80 {
+                    assert_eq!(
+                        read_pixel(&row_after_pixels, TARGET_WIDTH, x, y),
+                        read_pixel(&row_before_pixels, TARGET_WIDTH, x, y),
+            "row state update changed a pixel outside row 2 at ({x}, {y})"
+                    );
+                }
+            }
+        }
+
+        let old_row_2_bounds = row_app.app.render_tree().element_bounds(row_2).unwrap();
+        assert_eq!(old_row_2_bounds, Rect::new(40.0, 0.0, 20.0, 80.0));
+        let revisions_before_height_update = updated_rows
+            .iter()
+            .map(|row| (*row, updated_plan.local_v2_revision(*row).unwrap()))
+            .collect::<HashMap<_, _>>();
+        let paints_before_height_update = row_paints.get();
+        row_updaters
+            .borrow()
+            .get(&2)
+            .expect("the visible row has its own state updater")
+            .set_state(|state| state.height = 60.0);
+        let rebuild_before_height_frame = aimer_widget::rebuild_invalidation_generation();
+        let layout_before_height_frame = aimer_widget::layout_invalidation_generation();
+        let (height_scale, height_packet) = direct_headless_frame_packet(&mut row_app);
+        assert_eq!(height_scale, 1.0);
+        assert!(height_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        assert_eq!(row_paints.get(), paints_before_height_update + 1);
+
+        let height_damage = height_packet.metadata().damage();
+        let concurrent_height_invalidation =
+            rebuild_before_height_frame != aimer_widget::rebuild_invalidation_generation()
+                || layout_before_height_frame != aimer_widget::layout_invalidation_generation();
+        if !concurrent_height_invalidation {
+            assert!(
+                !height_damage.is_full(),
+                "one row height update should remain partial: {:?}",
+                height_damage.regions()
+            );
+        }
+        if !height_damage.is_full() {
+            assert!(!height_damage.regions().is_empty());
+            assert!(height_damage.regions().iter().all(|region| {
+                region.x as f32 >= old_row_2_bounds.x
+                    && region.y as f32 >= old_row_2_bounds.y
+                    && (region.x + region.width) as f32
+                        <= old_row_2_bounds.x + old_row_2_bounds.width
+                    && (region.y + region.height) as f32
+                        <= old_row_2_bounds.y + old_row_2_bounds.height
+            }), "height-change damage escaped the old/new bounds union: {:?}", height_damage.regions());
+            assert!(height_damage.regions().iter().any(|region| {
+                region.x <= 50
+                    && region.x + region.width > 50
+                    && region.y <= 70
+                    && region.y + region.height > 70
+            }), "height-change damage missed the cleared old tail: {:?}", height_damage.regions());
+        }
+
+        let height_rows = visible_horizontal_rows(
+            &row_app,
+            height_packet.render_plan().unwrap(),
+            (100.0, 80.0),
+        );
+        assert_eq!(height_rows, indexed_rows);
+        assert_eq!(
+            row_app.app.render_tree().element_bounds(row_2).unwrap(),
+            Rect::new(40.0, 0.0, 20.0, 60.0)
+        );
+        let height_plan = height_packet.render_plan().unwrap();
+        for row in &height_rows {
+            let expected_revision = revisions_before_height_update[row] + u64::from(*row == row_2);
+            assert_eq!(height_plan.local_v2_revision(*row), Some(expected_revision));
+        }
+
+        row_renderer.render_packet(&backend, &row_view, &height_packet, false);
+        let row_after_height_pixels = read_target(&row_target, TARGET_WIDTH, TARGET_HEIGHT);
+        if !concurrent_height_invalidation && !height_damage.is_full() {
+            assert!(!row_renderer.compositor_stats().full_repaint);
+        }
+        assert_eq!(
+            read_pixel(&row_after_height_pixels, TARGET_WIDTH, 50, 10),
+            color_bytes(Color::WHITE)
+        );
+        assert_eq!(
+            read_pixel(&row_after_height_pixels, TARGET_WIDTH, 50, 70),
+            [0, 0, 0, 0],
+            "the old tail pixels are cleared after the row shrinks"
+        );
+        for y in 0..TARGET_HEIGHT {
+            for x in 0..TARGET_WIDTH {
+                if !(40..60).contains(&x) || y >= 80 {
+                    assert_eq!(
+                        read_pixel(&row_after_height_pixels, TARGET_WIDTH, x, y),
+                        read_pixel(&row_after_pixels, TARGET_WIDTH, x, y),
+                        "row height update changed a pixel outside the old/new bounds at ({x}, {y})"
+                    );
+                }
+            }
+        }
+
+        let shrunk_row_2_bounds = row_app.app.render_tree().element_bounds(row_2).unwrap();
+        let revisions_before_grow = height_rows
+            .iter()
+            .map(|row| (*row, height_plan.local_v2_revision(*row).unwrap()))
+            .collect::<HashMap<_, _>>();
+        let paints_before_grow = row_paints.get();
+        row_updaters
+            .borrow()
+            .get(&2)
+            .expect("the visible row has its own state updater")
+            .set_state(|state| state.height = 80.0);
+        let rebuild_before_grow_frame = aimer_widget::rebuild_invalidation_generation();
+        let layout_before_grow_frame = aimer_widget::layout_invalidation_generation();
+        let (grow_scale, grow_packet) = direct_headless_frame_packet(&mut row_app);
+        assert_eq!(grow_scale, 1.0);
+        assert!(grow_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        assert_eq!(row_paints.get(), paints_before_grow + 1);
+
+        let grow_damage = grow_packet.metadata().damage();
+        let concurrent_grow_invalidation =
+            rebuild_before_grow_frame != aimer_widget::rebuild_invalidation_generation()
+                || layout_before_grow_frame != aimer_widget::layout_invalidation_generation();
+        if !concurrent_grow_invalidation {
+            assert!(
+                !grow_damage.is_full(),
+                "one row height growth should remain partial: {:?}",
+                grow_damage.regions()
+            );
+        }
+        if !grow_damage.is_full() {
+            assert!(!grow_damage.regions().is_empty());
+            assert!(grow_damage.regions().iter().all(|region| {
+                region.x as f32 >= shrunk_row_2_bounds.x
+                    && region.y as f32 >= shrunk_row_2_bounds.y
+                    && (region.x + region.width) as f32
+                        <= shrunk_row_2_bounds.x + shrunk_row_2_bounds.width
+                    && (region.y + region.height) as f32 <= 80.0
+            }), "height-growth damage escaped the old/new bounds union: {:?}", grow_damage.regions());
+            assert!(grow_damage.regions().iter().any(|region| {
+                region.x <= 50
+                    && region.x + region.width > 50
+                    && region.y <= 70
+                    && region.y + region.height > 70
+            }), "height-growth damage missed the newly exposed strip: {:?}", grow_damage.regions());
+        }
+
+        let grow_rows = visible_horizontal_rows(
+            &row_app,
+            grow_packet.render_plan().unwrap(),
+            (100.0, 80.0),
+        );
+        assert_eq!(grow_rows, indexed_rows);
+        assert_eq!(
+            row_app.app.render_tree().element_bounds(row_2).unwrap(),
+            Rect::new(40.0, 0.0, 20.0, 80.0)
+        );
+        let grow_plan = grow_packet.render_plan().unwrap();
+        for row in &grow_rows {
+            let expected_revision = revisions_before_grow[row] + u64::from(*row == row_2);
+            assert_eq!(grow_plan.local_v2_revision(*row), Some(expected_revision));
+        }
+
+        row_renderer.render_packet(&backend, &row_view, &grow_packet, false);
+        let row_after_grow_pixels = read_target(&row_target, TARGET_WIDTH, TARGET_HEIGHT);
+        if !concurrent_grow_invalidation && !grow_damage.is_full() {
+            assert!(!row_renderer.compositor_stats().full_repaint);
+        }
+        assert_eq!(
+            read_pixel(&row_after_grow_pixels, TARGET_WIDTH, 50, 70),
+            color_bytes(Color::WHITE),
+            "the newly exposed strip is repainted after the row grows"
+        );
+        for y in 0..TARGET_HEIGHT {
+            for x in 0..TARGET_WIDTH {
+                if !(40..60).contains(&x) || y >= 80 {
+                    assert_eq!(
+                        read_pixel(&row_after_grow_pixels, TARGET_WIDTH, x, y),
+                        read_pixel(&row_after_height_pixels, TARGET_WIDTH, x, y),
+                        "row height growth changed a pixel outside the old/new bounds at ({x}, {y})"
+                    );
+                }
+            }
+        }
+        drop(row_app);
+
+        let first_pixels = read_target(&target, TARGET_WIDTH, TARGET_HEIGHT);
+        let initial_paints = paints.get();
+        assert!(initial_paints > 0, "the first frame paints windowed rows");
+        let first_plan = first_packet.render_plan().unwrap();
+        let initial_visible_rows = {
+            let root = app.app.widget_root.as_ref().unwrap();
+            let mut visible_rows = Vec::new();
+            let mut pending = vec![root.as_ref() as &dyn Element];
+            while let Some(element) = pending.pop() {
+                if element.debug_name() == "HeadlessVirtualizedRow"
+                    && let Some(render_node) = app.app.render_node_for_element(element.id())
+                    && let Ok(bounds) = app.app.render_tree().element_bounds(render_node)
+                    && bounds.x < 100.0
+                    && bounds.x + bounds.width > 0.0
+                    && bounds.y < 80.0
+                    && bounds.y + bounds.height > 0.0
+                {
+                    assert_eq!(first_plan.local_v2_revision(render_node), Some(1));
+                    visible_rows.push(render_node);
+                }
+                element.visit_children(&mut |child| pending.push(child));
+            }
+            visible_rows
+        };
+        assert!(!initial_visible_rows.is_empty());
+        assert_eq!(read_pixel(&first_pixels, TARGET_WIDTH, 10, 10), color_bytes(Color::RED));
+        assert_eq!(read_pixel(&first_pixels, TARGET_WIDTH, 10, 30), color_bytes(Color::GREEN));
+        assert_eq!(read_pixel(&first_pixels, TARGET_WIDTH, 10, 50), color_bytes(Color::BLUE));
+        assert_eq!(read_pixel(&first_pixels, TARGET_WIDTH, 10, 70), color_bytes(Color::WHITE));
+        assert_eq!(read_pixel(&first_pixels, TARGET_WIDTH, 110, 10), [0, 0, 0, 0]);
+        assert_eq!(read_pixel(&first_pixels, TARGET_WIDTH, 10, 90), [0, 0, 0, 0]);
+
+        controller.jump_to(Vec2d { x: 0.0, y: 400.0 });
+        let rebuild_before_frame = aimer_widget::rebuild_invalidation_generation();
+        let layout_before_frame = aimer_widget::layout_invalidation_generation();
+        let (scale, second_packet) = direct_headless_frame_packet(&mut app);
+        assert_eq!(scale, 1.0);
+        assert!(second_packet.render_plan().is_some_and(|plan| plan.is_complete()));
+        let concurrent_global_invalidation =
+            rebuild_before_frame != aimer_widget::rebuild_invalidation_generation()
+                || layout_before_frame != aimer_widget::layout_invalidation_generation();
+        let damage = second_packet.metadata().damage();
+        assert_eq!(damage.target_size(), (TARGET_WIDTH, TARGET_HEIGHT));
+        assert!(!damage.regions().is_empty());
+        if !concurrent_global_invalidation {
+            assert!(!damage.is_full(), "stable scroll frame damage: {:?}", damage.regions());
+            assert!(damage.regions().iter().all(|region| {
+                region.x + region.width <= 100 && region.y + region.height <= 80
+            }), "headless scroll damage escaped its viewport: {:?}", damage.regions());
+        }
+
+        let plan = second_packet.render_plan().unwrap();
+        let visible_rows = {
+            let root = app.app.widget_root.as_ref().unwrap();
+            let mut visible_rows = Vec::new();
+            let mut pending = vec![root.as_ref() as &dyn Element];
+            while let Some(element) = pending.pop() {
+                if element.debug_name() == "HeadlessVirtualizedRow"
+                    && let Some(render_node) = app.app.render_node_for_element(element.id())
+                    && let Ok(bounds) = app.app.render_tree().element_bounds(render_node)
+                    && bounds.x < 100.0
+                    && bounds.x + bounds.width > 0.0
+                    && bounds.y < 80.0
+                    && bounds.y + bounds.height > 0.0
+                {
+                    assert_eq!(plan.local_v2_revision(render_node), Some(1));
+                    visible_rows.push(render_node);
+                }
+                element.visit_children(&mut |child| pending.push(child));
+            }
+            visible_rows
+        };
+        assert!(!visible_rows.is_empty());
+        assert_ne!(initial_visible_rows, visible_rows, "scrolling replaces the row window");
+        assert!(paints.get() > initial_paints, "new rows paint in this frame");
+
+        renderer.render_packet(&backend, &view, &second_packet, false);
+        let second_pixels = read_target(&target, TARGET_WIDTH, TARGET_HEIGHT);
+        let stats = renderer.compositor_stats();
+        if !concurrent_global_invalidation {
+            assert!(!stats.full_repaint);
+            assert_eq!(stats.damage_regions, 1);
+            assert_eq!(stats.damaged_pixels, 100 * 80);
+        }
+        assert_eq!(read_pixel(&second_pixels, TARGET_WIDTH, 10, 10), color_bytes(Color::YELLOW));
+        assert_eq!(read_pixel(&second_pixels, TARGET_WIDTH, 10, 30), color_bytes(Color::MAGENTA));
+        assert_eq!(read_pixel(&second_pixels, TARGET_WIDTH, 10, 50), color_bytes(Color::CYAN));
+        assert_eq!(read_pixel(&second_pixels, TARGET_WIDTH, 10, 70), color_bytes(Color::ORANGE));
+        for y in 0..TARGET_HEIGHT {
+            for x in 0..TARGET_WIDTH {
+                if x >= 100 || y >= 80 {
+                    assert_eq!(
+                        read_pixel(&second_pixels, TARGET_WIDTH, x, y),
+                        read_pixel(&first_pixels, TARGET_WIDTH, x, y),
+                        "headless scrolling changed pixel outside the viewport at ({x}, {y})"
+                    );
+                }
+            }
+        }
+
+        let resized_target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Aimer resized headless virtualized scroll target"),
+            size: wgpu::Extent3d {
+                width: RESIZED_WIDTH,
+                height: RESIZED_HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let resized_view = resized_target.create_view(&wgpu::TextureViewDescriptor::default());
+        renderer.render_packet_at_size(
+            &backend,
+            &resized_view,
+            &second_packet,
+            RESIZED_WIDTH,
+            RESIZED_HEIGHT,
+            false,
+        );
+        let resized_stats = renderer.compositor_stats();
+        assert!(resized_stats.full_repaint, "a resized target requires full damage");
+        assert_eq!(resized_stats.damage_regions, 1);
+        assert_eq!(
+            resized_stats.damaged_pixels,
+            u64::from(RESIZED_WIDTH) * u64::from(RESIZED_HEIGHT)
+        );
+
+        let resized_pixels = read_target(&resized_target, RESIZED_WIDTH, RESIZED_HEIGHT);
+        assert_eq!(read_pixel(&resized_pixels, RESIZED_WIDTH, 10, 10), color_bytes(Color::YELLOW));
+        assert_eq!(read_pixel(&resized_pixels, RESIZED_WIDTH, 10, 30), color_bytes(Color::MAGENTA));
+        assert_eq!(read_pixel(&resized_pixels, RESIZED_WIDTH, 10, 50), color_bytes(Color::CYAN));
+        assert_eq!(read_pixel(&resized_pixels, RESIZED_WIDTH, 10, 70), color_bytes(Color::ORANGE));
+        for y in 0..RESIZED_HEIGHT {
+            for x in 0..RESIZED_WIDTH {
+                let resized_pixel = read_pixel(&resized_pixels, RESIZED_WIDTH, x, y);
+                if x < TARGET_WIDTH && y < TARGET_HEIGHT {
+                    assert_eq!(
+                        resized_pixel,
+                        read_pixel(&second_pixels, TARGET_WIDTH, x, y),
+                        "resize changed the complete old frame at ({x}, {y})"
+                    );
+                } else {
+                    assert_eq!(
+                        resized_pixel,
+                        [0, 0, 0, 0],
+                        "resized target was not cleared outside the submitted frame at ({x}, {y})"
+                    );
+                }
+            }
+        }
+
+        app.send_window_event(WindowEvent::Resized(PhysicalSize::new(
+            APP_RESIZED_WIDTH,
+            APP_RESIZED_HEIGHT,
+        )));
+        assert_eq!(
+            app.physical_size(),
+            PhysicalSize::new(APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
+        );
+        let (resize_scale, resize_damage) = app
+            .last_frame_result
+            .take()
+            .expect("the headless resize event draws a new frame");
+        assert_eq!(resize_scale, 1.0);
+        assert_eq!(
+            resize_damage.target_size(),
+            (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
+        );
+        assert!(resize_damage.is_full(), "resizing the headless target is full damage");
+        let app_resized_packet =
+            headless_packet_from_canvas(&mut app, resize_scale, resize_damage);
+        assert_eq!(
+            (app_resized_packet.frame().width, app_resized_packet.frame().height),
+            (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
+        );
+        assert!(app_resized_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+
+        let app_resized_plan = app_resized_packet.render_plan().unwrap();
+        let (resized_viewport, app_resized_rows) = {
+            let root = app.app.widget_root.as_ref().unwrap();
+            let mut viewport_bounds = None;
+            let mut visible_rows = Vec::new();
+            let mut pending = vec![root.as_ref() as &dyn Element];
+            while let Some(element) = pending.pop() {
+                if element.debug_name() == "RawScrollableContainer"
+                    && let Some(render_node) = app.app.render_node_for_element(element.id())
+                {
+                    viewport_bounds = Some(
+                        app.app
+                            .render_tree()
+                            .element_bounds(render_node)
+                            .expect("the resized scroll viewport has retained bounds"),
+                    );
+                }
+                if element.debug_name() == "HeadlessVirtualizedRow"
+                    && let Some(render_node) = app.app.render_node_for_element(element.id())
+                    && let Ok(bounds) = app.app.render_tree().element_bounds(render_node)
+                    && bounds.x < 180.0
+                    && bounds.x + bounds.width > 0.0
+                    && bounds.y < 120.0
+                    && bounds.y + bounds.height > 0.0
+                {
+                    assert_eq!(app_resized_plan.local_v2_revision(render_node), Some(1));
+                    visible_rows.push(render_node);
+                }
+                element.visit_children(&mut |child| pending.push(child));
+            }
+            (
+                viewport_bounds.expect("the resized tree retains its scroll viewport"),
+                visible_rows,
+            )
+        };
+        assert_eq!(resized_viewport, Rect::new(0.0, 0.0, 180.0, 120.0));
+        assert_eq!(app_resized_rows.len(), 6, "the taller viewport materializes six rows");
+        assert!(
+            app_resized_rows.len() > visible_rows.len(),
+            "resizing exposes additional virtualized rows"
+        );
+        assert!(paints.get() > initial_paints);
+
+        let app_resized_target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Aimer resized Quiver application target"),
+            size: wgpu::Extent3d {
+                width: APP_RESIZED_WIDTH,
+                height: APP_RESIZED_HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let app_resized_view = app_resized_target.create_view(&wgpu::TextureViewDescriptor::default());
+        renderer.render_packet(&backend, &app_resized_view, &app_resized_packet, false);
+        let app_resized_stats = renderer.compositor_stats();
+        assert!(app_resized_stats.full_repaint);
+        assert_eq!(app_resized_stats.damage_regions, 1);
+        assert_eq!(
+            app_resized_stats.damaged_pixels,
+            u64::from(APP_RESIZED_WIDTH) * u64::from(APP_RESIZED_HEIGHT)
+        );
+
+        let app_resized_pixels =
+            read_target(&app_resized_target, APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT);
+        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::YELLOW));
+        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 30), color_bytes(Color::MAGENTA));
+        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 50), color_bytes(Color::CYAN));
+        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 70), color_bytes(Color::ORANGE));
+        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 90), color_bytes(Color::RED));
+        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 110), color_bytes(Color::GREEN));
+        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 120, 10), [0, 0, 0, 0]);
+        assert_eq!(read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, 10, 130), [0, 0, 0, 0]);
+        for y in 0..APP_RESIZED_HEIGHT {
+            for x in 0..APP_RESIZED_WIDTH {
+                if x >= 180 || y >= 120 {
+                    assert_eq!(
+                        read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, x, y),
+                        [0, 0, 0, 0],
+                        "resized Quiver content escaped the viewport at ({x}, {y})"
+                    );
+                }
+            }
+        }
+
+        let max_extent = controller.max_extent();
+        assert!(max_extent.y > 0.0, "the list has a reachable content end");
+        controller.jump_to(max_extent);
+        let rebuild_before_end_frame = aimer_widget::rebuild_invalidation_generation();
+        let layout_before_end_frame = aimer_widget::layout_invalidation_generation();
+        let (end_scale, end_packet) = direct_headless_frame_packet(&mut app);
+        assert_eq!(end_scale, 1.0);
+        assert!(end_packet.render_plan().is_some_and(|plan| plan.is_complete()));
+        let end_damage = end_packet.metadata().damage();
+        assert_eq!(
+            end_damage.target_size(),
+            (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
+        );
+        assert!(!end_damage.regions().is_empty());
+        let concurrent_global_invalidation =
+            rebuild_before_end_frame != aimer_widget::rebuild_invalidation_generation()
+                || layout_before_end_frame != aimer_widget::layout_invalidation_generation();
+        if !concurrent_global_invalidation {
+            assert!(!end_damage.is_full(), "end-scroll damage: {:?}", end_damage.regions());
+            assert!(end_damage.regions().iter().all(|region| {
+                region.x + region.width <= 180 && region.y + region.height <= 120
+            }), "end-scroll damage escaped the resized viewport: {:?}", end_damage.regions());
+        }
+
+        let end_plan = end_packet.render_plan().unwrap();
+        let end_visible_rows = {
+            let root = app.app.widget_root.as_ref().unwrap();
+            let mut visible_rows = Vec::new();
+            let mut pending = vec![root.as_ref() as &dyn Element];
+            while let Some(element) = pending.pop() {
+                if element.debug_name() == "HeadlessVirtualizedRow"
+                    && let Some(render_node) = app.app.render_node_for_element(element.id())
+                    && let Ok(bounds) = app.app.render_tree().element_bounds(render_node)
+                    && bounds.x < 180.0
+                    && bounds.x + bounds.width > 0.0
+                    && bounds.y < 120.0
+                    && bounds.y + bounds.height > 0.0
+                {
+                    assert_eq!(end_plan.local_v2_revision(render_node), Some(1));
+                    visible_rows.push(render_node);
+                }
+                element.visit_children(&mut |child| pending.push(child));
+            }
+            visible_rows
+        };
+        assert_eq!(end_visible_rows.len(), 6, "six rows fill the resized viewport");
+        assert_ne!(app_resized_rows, end_visible_rows, "the row window moves to the list end");
+        let actual_offset = controller.offset();
+        assert!((actual_offset.y - max_extent.y).abs() < 0.01);
+        assert!(paints.get() > initial_paints);
+
+        renderer.render_packet(&backend, &app_resized_view, &end_packet, false);
+        let end_pixels = read_target(
+            &app_resized_target,
+            APP_RESIZED_WIDTH,
+            APP_RESIZED_HEIGHT,
+        );
+        let end_stats = renderer.compositor_stats();
+        if !concurrent_global_invalidation {
+            assert!(!end_stats.full_repaint);
+            assert_eq!(end_stats.damage_regions, 1);
+            assert_eq!(end_stats.damaged_pixels, 180 * 120);
+        }
+        assert_eq!(read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::BLUE));
+        assert_eq!(read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 30), color_bytes(Color::WHITE));
+        assert_eq!(read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 50), color_bytes(Color::YELLOW));
+        assert_eq!(read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 70), color_bytes(Color::MAGENTA));
+        assert_eq!(read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 90), color_bytes(Color::CYAN));
+        assert_eq!(read_pixel(&end_pixels, APP_RESIZED_WIDTH, 10, 110), color_bytes(Color::ORANGE));
+        for y in 0..APP_RESIZED_HEIGHT {
+            for x in 0..APP_RESIZED_WIDTH {
+                if x >= 180 || y >= 120 {
+                    assert_eq!(
+                        read_pixel(&end_pixels, APP_RESIZED_WIDTH, x, y),
+                        read_pixel(&app_resized_pixels, APP_RESIZED_WIDTH, x, y),
+                        "end scrolling changed pixels outside the resized viewport at ({x}, {y})"
+                    );
+                }
+            }
+        }
+
+        let paints_before_vertical_shrink = paints.get();
+        let find_vertical_scroll_id = |root: &dyn Element| {
+            let mut pending = vec![root];
+            while let Some(element) = pending.pop() {
+                if element.debug_name() == "RawScrollableContainer" {
+                    return Some(element.id());
+                }
+                element.visit_children(&mut |child| pending.push(child));
+            }
+            None
+        };
+        let root_before_vertical_shrink = app.app.widget_root.as_ref().unwrap();
+        let root_id_before_vertical_shrink = root_before_vertical_shrink.id();
+        let scroll_id_before_vertical_shrink =
+            find_vertical_scroll_id(root_before_vertical_shrink.as_ref())
+                .expect("the stateful rows are inside the scrollable");
+        let scroll_node_before_vertical_shrink = app
+            .app
+            .render_node_for_element(scroll_id_before_vertical_shrink)
+            .expect("the vertical viewport has a retained render node");
+        vertical_updater
+            .borrow()
+            .as_ref()
+            .expect("the vertical row state exposes its updater")
+            .set_state(|state| state.item_count = 3);
+        let rebuild_before_vertical_shrink = aimer_widget::rebuild_invalidation_generation();
+        let layout_before_vertical_shrink = aimer_widget::layout_invalidation_generation();
+        let (shrink_scale, vertical_shrink_packet) = direct_headless_frame_packet(&mut app);
+        assert_eq!(shrink_scale, 1.0);
+        assert!(vertical_shrink_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        let root_after_vertical_shrink = app.app.widget_root.as_ref().unwrap();
+        assert_eq!(root_after_vertical_shrink.id(), root_id_before_vertical_shrink);
+        let scroll_id_after_vertical_shrink =
+            find_vertical_scroll_id(root_after_vertical_shrink.as_ref())
+                .expect("the in-place update retains the vertical scrollable");
+        assert_eq!(scroll_id_after_vertical_shrink, scroll_id_before_vertical_shrink);
+        assert_eq!(
+            app.app
+                .render_node_for_element(scroll_id_after_vertical_shrink),
+            Some(scroll_node_before_vertical_shrink),
+            "the in-place update retains the vertical viewport render node"
+        );
+        let vertical_shrink_damage = vertical_shrink_packet.metadata().damage();
+        assert_eq!(
+            vertical_shrink_damage.target_size(),
+            (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
+        );
+        assert!(!vertical_shrink_damage.regions().is_empty());
+        let concurrent_global_invalidation =
+            rebuild_before_vertical_shrink != aimer_widget::rebuild_invalidation_generation()
+                || layout_before_vertical_shrink != aimer_widget::layout_invalidation_generation();
+        if !vertical_shrink_damage.is_full() {
+            assert!(vertical_shrink_damage.regions().iter().all(|region| {
+                region.x + region.width <= 180 && region.y + region.height <= 120
+            }), "vertical list shrink damage escaped its viewport: {:?}", vertical_shrink_damage.regions());
+        }
+        assert!(controller.is_attached());
+        assert_eq!(controller.max_extent().y, 0.0);
+        assert_eq!(controller.offset().y, 0.0);
+
+        let vertical_shrink_plan = vertical_shrink_packet.render_plan().unwrap();
+        let vertical_shrink_rows = {
+            let root = app.app.widget_root.as_ref().unwrap();
+            let mut rows = Vec::new();
+            let mut pending = vec![root.as_ref() as &dyn Element];
+            while let Some(element) = pending.pop() {
+                if element.debug_name() == "HeadlessVirtualizedRow"
+                    && let Some(render_node) = app.app.render_node_for_element(element.id())
+                    && let Ok(bounds) = app.app.render_tree().element_bounds(render_node)
+                    && bounds.x < 180.0
+                    && bounds.x + bounds.width > 0.0
+                    && bounds.y < 120.0
+                    && bounds.y + bounds.height > 0.0
+                {
+                    assert_eq!(vertical_shrink_plan.local_v2_revision(render_node), Some(1));
+                    rows.push(render_node);
+                }
+                element.visit_children(&mut |child| pending.push(child));
+            }
+            rows
+        };
+        assert_eq!(vertical_shrink_rows.len(), 3);
+        assert!(paints.get() > paints_before_vertical_shrink);
+
+        renderer.render_packet(
+            &backend,
+            &app_resized_view,
+            &vertical_shrink_packet,
+            false,
+        );
+        let vertical_shrink_pixels =
+            read_target(&app_resized_target, APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT);
+        let vertical_shrink_stats = renderer.compositor_stats();
+        if !concurrent_global_invalidation && !vertical_shrink_damage.is_full() {
+            assert!(!vertical_shrink_stats.full_repaint);
+        }
+        assert_eq!(read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::RED));
+        assert_eq!(read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 30), color_bytes(Color::GREEN));
+        assert_eq!(read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 50), color_bytes(Color::BLUE));
+        assert_eq!(read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 70), [0, 0, 0, 0]);
+        assert_eq!(read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, 10, 110), [0, 0, 0, 0]);
+        for y in 60..120 {
+            for x in 0..180 {
+                assert_eq!(
+                    read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, x, y),
+                    [0, 0, 0, 0],
+                    "a removed bottom row left stale pixels at ({x}, {y})"
+                );
+            }
+        }
+        for y in 0..APP_RESIZED_HEIGHT {
+            for x in 0..APP_RESIZED_WIDTH {
+                if x >= 180 || y >= 120 {
+                    assert_eq!(
+                        read_pixel(&vertical_shrink_pixels, APP_RESIZED_WIDTH, x, y),
+                        read_pixel(&end_pixels, APP_RESIZED_WIDTH, x, y),
+                        "vertical list shrink changed pixels outside the viewport at ({x}, {y})"
+                    );
+                }
+            }
+        }
+
+        drop(app);
+        let horizontal_controller = ScrollController::new();
+        let horizontal_paints = Rc::new(Cell::new(0));
+        let horizontal_updater = Rc::new(RefCell::new(None));
+        let mut horizontal_app = AimerApp::start_headless_with(
+            HeadlessHorizontalVirtualizedWidget {
+                controller: horizontal_controller.clone(),
+                paints: horizontal_paints.clone(),
+                item_count: 1_000,
+                updater: horizontal_updater.clone(),
+            },
+            HeadlessOptions {
+                size: PhysicalSize::new(TARGET_WIDTH, TARGET_HEIGHT),
+                scale_factor: 1.0,
+            },
+        );
+        let (_, horizontal_first_packet) = direct_headless_frame_packet(&mut horizontal_app);
+        assert!(horizontal_first_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        let mut horizontal_renderer =
+            aimer_cupid::renderer::Renderer::new(&backend, wgpu::TextureFormat::Rgba8Unorm);
+        horizontal_renderer.render_packet(&backend, &view, &horizontal_first_packet, false);
+        let horizontal_first_pixels = read_target(&target, TARGET_WIDTH, TARGET_HEIGHT);
+        let horizontal_initial_paints = horizontal_paints.get();
+        let horizontal_first_plan = horizontal_first_packet.render_plan().unwrap();
+        let horizontal_first_items = {
+            let root = horizontal_app.app.widget_root.as_ref().unwrap();
+            let mut visible_items = Vec::new();
+            let mut pending = vec![root.as_ref() as &dyn Element];
+            while let Some(element) = pending.pop() {
+                if element.debug_name() == "HeadlessHorizontalVirtualizedItem"
+                    && let Some(render_node) =
+                        horizontal_app.app.render_node_for_element(element.id())
+                    && let Ok(bounds) = horizontal_app
+                        .app
+                        .render_tree()
+                        .element_bounds(render_node)
+                    && bounds.x < 100.0
+                    && bounds.x + bounds.width > 0.0
+                    && bounds.y < 80.0
+                    && bounds.y + bounds.height > 0.0
+                {
+                    assert_eq!(horizontal_first_plan.local_v2_revision(render_node), Some(1));
+                    visible_items.push(render_node);
+                }
+                element.visit_children(&mut |child| pending.push(child));
+            }
+            visible_items
+        };
+        assert_eq!(horizontal_first_items.len(), 5);
+        assert_eq!(horizontal_controller.max_extent().y, 0.0);
+        assert_eq!(read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 10, 10), color_bytes(Color::RED));
+        assert_eq!(read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 30, 10), color_bytes(Color::GREEN));
+        assert_eq!(read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 50, 10), color_bytes(Color::BLUE));
+        assert_eq!(read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 70, 10), color_bytes(Color::WHITE));
+        assert_eq!(read_pixel(&horizontal_first_pixels, TARGET_WIDTH, 90, 10), color_bytes(Color::YELLOW));
+
+        let horizontal_max = horizontal_controller.max_extent();
+        assert!(horizontal_max.x > 0.0, "the horizontal list has a reachable end");
+        horizontal_controller.jump_to(horizontal_max);
+        let rebuild_before_horizontal_end = aimer_widget::rebuild_invalidation_generation();
+        let layout_before_horizontal_end = aimer_widget::layout_invalidation_generation();
+        let (horizontal_scale, horizontal_end_packet) =
+            direct_headless_frame_packet(&mut horizontal_app);
+        assert_eq!(horizontal_scale, 1.0);
+        assert!(horizontal_end_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        let horizontal_end_damage = horizontal_end_packet.metadata().damage();
+        assert_eq!(
+            horizontal_end_damage.target_size(),
+            (TARGET_WIDTH, TARGET_HEIGHT)
+        );
+        assert!(!horizontal_end_damage.regions().is_empty());
+        let concurrent_global_invalidation =
+            rebuild_before_horizontal_end != aimer_widget::rebuild_invalidation_generation()
+                || layout_before_horizontal_end != aimer_widget::layout_invalidation_generation();
+        if !concurrent_global_invalidation {
+            assert!(
+                !horizontal_end_damage.is_full(),
+                "horizontal end-scroll damage: {:?}",
+                horizontal_end_damage.regions()
+            );
+            assert!(horizontal_end_damage.regions().iter().all(|region| {
+                region.x + region.width <= 100 && region.y + region.height <= 80
+            }), "horizontal damage escaped its viewport: {:?}", horizontal_end_damage.regions());
+        }
+
+        let horizontal_end_plan = horizontal_end_packet.render_plan().unwrap();
+        let horizontal_end_items = {
+            let root = horizontal_app.app.widget_root.as_ref().unwrap();
+            let mut visible_items = Vec::new();
+            let mut pending = vec![root.as_ref() as &dyn Element];
+            while let Some(element) = pending.pop() {
+                if element.debug_name() == "HeadlessHorizontalVirtualizedItem"
+                    && let Some(render_node) =
+                        horizontal_app.app.render_node_for_element(element.id())
+                    && let Ok(bounds) = horizontal_app
+                        .app
+                        .render_tree()
+                        .element_bounds(render_node)
+                    && bounds.x < 100.0
+                    && bounds.x + bounds.width > 0.0
+                    && bounds.y < 80.0
+                    && bounds.y + bounds.height > 0.0
+                {
+                    assert_eq!(horizontal_end_plan.local_v2_revision(render_node), Some(1));
+                    visible_items.push(render_node);
+                }
+                element.visit_children(&mut |child| pending.push(child));
+            }
+            visible_items
+        };
+        assert_eq!(horizontal_end_items.len(), 5);
+        assert_ne!(horizontal_first_items, horizontal_end_items);
+        let horizontal_offset = horizontal_controller.offset();
+        assert!((horizontal_offset.x - horizontal_max.x).abs() < 0.01);
+        assert!(horizontal_paints.get() > horizontal_initial_paints);
+
+        horizontal_renderer.render_packet(
+            &backend,
+            &view,
+            &horizontal_end_packet,
+            false,
+        );
+        let horizontal_end_pixels = read_target(&target, TARGET_WIDTH, TARGET_HEIGHT);
+        let horizontal_stats = horizontal_renderer.compositor_stats();
+        if !concurrent_global_invalidation {
+            assert!(!horizontal_stats.full_repaint);
+            assert_eq!(horizontal_stats.damage_regions, 1);
+            assert_eq!(horizontal_stats.damaged_pixels, 100 * 80);
+        }
+        assert_eq!(read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 10, 10), color_bytes(Color::WHITE));
+        assert_eq!(read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 30, 10), color_bytes(Color::YELLOW));
+        assert_eq!(read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 50, 10), color_bytes(Color::MAGENTA));
+        assert_eq!(read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 70, 10), color_bytes(Color::CYAN));
+        assert_eq!(read_pixel(&horizontal_end_pixels, TARGET_WIDTH, 90, 10), color_bytes(Color::ORANGE));
+        for y in 0..TARGET_HEIGHT {
+            for x in 0..TARGET_WIDTH {
+                if x >= 100 || y >= 80 {
+                    assert_eq!(
+                        read_pixel(&horizontal_end_pixels, TARGET_WIDTH, x, y),
+                        read_pixel(&horizontal_first_pixels, TARGET_WIDTH, x, y),
+                        "horizontal scrolling changed pixels outside its viewport at ({x}, {y})"
+                    );
+                }
+            }
+        }
+
+        let old_horizontal_max = horizontal_controller.max_extent();
+        horizontal_app.send_window_event(WindowEvent::Resized(PhysicalSize::new(
+            APP_RESIZED_WIDTH,
+            APP_RESIZED_HEIGHT,
+        )));
+        assert_eq!(
+            horizontal_app.physical_size(),
+            PhysicalSize::new(APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
+        );
+        let (horizontal_resize_scale, horizontal_resize_damage) = horizontal_app
+            .last_frame_result
+            .take()
+            .expect("the horizontal headless resize event draws a frame");
+        assert_eq!(horizontal_resize_scale, 1.0);
+        assert_eq!(
+            horizontal_resize_damage.target_size(),
+            (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
+        );
+        assert!(horizontal_resize_damage.is_full());
+        let horizontal_resize_packet = headless_packet_from_canvas(
+            &mut horizontal_app,
+            horizontal_resize_scale,
+            horizontal_resize_damage,
+        );
+        assert!(horizontal_resize_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+
+        let new_horizontal_max = horizontal_controller.max_extent();
+        assert!((old_horizontal_max.x - new_horizontal_max.x - 80.0).abs() < 0.01);
+        assert_eq!(new_horizontal_max.y, 0.0);
+        let clamped_offset = horizontal_controller.offset();
+        assert!((clamped_offset.x - new_horizontal_max.x).abs() < 0.01);
+        let new_horizontal_plan = horizontal_resize_packet.render_plan().unwrap();
+        let (new_horizontal_viewport, new_horizontal_items) = {
+            let root = horizontal_app.app.widget_root.as_ref().unwrap();
+            let mut viewport_bounds = None;
+            let mut visible_items = Vec::new();
+            let mut pending = vec![root.as_ref() as &dyn Element];
+            while let Some(element) = pending.pop() {
+                if element.debug_name() == "RawScrollableContainer"
+                    && let Some(render_node) =
+                        horizontal_app.app.render_node_for_element(element.id())
+                {
+                    viewport_bounds = Some(
+                        horizontal_app
+                            .app
+                            .render_tree()
+                            .element_bounds(render_node)
+                            .expect("the resized horizontal viewport has retained bounds"),
+                    );
+                }
+                if element.debug_name() == "HeadlessHorizontalVirtualizedItem"
+                    && let Some(render_node) =
+                        horizontal_app.app.render_node_for_element(element.id())
+                    && let Ok(bounds) = horizontal_app
+                        .app
+                        .render_tree()
+                        .element_bounds(render_node)
+                    && bounds.x < 180.0
+                    && bounds.x + bounds.width > 0.0
+                    && bounds.y < 120.0
+                    && bounds.y + bounds.height > 0.0
+                {
+                    assert_eq!(new_horizontal_plan.local_v2_revision(render_node), Some(1));
+                    visible_items.push(render_node);
+                }
+                element.visit_children(&mut |child| pending.push(child));
+            }
+            (
+                viewport_bounds.expect("the resized horizontal tree keeps its viewport"),
+                visible_items,
+            )
+        };
+        assert_eq!(new_horizontal_viewport, Rect::new(0.0, 0.0, 180.0, 120.0));
+        assert_eq!(new_horizontal_items.len(), 9);
+        assert!(new_horizontal_items.len() > horizontal_end_items.len());
+        assert!(horizontal_paints.get() > horizontal_initial_paints);
+
+        let horizontal_resized_target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Aimer resized horizontal Quiver target at list end"),
+            size: wgpu::Extent3d {
+                width: APP_RESIZED_WIDTH,
+                height: APP_RESIZED_HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let horizontal_resized_view =
+            horizontal_resized_target.create_view(&wgpu::TextureViewDescriptor::default());
+        horizontal_renderer.render_packet(
+            &backend,
+            &horizontal_resized_view,
+            &horizontal_resize_packet,
+            false,
+        );
+        let horizontal_resize_stats = horizontal_renderer.compositor_stats();
+        assert!(horizontal_resize_stats.full_repaint);
+        assert_eq!(horizontal_resize_stats.damage_regions, 1);
+        assert_eq!(
+            horizontal_resize_stats.damaged_pixels,
+            u64::from(APP_RESIZED_WIDTH) * u64::from(APP_RESIZED_HEIGHT)
+        );
+
+        let horizontal_resized_pixels = read_target(
+            &horizontal_resized_target,
+            APP_RESIZED_WIDTH,
+            APP_RESIZED_HEIGHT,
+        );
+        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::ORANGE));
+        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 30, 10), color_bytes(Color::RED));
+        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 50, 10), color_bytes(Color::GREEN));
+        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 70, 10), color_bytes(Color::BLUE));
+        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 90, 10), color_bytes(Color::WHITE));
+        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 110, 10), color_bytes(Color::YELLOW));
+        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 130, 10), color_bytes(Color::MAGENTA));
+        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 150, 10), color_bytes(Color::CYAN));
+        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 170, 10), color_bytes(Color::ORANGE));
+        assert_eq!(read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, 10, 90), [0, 0, 0, 0]);
+        for y in 0..APP_RESIZED_HEIGHT {
+            for x in 0..APP_RESIZED_WIDTH {
+                if x >= 180 || y >= 120 {
+                    assert_eq!(
+                        read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, x, y),
+                        [0, 0, 0, 0],
+                        "resized horizontal content escaped its viewport at ({x}, {y})"
+                    );
+                }
+            }
+        }
+
+        let old_end_offset = horizontal_controller.offset();
+        assert!((old_end_offset.x - new_horizontal_max.x).abs() < 0.01);
+        let find_scroll_element_id = |root: &dyn Element| {
+            let mut pending = vec![root];
+            while let Some(element) = pending.pop() {
+                if element.debug_name() == "RawScrollableContainer" {
+                    return Some(element.id());
+                }
+                element.visit_children(&mut |child| pending.push(child));
+            }
+            None
+        };
+        let root_before_shrink = horizontal_app.app.widget_root.as_ref().unwrap();
+        let root_element_id_before_shrink = root_before_shrink.id();
+        let scroll_element_id_before_shrink = find_scroll_element_id(root_before_shrink.as_ref())
+            .expect("the stateful rows remain inside the scrollable");
+        let scroll_render_node_before_shrink = horizontal_app
+            .app
+            .render_node_for_element(scroll_element_id_before_shrink)
+            .expect("the scroll viewport has a retained render node");
+        let paints_before_shrink = horizontal_paints.get();
+        horizontal_updater
+            .borrow()
+            .as_ref()
+            .expect("the horizontal row state exposes its updater")
+            .set_state(|state| state.item_count = 3);
+        let rebuild_before_shrink = aimer_widget::rebuild_invalidation_generation();
+        let layout_before_shrink = aimer_widget::layout_invalidation_generation();
+        let (shrink_scale, shrink_packet) = direct_headless_frame_packet(&mut horizontal_app);
+        assert_eq!(shrink_scale, 1.0);
+        assert!(shrink_packet.render_plan().is_some_and(|plan| plan.is_complete()));
+        let root_after_shrink = horizontal_app.app.widget_root.as_ref().unwrap();
+        assert_eq!(root_after_shrink.id(), root_element_id_before_shrink);
+        let scroll_element_id_after_shrink = find_scroll_element_id(root_after_shrink.as_ref())
+            .expect("the in-place update retains the scrollable element");
+        assert_eq!(scroll_element_id_after_shrink, scroll_element_id_before_shrink);
+        assert_eq!(
+            horizontal_app
+                .app
+                .render_node_for_element(scroll_element_id_after_shrink),
+            Some(scroll_render_node_before_shrink),
+            "the in-place update retains the viewport render node"
+        );
+        let shrink_damage = shrink_packet.metadata().damage();
+        assert_eq!(
+            shrink_damage.target_size(),
+            (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
+        );
+        assert!(!shrink_damage.regions().is_empty());
+        let concurrent_global_invalidation =
+            rebuild_before_shrink != aimer_widget::rebuild_invalidation_generation()
+                || layout_before_shrink != aimer_widget::layout_invalidation_generation();
+        if !shrink_damage.is_full() {
+            assert!(shrink_damage.regions().iter().all(|region| {
+                region.x + region.width <= 180 && region.y + region.height <= 120
+            }), "list shrink damage escaped the horizontal viewport: {:?}", shrink_damage.regions());
+        }
+
+        assert!(horizontal_controller.is_attached());
+        assert_eq!(horizontal_controller.max_extent().x, 0.0);
+        assert_eq!(horizontal_controller.offset().x, 0.0);
+        let shrink_plan = shrink_packet.render_plan().unwrap();
+        let shrink_items = {
+            let root = horizontal_app.app.widget_root.as_ref().unwrap();
+            let mut items = Vec::new();
+            let mut pending = vec![root.as_ref() as &dyn Element];
+            while let Some(element) = pending.pop() {
+                if element.debug_name() == "HeadlessHorizontalVirtualizedItem"
+                    && let Some(render_node) =
+                        horizontal_app.app.render_node_for_element(element.id())
+                    && let Ok(bounds) = horizontal_app
+                        .app
+                        .render_tree()
+                        .element_bounds(render_node)
+                    && bounds.x < 180.0
+                    && bounds.x + bounds.width > 0.0
+                    && bounds.y < 120.0
+                    && bounds.y + bounds.height > 0.0
+                {
+                    assert_eq!(shrink_plan.local_v2_revision(render_node), Some(1));
+                    items.push(render_node);
+                }
+                element.visit_children(&mut |child| pending.push(child));
+            }
+            items
+        };
+        assert_eq!(shrink_items.len(), 3, "the reduced row source retains only three items");
+        assert!(horizontal_paints.get() > paints_before_shrink);
+
+        horizontal_renderer.render_packet(
+            &backend,
+            &horizontal_resized_view,
+            &shrink_packet,
+            false,
+        );
+        let shrink_pixels = read_target(
+            &horizontal_resized_target,
+            APP_RESIZED_WIDTH,
+            APP_RESIZED_HEIGHT,
+        );
+        let shrink_stats = horizontal_renderer.compositor_stats();
+        if !concurrent_global_invalidation {
+            assert!(!shrink_stats.full_repaint || shrink_damage.is_full());
+        }
+        assert_eq!(read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::RED));
+        assert_eq!(read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 30, 10), color_bytes(Color::GREEN));
+        assert_eq!(read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 50, 10), color_bytes(Color::BLUE));
+        assert_eq!(read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 70, 10), [0, 0, 0, 0]);
+        assert_eq!(read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, 170, 10), [0, 0, 0, 0]);
+        for y in 0..APP_RESIZED_HEIGHT {
+            for x in 0..APP_RESIZED_WIDTH {
+                if (60..180).contains(&x) && y < 80 {
+                    assert_eq!(
+                        read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, x, y),
+                        [0, 0, 0, 0],
+                        "a removed end item left stale pixels at ({x}, {y})"
+                    );
+                }
+                if x >= 180 || y >= 120 {
+                    assert_eq!(
+                        read_pixel(&shrink_pixels, APP_RESIZED_WIDTH, x, y),
+                        read_pixel(&horizontal_resized_pixels, APP_RESIZED_WIDTH, x, y),
+                        "shrinking changed pixels outside the viewport at ({x}, {y})"
+                    );
+                }
+            }
+        }
+
+        horizontal_updater
+            .borrow()
+            .as_ref()
+            .expect("the horizontal row state updater remains live")
+            .set_state(|state| state.item_count = 1_000);
+        let (_, restored_packet) = direct_headless_frame_packet(&mut horizontal_app);
+        assert!(restored_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        assert!(horizontal_controller.max_extent().x > 400.0);
+        assert_eq!(horizontal_controller.offset().x, 0.0);
+        horizontal_renderer.render_packet(
+            &backend,
+            &horizontal_resized_view,
+            &restored_packet,
+            false,
+        );
+        let restored_pixels = read_target(
+            &horizontal_resized_target,
+            APP_RESIZED_WIDTH,
+            APP_RESIZED_HEIGHT,
+        );
+        assert_eq!(read_pixel(&restored_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::RED));
+        assert_eq!(read_pixel(&restored_pixels, APP_RESIZED_WIDTH, 170, 10), color_bytes(Color::RED));
+
+        horizontal_controller.jump_to(Vec2d { x: 400.0, y: 0.0 });
+        let (middle_scale, middle_packet) = direct_headless_frame_packet(&mut horizontal_app);
+        assert_eq!(middle_scale, 1.0);
+        assert!(middle_packet.render_plan().is_some_and(|plan| plan.is_complete()));
+        assert_eq!(horizontal_controller.offset().x, 400.0);
+        let middle_rows = visible_horizontal_rows(
+            &horizontal_app,
+            middle_packet.render_plan().unwrap(),
+            (180.0, 120.0),
+        );
+        assert_eq!(middle_rows.len(), 9);
+        horizontal_renderer.render_packet(
+            &backend,
+            &horizontal_resized_view,
+            &middle_packet,
+            false,
+        );
+        let middle_pixels = read_target(
+            &horizontal_resized_target,
+            APP_RESIZED_WIDTH,
+            APP_RESIZED_HEIGHT,
+        );
+        assert_eq!(read_pixel(&middle_pixels, APP_RESIZED_WIDTH, 10, 10), color_bytes(Color::YELLOW));
+        assert_eq!(read_pixel(&middle_pixels, APP_RESIZED_WIDTH, 30, 10), color_bytes(Color::MAGENTA));
+        assert_eq!(read_pixel(&middle_pixels, APP_RESIZED_WIDTH, 50, 10), color_bytes(Color::CYAN));
+
+        let max_extent_before_middle_shrink = horizontal_controller.max_extent();
+        assert!((max_extent_before_middle_shrink.x - horizontal_controller.offset().x) > 0.0);
+        let root_before_middle_shrink = horizontal_app.app.widget_root.as_ref().unwrap();
+        let root_id_before_middle_shrink = root_before_middle_shrink.id();
+        let scroll_id_before_middle_shrink = find_scroll_element_id(root_before_middle_shrink.as_ref())
+            .expect("middle-position state belongs to the retained scrollable");
+        let scroll_node_before_middle_shrink = horizontal_app
+            .app
+            .render_node_for_element(scroll_id_before_middle_shrink)
+            .expect("middle-position scrollable has a retained render node");
+        horizontal_updater
+            .borrow()
+            .as_ref()
+            .expect("the horizontal row state updater remains live")
+            .set_state(|state| state.item_count = 500);
+        let rebuild_before_middle_shrink = aimer_widget::rebuild_invalidation_generation();
+        let layout_before_middle_shrink = aimer_widget::layout_invalidation_generation();
+        let (middle_shrink_scale, middle_shrink_packet) =
+            direct_headless_frame_packet(&mut horizontal_app);
+        assert_eq!(middle_shrink_scale, 1.0);
+        assert!(middle_shrink_packet
+            .render_plan()
+            .is_some_and(|plan| plan.is_complete()));
+        let middle_shrink_damage = middle_shrink_packet.metadata().damage();
+        assert_eq!(
+            middle_shrink_damage.target_size(),
+            (APP_RESIZED_WIDTH, APP_RESIZED_HEIGHT)
+        );
+        let concurrent_global_invalidation =
+            rebuild_before_middle_shrink != aimer_widget::rebuild_invalidation_generation()
+                || layout_before_middle_shrink != aimer_widget::layout_invalidation_generation();
+        if !concurrent_global_invalidation {
+            assert!(
+                !middle_shrink_damage.is_full(),
+                "a valid middle offset keeps list-shrink damage partial: {:?}",
+                middle_shrink_damage.regions()
+            );
+        }
+        if !middle_shrink_damage.is_full() {
+            assert!(middle_shrink_damage.regions().iter().all(|region| {
+                region.x + region.width <= 180 && region.y + region.height <= 120
+            }), "middle list shrink damage escaped the viewport: {:?}", middle_shrink_damage.regions());
+        }
+        assert_eq!(horizontal_controller.offset().x, 400.0);
+        assert!((horizontal_controller.max_extent().x - 9_820.0).abs() < 0.01);
+        let root_after_middle_shrink = horizontal_app.app.widget_root.as_ref().unwrap();
+        assert_eq!(root_after_middle_shrink.id(), root_id_before_middle_shrink);
+        let scroll_id_after_middle_shrink =
+            find_scroll_element_id(root_after_middle_shrink.as_ref())
+                .expect("the middle shrink keeps the scrollable element");
+        assert_eq!(scroll_id_after_middle_shrink, scroll_id_before_middle_shrink);
+        assert_eq!(
+            horizontal_app
+                .app
+                .render_node_for_element(scroll_id_after_middle_shrink),
+            Some(scroll_node_before_middle_shrink)
+        );
+        let middle_shrink_rows = visible_horizontal_rows(
+            &horizontal_app,
+            middle_shrink_packet.render_plan().unwrap(),
+            (180.0, 120.0),
+        );
+        assert_eq!(middle_shrink_rows.len(), 9);
+        assert_eq!(middle_shrink_rows, middle_rows, "visible row identities are retained");
+
+        horizontal_renderer.render_packet(
+            &backend,
+            &horizontal_resized_view,
+            &middle_shrink_packet,
+            false,
+        );
+        let middle_shrink_pixels = read_target(
+            &horizontal_resized_target,
+            APP_RESIZED_WIDTH,
+            APP_RESIZED_HEIGHT,
+        );
+        let middle_shrink_stats = horizontal_renderer.compositor_stats();
+        if !concurrent_global_invalidation && !middle_shrink_damage.is_full() {
+            assert!(!middle_shrink_stats.full_repaint);
+        }
+        for y in 0..APP_RESIZED_HEIGHT {
+            for x in 0..APP_RESIZED_WIDTH {
+                assert_eq!(
+                    read_pixel(&middle_shrink_pixels, APP_RESIZED_WIDTH, x, y),
+                    read_pixel(&middle_pixels, APP_RESIZED_WIDTH, x, y),
+                    "a middle-position list shrink changed pixel ({x}, {y})"
+                );
+            }
+        }
+
+    }
 
     #[cfg(feature = "wasm-hot-reload")]
     #[test]
@@ -2035,6 +5138,21 @@ mod tests {
                 height: 800.0
             }
         );
+        let element_id = app.app.active_root().unwrap().id();
+        let render_node = app
+            .app
+            .render_node_for_element(element_id)
+            .expect("frame drawer synchronizes the retained render tree");
+        assert_eq!(
+            app.app.render_tree().element_bounds(render_node).unwrap(),
+            aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 1150.0, 800.0)
+        );
+        assert!(app
+            .app
+            .render_tree()
+            .render_all()
+            .iter()
+            .any(|operation| matches!(operation, aimer_cupid::draw_cmd_v2::RenderOp::Draw(item) if item.element == render_node)));
     }
 
     #[test]
@@ -2660,6 +5778,9 @@ mod tests {
 
     #[test]
     fn no_op_scroll_ticks_deliver_phases_without_redrawing_the_root() {
+        let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let draws = Arc::new(AtomicUsize::new(0));
         let phases = Arc::new(Mutex::new(Vec::new()));
         let mut app = AimerApp::start_headless(NoopScrollWidget {

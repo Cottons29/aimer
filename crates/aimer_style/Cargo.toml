@@ -16,6 +16,7 @@ aimer_provider.workspace = true
 aimer_widget.workspace = true
 aimer_cupid.workspace = true
 aimer_utils.workspace = true
+aimer_canvas = { workspace = true }
 
 [dev-dependencies]
 aimer_canvas.workspace = true

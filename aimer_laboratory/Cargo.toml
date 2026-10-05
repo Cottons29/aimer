@@ -9,9 +9,6 @@ description = "Isolated experiments for Aimer's core ownership model, published 
 [features]
 # Forward the release flex benchmark control to the root framework dependency.
 force-scalar = ["aimer/force-scalar"]
-# Enable the framework's experimental sparse event-routing path while running
-# the parity and routing benchmarks in `new_event_tree`.
-event-tree-exp = ["aimer/event-tree-exp"]
 wgpu = ["aimer/wgpu"]
 # The before/after benchmark depends on the historical framework revision,
 # which is intentionally not part of this checkout.
@@ -26,13 +23,14 @@ name = "compositor_gpu_e2e"
 required-features = ["wgpu"]
 
 [dependencies]
+aimer_cupid.workspace = true
+aimer_canvas.workspace = true
 aimer_rubick.workspace = true
 aimer_attribute.workspace = true
 aimer_widget.workspace = true
 
-# Only the benchmarks in `examples/` need a framework; the crate itself keeps
-# using nothing but the ownership primitive, so nothing here reaches the
-# library or the tests.
+# The library keeps its ownership and widget experiments isolated. Cupid is a
+# direct dependency because v2_render re-exports its experimental render core.
 #
 # `production_widget_benchmark` builds the *same* widget tree with the shipping
 # consuming conversion and with the borrowing conversion as it was before the
@@ -42,7 +40,6 @@ aimer_widget.workspace = true
 [dev-dependencies]
 aimer = { path = ".." }
 aimer_events.workspace = true
-aimer_canvas.workspace = true
 aimer_widget.workspace = true
 #aimer_legacy = { package = "aimer", git = "https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-1" }
 #aimer_canvas_legacy = { package = "aimer_canvas", git = "https://github.com/Cottons29/aimer.git", branch = "1.97.1-alpha-1" }

@@ -35,6 +35,8 @@
 //!   conversion needs in place of a second widget.
 //! - [`experiment`] — the nodes the measurements are run against, and the
 //!   measurements themselves.
+//! - [`v2_render`] — a retained render tree with one local command list per
+//!   element and damage-aware parent-first composition.
 //!
 //! # Example
 //!
@@ -69,6 +71,7 @@ mod element;
 pub mod experiment;
 mod widget;
 pub mod new_event_tree;
+pub mod v2_render;
 
 pub use crate::element::{AnyElement, Element};
 pub use crate::widget::Widget;

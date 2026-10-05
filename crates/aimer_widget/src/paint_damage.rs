@@ -67,7 +67,40 @@ impl PaintDamageTracker {
         size: ResolvedSize,
         visual_changed: bool,
     ) {
-        match transformed_bounds(ctx, size) {
+        self.mark_bounds(transformed_bounds(ctx, size), visual_changed);
+    }
+
+    /// Records damage for an owner whose output is clipped to `clip_size`.
+    ///
+    /// The ordinary two-pixel antialiasing pad is intersected with the
+    /// unpadded transformed clip bounds before it is added to the frame. This
+    /// keeps a moving scroll viewport from invalidating neighboring pixels its
+    /// clip cannot paint. The clip starts at local `(0, 0)` and uses the same
+    /// transform as `size`.
+    #[doc(hidden)]
+    pub fn mark_current_bounds_clipped(
+        &self,
+        ctx: &BuildContext,
+        size: ResolvedSize,
+        clip_size: ResolvedSize,
+        visual_changed: bool,
+    ) {
+        let bounds = transformed_bounds(ctx, size);
+        let clip = transformed_bounds_with_padding(ctx, clip_size, 0.0);
+        let clipped = match (bounds, clip) {
+            (PaintBounds::Unknown, _) | (_, PaintBounds::Unknown) => PaintBounds::Unknown,
+            (PaintBounds::Known(Some(bounds)), PaintBounds::Known(Some(clip))) => {
+                PaintBounds::Known(intersection(bounds, clip))
+            }
+            (PaintBounds::Known(None), _) | (_, PaintBounds::Known(None)) => {
+                PaintBounds::Known(None)
+            }
+        };
+        self.mark_bounds(clipped, visual_changed);
+    }
+
+    fn mark_bounds(&self, bounds: PaintBounds, visual_changed: bool) {
+        match bounds {
             PaintBounds::Unknown => self.mark_full(),
             PaintBounds::Known(current) => {
                 let previous = self.previous.replace(current);
@@ -108,6 +141,14 @@ impl PaintDamageTracker {
 /// paint. Callers that need to distinguish an empty box from invalid geometry
 /// should match on [`PaintBounds`] directly.
 pub(crate) fn transformed_bounds(ctx: &BuildContext, size: ResolvedSize) -> PaintBounds {
+    transformed_bounds_with_padding(ctx, size, 2.0)
+}
+
+fn transformed_bounds_with_padding(
+    ctx: &BuildContext,
+    size: ResolvedSize,
+    padding: f32,
+) -> PaintBounds {
     let width = size.width;
     let height = size.height;
     if !width.is_finite() || !height.is_finite() || width < 0.0 || height < 0.0 {
@@ -131,18 +172,18 @@ pub(crate) fn transformed_bounds(ctx: &BuildContext, size: ResolvedSize) -> Pain
         return PaintBounds::Unknown;
     }
 
-    let min_x = points.iter().map(|(x, _)| *x).fold(f32::INFINITY, f32::min) - 2.0;
-    let min_y = points.iter().map(|(_, y)| *y).fold(f32::INFINITY, f32::min) - 2.0;
+    let min_x = points.iter().map(|(x, _)| *x).fold(f32::INFINITY, f32::min) - padding;
+    let min_y = points.iter().map(|(_, y)| *y).fold(f32::INFINITY, f32::min) - padding;
     let max_x = points
         .iter()
         .map(|(x, _)| *x)
         .fold(f32::NEG_INFINITY, f32::max)
-        + 2.0;
+        + padding;
     let max_y = points
         .iter()
         .map(|(_, y)| *y)
         .fold(f32::NEG_INFINITY, f32::max)
-        + 2.0;
+        + padding;
     if !min_x.is_finite() || !min_y.is_finite() || !max_x.is_finite() || !max_y.is_finite() {
         return PaintBounds::Unknown;
     }
@@ -164,6 +205,22 @@ pub(crate) fn transformed_bounds(ctx: &BuildContext, size: ResolvedSize) -> Pain
             bottom.saturating_sub(y),
         )))
     }
+}
+
+#[inline]
+fn intersection(left: DamageRect, right: DamageRect) -> Option<DamageRect> {
+    let x = left.x.max(right.x);
+    let y = left.y.max(right.y);
+    let right_edge = (u64::from(left.x) + u64::from(left.width))
+        .min(u64::from(right.x) + u64::from(right.width));
+    let bottom_edge = (u64::from(left.y) + u64::from(left.height))
+        .min(u64::from(right.y) + u64::from(right.height));
+    (right_edge > u64::from(x) && bottom_edge > u64::from(y)).then_some(DamageRect::new(
+        x,
+        y,
+        (right_edge - u64::from(x)) as u32,
+        (bottom_edge - u64::from(y)) as u32,
+    ))
 }
 
 /// Returns a conservative footprint for callers that only need an optional

@@ -280,6 +280,7 @@ pub mod render_ctx {
             let build = PhaseTimer::start();
             state.canvas.begin_frame();
             let (scale, damage) = draw_fn(&state.canvas, width, height);
+            let render_plan = state.canvas.take_retained_render_plan();
             let damage = if damage.target_size() == (width, height) {
                 damage
             } else {
@@ -295,25 +296,32 @@ pub mod render_ctx {
                 0,
                 damage,
             );
-            let scene = state
-                .canvas
-                .take_scene(
-                    &frame.draw_list,
-                    width,
-                    height,
-                    metadata.damage().clone(),
-                )
-                .unwrap_or_else(|| {
-                    CompositorScene::from_draw_list(
+            let scene = render_plan.is_none().then(|| {
+                state
+                    .canvas
+                    .take_scene(
                         &frame.draw_list,
                         width,
                         height,
                         metadata.damage().clone(),
                     )
-                });
+                    .unwrap_or_else(|| {
+                        CompositorScene::from_draw_list(
+                            &frame.draw_list,
+                            width,
+                            height,
+                            metadata.damage().clone(),
+                        )
+                    })
+            });
             build.finish(FramePhase::Build);
 
-            Some(FramePacket::with_scene(frame, metadata, scene))
+            Some(FramePacket::with_render_plan(
+                frame,
+                metadata,
+                scene,
+                render_plan,
+            ))
         }
 
         /// Encode a recorded frame and put it on screen.

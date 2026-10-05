@@ -1,16 +1,17 @@
 //! Stateful widget adapters for range controls.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use aimer_attribute::{BoxConstraint, CacheBounds};
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
+use aimer_cupid::draw_cmd_v2::Rect;
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 use aimer_events::pointer::PointerButton;
-use aimer_widget::base::{BuildContext, Color};
+use aimer_widget::base::BuildContext;
 use aimer_widget::{
-    AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult,
+    AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, EventTreeRole,
     FocusNode, LayoutElement, PointerKey, PortableWidget, Rebuildable, State, StateUpdater,
     StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
@@ -18,7 +19,7 @@ use aimer_widget::{
 use super::{
     RangeSlider, RangeThumb, RangeValue, Slider, SliderKey, SliderThumb, SliderTrail,
 };
-use super::visuals::SliderVisualState;
+use super::visuals::{SliderTrack, SliderVisualState};
 
 struct SliderRuntime<T: RangeValue> {
     current: Cell<T>,
@@ -28,14 +29,49 @@ struct SliderRuntime<T: RangeValue> {
     focused: Cell<bool>,
     focus_node: FocusNode,
     last_proposed: Cell<Option<T>>,
-    visual_state: Rc<Cell<SliderVisualState>>,
-    default_trail: ChildBuilder,
-    default_thumb: ChildBuilder,
+    updater: Cell<StateUpdater<SliderState<T>>>,
+    default_visuals: RefCell<SliderDefaultVisuals>,
+}
+
+struct SliderDefaultVisuals {
+    track: ChildBuilder,
+    trail: ChildBuilder,
+    thumb: ChildBuilder,
+    trail_style: DefaultVisualStyle,
+    thumb_style: DefaultVisualStyle,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DefaultVisualStyle {
+    Normal,
+    Pressed,
+    Focused,
+    Disabled,
+}
+
+fn trail_visual_style(state: SliderVisualState) -> DefaultVisualStyle {
+    if state.disabled {
+        DefaultVisualStyle::Disabled
+    } else if state.pressed {
+        DefaultVisualStyle::Pressed
+    } else {
+        DefaultVisualStyle::Normal
+    }
+}
+
+fn thumb_visual_style(state: SliderVisualState) -> DefaultVisualStyle {
+    if state.disabled {
+        DefaultVisualStyle::Disabled
+    } else if state.focused {
+        DefaultVisualStyle::Focused
+    } else {
+        DefaultVisualStyle::Normal
+    }
 }
 
 impl<T: RangeValue> SliderRuntime<T> {
     fn new(current: T) -> Self {
-        let visual_state = Rc::new(Cell::new(SliderVisualState::default()));
+        let default_visual_state = SliderVisualState::default();
         Self {
             current: Cell::new(current),
             active_pointer: Cell::new(None),
@@ -44,14 +80,43 @@ impl<T: RangeValue> SliderRuntime<T> {
             focused: Cell::new(false),
             focus_node: FocusNode::new(),
             last_proposed: Cell::new(None),
-            default_trail: ChildBuilder::from_widget(
-                SliderTrail::new().with_visual_state(Rc::clone(&visual_state)),
-            ),
-            default_thumb: ChildBuilder::from_widget(
-                SliderThumb::new().with_visual_state(Rc::clone(&visual_state)),
-            ),
-            visual_state,
+            updater: Cell::new(StateUpdater::empty()),
+            default_visuals: RefCell::new(SliderDefaultVisuals {
+                track: ChildBuilder::from_widget(SliderTrack::new()),
+                trail: ChildBuilder::from_widget(SliderTrail::for_state(default_visual_state)),
+                thumb: ChildBuilder::from_widget(SliderThumb::for_state(default_visual_state)),
+                trail_style: DefaultVisualStyle::Normal,
+                thumb_style: DefaultVisualStyle::Normal,
+            }),
         }
+    }
+
+    fn default_visuals(
+        &self,
+        state: SliderVisualState,
+    ) -> (ChildBuilder, ChildBuilder, ChildBuilder) {
+        let trail_style = trail_visual_style(state);
+        let thumb_style = thumb_visual_style(state);
+        let mut visuals = self.default_visuals.borrow_mut();
+        if visuals.trail_style != trail_style {
+            visuals.trail = ChildBuilder::from_widget(SliderTrail::for_state(state));
+            visuals.trail_style = trail_style;
+        }
+        if visuals.thumb_style != thumb_style {
+            visuals.thumb = ChildBuilder::from_widget(SliderThumb::for_state(state));
+            visuals.thumb_style = thumb_style;
+        }
+        (
+            visuals.track.clone(),
+            visuals.trail.clone(),
+            visuals.thumb.clone(),
+        )
+    }
+
+    fn request_visual_rebuild(&self) {
+        self.updater.get().set_state(|state| {
+            state.visual_revision = state.visual_revision.wrapping_add(1);
+        });
     }
 }
 
@@ -65,15 +130,22 @@ struct RangeSliderRuntime<T: RangeValue> {
     focused: Cell<bool>,
     focus_node: FocusNode,
     last_proposed: Cell<Option<(T, T)>>,
-    visual_state: Rc<Cell<SliderVisualState>>,
-    default_trail: ChildBuilder,
-    default_lower_thumb: ChildBuilder,
-    default_upper_thumb: ChildBuilder,
+    updater: Cell<StateUpdater<RangeSliderState<T>>>,
+    default_visuals: RefCell<RangeSliderDefaultVisuals>,
+}
+
+struct RangeSliderDefaultVisuals {
+    track: ChildBuilder,
+    trail: ChildBuilder,
+    lower_thumb: ChildBuilder,
+    upper_thumb: ChildBuilder,
+    trail_style: DefaultVisualStyle,
+    thumb_style: DefaultVisualStyle,
 }
 
 impl<T: RangeValue> RangeSliderRuntime<T> {
     fn new(lower: T, upper: T) -> Self {
-        let visual_state = Rc::new(Cell::new(SliderVisualState::default()));
+        let default_visual_state = SliderVisualState::default();
         Self {
             lower: Cell::new(lower),
             upper: Cell::new(upper),
@@ -84,17 +156,46 @@ impl<T: RangeValue> RangeSliderRuntime<T> {
             focused: Cell::new(false),
             focus_node: FocusNode::new(),
             last_proposed: Cell::new(None),
-            default_trail: ChildBuilder::from_widget(
-                SliderTrail::new().with_visual_state(Rc::clone(&visual_state)),
-            ),
-            default_lower_thumb: ChildBuilder::from_widget(
-                SliderThumb::new().with_visual_state(Rc::clone(&visual_state)),
-            ),
-            default_upper_thumb: ChildBuilder::from_widget(
-                SliderThumb::new().with_visual_state(Rc::clone(&visual_state)),
-            ),
-            visual_state,
+            updater: Cell::new(StateUpdater::empty()),
+            default_visuals: RefCell::new(RangeSliderDefaultVisuals {
+                track: ChildBuilder::from_widget(SliderTrack::new()),
+                trail: ChildBuilder::from_widget(SliderTrail::for_state(default_visual_state)),
+                lower_thumb: ChildBuilder::from_widget(SliderThumb::for_state(default_visual_state)),
+                upper_thumb: ChildBuilder::from_widget(SliderThumb::for_state(default_visual_state)),
+                trail_style: DefaultVisualStyle::Normal,
+                thumb_style: DefaultVisualStyle::Normal,
+            }),
         }
+    }
+
+    fn default_visuals(
+        &self,
+        state: SliderVisualState,
+    ) -> (ChildBuilder, ChildBuilder, ChildBuilder, ChildBuilder) {
+        let trail_style = trail_visual_style(state);
+        let thumb_style = thumb_visual_style(state);
+        let mut visuals = self.default_visuals.borrow_mut();
+        if visuals.trail_style != trail_style {
+            visuals.trail = ChildBuilder::from_widget(SliderTrail::for_state(state));
+            visuals.trail_style = trail_style;
+        }
+        if visuals.thumb_style != thumb_style {
+            visuals.lower_thumb = ChildBuilder::from_widget(SliderThumb::for_state(state));
+            visuals.upper_thumb = ChildBuilder::from_widget(SliderThumb::for_state(state));
+            visuals.thumb_style = thumb_style;
+        }
+        (
+            visuals.track.clone(),
+            visuals.trail.clone(),
+            visuals.lower_thumb.clone(),
+            visuals.upper_thumb.clone(),
+        )
+    }
+
+    fn request_visual_rebuild(&self) {
+        self.updater.get().set_state(|state| {
+            state.visual_revision = state.visual_revision.wrapping_add(1);
+        });
     }
 }
 
@@ -102,6 +203,8 @@ impl<T: RangeValue> RangeSliderRuntime<T> {
 pub struct SliderState<T: RangeValue = f64> {
     model: Slider<T>,
     runtime: Rc<SliderRuntime<T>>,
+    // Runtime-only pressed/focus changes still rebuild the visual leaf widgets.
+    visual_revision: u64,
 }
 
 impl<T: RangeValue> SliderState<T> {
@@ -147,12 +250,15 @@ impl<T: RangeValue> StatefulWidget for Slider<T> {
         SliderState {
             model: self,
             runtime: Rc::new(SliderRuntime::new(current)),
+            visual_revision: 0,
         }
     }
 }
 
 impl<T: RangeValue> State<Slider<T>> for SliderState<T> {
-    fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+    fn init_state(&mut self, updater: StateUpdater<Self>) {
+        self.runtime.updater.set(updater);
+    }
 
     fn adopt_config_from(&mut self, new: Self) {
         let old_model = &self.model;
@@ -181,19 +287,27 @@ impl<T: RangeValue> State<Slider<T>> for SliderState<T> {
     }
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
+        let visual_state = SliderVisualState {
+            disabled: self.model.is_disabled(),
+            pressed: self.runtime.pressed.get(),
+            focused: self.runtime.focused.get(),
+        };
+        let default_visuals = self.runtime.default_visuals(visual_state);
         SliderSurface {
             model: self.model.clone(),
             runtime: Rc::clone(&self.runtime),
-            track: self.model.track_child(),
+            track: self
+                .model
+                .track_child()
+                .unwrap_or_else(|| default_visuals.0),
             trail: self
                 .model
                 .trail_child()
-                .unwrap_or_else(|| self.runtime.default_trail.clone()),
+                .unwrap_or_else(|| default_visuals.1),
             thumb: self
                 .model
                 .thumb_child()
-                .unwrap_or_else(|| self.runtime.default_thumb.clone()),
-            visual_state: Rc::clone(&self.runtime.visual_state),
+                .unwrap_or_else(|| default_visuals.2),
         }
     }
 }
@@ -215,23 +329,39 @@ impl<T: RangeValue> PortableWidget for Slider<T> {}
 struct SliderSurface<T: RangeValue> {
     model: Slider<T>,
     runtime: Rc<SliderRuntime<T>>,
-    track: Option<ChildBuilder>,
+    track: ChildBuilder,
     trail: ChildBuilder,
     thumb: ChildBuilder,
-    visual_state: Rc<Cell<SliderVisualState>>,
 }
 
 impl<T: RangeValue> Widget for SliderSurface<T> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let track_geometry = Rc::new(Cell::new(SliderVisualGeometry::default()));
+        let trail_geometry = Rc::new(Cell::new(SliderVisualGeometry::default()));
+        let thumb_geometry = Rc::new(Cell::new(SliderVisualGeometry::default()));
+        let track = Element::boxed(RawSliderVisualSlot {
+            child: self.track.build(ctx),
+            geometry: Rc::clone(&track_geometry),
+        });
+        let trail = Element::boxed(RawSliderVisualSlot {
+            child: self.trail.build(ctx),
+            geometry: Rc::clone(&trail_geometry),
+        });
+        let thumb = Element::boxed(RawSliderVisualSlot {
+            child: self.thumb.build(ctx),
+            geometry: Rc::clone(&thumb_geometry),
+        });
         Element::boxed(RawSlider {
             model: self.model,
             runtime: self.runtime,
-            track: self.track.map(|child| child.build(ctx)),
-            trail: self.trail.build(ctx),
-            thumb: self.thumb.build(ctx),
+            track,
+            trail,
+            thumb,
             bounds: CacheBounds::new(),
             visual_inset: Cell::new(0.0),
-            visual_state: self.visual_state,
+            track_geometry,
+            trail_geometry,
+            thumb_geometry,
         })
     }
 
@@ -242,16 +372,125 @@ impl<T: RangeValue> Widget for SliderSurface<T> {
 
 impl<T: RangeValue> PortableWidget for SliderSurface<T> {}
 
+#[derive(Clone, Copy, Default)]
+struct SliderVisualGeometry {
+    position: Vec2d,
+    clip: Option<Rect>,
+}
+
+struct RawSliderVisualSlot {
+    child: AnyElement,
+    geometry: Rc<Cell<SliderVisualGeometry>>,
+}
+
+impl VisitorElement for RawSliderVisualSlot {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "SliderVisualSlot"
+    }
+}
+
+impl EventElement for RawSliderVisualSlot {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::Transparent
+    }
+
+    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
+}
+
+impl Rebuildable for RawSliderVisualSlot {
+    fn is_carry_state(&self) -> bool {
+        self.child.is_carry_state()
+    }
+
+    fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
+        self.child.with_rebuild_context(ctx, callback);
+    }
+}
+
+impl LayoutElement for RawSliderVisualSlot {
+    fn pos(&self) -> Option<Vec2d> {
+        Some(self.geometry.get().position)
+    }
+
+    fn size(&self) -> Option<Size> {
+        self.child.size()
+    }
+
+    fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child.layout(ctx)
+    }
+
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.child.pos_start_end()
+    }
+
+    fn event_tree_bounds(&self) -> Option<(Vec2d, Vec2d)> {
+        self.child.event_tree_bounds()
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child.computed_size(ctx)
+    }
+
+    fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        self.child.content_size(ctx)
+    }
+
+    fn get_size_from_child(&self) -> Option<Size> {
+        self.child.get_size_from_child()
+    }
+}
+
+impl Drawable for RawSliderVisualSlot {
+    fn draw(&self, ctx: &BuildContext) {
+        self.child.draw(ctx);
+    }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn retained_clip(&self, _ctx: &BuildContext) -> Option<Rect> {
+        self.geometry.get().clip
+    }
+
+    fn paint(&self, ctx: &BuildContext) {
+        self.child.paint(ctx);
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.child.sync_paint_geometry(ctx);
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        self.child.is_paint_stable()
+    }
+
+    fn is_paint_bounded(&self) -> bool {
+        self.child.is_paint_bounded()
+    }
+}
+
 struct RawSlider<T: RangeValue> {
     model: Slider<T>,
     runtime: Rc<SliderRuntime<T>>,
-    track: Option<AnyElement>,
+    track: AnyElement,
     trail: AnyElement,
     thumb: AnyElement,
     bounds: CacheBounds,
     /// Logical inset reserved for half of the visual thumb at each endpoint.
     visual_inset: Cell<f32>,
-    visual_state: Rc<Cell<SliderVisualState>>,
+    track_geometry: Rc<Cell<SliderVisualGeometry>>,
+    trail_geometry: Rc<Cell<SliderVisualGeometry>>,
+    thumb_geometry: Rc<Cell<SliderVisualGeometry>>,
 }
 
 impl<T: RangeValue> RawSlider<T> {
@@ -355,9 +594,7 @@ impl<T: RangeValue> RawSlider<T> {
 
 impl<T: RangeValue> VisitorElement for RawSlider<T> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        if let Some(track) = self.track.as_ref() {
-            visitor(track.as_ref());
-        }
+        visitor(self.track.as_ref());
         visitor(self.trail.as_ref());
         visitor(self.thumb.as_ref());
     }
@@ -386,6 +623,7 @@ impl<T: RangeValue> EventElement for RawSlider<T> {
                 let key = PointerKey::new(pointer.source, pointer.id);
                 self.runtime.active_pointer.set(Some(key));
                 self.runtime.pressed.set(true);
+                self.runtime.request_visual_rebuild();
                 self.propose_at(pointer.pos.x);
                 EventResult::consumed()
                     .with_pointer_capture(key)
@@ -416,6 +654,7 @@ impl<T: RangeValue> EventElement for RawSlider<T> {
                 self.propose_at(pointer.pos.x);
                 self.runtime.active_pointer.set(None);
                 self.runtime.pressed.set(false);
+                self.runtime.request_visual_rebuild();
                 EventResult::consumed()
                     .with_pointer_release(key)
                     .with_redraw()
@@ -429,10 +668,12 @@ impl<T: RangeValue> EventElement for RawSlider<T> {
             }
             ElementEvent::FocusGained => {
                 self.runtime.focused.set(true);
+                self.runtime.request_visual_rebuild();
                 EventResult::redraw()
             }
             ElementEvent::FocusLost => {
                 self.runtime.focused.set(false);
+                self.runtime.request_visual_rebuild();
                 EventResult::redraw()
             }
             ElementEvent::KeyInput {
@@ -444,6 +685,7 @@ impl<T: RangeValue> EventElement for RawSlider<T> {
                 if self.runtime.active_pointer.get().is_some() {
                     self.runtime.active_pointer.set(None);
                     self.runtime.pressed.set(false);
+                    self.runtime.request_visual_rebuild();
                     EventResult::consumed().with_redraw()
                 } else {
                     EventResult::ignored()
@@ -485,31 +727,55 @@ impl<T: RangeValue> LayoutElement for RawSlider<T> {
         self.visual_inset
             .set((thumb_inset / ctx.scale.max(f32::EPSILON)).max(0.0));
         let child_ctx = child_context(ctx, size);
-        if let Some(track) = self.track.as_ref() {
-            let child_size = track.computed_size(&child_ctx);
-            layout_child(track, &child_ctx, Vec2d {
-                x: 0.0,
-                y: (size.height - child_size.height) / 2.0,
-            });
-        }
+        let logical_scale = ctx.scale.max(f32::EPSILON);
+        let track_size = self.track.computed_size(&child_ctx);
+        let track_offset = Vec2d {
+            x: 0.0,
+            y: (size.height - track_size.height) / 2.0,
+        };
+        self.track_geometry.set(SliderVisualGeometry {
+            position: track_offset,
+            clip: None,
+        });
+        layout_child(
+            &self.track,
+            &child_ctx,
+            track_offset,
+        );
         let trail_size = self.trail.computed_size(&child_ctx);
+        let position = self.position_px(ctx, size, thumb_inset);
+        let trail_offset = Vec2d {
+            x: 0.0,
+            y: (size.height - trail_size.height) / 2.0,
+        };
+        let trail_width = position.clamp(0.0, size.width);
+        self.trail_geometry.set(SliderVisualGeometry {
+            position: trail_offset,
+            clip: Some(Rect::new(
+                0.0,
+                0.0,
+                trail_width / logical_scale,
+                trail_size.height.max(0.0) / logical_scale,
+            )),
+        });
         layout_child(
             &self.trail,
             &child_ctx,
-            Vec2d {
-                x: 0.0,
-                y: (size.height - trail_size.height) / 2.0,
-            },
+            trail_offset,
         );
         let thumb_size = self.thumb.computed_size(&child_ctx);
-        let position = self.position_px(ctx, size, thumb_inset);
+        let thumb_offset = Vec2d {
+            x: position - thumb_size.width / 2.0,
+            y: (size.height - thumb_size.height) / 2.0,
+        };
+        self.thumb_geometry.set(SliderVisualGeometry {
+            position: thumb_offset,
+            clip: None,
+        });
         layout_child(
             &self.thumb,
             &child_ctx,
-            Vec2d {
-                x: position - thumb_size.width / 2.0,
-                y: (size.height - thumb_size.height) / 2.0,
-            },
+            thumb_offset,
         );
         size
     }
@@ -527,40 +793,37 @@ impl<T: RangeValue> Drawable for RawSlider<T> {
         let thumb_inset = self.thumb_inset(ctx, size);
         self.visual_inset
             .set((thumb_inset / ctx.scale.max(f32::EPSILON)).max(0.0));
-        self.visual_state.set(SliderVisualState {
-            disabled: self.model.is_disabled(),
-            pressed: self.runtime.pressed.get(),
-            focused: self.runtime.focused.get(),
-        });
         let child_ctx = child_context(ctx, size);
 
         let track_height = (4.0 * ctx.scale).min(size.height.max(0.0));
         if size.width <= 0.0 || track_height <= 0.0 {
             return;
         }
-        let center_y = (size.height - track_height) / 2.0;
-        if let Some(track) = self.track.as_ref() {
-            let child_size = track.computed_size(&child_ctx);
-            draw_child(track, &child_ctx, Vec2d {
-                x: 0.0,
-                y: (size.height - child_size.height) / 2.0,
-            });
-        } else {
-            let track_color = Color::Rgba(190, 196, 205, 255);
-            ctx.canvas.fill_color_rect(
-                Vec2d { x: 0.0, y: center_y },
-                ResolvedSize {
-                    width: size.width,
-                    height: track_height,
-                },
-                track_color,
-                [track_height / 2.0; 4],
-            );
-        }
+        let track_size = self.track.computed_size(&child_ctx);
+        let track_offset = Vec2d {
+            x: 0.0,
+            y: (size.height - track_size.height) / 2.0,
+        };
+        let logical_scale = ctx.scale.max(f32::EPSILON);
+        self.track_geometry.set(SliderVisualGeometry {
+            position: track_offset,
+            clip: None,
+        });
+        draw_child(&self.track, &child_ctx, track_offset);
 
         let position = self.position_px(ctx, size, thumb_inset);
         let trail_size = self.trail.computed_size(&child_ctx);
         let trail_y = (size.height - trail_size.height) / 2.0;
+        let trail_width = position.clamp(0.0, size.width);
+        self.trail_geometry.set(SliderVisualGeometry {
+            position: Vec2d { x: 0.0, y: trail_y },
+            clip: Some(Rect::new(
+                0.0,
+                0.0,
+                trail_width / logical_scale,
+                trail_size.height.max(0.0) / logical_scale,
+            )),
+        });
         ctx.canvas.save();
         ctx.canvas.set_clip(
             Vec2d {
@@ -568,7 +831,7 @@ impl<T: RangeValue> Drawable for RawSlider<T> {
                 y: trail_y,
             },
             ResolvedSize {
-                width: position.clamp(0.0, size.width),
+                width: trail_width,
                 height: trail_size.height.max(0.0),
             },
         );
@@ -584,15 +847,33 @@ impl<T: RangeValue> Drawable for RawSlider<T> {
         ctx.canvas.restore();
 
         let thumb_size = self.thumb.computed_size(&child_ctx);
-        draw_child(
-            &self.thumb,
-            &child_ctx,
-            Vec2d {
-                x: position - thumb_size.width / 2.0,
-                y: (size.height - thumb_size.height) / 2.0,
-            },
-        );
+        let thumb_offset = Vec2d {
+            x: position - thumb_size.width / 2.0,
+            y: (size.height - thumb_size.height) / 2.0,
+        };
+        self.thumb_geometry.set(SliderVisualGeometry {
+            position: thumb_offset,
+            clip: None,
+        });
+        draw_child(&self.thumb, &child_ctx, thumb_offset);
     }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
+            return false;
+        }
+        let size = self.computed_size(ctx);
+        let width = size.width / ctx.scale;
+        let height = size.height / ctx.scale;
+        width.is_finite()
+            && height.is_finite()
+            && width > 0.0
+            && height > 0.0
+            && width <= 1_000_000.0
+            && height <= 1_000_000.0
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
 }
 
 impl<T: RangeValue> Rebuildable for RawSlider<T> {}
@@ -612,6 +893,8 @@ impl<T: RangeValue> Widget for RawSlider<T> {
 pub struct RangeSliderState<T: RangeValue = f64> {
     model: RangeSlider<T>,
     runtime: Rc<RangeSliderRuntime<T>>,
+    // Runtime-only pressed/focus changes still rebuild the visual leaf widgets.
+    visual_revision: u64,
 }
 
 impl<T: RangeValue> RangeSliderState<T> {
@@ -675,12 +958,15 @@ impl<T: RangeValue> StatefulWidget for RangeSlider<T> {
         RangeSliderState {
             model: self,
             runtime: Rc::new(RangeSliderRuntime::new(lower, upper)),
+            visual_revision: 0,
         }
     }
 }
 
 impl<T: RangeValue> State<RangeSlider<T>> for RangeSliderState<T> {
-    fn init_state(&mut self, _updater: StateUpdater<Self>) {}
+    fn init_state(&mut self, updater: StateUpdater<Self>) {
+        self.runtime.updater.set(updater);
+    }
 
     fn adopt_config_from(&mut self, new: Self) {
         let old_model = &self.model;
@@ -721,23 +1007,31 @@ impl<T: RangeValue> State<RangeSlider<T>> for RangeSliderState<T> {
     }
 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
+        let visual_state = SliderVisualState {
+            disabled: self.model.is_disabled(),
+            pressed: self.runtime.pressed.get(),
+            focused: self.runtime.focused.get(),
+        };
+        let default_visuals = self.runtime.default_visuals(visual_state);
         RangeSliderSurface {
             model: self.model.clone(),
             runtime: Rc::clone(&self.runtime),
-            track: self.model.track_child(),
+            track: self
+                .model
+                .track_child()
+                .unwrap_or_else(|| default_visuals.0),
             trail: self
                 .model
                 .trail_child()
-                .unwrap_or_else(|| self.runtime.default_trail.clone()),
+                .unwrap_or_else(|| default_visuals.1),
             lower_thumb: self
                 .model
                 .lower_thumb_child()
-                .unwrap_or_else(|| self.runtime.default_lower_thumb.clone()),
+                .unwrap_or_else(|| default_visuals.2),
             upper_thumb: self
                 .model
                 .upper_thumb_child()
-                .unwrap_or_else(|| self.runtime.default_upper_thumb.clone()),
-            visual_state: Rc::clone(&self.runtime.visual_state),
+                .unwrap_or_else(|| default_visuals.3),
         }
     }
 }
@@ -759,25 +1053,47 @@ impl<T: RangeValue> PortableWidget for RangeSlider<T> {}
 struct RangeSliderSurface<T: RangeValue> {
     model: RangeSlider<T>,
     runtime: Rc<RangeSliderRuntime<T>>,
-    track: Option<ChildBuilder>,
+    track: ChildBuilder,
     trail: ChildBuilder,
     lower_thumb: ChildBuilder,
     upper_thumb: ChildBuilder,
-    visual_state: Rc<Cell<SliderVisualState>>,
 }
 
 impl<T: RangeValue> Widget for RangeSliderSurface<T> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let track_geometry = Rc::new(Cell::new(SliderVisualGeometry::default()));
+        let trail_geometry = Rc::new(Cell::new(SliderVisualGeometry::default()));
+        let lower_thumb_geometry = Rc::new(Cell::new(SliderVisualGeometry::default()));
+        let upper_thumb_geometry = Rc::new(Cell::new(SliderVisualGeometry::default()));
+        let track = Element::boxed(RawSliderVisualSlot {
+            child: self.track.build(ctx),
+            geometry: Rc::clone(&track_geometry),
+        });
+        let trail = Element::boxed(RawSliderVisualSlot {
+            child: self.trail.build(ctx),
+            geometry: Rc::clone(&trail_geometry),
+        });
+        let lower_thumb = Element::boxed(RawSliderVisualSlot {
+            child: self.lower_thumb.build(ctx),
+            geometry: Rc::clone(&lower_thumb_geometry),
+        });
+        let upper_thumb = Element::boxed(RawSliderVisualSlot {
+            child: self.upper_thumb.build(ctx),
+            geometry: Rc::clone(&upper_thumb_geometry),
+        });
         Element::boxed(RawRangeSlider {
             model: self.model,
             runtime: self.runtime,
-            track: self.track.map(|child| child.build(ctx)),
-            trail: self.trail.build(ctx),
-            lower_thumb: self.lower_thumb.build(ctx),
-            upper_thumb: self.upper_thumb.build(ctx),
+            track,
+            trail,
+            lower_thumb,
+            upper_thumb,
             bounds: CacheBounds::new(),
             visual_inset: Cell::new(0.0),
-            visual_state: self.visual_state,
+            track_geometry,
+            trail_geometry,
+            lower_thumb_geometry,
+            upper_thumb_geometry,
         })
     }
 
@@ -791,14 +1107,17 @@ impl<T: RangeValue> PortableWidget for RangeSliderSurface<T> {}
 struct RawRangeSlider<T: RangeValue> {
     model: RangeSlider<T>,
     runtime: Rc<RangeSliderRuntime<T>>,
-    track: Option<AnyElement>,
+    track: AnyElement,
     trail: AnyElement,
     lower_thumb: AnyElement,
     upper_thumb: AnyElement,
     bounds: CacheBounds,
     /// Logical inset shared by both visual thumbs at the range endpoints.
     visual_inset: Cell<f32>,
-    visual_state: Rc<Cell<SliderVisualState>>,
+    track_geometry: Rc<Cell<SliderVisualGeometry>>,
+    trail_geometry: Rc<Cell<SliderVisualGeometry>>,
+    lower_thumb_geometry: Rc<Cell<SliderVisualGeometry>>,
+    upper_thumb_geometry: Rc<Cell<SliderVisualGeometry>>,
 }
 
 impl<T: RangeValue> RawRangeSlider<T> {
@@ -919,9 +1238,7 @@ impl<T: RangeValue> RawRangeSlider<T> {
 
 impl<T: RangeValue> VisitorElement for RawRangeSlider<T> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        if let Some(track) = self.track.as_ref() {
-            visitor(track.as_ref());
-        }
+        visitor(self.track.as_ref());
         visitor(self.trail.as_ref());
         visitor(self.lower_thumb.as_ref());
         visitor(self.upper_thumb.as_ref());
@@ -951,6 +1268,7 @@ impl<T: RangeValue> EventElement for RawRangeSlider<T> {
                 self.runtime.active_pointer.set(Some(key));
                 self.runtime.active_thumb.set(Some(thumb));
                 self.runtime.pressed.set(true);
+                self.runtime.request_visual_rebuild();
                 self.propose_at(pointer.pos.x, thumb);
                 EventResult::consumed()
                     .with_pointer_capture(key)
@@ -986,6 +1304,7 @@ impl<T: RangeValue> EventElement for RawRangeSlider<T> {
                 self.runtime.active_pointer.set(None);
                 self.runtime.active_thumb.set(None);
                 self.runtime.pressed.set(false);
+                self.runtime.request_visual_rebuild();
                 EventResult::consumed()
                     .with_pointer_release(key)
                     .with_redraw()
@@ -999,10 +1318,12 @@ impl<T: RangeValue> EventElement for RawRangeSlider<T> {
             }
             ElementEvent::FocusGained => {
                 self.runtime.focused.set(true);
+                self.runtime.request_visual_rebuild();
                 EventResult::redraw()
             }
             ElementEvent::FocusLost => {
                 self.runtime.focused.set(false);
+                self.runtime.request_visual_rebuild();
                 EventResult::redraw()
             }
             ElementEvent::KeyInput {
@@ -1037,6 +1358,7 @@ impl<T: RangeValue> EventElement for RawRangeSlider<T> {
                     self.runtime.active_pointer.set(None);
                     self.runtime.active_thumb.set(None);
                     self.runtime.pressed.set(false);
+                    self.runtime.request_visual_rebuild();
                     EventResult::consumed().with_redraw()
                 } else {
                     EventResult::ignored()
@@ -1078,38 +1400,57 @@ impl<T: RangeValue> LayoutElement for RawRangeSlider<T> {
         self.visual_inset
             .set((thumb_inset / ctx.scale.max(f32::EPSILON)).max(0.0));
         let child_ctx = child_context(ctx, size);
-        if let Some(track) = self.track.as_ref() {
-            let child_size = track.computed_size(&child_ctx);
-            layout_child(track, &child_ctx, Vec2d {
-                x: 0.0,
-                y: (size.height - child_size.height) / 2.0,
-            });
-        }
+        let logical_scale = ctx.scale.max(f32::EPSILON);
+        let track_size = self.track.computed_size(&child_ctx);
+        let track_offset = Vec2d {
+            x: 0.0,
+            y: (size.height - track_size.height) / 2.0,
+        };
+        self.track_geometry.set(SliderVisualGeometry {
+            position: track_offset,
+            clip: None,
+        });
+        layout_child(&self.track, &child_ctx, track_offset);
         let trail_size = self.trail.computed_size(&child_ctx);
-        layout_child(
-            &self.trail,
-            &child_ctx,
-            Vec2d {
-                x: 0.0,
-                y: (size.height - trail_size.height) / 2.0,
-            },
-        );
+        let trail_offset = Vec2d {
+            x: 0.0,
+            y: (size.height - trail_size.height) / 2.0,
+        };
         let lower = self.position_px(ctx, size, self.runtime.lower.get(), thumb_inset);
         let upper = self.position_px(ctx, size, self.runtime.upper.get(), thumb_inset);
-        for (child, value) in [
-            (&self.lower_thumb, lower),
-            (&self.upper_thumb, upper),
-        ] {
-            let child_size = child.computed_size(&child_ctx);
-            layout_child(
-                child,
-                &child_ctx,
-                Vec2d {
-                    x: value - child_size.width / 2.0,
-                    y: (size.height - child_size.height) / 2.0,
-                },
-            );
-        }
+        let clip_width = (upper - lower).abs().min(size.width.max(0.0));
+        self.trail_geometry.set(SliderVisualGeometry {
+            position: trail_offset,
+            clip: Some(Rect::new(
+                lower.min(upper) / logical_scale,
+                0.0,
+                clip_width / logical_scale,
+                trail_size.height.max(0.0) / logical_scale,
+            )),
+        });
+        layout_child(&self.trail, &child_ctx, trail_offset);
+
+        let lower_size = self.lower_thumb.computed_size(&child_ctx);
+        let lower_offset = Vec2d {
+            x: lower - lower_size.width / 2.0,
+            y: (size.height - lower_size.height) / 2.0,
+        };
+        self.lower_thumb_geometry.set(SliderVisualGeometry {
+            position: lower_offset,
+            clip: None,
+        });
+        layout_child(&self.lower_thumb, &child_ctx, lower_offset);
+
+        let upper_size = self.upper_thumb.computed_size(&child_ctx);
+        let upper_offset = Vec2d {
+            x: upper - upper_size.width / 2.0,
+            y: (size.height - upper_size.height) / 2.0,
+        };
+        self.upper_thumb_geometry.set(SliderVisualGeometry {
+            position: upper_offset,
+            clip: None,
+        });
+        layout_child(&self.upper_thumb, &child_ctx, upper_offset);
         size
     }
 
@@ -1126,47 +1467,46 @@ impl<T: RangeValue> Drawable for RawRangeSlider<T> {
         let thumb_inset = self.thumb_inset(ctx, size);
         self.visual_inset
             .set((thumb_inset / ctx.scale.max(f32::EPSILON)).max(0.0));
-        self.visual_state.set(SliderVisualState {
-            disabled: self.model.is_disabled(),
-            pressed: self.runtime.pressed.get(),
-            focused: self.runtime.focused.get(),
-        });
         let child_ctx = child_context(ctx, size);
         let track_height = (4.0 * ctx.scale).min(size.height.max(0.0));
         if size.width <= 0.0 || track_height <= 0.0 {
             return;
         }
-        let center_y = (size.height - track_height) / 2.0;
-        if let Some(track) = self.track.as_ref() {
-            let child_size = track.computed_size(&child_ctx);
-            draw_child(track, &child_ctx, Vec2d {
-                x: 0.0,
-                y: (size.height - child_size.height) / 2.0,
-            });
-        } else {
-            ctx.canvas.fill_color_rect(
-                Vec2d { x: 0.0, y: center_y },
-                ResolvedSize {
-                    width: size.width,
-                    height: track_height,
-                },
-                Color::Rgba(190, 196, 205, 255),
-                [track_height / 2.0; 4],
-            );
-        }
+        let logical_scale = ctx.scale.max(f32::EPSILON);
+        let track_size = self.track.computed_size(&child_ctx);
+        let track_offset = Vec2d {
+            x: 0.0,
+            y: (size.height - track_size.height) / 2.0,
+        };
+        self.track_geometry.set(SliderVisualGeometry {
+            position: track_offset,
+            clip: None,
+        });
+        draw_child(&self.track, &child_ctx, track_offset);
 
         let lower = self.position_px(ctx, size, self.runtime.lower.get(), thumb_inset);
         let upper = self.position_px(ctx, size, self.runtime.upper.get(), thumb_inset);
         let trail_size = self.trail.computed_size(&child_ctx);
         let trail_y = (size.height - trail_size.height) / 2.0;
+        let clip_x = lower.min(upper);
+        let clip_width = (upper - lower).abs().min(size.width.max(0.0));
+        self.trail_geometry.set(SliderVisualGeometry {
+            position: Vec2d { x: 0.0, y: trail_y },
+            clip: Some(Rect::new(
+                clip_x / logical_scale,
+                0.0,
+                clip_width / logical_scale,
+                trail_size.height.max(0.0) / logical_scale,
+            )),
+        });
         ctx.canvas.save();
         ctx.canvas.set_clip(
             Vec2d {
-                x: lower.min(upper),
+                x: clip_x,
                 y: trail_y,
             },
             ResolvedSize {
-                width: (upper - lower).abs().min(size.width.max(0.0)),
+                width: clip_width,
                 height: trail_size.height.max(0.0),
             },
         );
@@ -1181,18 +1521,45 @@ impl<T: RangeValue> Drawable for RawRangeSlider<T> {
         ctx.canvas.clear_clip();
         ctx.canvas.restore();
 
-        for (child, position) in [(&self.lower_thumb, lower), (&self.upper_thumb, upper)] {
-            let child_size = child.computed_size(&child_ctx);
-            draw_child(
-                child,
-                &child_ctx,
-                Vec2d {
-                    x: position - child_size.width / 2.0,
-                    y: (size.height - child_size.height) / 2.0,
-                },
-            );
-        }
+        let lower_size = self.lower_thumb.computed_size(&child_ctx);
+        let lower_offset = Vec2d {
+            x: lower - lower_size.width / 2.0,
+            y: (size.height - lower_size.height) / 2.0,
+        };
+        self.lower_thumb_geometry.set(SliderVisualGeometry {
+            position: lower_offset,
+            clip: None,
+        });
+        draw_child(&self.lower_thumb, &child_ctx, lower_offset);
+
+        let upper_size = self.upper_thumb.computed_size(&child_ctx);
+        let upper_offset = Vec2d {
+            x: upper - upper_size.width / 2.0,
+            y: (size.height - upper_size.height) / 2.0,
+        };
+        self.upper_thumb_geometry.set(SliderVisualGeometry {
+            position: upper_offset,
+            clip: None,
+        });
+        draw_child(&self.upper_thumb, &child_ctx, upper_offset);
     }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
+            return false;
+        }
+        let size = self.computed_size(ctx);
+        let width = size.width / ctx.scale;
+        let height = size.height / ctx.scale;
+        width.is_finite()
+            && height.is_finite()
+            && width > 0.0
+            && height > 0.0
+            && width <= 1_000_000.0
+            && height <= 1_000_000.0
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
 }
 
 impl<T: RangeValue> Rebuildable for RawRangeSlider<T> {}

@@ -87,6 +87,10 @@ impl<T> Select<T> {
         self.focused_index
     }
 
+    pub(crate) fn set_focused_index(&mut self, index: Option<usize>) {
+        self.focused_index = index.filter(|index| self.is_available(*index));
+    }
+
     /// Returns the stable key of the transiently focused option.
     #[inline]
     pub fn focused_key(&self) -> Option<&str> {

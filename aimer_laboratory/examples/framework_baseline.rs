@@ -184,8 +184,8 @@ fn animated_probe() -> AnyWidget {
     .boxed()
 }
 
-/// A retained paint wrapper around one stable child. The controller and
-/// closure are sampled during draw, but the child element is never rebuilt.
+/// A retained opacity wrapper around one stable child. The controller is
+/// sampled during synchronization, and the child element is never rebuilt.
 fn retained_paint_probe() -> AnyWidget {
     let controller = AnimationController::with_millis(1_000, Curve::Linear);
     controller.forward_from_first_tick();
@@ -193,7 +193,7 @@ fn retained_paint_probe() -> AnyWidget {
         controller,
         SizedBox::new().width(1.0).height(1.0),
     )
-    .effect(|ctx, value| ctx.canvas.set_alpha(value))
+    .opacity()
     .bounded()
     .boxed()
 }
@@ -202,7 +202,7 @@ fn retained_paint_column(count: usize) -> AnyWidget {
     let controller = AnimationController::with_millis(1_000, Curve::Linear);
     controller.forward_from_first_tick();
     AnimatedPaint::new(controller, stable_column(count))
-        .effect(|ctx, value| ctx.canvas.set_alpha(value))
+        .opacity()
         .boxed()
 }
 

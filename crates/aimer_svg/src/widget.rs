@@ -646,8 +646,13 @@ impl RawSvgAsset {
                     *self.svg_element.get() = Some(svg.to_element(ctx));
                 }
                 self.phase.set(SvgAssetPhase::Ready);
+                aimer_widget::notify_element_tree_changed();
+                request_animation_frame();
             }
-            SvgLoadState::Error(_) => self.phase.set(SvgAssetPhase::Error),
+            SvgLoadState::Error(_) => {
+                self.phase.set(SvgAssetPhase::Error);
+                aimer_widget::notify_element_tree_changed();
+            }
         }
     }
 
@@ -711,6 +716,30 @@ impl Drawable for RawSvgAsset {
         if let Some(element) = self.active_element() {
             element.draw(ctx);
         }
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.phase.get() == SvgAssetPhase::Ready
+            && self
+                .active_element()
+                .is_some_and(|element| {
+                    element.can_paint_local_v2(ctx) && element.is_paint_bounded()
+                })
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        canvas.finish();
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        self.active_element()
+            .is_some_and(|element| element.is_paint_stable())
+    }
+
+    fn is_paint_bounded(&self) -> bool {
+        self.active_element()
+            .is_some_and(|element| element.is_paint_bounded())
     }
 }
 
@@ -968,9 +997,13 @@ impl RawSvg {
     }
 
     fn set_hovered(&self, hovered: Option<SvgNodeId>) {
-        if self.hovered.replace(hovered) != hovered {
+        if self.hovered.replace(hovered) != hovered && !self.hover_styles.is_empty() {
             request_animation_frame();
         }
+    }
+
+    fn clear_pressed(&self) -> bool {
+        self.interaction.borrow_mut().cancel()
     }
 
     fn execute_callbacks(&self, hit: SvgHit) {
@@ -1047,6 +1080,35 @@ impl Drawable for RawSvg {
         self.save_bounds(ctx, self.resolved_size(ctx));
     }
 
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        let size = self.resolved_size(ctx);
+        self.paint_bounded
+            && ctx.scale.is_finite()
+            && ctx.scale > 0.0
+            && size.width.is_finite()
+            && size.height.is_finite()
+            && size.width >= 0.0
+            && size.height >= 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let size = self.resolved_size(ctx);
+        let scale = ctx.scale;
+        let destination = aimer_cupid::draw_cmd_v2::Rect::new(
+            0.0,
+            0.0,
+            size.width / scale,
+            size.height / scale,
+        );
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        canvas.draw_svg(
+            self.document.scene().clone(),
+            destination,
+            self.overrides_for_size(size.width, size.height).into(),
+        );
+        canvas.finish();
+    }
+
     fn is_paint_stable(&self) -> bool {
         self.hover_styles.is_empty() && self.pressed_styles.is_empty()
     }
@@ -1064,21 +1126,37 @@ impl EventElement for RawSvg {
                 source: PointerSource::Mouse,
                 ..
             }) => {
+                let previous = self.hovered.get();
                 self.set_hovered(self.hit_at(pos.x, pos.y).map(|hit| hit.node_id));
-                EventResult::ignored()
+                if previous != self.hovered.get() && !self.hover_styles.is_empty() {
+                    EventResult::redraw()
+                } else {
+                    EventResult::ignored()
+                }
             }
             ElementEvent::PointerExited(PointerSource::Mouse, _) => {
+                let hovered = self.hovered.get().is_some_and(|_| !self.hover_styles.is_empty());
                 self.set_hovered(None);
-                self.interaction.borrow_mut().cancel();
-                svg_pointer_capture_effect(EventResult::ignored(), event, false)
+                let pressed = self.clear_pressed() && !self.pressed_styles.is_empty();
+                let result = if hovered || pressed {
+                    EventResult::redraw()
+                } else {
+                    EventResult::ignored()
+                };
+                svg_pointer_capture_effect(result, event, false)
             }
             ElementEvent::PointerExited(_, _) => {
-                self.interaction.borrow_mut().cancel();
-                svg_pointer_capture_effect(EventResult::ignored(), event, false)
+                let pressed = self.clear_pressed() && !self.pressed_styles.is_empty();
+                let result = if pressed {
+                    EventResult::redraw()
+                } else {
+                    EventResult::ignored()
+                };
+                svg_pointer_capture_effect(result, event, false)
             }
             ElementEvent::PointerDown(pointer) => {
                 let hit = self.hit_at(pointer.x(), pointer.y());
-                self.interaction
+                let changed = self.interaction
                     .borrow_mut()
                     .pointer_down(hit.as_ref().map(|hit| hit.node_id));
                 let captured = hit.is_some();
@@ -1087,10 +1165,19 @@ impl EventElement for RawSvg {
                 } else {
                     EventResult::ignored()
                 };
-                svg_pointer_capture_effect(result, event, captured)
+                svg_pointer_capture_effect(
+                    if changed && !self.pressed_styles.is_empty() {
+                        result.with_redraw()
+                    } else {
+                        result
+                    },
+                    event,
+                    captured,
+                )
             }
             ElementEvent::PointerUp(pointer) => {
                 let hit = self.hit_at(pointer.x(), pointer.y());
+                let had_pressed = self.interaction.borrow().pressed.is_some();
                 let pressed = self
                     .interaction
                     .borrow_mut()
@@ -1104,11 +1191,19 @@ impl EventElement for RawSvg {
                 } else {
                     EventResult::ignored()
                 };
+                let result = if had_pressed && !self.pressed_styles.is_empty() {
+                    result.with_redraw()
+                } else {
+                    result
+                };
                 svg_pointer_capture_effect(result, event, false)
             }
             ElementEvent::Cancel => {
-                self.interaction.borrow_mut().cancel();
-                EventResult::ignored()
+                if self.clear_pressed() && !self.pressed_styles.is_empty() {
+                    EventResult::redraw()
+                } else {
+                    EventResult::ignored()
+                }
             }
             _ => EventResult::ignored(),
         }
@@ -1140,8 +1235,10 @@ pub(crate) struct SvgInteraction {
 }
 
 impl SvgInteraction {
-    pub(crate) fn pointer_down(&mut self, hit: Option<SvgNodeId>) {
+    pub(crate) fn pointer_down(&mut self, hit: Option<SvgNodeId>) -> bool {
+        let changed = self.pressed != hit;
         self.pressed = hit;
+        changed
     }
 
     pub(crate) fn pointer_up(&mut self, hit: Option<SvgNodeId>) -> Option<SvgNodeId> {
@@ -1149,8 +1246,8 @@ impl SvgInteraction {
         if pressed == hit { pressed } else { None }
     }
 
-    fn cancel(&mut self) {
-        self.pressed = None;
+    fn cancel(&mut self) -> bool {
+        self.pressed.take().is_some()
     }
 }
 
@@ -1483,7 +1580,7 @@ mod tests {
         });
         let _guard = runtime.enter();
         let mut context = BuildContext::new(
-            aimer_canvas::Canvas::new(inner),
+            aimer_canvas::FrameCanvas::new(inner),
             ResolvedSize {
                 width: 32.0,
                 height: 32.0,

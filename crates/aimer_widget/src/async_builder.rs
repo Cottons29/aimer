@@ -803,7 +803,7 @@ mod tests {
 
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         let ctx = BuildContext::new(
             canvas,

@@ -668,16 +668,23 @@ impl<T: Theme> VisitorElement for AnimatedThemeElement<T> {
 
 impl<T: Theme> Drawable for AnimatedThemeElement<T> {
     fn draw(&self, ctx: &BuildContext) {
-        let progress = self.controller.tick(AnimInstant::now());
-        let value = self.transition.borrow().sample(progress);
-        if *self.current.borrow() != value {
-            *self.current.borrow_mut() = value.clone();
-            self.handle.update(|theme| *theme = value);
-        }
-
-        self.child.rebuild_if_dirty(ctx);
         self.child.draw(ctx);
 
+        if self.controller.is_animating() {
+            request_next_frame();
+        }
+    }
+
+    #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.child.draw(ctx);
         if self.controller.is_animating() {
             request_next_frame();
         }
@@ -692,6 +699,12 @@ impl<T: Theme> EventElement for AnimatedThemeElement<T> {
 
 impl<T: Theme> Rebuildable for AnimatedThemeElement<T> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        let progress = self.controller.tick(AnimInstant::now());
+        let value = self.transition.borrow().sample(progress);
+        if *self.current.borrow() != value {
+            *self.current.borrow_mut() = value.clone();
+            self.handle.update(|theme| *theme = value);
+        }
         self.child.rebuild_if_dirty(ctx);
     }
 
@@ -1131,7 +1144,7 @@ mod tests {
     fn context() -> BuildContext<'static> {
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         BuildContext::new(
             canvas,

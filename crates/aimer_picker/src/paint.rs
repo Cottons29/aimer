@@ -2,13 +2,164 @@
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
+use aimer_canvas::Canvas;
 use aimer_style::{ThemeTokens, apply_state_layer};
 use aimer_widget::base::{BuildContext, Color};
 
 use super::{Calendar, ColorChannel, ColorPicker, TimeOfDay};
 
-pub(crate) fn draw_calendar(
+trait PickerPaintCanvas {
+    fn scale(&self) -> f32;
+    fn fill_color_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+    );
+    fn stroke_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        stroke_width: f32,
+        border_radius: [f32; 4],
+    );
+    fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, font_weight: u16);
+}
+
+impl PickerPaintCanvas for BuildContext<'_> {
+    fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    fn fill_color_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+    ) {
+        self.canvas.fill_color_rect(pos, size, color, border_radius);
+    }
+
+    fn stroke_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        stroke_width: f32,
+        border_radius: [f32; 4],
+    ) {
+        self.canvas
+            .stroke_rect(pos, size, color, stroke_width, border_radius);
+    }
+
+    fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, font_weight: u16) {
+        self.canvas.draw_text(text, pos, font_size, color, font_weight);
+    }
+}
+
+pub(crate) struct RetainedPickerCanvas<'a> {
+    canvas: &'a Canvas,
+    scale: f32,
+}
+
+impl<'a> RetainedPickerCanvas<'a> {
+    pub(crate) fn new(canvas: &'a Canvas, scale: f32) -> Self {
+        Self {
+            canvas,
+            scale: scale.max(f32::EPSILON),
+        }
+    }
+}
+
+pub(crate) fn record_local_v2(
     ctx: &BuildContext,
+    paint: impl FnOnce(&RetainedPickerCanvas<'_>),
+) {
+    let canvas = Canvas::of(ctx);
+    let painter = RetainedPickerCanvas::new(&canvas, ctx.scale);
+    paint(&painter);
+    canvas.finish();
+}
+
+impl PickerPaintCanvas for RetainedPickerCanvas<'_> {
+    fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    fn fill_color_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        border_radius: [f32; 4],
+    ) {
+        let (red, green, blue, alpha) = color.to_rgba();
+        self.canvas.fill_rect_styled(
+            aimer_cupid::utilities::Rect::new(
+                pos.x / self.scale,
+                pos.y / self.scale,
+                size.width / self.scale,
+                size.height / self.scale,
+            ),
+            aimer_cupid::utilities::Color::rgba8(red, green, blue, alpha),
+            border_radius.map(|radius| radius / self.scale),
+            [0.0; 4],
+            aimer_cupid::utilities::Color::transparent(),
+            [0.0; 4],
+            aimer_cupid::utilities::Color::transparent(),
+        );
+    }
+
+    fn stroke_rect(
+        &self,
+        pos: Vec2d,
+        size: ResolvedSize,
+        color: Color,
+        stroke_width: f32,
+        border_radius: [f32; 4],
+    ) {
+        let (red, green, blue, alpha) = color.to_rgba();
+        self.canvas.fill_rect_styled(
+            aimer_cupid::utilities::Rect::new(
+                pos.x / self.scale,
+                pos.y / self.scale,
+                size.width / self.scale,
+                size.height / self.scale,
+            ),
+            aimer_cupid::utilities::Color::transparent(),
+            border_radius.map(|radius| radius / self.scale),
+            [stroke_width / self.scale; 4],
+            aimer_cupid::utilities::Color::rgba8(red, green, blue, alpha),
+            [0.0; 4],
+            aimer_cupid::utilities::Color::transparent(),
+        );
+    }
+
+    fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, font_weight: u16) {
+        let (red, green, blue, alpha) = color.to_rgba();
+        self.canvas.draw_text_styled(
+            std::sync::Arc::<str>::from(text),
+            aimer_cupid::utilities::Vec2d::new(pos.x / self.scale, pos.y / self.scale),
+            font_size / self.scale,
+            aimer_cupid::utilities::Color::rgba8(red, green, blue, alpha),
+            None,
+            None,
+            aimer_cupid::text_pipeline::TextOverflowMode::Clip,
+            aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign::Left,
+            aimer_cupid::font::FontFamily::SANS_SERIF,
+            aimer_cupid::font::FontStyle::Normal,
+            font_weight,
+            None,
+            true,
+        );
+    }
+}
+
+pub(crate) fn draw_calendar(
+    ctx: &impl PickerPaintCanvas,
     calendar: &Calendar,
     origin: Vec2d,
     width: f32,
@@ -16,15 +167,15 @@ pub(crate) fn draw_calendar(
     has_focus: bool,
     tokens: &ThemeTokens,
 ) {
-    let scale = ctx.scale.max(f32::EPSILON);
-    ctx.canvas.fill_color_rect(
+    let scale = ctx.scale().max(f32::EPSILON);
+    ctx.fill_color_rect(
         origin,
         ResolvedSize { width, height },
         tokens.colors.surface,
         [tokens.shape.medium * scale; 4],
     );
     let month = calendar.visible_month();
-    ctx.canvas.draw_text(
+    ctx.draw_text(
         &format!("{:04}-{:02}", month.year(), month.month()),
         Vec2d {
             x: origin.x + tokens.spacing.medium * scale,
@@ -38,7 +189,7 @@ pub(crate) fn draw_calendar(
     let weekdays = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
     let cell_width = width / 7.0;
     for (index, weekday) in weekdays.iter().enumerate() {
-        ctx.canvas.draw_text(
+        ctx.draw_text(
             weekday,
             Vec2d {
                 x: origin.x + index as f32 * cell_width + tokens.spacing.small * scale,
@@ -75,7 +226,7 @@ pub(crate) fn draw_calendar(
         } else {
             tokens.colors.surface
         };
-        ctx.canvas.fill_color_rect(
+        ctx.fill_color_rect(
             Vec2d {
                 x: cell_origin.x + 1.0 * scale,
                 y: cell_origin.y + 1.0 * scale,
@@ -88,7 +239,7 @@ pub(crate) fn draw_calendar(
             [tokens.shape.small * scale; 4],
         );
         if focused {
-            ctx.canvas.stroke_rect(
+            ctx.stroke_rect(
                 Vec2d {
                     x: cell_origin.x + 1.0 * scale,
                     y: cell_origin.y + 1.0 * scale,
@@ -113,7 +264,7 @@ pub(crate) fn draw_calendar(
         } else {
             tokens.colors.on_surface
         };
-        ctx.canvas.draw_text(
+        ctx.draw_text(
             &cell.date().day().to_string(),
             Vec2d {
                 x: cell_origin.x + tokens.spacing.small * scale,
@@ -127,7 +278,7 @@ pub(crate) fn draw_calendar(
 }
 
 pub(crate) fn draw_picker_field(
-    ctx: &BuildContext,
+    ctx: &impl PickerPaintCanvas,
     label: &str,
     value: String,
     width: f32,
@@ -135,13 +286,13 @@ pub(crate) fn draw_picker_field(
     focused: bool,
     tokens: &ThemeTokens,
 ) {
-    let scale = ctx.scale.max(f32::EPSILON);
+    let scale = ctx.scale().max(f32::EPSILON);
     let background = if focused {
         apply_state_layer(tokens.colors.surface, tokens.state.selected)
     } else {
         tokens.colors.surface
     };
-    ctx.canvas.fill_color_rect(
+    ctx.fill_color_rect(
         Vec2d::default(),
         ResolvedSize {
             width,
@@ -151,7 +302,7 @@ pub(crate) fn draw_picker_field(
         [tokens.shape.medium * scale; 4],
     );
     if focused {
-        ctx.canvas.stroke_rect(
+        ctx.stroke_rect(
             Vec2d::default(),
             ResolvedSize {
                 width: (width - tokens.control.focus_ring.ring_width * scale).max(0.0),
@@ -164,7 +315,7 @@ pub(crate) fn draw_picker_field(
             [tokens.shape.medium * scale; 4],
         );
     }
-    ctx.canvas.draw_text(
+    ctx.draw_text(
         &format!("{label}: {value}"),
         Vec2d {
             x: tokens.spacing.medium * scale,
@@ -174,7 +325,7 @@ pub(crate) fn draw_picker_field(
         tokens.colors.on_surface,
         text_weight(tokens.typography.body.font_weight),
     );
-    ctx.canvas.draw_text(
+    ctx.draw_text(
         if open { "▲" } else { "▼" },
         Vec2d {
             x: (width - tokens.spacing.medium * 1.5 * scale).max(0.0),
@@ -187,13 +338,13 @@ pub(crate) fn draw_picker_field(
 }
 
 pub(crate) fn draw_overlay_border(
-    ctx: &BuildContext,
+    ctx: &impl PickerPaintCanvas,
     width: f32,
     height: f32,
     tokens: &ThemeTokens,
 ) {
-    let scale = ctx.scale.max(f32::EPSILON);
-    ctx.canvas.stroke_rect(
+    let scale = ctx.scale().max(f32::EPSILON);
+    ctx.stroke_rect(
         Vec2d {
             x: 0.5 * scale,
             y: 0.5 * scale,
@@ -209,14 +360,14 @@ pub(crate) fn draw_overlay_border(
 }
 
 pub(crate) fn draw_segmented_picker_header(
-    ctx: &BuildContext,
+    ctx: &impl PickerPaintCanvas,
     width: f32,
     active_date: bool,
     tokens: &ThemeTokens,
 ) {
-    let scale = ctx.scale.max(f32::EPSILON);
+    let scale = ctx.scale().max(f32::EPSILON);
     let height = super::PICKER_FIELD_HEIGHT * scale;
-    ctx.canvas.fill_color_rect(
+    ctx.fill_color_rect(
         Vec2d::default(),
         ResolvedSize { width, height },
         tokens.colors.surface,
@@ -224,7 +375,7 @@ pub(crate) fn draw_segmented_picker_header(
     );
     let half = width / 2.0;
     let active_origin = if active_date { 0.0 } else { half };
-    ctx.canvas.fill_color_rect(
+    ctx.fill_color_rect(
         Vec2d {
             x: active_origin,
             y: 0.0,
@@ -236,7 +387,7 @@ pub(crate) fn draw_segmented_picker_header(
         tokens.colors.primary.with_alpha(0.12),
         [tokens.shape.small * scale; 4],
     );
-    ctx.canvas.fill_color_rect(
+    ctx.fill_color_rect(
         Vec2d {
             x: (half - 0.5 * scale).max(0.0),
             y: 6.0 * scale,
@@ -250,7 +401,7 @@ pub(crate) fn draw_segmented_picker_header(
     );
     let weight = text_weight(tokens.typography.label.font_weight);
     for (index, label) in ["Date", "Time"].into_iter().enumerate() {
-        ctx.canvas.draw_text(
+        ctx.draw_text(
             label,
             Vec2d {
                 x: index as f32 * half + tokens.spacing.medium * scale,
@@ -268,7 +419,7 @@ pub(crate) fn draw_segmented_picker_header(
 }
 
 pub(crate) fn draw_footer(
-    ctx: &BuildContext,
+    ctx: &impl PickerPaintCanvas,
     width: f32,
     height: f32,
     focused: bool,
@@ -278,7 +429,7 @@ pub(crate) fn draw_footer(
 }
 
 pub(crate) fn draw_done_footer(
-    ctx: &BuildContext,
+    ctx: &impl PickerPaintCanvas,
     width: f32,
     height: f32,
     focused: bool,
@@ -288,16 +439,16 @@ pub(crate) fn draw_done_footer(
 }
 
 fn draw_action_footer(
-    ctx: &BuildContext,
+    ctx: &impl PickerPaintCanvas,
     width: f32,
     height: f32,
     focused: bool,
     confirm_label: &str,
     tokens: &ThemeTokens,
 ) {
-    let scale = ctx.scale.max(f32::EPSILON);
+    let scale = ctx.scale().max(f32::EPSILON);
     let y = (height - super::PICKER_FOOTER_HEIGHT * scale).max(0.0);
-    ctx.canvas.fill_color_rect(
+    ctx.fill_color_rect(
         Vec2d { x: 0.0, y },
         ResolvedSize {
             width,
@@ -312,7 +463,7 @@ fn draw_action_footer(
         tokens.colors.on_surface
     };
     let weight = text_weight(tokens.typography.label.font_weight);
-    ctx.canvas.draw_text(
+    ctx.draw_text(
         "Cancel",
         Vec2d {
             x: tokens.spacing.medium * scale,
@@ -322,7 +473,7 @@ fn draw_action_footer(
         text_color,
         weight,
     );
-    ctx.canvas.draw_text(
+    ctx.draw_text(
         confirm_label,
         Vec2d {
             x: (width / 2.0 + tokens.spacing.medium * scale).min(width),
@@ -335,17 +486,17 @@ fn draw_action_footer(
 }
 
 pub(crate) fn draw_color_picker(
-    ctx: &BuildContext,
+    ctx: &impl PickerPaintCanvas,
     picker: &ColorPicker,
     width: f32,
     height: f32,
     active_channel: ColorChannel,
     tokens: &ThemeTokens,
 ) {
-    let scale = ctx.scale.max(f32::EPSILON);
+    let scale = ctx.scale().max(f32::EPSILON);
     let draft = picker.draft();
     let rgba = draft.to_rgba();
-    ctx.canvas.fill_color_rect(
+    ctx.fill_color_rect(
         Vec2d { x: 0.0, y: 48.0 * scale },
         ResolvedSize {
             width,
@@ -356,7 +507,7 @@ pub(crate) fn draw_color_picker(
     );
     for (index, swatch) in picker.swatches().iter().enumerate() {
         let color = swatch.color().to_rgba();
-        ctx.canvas.fill_color_rect(
+        ctx.fill_color_rect(
             Vec2d {
                 x: index as f32 * 32.0 * scale,
                 y: 82.0 * scale,
@@ -369,7 +520,7 @@ pub(crate) fn draw_color_picker(
             [tokens.shape.small * scale; 4],
         );
         if swatch.is_disabled() {
-            ctx.canvas.draw_text(
+            ctx.draw_text(
                 "×",
                 Vec2d {
                     x: index as f32 * 32.0 * scale + 8.0 * scale,
@@ -390,7 +541,7 @@ pub(crate) fn draw_color_picker(
     for (index, (channel, label, value)) in channels.into_iter().enumerate() {
         let y = 116.0 + index as f32 * 30.0;
         let disabled = channel == ColorChannel::Alpha && !picker.alpha_enabled();
-        ctx.canvas.draw_text(
+        ctx.draw_text(
             &format!("{label} {value}"),
             Vec2d { x: 2.0 * scale, y: (y + 8.0) * scale },
             tokens.typography.label.font_size * 0.8 * scale,
@@ -414,7 +565,7 @@ pub(crate) fn draw_color_picker(
 }
 
 pub(crate) fn draw_time_picker(
-    ctx: &BuildContext,
+    ctx: &impl PickerPaintCanvas,
     time: TimeOfDay,
     width: f32,
     height: f32,
@@ -423,11 +574,11 @@ pub(crate) fn draw_time_picker(
     use_24_hours: bool,
     tokens: &ThemeTokens,
 ) {
-    let scale = ctx.scale.max(f32::EPSILON);
+    let scale = ctx.scale().max(f32::EPSILON);
     let wheel_bottom = (height - super::PICKER_FOOTER_HEIGHT * scale).max(0.0);
     let body_top = body_top * scale;
     let wheel_top = body_top + super::TIME_WHEEL_CONTENT_TOP * scale;
-    ctx.canvas.fill_color_rect(
+    ctx.fill_color_rect(
         Vec2d { x: 0.0, y: body_top },
         ResolvedSize {
             width,
@@ -446,7 +597,7 @@ pub(crate) fn draw_time_picker(
     let selected_row = super::TIME_WHEEL_ROWS / 2;
     for (column, label) in columns.into_iter().enumerate() {
         let column_origin = column as f32 * column_width;
-        ctx.canvas.draw_text(
+        ctx.draw_text(
             label,
             Vec2d {
                 x: column_origin + 8.0 * scale,
@@ -468,7 +619,7 @@ pub(crate) fn draw_time_picker(
                 + row as f32 * super::TIME_WHEEL_ROW_HEIGHT)
                 * scale;
             if selected {
-                ctx.canvas.fill_color_rect(
+                ctx.fill_color_rect(
                     Vec2d {
                         x: column_origin + 2.0 * scale,
                         y: row_top,
@@ -490,7 +641,7 @@ pub(crate) fn draw_time_picker(
             } else {
                 tokens.colors.on_surface.with_alpha(0.5)
             };
-            ctx.canvas.draw_text(
+            ctx.draw_text(
                 &value,
                 Vec2d {
                     x: column_origin + 8.0 * scale,

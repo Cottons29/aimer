@@ -117,7 +117,7 @@ async fn slider_materializes_default_trail_and_thumb_widgets() {
 fn context() -> BuildContext<'static> {
     let canvas = {
         let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-        aimer_canvas::Canvas::new(inner)
+        aimer_canvas::FrameCanvas::new(inner)
     };
     let mut ctx = BuildContext::new(
         canvas,
@@ -385,7 +385,7 @@ async fn disabled_slider_does_not_capture_or_propose_input() {
 async fn slider_paints_track_active_segment_and_thumb() {
     let canvas = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
     let mut ctx = BuildContext::new(
-        aimer_canvas::Canvas::new(canvas),
+        aimer_canvas::FrameCanvas::new(canvas),
         ResolvedSize {
             width: 320.0,
             height: 120.0,
@@ -430,7 +430,7 @@ async fn slider_paints_track_active_segment_and_thumb() {
 async fn slider_minimum_thumb_stays_inside_the_visual_bounds() {
     let canvas = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
     let mut ctx = BuildContext::new(
-        aimer_canvas::Canvas::new(canvas),
+        aimer_canvas::FrameCanvas::new(canvas),
         ResolvedSize {
             width: 320.0,
             height: 120.0,
@@ -499,7 +499,7 @@ async fn slider_minimum_thumb_stays_inside_the_visual_bounds() {
 async fn range_slider_endpoint_thumbs_stay_inside_the_visual_bounds() {
     let canvas = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
     let mut ctx = BuildContext::new(
-        aimer_canvas::Canvas::new(canvas),
+        aimer_canvas::FrameCanvas::new(canvas),
         ResolvedSize {
             width: 320.0,
             height: 120.0,

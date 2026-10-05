@@ -17,13 +17,10 @@ mod lazy_tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    #[cfg(feature = "event-tree-exp")]
     use std::cell::RefCell;
 
-    #[cfg(feature = "event-tree-exp")]
     use aimer_events::element::ElementEvent;
 
-    #[cfg(feature = "event-tree-exp")]
     use std::time::Instant;
 
     use aimer_widget::base::{BuildContext, ResolvedSize, Vec2d};
@@ -32,7 +29,6 @@ mod lazy_tests {
         VisitorElement,
     };
 
-    #[cfg(feature = "event-tree-exp")]
     use aimer_widget::{EventDispatcher, EventResult, Widget};
 
     use crate::flex::raw_flex::RawFlex;
@@ -372,21 +368,18 @@ mod lazy_tests {
         );
     }
 
-    #[cfg(feature = "event-tree-exp")]
     struct DispatchProbe {
         id: usize,
         role: EventTreeRole,
         events: Rc<RefCell<Vec<usize>>>,
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl VisitorElement for DispatchProbe {
         fn debug_name(&self) -> &'static str {
             "DispatchProbe"
         }
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl EventElement for DispatchProbe {
         fn event_tree_role(&self) -> EventTreeRole {
             self.role
@@ -398,12 +391,10 @@ mod lazy_tests {
         }
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl Drawable for DispatchProbe {
         fn draw(&self, _ctx: &BuildContext) {}
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl LayoutElement for DispatchProbe {
         fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
             ResolvedSize {
@@ -424,10 +415,8 @@ mod lazy_tests {
         }
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl Rebuildable for DispatchProbe {}
 
-    #[cfg(feature = "event-tree-exp")]
     struct DispatchProbeWidget {
         id: usize,
         role: EventTreeRole,
@@ -435,7 +424,6 @@ mod lazy_tests {
         wrapper_depth: usize,
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl Widget for DispatchProbeWidget {
         fn to_element(self, _ctx: &BuildContext) -> AnyElement {
             wrap_dispatch_probe(
@@ -450,15 +438,12 @@ mod lazy_tests {
         }
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl aimer_widget::PortableWidget for DispatchProbeWidget {}
 
-    #[cfg(feature = "event-tree-exp")]
     struct TransparentDispatchWrapper {
         child: AnyElement,
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl VisitorElement for TransparentDispatchWrapper {
         fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
             visitor(self.child.as_ref());
@@ -469,7 +454,6 @@ mod lazy_tests {
         }
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl EventElement for TransparentDispatchWrapper {
         fn event_tree_role(&self) -> EventTreeRole {
             EventTreeRole::Transparent
@@ -480,14 +464,12 @@ mod lazy_tests {
         }
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl Drawable for TransparentDispatchWrapper {
         fn draw(&self, ctx: &BuildContext) {
             self.child.draw(ctx);
         }
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl LayoutElement for TransparentDispatchWrapper {
         fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
             self.child.computed_size(ctx)
@@ -498,10 +480,8 @@ mod lazy_tests {
         }
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl Rebuildable for TransparentDispatchWrapper {}
 
-    #[cfg(feature = "event-tree-exp")]
     fn wrap_dispatch_probe(mut child: AnyElement, depth: usize) -> AnyElement {
         for _ in 0..depth {
             child = TransparentDispatchWrapper { child }.boxed();
@@ -509,7 +489,6 @@ mod lazy_tests {
         child
     }
 
-    #[cfg(feature = "event-tree-exp")]
     fn build_dispatch_fixture(
         child_count: usize,
         wrapper_depth: usize,
@@ -560,7 +539,6 @@ mod lazy_tests {
         (column, dispatcher, events, pos, event, started.elapsed())
     }
 
-    #[cfg(feature = "event-tree-exp")]
     fn dispatch_through_test_column(add_boundary_child: bool) -> (Vec<usize>, Vec<usize>) {
         let (column, mut dispatcher, events, pos, event, _) =
             build_dispatch_fixture(5, 0, add_boundary_child.then_some(4), 15.0);
@@ -573,7 +551,6 @@ mod lazy_tests {
         (pointer_hits, broadcast_hits)
     }
 
-    #[cfg(feature = "event-tree-exp")]
     #[test]
     fn indexed_flex_dispatch_matches_boundary_child_and_broadcast_views() {
         let indexed = dispatch_through_test_column(false);
@@ -584,7 +561,6 @@ mod lazy_tests {
         assert_eq!(indexed.1, [4, 3, 2, 1, 0]);
     }
 
-    #[cfg(feature = "event-tree-exp")]
     #[test]
     #[ignore = "manual debug-profile comparison of warmed production RawFlex routes"]
     fn compare_warmed_direct_and_boundary_indexed_flex_dispatch() {

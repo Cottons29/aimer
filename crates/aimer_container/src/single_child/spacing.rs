@@ -272,6 +272,71 @@ fn is_unbounded(value: f32) -> bool {
 macro_rules! impl_spacing_element {
     ($raw:ident, $field:ident, $name:literal) => {
         impl Drawable for $raw {
+            fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+                let spacing = self.resolved(ctx);
+                let size = self.computed_size(ctx);
+                ctx.scale.is_finite()
+                    && ctx.scale > 0.0
+                    && spacing.left.is_finite()
+                    && spacing.top.is_finite()
+                    && spacing.right.is_finite()
+                    && spacing.bottom.is_finite()
+                    && spacing.horizontal().is_finite()
+                    && spacing.vertical().is_finite()
+                    && size.width.is_finite()
+                    && size.height.is_finite()
+                    && size.width >= 0.0
+                    && size.height >= 0.0
+                    && size.width <= 1_000_000.0
+                    && size.height <= 1_000_000.0
+            }
+
+            fn retained_v2_child_context<'a>(
+                &self,
+                ctx: &BuildContext<'a>,
+                _child: &dyn Element,
+            ) -> Option<BuildContext<'a>> {
+                if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
+                    return None;
+                }
+                Some(translated_context(ctx, self.resolved(ctx)))
+            }
+
+            fn retained_v2_child_geometry(
+                &self,
+                ctx: &BuildContext,
+                child: &dyn Element,
+            ) -> Option<(
+                aimer_cupid::draw_cmd_v2::Rect,
+                Option<aimer_cupid::draw_cmd_v2::Rect>,
+            )> {
+                if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
+                    return None;
+                }
+                let spacing = self.resolved(ctx);
+                let child_ctx = translated_context(ctx, spacing);
+                let size = child
+                    .retained_v2_bounds(&child_ctx)
+                    .unwrap_or_else(|| child.content_size(&child_ctx));
+                let position = child.pos().unwrap_or_default();
+                let bounds = aimer_cupid::draw_cmd_v2::Rect::new(
+                    (spacing.left + position.x) / ctx.scale,
+                    (spacing.top + position.y) / ctx.scale,
+                    size.width / ctx.scale,
+                    size.height / ctx.scale,
+                );
+                if !bounds.x.is_finite()
+                    || !bounds.y.is_finite()
+                    || !bounds.width.is_finite()
+                    || !bounds.height.is_finite()
+                    || bounds.width < 0.0
+                    || bounds.height < 0.0
+                {
+                    return None;
+                }
+                Some((bounds, child.retained_clip(&child_ctx)))
+            }
+
             fn draw(&self, ctx: &BuildContext) {
                 let spacing = self.resolved(ctx);
                 let child_ctx = translated_context(ctx, spacing);
@@ -476,7 +541,7 @@ mod tests {
     fn context(max_width: f32, max_height: f32, scale: f32) -> BuildContext<'static> {
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         let mut ctx = BuildContext::new(
             canvas,

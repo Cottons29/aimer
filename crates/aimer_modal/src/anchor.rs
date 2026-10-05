@@ -193,9 +193,32 @@ impl RawAnchor {
 }
 
 impl Drawable for RawAnchor {
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
     fn draw(&self, ctx: &BuildContext) {
         self.track(ctx, self.child.computed_size(ctx));
         self.child.draw(ctx);
+    }
+
+    fn paint(&self, ctx: &BuildContext) {
+        self.child.paint(ctx);
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.track(ctx, self.child.computed_size(ctx));
+        self.child.sync_paint_geometry(ctx);
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        self.child.is_paint_stable()
+    }
+
+    fn is_paint_bounded(&self) -> bool {
+        self.child.is_paint_bounded()
     }
 }
 

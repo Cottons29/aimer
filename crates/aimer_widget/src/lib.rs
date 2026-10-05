@@ -18,7 +18,6 @@ mod reconciliation_plan;
 mod frame_work_stats;
 mod hover_reconciliation;
 mod rebuild_stats;
-#[cfg(feature = "event-tree-exp")]
 mod event_tree;
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 mod paint_isolated;
@@ -103,8 +102,13 @@ pub use crate::components::drawable::{
 pub use crate::components::element::{
     Element, ElementId, ElementPath, EventDispatchContext, EventDispatcher, begin_event_frame,
     begin_paint_frame, element_tree_generation, layout_invalidation_generation,
-    mark_paint_damage, mark_paint_damage_full, rebuild_invalidation_generation,
-    take_paint_frame_damage,
+    mark_paint_damage, mark_paint_damage_full, notify_element_tree_changed,
+    notify_hosted_element_tree_changed, notify_retained_render_structure_changed,
+    retained_render_structure_generation,
+    has_active_v2_render_tree, update_v2_render_node_geometry,
+    rebuild_invalidation_generation,
+    set_rebuild_source_path, take_paint_frame_damage, with_v2_render_tree_context,
+    with_v2_render_tree_presentation_context, has_active_v2_render_presentation,
 };
 #[doc(hidden)]
 pub use crate::element_invalidation::{
@@ -404,7 +408,7 @@ mod tests {
     fn context() -> BuildContext<'static> {
         let canvas = {
             let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-            aimer_canvas::Canvas::new(inner)
+            aimer_canvas::FrameCanvas::new(inner)
         };
         BuildContext::new(
             canvas,

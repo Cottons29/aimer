@@ -182,6 +182,35 @@ pub struct RawStackElement {
 }
 
 impl RawStackElement {
+    fn child_context<'a>(&self, ctx: &BuildContext<'a>) -> BuildContext<'a> {
+        let content_size = self.content_size(ctx);
+        let mut child_ctx = ctx.clone();
+        child_ctx.parent_size = content_size;
+        child_ctx.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: content_size.width,
+            max_height: content_size.height,
+        };
+        child_ctx
+    }
+
+    fn retained_child_context<'a>(&self, ctx: &BuildContext<'a>) -> Option<BuildContext<'a>> {
+        let content_size = self.content_size(ctx);
+        if !ctx.scale.is_finite()
+            || ctx.scale <= 0.0
+            || !content_size.width.is_finite()
+            || !content_size.height.is_finite()
+            || content_size.width < 0.0
+            || content_size.height < 0.0
+            || content_size.width > 1_000_000.0
+            || content_size.height > 1_000_000.0
+        {
+            return None;
+        }
+        Some(self.child_context(ctx))
+    }
+
     /// Returns child indices in ascending layer order.
     ///
     /// Layer is structural element state, so the element-tree generation is
@@ -376,6 +405,21 @@ impl RawStackElement {
 }
 
 impl Drawable for RawStackElement {
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.retained_child_context(ctx).is_some()
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        _child: &dyn Element,
+        _child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        self.retained_child_context(ctx)
+    }
+
     fn draw(&self, ctx: &BuildContext) {
         self.invalidate_hit_test_index();
         let content_size = self.content_size(ctx);
@@ -410,12 +454,84 @@ impl Drawable for RawStackElement {
             }
         }
     }
+
+    fn paint(&self, ctx: &BuildContext) {
+        self.invalidate_hit_test_index();
+        let Some(child_ctx) = self.retained_child_context(ctx) else {
+            let child_ctx = self.child_context(ctx);
+            let sorted_children = self.sorted_child_indices();
+            if self.direction == StackDirection::Reverse {
+                for &index in sorted_children.iter().rev() {
+                    self.children[index].paint(&child_ctx);
+                }
+            } else {
+                for &index in sorted_children.iter() {
+                    self.children[index].paint(&child_ctx);
+                }
+            }
+            return;
+        };
+        let sorted_children = self.sorted_child_indices();
+        if self.direction == StackDirection::Reverse {
+            for &index in sorted_children.iter().rev() {
+                self.children[index].paint(&child_ctx);
+            }
+        } else {
+            for &index in sorted_children.iter() {
+                self.children[index].paint(&child_ctx);
+            }
+        }
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.invalidate_hit_test_index();
+        let Some(child_ctx) = self.retained_child_context(ctx) else {
+            let child_ctx = self.child_context(ctx);
+            let sorted_children = self.sorted_child_indices();
+            if self.direction == StackDirection::Reverse {
+                for &index in sorted_children.iter().rev() {
+                    self.children[index].sync_paint_geometry(&child_ctx);
+                }
+            } else {
+                for &index in sorted_children.iter() {
+                    self.children[index].sync_paint_geometry(&child_ctx);
+                }
+            }
+            return;
+        };
+        let sorted_children = self.sorted_child_indices();
+        if self.direction == StackDirection::Reverse {
+            for &index in sorted_children.iter().rev() {
+                self.children[index].sync_paint_geometry(&child_ctx);
+            }
+        } else {
+            for &index in sorted_children.iter() {
+                self.children[index].sync_paint_geometry(&child_ctx);
+            }
+        }
+    }
 }
 
 impl VisitorElement for RawStackElement {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for child in &self.children {
             visitor(child.as_ref());
+        }
+    }
+
+    fn visit_retained_v2_children<'a>(
+        &'a self,
+        visitor: &mut dyn FnMut(usize, &'a dyn Element),
+    ) {
+        let sorted_children = self.sorted_child_indices();
+        if self.direction == StackDirection::Reverse {
+            for &index in sorted_children.iter().rev() {
+                visitor(index, self.children[index].as_ref());
+            }
+        } else {
+            for &index in sorted_children.iter() {
+                visitor(index, self.children[index].as_ref());
+            }
         }
     }
 

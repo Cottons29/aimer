@@ -7,6 +7,7 @@ use aimer_widget::base::{BuildContext, Color, WindowHandle};
 
 use crate::selection::session::{SelectionSession, SelectionSlot};
 use crate::selection::{SelectionRegion, TextHitRegion, text_offset_at};
+use crate::TextSource;
 
 use aimer_cupid::text_layout::{TextInteractionLayout, TextWritingMode};
 use aimer_cupid::utilities::Mat3;
@@ -73,6 +74,8 @@ pub(crate) struct TextGeometry {
     /// coordinates.
     pub regions: RefCell<Vec<TextHitRegion>>,
     interaction: RefCell<Option<InteractionSnapshot>>,
+    pub retained_v2_link_hover: RefCell<Option<TextSource>>,
+    pub retained_v2_selection: RefCell<Option<Range<usize>>>,
     window: WindowHandle,
 }
 
@@ -90,6 +93,8 @@ impl TextGeometry {
             bounds: CacheBounds::new(),
             regions: RefCell::new(Vec::new()),
             interaction: RefCell::new(None),
+            retained_v2_link_hover: RefCell::new(None),
+            retained_v2_selection: RefCell::new(None),
             window,
         }
     }

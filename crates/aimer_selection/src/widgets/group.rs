@@ -14,7 +14,8 @@ use crate::events::{ControlAction, InputEvent, is_activation_key};
 use crate::{Autocomplete, ChoiceOption, Key, RadioGroup, Select};
 
 use super::chrome::{
-    control_shell, error_text, indicator, labeled_row, tokens, wrap_interactive,
+    control_shell, error_text, indicator, labeled_option_row, labeled_row, tokens,
+    wrap_interactive,
 };
 
 /// Retained state for a [`RadioGroup`] widget.
@@ -258,7 +259,8 @@ impl<T: Clone + PartialEq + 'static> State<Select<T>> for SelectState<T> {
                 .control
                 .options()
                 .iter()
-                .map(|option| option_row(self, &tokens, option))
+                .enumerate()
+                .map(|(index, option)| option_row(self, &tokens, index, option))
                 .collect();
             children.push(
                 Column::new()
@@ -326,16 +328,26 @@ impl<T: Clone + PartialEq + 'static> State<Select<T>> for SelectState<T> {
 fn option_row<T: Clone + PartialEq + 'static>(
     state: &SelectState<T>,
     tokens: &aimer_style::ThemeTokens,
+    index: usize,
     option: &ChoiceOption<T>,
 ) -> AnyWidget {
     let key = option.key().to_owned();
     let selected = state.control.selected() == Some(option.value());
     let disabled = option.disabled();
-    let visual = labeled_row(
+    let highlighted = state.control.focused_index() == Some(index);
+    let visual = labeled_option_row(
         tokens,
-        indicator(tokens, selected, tokens.shape.small, false, false, disabled),
-        Some(option.label()),
+        indicator(
+            tokens,
+            selected,
+            tokens.shape.small,
+            highlighted,
+            false,
+            disabled,
+        ),
+        option.label(),
         disabled,
+        highlighted,
     );
     let updater = state.updater;
     wrap_interactive(
@@ -347,7 +359,13 @@ fn option_row<T: Clone + PartialEq + 'static>(
             });
         }),
         Rc::new(|_| {}),
-        Rc::new(|_| {}),
+        Rc::new(move |hovered| {
+            if hovered {
+                updater.set_state(move |state| {
+                    state.control.set_focused_index(Some(index));
+                });
+            }
+        }),
         Rc::new(|_| false),
         visual,
     )
@@ -399,14 +417,17 @@ impl<T: Clone + PartialEq + 'static> State<Autocomplete<T>> for AutocompleteStat
 
     fn adopt_config_from(&mut self, new: Self) {
         let open = self.control.is_open();
-        let focused = self.control.focused_index();
+        let focused_key = if open {
+            self.control.focused_key().map(str::to_owned)
+        } else {
+            None
+        };
         let mut next = new.control;
         if open {
             let _ = next.open_menu();
         }
-        if let Some(index) = focused {
-            // Focus is transient; reconstruct after opening.
-            let _ = index;
+        if let Some(key) = focused_key {
+            next.set_focused_key(&key);
         }
         self.control = next;
     }
@@ -447,19 +468,23 @@ impl<T: Clone + PartialEq + 'static> State<Autocomplete<T>> for AutocompleteStat
                 .visible_options()
                 .map(|option| {
                     let key = option.key().to_owned();
+                    let hover_key = key.clone();
                     let disabled = option.disabled();
-                    let visual = labeled_row(
+                    let selected = self.control.selected() == Some(option.value());
+                    let highlighted = self.control.focused_key() == Some(option.key());
+                    let visual = labeled_option_row(
                         &tokens,
                         indicator(
                             &tokens,
-                            self.control.selected() == Some(option.value()),
+                            selected,
                             tokens.shape.small,
-                            false,
+                            highlighted,
                             false,
                             disabled,
                         ),
-                        Some(option.label()),
+                        option.label(),
                         disabled,
+                        highlighted,
                     );
                     let updater = self.updater;
                     wrap_interactive(
@@ -471,7 +496,14 @@ impl<T: Clone + PartialEq + 'static> State<Autocomplete<T>> for AutocompleteStat
                             });
                         }),
                         Rc::new(|_| {}),
-                        Rc::new(|_| {}),
+                        Rc::new(move |hovered| {
+                            if hovered {
+                                let key = hover_key.clone();
+                                updater.set_state(move |state| {
+                                    state.control.set_focused_key(&key);
+                                });
+                            }
+                        }),
                         Rc::new(|_| false),
                         visual,
                     )

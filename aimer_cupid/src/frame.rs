@@ -1,8 +1,156 @@
 //! The hand-off payload between the thread that builds a frame and the thread
 //! that rasterizes it.
 
+use std::sync::Arc;
+
+use crate::damage_region::{DamageRect, DamageSet};
 use crate::draw_cmd::DrawList;
-use crate::damage_region::DamageSet;
+use crate::draw_cmd_v2::{DrawCommand as V2DrawCommand, Mat3, Rect as V2Rect, RenderNodeId};
+
+/// Ordered local lists and legacy command ranges for damage-limited replay.
+#[doc(hidden)]
+pub struct RetainedRenderPlan {
+    operations: Vec<RetainedRenderOperation>,
+    complete: bool,
+}
+
+/// One retained item's bounds and paint payload in the direct replay plan.
+#[doc(hidden)]
+pub struct RetainedRenderOperation {
+    pub(crate) kind: RetainedRenderOperationKind,
+    pub(crate) bounds: DamageRect,
+}
+
+pub(crate) enum RetainedRenderOperationKind {
+    OpacityGroupBegin {
+        element: u64,
+        opacity: f32,
+    },
+    LegacyRange {
+        range: std::ops::Range<usize>,
+        prefix: Vec<crate::draw_cmd::DrawCommand>,
+        suffix: Vec<crate::draw_cmd::DrawCommand>,
+    },
+    LocalV2(RetainedV2Item),
+    OpacityGroupEnd { element: u64 },
+}
+
+pub(crate) struct RetainedV2Item {
+    pub(crate) element: RenderNodeId,
+    pub(crate) revision: u64,
+    pub(crate) bounds: V2Rect,
+    pub(crate) origin: (f32, f32),
+    pub(crate) transform: Mat3,
+    pub(crate) clip: Option<V2Rect>,
+    pub(crate) commands: Arc<[V2DrawCommand]>,
+}
+
+impl RetainedRenderPlan {
+    pub(crate) fn new(operations: Vec<RetainedRenderOperation>, complete: bool) -> Self {
+        Self {
+            operations,
+            complete,
+        }
+    }
+
+    pub(crate) fn operation(
+        range: std::ops::Range<usize>,
+        bounds: DamageRect,
+    ) -> RetainedRenderOperation {
+        RetainedRenderOperation {
+            kind: RetainedRenderOperationKind::LegacyRange {
+                range,
+                prefix: Vec::new(),
+                suffix: Vec::new(),
+            },
+            bounds,
+        }
+    }
+
+    pub(crate) fn legacy_range_operation(
+        range: std::ops::Range<usize>,
+        prefix: Vec<crate::draw_cmd::DrawCommand>,
+        suffix: Vec<crate::draw_cmd::DrawCommand>,
+        bounds: DamageRect,
+    ) -> RetainedRenderOperation {
+        RetainedRenderOperation {
+            kind: RetainedRenderOperationKind::LegacyRange {
+                range,
+                prefix,
+                suffix,
+            },
+            bounds,
+        }
+    }
+
+    pub(crate) fn local_v2_operation(
+        item: RetainedV2Item,
+        bounds: DamageRect,
+    ) -> RetainedRenderOperation {
+        RetainedRenderOperation {
+            kind: RetainedRenderOperationKind::LocalV2(item),
+            bounds,
+        }
+    }
+
+    pub(crate) fn opacity_group_begin_operation(
+        element: u64,
+        opacity: f32,
+        bounds: DamageRect,
+    ) -> RetainedRenderOperation {
+        RetainedRenderOperation {
+            kind: RetainedRenderOperationKind::OpacityGroupBegin { element, opacity },
+            bounds,
+        }
+    }
+
+    pub(crate) fn opacity_group_end_operation(
+        element: u64,
+        bounds: DamageRect,
+    ) -> RetainedRenderOperation {
+        RetainedRenderOperation {
+            kind: RetainedRenderOperationKind::OpacityGroupEnd { element },
+            bounds,
+        }
+    }
+
+    /// Returns whether the ordered operations include the whole visible tree.
+    #[inline]
+    pub fn is_complete(&self) -> bool {
+        self.complete
+    }
+
+    /// Returns the retained list revision for one local-v2 node, if submitted.
+    #[doc(hidden)]
+    pub fn local_v2_revision(&self, element: RenderNodeId) -> Option<u64> {
+        self.operations.iter().find_map(|operation| match &operation.kind {
+            RetainedRenderOperationKind::LocalV2(item) if item.element == element => {
+                Some(item.revision)
+            }
+            RetainedRenderOperationKind::LegacyRange { .. }
+            | RetainedRenderOperationKind::OpacityGroupBegin { .. }
+            | RetainedRenderOperationKind::OpacityGroupEnd { .. }
+            | RetainedRenderOperationKind::LocalV2(_) => None,
+        })
+    }
+
+    pub(crate) fn operations_for_region(
+        &self,
+        region: DamageRect,
+    ) -> impl Iterator<Item = &RetainedRenderOperation> {
+        self.operations
+            .iter()
+            .filter(move |operation| rects_intersect(operation.bounds, region))
+    }
+}
+
+fn rects_intersect(left: DamageRect, right: DamageRect) -> bool {
+    let left_right = left.x.saturating_add(left.width);
+    let left_bottom = left.y.saturating_add(left.height);
+    let right_right = right.x.saturating_add(right.width);
+    let right_bottom = right.y.saturating_add(right.height);
+    left.x < right_right && right.x < left_right && left.y < right_bottom && right.y < left_bottom
+}
 
 /// A finished, immutable frame: everything the renderer needs to encode and
 /// present, and nothing else.
@@ -61,6 +209,7 @@ pub struct FramePacket {
     frame: Frame,
     metadata: FrameRenderMetadata,
     scene: Option<crate::compositor::CompositorScene>,
+    render_plan: Option<RetainedRenderPlan>,
 }
 
 impl Frame {
@@ -189,6 +338,7 @@ impl FramePacket {
             frame,
             metadata,
             scene: None,
+            render_plan: None,
         }
     }
 
@@ -204,6 +354,24 @@ impl FramePacket {
             frame,
             metadata,
             scene: Some(scene),
+            render_plan: None,
+        }
+    }
+
+    /// Wraps a frame, renderer metadata, compositor scene, and retained replay plan.
+    #[doc(hidden)]
+    #[inline]
+    pub fn with_render_plan(
+        frame: Frame,
+        metadata: FrameRenderMetadata,
+        scene: Option<crate::compositor::CompositorScene>,
+        render_plan: Option<RetainedRenderPlan>,
+    ) -> Self {
+        Self {
+            frame,
+            metadata,
+            scene,
+            render_plan,
         }
     }
 
@@ -215,6 +383,7 @@ impl FramePacket {
             frame,
             metadata,
             scene: None,
+            render_plan: None,
         }
     }
 
@@ -234,6 +403,20 @@ impl FramePacket {
     #[inline]
     pub fn scene(&self) -> Option<&crate::compositor::CompositorScene> {
         self.scene.as_ref()
+    }
+
+    /// Borrows the retained ordered local lists and legacy ranges when this frame was built from v2.
+    #[doc(hidden)]
+    #[inline]
+    pub fn render_plan(&self) -> Option<&RetainedRenderPlan> {
+        self.render_plan.as_ref()
+    }
+
+    /// Removes and returns the retained render plan for transfer to a canvas frame builder.
+    #[doc(hidden)]
+    #[inline]
+    pub fn take_render_plan(&mut self) -> Option<RetainedRenderPlan> {
+        self.render_plan.take()
     }
 
     /// Consumes the packet and returns its frame payload.
@@ -297,5 +480,50 @@ mod tests {
         );
 
         assert_eq!(packet.scene().map(crate::compositor::CompositorScene::target_size), Some((12, 8)));
+    }
+
+    #[test]
+    fn retained_plan_returns_only_nodes_intersecting_each_damage_region() {
+        let mut draw_list = DrawList::new();
+        draw_list.fill_rect(
+            Rect::new(0.0, 0.0, 8.0, 8.0),
+            Color::red(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        draw_list.fill_rect(
+            Rect::new(16.0, 0.0, 8.0, 8.0),
+            Color::blue(),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        let plan = RetainedRenderPlan::new(
+            vec![
+                RetainedRenderPlan::operation(0..1, DamageRect::new(0, 0, 8, 8)),
+                RetainedRenderPlan::operation(1..2, DamageRect::new(16, 0, 8, 8)),
+            ],
+            true,
+        );
+
+        let left = plan
+            .operations_for_region(DamageRect::new(2, 2, 2, 2))
+            .collect::<Vec<_>>();
+        let right = plan
+            .operations_for_region(DamageRect::new(18, 2, 2, 2))
+            .collect::<Vec<_>>();
+
+        assert_eq!(left.len(), 1);
+        assert_eq!(right.len(), 1);
+        let RetainedRenderOperationKind::LegacyRange { range: left_range, .. } = &left[0].kind else {
+            panic!("expected a legacy command range");
+        };
+        let RetainedRenderOperationKind::LegacyRange { range: right_range, .. } = &right[0].kind else {
+            panic!("expected a legacy command range");
+        };
+        assert!(matches!(draw_list.commands()[left_range.start], crate::draw_cmd::DrawCommand::FillRect { color, .. } if color == Color::red()));
+        assert!(matches!(draw_list.commands()[right_range.start], crate::draw_cmd::DrawCommand::FillRect { color, .. } if color == Color::blue()));
+        assert!(plan.is_complete());
     }
 }

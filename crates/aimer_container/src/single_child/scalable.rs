@@ -124,6 +124,70 @@ impl Drawable for RawScalable {
         self.child.draw(&self.child_context(ctx));
     }
 
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite()
+            && ctx.scale > 0.0
+            && self.scale.is_finite()
+            && self.scale > 0.0
+            && (ctx.scale * self.scale).is_finite()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        aimer_canvas::Canvas::of(ctx).finish();
+    }
+
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        self.sync_paint_geometry(ctx);
+        ctx.set_local_v2_child_presentation_at(
+            0,
+            aimer_cupid::utilities::Mat3::scale(self.scale, self.scale),
+            1.0,
+        )
+    }
+
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.child.draw(&self.child_context(ctx));
+    }
+
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        (child_index == 0 && std::ptr::eq(child, self.child.as_ref()))
+            .then(|| self.child_context(ctx))
+    }
+
+    fn retained_v2_child_geometry_at(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        if child_index != 0 || !std::ptr::eq(child, self.child.as_ref()) {
+            return None;
+        }
+        let child_ctx = self.child_context(ctx);
+        let size = child
+            .retained_v2_bounds(&child_ctx)
+            .unwrap_or_else(|| child.content_size(&child_ctx));
+        let position = child.pos().unwrap_or_default();
+        let scale = ctx.scale * self.scale;
+        Some((
+            aimer_cupid::draw_cmd_v2::Rect::new(
+                position.x / scale,
+                position.y / scale,
+                size.width / scale,
+                size.height / scale,
+            ),
+            child.retained_clip(&child_ctx),
+        ))
+    }
+
     #[inline]
     fn paint(&self, ctx: &BuildContext) {
         self.child.paint(&self.child_context(ctx));

@@ -28,7 +28,7 @@ fn context() -> BuildContext<'static> {
 fn context_with_max(max_width: f32, max_height: f32) -> BuildContext<'static> {
     let canvas = {
         let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-        aimer_canvas::Canvas::new(inner)
+        aimer_canvas::FrameCanvas::new(inner)
     };
     let mut ctx = BuildContext::new(
         canvas,

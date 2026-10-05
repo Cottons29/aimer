@@ -17,10 +17,7 @@ aimer_style.workspace = true
 aimer_svg.workspace = true
 aimer_text.workspace = true
 aimer_widget.workspace = true
-
-[features]
-default = ["event-tree-exp"]
-event-tree-exp = ["aimer_input/event-tree-exp", "aimer_widget/event-tree-exp"]
+aimer_cupid = { workspace = true }
 
 [dev-dependencies]
 aimer_canvas.workspace = true

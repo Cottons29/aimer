@@ -9,7 +9,6 @@ f# Aimer
 **A high-performance, asynchronous, declarative GUI framework for Rust.**
 
 [Getting Started](#getting-started) •
-[Architecture](#architecture) •
 [Platform Support](#platform-support) •
 [Features](#key-features) •
 [Showcase](#running-the-showcase) •
@@ -182,12 +181,11 @@ Or configure optional features:
 aimer = { git = "https://github.com/Cottons29/aimer.git", features = ["markdown", "svg", "provider"] }
 ```
 
-Indexed event routing is enabled by default in the `aimer` framework and
-`aimer_widget`. The `event-tree-exp` feature remains as a compatibility alias
-for existing builds. Custom elements default to conservative indexed
-hit-testing; implement `EventTreeRole::Transparent` or `IndexedTarget` when the
-element's routing behavior permits a sparser event tree. `Legacy` is an alias
-for indexed hit-test-boundary routing.
+Indexed event routing is built into the `aimer` framework and `aimer_widget`;
+it no longer requires a Cargo feature. Custom elements default to conservative
+indexed hit-testing; implement `EventTreeRole::Transparent` or `IndexedTarget`
+when the element's routing behavior permits a sparser event tree. `Legacy` is
+an alias for indexed hit-test-boundary routing.
 The laboratory parity cases can be run with:
 
 ```bash
@@ -347,54 +345,6 @@ in `.cargo/config.toml`. Downstream builds that enable `web` must also pass
 `--cfg=web_sys_unstable_apis` for wasm, as described in the
 [wasm-bindgen guide](https://wasm-bindgen.github.io/wasm-bindgen/web-sys/unstable-apis.html).
 
----
-
-## Architecture
-
-```mermaid
-flowchart TD
-    App[User Application / Widgets] -->|defines tree| Aimer[aimer umbrella]
-    Aimer -->|reactive context| Provider[aimer_provider]
-    Aimer -->|element hierarchy| WidgetEngine[aimer_widget]
-    Aimer -->|layout constraints| FlexLayout[aimer_flex / aimer_layout]
-    WidgetEngine -->|small - object pool| Rubick[aimer_rubick]
-    WidgetEngine -->|frame & async tasks| Venus[aimer_venus]
-    Venus -->|render pass| Quiver[aimer_quiver / Shell]
-    Quiver -->|2D drawing & shaping| Cupid[aimer_cupid]
-    Cupid -->|GPU commands| GPU[WGPU or direct WebGL2]
-```
-
-### Workspace Structure
-
-```text
-aimer/
-├── src/                      # Top-level umbrella crate and unified re-exports
-├── aimer_cupid/              # 2D vector renderer, GPU pipeline, self-implemented text shaper & glyph rasterizer
-├── aimer_venus/              # UI-thread async runtime, frame scheduler, idle task budget
-├── aimer_rubick/             # Small-object optimization smart pointer & thread-local pooling
-├── aimer_quiver/             # Host application shell, winit event loop, frame stats
-├── aimer_anteros/            # Capability model, sandbox IPC, WASM hot reload transport
-├── crates/
-│   ├── aimer_widget/         # Element tree, lifecycle, BuildContext, Widget trait
-│   ├── aimer_flex/           # High-performance Flexbox layout engine
-│   ├── aimer_provider/       # Scoped state dependency tracking and action dispatchers
-│   ├── aimer_input/          # TextField, TextArea, focus trees, keyboard, IME handling
-│   ├── aimer_router/         # Type-safe router macro and navigation stack
-│   ├── aimer_animation/      # AnimationController, easing curves, transition primitives
-│   ├── aimer_style/          # Color palettes, decoration, borders, typography styles
-│   ├── aimer_modal/          # Modal host, dialogs, overlays, popup menus
-│   ├── aimer_markdown/       # Declarative markdown parser and renderer
-│   ├── aimer_svg/            # Vector SVG drawing integration
-│   ├── aimer_dnd/            # Drag and drop subsystem
-│   ├── aimer_a11y/           # Semantic accessibility tree integration
-│   └── ...
-├── jaime/                    # Complete desktop showcase application
-├── aimer_book/               # Official mdBook documentation
-└── examples/                 # Standalone sample applications
-```
-
----
-
 ## Development & Verification
 
 When contributing to Aimer, follow the project guidelines:
@@ -405,23 +355,6 @@ When contributing to Aimer, follow the project guidelines:
 - **Test-Driven:** Implement changes using the red-green-refactor loop.
 - **Formatting & Style:** Do not run broad reformatting tools (`cargo fmt`); preserve the surrounding formatting style.
   Keep source files below 2,000 lines.
-
-### Running Tests
-
-```bash
-# Run a focused test
-cargo test -p aimer_animation test_curve_linear
-
-# Run crate-specific tests
-cargo test -p aimer_animation
-cargo test -p aimer_widget
-cargo test -p aimer_flex
-
-# Run the complete workspace test suite
-cargo test --workspace
-```
-
----
 
 ## License
 

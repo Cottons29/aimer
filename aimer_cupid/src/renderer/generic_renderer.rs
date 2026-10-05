@@ -14,7 +14,10 @@ use crate::compositor::{CompositorScene, CompositorStats, RetainedSceneTree};
 use crate::custom_pipeline::{CustomPipelineGeneric, CustomPipelineSlotGeneric, RenderContextGeneric};
 use crate::damage_region::DamageRect;
 use crate::draw_cmd::{DrawCommand, DrawList, RetainedLayerContent};
-use crate::frame::{FramePacket, FrameRenderMetadata};
+use crate::frame::{
+    FramePacket, FrameRenderMetadata, RetainedRenderOperationKind, RetainedRenderPlan,
+    RetainedV2Item,
+};
 use crate::pipeline::frame_composite::FrameCompositePipeline;
 use crate::pipeline::image_pipeline::{ImageInstance, ImagePipeline};
 use crate::pipeline::material::{MaterialPipeline, MATERIAL_PIPELINE_NAME};
@@ -103,6 +106,7 @@ pub struct Renderer<B: GpuBackend = crate::backend::DefaultGpuBackend> {
     scene_target: PersistentTargetGeneric<B>,
     scene_composite_bind_group: Option<B::BindGroup>,
     damage_clear_texture: Option<DamageClearTextureGeneric<B>>,
+    opacity_group_targets: Vec<OpacityGroupTargetGeneric<B>>,
     custom_pipelines: Vec<CustomPipelineSlotGeneric<B>>,
     antialiasing: crate::AntiAlias,
     material_pipeline_enabled: bool,
@@ -122,6 +126,7 @@ pub struct Renderer<B: GpuBackend = crate::backend::DefaultGpuBackend> {
     compositor_stats: CompositorStats,
     scene_tree: RetainedSceneTree,
     scene_history_key: Option<(u64, u64, u64, u64, u32, u32)>,
+    v2_command_cache: HashMap<u64, CachedV2CommandList>,
     #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
     first_render_timing_enabled: bool,
 }
@@ -147,6 +152,13 @@ struct RetainedLayerGeneric<B: GpuBackend> {
     is_srgb: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RetainedLayerPreparation {
+    Rasterized,
+    Reused,
+    Skipped,
+}
+
 struct MultisampleTargetGeneric<B: GpuBackend> {
     _texture: B::Texture,
     view: B::TextureView,
@@ -162,6 +174,42 @@ struct DamageClearTextureGeneric<B: GpuBackend> {
     width: u32,
     height: u32,
     format: B::TextureFormat,
+}
+
+struct OpacityGroupTargetGeneric<B: GpuBackend> {
+    target: PersistentTargetGeneric<B>,
+    bind_group: Option<B::BindGroup>,
+    multisample_target: Option<MultisampleTargetGeneric<B>>,
+}
+
+impl<B: GpuBackend> Default for OpacityGroupTargetGeneric<B> {
+    fn default() -> Self {
+        Self {
+            target: PersistentTargetGeneric::default(),
+            bind_group: None,
+            multisample_target: None,
+        }
+    }
+}
+
+struct ActiveOpacityGroup<B: GpuBackend> {
+    element: u64,
+    opacity: f32,
+    bounds: DamageRect,
+    depth: usize,
+    bind_group: B::BindGroup,
+    render_view: B::TextureView,
+    resolve_target: Option<B::TextureView>,
+}
+
+struct CachedV2CommandList {
+    revision: u64,
+    scale_bits: u32,
+    origin_bits: (u32, u32),
+    transform_bits: [u32; 9],
+    clip_bits: Option<[u32; 4]>,
+    commands: Vec<DrawCommand>,
+    last_used_frame: u64,
 }
 
 impl<B: GpuBackend> Renderer<B> {
@@ -219,6 +267,7 @@ impl<B: GpuBackend> Renderer<B> {
             scene_target: PersistentTargetGeneric::default(),
             scene_composite_bind_group: None,
             damage_clear_texture: None,
+            opacity_group_targets: Vec::new(),
             custom_pipelines: Vec::new(),
             antialiasing,
             material_pipeline_enabled: initialize_all,
@@ -238,6 +287,7 @@ impl<B: GpuBackend> Renderer<B> {
             compositor_stats: CompositorStats::default(),
             scene_tree: RetainedSceneTree::new(),
             scene_history_key: None,
+            v2_command_cache: HashMap::new(),
             #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
             first_render_timing_enabled: false,
         }
@@ -405,6 +455,33 @@ impl<B: GpuBackend> Renderer<B> {
         is_srgb: bool,
         draw_list: &DrawList,
     ) {
+        self.render_with_source_texture_and_plan(
+            backend,
+            view,
+            source_texture,
+            width,
+            height,
+            is_srgb,
+            draw_list,
+            None,
+            1.0,
+            None,
+        );
+    }
+
+    fn render_with_source_texture_and_plan(
+        &mut self,
+        backend: &B,
+        view: &B::TextureView,
+        source_texture: Option<&B::Texture>,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        draw_list: &DrawList,
+        render_plan: Option<&RetainedRenderPlan>,
+        device_scale: f32,
+        opacity_target_key: Option<PersistentTargetKey>,
+    ) {
         if width == 0 || height == 0 {
             return;
         }
@@ -427,7 +504,10 @@ impl<B: GpuBackend> Renderer<B> {
         self.prepare_retained_layers(backend, draw_list, is_srgb);
         dx12_stage_finish!(retained_started, "retained layer preparation");
 
-        if source_texture.is_none() && draw_list_uses_material(draw_list) {
+        let retained_plan = render_plan.is_some_and(|plan| {
+            render_plan_uses_material(plan, width, height)
+        });
+        if source_texture.is_none() && (draw_list_uses_material(draw_list) || retained_plan) {
             let key = PersistentTargetKey::new(
                 width,
                 height,
@@ -465,19 +545,38 @@ impl<B: GpuBackend> Renderer<B> {
                     (target_view.clone(), None)
                 };
                 let contents_started = dx12_stage_start!(startup_timing);
-                self.render_contents(
-                    backend,
-                    &render_view,
-                    Some(&target_texture),
-                    resolve_target.as_ref(),
-                    width,
-                    height,
-                    is_srgb,
-                    draw_list,
-                    startup_timing,
-                    LoadOp::Clear([0.0; 4]),
-                    None,
-                );
+                if let Some(plan) = render_plan {
+                    self.render_retained_plan_contents(
+                        backend,
+                        &render_view,
+                        Some(&target_texture),
+                        resolve_target.as_ref(),
+                        width,
+                        height,
+                        is_srgb,
+                        draw_list,
+                        plan,
+                        device_scale,
+                        opacity_target_key.unwrap_or(key),
+                        startup_timing,
+                        LoadOp::Clear([0.0; 4]),
+                        None,
+                    );
+                } else {
+                    self.render_contents(
+                        backend,
+                        &render_view,
+                        Some(&target_texture),
+                        resolve_target.as_ref(),
+                        width,
+                        height,
+                        is_srgb,
+                        draw_list,
+                        startup_timing,
+                        LoadOp::Clear([0.0; 4]),
+                        None,
+                    );
+                }
                 dx12_stage_finish!(contents_started, "render contents total");
                 self.material_target.mark_valid();
                 let composition_started = dx12_stage_start!(startup_timing);
@@ -496,19 +595,49 @@ impl<B: GpuBackend> Renderer<B> {
             (view.clone(), None)
         };
         let contents_started = dx12_stage_start!(startup_timing);
-        self.render_contents(
-            backend,
-            &render_view,
-            source_texture,
-            resolve_target,
-            width,
-            height,
-            is_srgb,
-            draw_list,
-            startup_timing,
-            LoadOp::Clear([0.0; 4]),
-            None,
-        );
+        if let Some(plan) = render_plan {
+            let opacity_target_key = opacity_target_key.unwrap_or_else(|| {
+                PersistentTargetKey::new(
+                    width,
+                    height,
+                    device_scale,
+                    0,
+                    0,
+                    0,
+                    TargetValidity::Valid,
+                )
+            });
+            self.render_retained_plan_contents(
+                backend,
+                &render_view,
+                source_texture,
+                resolve_target,
+                width,
+                height,
+                is_srgb,
+                draw_list,
+                plan,
+                device_scale,
+                opacity_target_key,
+                startup_timing,
+                LoadOp::Clear([0.0; 4]),
+                None,
+            );
+        } else {
+            self.render_contents(
+                backend,
+                &render_view,
+                source_texture,
+                resolve_target,
+                width,
+                height,
+                is_srgb,
+                draw_list,
+                startup_timing,
+                LoadOp::Clear([0.0; 4]),
+                None,
+            );
+        }
         dx12_stage_finish!(contents_started, "render contents total");
         let reclaim_started = dx12_stage_start!(startup_timing);
         self.reclaim_retained_layers();
@@ -570,6 +699,7 @@ impl<B: GpuBackend> Renderer<B> {
             &frame.draw_list,
             packet.metadata(),
             packet.scene(),
+            packet.render_plan(),
         );
     }
 
@@ -593,6 +723,37 @@ impl<B: GpuBackend> Renderer<B> {
             &frame.draw_list,
             packet.metadata(),
             packet.scene(),
+            packet.render_plan(),
+        );
+    }
+
+    /// Renders a packet against a surface whose dimensions changed after the
+    /// frame was recorded, promoting the packet to full-target damage.
+    #[doc(hidden)]
+    pub fn render_packet_at_size(
+        &mut self,
+        backend: &B,
+        view: &B::TextureView,
+        packet: &FramePacket,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+    ) {
+        let frame = packet.frame();
+        let metadata = packet
+            .metadata()
+            .with_damage(crate::damage_region::DamageSet::full(width, height));
+        self.render_with_metadata(
+            backend,
+            view,
+            None,
+            width,
+            height,
+            is_srgb,
+            &frame.draw_list,
+            &metadata,
+            packet.scene(),
+            packet.render_plan(),
         );
     }
 
@@ -617,6 +778,7 @@ impl<B: GpuBackend> Renderer<B> {
             draw_list,
             metadata,
             None,
+            None,
         );
     }
 
@@ -631,6 +793,7 @@ impl<B: GpuBackend> Renderer<B> {
         draw_list: &DrawList,
         metadata: &FrameRenderMetadata,
         scene: Option<&CompositorScene>,
+        render_plan: Option<&RetainedRenderPlan>,
     ) {
         let scene_matches_target = scene.is_some_and(|scene| {
             scene.target_size() == (width, height)
@@ -644,6 +807,16 @@ impl<B: GpuBackend> Renderer<B> {
             metadata.resource_generation(),
             width,
             height,
+        );
+        let opacity_target_key = PersistentTargetKey::new_with_resource(
+            width,
+            height,
+            metadata.device_scale(),
+            metadata.surface_identity(),
+            metadata.renderer_generation(),
+            metadata.context_generation(),
+            metadata.resource_generation(),
+            TargetValidity::Valid,
         );
         let (scene_diff, reused_nodes) = if let Some(scene) = scene.filter(|scene| scene.is_recorded()) {
             if self.scene_history_key != Some(history_key) {
@@ -704,16 +877,20 @@ impl<B: GpuBackend> Renderer<B> {
             ..CompositorStats::default()
         };
 
+        let retained_plan_has_custom_pipeline = render_plan.is_some_and(|plan| {
+            render_plan_uses_custom_pipeline(plan, width, height)
+        });
         let persistent_contract = source_texture.is_none()
             && !self.antialiasing.uses_multisampling()
             && !draw_list_uses_custom_pipeline(draw_list)
+            && !retained_plan_has_custom_pipeline
             && self.frame_composite_pipeline.is_some()
             && metadata.damage().target_size() == (width, height)
             && metadata.device_scale().is_finite()
             && metadata.device_scale() > 0.0;
         if !persistent_contract || width == 0 || height == 0 {
             self.compositor_stats.full_repaint = true;
-            self.render_with_source_texture(
+            self.render_with_source_texture_and_plan(
                 backend,
                 view,
                 source_texture,
@@ -721,26 +898,31 @@ impl<B: GpuBackend> Renderer<B> {
                 height,
                 is_srgb,
                 draw_list,
+                render_plan,
+                metadata.device_scale(),
+                Some(opacity_target_key),
             );
             return;
         }
 
         self.frame_index = self.frame_index.wrapping_add(1);
         self.prepare_retained_layers(backend, draw_list, is_srgb);
-        let key = PersistentTargetKey::new_with_resource(
-            width,
-            height,
-            metadata.device_scale(),
-            metadata.surface_identity(),
-            metadata.renderer_generation(),
-            metadata.context_generation(),
-            metadata.resource_generation(),
-            TargetValidity::Valid,
-        );
+        let key = opacity_target_key;
         let result = self.scene_target.ensure(backend, self.format, key);
         if result == TargetEnsureResult::Unavailable {
             self.compositor_stats.full_repaint = true;
-            self.render_with_source_texture(backend, view, None, width, height, is_srgb, draw_list);
+            self.render_with_source_texture_and_plan(
+                backend,
+                view,
+                None,
+                width,
+                height,
+                is_srgb,
+                draw_list,
+                render_plan,
+                metadata.device_scale(),
+                Some(key),
+            );
             return;
         }
         if matches!(result, TargetEnsureResult::Created | TargetEnsureResult::Recreated) {
@@ -772,19 +954,38 @@ impl<B: GpuBackend> Renderer<B> {
                 if region.width == 0 || region.height == 0 {
                     continue;
                 }
-                self.render_contents(
-                    backend,
-                    &target_view,
-                    None,
-                    None,
-                    width,
-                    height,
-                    is_srgb,
-                    draw_list,
-                    false,
-                    LoadOp::Load,
-                    Some((region.x, region.y, region.width, region.height)),
-                );
+                if let Some(plan) = render_plan {
+                    self.render_retained_plan_contents(
+                        backend,
+                        &target_view,
+                        None,
+                        None,
+                        width,
+                        height,
+                        is_srgb,
+                        draw_list,
+                        plan,
+                        metadata.device_scale(),
+                        key,
+                        false,
+                        LoadOp::Load,
+                        Some((region.x, region.y, region.width, region.height)),
+                    );
+                } else {
+                    self.render_contents(
+                        backend,
+                        &target_view,
+                        None,
+                        None,
+                        width,
+                        height,
+                        is_srgb,
+                        draw_list,
+                        false,
+                        LoadOp::Load,
+                        Some((region.x, region.y, region.width, region.height)),
+                    );
+                }
             }
             self.scene_target.mark_valid();
             self.composite_scene_target(backend, view);
@@ -795,6 +996,600 @@ impl<B: GpuBackend> Renderer<B> {
             }
         }
         self.reclaim_retained_layers();
+    }
+
+    fn render_retained_plan_contents(
+        &mut self,
+        backend: &B,
+        view: &B::TextureView,
+        source_texture: Option<&B::Texture>,
+        resolve_target: Option<&B::TextureView>,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        draw_list: &DrawList,
+        plan: &RetainedRenderPlan,
+        device_scale: f32,
+        opacity_target_key: PersistentTargetKey,
+        startup_timing: bool,
+        initial_load: LoadOp<[f64; 4]>,
+        scissor: Option<(u32, u32, u32, u32)>,
+    ) {
+        let region = scissor.map_or_else(
+            || crate::damage_region::DamageRect::new(0, 0, width, height),
+            |(x, y, width, height)| crate::damage_region::DamageRect::new(x, y, width, height),
+        );
+        let operations = plan.operations_for_region(region).collect::<Vec<_>>();
+        let has_opacity_groups = operations.iter().any(|operation| {
+            matches!(
+                operation.kind,
+                RetainedRenderOperationKind::OpacityGroupBegin { .. }
+                    | RetainedRenderOperationKind::OpacityGroupEnd { .. }
+            )
+        });
+        if has_opacity_groups {
+            self.render_retained_plan_with_opacity_groups(
+                backend,
+                view,
+                source_texture,
+                resolve_target,
+                width,
+                height,
+                is_srgb,
+                draw_list,
+                &operations,
+                device_scale,
+                opacity_target_key,
+                startup_timing,
+                initial_load,
+                region,
+            );
+        } else {
+            self.render_retained_plan_chunk(
+                backend,
+                view,
+                source_texture,
+                resolve_target,
+                width,
+                height,
+                (width, height),
+                is_srgb,
+                draw_list,
+                &operations,
+                device_scale,
+                (0, 0),
+                startup_timing,
+                initial_load,
+                scissor,
+            );
+        }
+    }
+
+    fn render_retained_plan_chunk(
+        &mut self,
+        backend: &B,
+        view: &B::TextureView,
+        source_texture: Option<&B::Texture>,
+        resolve_target: Option<&B::TextureView>,
+        width: u32,
+        height: u32,
+        frame_size: (u32, u32),
+        is_srgb: bool,
+        draw_list: &DrawList,
+        operations: &[&crate::frame::RetainedRenderOperation],
+        device_scale: f32,
+        target_offset: (u32, u32),
+        startup_timing: bool,
+        initial_load: LoadOp<[f64; 4]>,
+        scissor: Option<(u32, u32, u32, u32)>,
+    ) {
+        let mut retained_lists = Vec::new();
+        let mut retained_indices = HashMap::new();
+        for operation in operations.iter().copied() {
+            let RetainedRenderOperationKind::LocalV2(item) = &operation.kind else {
+                continue;
+            };
+            let element = item.element.get();
+            let cached = self.take_v2_command_list(item, device_scale);
+            if cached.commands.is_empty() {
+                self.v2_command_cache.insert(element, cached);
+                continue;
+            }
+            let index = retained_lists.len();
+            retained_lists.push((element, cached));
+            retained_indices.insert(element, index);
+        }
+
+        let mut slices = Vec::with_capacity(operations.len() * 3);
+        for operation in operations.iter().copied() {
+            match &operation.kind {
+                RetainedRenderOperationKind::LegacyRange {
+                    range,
+                    prefix,
+                    suffix,
+                } => {
+                    if !prefix.is_empty() {
+                        slices.push(prefix.as_slice());
+                    }
+                    if let Some(commands) = draw_list.commands().get(range.clone()) {
+                        slices.push(commands);
+                    }
+                    if !suffix.is_empty() {
+                        slices.push(suffix.as_slice());
+                    }
+                }
+                RetainedRenderOperationKind::LocalV2(item) => {
+                    if let Some(index) = retained_indices.get(&item.element.get()) {
+                        slices.push(retained_lists[*index].1.commands.as_slice());
+                    }
+                }
+                RetainedRenderOperationKind::OpacityGroupBegin { .. }
+                | RetainedRenderOperationKind::OpacityGroupEnd { .. } => {}
+            }
+        }
+        self.render_contents_with_slices(
+            backend,
+            view,
+            source_texture,
+            resolve_target,
+            width,
+            height,
+            frame_size,
+            is_srgb,
+            draw_list,
+            Some(&slices),
+            startup_timing,
+            initial_load,
+            scissor,
+            target_offset,
+        );
+        drop(slices);
+        for (element, cached) in retained_lists {
+            self.v2_command_cache.insert(element, cached);
+        }
+    }
+
+    fn render_retained_plan_with_opacity_groups(
+        &mut self,
+        backend: &B,
+        view: &B::TextureView,
+        source_texture: Option<&B::Texture>,
+        resolve_target: Option<&B::TextureView>,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        draw_list: &DrawList,
+        operations: &[&crate::frame::RetainedRenderOperation],
+        device_scale: f32,
+        opacity_target_key: PersistentTargetKey,
+        startup_timing: bool,
+        initial_load: LoadOp<[f64; 4]>,
+        region: DamageRect,
+    ) {
+        if let LoadOp::Clear(color) = initial_load {
+            self.clear_render_target(backend, view, resolve_target, color);
+        }
+
+        let mut groups = Vec::<ActiveOpacityGroup<B>>::new();
+        let mut chunk = Vec::new();
+        for operation in operations.iter().copied() {
+            match operation.kind {
+                RetainedRenderOperationKind::OpacityGroupBegin { element, opacity } => {
+                    self.flush_opacity_group_chunk(
+                        backend,
+                        view,
+                        source_texture,
+                        resolve_target,
+                        width,
+                        height,
+                        is_srgb,
+                        draw_list,
+                        &mut chunk,
+                        &groups,
+                        device_scale,
+                        startup_timing,
+                        region,
+                    );
+
+                    let group = self.ensure_opacity_group_target(
+                        backend,
+                        groups.len(),
+                        element,
+                        opacity,
+                        operation.bounds,
+                        opacity_target_key,
+                    );
+                    self.clear_render_target(
+                        backend,
+                        &group.render_view,
+                        group.resolve_target.as_ref(),
+                        [0.0; 4],
+                    );
+                    groups.push(group);
+                }
+                RetainedRenderOperationKind::OpacityGroupEnd { element } => {
+                    self.flush_opacity_group_chunk(
+                        backend,
+                        view,
+                        source_texture,
+                        resolve_target,
+                        width,
+                        height,
+                        is_srgb,
+                        draw_list,
+                        &mut chunk,
+                        &groups,
+                        device_scale,
+                        startup_timing,
+                        region,
+                    );
+                    let group = groups
+                        .pop()
+                        .expect("validated opacity groups have matching begin operations");
+                    assert_eq!(group.element, element, "opacity group end matches its begin");
+                    let Some(composite_region) =
+                        opacity_group_region(region, &groups, group.bounds)
+                    else {
+                        continue;
+                    };
+                    let (parent_view, parent_resolve, parent_origin, parent_width, parent_height) =
+                        groups.last().map_or_else(
+                            || (view.clone(), resolve_target.cloned(), (0, 0), width, height),
+                            |parent| {
+                                (
+                                    parent.render_view.clone(),
+                                    parent.resolve_target.clone(),
+                                    (parent.bounds.x, parent.bounds.y),
+                                    parent.bounds.width,
+                                    parent.bounds.height,
+                                )
+                            },
+                        );
+                    let local_composite_region = DamageRect::new(
+                        composite_region.x - parent_origin.0,
+                        composite_region.y - parent_origin.1,
+                        composite_region.width,
+                        composite_region.height,
+                    );
+                    self.composite_opacity_group(
+                        backend,
+                        &group,
+                        &parent_view,
+                        parent_resolve.as_ref(),
+                        parent_origin,
+                        parent_width,
+                        parent_height,
+                        is_srgb,
+                        local_composite_region,
+                    );
+                    self.opacity_group_targets[group.depth].target.mark_valid();
+                }
+                RetainedRenderOperationKind::LegacyRange { .. }
+                | RetainedRenderOperationKind::LocalV2(_) => chunk.push(operation),
+            }
+        }
+        self.flush_opacity_group_chunk(
+            backend,
+            view,
+            source_texture,
+            resolve_target,
+            width,
+            height,
+            is_srgb,
+            draw_list,
+            &mut chunk,
+            &groups,
+            device_scale,
+            startup_timing,
+            region,
+        );
+        debug_assert!(groups.is_empty());
+    }
+
+    fn flush_opacity_group_chunk(
+        &mut self,
+        backend: &B,
+        root_view: &B::TextureView,
+        source_texture: Option<&B::Texture>,
+        root_resolve_target: Option<&B::TextureView>,
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        draw_list: &DrawList,
+        chunk: &mut Vec<&crate::frame::RetainedRenderOperation>,
+        groups: &[ActiveOpacityGroup<B>],
+        device_scale: f32,
+        startup_timing: bool,
+        region: DamageRect,
+    ) {
+        if chunk.is_empty() {
+            return;
+        }
+        let Some(scissor) = opacity_group_scissor(region, groups) else {
+            chunk.clear();
+            return;
+        };
+        let (view, resolve_target) = groups.last().map_or_else(
+            || (root_view.clone(), root_resolve_target.cloned()),
+            |group| (group.render_view.clone(), group.resolve_target.clone()),
+        );
+        let (target_width, target_height, target_offset) = groups.last().map_or(
+            (width, height, (0, 0)),
+            |group| {
+                (
+                    group.bounds.width,
+                    group.bounds.height,
+                    (group.bounds.x, group.bounds.y),
+                )
+            },
+        );
+        let local_scissor = DamageRect::new(
+            scissor.x - target_offset.0,
+            scissor.y - target_offset.1,
+            scissor.width,
+            scissor.height,
+        );
+        let operations = std::mem::take(chunk);
+        self.render_retained_plan_chunk(
+            backend,
+            &view,
+            source_texture,
+            resolve_target.as_ref(),
+            target_width,
+            target_height,
+            (width, height),
+            is_srgb,
+            draw_list,
+            &operations,
+            device_scale,
+            target_offset,
+            startup_timing,
+            LoadOp::Load,
+            Some((
+                local_scissor.x,
+                local_scissor.y,
+                local_scissor.width,
+                local_scissor.height,
+            )),
+        );
+    }
+
+    fn ensure_opacity_group_target(
+        &mut self,
+        backend: &B,
+        depth: usize,
+        element: u64,
+        opacity: f32,
+        bounds: DamageRect,
+        key: PersistentTargetKey,
+    ) -> ActiveOpacityGroup<B> {
+        let width = bounds.width;
+        let height = bounds.height;
+        assert!(width != 0 && height != 0, "opacity groups have nonempty bounds");
+        while self.opacity_group_targets.len() <= depth {
+            self.opacity_group_targets.push(OpacityGroupTargetGeneric::default());
+        }
+        let group_target = &mut self.opacity_group_targets[depth];
+        let result = group_target
+            .target
+            .ensure(backend, self.format, key.with_size(width, height));
+        if matches!(result, TargetEnsureResult::Created | TargetEnsureResult::Recreated) {
+            group_target.multisample_target = None;
+            let target_view = group_target
+                .target
+                .view()
+                .expect("ensured opacity group target has a view");
+            group_target.bind_group = Some(
+                self.image_pipeline
+                    .as_ref()
+                    .expect("opacity groups require the image pipeline")
+                    .create_external_bind_group(backend, target_view),
+            );
+        }
+        let target_view = group_target
+            .target
+            .view()
+            .cloned()
+            .expect("ensured opacity group target has a view");
+
+        let (render_view, resolve_target) = if self.antialiasing.uses_multisampling() {
+            let sample_count = self.antialiasing.sample_count();
+            let recreate = group_target.multisample_target.as_ref().is_none_or(|target| {
+                target.width != width
+                    || target.height != height
+                    || target.sample_count != sample_count
+                    || target.format != self.format
+            });
+            if recreate {
+                let texture = backend.create_texture(&crate::backend::TextureDescriptor {
+                    label: Some("cupid opacity group multisample target".to_string()),
+                    size: (width, height, 1),
+                    mip_level_count: 1,
+                    sample_count,
+                    dimension: crate::backend::TextureDimension::D2,
+                    format: self.format,
+                    usage: vec![crate::backend::TextureUsage::RenderAttachment],
+                });
+                let view = backend.create_texture_view(
+                    &texture,
+                    "cupid opacity group multisample target view",
+                );
+                group_target.multisample_target = Some(MultisampleTargetGeneric {
+                    _texture: texture,
+                    view,
+                    width,
+                    height,
+                    sample_count,
+                    format: self.format,
+                    bytes: width as u64 * height as u64 * 4 * u64::from(sample_count),
+                });
+            }
+            let multisample_view = group_target
+                .multisample_target
+                .as_ref()
+                .expect("opacity group multisample target initialized")
+                .view
+                .clone();
+            (multisample_view, Some(target_view.clone()))
+        } else {
+            (target_view.clone(), None)
+        };
+
+        let bind_group = group_target
+            .bind_group
+            .clone()
+            .expect("opacity group target bind group initialized");
+        ActiveOpacityGroup {
+            element,
+            opacity,
+            bounds,
+            depth,
+            bind_group,
+            render_view,
+            resolve_target,
+        }
+    }
+
+    fn clear_render_target(
+        &self,
+        backend: &B,
+        view: &B::TextureView,
+        resolve_target: Option<&B::TextureView>,
+        color: [f64; 4],
+    ) {
+        let mut encoder = backend.create_command_encoder("cupid clear render target");
+        let attachments = [RenderPassColorAttachment {
+            view,
+            resolve_target,
+            ops: Operations {
+                load: LoadOp::Clear(color),
+                store: StoreOp::Store,
+            },
+        }];
+        backend.begin_render_pass(
+            &mut encoder,
+            &RenderPassDescriptor {
+                label: Some("cupid clear render target pass".to_string()),
+                color_attachments: &attachments,
+                depth_stencil_attachment: None,
+            },
+        );
+        backend.submit(encoder);
+    }
+
+    fn composite_opacity_group(
+        &mut self,
+        backend: &B,
+        group: &ActiveOpacityGroup<B>,
+        view: &B::TextureView,
+        resolve_target: Option<&B::TextureView>,
+        parent_origin: (u32, u32),
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        scissor: DamageRect,
+    ) {
+        let image = ImageInstance {
+            position: [
+                (group.bounds.x - parent_origin.0) as f32,
+                (group.bounds.y - parent_origin.1) as f32,
+            ],
+            size: [group.bounds.width as f32, group.bounds.height as f32],
+            uv_offset: [0.0, 0.0],
+            uv_scale: [1.0, 1.0],
+            // Descendant clips were applied while building the isolated
+            // surface. The group bounds only limit its damage scissor; treating
+            // that union as another clip would add an unwanted antialiased edge.
+            clip_rect: [-1.0; 4],
+            clip_border_radius: [0.0; 4],
+            alpha: group.opacity,
+            source_premultiplied: 1.0,
+        };
+        let image_pipeline = self
+            .image_pipeline
+            .as_mut()
+            .expect("opacity groups require the image pipeline");
+        image_pipeline.begin_frame(backend, 1, width, height, is_srgb);
+        let mut encoder = backend.create_command_encoder("cupid composite opacity group");
+        let attachments = [RenderPassColorAttachment {
+            view,
+            resolve_target,
+            ops: Operations {
+                load: LoadOp::Load,
+                store: StoreOp::Store,
+            },
+        }];
+        {
+            use crate::backend::GpuRenderPass;
+            let mut pass = backend.begin_render_pass(
+                &mut encoder,
+                &RenderPassDescriptor {
+                    label: Some("cupid opacity group composite pass".to_string()),
+                    color_attachments: &attachments,
+                    depth_stencil_attachment: None,
+                },
+            );
+            pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height);
+            image_pipeline.draw_external_batch(
+                backend,
+                &mut pass,
+                &group.bind_group,
+                std::slice::from_ref(&image),
+            );
+        }
+        image_pipeline.end_frame(backend);
+        backend.submit(encoder);
+    }
+
+    fn take_v2_command_list(
+        &mut self,
+        item: &RetainedV2Item,
+        scale: f32,
+    ) -> CachedV2CommandList {
+        let element = item.element.get();
+        let scale_bits = scale.to_bits();
+        let origin_bits = (item.origin.0.to_bits(), item.origin.1.to_bits());
+        let transform_bits = [
+            item.transform.cols[0][0].to_bits(),
+            item.transform.cols[0][1].to_bits(),
+            item.transform.cols[0][2].to_bits(),
+            item.transform.cols[1][0].to_bits(),
+            item.transform.cols[1][1].to_bits(),
+            item.transform.cols[1][2].to_bits(),
+            item.transform.cols[2][0].to_bits(),
+            item.transform.cols[2][1].to_bits(),
+            item.transform.cols[2][2].to_bits(),
+        ];
+        let clip_bits = item.clip.map(|clip| {
+            [
+                clip.x.to_bits(),
+                clip.y.to_bits(),
+                clip.width.to_bits(),
+                clip.height.to_bits(),
+            ]
+        });
+        if let Some(mut cached) = self.v2_command_cache.remove(&element)
+            && cached.revision == item.revision
+            && cached.scale_bits == scale_bits
+            && cached.origin_bits == origin_bits
+            && cached.transform_bits == transform_bits
+            && cached.clip_bits == clip_bits
+        {
+            cached.last_used_frame = self.frame_index;
+            return cached;
+        }
+
+        let commands = crate::v2_frame_adapter::lower_retained_v2_commands(item, scale)
+            .expect("validated v2 items must lower during frame replay");
+        CachedV2CommandList {
+            revision: item.revision,
+            scale_bits,
+            origin_bits,
+            transform_bits,
+            clip_bits,
+            commands,
+            last_used_frame: self.frame_index,
+        }
     }
 
     fn ensure_damage_clear_texture(&mut self, backend: &B, width: u32, height: u32) -> B::Texture {
@@ -969,8 +1764,50 @@ impl<B: GpuBackend> Renderer<B> {
         initial_load: LoadOp<[f64; 4]>,
         scissor: Option<(u32, u32, u32, u32)>,
     ) {
+        self.render_contents_with_slices(
+            backend,
+            view,
+            source_texture,
+            resolve_target,
+            width,
+            height,
+            (width, height),
+            is_srgb,
+            draw_list,
+            None,
+            startup_timing,
+            initial_load,
+            scissor,
+            (0, 0),
+        );
+    }
+
+    fn render_contents_with_slices(
+        &mut self,
+        backend: &B,
+        view: &B::TextureView,
+        source_texture: Option<&B::Texture>,
+        resolve_target: Option<&B::TextureView>,
+        width: u32,
+        height: u32,
+        frame_size: (u32, u32),
+        is_srgb: bool,
+        draw_list: &DrawList,
+        command_slices: Option<&[&[DrawCommand]]>,
+        startup_timing: bool,
+        initial_load: LoadOp<[f64; 4]>,
+        scissor: Option<(u32, u32, u32, u32)>,
+        target_offset: (u32, u32),
+    ) {
         let collect_started = dx12_stage_start!(startup_timing);
-        self.collect_commands(backend, draw_list, width, height, startup_timing);
+        self.collect_commands(
+            backend,
+            draw_list,
+            command_slices,
+            frame_size,
+            startup_timing,
+            target_offset,
+        );
         dx12_stage_finish!(collect_started, "draw-list command collection");
 
         let custom_started = dx12_stage_start!(startup_timing);
@@ -1312,9 +2149,10 @@ impl<B: GpuBackend> Renderer<B> {
         &mut self,
         backend: &B,
         draw_list: &DrawList,
-        width: u32,
-        height: u32,
+        command_slices: Option<&[&[DrawCommand]]>,
+        frame_size: (u32, u32),
         startup_timing: bool,
+        target_offset: (u32, u32),
     ) {
         self.resolved.clear();
         self.text_requests.clear();
@@ -1333,12 +2171,16 @@ impl<B: GpuBackend> Renderer<B> {
         let mut current_italic = false;
         let mut current_language = None;
         let mut alpha_state = AlphaState::new();
-        for command in draw_list.commands() {
+        let target_translation =
+            target_relative_transform(Mat3::identity(), target_offset);
+        let fallback_slices = [draw_list.commands()];
+        let command_slices = command_slices.unwrap_or(&fallback_slices);
+        for command in command_slices.iter().flat_map(|commands| commands.iter()) {
             match command {
                 DrawCommand::PushTransform { matrix } => {
                     self.transform_stack.push(current_transform);
                     alpha_state.save();
-                    current_transform = matrix.pixel_aligned();
+                    current_transform = target_translation.mul(matrix).pixel_aligned();
                     current_scales = transform_scales(&current_transform);
                 }
                 DrawCommand::PopTransform => {
@@ -1460,8 +2302,12 @@ impl<B: GpuBackend> Renderer<B> {
                             color.to_array(),
                             alpha_state.current(),
                         )),
-                        bounds_width: bounds_width.unwrap_or(width as f32 - x),
-                        bounds_height: bounds_height.unwrap_or(height as f32 - y),
+                        bounds_width: bounds_width.unwrap_or(
+                            frame_size.0 as f32 - target_offset.0 as f32 - x,
+                        ),
+                        bounds_height: bounds_height.unwrap_or(
+                            frame_size.1 as f32 - target_offset.1 as f32 - y,
+                        ),
                         overflow: *overflow,
                         horizontal_align: *horizontal_align,
                         writing_mode: TextWritingMode::HorizontalTb,
@@ -1505,8 +2351,12 @@ impl<B: GpuBackend> Renderer<B> {
                             color.to_array(),
                             alpha_state.current(),
                         )),
-                        bounds_width: bounds_width.unwrap_or(width as f32 - x),
-                        bounds_height: bounds_height.unwrap_or(height as f32 - y),
+                        bounds_width: bounds_width.unwrap_or(
+                            frame_size.0 as f32 - target_offset.0 as f32 - x,
+                        ),
+                        bounds_height: bounds_height.unwrap_or(
+                            frame_size.1 as f32 - target_offset.1 as f32 - y,
+                        ),
                         overflow: *overflow,
                         horizontal_align: TextHorizontalAlign::Left,
                         writing_mode: TextWritingMode::HorizontalTb,
@@ -1587,7 +2437,7 @@ impl<B: GpuBackend> Renderer<B> {
                     self.resolved.push(ResolvedCommand::Svg(index));
                 }
                 DrawCommand::SetTransform { matrix } => {
-                    current_transform = matrix.pixel_aligned();
+                    current_transform = target_translation.mul(matrix).pixel_aligned();
                     current_scales = transform_scales(&current_transform);
                 }
                 DrawCommand::SetAlpha { alpha } => alpha_state.set(*alpha),
@@ -1600,6 +2450,35 @@ impl<B: GpuBackend> Renderer<B> {
                         .transform_point(rect.x + rect.width, rect.y + rect.height);
                     self.resolved.push(ResolvedCommand::Image {
                         texture_id: *texture_id,
+                        instance: ImageInstance {
+                            position: [x1.min(x2), y1.min(y2)],
+                            size: [(x2 - x1).abs(), (y2 - y1).abs()],
+                            uv_offset: [0.0, 0.0],
+                            uv_scale: [1.0, 1.0],
+                            clip_rect: clip_to_array(self.clip_stack.last()),
+                            clip_border_radius: clip_border_radius(self.clip_stack.last()),
+                            alpha: alpha_state.current(),
+                            source_premultiplied: 0.0,
+                        },
+                    });
+                }
+                DrawCommand::DrawImageWithResource { rect, resource } => {
+                    self.image_pipeline
+                        .as_mut()
+                        .expect("retained image resources require the image pipeline")
+                        .upload_retained_image_with_id(
+                            backend,
+                            resource.texture_id(),
+                            resource.revision(),
+                            resource.width(),
+                            resource.height(),
+                            resource.rgba(),
+                        );
+                    let (x1, y1) = current_transform.transform_point(rect.x, rect.y);
+                    let (x2, y2) = current_transform
+                        .transform_point(rect.x + rect.width, rect.y + rect.height);
+                    self.resolved.push(ResolvedCommand::Image {
+                        texture_id: resource.texture_id(),
                         instance: ImageInstance {
                             position: [x1.min(x2), y1.min(y2)],
                             size: [(x2 - x1).abs(), (y2 - y1).abs()],
@@ -1793,6 +2672,10 @@ impl<B: GpuBackend> Renderer<B> {
     }
 
     fn prepare_retained_layers(&mut self, backend: &B, draw_list: &DrawList, is_srgb: bool) {
+        let frame_stats = self.compositor_stats;
+        let mut rasterized_surfaces = 0usize;
+        let mut reused_surfaces = 0usize;
+        let mut composed_surfaces = 0usize;
         for command in draw_list.commands() {
             let DrawCommand::RetainedLayer {
                 layer_id,
@@ -1802,8 +2685,34 @@ impl<B: GpuBackend> Renderer<B> {
             else {
                 continue;
             };
-            self.prepare_retained_layer(backend, *layer_id, *rect, content, is_srgb);
+            match self.prepare_retained_layer(backend, *layer_id, *rect, content, is_srgb) {
+                RetainedLayerPreparation::Rasterized => {
+                    rasterized_surfaces = rasterized_surfaces.saturating_add(1);
+                    composed_surfaces = composed_surfaces.saturating_add(1);
+                }
+                RetainedLayerPreparation::Reused => {
+                    reused_surfaces = reused_surfaces.saturating_add(1);
+                    composed_surfaces = composed_surfaces.saturating_add(1);
+                }
+                RetainedLayerPreparation::Skipped => {}
+            }
         }
+
+        // Rasterizing a layer uses the same renderer recursively. Keep the
+        // enclosing window-frame counters and add the work done for its layers.
+        self.compositor_stats = frame_stats;
+        self.compositor_stats.rasterized_surfaces = self
+            .compositor_stats
+            .rasterized_surfaces
+            .saturating_add(rasterized_surfaces);
+        self.compositor_stats.reused_surfaces = self
+            .compositor_stats
+            .reused_surfaces
+            .saturating_add(reused_surfaces);
+        self.compositor_stats.composed_surfaces = self
+            .compositor_stats
+            .composed_surfaces
+            .saturating_add(composed_surfaces);
     }
 
     fn prepare_retained_layer(
@@ -1813,11 +2722,11 @@ impl<B: GpuBackend> Renderer<B> {
         rect: Rect,
         content: &Arc<RetainedLayerContent>,
         is_srgb: bool,
-    ) {
+    ) -> RetainedLayerPreparation {
         let Some((width, height)) =
             retained_layer_dimensions(rect, backend.limits().max_texture_dimension_2d)
         else {
-            return;
+            return RetainedLayerPreparation::Skipped;
         };
         let entry = self.retained_layers.entry(layer_id).or_insert_with(|| {
             RetainedLayerGeneric {
@@ -1856,10 +2765,10 @@ impl<B: GpuBackend> Renderer<B> {
             }
         }
         if matches!(result, TargetEnsureResult::ReusedValid) {
-            return;
+            return RetainedLayerPreparation::Reused;
         }
         let Some(target_view) = entry.target.view().cloned() else {
-            return;
+            return RetainedLayerPreparation::Skipped;
         };
         let layer_draw_list = content.to_draw_list();
         self.render_with_source_texture(
@@ -1884,9 +2793,14 @@ impl<B: GpuBackend> Renderer<B> {
                 }
             }
         }
+        RetainedLayerPreparation::Rasterized
     }
 
     fn reclaim_retained_layers(&mut self) {
+        let frame_index = self.frame_index;
+        self.v2_command_cache.retain(|_, cached| {
+            frame_index.saturating_sub(cached.last_used_frame) < RETAINED_LAYER_IDLE_FRAMES
+        });
         let mut total_bytes = self
             .retained_layers
             .values()
@@ -1908,6 +2822,50 @@ impl<B: GpuBackend> Renderer<B> {
             }
         }
     }
+}
+
+fn opacity_group_region<B: GpuBackend>(
+    region: DamageRect,
+    groups: &[ActiveOpacityGroup<B>],
+    bounds: DamageRect,
+) -> Option<DamageRect> {
+    groups
+        .iter()
+        .try_fold(intersect_damage_rects(region, bounds)?, |region, group| {
+            intersect_damage_rects(region, group.bounds)
+        })
+}
+
+fn opacity_group_scissor<B: GpuBackend>(
+    region: DamageRect,
+    groups: &[ActiveOpacityGroup<B>],
+) -> Option<DamageRect> {
+    groups.iter().try_fold(region, |region, group| {
+        intersect_damage_rects(region, group.bounds)
+    })
+}
+
+fn intersect_damage_rects(left: DamageRect, right: DamageRect) -> Option<DamageRect> {
+    let x = left.x.max(right.x);
+    let y = left.y.max(right.y);
+    let right_edge = left
+        .x
+        .saturating_add(left.width)
+        .min(right.x.saturating_add(right.width));
+    let bottom_edge = left
+        .y
+        .saturating_add(left.height)
+        .min(right.y.saturating_add(right.height));
+    if right_edge <= x || bottom_edge <= y {
+        return None;
+    }
+    Some(DamageRect::new(x, y, right_edge - x, bottom_edge - y))
+}
+
+fn target_relative_transform(matrix: Mat3, target_offset: (u32, u32)) -> Mat3 {
+    Mat3::translate(-(target_offset.0 as f32), -(target_offset.1 as f32))
+        .mul(&matrix)
+        .pixel_aligned()
 }
 
 fn flush_image_batch<'pass, B: GpuBackend>(
@@ -1940,5 +2898,90 @@ fn draw_list_uses_custom_pipeline(draw_list: &DrawList) -> bool {
         .any(|command| matches!(command, DrawCommand::Custom { .. }))
 }
 
+fn render_plan_uses_custom_pipeline(plan: &RetainedRenderPlan, width: u32, height: u32) -> bool {
+    plan.operations_for_region(crate::damage_region::DamageRect::new(0, 0, width, height))
+        .any(|operation| match &operation.kind {
+            crate::frame::RetainedRenderOperationKind::LocalV2(item) => item.commands.iter().any(
+                |command| {
+                    matches!(command, crate::draw_cmd_v2::DrawCommand::DrawCustom { .. })
+                },
+            ),
+            crate::frame::RetainedRenderOperationKind::LegacyRange { .. }
+            | crate::frame::RetainedRenderOperationKind::OpacityGroupBegin { .. }
+            | crate::frame::RetainedRenderOperationKind::OpacityGroupEnd { .. } => false,
+        })
+}
+
+fn render_plan_uses_material(plan: &RetainedRenderPlan, width: u32, height: u32) -> bool {
+    plan.operations_for_region(crate::damage_region::DamageRect::new(0, 0, width, height))
+        .any(|operation| match &operation.kind {
+            crate::frame::RetainedRenderOperationKind::LocalV2(item) => item.commands.iter().any(
+                |command| {
+                    matches!(
+                        command,
+                        crate::draw_cmd_v2::DrawCommand::DrawCustom { pipeline_name, .. }
+                            if pipeline_name.as_ref() == MATERIAL_PIPELINE_NAME
+                    )
+                },
+            ),
+            crate::frame::RetainedRenderOperationKind::LegacyRange { .. }
+            | crate::frame::RetainedRenderOperationKind::OpacityGroupBegin { .. }
+            | crate::frame::RetainedRenderOperationKind::OpacityGroupEnd { .. } => false,
+        })
+}
+
 /// Compatibility name for the backend-generic [`Renderer`].
 pub type RendererImpl<B = crate::backend::DefaultGpuBackend> = Renderer<B>;
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::damage_region::DamageSet;
+    use crate::draw_cmd_v2::{DrawCommand, Rect, RenderFrame, RenderPaintSource, RenderTree};
+    use crate::frame::{FramePacket, FrameRenderMetadata};
+    use crate::utilities::Mat3;
+
+    use super::{
+        MATERIAL_PIPELINE_NAME, render_plan_uses_custom_pipeline, render_plan_uses_material,
+        target_relative_transform,
+    };
+
+    #[test]
+    fn cropped_group_transform_maps_world_pixels_into_local_surface_pixels() {
+        let world = Mat3::translate(52.0, 27.0).mul(&Mat3::scale(2.0, 3.0));
+        let local = target_relative_transform(world, (40, 20));
+
+        assert_eq!(local.transform_point(4.0, 5.0), (20.0, 22.0));
+        assert_eq!(local.transform_point(0.0, 0.0), (12.0, 7.0));
+    }
+
+    #[test]
+    fn retained_material_commands_are_detected_before_target_selection() {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
+        tree.set_paint_source(root, RenderPaintSource::LocalV2)
+            .unwrap();
+        tree.context(root)
+            .unwrap()
+            .begin_recording()
+            .unwrap()
+            .commit(vec![DrawCommand::DrawCustom {
+                pipeline_name: Arc::from(MATERIAL_PIPELINE_NAME),
+                data: Arc::from(vec![1_u8, 2, 3]),
+            }])
+            .unwrap();
+        let packet = FramePacket::from_v2_direct(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, 64.0, 64.0)],
+                operations: tree.render_all(),
+            },
+            FrameRenderMetadata::new(1.0, 1, 1, 1, 1, DamageSet::new(64, 64)),
+        )
+        .unwrap();
+        let plan = packet.render_plan().unwrap();
+
+        assert!(render_plan_uses_custom_pipeline(plan, 64, 64));
+        assert!(render_plan_uses_material(plan, 64, 64));
+    }
+}

@@ -1,12 +1,12 @@
-use std::hash::{Hash, Hasher};
-use aimer_attribute::position::Vec2d;
-use aimer_events::element::ElementEvent;
-use aimer_events::pointer::PointerSource;
-use smallvec::SmallVec;
-
 use crate::Element;
 use crate::components::element::{EventDispatchContext, VisitorElement};
 use crate::focus::FocusNode;
+use aimer_attribute::position::Vec2d;
+use aimer_events::element::ElementEvent;
+use aimer_events::pointer::PointerSource;
+use aimer_utils::debug;
+use smallvec::SmallVec;
+use std::hash::{Hash, Hasher};
 
 /// Identifies one pointer independently of pointers from other input sources.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -180,6 +180,17 @@ impl EventResult {
         self
     }
 
+    /// Clears the redraw flag while preserving consumption and pointer effects.
+    ///
+    /// A transparent routing wrapper can use this after a child has already
+    /// invalidated its own retained paint. The wrapper must schedule the frame
+    /// separately so its full bounds do not become another paint invalidation.
+    #[inline]
+    pub const fn without_redraw(mut self) -> Self {
+        self.needs_redraw = false;
+        self
+    }
+
     /// Requests persistent ownership of `pointer` by the producing element.
     #[inline]
     pub const fn with_pointer_capture(mut self, pointer: PointerKey) -> Self {
@@ -341,12 +352,14 @@ pub trait EventElement: VisitorElement {
     /// once, in structural order.
     fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         let mut children: SmallVec<[&'a dyn Element; 8]> = SmallVec::new();
+        // let mut children = Vec::new();
+        debug!("#1");
         self.event_children(&mut |child| children.push(child));
+        // debug!("#2");
         self.visit_children(&mut |child| {
-            if !children
-                .iter()
-                .any(|existing| std::ptr::eq(*existing, child))
-            {
+            if !children.iter().any(|existing| {
+                std::ptr::eq(*existing, child)
+            }) {
                 children.push(child);
             }
         });
@@ -404,11 +417,7 @@ pub trait EventElement: VisitorElement {
     /// a retained spatial index may override this to skip known-outside
     /// children without affecting focus or broadcast traversal.
     #[inline]
-    fn hit_test_children_at<'a>(
-        &'a self,
-        _pos: Vec2d,
-        visitor: &mut dyn FnMut(&'a dyn Element),
-    ) {
+    fn hit_test_children_at<'a>(&'a self, _pos: Vec2d, visitor: &mut dyn FnMut(&'a dyn Element)) {
         self.hit_test_children(visitor);
     }
 
@@ -442,7 +451,6 @@ pub trait EventElement: VisitorElement {
     fn has_overlapping_hit_targets(&self) -> bool {
         false
     }
-
 }
 
 #[cfg(test)]
@@ -486,6 +494,19 @@ mod tests {
 
         assert!(result.is_consumed());
         assert!(result.needs_redraw());
+        assert_eq!(result.capture_request(), CaptureRequest::Capture(pointer));
+    }
+
+    #[test]
+    fn removing_forwarded_redraw_preserves_other_event_effects() {
+        let pointer = PointerKey::new(PointerSource::Touch, 9);
+        let result = EventResult::consumed()
+            .with_redraw()
+            .with_pointer_capture(pointer)
+            .without_redraw();
+
+        assert!(result.is_consumed());
+        assert!(!result.needs_redraw());
         assert_eq!(result.capture_request(), CaptureRequest::Capture(pointer));
     }
 

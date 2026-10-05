@@ -30,7 +30,7 @@ fn runtime_handle() -> tokio::runtime::Handle {
 fn context() -> BuildContext<'static> {
     let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
     let mut context = BuildContext::new(
-        aimer_canvas::Canvas::new(inner),
+        aimer_canvas::FrameCanvas::new(inner),
         ResolvedSize {
             width: FRAME_WIDTH as f32,
             height: FRAME_HEIGHT as f32,

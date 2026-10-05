@@ -313,6 +313,20 @@ enum MenuOrigin {
     Click(Vec2d),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct RetainedFieldPaintState {
+    controller_revision: u64,
+    cursor_offset: usize,
+    selection_anchor: Option<usize>,
+    preedit_cursor: Option<(usize, usize)>,
+    scroll_x_bits: u32,
+    scroll_y_bits: u32,
+    input_language: Option<aimer_cupid::font::TextLanguage>,
+    hovered: bool,
+    focused: bool,
+    composing: bool,
+}
+
 #[allow(dead_code)]
 pub(crate) struct RawTextField {
     pub input_type: InputType,
@@ -359,6 +373,7 @@ pub(crate) struct RawTextField {
     pub focus_node: FocusNode,
     pub focused: Cell<bool>,
     pub hovered: Cell<bool>,
+    pub(super) retained_v2_paint_state: Cell<Option<RetainedFieldPaintState>>,
     pub cached_bounds: CacheBounds,
     pub on_changed: TextFieldCallback,
     pub on_submitted: TextFieldCallback,
@@ -569,6 +584,7 @@ impl RawTextField {
             focus_node,
             focused: Cell::new(false),
             hovered: Cell::new(false),
+            retained_v2_paint_state: Cell::new(None),
             cached_bounds: CacheBounds::new(),
             on_changed: config.on_changed,
             on_submitted: config.on_submitted,

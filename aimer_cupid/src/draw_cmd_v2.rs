@@ -1,0 +1,1852 @@
+//! Retained per-element drawing primitives for the v2 renderer experiment.
+//!
+//! The tree and its shared handles are single-threaded recording data. A caller
+//! can snapshot each local command list into a transferable frame representation
+//! before handing work to a raster thread.
+
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::mem;
+use std::sync::Arc;
+
+use aimer_rubick::Shared;
+
+pub use crate::draw_cmd::RichTextSegment;
+use crate::font::{FontFamily, FontStyle, TextLanguage};
+use crate::svg::{SvgNodeStyleOverride, SvgScene};
+use crate::text_pipeline::text_layout::TextHorizontalAlign;
+use crate::text_pipeline::{TextOverflowMode, TextShadowRequest};
+pub use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
+
+/// Stable identity for one retained render node in this tree.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RenderNodeId(u64);
+
+impl RenderNodeId {
+    /// Returns the numeric identity used by the v2 render tree.
+    #[inline]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl Rect {
+    #[inline]
+    fn translated(self, x: f32, y: f32) -> Self {
+        Self::new(self.x + x, self.y + y, self.width, self.height)
+    }
+
+    #[inline]
+    fn right(self) -> f32 {
+        self.x + self.width
+    }
+
+    #[inline]
+    fn bottom(self) -> f32 {
+        self.y + self.height
+    }
+
+    #[inline]
+    fn is_valid(self) -> bool {
+        self.x.is_finite()
+            && self.y.is_finite()
+            && self.width.is_finite()
+            && self.height.is_finite()
+            && self.width >= 0.0
+            && self.height >= 0.0
+    }
+
+    #[inline]
+    fn intersection(self, other: Self) -> Option<Self> {
+        if !self.is_valid() || !other.is_valid() {
+            return None;
+        }
+        let x = self.x.max(other.x);
+        let y = self.y.max(other.y);
+        let right = self.right().min(other.right());
+        let bottom = self.bottom().min(other.bottom());
+        (right > x && bottom > y).then(|| Self::new(x, y, right - x, bottom - y))
+    }
+
+    /// Tests whether a point lies within the rectangle's half-open bounds.
+    #[inline]
+    pub fn contains_point(self, x: f32, y: f32) -> bool {
+        self.is_valid() && x >= self.x && y >= self.y && x < self.right() && y < self.bottom()
+    }
+
+    #[inline]
+    fn union(self, other: Self) -> Self {
+        let x = self.x.min(other.x);
+        let y = self.y.min(other.y);
+        let right = self.right().max(other.right());
+        let bottom = self.bottom().max(other.bottom());
+        Self::new(x, y, right - x, bottom - y)
+    }
+}
+
+/// Shared RGBA8 pixels retained by an element-local image command.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct ImageResource {
+    texture_id: TextureId,
+    revision: u64,
+    width: u32,
+    height: u32,
+    intrinsic_width: u32,
+    intrinsic_height: u32,
+    rgba: Arc<[u8]>,
+}
+
+impl ImageResource {
+    /// Creates a retained RGBA8 resource when `rgba` exactly matches its size.
+    #[inline]
+    pub fn rgba8(
+        texture_id: TextureId,
+        revision: u64,
+        width: u32,
+        height: u32,
+        rgba: Arc<[u8]>,
+    ) -> Option<Self> {
+        Self::rgba8_with_intrinsic_size(
+            texture_id,
+            revision,
+            width,
+            height,
+            width,
+            height,
+            rgba,
+        )
+    }
+
+    /// Creates a retained RGBA8 resource with separate upload and layout sizes.
+    #[inline]
+    pub fn rgba8_with_intrinsic_size(
+        texture_id: TextureId,
+        revision: u64,
+        width: u32,
+        height: u32,
+        intrinsic_width: u32,
+        intrinsic_height: u32,
+        rgba: Arc<[u8]>,
+    ) -> Option<Self> {
+        let expected_len = u64::from(width)
+            .checked_mul(u64::from(height))?
+            .checked_mul(4)?;
+        (width > 0
+            && height > 0
+            && intrinsic_width > 0
+            && intrinsic_height > 0
+            && usize::try_from(expected_len).ok()? == rgba.len())
+        .then_some(Self {
+            texture_id,
+            revision,
+            width,
+            height,
+            intrinsic_width,
+            intrinsic_height,
+            rgba,
+        })
+    }
+
+    /// Returns the renderer texture identifier for this resource.
+    #[inline]
+    pub const fn texture_id(&self) -> TextureId {
+        self.texture_id
+    }
+
+    /// Returns the generation that changes when the pixels are replaced.
+    #[inline]
+    pub const fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Returns the pixel width uploaded to the renderer.
+    #[inline]
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Returns the pixel height uploaded to the renderer.
+    #[inline]
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Returns the source width used for image fitting and layout.
+    #[inline]
+    pub const fn intrinsic_width(&self) -> u32 {
+        self.intrinsic_width
+    }
+
+    /// Returns the source height used for image fitting and layout.
+    #[inline]
+    pub const fn intrinsic_height(&self) -> u32 {
+        self.intrinsic_height
+    }
+
+    /// Returns the retained unpremultiplied RGBA8 pixels.
+    #[inline]
+    pub fn rgba(&self) -> &[u8] {
+        &self.rgba
+    }
+}
+
+/// One element-local paint or state instruction emitted by `aimer_canvas::Canvas`.
+#[derive(Clone, Debug)]
+pub enum DrawCommand {
+    /// Fills a local rectangle with border and outline paint.
+    FillRect {
+        /// Element-local fill rectangle.
+        rect: Rect,
+        /// Interior fill color.
+        color: Color,
+        /// Per-corner radii: top-left, top-right, bottom-right, bottom-left.
+        border_radius: [f32; 4],
+        /// Per-side border widths: top, right, bottom, left.
+        border_width: [f32; 4],
+        /// Border stroke color.
+        border_color: Color,
+        /// Per-side outline widths: top, right, bottom, left.
+        outline_width: [f32; 4],
+        /// Outline stroke color.
+        outline_color: Color,
+    },
+    /// Draws one local text run with fully resolved paint and layout settings.
+    DrawText {
+        /// Local baseline origin.
+        position: Vec2d,
+        /// Shared text payload.
+        text: Arc<str>,
+        /// Font size in logical pixels.
+        font_size: f32,
+        /// Glyph color.
+        color: Color,
+        /// Optional text layout width.
+        bounds_width: Option<f32>,
+        /// Optional text layout height.
+        bounds_height: Option<f32>,
+        /// Overflow policy for the supplied bounds.
+        overflow: TextOverflowMode,
+        /// Horizontal alignment inside the text bounds.
+        horizontal_align: TextHorizontalAlign,
+        /// Requested font family.
+        font_family: FontFamily,
+        /// Requested font style.
+        font_style: FontStyle,
+        /// Numeric font weight.
+        font_weight: u16,
+        /// Optional glyph shadow.
+        shadow: Option<TextShadowRequest>,
+        /// Whether to draw foreground glyphs.
+        draw_glyphs: bool,
+    },
+    /// Draws locally positioned spans with per-span style overrides.
+    DrawRichText {
+        /// Local baseline origin.
+        position: Vec2d,
+        /// Ordered rich text spans.
+        spans: Vec<RichTextSegment>,
+        /// Base font size.
+        font_size: f32,
+        /// Base glyph color.
+        color: Color,
+        /// Optional text layout width.
+        bounds_width: Option<f32>,
+        /// Optional text layout height.
+        bounds_height: Option<f32>,
+        /// Overflow policy for the supplied bounds.
+        overflow: TextOverflowMode,
+    },
+    /// Draws one local text-decoration band.
+    DrawTextDecoration {
+        /// Element-local decoration bounds.
+        rect: Rect,
+        /// Decoration stroke color.
+        color: Color,
+        /// Style identifier from the text-decoration style registry.
+        style: u32,
+        /// Stroke thickness in logical pixels.
+        thickness: f32,
+        /// Repeat period for patterned styles.
+        period: f32,
+    },
+    /// Draws a previously uploaded texture by ID.
+    DrawImage {
+        /// Element-local destination rectangle.
+        rect: Rect,
+        /// Texture identifier from the existing image resource path.
+        texture_id: TextureId,
+    },
+    /// Draws a texture and retains the pixels needed to upload it if it is evicted.
+    DrawImageWithResource {
+        /// Element-local destination rectangle.
+        rect: Rect,
+        /// Shared image pixels and their stable renderer identity.
+        resource: Arc<ImageResource>,
+    },
+    /// Draws an SVG scene with node-style overrides.
+    Svg {
+        /// Immutable retained SVG payload.
+        scene: Arc<SvgScene>,
+        /// Element-local destination rectangle.
+        destination: Rect,
+        /// Per-node style overrides applied during SVG preparation.
+        overrides: Arc<[SvgNodeStyleOverride]>,
+    },
+    /// Dispatches a retained byte payload through an existing custom pipeline.
+    DrawCustom {
+        /// Registered Cupid custom-pipeline name.
+        pipeline_name: Arc<str>,
+        /// Immutable payload consumed by the selected pipeline.
+        data: Arc<[u8]>,
+    },
+    /// Draws a shadowed rectangle.
+    DrawShadowRect {
+        /// Element-local shadow rectangle.
+        rect: Rect,
+        /// Shadow color.
+        shadow_color: Color,
+        /// Offset x, offset y, blur, and spread.
+        shadow_params: [f32; 4],
+        /// Per-corner radii: top-left, top-right, bottom-right, bottom-left.
+        border_radius: [f32; 4],
+        /// Whether the shadow is inset.
+        inset: bool,
+        /// Side type, start angle, and end angle.
+        side_params: [f32; 3],
+    },
+    /// Begins a clip scope local to this element's command list.
+    PushClip {
+        /// Element-local clip bounds.
+        rect: Rect,
+        /// Per-corner radii: top-left, top-right, bottom-right, bottom-left.
+        border_radius: [f32; 4],
+    },
+    /// Ends the most recent local clip scope.
+    PopClip,
+    /// Begins a transform scope local to this element's command list.
+    PushTransform {
+        /// Transform composed with subsequent local draws.
+        matrix: Mat3,
+    },
+    /// Ends the most recent local transform scope.
+    PopTransform,
+    /// Changes local command alpha until [`Self::RestoreAlpha`].
+    SetAlpha {
+        /// Alpha applied to subsequent local draws.
+        alpha: f32,
+    },
+    /// Restores the default alpha for subsequent local commands.
+    RestoreAlpha,
+    /// Sets italic style for subsequent plain text commands in this list.
+    SetItalic {
+        /// Whether subsequent plain text is italic.
+        italic: bool,
+    },
+    /// Sets written language for subsequent text commands; `None` resets it.
+    SetTextLanguage {
+        /// Written-language hint for subsequent text.
+        language: Option<TextLanguage>,
+    },
+    /// Sets the current element-local transform.
+    SetTransform {
+        /// Current element-local transform.
+        matrix: Mat3,
+    },
+}
+
+/// The retained local command buffer owned by one render node.
+///
+/// Commands use element-local coordinates. A backend replays the list from the
+/// node's inherited transform, clip, and opacity, then resets its state before
+/// drawing the next element list.
+#[derive(Default)]
+pub struct DrawList {
+    commands: Arc<[DrawCommand]>,
+    revision: u64,
+    dirty: bool,
+    recording: bool,
+}
+
+impl DrawList {
+    /// Returns the revision of the last successfully completed recording.
+    #[inline]
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Returns whether this node needs its local commands to be recorded.
+    #[inline]
+    pub fn needs_recording(&self) -> bool {
+        self.dirty
+    }
+
+    /// Returns a shared immutable snapshot of the node's current local commands.
+    #[inline]
+    pub fn snapshot(&self) -> Arc<[DrawCommand]> {
+        self.commands.clone()
+    }
+}
+
+struct RenderNode {
+    id: RenderNodeId,
+    parent: Option<RenderNodeId>,
+    children: Vec<RenderNodeId>,
+    bounds: Rect,
+    clip: Option<Rect>,
+    animation_clip: Option<Rect>,
+    presentation_transform: Mat3,
+    presentation_opacity: f32,
+    transform: Mat3,
+    opacity: f32,
+    paint_source: RenderPaintSource,
+    legacy_command_range: Option<(u64, usize, usize)>,
+    draw_list: Shared<RefCell<DrawList>>,
+}
+
+fn transform_rect(transform: Mat3, rect: Rect) -> Option<Rect> {
+    let corners = [
+        transform.transform_point(rect.x, rect.y),
+        transform.transform_point(rect.x + rect.width, rect.y),
+        transform.transform_point(rect.x, rect.y + rect.height),
+        transform.transform_point(rect.x + rect.width, rect.y + rect.height),
+    ];
+    let (mut min_x, mut max_x) = (f32::INFINITY, f32::NEG_INFINITY);
+    let (mut min_y, mut max_y) = (f32::INFINITY, f32::NEG_INFINITY);
+    for (x, y) in corners {
+        if !x.is_finite() || !y.is_finite() {
+            return None;
+        }
+        min_x = min_x.min(x);
+        max_x = max_x.max(x);
+        min_y = min_y.min(y);
+        max_y = max_y.max(y);
+    }
+    let bounds = Rect::new(min_x, min_y, max_x - min_x, max_y - min_y);
+    bounds.is_valid().then_some(bounds)
+}
+
+#[derive(Clone, Copy)]
+enum ClipState {
+    Unclipped,
+    Clipped(Rect),
+    Empty,
+}
+
+impl ClipState {
+    #[inline]
+    fn intersect(self, clip: Option<Rect>) -> Self {
+        match (self, clip) {
+            (Self::Empty, _) => Self::Empty,
+            (state, None) => state,
+            (Self::Unclipped, Some(clip)) => Self::Clipped(clip),
+            (Self::Clipped(parent), Some(clip)) => parent
+                .intersection(clip)
+                .map_or(Self::Empty, Self::Clipped),
+        }
+    }
+
+    #[inline]
+    fn intersect_state(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Empty, _) | (_, Self::Empty) => Self::Empty,
+            (Self::Unclipped, state) | (state, Self::Unclipped) => state,
+            (Self::Clipped(left), Self::Clipped(right)) => left
+                .intersection(right)
+                .map_or(Self::Empty, Self::Clipped),
+        }
+    }
+
+    #[inline]
+    fn intersect_bounds(self, bounds: Rect) -> Option<Rect> {
+        match self {
+            Self::Unclipped => Some(bounds),
+            Self::Clipped(clip) => bounds.intersection(clip),
+            Self::Empty => None,
+        }
+    }
+
+    #[inline]
+    fn as_option(self) -> Option<Rect> {
+        match self {
+            Self::Unclipped => None,
+            Self::Clipped(clip) => Some(clip),
+            Self::Empty => {
+                unreachable!("empty clip states are culled before emitting operations")
+            }
+        }
+    }
+}
+
+/// Errors reported while constructing or recording the retained tree.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RenderTreeError {
+    /// The requested render node is not part of this tree.
+    UnknownNode(RenderNodeId),
+    /// A child was inserted before its parent existed.
+    MissingParent(RenderNodeId),
+    /// A render node appeared more than once in one synchronized structure.
+    DuplicateNode(RenderNodeId),
+    /// A synchronized child must refer to an earlier parent entry.
+    InvalidParentIndex { node: usize, parent: usize },
+    /// A second recorder was opened for the same element before the first ended.
+    RecorderAlreadyOpen(RenderNodeId),
+    /// Recording was requested with a non-finite or negative rectangle extent.
+    InvalidBounds,
+    /// Opacity must be finite and in the closed interval from zero to one.
+    InvalidOpacity,
+    /// A clip, transform, or alpha scope was not closed before commit.
+    UnbalancedState,
+    /// A node transform is non-finite or overflows its subtree bounds.
+    InvalidTransform,
+    /// A legacy frame-command range has an end before its start.
+    InvalidLegacyCommandRange,
+    /// A legacy command range was assigned to an element painted locally by v2.
+    NotLegacyIsland(RenderNodeId),
+}
+
+/// How one synchronized render node supplies its paint content.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RenderPaintSource {
+    /// The element has not selected v2 paint or legacy fallback yet.
+    #[default]
+    Unresolved,
+    /// The node records only its own commands in its v2 local list.
+    LocalV2,
+    /// The node owns its entire subtree through one range in the frame's legacy list.
+    LegacyIsland,
+}
+
+/// One element's place in a synchronized retained render structure.
+///
+/// `parent_index` refers to an earlier entry in the same slice. An existing
+/// `RenderNodeId` preserves that node's local paint list and effects; `None`
+/// creates a new node. The returned IDs from [`RenderTree::sync_structure`]
+/// align with the input slice.
+#[derive(Clone, Copy, Debug)]
+pub struct RenderNodeSpec {
+    /// Previously assigned render identity, if this element already exists.
+    pub existing_id: Option<RenderNodeId>,
+    /// Index of the parent descriptor, or `None` for a tree root.
+    pub parent_index: Option<usize>,
+    /// Element-local position and size in logical pixels.
+    pub bounds: Rect,
+}
+
+impl RenderNodeSpec {
+    /// Creates a structure descriptor for an existing or new render node.
+    #[inline]
+    pub const fn new(
+        existing_id: Option<RenderNodeId>,
+        parent_index: Option<usize>,
+        bounds: Rect,
+    ) -> Self {
+        Self {
+            existing_id,
+            parent_index,
+            bounds,
+        }
+    }
+}
+
+/// A retained tree of local paint lists and ordered child links.
+#[derive(Default)]
+pub struct DrawCommandList {
+    nodes: Vec<RenderNode>,
+    indices: HashMap<RenderNodeId, usize>,
+    roots: Vec<RenderNodeId>,
+    next_id: u64,
+    pending_damage: Vec<Rect>,
+    legacy_frame_generation: u64,
+}
+
+impl DrawCommandList {
+    fn insert(
+        &mut self,
+        parent: Option<RenderNodeId>,
+        bounds: Rect,
+    ) -> Result<RenderNodeId, RenderTreeError> {
+        if !bounds.is_valid() {
+            return Err(RenderTreeError::InvalidBounds);
+        }
+        let parent_index = match parent {
+            Some(parent) => Some(
+                *self
+                    .indices
+                    .get(&parent)
+                    .ok_or(RenderTreeError::MissingParent(parent))?,
+            ),
+            None => None,
+        };
+
+        let id = RenderNodeId(
+            self.next_id
+                .checked_add(1)
+                .expect("render node IDs exhausted"),
+        );
+        self.next_id = id.get();
+        let index = self.nodes.len();
+        self.indices.insert(id, index);
+        self.nodes.push(RenderNode {
+            id,
+            parent,
+            children: Vec::new(),
+            bounds,
+            clip: None,
+            animation_clip: None,
+            presentation_transform: Mat3::identity(),
+            presentation_opacity: 1.0,
+            transform: Mat3::identity(),
+            opacity: 1.0,
+            paint_source: RenderPaintSource::Unresolved,
+            legacy_command_range: None,
+            draw_list: Shared::new(RefCell::new(DrawList {
+                dirty: true,
+                ..DrawList::default()
+            })),
+        });
+        if let Some(parent_index) = parent_index {
+            self.nodes[parent_index].children.push(id);
+        } else {
+            self.roots.push(id);
+        }
+        if let Some(world_bounds) = self.world_bounds(id) {
+            let parent_clip = parent
+                .map_or(Some(ClipState::Unclipped), |parent| self.inherited_clip(parent));
+            if let Some(parent_clip) = parent_clip
+                && let Some(bounds) = parent_clip
+                    .intersect_state(self.world_clip(id))
+                    .intersect_bounds(world_bounds)
+            {
+                self.push_damage(bounds);
+            }
+        }
+        Ok(id)
+    }
+
+    fn node(&self, id: RenderNodeId) -> Option<&RenderNode> {
+        self.indices
+            .get(&id)
+            .and_then(|index| self.nodes.get(*index))
+    }
+
+    fn node_mut(&mut self, id: RenderNodeId) -> Option<&mut RenderNode> {
+        let index = *self.indices.get(&id)?;
+        self.nodes.get_mut(index)
+    }
+
+    fn world_origin(&self, id: RenderNodeId) -> Option<(f32, f32)> {
+        let node = self.node(id)?;
+        let parent_origin = node
+            .parent
+            .and_then(|parent| self.world_origin(parent))
+            .unwrap_or((0.0, 0.0));
+        Some((parent_origin.0 + node.bounds.x, parent_origin.1 + node.bounds.y))
+    }
+
+    fn world_bounds(&self, id: RenderNodeId) -> Option<Rect> {
+        let node = self.node(id)?;
+        let (x, y) = self.world_origin(id)?;
+        transform_rect(
+            self.world_transform(id)?,
+            Rect::new(x, y, node.bounds.width, node.bounds.height),
+        )
+    }
+
+    fn world_transform(&self, id: RenderNodeId) -> Option<Mat3> {
+        let node = self.node(id)?;
+        let parent_transform = node
+            .parent
+            .map_or(Some(Mat3::identity()), |parent| self.world_transform(parent))?;
+        let (x, y) = self.world_origin(id)?;
+        let local_transform = Mat3::translate(x, y)
+            .mul(&node.presentation_transform)
+            .mul(&node.transform)
+            .mul(&Mat3::translate(-x, -y));
+        Some(parent_transform.mul(&local_transform))
+    }
+
+    fn subtree_bounds(&self, id: RenderNodeId) -> Option<Rect> {
+        let node = self.node(id)?;
+        let mut bounds = self.world_bounds(id)?;
+        for child in node.children.iter().copied() {
+            bounds = bounds.union(self.subtree_bounds(child)?);
+        }
+        Some(bounds)
+    }
+
+    fn inherited_clip(&self, id: RenderNodeId) -> Option<ClipState> {
+        let node = self.node(id)?;
+        let parent_clip = node
+            .parent
+            .map_or(Some(ClipState::Unclipped), |parent| self.inherited_clip(parent))?;
+        Some(parent_clip.intersect_state(self.world_clip(id)))
+    }
+
+    fn visible_subtree_bounds(&self, id: RenderNodeId) -> Option<Rect> {
+        let node = self.node(id)?;
+        let parent_clip = node
+            .parent
+            .map_or(Some(ClipState::Unclipped), |parent| self.inherited_clip(parent))?;
+        self.visible_subtree_bounds_with_clip(id, parent_clip)
+    }
+
+    fn visible_subtree_bounds_with_clip(
+        &self,
+        id: RenderNodeId,
+        parent_clip: ClipState,
+    ) -> Option<Rect> {
+        let node = self.node(id)?;
+        let clip = parent_clip.intersect_state(self.world_clip(id));
+        let mut bounds = clip.intersect_bounds(self.world_bounds(id)?);
+        for child in node.children.iter().copied() {
+            if let Some(child_bounds) = self.visible_subtree_bounds_with_clip(child, clip) {
+                bounds = Some(bounds.map_or(child_bounds, |bounds| bounds.union(child_bounds)));
+            }
+        }
+        bounds
+    }
+
+    fn visible_node_bounds(&self, id: RenderNodeId) -> Option<Rect> {
+        let clip = self.inherited_clip(id)?;
+        clip.intersect_bounds(self.world_bounds(id)?)
+    }
+
+    fn subtree_uses_only_local_v2(&self, id: RenderNodeId) -> bool {
+        let Some(node) = self.node(id) else {
+            return false;
+        };
+        node.paint_source == RenderPaintSource::LocalV2
+            && node
+                .children
+                .iter()
+                .copied()
+                .all(|child| self.subtree_uses_only_local_v2(child))
+    }
+
+    fn world_clip(&self, id: RenderNodeId) -> ClipState {
+        let Some(node) = self.node(id) else {
+            return ClipState::Empty;
+        };
+        let Some((x, y)) = self.world_origin(id) else {
+            return ClipState::Empty;
+        };
+        let mut clip = ClipState::Unclipped;
+        if let Some(local_clip) = node.clip {
+            let Some(world_transform) = self.world_transform(id) else {
+                return ClipState::Empty;
+            };
+            clip = clip.intersect(transform_rect(
+                world_transform,
+                local_clip.translated(x, y),
+            ));
+        }
+        if let Some(local_clip) = node.animation_clip {
+            let Some(world_transform) = self.world_transform_before_animation(id) else {
+                return ClipState::Empty;
+            };
+            clip = clip.intersect(transform_rect(
+                world_transform,
+                local_clip.translated(x, y),
+            ));
+        }
+        clip
+    }
+
+    fn world_transform_before_animation(&self, id: RenderNodeId) -> Option<Mat3> {
+        let node = self.node(id)?;
+        let parent_transform = node
+            .parent
+            .map_or(Some(Mat3::identity()), |parent| self.world_transform(parent))?;
+        let (x, y) = self.world_origin(id)?;
+        let local_transform = Mat3::translate(x, y)
+            .mul(&node.presentation_transform)
+            .mul(&Mat3::translate(-x, -y));
+        Some(parent_transform.mul(&local_transform))
+    }
+
+    fn push_damage(&mut self, rect: Rect) {
+        if !rect.is_valid() || rect.width == 0.0 || rect.height == 0.0 {
+            return;
+        }
+        if let Some(existing) = self
+            .pending_damage
+            .iter_mut()
+            .find(|existing| existing.intersection(rect).is_some())
+        {
+            *existing = existing.union(rect);
+        } else {
+            self.pending_damage.push(rect);
+        }
+    }
+
+    fn collect_render_order(
+        &self,
+        id: RenderNodeId,
+        parent_clip: ClipState,
+        damage: Option<&[Rect]>,
+        output: &mut Vec<RenderOp>,
+    ) {
+        let Some(node) = self.node(id) else {
+            return;
+        };
+        let Some(bounds) = self.world_bounds(id) else {
+            return;
+        };
+        let Some(origin) = self.world_origin(id) else {
+            return;
+        };
+        let clip = parent_clip.intersect_state(self.world_clip(id));
+        if matches!(clip, ClipState::Empty) {
+            return;
+        }
+        let subtree_bounds = self.subtree_bounds(id).unwrap_or(bounds);
+        let Some(visible_subtree) = self.visible_subtree_bounds_with_clip(id, parent_clip) else {
+            return;
+        };
+        if visible_subtree.width == 0.0 || visible_subtree.height == 0.0 {
+            return;
+        }
+        if damage.is_some_and(|damage| {
+            !damage
+                .iter()
+                .any(|region| visible_subtree.intersection(*region).is_some())
+        }) {
+            return;
+        }
+
+        let opacity = node.presentation_opacity * node.opacity;
+        let groups_opacity = opacity < 1.0 && !node.children.is_empty();
+        if groups_opacity {
+            output.push(RenderOp::BeginOpacityGroup {
+                element: id,
+                bounds: visible_subtree,
+                opacity,
+                clip: clip.as_option(),
+            });
+        }
+
+        let paint_bounds = if node.paint_source == RenderPaintSource::LegacyIsland {
+            subtree_bounds
+        } else {
+            bounds
+        };
+        let visible_bounds = clip.intersect_bounds(paint_bounds);
+        if let Some(visible_bounds) = visible_bounds
+            && damage.is_none_or(|damage| {
+                damage
+                    .iter()
+                    .any(|region| visible_bounds.intersection(*region).is_some())
+            })
+        {
+            output.push(RenderOp::Draw(RenderItem {
+                element: id,
+                bounds,
+                origin,
+                transform: self.world_transform(id).unwrap_or_else(Mat3::identity),
+                clip: clip.as_option(),
+                opacity: if groups_opacity { 1.0 } else { opacity },
+                paint_source: node.paint_source,
+                legacy_command_range: node
+                    .legacy_command_range
+                    .filter(|(generation, _, _)| *generation == self.legacy_frame_generation)
+                    .map(|(_, start, end)| (start, end)),
+                draw_list: node.draw_list.clone(),
+            }));
+        }
+
+        if node.paint_source != RenderPaintSource::LegacyIsland {
+            // A node without a clip may have children that extend beyond its bounds.
+            for child in node.children.iter().copied() {
+                self.collect_render_order(child, clip, damage, output);
+            }
+        }
+        if groups_opacity {
+            output.push(RenderOp::EndOpacityGroup { element: id });
+        }
+    }
+}
+
+/// A shareable handle to the retained v2 render tree.
+#[derive(Clone, Default)]
+pub struct RenderTree {
+    draw_cmd: Shared<RefCell<DrawCommandList>>,
+}
+
+impl RenderTree {
+    /// Creates an empty retained render tree.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a root element in paint order.
+    pub fn add_root(&self, bounds: Rect) -> Result<RenderNodeId, RenderTreeError> {
+        self.draw_cmd.borrow_mut().insert(None, bounds)
+    }
+
+    /// Adds a child after the parent's existing children.
+    pub fn add_child(
+        &self,
+        parent: RenderNodeId,
+        bounds: Rect,
+    ) -> Result<RenderNodeId, RenderTreeError> {
+        self.draw_cmd.borrow_mut().insert(Some(parent), bounds)
+    }
+
+    /// Synchronizes element order, parentage, and layout while retaining lists
+    /// for nodes whose IDs remain present.
+    ///
+    /// Descriptors are supplied in parent-before-child traversal order. A
+    /// structural change damages the previous and next visible bounds of
+    /// affected subtrees; a bounds-only change damages the changed node's
+    /// previous and next subtree footprints. IDs returned at each position
+    /// line up with `nodes`.
+    pub fn sync_structure(
+        &self,
+        nodes: &[RenderNodeSpec],
+    ) -> Result<Vec<RenderNodeId>, RenderTreeError> {
+        self.sync_structure_inner(nodes, None)
+    }
+
+    /// Synchronizes render nodes and their local clips as one geometry update.
+    ///
+    /// `clips` must align with `nodes`. Applying bounds and clips together
+    /// keeps moving viewports from damaging an intermediate position.
+    #[doc(hidden)]
+    pub fn sync_structure_with_clips(
+        &self,
+        nodes: &[RenderNodeSpec],
+        clips: &[Option<Rect>],
+    ) -> Result<Vec<RenderNodeId>, RenderTreeError> {
+        if nodes.len() != clips.len() || clips.iter().flatten().any(|clip| !clip.is_valid()) {
+            return Err(RenderTreeError::InvalidBounds);
+        }
+        self.sync_structure_inner(nodes, Some(clips))
+    }
+
+    fn sync_structure_inner(
+        &self,
+        nodes: &[RenderNodeSpec],
+        clip_updates: Option<&[Option<Rect>]>,
+    ) -> Result<Vec<RenderNodeId>, RenderTreeError> {
+        let mut tree = self.draw_cmd.borrow_mut();
+        let mut seen = HashSet::with_capacity(nodes.len());
+        let mut ids = Vec::with_capacity(nodes.len());
+        let mut next_id = tree.next_id;
+
+        for (index, spec) in nodes.iter().enumerate() {
+            if !spec.bounds.is_valid() {
+                return Err(RenderTreeError::InvalidBounds);
+            }
+            if let Some(parent) = spec.parent_index
+                && parent >= index
+            {
+                return Err(RenderTreeError::InvalidParentIndex {
+                    node: index,
+                    parent,
+                });
+            }
+
+            let id = if let Some(id) = spec.existing_id {
+                if !seen.insert(id) {
+                    return Err(RenderTreeError::DuplicateNode(id));
+                }
+                if tree.node(id).is_none() {
+                    return Err(RenderTreeError::UnknownNode(id));
+                }
+                id
+            } else {
+                next_id = next_id.checked_add(1).expect("render node IDs exhausted");
+                RenderNodeId(next_id)
+            };
+            ids.push(id);
+        }
+
+        let mut parents = Vec::with_capacity(nodes.len());
+        let mut children = vec![Vec::new(); nodes.len()];
+        let mut roots = Vec::new();
+        for (index, spec) in nodes.iter().enumerate() {
+            let parent = spec.parent_index.map(|parent| ids[parent]);
+            if let Some(parent_index) = spec.parent_index {
+                children[parent_index].push(ids[index]);
+            } else {
+                roots.push(ids[index]);
+            }
+            parents.push(parent);
+        }
+
+        let structure_changed = tree.nodes.len() != nodes.len()
+            || tree.roots != roots
+            || nodes.iter().enumerate().any(|(index, _)| {
+                let Some(old) = tree.node(ids[index]) else {
+                    return true;
+                };
+                old.parent != parents[index] || old.children != children[index]
+            });
+
+        if !structure_changed {
+            for (index, spec) in nodes.iter().enumerate() {
+                let id = ids[index];
+                if tree.node(id).is_none() {
+                    return Err(RenderTreeError::UnknownNode(id));
+                }
+                let clip_changed = clip_updates.is_some_and(|clips| {
+                    tree.node(id).is_some_and(|node| node.clip != clips[index])
+                });
+                if tree.node(id).is_some_and(|node| node.bounds == spec.bounds)
+                    && !clip_changed
+                {
+                    continue;
+                }
+                let old_bounds = tree.visible_subtree_bounds(id);
+                let node = tree
+                    .node_mut(id)
+                    .ok_or(RenderTreeError::UnknownNode(id))?;
+                node.bounds = spec.bounds;
+                if let Some(clips) = clip_updates {
+                    node.clip = clips[index];
+                }
+                let new_bounds = tree.visible_subtree_bounds(id);
+                if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
+                    tree.push_damage(damage);
+                }
+            }
+            return Ok(ids);
+        }
+
+        // A structural edit only changes pixels in the changed parent
+        // subtrees. Damaging the union of every root here made a virtualized
+        // row-window update repaint the complete window whenever the app root
+        // filled it, even though the changed rows were clipped by a scroll
+        // viewport. Capture the old clipped bounds before replacing the node
+        // array, then pair them with the corresponding new bounds below.
+        let mut structural_damage_ids = HashSet::new();
+        for (index, id) in ids.iter().copied().enumerate() {
+            if let Some(old) = tree.node(id) {
+                if old.children != children[index]
+                    || old.bounds != nodes[index].bounds
+                    || clip_updates.is_some_and(|clips| old.clip != clips[index])
+                {
+                    structural_damage_ids.insert(id);
+                }
+                if old.parent != parents[index] {
+                    structural_damage_ids.insert(old.parent.unwrap_or(id));
+                    structural_damage_ids.insert(parents[index].unwrap_or(id));
+                    structural_damage_ids.insert(id);
+                }
+            } else {
+                structural_damage_ids.insert(parents[index].unwrap_or(id));
+            }
+        }
+        for old in &tree.nodes {
+            if !seen.contains(&old.id) {
+                structural_damage_ids.insert(old.parent.unwrap_or(old.id));
+            }
+        }
+        let old_retained_roots = tree
+            .roots
+            .iter()
+            .filter(|id| roots.contains(id))
+            .copied()
+            .collect::<Vec<_>>();
+        let new_retained_roots = roots
+            .iter()
+            .filter(|id| tree.roots.contains(id))
+            .copied()
+            .collect::<Vec<_>>();
+        if old_retained_roots != new_retained_roots {
+            structural_damage_ids.extend(old_retained_roots);
+            structural_damage_ids.extend(new_retained_roots);
+        }
+        let mut structural_damage_ids = structural_damage_ids.into_iter().collect::<Vec<_>>();
+        structural_damage_ids.sort_unstable_by_key(|id| id.get());
+        let old_damage = structural_damage_ids
+            .iter()
+            .filter_map(|id| tree.visible_subtree_bounds(*id))
+            .collect::<Vec<_>>();
+        let mut previous = mem::take(&mut tree.nodes)
+            .into_iter()
+            .map(|node| (node.id, node))
+            .collect::<HashMap<_, _>>();
+        let mut synchronized = Vec::with_capacity(nodes.len());
+        for (index, spec) in nodes.iter().enumerate() {
+            let id = ids[index];
+            let mut node = previous.remove(&id).unwrap_or_else(|| {
+                RenderNode {
+                    id,
+                    parent: None,
+                    children: Vec::new(),
+                    bounds: spec.bounds,
+                    clip: None,
+                    animation_clip: None,
+                    presentation_transform: Mat3::identity(),
+                    presentation_opacity: 1.0,
+                    transform: Mat3::identity(),
+                    opacity: 1.0,
+                    paint_source: RenderPaintSource::Unresolved,
+                    legacy_command_range: None,
+                    draw_list: Shared::new(RefCell::new(DrawList {
+                        dirty: true,
+                        ..DrawList::default()
+                    })),
+                }
+            });
+            node.parent = parents[index];
+            node.children = mem::take(&mut children[index]);
+            node.bounds = spec.bounds;
+            if let Some(clips) = clip_updates {
+                node.clip = clips[index];
+            }
+            synchronized.push(node);
+        }
+
+        tree.nodes = synchronized;
+        tree.indices = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (node.id, index))
+            .collect();
+        tree.roots = roots;
+        tree.next_id = next_id;
+
+        let new_damage = structural_damage_ids
+            .iter()
+            .filter_map(|id| tree.visible_subtree_bounds(*id))
+            .collect::<Vec<_>>();
+        for damage in old_damage.into_iter().chain(new_damage) {
+            tree.push_damage(damage);
+        }
+        Ok(ids)
+    }
+
+    /// Creates a build context for one element's local paint list.
+    pub fn context(&self, element: RenderNodeId) -> Result<CurrentBuildContext, RenderTreeError> {
+        if self.draw_cmd.borrow().node(element).is_none() {
+            return Err(RenderTreeError::UnknownNode(element));
+        }
+        Ok(CurrentBuildContext {
+            draw_cmd: self.draw_cmd.clone(),
+            element,
+        })
+    }
+
+    /// Returns the paint source currently selected for one element.
+    pub fn paint_source(
+        &self,
+        element: RenderNodeId,
+    ) -> Result<RenderPaintSource, RenderTreeError> {
+        self.draw_cmd
+            .borrow()
+            .node(element)
+            .map(|node| node.paint_source)
+            .ok_or(RenderTreeError::UnknownNode(element))
+    }
+
+    /// Returns whether this element's local v2 draw list needs recording.
+    pub fn needs_recording(&self, element: RenderNodeId) -> Result<bool, RenderTreeError> {
+        let tree = self.draw_cmd.borrow();
+        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        Ok(node.paint_source != RenderPaintSource::LegacyIsland
+            && node.draw_list.borrow().needs_recording())
+    }
+
+    /// Changes the paint source for one retained node.
+    pub fn set_paint_source(
+        &self,
+        element: RenderNodeId,
+        source: RenderPaintSource,
+    ) -> Result<(), RenderTreeError> {
+        let mut tree = self.draw_cmd.borrow_mut();
+        if tree.node(element).is_none() {
+            return Err(RenderTreeError::UnknownNode(element));
+        }
+        let old_bounds = tree.visible_subtree_bounds(element);
+        let node = tree
+            .node_mut(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        if node.paint_source == source {
+            return Ok(());
+        }
+        let mut draw_list = node.draw_list.borrow_mut();
+        if draw_list.recording {
+            return Err(RenderTreeError::RecorderAlreadyOpen(element));
+        }
+        if source == RenderPaintSource::LegacyIsland {
+            if !draw_list.commands.is_empty() {
+                draw_list.commands = Arc::from([]);
+                draw_list.revision = draw_list
+                    .revision
+                    .checked_add(1)
+                    .expect("draw-list revisions exhausted");
+            }
+            draw_list.dirty = false;
+        } else if node.paint_source == RenderPaintSource::LegacyIsland {
+            draw_list.dirty = true;
+        }
+        drop(draw_list);
+        node.paint_source = source;
+        node.legacy_command_range = None;
+        let new_bounds = tree.visible_subtree_bounds(element);
+        if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
+            tree.push_damage(damage);
+        }
+        Ok(())
+    }
+
+    /// Associates this legacy island with its command range in the current frame.
+    pub fn set_legacy_command_range(
+        &self,
+        element: RenderNodeId,
+        range: Option<(usize, usize)>,
+    ) -> Result<(), RenderTreeError> {
+        if range.is_some_and(|(start, end)| end < start) {
+            return Err(RenderTreeError::InvalidLegacyCommandRange);
+        }
+        let mut tree = self.draw_cmd.borrow_mut();
+        let frame_generation = tree.legacy_frame_generation;
+        let node = tree
+            .node_mut(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        if range.is_some() && node.paint_source != RenderPaintSource::LegacyIsland {
+            return Err(RenderTreeError::NotLegacyIsland(element));
+        }
+        node.legacy_command_range = range.map(|(start, end)| (frame_generation, start, end));
+        Ok(())
+    }
+
+    /// Starts a new frame for frame-local legacy command ranges.
+    #[inline]
+    pub fn begin_legacy_frame(&self) {
+        let mut tree = self.draw_cmd.borrow_mut();
+        tree.legacy_frame_generation = tree
+            .legacy_frame_generation
+            .checked_add(1)
+            .expect("legacy render frame generations exhausted");
+    }
+
+    /// Damages a legacy island after paint inside its retained subtree changes.
+    pub fn invalidate_legacy_island(
+        &self,
+        element: RenderNodeId,
+    ) -> Result<(), RenderTreeError> {
+        let mut tree = self.draw_cmd.borrow_mut();
+        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        if node.paint_source != RenderPaintSource::LegacyIsland {
+            return Err(RenderTreeError::NotLegacyIsland(element));
+        }
+        if let Some(bounds) = tree.visible_subtree_bounds(element) {
+            tree.push_damage(bounds);
+        }
+        Ok(())
+    }
+
+    /// Changes an element's local bounds and damages both its old and new area.
+    pub fn set_bounds(&self, element: RenderNodeId, bounds: Rect) -> Result<(), RenderTreeError> {
+        if !bounds.is_valid() {
+            return Err(RenderTreeError::InvalidBounds);
+        }
+        let mut tree = self.draw_cmd.borrow_mut();
+        if tree.node(element).is_none() {
+            return Err(RenderTreeError::UnknownNode(element));
+        }
+        let old = tree.visible_subtree_bounds(element);
+        let node = tree
+            .node_mut(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        node.bounds = bounds;
+        let new = tree.visible_subtree_bounds(element);
+        if let Some(damage) = old.into_iter().chain(new).reduce(Rect::union) {
+            tree.push_damage(damage);
+        }
+        Ok(())
+    }
+
+    /// Sets the node-local transform inherited by its retained descendants.
+    ///
+    /// The transform changes presentation geometry and damage only; it leaves
+    /// every node's local command list and revision untouched. The supplied
+    /// matrix maps coordinates relative to this node's origin. It must be
+    /// finite and produce finite subtree bounds.
+    pub fn set_transform(
+        &self,
+        element: RenderNodeId,
+        transform: Mat3,
+    ) -> Result<(), RenderTreeError> {
+        if !transform.cols.iter().flatten().all(|value| value.is_finite()) {
+            return Err(RenderTreeError::InvalidTransform);
+        }
+        let mut tree = self.draw_cmd.borrow_mut();
+        let old_transform = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?
+            .transform;
+        if old_transform == transform {
+            return Ok(());
+        }
+        let old_bounds = tree.visible_subtree_bounds(element);
+        tree.node_mut(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?
+            .transform = transform;
+        if tree.subtree_bounds(element).is_none() {
+            tree.node_mut(element)
+                .ok_or(RenderTreeError::UnknownNode(element))?
+                .transform = old_transform;
+            return Err(RenderTreeError::InvalidTransform);
+        }
+        let new_bounds = tree.visible_subtree_bounds(element);
+        if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
+            tree.push_damage(damage);
+        }
+        Ok(())
+    }
+
+    fn set_presentation(
+        &self,
+        element: RenderNodeId,
+        transform: Mat3,
+        opacity: f32,
+    ) -> Result<(), RenderTreeError> {
+        if !transform.cols.iter().flatten().all(|value| value.is_finite()) {
+            return Err(RenderTreeError::InvalidTransform);
+        }
+        if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+            return Err(RenderTreeError::InvalidOpacity);
+        }
+        let mut tree = self.draw_cmd.borrow_mut();
+        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        if node.presentation_transform == transform && node.presentation_opacity == opacity {
+            return Ok(());
+        }
+        let old_transform = node.presentation_transform;
+        let old_opacity = node.presentation_opacity;
+        let old_bounds = tree.visible_subtree_bounds(element);
+        let node = tree
+            .node_mut(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        node.presentation_transform = transform;
+        node.presentation_opacity = opacity;
+        if tree.subtree_bounds(element).is_none() {
+            let node = tree
+                .node_mut(element)
+                .ok_or(RenderTreeError::UnknownNode(element))?;
+            node.presentation_transform = old_transform;
+            node.presentation_opacity = old_opacity;
+            return Err(RenderTreeError::InvalidTransform);
+        }
+        let new_bounds = tree.visible_subtree_bounds(element);
+        if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
+            tree.push_damage(damage);
+        }
+        Ok(())
+    }
+
+    /// Applies a local clip to the element and its descendants.
+    pub fn set_clip(
+        &self,
+        element: RenderNodeId,
+        clip: Option<Rect>,
+    ) -> Result<(), RenderTreeError> {
+        if clip.is_some_and(|clip| !clip.is_valid()) {
+            return Err(RenderTreeError::InvalidBounds);
+        }
+        let mut tree = self.draw_cmd.borrow_mut();
+        if tree.node(element).is_none() {
+            return Err(RenderTreeError::UnknownNode(element));
+        }
+        if tree.node(element).is_some_and(|node| node.clip == clip) {
+            return Ok(());
+        }
+        let old_bounds = tree.visible_subtree_bounds(element);
+        let node = tree
+            .node_mut(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        node.clip = clip;
+        let new_bounds = tree.visible_subtree_bounds(element);
+        if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
+            tree.push_damage(damage);
+        }
+        Ok(())
+    }
+
+    /// Changes an element's local bounds and clip as one geometry update.
+    ///
+    /// This is useful for moving a clipped viewport child: applying bounds
+    /// before its compensating clip would otherwise damage the intermediate
+    /// position as well as the old and new footprints.
+    pub fn set_geometry(
+        &self,
+        element: RenderNodeId,
+        bounds: Rect,
+        clip: Option<Rect>,
+    ) -> Result<(), RenderTreeError> {
+        if !bounds.is_valid() || clip.is_some_and(|clip| !clip.is_valid()) {
+            return Err(RenderTreeError::InvalidBounds);
+        }
+        let mut tree = self.draw_cmd.borrow_mut();
+        if tree.node(element).is_none() {
+            return Err(RenderTreeError::UnknownNode(element));
+        }
+        let old_bounds = tree.visible_subtree_bounds(element);
+        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        if node.bounds == bounds && node.clip == clip {
+            return Ok(());
+        }
+        let node = tree
+            .node_mut(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        node.bounds = bounds;
+        node.clip = clip;
+        let new_bounds = tree.visible_subtree_bounds(element);
+        if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
+            tree.push_damage(damage);
+        }
+        Ok(())
+    }
+
+    /// Sets node opacity without invalidating its local draw commands.
+    ///
+    /// A node with children becomes an opacity group so overlapping
+    /// descendants are blended together once. A leaf carries opacity directly
+    /// on its [`RenderItem`]. Both cases damage the node's subtree bounds.
+    pub fn set_opacity(
+        &self,
+        element: RenderNodeId,
+        opacity: f32,
+    ) -> Result<(), RenderTreeError> {
+        if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+            return Err(RenderTreeError::InvalidOpacity);
+        }
+        let mut tree = self.draw_cmd.borrow_mut();
+        if tree.node(element).is_none() {
+            return Err(RenderTreeError::UnknownNode(element));
+        }
+        let bounds = tree.visible_subtree_bounds(element);
+        let node = tree
+            .node_mut(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        if node.opacity == opacity {
+            return Ok(());
+        }
+        node.opacity = opacity;
+        if let Some(bounds) = bounds {
+            tree.push_damage(bounds);
+        }
+        Ok(())
+    }
+
+    /// Updates an animation transform, opacity, and pre-transform clip as one
+    /// retained presentation change without re-recording local commands.
+    #[doc(hidden)]
+    pub fn set_compositor_animation(
+        &self,
+        element: RenderNodeId,
+        transform: Mat3,
+        opacity: f32,
+        clip: Option<Rect>,
+    ) -> Result<(), RenderTreeError> {
+        if !transform.cols.iter().flatten().all(|value| value.is_finite()) {
+            return Err(RenderTreeError::InvalidTransform);
+        }
+        if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+            return Err(RenderTreeError::InvalidOpacity);
+        }
+        if clip.is_some_and(|clip| !clip.is_valid()) {
+            return Err(RenderTreeError::InvalidBounds);
+        }
+
+        let mut tree = self.draw_cmd.borrow_mut();
+        let node = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        if node.transform == transform
+            && node.opacity == opacity
+            && node.animation_clip == clip
+        {
+            return Ok(());
+        }
+
+        let old_bounds = tree.visible_subtree_bounds(element);
+        let (old_transform, old_opacity, old_clip) = {
+            let node = tree
+                .node_mut(element)
+                .ok_or(RenderTreeError::UnknownNode(element))?;
+            let previous = (node.transform, node.opacity, node.animation_clip);
+            node.transform = transform;
+            node.opacity = opacity;
+            node.animation_clip = clip;
+            previous
+        };
+        if tree.subtree_bounds(element).is_none() {
+            let node = tree
+                .node_mut(element)
+                .ok_or(RenderTreeError::UnknownNode(element))?;
+            node.transform = old_transform;
+            node.opacity = old_opacity;
+            node.animation_clip = old_clip;
+            return Err(RenderTreeError::InvalidTransform);
+        }
+
+        let new_bounds = tree.visible_subtree_bounds(element);
+        if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
+            tree.push_damage(damage);
+        }
+        Ok(())
+    }
+
+    /// Marks only this element's local command list stale.
+    pub fn invalidate_paint(&self, element: RenderNodeId) -> Result<(), RenderTreeError> {
+        let mut tree = self.draw_cmd.borrow_mut();
+        if tree.node(element).is_none() {
+            return Err(RenderTreeError::UnknownNode(element));
+        }
+        let bounds = tree.visible_node_bounds(element);
+        let node = tree
+            .node_mut(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        node.draw_list.borrow_mut().dirty = true;
+        if let Some(bounds) = bounds {
+            tree.push_damage(bounds);
+        }
+        Ok(())
+    }
+
+    /// Returns the IDs whose local command lists need recording.
+    pub fn dirty_elements(&self) -> Vec<RenderNodeId> {
+        self.draw_cmd
+            .borrow()
+            .nodes
+            .iter()
+            .filter_map(|node| node.draw_list.borrow().dirty.then_some(node.id))
+            .collect()
+    }
+
+    /// Returns the most recently committed local command revision.
+    pub fn draw_list_revision(&self, element: RenderNodeId) -> Result<u64, RenderTreeError> {
+        let tree = self.draw_cmd.borrow();
+        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        let revision = node.draw_list.borrow().revision;
+        Ok(revision)
+    }
+
+    /// Returns an element's current world-space layout bounds.
+    pub fn element_bounds(&self, element: RenderNodeId) -> Result<Rect, RenderTreeError> {
+        self.draw_cmd
+            .borrow()
+            .world_bounds(element)
+            .ok_or(RenderTreeError::UnknownNode(element))
+    }
+
+    /// Returns an element's direct parent, or `None` when it is a root.
+    pub fn parent_of(
+        &self,
+        element: RenderNodeId,
+    ) -> Result<Option<RenderNodeId>, RenderTreeError> {
+        self.draw_cmd
+            .borrow()
+            .node(element)
+            .map(|node| node.parent)
+            .ok_or(RenderTreeError::UnknownNode(element))
+    }
+
+    /// Shares an immutable snapshot of one element's local retained commands.
+    pub fn draw_list_snapshot(
+        &self,
+        element: RenderNodeId,
+    ) -> Result<DrawListSnapshot, RenderTreeError> {
+        let tree = self.draw_cmd.borrow();
+        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        let draw_list = node.draw_list.borrow();
+        Ok(DrawListSnapshot {
+            revision: draw_list.revision,
+            commands: draw_list.commands.clone(),
+        })
+    }
+
+    /// Takes damage accumulated by new nodes, local repaint, or geometry changes.
+    pub fn take_damage(&self) -> Vec<Rect> {
+        mem::take(&mut self.draw_cmd.borrow_mut().pending_damage)
+    }
+
+    /// Reports whether an element and its descendants all use local-v2 paint.
+    ///
+    /// Callers can use this to decide whether the retained tree owns every visual
+    /// update below an element after rebuilding, recording, and syncing the tree
+    /// for the current frame. A legacy or unresolved node returns `false`.
+    #[doc(hidden)]
+    pub fn subtree_uses_only_local_v2(
+        &self,
+        element: RenderNodeId,
+    ) -> Result<bool, RenderTreeError> {
+        let tree = self.draw_cmd.borrow();
+        let Some(node) = tree.node(element) else {
+            return Err(RenderTreeError::UnknownNode(element));
+        };
+        Ok(tree.subtree_uses_only_local_v2(node.id))
+    }
+
+    /// Returns visible elements in parent-first paint order for these damage regions.
+    ///
+    /// An empty damage slice means no pixels are dirty. The plan contains every
+    /// intersecting node, including clean nodes behind a dirty transparent node,
+    /// so the renderer can reconstruct the damaged pixels in the right order.
+    pub fn render_order(&self, damage: &[Rect]) -> Vec<RenderOp> {
+        let tree = self.draw_cmd.borrow();
+        let mut output = Vec::new();
+        for root in tree.roots.iter().copied() {
+            tree.collect_render_order(root, ClipState::Unclipped, Some(damage), &mut output);
+        }
+        output
+    }
+
+    /// Returns every render node in paint order, without damage culling.
+    pub fn render_all(&self) -> Vec<RenderOp> {
+        let tree = self.draw_cmd.borrow();
+        let mut output = Vec::new();
+        for root in tree.roots.iter().copied() {
+            tree.collect_render_order(root, ClipState::Unclipped, None, &mut output);
+        }
+        output
+    }
+
+    /// Takes pending damage and creates its parent-first composition plan.
+    pub fn render_pending(&self) -> RenderFrame {
+        let damage = self.take_damage();
+        let operations = self.render_order(&damage);
+        RenderFrame {
+            damage,
+            operations,
+        }
+    }
+}
+
+/// The active node identity and command tree passed while an element records paint.
+#[derive(Clone)]
+pub struct CurrentBuildContext {
+    draw_cmd: Shared<RefCell<DrawCommandList>>,
+    element: RenderNodeId,
+}
+
+impl CurrentBuildContext {
+    /// Returns the element whose local commands this context records.
+    #[inline]
+    pub const fn element_id(&self) -> RenderNodeId {
+        self.element
+    }
+
+    /// Updates one direct child's retained presentation without re-recording
+    /// either command list.
+    #[doc(hidden)]
+    pub fn set_child_presentation_at(
+        &self,
+        child_index: usize,
+        transform: Mat3,
+        opacity: f32,
+    ) -> bool {
+        let child = self
+            .draw_cmd
+            .borrow()
+            .node(self.element)
+            .and_then(|node| node.children.get(child_index).copied());
+        let Some(child) = child else {
+            return false;
+        };
+        RenderTree {
+            draw_cmd: self.draw_cmd.clone(),
+        }
+        .set_presentation(child, transform, opacity)
+        .is_ok()
+    }
+
+    /// Reserves this element's retained list for one transactional recording.
+    #[doc(hidden)]
+    pub fn begin_recording(&self) -> Result<DrawListWriter, RenderTreeError> {
+        let draw_list = self
+            .draw_cmd
+            .borrow()
+            .node(self.element)
+            .ok_or(RenderTreeError::UnknownNode(self.element))?
+            .draw_list
+            .clone();
+        {
+            let mut retained = draw_list.borrow_mut();
+            if retained.recording {
+                return Err(RenderTreeError::RecorderAlreadyOpen(self.element));
+            }
+            retained.recording = true;
+        }
+        Ok(DrawListWriter {
+            owner: self.element,
+            draw_cmd: self.draw_cmd.clone(),
+            draw_list,
+            finished: false,
+        })
+    }
+}
+
+/// Internal commit lease for one element's retained draw list.
+///
+/// The public recorder lives in `aimer_canvas::Canvas`. This lease keeps list
+/// reservation, scope validation, and commit behavior beside Cupid's retained
+/// storage without exposing that storage to the canvas crate.
+#[doc(hidden)]
+pub struct DrawListWriter {
+    owner: RenderNodeId,
+    draw_cmd: Shared<RefCell<DrawCommandList>>,
+    draw_list: Shared<RefCell<DrawList>>,
+    finished: bool,
+}
+
+impl DrawListWriter {
+    /// Commits the element-local commands and returns their new revision.
+    #[doc(hidden)]
+    pub fn commit(mut self, commands: Vec<DrawCommand>) -> Result<u64, RenderTreeError> {
+        validate_state_scopes(&commands)?;
+        let bounds = {
+            let tree = self.draw_cmd.borrow();
+            if tree.node(self.owner).is_none() {
+                return Err(RenderTreeError::UnknownNode(self.owner));
+            }
+            tree.visible_node_bounds(self.owner)
+        };
+        let revision = {
+            let mut draw_list = self.draw_list.borrow_mut();
+            draw_list.commands = Arc::from(commands);
+            draw_list.revision = draw_list
+                .revision
+                .checked_add(1)
+                .expect("draw-list revisions exhausted");
+            draw_list.dirty = false;
+            draw_list.recording = false;
+            draw_list.revision
+        };
+        if let Some(bounds) = bounds {
+            self.draw_cmd.borrow_mut().push_damage(bounds);
+        }
+        self.finished = true;
+        Ok(revision)
+    }
+}
+
+fn validate_state_scopes(commands: &[DrawCommand]) -> Result<(), RenderTreeError> {
+    let mut clip_depth = 0usize;
+    let mut transform_depth = 0usize;
+    let mut alpha_set = false;
+    let mut italic_set = false;
+    let mut language_set = false;
+    for command in commands {
+        match command {
+            DrawCommand::PushClip { .. } => clip_depth += 1,
+            DrawCommand::PopClip => {
+                let Some(depth) = clip_depth.checked_sub(1) else {
+                    return Err(RenderTreeError::UnbalancedState);
+                };
+                clip_depth = depth;
+            }
+            DrawCommand::PushTransform { .. } => transform_depth += 1,
+            DrawCommand::PopTransform => {
+                let Some(depth) = transform_depth.checked_sub(1) else {
+                    return Err(RenderTreeError::UnbalancedState);
+                };
+                transform_depth = depth;
+            }
+            DrawCommand::SetAlpha { .. } => alpha_set = true,
+            DrawCommand::RestoreAlpha => alpha_set = false,
+            DrawCommand::SetItalic { italic } => italic_set = *italic,
+            DrawCommand::SetTextLanguage { language } => language_set = language.is_some(),
+            DrawCommand::FillRect { .. }
+            | DrawCommand::DrawText { .. }
+            | DrawCommand::DrawRichText { .. }
+            | DrawCommand::DrawTextDecoration { .. }
+            | DrawCommand::DrawImage { .. }
+            | DrawCommand::DrawImageWithResource { .. }
+            | DrawCommand::Svg { .. }
+            | DrawCommand::DrawCustom { .. }
+            | DrawCommand::DrawShadowRect { .. }
+            | DrawCommand::SetTransform { .. } => {}
+        }
+    }
+    if clip_depth != 0 || transform_depth != 0 || alpha_set || italic_set || language_set {
+        return Err(RenderTreeError::UnbalancedState);
+    }
+    Ok(())
+}
+
+impl Drop for DrawListWriter {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        let mut draw_list = self.draw_list.borrow_mut();
+        draw_list.recording = false;
+        draw_list.dirty = true;
+    }
+}
+
+/// One visible node in the render plan, in parent-first paint order.
+pub struct RenderItem {
+    /// Identity of the element to draw.
+    pub element: RenderNodeId,
+    /// World-space element bounds.
+    pub bounds: Rect,
+    /// Untransformed world-space origin for local commands.
+    pub origin: (f32, f32),
+    /// Cumulative transform mapping untransformed world coordinates to display coordinates.
+    pub transform: Mat3,
+    /// Effective world-space clip, if any.
+    pub clip: Option<Rect>,
+    /// Opacity applied directly to this node's commands.
+    pub opacity: f32,
+    /// Whether this node records local v2 commands or stands for a legacy island.
+    pub paint_source: RenderPaintSource,
+    /// Legacy command range in the frame-wide DrawList, when this is an island.
+    pub legacy_command_range: Option<(usize, usize)>,
+    draw_list: Shared<RefCell<DrawList>>,
+}
+
+/// An ordered drawing or group-compositing operation.
+pub enum RenderOp {
+    /// Begins an offscreen opacity group for a node with children.
+    BeginOpacityGroup {
+        element: RenderNodeId,
+        bounds: Rect,
+        opacity: f32,
+        clip: Option<Rect>,
+    },
+    /// Draws one element's local command list.
+    ///
+    /// Backends must initialize from the item's node state and restore that
+    /// state after the list, so commands cannot affect sibling elements.
+    Draw(RenderItem),
+    /// Composites the current opacity group into its parent.
+    EndOpacityGroup { element: RenderNodeId },
+}
+
+impl RenderItem {
+    /// Returns the local commands and recording revision for this node.
+    pub fn snapshot(&self) -> DrawListSnapshot {
+        let draw_list = self.draw_list.borrow();
+        DrawListSnapshot {
+            revision: draw_list.revision,
+            commands: draw_list.commands.clone(),
+        }
+    }
+}
+
+/// Shared immutable snapshot of one node's retained local commands.
+#[derive(Clone, Debug, Default)]
+pub struct DrawListSnapshot {
+    /// Monotonic local recording revision.
+    pub revision: u64,
+    /// Commands in element-local coordinates.
+    pub commands: Arc<[DrawCommand]>,
+}
+
+/// Damage and ordered render operations for one v2 frame.
+pub struct RenderFrame {
+    /// Device-independent regions that changed.
+    pub damage: Vec<Rect>,
+    /// Nodes to composite in paint order within those regions.
+    pub operations: Vec<RenderOp>,
+}

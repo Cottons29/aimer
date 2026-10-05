@@ -25,7 +25,7 @@ use aimer_widget::{
     PointerKey, RawFocusable, VisitorElement, Widget,
 };
 
-use crate::paragraph::{Paragraph, display_color, geometry};
+use crate::paragraph::{Paragraph, PreparedLayout, display_color, geometry};
 use crate::selection::TextHitRegion;
 use crate::selection::SelectionPoint;
 use crate::selection::cursor::HoverCursor;
@@ -1319,6 +1319,13 @@ pub struct RawRichText {
     focus_node: FocusNode,
 }
 
+struct LocalV2RichTextPaint {
+    layout: Rc<PreparedLayout>,
+    scale: f32,
+    width: f32,
+    height: f32,
+}
+
 impl RawRichText {
     /// The shared geometry this element writes while drawing.
     #[inline]
@@ -1336,6 +1343,68 @@ impl RawRichText {
     #[inline]
     fn slot(&self) -> Rc<SelectionSlot> {
         Rc::clone(&self.binding.borrow().slot)
+    }
+
+    fn local_v2_paint_data(&self, ctx: &BuildContext) -> Option<LocalV2RichTextPaint> {
+        if !self.paragraph.supports_retained_v2_rich_text() {
+            return None;
+        }
+        let scale = ctx.scale;
+        let width = self.paragraph.available_width(ctx);
+        let height = ctx.parent_size.height;
+        if !scale.is_finite()
+            || scale <= 0.0
+            || !width.is_finite()
+            || !height.is_finite()
+            || width < 0.0
+            || height < 0.0
+            || width > 1_000_000.0
+            || height > 1_000_000.0
+        {
+            return None;
+        }
+        let layout = self.paragraph.cached_for_paint(ctx)?;
+        if !layout.size.width.is_finite()
+            || !layout.size.height.is_finite()
+            || layout.size.width < 0.0
+            || layout.size.height < 0.0
+            || layout.size.width > 1_000_000.0
+            || layout.size.height > 1_000_000.0
+            || layout.line_heights.iter().any(|height| !height.is_finite())
+            || layout.fragments.iter().any(|fragment| {
+                !fragment.x.is_finite()
+                    || !fragment.baseline.is_finite()
+                    || !fragment.width.is_finite()
+                    || !fragment.height.is_finite()
+                    || fragment.width < 0.0
+                    || fragment.height < 0.0
+            })
+        {
+            return None;
+        }
+        Some(LocalV2RichTextPaint {
+            layout,
+            scale,
+            width,
+            height,
+        })
+    }
+
+    fn retained_v2_hovered_link(
+        &self,
+        ctx: &BuildContext,
+        data: &LocalV2RichTextPaint,
+    ) -> Option<TextSource> {
+        let (origin_x, origin_y) = ctx.canvas.get_transform_translation();
+        self.paragraph.link_at_point(
+            &data.layout,
+            ctx.cursor_pos,
+            aimer_attribute::Vec2d {
+                x: origin_x,
+                y: origin_y,
+            },
+            data.scale,
+        )
     }
 
     /// Returns accessibility geometry from the last painted frame.
@@ -1721,14 +1790,214 @@ impl LayoutElement for RawRichText {
 }
 
 impl Drawable for RawRichText {
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        self.slot().stamp();
+        self.sync_paint_geometry(ctx);
+        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
+        let origin = frame_origin(abs_x, abs_y, ctx.scale);
+        if let Some((pointer, offset)) = self.touch_hold.poll_stationary(AnimInstant::now(), origin)
+        {
+            enter_hold(&self.session(), &self.slot(), offset, pointer);
+            self.pressed_link.borrow_mut().take();
+        }
+        self.set_hovered_link(self.link_at(ctx.cursor_pos.x, ctx.cursor_pos.y));
+        true
+    }
+
+    fn draw_local_v2_compatibility(&self, _ctx: &BuildContext) {
+        if self.selectable && self.owns_session() {
+            let session = self.session();
+            ui::track_menu(&session);
+            ui::track_handles(&session);
+        }
+    }
+
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        let data = self.local_v2_paint_data(ctx)?;
+        let outsets = self
+            .paragraph
+            .retained_v2_paint_outsets(&data.layout, data.scale);
+        outsets.iter().any(|outset| *outset > 0.0).then_some(outsets)
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.local_v2_paint_data(ctx).is_some()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let data = self
+            .local_v2_paint_data(ctx)
+            .expect("RawRichText v2 support must be checked before painting");
+        let hovered_link = self.retained_v2_hovered_link(ctx, &data);
+        let outsets = self
+            .paragraph
+            .retained_v2_paint_outsets(&data.layout, data.scale);
+        let origin_offset = aimer_attribute::Vec2d {
+            x: outsets[0],
+            y: outsets[1],
+        };
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        if self.paragraph.needs_clip() {
+            canvas.push_clip(
+                aimer_cupid::utilities::Rect::new(
+                    origin_offset.x,
+                    origin_offset.y,
+                    data.width / data.scale,
+                    data.height / data.scale,
+                ),
+                [0.0; 4],
+            );
+        }
+        self.paragraph
+            .record_retained_v2_backgrounds(
+                &canvas,
+                &data.layout,
+                data.scale,
+                origin_offset,
+            );
+        let selected_range = self
+            .selectable
+            .then(|| self.slot().selected_range().unwrap_or(0..0));
+        if let Some(selection) = selected_range.as_ref() {
+            let (red, green, blue, alpha) = self.selection_color.to_rgba();
+            let mut draw_rect = |x: f32, y: f32, width: f32, height: f32| {
+                canvas.fill_rect(
+                    aimer_cupid::utilities::Rect::new(
+                        x / data.scale + origin_offset.x,
+                        y / data.scale + origin_offset.y,
+                        width / data.scale,
+                        height / data.scale,
+                    ),
+                    [red, green, blue, alpha],
+                );
+            };
+            if let Some(layout) = data.layout.aimer_interaction.as_ref() {
+                for rect in layout.selection_rects(selection.clone()) {
+                    draw_rect(rect.x, rect.y, rect.width, rect.height);
+                }
+            } else {
+                for rect in geometry::selection_runs(&data.layout, selection.clone(), ctx.visible_rect)
+                {
+                    draw_rect(rect.x, rect.y, rect.width, rect.height);
+                }
+            }
+        }
+        self.paragraph.record_retained_v2_foreground(
+            &canvas,
+            &data.layout,
+            data.scale,
+            origin_offset,
+            hovered_link.as_ref(),
+            self.link_hover_color,
+        );
+        if self.paragraph.needs_clip() {
+            canvas.pop_clip();
+        }
+        canvas.finish();
+        let geometry = self.geometry();
+        *geometry.retained_v2_link_hover.borrow_mut() = hovered_link;
+        *geometry.retained_v2_selection.borrow_mut() = selected_range;
+    }
+
+    fn local_v2_paint_needs_recording(&self, ctx: &BuildContext) -> bool {
+        let Some(data) = self.local_v2_paint_data(ctx) else {
+            return false;
+        };
+        let geometry = self.geometry();
+        let current_selection = self
+            .selectable
+            .then(|| self.slot().selected_range().unwrap_or(0..0));
+        if current_selection != *geometry.retained_v2_selection.borrow() {
+            return true;
+        }
+        if self.link_hover_color.is_none() {
+            return false;
+        }
+        self.retained_v2_hovered_link(ctx, &data).as_deref()
+            != geometry.retained_v2_link_hover.borrow().as_deref()
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let Some(data) = self.local_v2_paint_data(ctx) else {
+            return;
+        };
+        let transform = ctx.canvas.get_transform();
+        let geometry = self.geometry();
+        geometry.save_painted_bounds(
+            data.scale,
+            transform,
+            data.layout.size.width,
+            data.layout.size.height,
+        );
+        geometry.regions.borrow_mut().clear();
+        geometry.set_shared_interaction_layout(
+            data.layout.aimer_interaction.clone(),
+            transform,
+            data.scale,
+        );
+        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
+        if self.selectable {
+            if let Some(shared) = data.layout.aimer_interaction.as_ref() {
+                let mut regions = geometry.regions.borrow_mut();
+                for cluster in &shared.clusters {
+                    let left = cluster.start_x.min(cluster.end_x);
+                    let right = cluster.start_x.max(cluster.end_x);
+                    let is_hard_break = shared
+                        .text
+                        .get(cluster.text_range.clone())
+                        .is_some_and(|text| text == "\n" || text == "\r\n");
+                    regions.push(TextHitRegion::new(
+                        if is_hard_break {
+                            cluster.text_range.start..cluster.text_range.start
+                        } else {
+                            cluster.text_range.clone()
+                        },
+                        Bounds::new(
+                            (abs_x + left) / data.scale,
+                            (abs_y + cluster.y) / data.scale,
+                            if is_hard_break {
+                                (shared.metrics.width - left).max(data.scale) / data.scale
+                            } else {
+                                (right - left) / data.scale
+                            },
+                            cluster.height / data.scale,
+                        ),
+                    ));
+                }
+            } else {
+                geometry::hit_regions(
+                    &data.layout,
+                    abs_x,
+                    abs_y,
+                    data.scale,
+                    ctx.visible_rect,
+                    &mut geometry.regions.borrow_mut(),
+                );
+            }
+        }
+        let mut link_regions = self.link_regions.borrow_mut();
+        link_regions.clear();
+        self.paragraph
+            .visit_link_fragments(&data.layout, ctx.visible_rect, |target, fragment| {
+                link_regions.push(LinkRegion {
+                    target: target.clone(),
+                    bounds: Bounds::new(
+                        (abs_x + fragment.x) / data.scale,
+                        (abs_y + fragment.baseline - fragment.ascent) / data.scale,
+                        fragment.width / data.scale,
+                        fragment.height / data.scale,
+                    ),
+                });
+            });
+    }
+
     fn draw(&self, ctx: &BuildContext) {
         let slot = self.slot();
         let geometry_state = self.geometry();
         slot.stamp();
         let layout = self.paragraph.prepare_for_paint(ctx);
-        // Selectable text must stay on the live paint path. Besides painting
-        // the selection overlay, this keeps its source-bearing text commands
-        // in the current draw list instead of hiding them in a retained layer.
+        // Legacy fallback keeps selectable text live so its source-bearing
+        // glyph commands stay in the current frame-wide command list.
         let paint_mode = (!self.selectable)
             .then(|| self.paragraph.static_paint_mode())
             .flatten();
@@ -2301,13 +2570,13 @@ mod tests {
     #[test]
     fn selection_highlight_starts_at_the_text_line_top() {
         use aimer_attribute::ResolvedSize;
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_cupid::draw_cmd::DrawCommand;
         use aimer_widget::Drawable;
         use aimer_widget::base::BuildContext;
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -2370,13 +2639,13 @@ mod tests {
     #[test]
     fn selection_highlight_connects_across_adjacent_spans() {
         use aimer_attribute::ResolvedSize;
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_cupid::draw_cmd::DrawCommand;
         use aimer_widget::Drawable;
         use aimer_widget::base::BuildContext;
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -2436,13 +2705,13 @@ mod tests {
     #[test]
     fn selection_highlights_touch_between_wrapped_lines() {
         use aimer_attribute::{BoxConstraint, ResolvedSize};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_cupid::draw_cmd::DrawCommand;
         use aimer_widget::Drawable;
         use aimer_widget::base::BuildContext;
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -2509,13 +2778,13 @@ mod tests {
     #[test]
     fn explicit_newlines_have_stable_hit_targets_and_connected_highlights() {
         use aimer_attribute::{BoxConstraint, ResolvedSize};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_cupid::draw_cmd::DrawCommand;
         use aimer_widget::Drawable;
         use aimer_widget::base::BuildContext;
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -2623,13 +2892,13 @@ mod tests {
     #[test]
     fn italic_span_enables_synthetic_italic_for_its_draw() {
         use aimer_attribute::ResolvedSize;
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_cupid::draw_cmd::DrawCommand;
         use aimer_widget::Drawable;
         use aimer_widget::base::BuildContext;
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -2707,14 +2976,14 @@ mod tests {
         use std::cell::RefCell;
 
         use aimer_attribute::{ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_cupid::draw_cmd::DrawCommand;
         use aimer_style::{TextAlign, TextOverflow};
         use aimer_widget::Drawable;
         use aimer_widget::base::{BuildContext, WindowHandle};
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -2828,12 +3097,12 @@ mod tests {
     #[test]
     fn wrapping_uses_parent_width_when_constraint_is_unbounded() {
         use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_style::{TextAlign, TextOverflow};
         use aimer_widget::base::{BuildContext, WindowHandle};
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();

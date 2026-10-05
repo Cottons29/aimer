@@ -101,7 +101,7 @@ mod tests {
         });
         let _guard = runtime.enter();
         let mut context = aimer::BuildContext::new(
-            aimer::canvas::Canvas::new(inner),
+            aimer::canvas::FrameCanvas::new(inner),
             aimer::ResolvedSize {
                 width: LOADING_ICON_SIZE,
                 height: LOADING_ICON_SIZE,

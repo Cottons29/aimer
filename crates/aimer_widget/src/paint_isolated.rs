@@ -14,14 +14,14 @@ use std::sync::Arc;
 use aimer_attribute::size::ResolvedSize;
 use aimer_cupid::damage_region::DamageRect;
 use aimer_canvas::{
-    Canvas, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION, RetainedDrawList,
+    FrameCanvas, RETAINED_LAYER_MAX_BYTES, RETAINED_LAYER_MAX_DIMENSION, RetainedDrawList,
     RetainedLayerContent, next_retained_layer_id,
 };
 
 use crate::base::BuildContext;
 use crate::components::element::{
-    ElementId, element_tree_generation, paint_element_was_invalidated,
-    paint_invalidations_are_known, rebuild_invalidation_generation,
+    ElementId, paint_element_was_invalidated, paint_invalidations_are_known,
+    rebuild_invalidation_generation,
 };
 use crate::Element;
 use crate::paint_damage::paint_damage_rect;
@@ -43,7 +43,6 @@ pub(crate) struct PaintContract {
     scale: u32,
     width: u32,
     height: u32,
-    tree_generation: u64,
     rebuild_generation: u64,
     rebuild_invalidation_generation: u64,
     layout_generation: u64,
@@ -81,7 +80,6 @@ impl PaintContract {
                 scale: ctx.scale.to_bits(),
                 width: content_size.width.to_bits(),
                 height: content_size.height.to_bits(),
-                tree_generation: element_tree_generation(),
                 rebuild_generation,
                 rebuild_invalidation_generation: rebuild_invalidation_generation(),
                 layout_generation: crate::layout_invalidation_generation(),
@@ -100,7 +98,6 @@ impl PaintContract {
             && self.scale == other.scale
             && self.width == other.width
             && self.height == other.height
-            && self.tree_generation == other.tree_generation
             && self.rebuild_generation == other.rebuild_generation
             && self.layout_generation == other.layout_generation
             && self.texture_epoch == other.texture_epoch
@@ -250,7 +247,7 @@ impl PaintCache {
     ) -> Option<CachedPaint> {
         let recording_canvas = ctx.canvas.fork_for_recording();
         let mut recording_ctx = ctx.clone();
-        recording_ctx.replace_canvas(Canvas::new(&recording_canvas));
+        recording_ctx.replace_canvas(FrameCanvas::new(&recording_canvas));
         // The outer canvas owns the current clip. A retained stream must keep
         // complete local content so a later clip change cannot reveal blank
         // pixels that were absent from the first recording.

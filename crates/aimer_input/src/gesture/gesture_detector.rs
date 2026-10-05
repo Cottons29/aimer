@@ -511,6 +511,15 @@ impl<E: Element> Drawable for RawGestureDetector<E> {
         self.child.draw(ctx);
     }
 
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        canvas.finish();
+    }
+
     fn paint(&self, ctx: &BuildContext<'_>) {
         self.child.paint(ctx);
     }
@@ -650,7 +659,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "event-tree-exp")]
     #[test]
     fn gesture_detector_is_an_indexed_target() {
         let detector = counting_detector(Rc::new(std::cell::Cell::new(0)));

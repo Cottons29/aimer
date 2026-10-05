@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 
@@ -23,8 +23,20 @@ type EntryBuilder =
 thread_local! {
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
     static COMMANDS: RefCell<VecDeque<ModalCommand>> = const { RefCell::new(VecDeque::new()) };
-    static ENTRIES: RefCell<Vec<HostedModal>> = const { RefCell::new(Vec::new()) };
+    static ENTRIES: Rc<HostedModalEntries> = Rc::new(HostedModalEntries::default());
     static LAYERS: RefCell<Vec<HostedLayer>> = const { RefCell::new(Vec::new()) };
+}
+
+fn hosted_entries() -> Rc<HostedModalEntries> {
+    ENTRIES.with(Rc::clone)
+}
+
+fn with_entries<R>(callback: impl FnOnce(&[HostedModal]) -> R) -> R {
+    ENTRIES.with(|entries| callback(entries.entries()))
+}
+
+fn with_entries_mut<R>(callback: impl FnOnce(&mut Vec<HostedModal>) -> R) -> R {
+    ENTRIES.with(|entries| callback(entries.entries_mut()))
 }
 
 /// A painter installed above every modal, receiving no events.
@@ -178,7 +190,7 @@ fn is_presented(id: ModalId) -> bool {
             .any(|command| matches!(command, ModalCommand::Show { id: shown, .. } if *shown == id))
     });
     queued
-        || ENTRIES.with_borrow(|entries| {
+        || with_entries(|entries| {
             entries
                 .iter()
                 .any(|entry| entry.id == id && !entry.timeline.borrow().is_closing())
@@ -192,7 +204,7 @@ pub struct ModalController;
 impl ModalController {
     /// Begins dismissal of the topmost modal, if one exists.
     pub fn dismiss_top() -> bool {
-        let has_modal = ENTRIES.with(|entries| !entries.borrow().is_empty())
+        let has_modal = with_entries(|entries| !entries.is_empty())
             || COMMANDS.with(|commands| {
                 commands
                     .borrow()
@@ -207,7 +219,7 @@ impl ModalController {
 
     /// Returns whether a modal is active or waiting for the first host frame.
     pub fn is_showing() -> bool {
-        !ENTRIES.with(|entries| entries.borrow().is_empty())
+        !with_entries(|entries| entries.is_empty())
             || COMMANDS.with(|commands| {
                 commands
                     .borrow()
@@ -262,10 +274,40 @@ impl<W: Widget + 'static> Widget for ModalHost<W> {
     }
 }
 
-#[derive(Rebuildable)]
 struct RawModalHost {
     child: AnyElement,
     overlay: AnyElement,
+}
+
+impl aimer_widget::Rebuildable for RawModalHost {
+    fn option_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+}
+
+impl RawModalHost {
+    fn prepare_pending_commands(&self, ctx: &BuildContext) {
+        if process_commands(ctx) {
+            let _ = broadcast_event(self.child.as_ref(), &ElementEvent::Cancel);
+        }
+    }
+}
+
+/// Applies queued modal changes before the app builds its retained render tree.
+///
+/// `ModalHost` keeps modal widgets in a window-wide overlay registry rather
+/// than the ordinary widget child. Preparing the host first makes those live
+/// entries visible to retained traversal on the same frame they are built.
+#[doc(hidden)]
+pub fn prepare_retained_render_tree(root: &dyn Element, ctx: &BuildContext) {
+    if let Some(host) = root
+        .option_any()
+        .and_then(|value| value.downcast_ref::<RawModalHost>())
+    {
+        host.prepare_pending_commands(ctx);
+        return;
+    }
+    root.visit_children(&mut |child| prepare_retained_render_tree(child, ctx));
 }
 
 impl Drop for RawModalHost {
@@ -276,11 +318,21 @@ impl Drop for RawModalHost {
 
 impl Drawable for RawModalHost {
     fn draw(&self, ctx: &BuildContext) {
-        if process_commands(ctx) {
-            let _ = broadcast_event(self.child.as_ref(), &ElementEvent::Cancel);
-        }
+        self.prepare_pending_commands(ctx);
         self.child.draw(ctx);
-        draw_hosted_entries(ctx);
+        self.overlay.draw(ctx);
+    }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        // ModalHost owns no paint of its own. Its app child and modal overlay
+        // are separate render nodes. Hosted entries keep independent local
+        // lists while their animation updates opacity and transform state.
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        canvas.finish();
     }
 }
 
@@ -323,44 +375,82 @@ impl VisitorElement for RawModalHost {
     }
 }
 
-#[derive(Default, Rebuildable)]
+#[derive(Rebuildable)]
 struct RawModalOverlay {
+    entries: Rc<HostedModalEntries>,
     promoted_captures: RefCell<HashSet<PointerKey>>,
 }
 
-impl RawModalOverlay {
-    fn prepare(&self, ctx: &BuildContext) -> bool {
-        process_commands(ctx)
-    }
-
-    fn draw_entries(&self, ctx: &BuildContext) {
-        draw_hosted_entries(ctx);
+impl Default for RawModalOverlay {
+    fn default() -> Self {
+        Self {
+            entries: hosted_entries(),
+            promoted_captures: RefCell::new(HashSet::new()),
+        }
     }
 }
 
-fn draw_hosted_entries(ctx: &BuildContext) {
+impl RawModalOverlay {
+    fn draw_entries(&self, ctx: &BuildContext) {
+        draw_hosted_entries(&self.entries, ctx);
+    }
+}
+
+fn draw_hosted_entries(entries: &HostedModalEntries, ctx: &BuildContext) {
     let now = AnimInstant::now();
-    ENTRIES.with(|entries| {
-        let mut entries = entries.borrow_mut();
-        for entry in entries.iter() {
-            entry.timeline.borrow_mut().tick(now, entry.animation);
-            entry.element.draw(ctx);
+    for entry in entries.entries() {
+        entry.timeline.borrow_mut().tick(now, entry.animation);
+        entry.element.draw(ctx);
+    }
+
+    let finished: HashSet<_> = entries
+        .entries()
+        .iter()
+        .filter(|entry| entry.timeline.borrow().finished())
+        .map(|entry| entry.id)
+        .collect();
+    if !finished.is_empty() {
+        for entry in entries
+            .entries()
+            .iter()
+            .filter(|entry| finished.contains(&entry.id))
+        {
+            cancel_hosted_entry(entry);
         }
-        entries.retain(|entry| {
-            let retain = !entry.timeline.borrow().finished();
-            if !retain {
-                cancel_hosted_entry(entry);
+        let retired = {
+            let entries = entries.entries_mut();
+            let mut current = std::mem::take(entries);
+            let mut keep = Vec::with_capacity(current.len());
+            let mut retired = Vec::new();
+            for entry in current.drain(..) {
+                if finished.contains(&entry.id) {
+                    retired.push(entry);
+                } else {
+                    keep.push(entry);
+                }
             }
-            retain
-        });
-    });
+            *entries = keep;
+            retired
+        };
+        drop(retired);
+        aimer_widget::notify_hosted_element_tree_changed();
+    }
     draw_layers(ctx);
 }
 
 impl Drawable for RawModalOverlay {
     fn draw(&self, ctx: &BuildContext) {
-        self.prepare(ctx);
         self.draw_entries(ctx);
+    }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        // The hosted entries are retained children; the overlay owns no paint.
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        canvas.finish();
     }
 }
 
@@ -370,66 +460,82 @@ impl EventElement for RawModalOverlay {
     }
 
     fn on_event(&self, event: &ElementEvent) -> EventResult {
-        ENTRIES.with(|entries| {
-            let entries = entries.borrow();
-            if matches!(event, ElementEvent::Scroll { .. }) {
-                // Scroll events carry no pointer position. Route them to the
-                // topmost modal directly so an anchored wheel can consume a
-                // trackpad or mouse-wheel frame instead of the page beneath
-                // it. Pointer events still use normal hit testing/capture.
-                return entries
-                    .last()
-                    .map_or_else(EventResult::ignored, |entry| {
-                        dispatch_focused_event(entry.element.as_ref(), event)
-                    });
+        let entries = self.entries.entries();
+        if matches!(event, ElementEvent::Scroll { .. }) {
+            // Scroll events carry no pointer position. Route them to the
+            // topmost modal directly so an anchored wheel can consume a
+            // trackpad or mouse-wheel frame instead of the page beneath
+            // it. Pointer events still use normal hit testing/capture.
+            return self.forward_child_redraw(entries.last().map_or_else(
+                EventResult::ignored,
+                |entry| dispatch_focused_event(entry.element.as_ref(), event),
+            ));
+        }
+        if matches!(
+            event,
+            ElementEvent::KeyInput {
+                key: aimer_events::element::NamedKey::Escape,
+                action: aimer_events::element::KeyAction::Pressed,
+                ..
             }
-            if matches!(
-                event,
-                ElementEvent::KeyInput {
-                    key: aimer_events::element::NamedKey::Escape,
-                    action: aimer_events::element::KeyAction::Pressed,
-                    ..
-                }
-            ) {
-                return entries
-                    .last()
-                    .map_or_else(EventResult::ignored, |entry| entry.element.on_event(event));
+        ) {
+            return self.forward_child_redraw(entries.last().map_or_else(
+                EventResult::ignored,
+                |entry| entry.element.on_event(event),
+            ));
+        }
+        let pointer = event_pointer_key(event);
+        if let Some(pointer) = pointer
+            && let Some(entry) = entries
+                .iter()
+                .rev()
+                .find(|entry| entry.dispatcher.borrow().is_captured(pointer))
+        {
+            let pos = event.get_pointer_pos().unwrap_or_default();
+            let result = dispatch_hosted_event(entry, pos, event);
+            self.track_promoted_capture(result, pointer);
+            return self.forward_child_redraw(result);
+        }
+        if let Some(pointer) = pointer
+            && self.promoted_captures.borrow_mut().remove(&pointer)
+        {
+            return EventResult::ignored().with_pointer_release(pointer);
+        }
+        let mut result = EventResult::ignored();
+        for entry in entries.iter().rev() {
+            let pos = event.get_pointer_pos().unwrap_or_default();
+            let entry_result = dispatch_hosted_event(entry, pos, event);
+            if let Some(pointer) = pointer {
+                self.track_promoted_capture(entry_result, pointer);
             }
-            let pointer = event_pointer_key(event);
-            if let Some(pointer) = pointer
-                && let Some(entry) = entries
-                    .iter()
-                    .rev()
-                    .find(|entry| entry.dispatcher.borrow().is_captured(pointer))
-            {
-                let pos = event.get_pointer_pos().unwrap_or_default();
-                let result = dispatch_hosted_event(entry, pos, event);
-                self.track_promoted_capture(result, pointer);
-                return result;
+            result = result.merge(entry_result);
+            if entry_result.is_consumed() {
+                return self.forward_child_redraw(result);
             }
-            if let Some(pointer) = pointer
-                && self.promoted_captures.borrow_mut().remove(&pointer)
-            {
-                return EventResult::ignored().with_pointer_release(pointer);
-            }
-            let mut result = EventResult::ignored();
-            for entry in entries.iter().rev() {
-                let pos = event.get_pointer_pos().unwrap_or_default();
-                let entry_result = dispatch_hosted_event(entry, pos, event);
-                if let Some(pointer) = pointer {
-                    self.track_promoted_capture(entry_result, pointer);
-                }
-                result = result.merge(entry_result);
-                if entry_result.is_consumed() {
-                    return result;
-                }
-            }
-            result.merge(EventResult::from(!entries.is_empty()))
-        })
+        }
+        self.forward_child_redraw(result.merge(EventResult::from(!entries.is_empty())))
     }
+
+    fn event_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
+
+    fn focus_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
+
+    fn hit_test_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
 }
 
 impl RawModalOverlay {
+    fn forward_child_redraw(&self, result: EventResult) -> EventResult {
+        if result.needs_redraw() {
+            // The hosted element already marked its own retained node stale.
+            // Schedule the frame without invalidating this viewport-sized
+            // routing node as well.
+            request_animation_frame();
+            result.without_redraw()
+        } else {
+            result
+        }
+    }
+
     fn track_promoted_capture(&self, result: EventResult, pointer: PointerKey) {
         match result.capture_request() {
             aimer_widget::CaptureRequest::Capture(captured) if captured == pointer => {
@@ -458,7 +564,20 @@ impl LayoutElement for RawModalOverlay {
 }
 
 impl VisitorElement for RawModalOverlay {
-    fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        for entry in self.entries.entries() {
+            visitor(entry.element.as_ref());
+        }
+    }
+
+    fn visit_retained_v2_children<'a>(
+        &'a self,
+        visitor: &mut dyn FnMut(usize, &'a dyn Element),
+    ) {
+        for (index, entry) in self.entries.entries().iter().enumerate() {
+            visitor(index, entry.element.as_ref());
+        }
+    }
 
     fn debug_name(&self) -> &'static str {
         "ModalOverlay"
@@ -482,6 +601,38 @@ struct HostedModal {
     timeline: Rc<RefCell<ModalTimeline>>,
     dispatcher: RefCell<EventDispatcher>,
     focus_trap: RefCell<Option<FocusTrap>>,
+}
+
+/// UI-thread-owned modal entries shared with the retained overlay's visitors.
+///
+/// Entry references must remain stable while the retained tree is collected or
+/// hosted entries are drawn. Mutations happen at frame preparation or after the
+/// hosted draw walk finishes, never from a visitor or entry callback.
+struct HostedModalEntries {
+    entries: UnsafeCell<Vec<HostedModal>>,
+}
+
+impl Default for HostedModalEntries {
+    fn default() -> Self {
+        Self {
+            entries: UnsafeCell::new(Vec::new()),
+        }
+    }
+}
+
+impl HostedModalEntries {
+    fn entries(&self) -> &[HostedModal] {
+        // SAFETY: the UI thread only mutates entries before retained traversal
+        // or after hosted draw callbacks finish; visitors may keep these
+        // references until the current traversal finishes.
+        unsafe { &*self.entries.get() }
+    }
+
+    fn entries_mut(&self) -> &mut Vec<HostedModal> {
+        // SAFETY: callers mutate only at the frame safe points documented on
+        // this type, never while a visitor or hosted draw callback is active.
+        unsafe { &mut *self.entries.get() }
+    }
 }
 
 impl HostedModal {
@@ -570,6 +721,10 @@ impl ModalTimeline {
         self.progress
     }
 
+    pub(crate) fn is_active(&self) -> bool {
+        matches!(self.phase, TimelinePhase::Entering { .. } | TimelinePhase::Exiting { .. })
+    }
+
     fn begin_exit(&mut self, animated: bool) {
         if matches!(
             self.phase,
@@ -644,26 +799,29 @@ fn duration_progress(now: AnimInstant, start: AnimInstant, duration: std::time::
 fn process_commands(ctx: &BuildContext) -> bool {
     let commands = COMMANDS.with(|commands| std::mem::take(&mut *commands.borrow_mut()));
     let mut opened = false;
-    ENTRIES.with(|entries| {
-        let mut entries = entries.borrow_mut();
-        for command in commands {
-            match command {
-                ModalCommand::Show {
-                    id,
-                    animation,
-                    build,
-                } => {
-                    for entry in entries.iter() {
+    let mut added_entry = false;
+    for command in commands {
+        match command {
+            ModalCommand::Show {
+                id,
+                animation,
+                build,
+            } => {
+                with_entries(|entries| {
+                    for entry in entries {
                         cancel_hosted_entry(entry);
                     }
-                    let timeline = Rc::new(RefCell::new(ModalTimeline::new(animation.is_some())));
-                    let element = build(ctx, id, timeline.clone());
-                    // A modal is a mode: while it is presented it owns the
-                    // keyboard, and the tree it covers — which dispatches
-                    // separately, and cannot see this content at all — owns
-                    // nothing until the trap is released.
-                    let focus_trap = FocusTrap::acquire();
-                    let dispatcher = EventDispatcher::new().with_focus_trap(focus_trap.id());
+                });
+                let timeline = Rc::new(RefCell::new(ModalTimeline::new(animation.is_some())));
+                let element = build(ctx, id, timeline.clone());
+                element.rebuild_if_dirty(ctx);
+                // A modal is a mode: while it is presented it owns the
+                // keyboard, and the tree it covers — which dispatches
+                // separately, and cannot see this content at all — owns
+                // nothing until the trap is released.
+                let focus_trap = FocusTrap::acquire();
+                let dispatcher = EventDispatcher::new().with_focus_trap(focus_trap.id());
+                with_entries_mut(|entries| {
                     entries.push(HostedModal {
                         id,
                         element,
@@ -672,9 +830,12 @@ fn process_commands(ctx: &BuildContext) -> bool {
                         dispatcher: RefCell::new(dispatcher),
                         focus_trap: RefCell::new(Some(focus_trap)),
                     });
-                    opened = true;
-                }
-                ModalCommand::Dismiss(id) => {
+                });
+                opened = true;
+                added_entry = true;
+            }
+            ModalCommand::Dismiss(id) => {
+                with_entries(|entries| {
                     if let Some(entry) = entries.iter().find(|entry| entry.id == id) {
                         cancel_hosted_entry(entry);
                         entry.release_focus_trap();
@@ -683,8 +844,10 @@ fn process_commands(ctx: &BuildContext) -> bool {
                             .borrow_mut()
                             .begin_exit(entry.animation.is_some());
                     }
-                }
-                ModalCommand::DismissTop => {
+                });
+            }
+            ModalCommand::DismissTop => {
+                with_entries(|entries| {
                     if let Some(entry) = entries.last() {
                         cancel_hosted_entry(entry);
                         entry.release_focus_trap();
@@ -693,10 +856,13 @@ fn process_commands(ctx: &BuildContext) -> bool {
                             .borrow_mut()
                             .begin_exit(entry.animation.is_some());
                     }
-                }
+                });
             }
         }
-    });
+    }
+    if added_entry {
+        aimer_widget::notify_hosted_element_tree_changed();
+    }
     opened
 }
 
@@ -707,7 +873,11 @@ fn enqueue(command: ModalCommand) {
 
 fn clear_registry() {
     COMMANDS.with(|commands| commands.borrow_mut().clear());
-    ENTRIES.with(|entries| entries.borrow_mut().clear());
+    let retired = with_entries_mut(std::mem::take);
+    if !retired.is_empty() {
+        drop(retired);
+        aimer_widget::notify_hosted_element_tree_changed();
+    }
     LAYERS.with(|layers| layers.borrow_mut().clear());
 }
 
@@ -962,7 +1132,7 @@ mod tests {
             }
             .boxed(),
         );
-        super::ENTRIES.with(|entries| entries.borrow_mut().push(entry));
+        super::with_entries_mut(|entries| entries.push(entry));
 
         let host = super::RawModalHost {
             child: CapturingModalElement {
@@ -1046,17 +1216,21 @@ mod tests {
             .exit_curve(Curve::Linear);
         let start = AnimInstant::now();
         let mut timeline = ModalTimeline::new(true);
+        assert!(timeline.is_active());
 
         timeline.tick(start, Some(animation));
         timeline.tick(start + Duration::from_millis(50), Some(animation));
         assert!((timeline.progress() - 0.5).abs() < 0.01);
+        assert!(timeline.is_active());
 
         timeline.begin_exit(true);
+        assert!(timeline.is_active());
         timeline.tick(start + Duration::from_millis(50), Some(animation));
         assert!((timeline.progress() - 0.5).abs() < 0.01);
 
         timeline.tick(start + Duration::from_millis(100), Some(animation));
         assert!((timeline.progress() - 0.25).abs() < 0.01);
+        assert!(timeline.is_active());
     }
 
     #[test]
@@ -1069,10 +1243,12 @@ mod tests {
 
         timeline.tick(now, Some(animation));
         assert_eq!(timeline.progress(), 1.0);
+        assert!(!timeline.is_active());
 
         timeline.begin_exit(true);
         timeline.tick(now, Some(animation));
         assert_eq!(timeline.progress(), 0.0);
         assert!(timeline.finished());
+        assert!(!timeline.is_active());
     }
 }

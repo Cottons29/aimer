@@ -131,6 +131,7 @@ pub mod render_ctx {
             let build = PhaseTimer::start();
             canvas.begin_frame();
             let (scale, damage) = draw_fn(canvas, width, height);
+            let render_plan = canvas.take_retained_render_plan();
             let damage = if damage.target_size() == (width, height) {
                 damage
             } else {
@@ -146,7 +147,12 @@ pub mod render_ctx {
                 damage,
             );
             build.finish(FramePhase::Build);
-            Some(FramePacket::new(frame, metadata))
+            Some(FramePacket::with_render_plan(
+                frame,
+                metadata,
+                None,
+                render_plan,
+            ))
         }
 
         pub fn present(&mut self, frame: Frame) -> PresentOutcome {
@@ -162,15 +168,14 @@ pub mod render_ctx {
         }
 
         pub fn present_packet(&mut self, packet: FramePacket) -> PresentOutcome {
-            let frame = packet.into_frame();
-            let presented = self.present_inner(&frame);
+            let presented = self.present_inner(&packet);
             if let Some(canvas) = &self.canvas {
-                canvas.recycle_draw_list(frame.into_draw_list());
+                canvas.recycle_draw_list(packet.into_frame().into_draw_list());
             }
             PresentOutcome::from_presented(presented)
         }
 
-        fn present_inner(&mut self, frame: &Frame) -> bool {
+        fn present_inner(&mut self, packet: &FramePacket) -> bool {
             let (Some(backend), Some(surface), Some(renderer)) = (
                 self.backend.as_ref(),
                 self.surface.as_mut(),
@@ -178,6 +183,7 @@ pub mod render_ctx {
             ) else {
                 return false;
             };
+            let frame = packet.frame();
             let is_srgb = surface.is_srgb();
             let drawable = match surface.try_acquire() {
                 Ok(Some(drawable)) => drawable,
@@ -189,7 +195,18 @@ pub mod render_ctx {
                 return false;
             }
             let encode = PhaseTimer::start();
-            renderer.render(backend, drawable.view(), width, height, is_srgb, &frame.draw_list);
+            if (width, height) == (frame.width, frame.height) {
+                renderer.render_packet(backend, drawable.view(), packet, is_srgb);
+            } else {
+                renderer.render_packet_at_size(
+                    backend,
+                    drawable.view(),
+                    packet,
+                    width,
+                    height,
+                    is_srgb,
+                );
+            }
             encode.finish(FramePhase::Encode);
             let present = PhaseTimer::start();
             let success = drawable.present().is_ok();

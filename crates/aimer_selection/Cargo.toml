@@ -10,6 +10,8 @@ path = "src/lib.rs"
 
 [dependencies]
 aimer_attribute.workspace = true
+aimer_canvas.workspace = true
+aimer_cupid.workspace = true
 aimer_container.workspace = true
 aimer_events.workspace = true
 aimer_flex.workspace = true
@@ -21,5 +23,4 @@ aimer_text.workspace = true
 aimer_widget.workspace = true
 
 [dev-dependencies]
-aimer_canvas.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }

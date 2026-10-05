@@ -137,3 +137,8 @@ web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "
 
 [dev-dependencies]
 aimer_macro.workspace = true
+aimer_container.workspace = true
+aimer_flex.workspace = true
+aimer_scroll.workspace = true
+aimer_input.workspace = true
+aimer_ctxmenu.workspace = true

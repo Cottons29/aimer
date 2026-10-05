@@ -1720,9 +1720,11 @@ fn configure_color_attachment(
             attachment.setLoadAction(MTLLoadAction::Clear);
         }
     }
-    attachment.setStoreAction(match source.ops.store {
-        StoreOp::Store => MTLStoreAction::Store,
-        StoreOp::Discard => MTLStoreAction::DontCare,
+    attachment.setStoreAction(match (source.resolve_target.is_some(), source.ops.store) {
+        (true, StoreOp::Store) => MTLStoreAction::StoreAndMultisampleResolve,
+        (true, StoreOp::Discard) => MTLStoreAction::MultisampleResolve,
+        (false, StoreOp::Store) => MTLStoreAction::Store,
+        (false, StoreOp::Discard) => MTLStoreAction::DontCare,
     });
 }
 
@@ -1854,6 +1856,9 @@ mod tests {
         RenderPassColorAttachment, RenderPassDescriptor, TextureAspect,
         TexelCopyBufferLayout, VertexAttribute, VertexState,
     };
+    use crate::damage_region::DamageSet;
+    use crate::draw_cmd_v2::{DrawCommand as V2DrawCommand, RenderFrame, RenderTree};
+    use crate::frame::{Frame, FramePacket, FrameRenderMetadata};
     use crate::rect_pipeline::RectInstance;
     use crate::draw_cmd::DrawList;
     use crate::renderer::RendererImpl;
@@ -1936,6 +1941,38 @@ mod tests {
             data[offset + 2],
             data[offset + 3],
         ]
+    }
+
+    fn pixel_with_stride(data: &[u8], row_bytes: u32, x: u32, y: u32) -> [u8; 4] {
+        let offset = (y as usize * row_bytes as usize) + (x as usize * 4);
+        [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]
+    }
+
+    fn assert_pixel_near(data: &[u8], row_bytes: u32, x: u32, y: u32, expected: [u8; 4]) {
+        let actual = pixel_with_stride(data, row_bytes, x, y);
+        for (channel, (actual, expected)) in actual.into_iter().zip(expected).enumerate() {
+            assert!(
+                actual.abs_diff(expected) <= 2,
+                "pixel ({x}, {y}) channel {channel}: expected {expected}, got {actual}"
+            );
+        }
+    }
+
+    fn record_v2_fill(tree: &RenderTree, node: crate::draw_cmd_v2::RenderNodeId, rect: Rect, color: Color) {
+        tree.context(node)
+            .unwrap()
+            .begin_recording()
+            .unwrap()
+            .commit(vec![V2DrawCommand::FillRect {
+                rect,
+                color,
+                border_radius: [0.0; 4],
+                border_width: [0.0; 4],
+                border_color: Color::transparent(),
+                outline_width: [0.0; 4],
+                outline_color: Color::transparent(),
+            }])
+            .unwrap();
     }
 
     /// Construction compiles every built-in pipeline shader for Metal.
@@ -2640,5 +2677,172 @@ mod tests {
         );
         assert_eq!(centre[0], centre[1]);
         assert_eq!(centre[1], centre[2]);
+    }
+
+    #[test]
+    fn cropped_opacity_groups_render_with_msaa_through_native_metal() {
+        let Some(backend) = MetalBackend::new() else {
+            eprintln!("skipping: this host exposes no Metal device");
+            return;
+        };
+
+        const TARGET_SIZE: u32 = 80;
+        let format = <MetalBackend as GpuBackend>::rgba8_unorm_format();
+        let target = backend.create_texture(&TextureDescriptor {
+            label: Some("native Metal cropped opacity target".to_string()),
+            size: (TARGET_SIZE, TARGET_SIZE, 1),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format,
+            usage: vec![TextureUsage::RenderAttachment, TextureUsage::CopySrc],
+        });
+        let view = backend.create_texture_view(&target, "native Metal cropped opacity view");
+        let mut renderer = RendererImpl::<MetalBackend>::with_antialiasing(
+            &backend,
+            format,
+            crate::AntiAlias::Msaa4x,
+        );
+
+        let tree = RenderTree::new();
+        let root = tree
+            .add_root(Rect::new(0.0, 0.0, TARGET_SIZE as f32, TARGET_SIZE as f32))
+            .unwrap();
+        tree.set_clip(
+            root,
+            Some(Rect::new(0.0, 0.0, TARGET_SIZE as f32, TARGET_SIZE as f32)),
+        )
+        .unwrap();
+        tree.set_opacity(root, 0.5).unwrap();
+        let nested = tree
+            .add_child(root, Rect::new(8.0, 8.0, 56.0, 56.0))
+            .unwrap();
+        tree.set_clip(nested, Some(Rect::new(0.0, 0.0, 40.0, 40.0)))
+            .unwrap();
+        tree.set_opacity(nested, 0.5).unwrap();
+        let green = tree
+            .add_child(nested, Rect::new(8.0, 8.0, 32.0, 32.0))
+            .unwrap();
+        let blue = tree
+            .add_child(nested, Rect::new(24.0, 24.0, 40.0, 40.0))
+            .unwrap();
+        let edge_group = tree
+            .add_child(root, Rect::new(48.0, 48.0, 32.0, 32.0))
+            .unwrap();
+        tree.set_clip(edge_group, Some(Rect::new(0.0, 0.0, 32.0, 32.0)))
+            .unwrap();
+        tree.set_opacity(edge_group, 0.5).unwrap();
+        let yellow = tree
+            .add_child(edge_group, Rect::new(0.0, 0.0, 32.0, 32.0))
+            .unwrap();
+        record_v2_fill(
+            &tree,
+            green,
+            Rect::new(0.0, 0.0, 32.0, 32.0),
+            Color::rgba8(0, 255, 0, 255),
+        );
+        record_v2_fill(
+            &tree,
+            blue,
+            Rect::new(0.0, 0.0, 40.0, 40.0),
+            Color::rgba8(0, 0, 255, 255),
+        );
+        record_v2_fill(
+            &tree,
+            yellow,
+            Rect::new(0.0, 0.0, 32.0, 32.0),
+            Color::rgba8(255, 255, 0, 255),
+        );
+
+        let metadata = || {
+            FrameRenderMetadata::new(
+                1.0,
+                301,
+                1,
+                1,
+                1,
+                DamageSet::new(TARGET_SIZE, TARGET_SIZE),
+            )
+        };
+        let first_packet = FramePacket::from_v2_direct(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, TARGET_SIZE as f32, TARGET_SIZE as f32)],
+                operations: tree.render_all(),
+            },
+            metadata(),
+        )
+        .expect("lower native Metal opacity groups");
+        let first_plan = first_packet.render_plan().unwrap();
+        let revisions = [green, blue, yellow].map(|node| {
+            first_plan
+                .local_v2_revision(node)
+                .expect("retained child list")
+        });
+        renderer.render_packet(&backend, &view, &first_packet, false);
+
+        let readback_row_bytes = (TARGET_SIZE * 4).div_ceil(256) * 256;
+        let readback_size = u64::from(readback_row_bytes) * u64::from(TARGET_SIZE);
+        let readback = backend.create_buffer(&BufferDescriptor {
+            label: Some("native Metal cropped opacity readback".to_string()),
+            size: readback_size,
+            usage: vec![BufferUsage::CopyDst, BufferUsage::MapRead],
+        });
+        let read_pixels = || {
+            let mut encoder =
+                backend.create_command_encoder("native Metal cropped opacity readback");
+            backend.copy_texture_to_buffer(
+                &mut encoder,
+                &TexelCopyTextureInfo {
+                    texture: &target,
+                    mip_level: 0,
+                    origin: Origin3d::ZERO,
+                    aspect: TextureAspect::All,
+                },
+                &TexelCopyBufferInfo {
+                    buffer: &readback,
+                    layout: TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(readback_row_bytes),
+                        rows_per_image: Some(TARGET_SIZE),
+                    },
+                },
+                Extent3d {
+                    width: TARGET_SIZE,
+                    height: TARGET_SIZE,
+                    depth_or_array_layers: 1,
+                },
+            );
+            backend.submit(encoder);
+            backend.read_buffer(&readback, readback_size)
+        };
+
+        let first_pixels = read_pixels();
+        assert_pixel_near(&first_pixels, readback_row_bytes, 20, 20, [0, 64, 0, 64]);
+        assert_pixel_near(&first_pixels, readback_row_bytes, 40, 40, [0, 0, 64, 64]);
+        assert_pixel_near(&first_pixels, readback_row_bytes, 70, 70, [64, 64, 0, 64]);
+        let _ = tree.take_damage();
+
+        tree.set_opacity(nested, 0.25).unwrap();
+        let update_packet = FramePacket::from_v2_direct_with_legacy(
+            RenderFrame {
+                damage: tree.take_damage(),
+                operations: tree.render_all(),
+            },
+            metadata(),
+            Frame::new(DrawList::new(), TARGET_SIZE, TARGET_SIZE),
+        )
+        .expect("lower native Metal MSAA opacity update");
+        for (node, revision) in [green, blue, yellow].into_iter().zip(revisions) {
+            assert_eq!(
+                update_packet.render_plan().unwrap().local_v2_revision(node),
+                Some(revision)
+            );
+        }
+        renderer.render_packet(&backend, &view, &update_packet, false);
+        let updated_pixels = read_pixels();
+        assert_pixel_near(&updated_pixels, readback_row_bytes, 20, 20, [0, 32, 0, 32]);
+        assert_pixel_near(&updated_pixels, readback_row_bytes, 40, 40, [0, 0, 32, 32]);
+        assert_pixel_near(&updated_pixels, readback_row_bytes, 70, 70, [64, 64, 0, 64]);
+        assert_eq!(pixel_with_stride(&updated_pixels, readback_row_bytes, 2, 2), [0, 0, 0, 0]);
     }
 }

@@ -1,12 +1,14 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
 use aimer_animation::{AnimInstant, AnimationController, Curve};
+use aimer_canvas::Canvas;
+use aimer_cupid::draw_cmd_v2::Rect;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
-    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
-    VisitorElement, Widget,
+    AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable, State,
+    StateUpdater, StatefulElement, StatefulWidget, VisitorElement, Widget,
 };
 
 /// The local logical rectangle occupied by a caret.
@@ -34,6 +36,7 @@ struct CaretSnapshot {
     focused: bool,
     available: bool,
     composing: bool,
+    visible: bool,
 }
 
 /// Read-only state supplied to a custom text-field caret widget.
@@ -47,6 +50,7 @@ struct CaretSnapshot {
 pub struct CaretContext {
     snapshot: Rc<Cell<CaretSnapshot>>,
     blink: CaretBlink,
+    repaint: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
 }
 
 impl CaretContext {
@@ -55,6 +59,7 @@ impl CaretContext {
         Self {
             snapshot: Rc::new(Cell::new(CaretSnapshot::default())),
             blink,
+            repaint: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -90,10 +95,7 @@ impl CaretContext {
     /// timeline.
     #[inline]
     pub fn is_visible(&self) -> bool {
-        let snapshot = self.snapshot.get();
-        snapshot.focused
-            && snapshot.available
-            && (snapshot.composing || self.blink.is_visible())
+        self.snapshot.get().visible
     }
 
     /// Returns whether the input method is currently replacing the caret with
@@ -109,6 +111,16 @@ impl CaretContext {
         &self.blink
     }
 
+    pub(crate) fn set_repaint_callback(&self, callback: Rc<dyn Fn()>) {
+        *self.repaint.borrow_mut() = Some(callback);
+    }
+
+    pub(crate) fn request_repaint(&self) {
+        if let Some(callback) = self.repaint.borrow().as_ref() {
+            callback();
+        }
+    }
+
     #[inline]
     pub(crate) fn publish(
         &self,
@@ -118,13 +130,22 @@ impl CaretContext {
         available: bool,
         composing: bool,
     ) {
+        let previous = self.snapshot.get();
+        let visible = focused && available && (composing || self.blink.is_visible());
         self.snapshot.set(CaretSnapshot {
             geometry,
             offset,
             focused,
             available,
             composing,
+            visible,
         });
+        if previous.visible != visible
+            || previous.geometry.width != geometry.width
+            || previous.geometry.height != geometry.height
+        {
+            self.request_repaint();
+        }
     }
 }
 
@@ -187,16 +208,98 @@ impl DefaultCaret {
 impl aimer_widget::PortableWidget for DefaultCaret {}
 
 impl Widget for DefaultCaret {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        DefaultCaretWidget {
+            context: self.context,
+            color: self.color,
+        }
+        .to_element(ctx)
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "DefaultCaret"
+    }
+}
+
+struct DefaultCaretWidget {
+    context: CaretContext,
+    color: Rc<Cell<Color>>,
+}
+
+impl aimer_widget::PortableWidget for DefaultCaretWidget {}
+
+impl Widget for DefaultCaretWidget {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        StatefulElement::new_with_name(self, ctx, "DefaultCaret", None)
+            .0
+            .boxed()
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "DefaultCaret"
+    }
+}
+
+struct DefaultCaretState {
+    context: CaretContext,
+    color: Rc<Cell<Color>>,
+    updater: StateUpdater<Self>,
+    revision: u64,
+}
+
+impl StatefulWidget for DefaultCaretWidget {
+    type State = DefaultCaretState;
+
+    fn create_state(self) -> Self::State {
+        DefaultCaretState {
+            context: self.context,
+            color: self.color,
+            updater: StateUpdater::empty(),
+            revision: 0,
+        }
+    }
+}
+
+impl State<DefaultCaretWidget> for DefaultCaretState {
+    fn init_state(&mut self, updater: StateUpdater<Self>) {
+        self.updater = updater;
+        let updater = self.updater;
+        self.context
+            .set_repaint_callback(Rc::new(move || {
+                updater.set_state(|state| {
+                    state.revision = state.revision.wrapping_add(1);
+                });
+            }));
+    }
+
+    fn adopt_config_from(&mut self, new: Self) {
+        self.context = new.context;
+        self.color = new.color;
+    }
+
+    fn build(&self, _ctx: &BuildContext) -> impl Widget {
+        let _revision = self.revision;
+        DefaultCaretPaint {
+            context: self.context.clone(),
+            color: Rc::clone(&self.color),
+        }
+    }
+}
+
+struct DefaultCaretPaint {
+    context: CaretContext,
+    color: Rc<Cell<Color>>,
+}
+
+impl aimer_widget::PortableWidget for DefaultCaretPaint {}
+
+impl Widget for DefaultCaretPaint {
     fn to_element(self, _ctx: &BuildContext) -> AnyElement {
         DefaultCaretElement {
             context: self.context,
             color: self.color,
         }
         .boxed()
-    }
-
-    fn debug_name(&self) -> &'static str {
-        "DefaultCaret"
     }
 }
 
@@ -217,6 +320,32 @@ impl Drawable for DefaultCaretElement {
             self.color.get(),
             [0.0; 4],
         );
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite()
+            && ctx.scale > 0.0
+            && ctx.parent_size.width.is_finite()
+            && ctx.parent_size.height.is_finite()
+            && ctx.parent_size.width >= 0.0
+            && ctx.parent_size.height >= 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = Canvas::of(ctx);
+        if self.context.is_focused() && self.context.is_visible() {
+            let (red, green, blue, alpha) = self.color.get().to_rgba();
+            canvas.fill_rect(
+                Rect::new(
+                    0.0,
+                    0.0,
+                    ctx.parent_size.width / ctx.scale,
+                    ctx.parent_size.height / ctx.scale,
+                ),
+                [red, green, blue, alpha],
+            );
+        }
+        canvas.finish();
     }
 }
 

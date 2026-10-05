@@ -146,6 +146,19 @@ impl<E: Element> Drawable for RawExpanded<E> {
     }
 
     #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    #[inline]
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.child.draw(ctx);
+    }
+
+    #[inline]
     fn paint(&self, ctx: &BuildContext) {
         self.child.paint(ctx);
     }

@@ -565,6 +565,96 @@ impl Drawable for RawColorPicker {
             );
         }
     }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite() && ctx.scale > 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let picker = self.runtime.picker.borrow();
+        let value = picker.draft();
+        paint::record_local_v2(ctx, |painter| {
+            if self.popup {
+                paint::draw_picker_field(
+                    painter,
+                    "Color",
+                    format_rgba(value.to_rgba()),
+                    size.width,
+                    picker.is_open(),
+                    self.runtime.focused.get(),
+                    &self.tokens,
+                );
+                paint::draw_color_picker(
+                    painter,
+                    &picker,
+                    size.width,
+                    size.height,
+                    self.runtime.channel.get(),
+                    &self.tokens,
+                );
+                paint::draw_overlay_border(painter, size.width, size.height, &self.tokens);
+            } else {
+                paint::draw_picker_field(
+                    painter,
+                    "Color",
+                    format_rgba(value.to_rgba()),
+                    size.width,
+                    picker.is_open(),
+                    self.runtime.focused.get(),
+                    &self.tokens,
+                );
+            }
+        });
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let (x, y) = ctx.canvas.get_transform_translation();
+        self.bounds.save(ctx.scale, x, y, size.width, size.height);
+    }
+
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        _child: &dyn Element,
+        child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        if !(self.popup && self.runtime.picker.borrow().is_open()) {
+            return None;
+        }
+        let offset = super::color_slider_offset(child_index, ctx.scale);
+        let mut child_ctx = ctx.clone();
+        child_ctx.parent_pos.x += offset.x;
+        child_ctx.parent_pos.y += offset.y;
+        Some(child_ctx)
+    }
+
+    fn retained_v2_child_geometry_at(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        let child_ctx = self.retained_v2_child_context_at(ctx, child, child_index)?;
+        let offset = super::color_slider_offset(child_index, ctx.scale);
+        let position = child.pos().unwrap_or_default();
+        let size = child
+            .retained_v2_bounds(&child_ctx)
+            .unwrap_or_else(|| child.content_size(&child_ctx));
+        Some((
+            aimer_cupid::draw_cmd_v2::Rect::new(
+                (offset.x + position.x) / ctx.scale,
+                (offset.y + position.y) / ctx.scale,
+                size.width / ctx.scale,
+                size.height / ctx.scale,
+            ),
+            child.retained_clip(&child_ctx),
+        ))
+    }
 }
 
 impl Rebuildable for RawColorPicker {}

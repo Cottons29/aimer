@@ -32,7 +32,10 @@ impl CaretSlot {
         ctx: &BuildContext,
     ) -> AnyElement {
         let custom = builder.is_some();
-        self.builtin_color.set(color.into());
+        let color = color.into();
+        if self.builtin_color.replace(color) != color {
+            context.request_repaint();
+        }
         let mut child = self.child.borrow_mut();
         if self.custom.get() != Some(custom) {
             let widget = builder
@@ -63,58 +66,191 @@ impl CaretSlot {
 pub(crate) struct RawTextFieldHost {
     pub(crate) field: RawTextField,
     pub(crate) caret: AnyElement,
+    caret_placement: Rc<Cell<CaretPlacement>>,
 }
 
 impl RawTextFieldHost {
     #[inline]
     pub(crate) fn new(field: RawTextField, caret: AnyElement) -> Self {
-        Self { field, caret }
+        let caret_placement = Rc::new(Cell::new(CaretPlacement::default()));
+        let caret = RawCaretPlacement {
+            child: caret,
+            placement: Rc::clone(&caret_placement),
+        }
+        .boxed();
+        Self {
+            field,
+            caret,
+            caret_placement,
+        }
+    }
+
+    fn sync_caret_placement(&self, ctx: &BuildContext) {
+        let context = self.field.caret_context();
+        let geometry = context.geometry();
+        let scale = if ctx.scale > 0.0 { ctx.scale } else { 1.0 };
+        let available = context.is_focused() && context.is_available();
+        let placement = if available {
+            CaretPlacement {
+                offset: Vec2d {
+                    x: geometry.x * scale,
+                    y: geometry.y * scale,
+                },
+                size: ResolvedSize {
+                    width: geometry.width * scale,
+                    height: geometry.height * scale,
+                },
+            }
+        } else {
+            CaretPlacement::default()
+        };
+        self.caret_placement.set(placement);
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct CaretPlacement {
+    offset: Vec2d,
+    size: ResolvedSize,
+}
+
+struct RawCaretPlacement {
+    child: AnyElement,
+    placement: Rc<Cell<CaretPlacement>>,
+}
+
+impl VisitorElement for RawCaretPlacement {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "TextFieldCaretPlacement"
+    }
+}
+
+impl EventElement for RawCaretPlacement {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::Transparent
+    }
+}
+
+impl Rebuildable for RawCaretPlacement {
+    fn is_carry_state(&self) -> bool {
+        self.child.is_carry_state()
+    }
+
+    fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
+        self.child.with_rebuild_context(ctx, callback);
+    }
+}
+
+impl LayoutElement for RawCaretPlacement {
+    fn pos(&self) -> Option<Vec2d> {
+        Some(self.placement.get().offset)
+    }
+
+    fn layout(&self, _ctx: &BuildContext) -> ResolvedSize {
+        self.placement.get().size
+    }
+
+    fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+        self.placement.get().size
+    }
+
+    fn content_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+        self.placement.get().size
+    }
+}
+
+impl Drawable for RawCaretPlacement {
+    fn draw(&self, ctx: &BuildContext) {
+        let placement = self.placement.get();
+        let mut caret_ctx = ctx.clone();
+        caret_ctx.parent_size = placement.size;
+        caret_ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: placement.size.width,
+            max_height: placement.size.height,
+        };
+        caret_ctx.visible_rect = ctx.visible_rect.map(|(x, y, width, height)| {
+            (
+                x - placement.offset.x,
+                y - placement.offset.y,
+                width,
+                height,
+            )
+        });
+        ctx.canvas.save();
+        ctx.canvas.translate(placement.offset);
+        self.child.draw(&caret_ctx);
+        ctx.canvas.restore();
+    }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn paint(&self, ctx: &BuildContext) {
+        self.child.paint(ctx);
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        self.child.sync_paint_geometry(ctx);
+    }
+
+    fn is_paint_stable(&self) -> bool {
+        self.child.is_paint_stable()
+    }
+
+    fn is_paint_bounded(&self) -> bool {
+        self.child.is_paint_bounded()
     }
 }
 
 impl Drawable for RawTextFieldHost {
     fn draw(&self, ctx: &BuildContext) {
         self.field.draw(ctx);
+        self.sync_caret_placement(ctx);
+        self.caret.draw(ctx);
+    }
 
-        let context = self.field.caret_context();
-        if !context.is_focused() || !context.is_available() {
-            return;
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        if !self.field.sync_local_v2_state(ctx) {
+            return false;
         }
+        self.sync_caret_placement(ctx);
+        true
+    }
 
-        let geometry = context.geometry();
-        let scale = if ctx.scale > 0.0 { ctx.scale } else { 1.0 };
-        let offset = Vec2d {
-            x: geometry.x * scale,
-            y: geometry.y * scale,
-        };
-        let size = ResolvedSize {
-            width: geometry.width * scale,
-            height: geometry.height * scale,
-        };
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        self.field.draw_local_v2_compatibility(ctx);
+        self.sync_caret_placement(ctx);
+        self.caret.draw(ctx);
+    }
 
-        ctx.canvas.save();
-        ctx.canvas.translate(offset);
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        self.field.retained_v2_paint_outsets(ctx)
+    }
 
-        let mut caret_ctx = ctx.clone();
-        caret_ctx.parent_size = size;
-        caret_ctx.box_constraint = aimer_attribute::BoxConstraint {
-            min_width: 0.0,
-            min_height: 0.0,
-            max_width: size.width,
-            max_height: size.height,
-        };
-        caret_ctx.visible_rect = ctx.visible_rect.map(|(x, y, width, height)| {
-            (x - offset.x, y - offset.y, width, height)
-        });
-        self.caret.draw(&caret_ctx);
+    fn local_v2_paint_needs_recording(&self, ctx: &BuildContext) -> bool {
+        self.field.local_v2_paint_needs_recording(ctx)
+    }
 
-        ctx.canvas.restore();
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.field.can_paint_local_v2(ctx)
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        self.field.paint_local_v2(ctx);
     }
 }
 
 impl VisitorElement for RawTextFieldHost {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(&self.field);
         visitor(&self.caret);
     }
 
@@ -124,21 +260,26 @@ impl VisitorElement for RawTextFieldHost {
 }
 
 impl EventElement for RawTextFieldHost {
+    fn on_event(&self, event: &ElementEvent) -> EventResult {
+        self.field.on_event(event)
+    }
+
     fn on_event_with_context(
         &self,
         event: &ElementEvent,
-        context: &mut EventDispatchContext<'_, '_>,
+        _context: &mut EventDispatchContext<'_, '_>,
     ) -> EventResult {
-        // `field` is embedded rather than erased because the host retains the
-        // caret as a sibling. The dispatcher captures this host, so continue
-        // captured pointer events through the same routed context to reach the
-        // embedded editing element.
-        let pos = event.get_pointer_pos().unwrap_or_default();
-        context.dispatch_child(&self.field, pos, event)
+        // `field` is embedded and therefore has no retained ElementId. The
+        // host is the indexed event target and owns pointer capture for its
+        // editing logic, so forward directly instead of indexing it as a
+        // separate child target.
+        self.field.on_event(event)
     }
 
-    fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
-        visitor(&self.field);
+    fn event_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {
+        // The field is embedded and has no retained ElementId of its own.
+        // Its callbacks are forwarded directly by this host, so it must not be
+        // registered as a separate indexed event target.
     }
 
     fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -172,7 +313,21 @@ impl LayoutElement for RawTextFieldHost {
     }
 }
 
-impl Rebuildable for RawTextFieldHost {}
+impl Rebuildable for RawTextFieldHost {
+    fn is_carry_state(&self) -> bool {
+        true
+    }
+
+    fn adopt_runtime_state_from(&self, old: &dyn Element) {
+        let Some(old) = old
+            .option_any()
+            .and_then(|value| value.downcast_ref::<Self>())
+        else {
+            return;
+        };
+        self.field.adopt_runtime_state_from(&old.field);
+    }
+}
 
 #[cfg(test)]
 mod tests {

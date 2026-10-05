@@ -1,0 +1,1912 @@
+//! Bridge the retained v2 render plan into the existing frame packet path.
+
+use std::collections::HashMap;
+
+use crate::damage_region::{DamageRect, DamageSet};
+use crate::draw_cmd::{DrawCommand as LegacyDrawCommand, DrawList as LegacyDrawList};
+use crate::draw_cmd_v2::{
+    DrawCommand as V2DrawCommand, Rect, RenderFrame, RenderItem, RenderOp, RenderPaintSource,
+};
+use crate::font::TextLanguage;
+use crate::frame::{
+    Frame, FramePacket, FrameRenderMetadata, RetainedRenderPlan, RetainedV2Item,
+};
+use crate::utilities::Mat3;
+
+/// Failures while lowering a retained v2 render frame to the legacy renderer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum V2FrameAdapterError {
+    /// Device scale must be finite and greater than zero.
+    InvalidDeviceScale,
+    /// A logical damage rectangle had invalid coordinates or extents.
+    InvalidDamage { index: usize },
+    /// A render item carried invalid bounds, origin, or clip geometry.
+    InvalidRenderItemGeometry { element: u64 },
+    /// A full repaint was requested without a full-target v2 damage rectangle.
+    FullRepaintRequiresCompleteV2Frame,
+    /// The flattened compatibility adapter cannot composite opacity groups.
+    OpacityGroupUnsupported { element: u64 },
+    /// The flattened compatibility adapter cannot represent element opacity.
+    ElementOpacityUnsupported { element: u64 },
+    /// A node's opacity is outside the normalized range.
+    InvalidOpacity { element: u64 },
+    /// Opacity group begin/end operations are unbalanced or mismatched.
+    UnbalancedOpacityGroup { element: u64 },
+    /// A legacy island needs the accompanying frame-wide legacy command list.
+    LegacyIslandRequiresLegacyFrame { element: u64 },
+    /// The legacy command range for an island is missing from its render item.
+    LegacyCommandRangeMissing { element: u64 },
+    /// A legacy command range is outside the accompanying frame's command list.
+    LegacyCommandRangeOutOfBounds {
+        element: u64,
+        start: usize,
+        end: usize,
+        command_count: usize,
+    },
+    /// Legacy command ranges overlap or appear out of their recorded paint order.
+    LegacyCommandRangeOrder { element: u64, previous_end: usize, start: usize },
+    /// A legacy island left a transform, clip, or alpha scope open at its boundary.
+    UnbalancedLegacyCommandRange { element: u64 },
+    /// The legacy frame and render metadata describe different surface sizes.
+    LegacyFrameTargetMismatch {
+        frame_width: u32,
+        frame_height: u32,
+        target_width: u32,
+        target_height: u32,
+    },
+}
+
+impl FramePacket {
+    /// Lowers one retained v2 frame into the existing renderer's frame packet.
+    ///
+    /// This adapter preserves parent-first paint order, element-local transforms,
+    /// clips, and damage. It replaces the metadata damage with damage mapped from
+    /// `render_frame`; if the resulting damage requires a full repaint, the v2
+    /// frame must include a full-target damage rectangle and the complete paint
+    /// plan. Opacity groups require the direct retained-plan API.
+    pub fn from_v2(
+        render_frame: RenderFrame,
+        metadata: FrameRenderMetadata,
+    ) -> Result<Self, V2FrameAdapterError> {
+        Self::from_v2_inner(render_frame, metadata, None, false)
+    }
+
+    /// Builds a complete retained v2 packet without lowering its local lists
+    /// into a frame-wide command buffer. Opacity groups and leaf opacity are
+    /// preserved for offscreen rendering by the GPU compositor.
+    #[doc(hidden)]
+    pub fn from_v2_direct(
+        render_frame: RenderFrame,
+        metadata: FrameRenderMetadata,
+    ) -> Result<Self, V2FrameAdapterError> {
+        let (width, height) = metadata.damage().target_size();
+        let mut legacy_frame = Frame::new(LegacyDrawList::new(), width, height);
+        let (plan, damage) =
+            Self::prepare_v2_direct_render_plan(&render_frame, &metadata, &mut legacy_frame)?;
+        if width != 0 && height != 0 && !damage.is_full() {
+            return Err(V2FrameAdapterError::FullRepaintRequiresCompleteV2Frame);
+        }
+        Ok(FramePacket::with_render_plan(
+            legacy_frame,
+            metadata.with_damage(damage),
+            None,
+            Some(plan),
+        ))
+    }
+
+    /// Lowers a mixed v2 render tree using command ranges from its matching
+    /// legacy frame for nodes classified as legacy islands.
+    ///
+    /// Each island range is replayed in render-tree order. Its incoming canvas
+    /// transform, clip stack, alpha, italic state, and language state are
+    /// reconstructed from the legacy frame prefix so ranges remain isolated
+    /// while preserving ancestor translations such as scrolling.
+    pub fn from_v2_with_legacy(
+        render_frame: RenderFrame,
+        metadata: FrameRenderMetadata,
+        legacy_frame: Frame,
+    ) -> Result<Self, V2FrameAdapterError> {
+        Self::from_v2_inner(render_frame, metadata, Some(legacy_frame), false)
+    }
+
+    /// Lowers a complete retained tree and its current legacy islands.
+    ///
+    /// The packet keeps the compatibility draw list and an ordered set of
+    /// command ranges for each retained node. Backends can replay only the
+    /// ranges intersecting a damage rectangle, and can use the complete plan
+    /// when their persistent target needs a full repaint.
+    #[doc(hidden)]
+    pub fn from_v2_complete_with_legacy(
+        render_frame: RenderFrame,
+        metadata: FrameRenderMetadata,
+        legacy_frame: Frame,
+    ) -> Result<Self, V2FrameAdapterError> {
+        Self::from_v2_inner(render_frame, metadata, Some(legacy_frame), true)
+    }
+
+    /// Builds a complete retained packet without flattening local v2 lists into
+    /// the frame-wide compatibility command buffer.
+    ///
+    /// Legacy islands keep ranges into `legacy_frame` and carry the canvas state
+    /// needed to replay each range independently. `render_frame` must contain
+    /// the complete visible tree so the renderer can recover a newly allocated
+    /// or invalid persistent target from any packet.
+    #[doc(hidden)]
+    pub fn from_v2_direct_with_legacy(
+        render_frame: RenderFrame,
+        metadata: FrameRenderMetadata,
+        legacy_frame: Frame,
+    ) -> Result<Self, V2FrameAdapterError> {
+        let mut legacy_frame = legacy_frame;
+        let (plan, damage) =
+            Self::prepare_v2_direct_render_plan(&render_frame, &metadata, &mut legacy_frame)?;
+        Ok(FramePacket::with_render_plan(
+            legacy_frame,
+            metadata.with_damage(damage),
+            None,
+            Some(plan),
+        ))
+    }
+
+    /// Validates this frame's damage-culled retained operations and snapshots
+    /// them into a render plan while preserving the legacy frame's command
+    /// buffer for direct ranges.
+    /// Balanced opacity groups and leaf opacity are represented as ordered
+    /// retained operations; the renderer isolates each group in a GPU target.
+    #[doc(hidden)]
+    pub fn prepare_v2_direct_render_plan(
+        render_frame: &RenderFrame,
+        metadata: &FrameRenderMetadata,
+        legacy_frame: &mut Frame,
+    ) -> Result<(RetainedRenderPlan, DamageSet), V2FrameAdapterError> {
+        let validated = validate_frame_input(render_frame, metadata, Some(legacy_frame), true)?;
+        let scale = metadata.device_scale();
+        let (width, height) = metadata.damage().target_size();
+        let mut operations = Vec::with_capacity(render_frame.operations.len());
+        let mut direct_texture_ids = Vec::new();
+        let mut opacity_groups = Vec::new();
+
+        for (operation_index, operation) in render_frame.operations.iter().enumerate() {
+            match operation {
+                RenderOp::Draw(item) if item.paint_source == RenderPaintSource::LegacyIsland => {
+                    let Some(bounds) = item_device_bounds(item, scale, width, height) else {
+                        continue;
+                    };
+                    let element = item.element.get();
+                    let (start, end) = item
+                        .legacy_command_range
+                        .ok_or(V2FrameAdapterError::LegacyCommandRangeMissing { element })?;
+                    if start == end {
+                        continue;
+                    }
+                    let state = validated
+                        .legacy_states
+                        .get(&start)
+                        .expect("validated legacy ranges have an incoming canvas state");
+                    let (prefix, suffix) = legacy_replay_scope(item, state, scale)?;
+                    if item.opacity < 1.0 {
+                        operations.push(RetainedRenderPlan::opacity_group_begin_operation(
+                            item.element.get(),
+                            item.opacity,
+                            bounds,
+                        ));
+                    }
+                    operations.push(RetainedRenderPlan::legacy_range_operation(
+                        start..end,
+                        prefix,
+                        suffix,
+                        bounds,
+                    ));
+                    if item.opacity < 1.0 {
+                        operations.push(RetainedRenderPlan::opacity_group_end_operation(
+                            item.element.get(),
+                            bounds,
+                        ));
+                    }
+                }
+                RenderOp::Draw(item) => {
+                    let Some(bounds) = item_device_bounds(item, scale, width, height) else {
+                        continue;
+                    };
+                    let snapshot = item.snapshot();
+                    if snapshot.commands.is_empty() {
+                        continue;
+                    }
+                    if item.opacity < 1.0 {
+                        operations.push(RetainedRenderPlan::opacity_group_begin_operation(
+                            item.element.get(),
+                            item.opacity,
+                            bounds,
+                        ));
+                    }
+                    direct_texture_ids.extend(snapshot.commands.iter().filter_map(|command| {
+                        match command {
+                            V2DrawCommand::DrawImage { texture_id, .. } => Some(*texture_id),
+                            V2DrawCommand::DrawImageWithResource { resource, .. } => {
+                                Some(resource.texture_id())
+                            }
+                            _ => None,
+                        }
+                    }));
+                    operations.push(RetainedRenderPlan::local_v2_operation(
+                        RetainedV2Item {
+                            element: item.element,
+                            revision: snapshot.revision,
+                            bounds: item.bounds,
+                            origin: item.origin,
+                            transform: item.transform,
+                            clip: item.clip,
+                            commands: snapshot.commands,
+                        },
+                        bounds,
+                    ));
+                    if item.opacity < 1.0 {
+                        operations.push(RetainedRenderPlan::opacity_group_end_operation(
+                            item.element.get(),
+                            bounds,
+                        ));
+                    }
+                }
+                RenderOp::BeginOpacityGroup {
+                    element,
+                    bounds,
+                    opacity,
+                    ..
+                } => {
+                    let device_bounds = logical_damage_to_device(
+                        *bounds,
+                        scale,
+                        width,
+                        height,
+                        operation_index,
+                    )?
+                    .unwrap_or(DamageRect::new(0, 0, 0, 0));
+                    opacity_groups.push((element.get(), device_bounds));
+                    operations.push(RetainedRenderPlan::opacity_group_begin_operation(
+                        element.get(),
+                        *opacity,
+                        device_bounds,
+                    ));
+                }
+                RenderOp::EndOpacityGroup { element } => {
+                    let Some((group, bounds)) = opacity_groups.pop() else {
+                        return Err(V2FrameAdapterError::UnbalancedOpacityGroup {
+                            element: element.get(),
+                        });
+                    };
+                    if group != element.get() {
+                        return Err(V2FrameAdapterError::UnbalancedOpacityGroup {
+                            element: element.get(),
+                        });
+                    }
+                    operations.push(RetainedRenderPlan::opacity_group_end_operation(
+                        element.get(),
+                        bounds,
+                    ));
+                }
+            }
+        }
+
+        if let Some((element, _)) = opacity_groups.pop() {
+            return Err(V2FrameAdapterError::UnbalancedOpacityGroup { element });
+        }
+
+        legacy_frame
+            .draw_list
+            .sync_composed_texture_references_with_ids(direct_texture_ids);
+        let complete = validated.damage.is_full();
+        Ok((RetainedRenderPlan::new(operations, complete), validated.damage))
+    }
+
+    /// Validates a mixed frame before its legacy command list is consumed.
+    ///
+    /// A caller that wants to preserve the original legacy frame as a fallback
+    /// can validate first, then call [`Self::from_v2_with_legacy`] only when this
+    /// returns `Ok(())`.
+    #[doc(hidden)]
+    pub fn validate_v2_with_legacy(
+        render_frame: &RenderFrame,
+        metadata: &FrameRenderMetadata,
+        legacy_frame: &Frame,
+    ) -> Result<(), V2FrameAdapterError> {
+        validate_frame_input(render_frame, metadata, Some(legacy_frame), false).map(|_| ())
+    }
+
+    fn from_v2_inner(
+        render_frame: RenderFrame,
+        metadata: FrameRenderMetadata,
+        legacy_frame: Option<Frame>,
+        complete: bool,
+    ) -> Result<Self, V2FrameAdapterError> {
+        let validated = validate_frame_input(&render_frame, &metadata, legacy_frame.as_ref(), false)?;
+        let scale = metadata.device_scale();
+        let (width, height) = metadata.damage().target_size();
+        let damage = validated.damage;
+        let legacy_states = validated.legacy_states;
+
+        let mut legacy_commands = None;
+        let mut draw_list = if let Some(legacy_frame) = legacy_frame {
+            let mut draw_list = legacy_frame.draw_list;
+            legacy_commands = Some(draw_list.take_commands_for_composition());
+            draw_list
+        } else {
+            LegacyDrawList::new()
+        };
+
+        let mut legacy_commands = legacy_commands
+            .map(|commands| commands.into_iter().map(Some).collect::<Vec<_>>());
+
+        let mut render_operations = Vec::with_capacity(render_frame.operations.len());
+        for operation in render_frame.operations {
+            match operation {
+                RenderOp::Draw(item) if item.paint_source == RenderPaintSource::LegacyIsland => {
+                    let item_bounds = item_device_bounds(&item, scale, width, height);
+                    let commands = legacy_commands
+                        .as_mut()
+                        .expect("a legacy item has a validated matching command list");
+                    let state = legacy_states
+                        .get(&item.legacy_command_range.expect("validated range").0)
+                        .expect("a validated range has a start state");
+                    let start = draw_list.commands().len();
+                    append_legacy_item(&mut draw_list, item, commands, state, scale)?;
+                    let end = draw_list.commands().len();
+                    if start < end
+                        && let Some(bounds) = item_bounds
+                    {
+                        render_operations.push(RetainedRenderPlan::operation(start..end, bounds));
+                    }
+                }
+                RenderOp::Draw(item) => {
+                    let item_bounds = item_device_bounds(&item, scale, width, height);
+                    let snapshot = item.snapshot();
+                    let retained_item = RetainedV2Item {
+                        element: item.element,
+                        revision: snapshot.revision,
+                        bounds: item.bounds,
+                        origin: item.origin,
+                        transform: item.transform,
+                        clip: item.clip,
+                        commands: snapshot.commands,
+                    };
+                    let start = draw_list.commands().len();
+                    append_item(&mut draw_list, item, scale)?;
+                    let end = draw_list.commands().len();
+                    if start < end
+                        && let Some(bounds) = item_bounds
+                    {
+                        render_operations.push(RetainedRenderPlan::local_v2_operation(
+                            retained_item,
+                            bounds,
+                        ));
+                    }
+                }
+                RenderOp::BeginOpacityGroup { element, .. }
+                | RenderOp::EndOpacityGroup { element } => {
+                    return Err(V2FrameAdapterError::OpacityGroupUnsupported {
+                        element: element.get(),
+                    });
+                }
+            }
+        }
+        draw_list.sync_composed_texture_references();
+        let plan_complete = complete || damage.is_full();
+
+        Ok(FramePacket::with_render_plan(
+            Frame::new(draw_list, width, height),
+            metadata.with_damage(damage),
+            None,
+            Some(RetainedRenderPlan::new(render_operations, plan_complete)),
+        ))
+    }
+}
+
+fn item_device_bounds(
+    item: &RenderItem,
+    scale: f32,
+    target_width: u32,
+    target_height: u32,
+) -> Option<DamageRect> {
+    let mut bounds = item.bounds;
+    if let Some(clip) = item.clip {
+        let left = bounds.x.max(clip.x);
+        let top = bounds.y.max(clip.y);
+        let right = (bounds.x + bounds.width).min(clip.x + clip.width);
+        let bottom = (bounds.y + bounds.height).min(clip.y + clip.height);
+        bounds = Rect::new(left, top, (right - left).max(0.0), (bottom - top).max(0.0));
+    }
+    let scale = f64::from(scale);
+    let left = (f64::from(bounds.x) * scale).floor().clamp(0.0, f64::from(target_width));
+    let top = (f64::from(bounds.y) * scale).floor().clamp(0.0, f64::from(target_height));
+    let right = ((f64::from(bounds.x) + f64::from(bounds.width)) * scale)
+        .ceil()
+        .clamp(0.0, f64::from(target_width));
+    let bottom = ((f64::from(bounds.y) + f64::from(bounds.height)) * scale)
+        .ceil()
+        .clamp(0.0, f64::from(target_height));
+    if right <= left || bottom <= top {
+        return None;
+    }
+    let x = left as u32;
+    let y = top as u32;
+    Some(DamageRect::new(
+        x,
+        y,
+        right as u32 - x,
+        bottom as u32 - y,
+    ))
+}
+
+struct ValidatedFrameInput {
+    damage: DamageSet,
+    legacy_states: HashMap<usize, LegacyCommandState>,
+}
+
+fn validate_frame_input(
+    render_frame: &RenderFrame,
+    metadata: &FrameRenderMetadata,
+    legacy_frame: Option<&Frame>,
+    allow_opacity_groups: bool,
+) -> Result<ValidatedFrameInput, V2FrameAdapterError> {
+    let scale = metadata.device_scale();
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err(V2FrameAdapterError::InvalidDeviceScale);
+    }
+
+    let (width, height) = metadata.damage().target_size();
+    if let Some(legacy_frame) = legacy_frame
+        && (legacy_frame.width, legacy_frame.height) != (width, height)
+    {
+        return Err(V2FrameAdapterError::LegacyFrameTargetMismatch {
+            frame_width: legacy_frame.width,
+            frame_height: legacy_frame.height,
+            target_width: width,
+            target_height: height,
+        });
+    }
+
+    let mut damage = DamageSet::new(width, height);
+    let full_target = DamageRect::new(0, 0, width, height);
+    let mut has_full_target_damage = false;
+    for (index, rect) in render_frame.damage.iter().copied().enumerate() {
+        if let Some(rect) = logical_damage_to_device(rect, scale, width, height, index)? {
+            has_full_target_damage |= rect == full_target;
+            damage.add(rect);
+        }
+    }
+    if (metadata.damage().is_full() || damage.is_full())
+        && width != 0
+        && height != 0
+        && !has_full_target_damage
+    {
+        return Err(V2FrameAdapterError::FullRepaintRequiresCompleteV2Frame);
+    }
+
+    let legacy_states = if let Some(legacy_frame) = legacy_frame {
+        capture_legacy_range_states(
+            &render_frame.operations,
+            legacy_frame.draw_list.commands(),
+        )?
+    } else {
+        for operation in &render_frame.operations {
+            if let RenderOp::Draw(item) = operation
+                && item.paint_source == RenderPaintSource::LegacyIsland
+            {
+                return Err(V2FrameAdapterError::LegacyIslandRequiresLegacyFrame {
+                    element: item.element.get(),
+                });
+            }
+        }
+        HashMap::new()
+    };
+
+    let mut opacity_stack = Vec::new();
+    for operation in &render_frame.operations {
+        match operation {
+            RenderOp::BeginOpacityGroup {
+                element,
+                bounds,
+                opacity,
+                clip,
+            } => {
+                if !allow_opacity_groups {
+                    return Err(V2FrameAdapterError::OpacityGroupUnsupported {
+                        element: element.get(),
+                    });
+                }
+                if !valid_rect(*bounds) || clip.is_some_and(|clip| !valid_rect(clip)) {
+                    return Err(V2FrameAdapterError::InvalidRenderItemGeometry {
+                        element: element.get(),
+                    });
+                }
+                if !opacity.is_finite() || !(0.0..=1.0).contains(opacity) {
+                    return Err(V2FrameAdapterError::InvalidOpacity {
+                        element: element.get(),
+                    });
+                }
+                opacity_stack.push(element.get());
+            }
+            RenderOp::EndOpacityGroup { element } => {
+                if !allow_opacity_groups {
+                    return Err(V2FrameAdapterError::OpacityGroupUnsupported {
+                        element: element.get(),
+                    });
+                }
+                if opacity_stack.pop() != Some(element.get()) {
+                    return Err(V2FrameAdapterError::UnbalancedOpacityGroup {
+                        element: element.get(),
+                    });
+                }
+            }
+            RenderOp::Draw(item) => validate_item(item, scale, allow_opacity_groups)?,
+        }
+    }
+    if let Some(element) = opacity_stack.pop() {
+        return Err(V2FrameAdapterError::UnbalancedOpacityGroup { element });
+    }
+
+    Ok(ValidatedFrameInput {
+        damage,
+        legacy_states,
+    })
+}
+
+fn validate_item(
+    item: &RenderItem,
+    scale: f32,
+    allow_opacity_groups: bool,
+) -> Result<(), V2FrameAdapterError> {
+    let element = item.element.get();
+    if !valid_rect(item.bounds)
+        || !item.origin.0.is_finite()
+        || !item.origin.1.is_finite()
+        || !valid_transform(item.transform)
+        || item.clip.is_some_and(|clip| !valid_rect(clip))
+    {
+        return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
+    }
+    if !item.opacity.is_finite() || !(0.0..=1.0).contains(&item.opacity) {
+        return Err(V2FrameAdapterError::InvalidOpacity { element });
+    }
+    if item.opacity != 1.0 && !allow_opacity_groups {
+        return Err(V2FrameAdapterError::ElementOpacityUnsupported { element });
+    }
+    if item.paint_source == RenderPaintSource::LegacyIsland {
+        if let Some(clip) = item.clip
+            && !valid_rect(Rect::new(
+                clip.x * scale,
+                clip.y * scale,
+                clip.width * scale,
+                clip.height * scale,
+            ))
+        {
+            return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
+        }
+    } else if let Some(clip) = item.clip {
+        let local_clip = Rect::new(
+            clip.x - item.origin.0,
+            clip.y - item.origin.1,
+            clip.width,
+            clip.height,
+        );
+        if !valid_rect(local_clip) {
+            return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct LegacyClipState {
+    rect: Rect,
+    border_radius: [f32; 4],
+}
+
+#[derive(Clone)]
+struct LegacyCommandState {
+    transform: Mat3,
+    transform_stack: Vec<Mat3>,
+    clips: Vec<LegacyClipState>,
+    alpha: f32,
+    alpha_stack: Vec<f32>,
+    italic: bool,
+    language: Option<TextLanguage>,
+}
+
+impl Default for LegacyCommandState {
+    fn default() -> Self {
+        Self {
+            transform: Mat3::identity(),
+            transform_stack: Vec::new(),
+            clips: Vec::new(),
+            alpha: 1.0,
+            alpha_stack: Vec::new(),
+            italic: false,
+            language: None,
+        }
+    }
+}
+
+fn capture_legacy_range_states(
+    operations: &[RenderOp],
+    commands: &[LegacyDrawCommand],
+) -> Result<HashMap<usize, LegacyCommandState>, V2FrameAdapterError> {
+    let mut requested_indices = Vec::new();
+    let mut previous_end = 0;
+    for operation in operations {
+        let RenderOp::Draw(item) = operation else {
+            continue;
+        };
+        if item.paint_source != RenderPaintSource::LegacyIsland {
+            continue;
+        }
+        let element = item.element.get();
+        let (start, end) = item
+            .legacy_command_range
+            .ok_or(V2FrameAdapterError::LegacyCommandRangeMissing { element })?;
+        if end < start || end > commands.len() {
+            return Err(V2FrameAdapterError::LegacyCommandRangeOutOfBounds {
+                element,
+                start,
+                end,
+                command_count: commands.len(),
+            });
+        }
+        if start < previous_end {
+            return Err(V2FrameAdapterError::LegacyCommandRangeOrder {
+                element,
+                previous_end,
+                start,
+            });
+        }
+        previous_end = end;
+        requested_indices.push(start);
+        requested_indices.push(end);
+    }
+
+    requested_indices.sort_unstable();
+    requested_indices.dedup();
+    let mut states = HashMap::with_capacity(requested_indices.len());
+    let mut next_requested = 0;
+    let mut state = LegacyCommandState::default();
+    for index in 0..=commands.len() {
+        while requested_indices.get(next_requested) == Some(&index) {
+            states.insert(index, state.clone());
+            next_requested += 1;
+        }
+        let Some(command) = commands.get(index) else {
+            break;
+        };
+        update_legacy_command_state(&mut state, command);
+    }
+
+    for operation in operations {
+        let RenderOp::Draw(item) = operation else {
+            continue;
+        };
+        if item.paint_source != RenderPaintSource::LegacyIsland {
+            continue;
+        }
+        let (start, end) = item
+            .legacy_command_range
+            .expect("legacy ranges were validated above");
+        let start_state = states
+            .get(&start)
+            .expect("the command-state scanner captured range starts");
+        let end_state = states
+            .get(&end)
+            .expect("the command-state scanner captured range ends");
+        if start_state.transform_stack != end_state.transform_stack
+            || start_state.clips != end_state.clips
+            || start_state.alpha_stack != end_state.alpha_stack
+        {
+            return Err(V2FrameAdapterError::UnbalancedLegacyCommandRange {
+                element: item.element.get(),
+            });
+        }
+    }
+
+    Ok(states)
+}
+
+fn update_legacy_command_state(state: &mut LegacyCommandState, command: &LegacyDrawCommand) {
+    match command {
+        LegacyDrawCommand::PushTransform { matrix } => {
+            state.transform_stack.push(state.transform);
+            state.alpha_stack.push(state.alpha);
+            state.transform = matrix.pixel_aligned();
+        }
+        LegacyDrawCommand::PopTransform => {
+            if let Some(transform) = state.transform_stack.pop() {
+                state.transform = transform;
+            }
+            state.alpha = state.alpha_stack.pop().unwrap_or(1.0);
+        }
+        LegacyDrawCommand::PushClip { rect, border_radius } => {
+            let (x1, y1) = state.transform.transform_point(rect.x, rect.y);
+            let (x2, y2) = state
+                .transform
+                .transform_point(rect.x + rect.width, rect.y + rect.height);
+            let next = Rect::new(
+                x1.min(x2),
+                y1.min(y2),
+                (x2 - x1).abs(),
+                (y2 - y1).abs(),
+            );
+            let rect = state.clips.last().map_or(next, |parent| {
+                intersect_rect(parent.rect, next)
+            });
+            let scale_x = (state.transform.cols[0][0].powi(2)
+                + state.transform.cols[0][1].powi(2))
+            .sqrt();
+            let mut border_radius = *border_radius;
+            for radius in &mut border_radius {
+                *radius *= scale_x;
+            }
+            state.clips.push(LegacyClipState { rect, border_radius });
+        }
+        LegacyDrawCommand::PopClip => {
+            state.clips.pop();
+        }
+        LegacyDrawCommand::SetTransform { matrix } => {
+            state.transform = matrix.pixel_aligned();
+        }
+        LegacyDrawCommand::SetAlpha { alpha } => state.alpha = alpha.clamp(0.0, 1.0),
+        LegacyDrawCommand::RestoreAlpha => state.alpha = 1.0,
+        LegacyDrawCommand::SetItalic { italic } => state.italic = *italic,
+        LegacyDrawCommand::SetTextLanguage { language } => state.language = *language,
+        _ => {}
+    }
+}
+
+fn intersect_rect(parent: Rect, next: Rect) -> Rect {
+    let left = next.x.max(parent.x);
+    let top = next.y.max(parent.y);
+    let right = (next.x + next.width).min(parent.x + parent.width);
+    let bottom = (next.y + next.height).min(parent.y + parent.height);
+    Rect::new(left, top, (right - left).max(0.0), (bottom - top).max(0.0))
+}
+
+fn logical_damage_to_device(
+    rect: Rect,
+    scale: f32,
+    target_width: u32,
+    target_height: u32,
+    index: usize,
+) -> Result<Option<DamageRect>, V2FrameAdapterError> {
+    if !rect.x.is_finite()
+        || !rect.y.is_finite()
+        || !rect.width.is_finite()
+        || !rect.height.is_finite()
+        || rect.width < 0.0
+        || rect.height < 0.0
+    {
+        return Err(V2FrameAdapterError::InvalidDamage { index });
+    }
+    if rect.width == 0.0 || rect.height == 0.0 || target_width == 0 || target_height == 0 {
+        return Ok(None);
+    }
+
+    let scale = f64::from(scale);
+    let target_right = f64::from(target_width);
+    let target_bottom = f64::from(target_height);
+    let left = (f64::from(rect.x) * scale).floor().clamp(0.0, target_right);
+    let top = (f64::from(rect.y) * scale).floor().clamp(0.0, target_bottom);
+    let right = ((f64::from(rect.x) + f64::from(rect.width)) * scale)
+        .ceil()
+        .clamp(0.0, target_right);
+    let bottom = ((f64::from(rect.y) + f64::from(rect.height)) * scale)
+        .ceil()
+        .clamp(0.0, target_bottom);
+    if right <= left || bottom <= top {
+        return Ok(None);
+    }
+
+    let x = left as u32;
+    let y = top as u32;
+    Ok(Some(DamageRect::new(
+        x,
+        y,
+        (right as u32) - x,
+        (bottom as u32) - y,
+    )))
+}
+
+fn append_item(
+    output: &mut LegacyDrawList,
+    item: RenderItem,
+    scale: f32,
+) -> Result<(), V2FrameAdapterError> {
+    let element = item.element.get();
+    if !valid_rect(item.bounds)
+        || !item.origin.0.is_finite()
+        || !item.origin.1.is_finite()
+        || !valid_transform(item.transform)
+        || item.clip.is_some_and(|clip| !valid_rect(clip))
+    {
+        return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
+    }
+    if item.opacity != 1.0 {
+        return Err(V2FrameAdapterError::ElementOpacityUnsupported { element });
+    }
+    if item.paint_source == crate::draw_cmd_v2::RenderPaintSource::LegacyIsland {
+        return Err(V2FrameAdapterError::LegacyIslandRequiresLegacyFrame { element });
+    }
+
+    let snapshot = item.snapshot();
+    let retained_item = RetainedV2Item {
+        element: item.element,
+        revision: snapshot.revision,
+        bounds: item.bounds,
+        origin: item.origin,
+        transform: item.transform,
+        clip: item.clip,
+        commands: snapshot.commands,
+    };
+    for command in lower_retained_v2_commands(&retained_item, scale)? {
+        output.push(command);
+    }
+    Ok(())
+}
+
+pub(crate) fn lower_retained_v2_commands(
+    item: &RetainedV2Item,
+    scale: f32,
+) -> Result<Vec<LegacyDrawCommand>, V2FrameAdapterError> {
+    let element = item.element.get();
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err(V2FrameAdapterError::InvalidDeviceScale);
+    }
+    if !valid_rect(item.bounds)
+        || !item.origin.0.is_finite()
+        || !item.origin.1.is_finite()
+        || !item.transform.cols.iter().flatten().all(|value| value.is_finite())
+        || item.clip.is_some_and(|clip| !valid_rect(clip))
+    {
+        return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
+    }
+    if item.commands.is_empty() {
+        return Ok(Vec::new());
+    }
+    let origin_transform = Mat3::scale(scale, scale)
+        .mul(&item.transform)
+        .mul(&Mat3::translate(item.origin.0, item.origin.1));
+    let mut output = LegacyDrawList::new();
+    output.save();
+    if let Some(clip) = item.clip {
+        output.push(LegacyDrawCommand::SetTransform {
+            matrix: Mat3::scale(scale, scale),
+        });
+        output.push(LegacyDrawCommand::PushClip {
+            rect: clip,
+            border_radius: [0.0; 4],
+        });
+    }
+    output.push(LegacyDrawCommand::SetTransform {
+        matrix: origin_transform,
+    });
+
+    for command in item.commands.iter().cloned() {
+        match command {
+            V2DrawCommand::DrawImage { rect, texture_id } => {
+                output.draw_image(rect, texture_id);
+            }
+            V2DrawCommand::DrawImageWithResource { rect, resource } => {
+                output.draw_image_with_resource(rect, resource);
+            }
+            command => output.push(lower_command(command, origin_transform, scale)),
+        }
+    }
+
+    output.push(LegacyDrawCommand::SetItalic { italic: false });
+    output.push(LegacyDrawCommand::SetTextLanguage { language: None });
+    if item.clip.is_some() {
+        output.pop_clip();
+    }
+    output.restore();
+    Ok(output.take_commands_for_composition())
+}
+
+fn append_legacy_item(
+    output: &mut LegacyDrawList,
+    item: RenderItem,
+    legacy_commands: &mut [Option<LegacyDrawCommand>],
+    state: &LegacyCommandState,
+    scale: f32,
+) -> Result<(), V2FrameAdapterError> {
+    let element = item.element.get();
+    if item.paint_source != RenderPaintSource::LegacyIsland {
+        return Err(V2FrameAdapterError::LegacyCommandRangeMissing { element });
+    }
+    if !valid_rect(item.bounds)
+        || !item.origin.0.is_finite()
+        || !item.origin.1.is_finite()
+        || !valid_transform(item.transform)
+        || item.clip.is_some_and(|clip| !valid_rect(clip))
+    {
+        return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
+    }
+    if item.opacity != 1.0 {
+        return Err(V2FrameAdapterError::ElementOpacityUnsupported { element });
+    }
+    let (start, end) = item
+        .legacy_command_range
+        .ok_or(V2FrameAdapterError::LegacyCommandRangeMissing { element })?;
+    if end < start || end > legacy_commands.len() {
+        return Err(V2FrameAdapterError::LegacyCommandRangeOutOfBounds {
+            element,
+            start,
+            end,
+            command_count: legacy_commands.len(),
+        });
+    }
+    if start == end {
+        return Ok(());
+    }
+
+    // The captured legacy transform contains ordinary canvas placement. Apply
+    // the retained node transform in display space without changing the
+    // element's own legacy command range.
+    output.save();
+    for clip in &state.clips {
+        output.push(LegacyDrawCommand::PushClip {
+            rect: clip.rect,
+            border_radius: clip.border_radius,
+        });
+    }
+    let mut added_item_clip = false;
+    if let Some(clip) = item.clip {
+        let device_clip = Rect::new(
+            clip.x * scale,
+            clip.y * scale,
+            clip.width * scale,
+            clip.height * scale,
+        );
+        if !valid_rect(device_clip) {
+            return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
+        }
+        output.push(LegacyDrawCommand::PushClip {
+            rect: device_clip,
+            border_radius: [0.0; 4],
+        });
+        added_item_clip = true;
+    }
+    output.push(LegacyDrawCommand::SetTransform {
+        matrix: transformed_legacy_state(item.transform, state.transform, scale),
+    });
+    output.push(LegacyDrawCommand::SetAlpha { alpha: state.alpha });
+    output.push(LegacyDrawCommand::SetItalic {
+        italic: state.italic,
+    });
+    output.push(LegacyDrawCommand::SetTextLanguage {
+        language: state.language,
+    });
+
+    for command in &mut legacy_commands[start..end] {
+        let Some(command) = command.take() else {
+            return Err(V2FrameAdapterError::LegacyCommandRangeOrder {
+                element,
+                previous_end: start,
+                start,
+            });
+        };
+        match command {
+            LegacyDrawCommand::DrawImage { rect, texture_id } => {
+                output.draw_image(rect, texture_id);
+            }
+            LegacyDrawCommand::DrawImageWithResource { rect, resource } => {
+                output.draw_image_with_resource(rect, resource);
+            }
+            command => output.push(command),
+        }
+    }
+
+    output.push(LegacyDrawCommand::SetItalic { italic: false });
+    output.push(LegacyDrawCommand::SetTextLanguage { language: None });
+    if added_item_clip {
+        output.pop_clip();
+    }
+    for _ in &state.clips {
+        output.pop_clip();
+    }
+    output.restore();
+    Ok(())
+}
+
+fn legacy_replay_scope(
+    item: &RenderItem,
+    state: &LegacyCommandState,
+    scale: f32,
+) -> Result<(Vec<LegacyDrawCommand>, Vec<LegacyDrawCommand>), V2FrameAdapterError> {
+    let element = item.element.get();
+    if !valid_transform(item.transform) {
+        return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
+    }
+    let mut prefix = Vec::with_capacity(state.clips.len() * 2 + 5);
+    prefix.push(LegacyDrawCommand::PushTransform {
+        matrix: Mat3::identity(),
+    });
+    for clip in &state.clips {
+        prefix.push(LegacyDrawCommand::PushClip {
+            rect: clip.rect,
+            border_radius: clip.border_radius,
+        });
+    }
+    let mut has_item_clip = false;
+    if let Some(clip) = item.clip {
+        let device_clip = Rect::new(
+            clip.x * scale,
+            clip.y * scale,
+            clip.width * scale,
+            clip.height * scale,
+        );
+        if !valid_rect(device_clip) {
+            return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
+        }
+        prefix.push(LegacyDrawCommand::PushClip {
+            rect: device_clip,
+            border_radius: [0.0; 4],
+        });
+        has_item_clip = true;
+    }
+    prefix.push(LegacyDrawCommand::SetTransform {
+        matrix: transformed_legacy_state(item.transform, state.transform, scale),
+    });
+    prefix.push(LegacyDrawCommand::SetAlpha { alpha: state.alpha });
+    prefix.push(LegacyDrawCommand::SetItalic {
+        italic: state.italic,
+    });
+    prefix.push(LegacyDrawCommand::SetTextLanguage {
+        language: state.language,
+    });
+
+    let mut suffix = Vec::with_capacity(state.clips.len() + 4);
+    suffix.push(LegacyDrawCommand::SetItalic { italic: false });
+    suffix.push(LegacyDrawCommand::SetTextLanguage { language: None });
+    if has_item_clip {
+        suffix.push(LegacyDrawCommand::PopClip);
+    }
+    for _ in &state.clips {
+        suffix.push(LegacyDrawCommand::PopClip);
+    }
+    suffix.push(LegacyDrawCommand::PopTransform);
+    Ok((prefix, suffix))
+}
+
+fn valid_rect(rect: Rect) -> bool {
+    rect.x.is_finite()
+        && rect.y.is_finite()
+        && rect.width.is_finite()
+        && rect.height.is_finite()
+        && rect.width >= 0.0
+        && rect.height >= 0.0
+}
+
+fn valid_transform(transform: Mat3) -> bool {
+    transform.cols.iter().flatten().all(|value| value.is_finite())
+}
+
+fn transformed_legacy_state(transform: Mat3, current: Mat3, scale: f32) -> Mat3 {
+    Mat3::scale(scale, scale)
+        .mul(&transform)
+        .mul(&Mat3::scale(1.0 / scale, 1.0 / scale))
+        .mul(&current)
+}
+
+fn lower_command(command: V2DrawCommand, origin: Mat3, scale: f32) -> LegacyDrawCommand {
+    match command {
+        V2DrawCommand::FillRect {
+            rect,
+            color,
+            border_radius,
+            border_width,
+            border_color,
+            outline_width,
+            outline_color,
+        } => LegacyDrawCommand::FillRect {
+            rect,
+            color,
+            border_radius,
+            border_width,
+            border_color,
+            outline_width,
+            outline_color,
+        },
+        V2DrawCommand::DrawText {
+            position,
+            text,
+            font_size,
+            color,
+            bounds_width,
+            bounds_height,
+            overflow,
+            horizontal_align,
+            font_family,
+            font_style,
+            font_weight,
+            shadow,
+            draw_glyphs,
+        } => LegacyDrawCommand::DrawText {
+            position,
+            text,
+            font_size: font_size * scale,
+            color,
+            bounds_width: bounds_width.map(|width| width * scale),
+            bounds_height: bounds_height.map(|height| height * scale),
+            overflow,
+            horizontal_align,
+            font_family,
+            font_style,
+            font_weight,
+            shadow,
+            draw_glyphs,
+        },
+        V2DrawCommand::DrawRichText {
+            position,
+            mut spans,
+            font_size,
+            color,
+            bounds_width,
+            bounds_height,
+            overflow,
+        } => LegacyDrawCommand::DrawRichText {
+            position,
+            spans: {
+                for span in &mut spans {
+                    span.font_size = span.font_size.map(|size| size * scale);
+                }
+                spans
+            },
+            font_size: font_size * scale,
+            color,
+            bounds_width: bounds_width.map(|width| width * scale),
+            bounds_height: bounds_height.map(|height| height * scale),
+            overflow,
+        },
+        V2DrawCommand::DrawTextDecoration {
+            rect,
+            color,
+            style,
+            thickness,
+            period,
+        } => LegacyDrawCommand::DrawTextDecoration {
+            rect,
+            color,
+            style,
+            thickness,
+            period,
+        },
+        V2DrawCommand::DrawImage { rect, texture_id } => {
+            LegacyDrawCommand::DrawImage { rect, texture_id }
+        }
+        V2DrawCommand::DrawImageWithResource { rect, resource } => {
+            LegacyDrawCommand::DrawImageWithResource { rect, resource }
+        }
+        V2DrawCommand::Svg {
+            scene,
+            destination,
+            overrides,
+        } => LegacyDrawCommand::Svg {
+            scene,
+            destination,
+            overrides,
+        },
+        V2DrawCommand::DrawCustom { pipeline_name, data } => LegacyDrawCommand::Custom {
+            pipeline_name: pipeline_name.to_string(),
+            data: Box::new(data.to_vec()),
+        },
+        V2DrawCommand::DrawShadowRect {
+            rect,
+            shadow_color,
+            shadow_params,
+            border_radius,
+            inset,
+            side_params,
+        } => LegacyDrawCommand::DrawShadowRect {
+            rect,
+            shadow_color,
+            shadow_params,
+            border_radius,
+            inset,
+            side_params,
+        },
+        V2DrawCommand::PushClip {
+            rect,
+            border_radius,
+        } => LegacyDrawCommand::PushClip {
+            rect,
+            border_radius,
+        },
+        V2DrawCommand::PopClip => LegacyDrawCommand::PopClip,
+        V2DrawCommand::PushTransform { matrix } => LegacyDrawCommand::PushTransform {
+            matrix: origin.mul(&matrix),
+        },
+        V2DrawCommand::PopTransform => LegacyDrawCommand::PopTransform,
+        V2DrawCommand::SetAlpha { alpha } => LegacyDrawCommand::SetAlpha { alpha },
+        V2DrawCommand::RestoreAlpha => LegacyDrawCommand::RestoreAlpha,
+        V2DrawCommand::SetItalic { italic } => LegacyDrawCommand::SetItalic { italic },
+        V2DrawCommand::SetTextLanguage { language } => {
+            LegacyDrawCommand::SetTextLanguage { language }
+        }
+        V2DrawCommand::SetTransform { matrix } => LegacyDrawCommand::SetTransform {
+            matrix: origin.mul(&matrix),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::damage_region::{DamageRect, DamageSet};
+    use crate::draw_cmd::{DrawCommand as LegacyDrawCommand, DrawList as LegacyDrawList};
+    use crate::draw_cmd_v2::{DrawCommand, Rect, RenderFrame, RenderOp, RenderPaintSource, RenderTree};
+    use crate::frame::{
+        Frame, FramePacket, FrameRenderMetadata, RetainedRenderOperationKind, RetainedV2Item,
+    };
+    use crate::utilities::{Color, Mat3};
+
+    #[test]
+    fn direct_packet_keeps_local_lists_separate_from_legacy_ranges() {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
+        let legacy = tree
+            .add_child(root, Rect::new(16.0, 16.0, 32.0, 32.0))
+            .unwrap();
+        tree.set_paint_source(root, RenderPaintSource::LocalV2)
+            .unwrap();
+        tree.set_paint_source(legacy, RenderPaintSource::LegacyIsland)
+            .unwrap();
+        tree.begin_legacy_frame();
+        record_fill(&tree, root, Color::rgba8(220, 20, 20, 255));
+
+        let mut legacy_draw_list = LegacyDrawList::new();
+        let start = legacy_draw_list.commands().len();
+        legacy_draw_list.fill_rect(
+            Rect::new(0.0, 0.0, 32.0, 32.0),
+            Color::rgba8(20, 220, 20, 255),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        let end = legacy_draw_list.commands().len();
+        tree.set_legacy_command_range(legacy, Some((start, end)))
+            .unwrap();
+        let legacy_command_count = legacy_draw_list.commands().len();
+
+        let packet = FramePacket::from_v2_direct_with_legacy(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, 64.0, 64.0)],
+                operations: tree.render_all(),
+            },
+            FrameRenderMetadata::new(1.0, 7, 1, 1, 1, DamageSet::new(64, 64)),
+            Frame::new(legacy_draw_list, 64, 64),
+        )
+        .unwrap();
+
+        assert_eq!(packet.frame().draw_list.commands().len(), legacy_command_count);
+        let plan = packet.render_plan().expect("direct retained render plan");
+        assert!(plan.is_complete());
+        assert_eq!(plan.local_v2_revision(root), Some(1));
+        let operations = plan
+            .operations_for_region(DamageRect::new(0, 0, 64, 64))
+            .collect::<Vec<_>>();
+        assert_eq!(operations.len(), 2);
+        assert!(matches!(
+            &operations[0].kind,
+            RetainedRenderOperationKind::LocalV2(item) if item.element == root
+        ));
+        assert!(matches!(
+            &operations[1].kind,
+            RetainedRenderOperationKind::LegacyRange { range, .. }
+                if range.start == start && range.end == end
+        ));
+    }
+
+    #[test]
+    fn mixed_packet_splices_legacy_islands_between_v2_items_in_tree_order() {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 100.0, 20.0)).unwrap();
+        let first = tree
+            .add_child(root, Rect::new(10.0, 0.0, 10.0, 10.0))
+            .unwrap();
+        let legacy = tree
+            .add_child(root, Rect::new(30.0, 0.0, 10.0, 10.0))
+            .unwrap();
+        let last = tree
+            .add_child(root, Rect::new(50.0, 0.0, 10.0, 10.0))
+            .unwrap();
+        tree.set_clip(root, Some(Rect::new(0.0, 0.0, 80.0, 15.0)))
+            .unwrap();
+
+        for node in [root, first, last] {
+            tree.set_paint_source(node, RenderPaintSource::LocalV2)
+                .unwrap();
+        }
+        record_fill(&tree, first, Color::rgba8(220, 20, 20, 255));
+        record_fill(&tree, last, Color::rgba8(20, 20, 220, 255));
+        tree.set_paint_source(legacy, RenderPaintSource::LegacyIsland)
+            .unwrap();
+        tree.begin_legacy_frame();
+
+        let mut legacy_draw_list = LegacyDrawList::new();
+        legacy_draw_list.fill_rect(
+            Rect::new(90.0, 0.0, 2.0, 2.0),
+            Color::rgba8(220, 220, 20, 255),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        legacy_draw_list.save();
+        legacy_draw_list.translate(30.0, 0.0);
+        legacy_draw_list.push_clip(Rect::new(0.0, 0.0, 9.0, 9.0));
+        let start = legacy_draw_list.commands().len();
+        legacy_draw_list.fill_rect(
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            Color::rgba8(20, 220, 20, 255),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        let end = legacy_draw_list.commands().len();
+        legacy_draw_list.pop_clip();
+        legacy_draw_list.restore();
+        legacy_draw_list.fill_rect(
+            Rect::new(90.0, 2.0, 2.0, 2.0),
+            Color::rgba8(20, 220, 220, 255),
+            [0.0; 4],
+            [0.0; 4],
+            Color::transparent(),
+        );
+        tree.set_legacy_command_range(legacy, Some((start, end)))
+            .unwrap();
+
+        let packet = FramePacket::from_v2_with_legacy(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, 100.0, 20.0)],
+                operations: tree.render_all(),
+            },
+            FrameRenderMetadata::new(1.0, 1, 1, 1, 1, DamageSet::new(100, 20)),
+            Frame::new(legacy_draw_list, 100, 20),
+        )
+        .unwrap();
+
+        let commands = packet.frame().draw_list.commands();
+        let colors = commands
+            .iter()
+            .filter_map(|command| match command {
+                LegacyDrawCommand::FillRect { color, .. } => Some(*color),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            colors,
+            [
+                Color::rgba8(220, 20, 20, 255),
+                Color::rgba8(20, 220, 20, 255),
+                Color::rgba8(20, 20, 220, 255),
+            ]
+        );
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            LegacyDrawCommand::SetTransform { matrix }
+                if matrix.transform_point(0.0, 0.0) == (30.0, 0.0)
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            LegacyDrawCommand::PushClip { rect, .. }
+                if *rect == Rect::new(30.0, 0.0, 9.0, 9.0)
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            LegacyDrawCommand::PushClip { rect, .. }
+                if *rect == Rect::new(0.0, 0.0, 80.0, 15.0)
+        )));
+        assert_eq!(
+            packet.metadata().damage().regions(),
+            &[DamageRect::new(0, 0, 100, 20)]
+        );
+    }
+
+    #[test]
+    fn mixed_packet_requires_a_matching_legacy_frame_and_valid_range() {
+        let tree = RenderTree::new();
+        let legacy = tree.add_root(Rect::new(0.0, 0.0, 10.0, 10.0)).unwrap();
+        tree.set_paint_source(legacy, RenderPaintSource::LegacyIsland)
+            .unwrap();
+        tree.begin_legacy_frame();
+        tree.set_legacy_command_range(legacy, Some((0, 1))).unwrap();
+        let render_frame = RenderFrame {
+            damage: vec![Rect::new(0.0, 0.0, 10.0, 10.0)],
+            operations: tree.render_all(),
+        };
+
+        assert!(matches!(
+            FramePacket::from_v2(
+                render_frame,
+                FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
+            ),
+            Err(super::V2FrameAdapterError::LegacyIslandRequiresLegacyFrame { .. })
+        ));
+
+        let packet = FramePacket::from_v2_with_legacy(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, 10.0, 10.0)],
+                operations: tree.render_all(),
+            },
+            FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
+            Frame::new(LegacyDrawList::new(), 10, 10),
+        );
+        assert!(matches!(
+            packet,
+            Err(super::V2FrameAdapterError::LegacyCommandRangeOutOfBounds {
+                element,
+                start: 0,
+                end: 1,
+                command_count: 0,
+            }) if element == legacy.get()
+        ));
+    }
+
+    #[test]
+    fn lowers_opaque_local_paint_and_rounds_damage_outward() {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(5.0, 6.0, 80.0, 70.0)).unwrap();
+        let child = tree
+            .add_child(root, Rect::new(10.0, 20.0, 30.0, 24.0))
+            .unwrap();
+        tree.set_clip(root, Some(Rect::new(0.0, 0.0, 70.0, 50.0)))
+            .unwrap();
+        let commands = vec![
+            DrawCommand::SetTransform {
+                matrix: crate::utilities::Mat3::translate(2.0, 3.0),
+            },
+            DrawCommand::FillRect {
+                rect: Rect::new(1.0, 2.0, 3.0, 4.0),
+                color: crate::utilities::Color::rgba8(220, 80, 40, 255),
+                border_radius: [0.0; 4],
+                border_width: [0.0; 4],
+                border_color: crate::utilities::Color::transparent(),
+                outline_width: [0.0; 4],
+                outline_color: crate::utilities::Color::transparent(),
+            },
+            DrawCommand::DrawText {
+                position: crate::utilities::Vec2d::new(0.0, 8.0),
+                text: std::sync::Arc::<str>::from("scaled"),
+                font_size: 8.0,
+                color: crate::utilities::Color::white(),
+                bounds_width: Some(10.0),
+                bounds_height: Some(20.0),
+                overflow: crate::text_pipeline::TextOverflowMode::Clip,
+                horizontal_align: crate::text_pipeline::text_layout::TextHorizontalAlign::Left,
+                font_family: crate::font::FontFamily::SANS_SERIF,
+                font_style: crate::font::FontStyle::Normal,
+                font_weight: 400,
+                shadow: None,
+                draw_glyphs: true,
+            },
+        ];
+        tree.context(child).unwrap().begin_recording().unwrap().commit(commands).unwrap();
+
+        let packet = FramePacket::from_v2(
+            RenderFrame {
+                damage: vec![Rect::new(2.25, 3.2, 4.25, 5.1)],
+                operations: tree.render_all(),
+            },
+            FrameRenderMetadata::new(1.5, 7, 2, 3, 4, DamageSet::new(128, 128)),
+        )
+        .unwrap();
+
+        assert_eq!((packet.frame().width, packet.frame().height), (128, 128));
+        assert_eq!(packet.metadata().damage().regions(), &[DamageRect::new(3, 4, 7, 9)]);
+        assert_eq!(packet.metadata().surface_identity(), 7);
+
+        let commands = packet.frame().draw_list.commands();
+        let transform = commands.iter().find_map(|command| match command {
+            LegacyDrawCommand::SetTransform { matrix }
+                if matrix.transform_point(0.0, 0.0) == (22.5, 39.0) =>
+            {
+                Some(matrix)
+            }
+            _ => None,
+        }).expect("element origin transform");
+        assert_eq!(transform.transform_point(0.0, 0.0), (22.5, 39.0));
+        let local_transform = commands.iter().filter_map(|command| match command {
+            LegacyDrawCommand::SetTransform { matrix } => Some(matrix),
+            _ => None,
+        }).nth(2).expect("composed local transform");
+        assert_eq!(local_transform.transform_point(0.0, 0.0), (25.5, 43.5));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            LegacyDrawCommand::PushClip { rect, .. }
+                if rect.x == 5.0 && rect.y == 6.0 && rect.width == 70.0 && rect.height == 50.0
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            LegacyDrawCommand::FillRect { rect, .. }
+                if rect.x == 1.0 && rect.y == 2.0 && rect.width == 3.0 && rect.height == 4.0
+        )));
+        let text = commands.iter().find_map(|command| match command {
+            LegacyDrawCommand::DrawText {
+                font_size,
+                bounds_width,
+                bounds_height,
+                ..
+            } => Some((*font_size, *bounds_width, *bounds_height)),
+            _ => None,
+        });
+        assert_eq!(text, Some((12.0, Some(15.0), Some(30.0))));
+    }
+
+    #[test]
+    fn retained_commands_apply_node_transform_and_final_clip() {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap();
+        tree.set_paint_source(root, RenderPaintSource::LocalV2)
+            .unwrap();
+        tree.set_clip(root, Some(Rect::new(0.0, 0.0, 40.0, 40.0)))
+            .unwrap();
+        record_fill(&tree, root, Color::rgba8(20, 40, 60, 255));
+        let node_transform = Mat3::translate(50.0, 50.0)
+            .mul(&Mat3::scale(0.5, 0.5))
+            .mul(&Mat3::translate(-50.0, -50.0));
+        tree.set_transform(root, node_transform).unwrap();
+
+        let item = tree
+            .render_all()
+            .into_iter()
+            .find_map(|operation| match operation {
+                RenderOp::Draw(item) => Some(item),
+                _ => None,
+            })
+            .expect("retained root item");
+        let snapshot = item.snapshot();
+        let retained = RetainedV2Item {
+            element: item.element,
+            revision: snapshot.revision,
+            bounds: item.bounds,
+            origin: item.origin,
+            transform: item.transform,
+            clip: item.clip,
+            commands: snapshot.commands,
+        };
+        let commands = super::lower_retained_v2_commands(&retained, 2.0).unwrap();
+
+        let expected_transform = Mat3::scale(2.0, 2.0).mul(&node_transform);
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            LegacyDrawCommand::SetTransform { matrix } if *matrix == expected_transform
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            LegacyDrawCommand::PushClip { rect, .. }
+                if *rect == Rect::new(25.0, 25.0, 20.0, 20.0)
+        )));
+    }
+
+    #[test]
+    fn complete_packet_keeps_clean_nodes_for_target_recreation() {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
+        let child = tree
+            .add_child(root, Rect::new(16.0, 16.0, 32.0, 32.0))
+            .unwrap();
+        record_fill(&tree, root, Color::rgba8(220, 20, 20, 255));
+        record_fill(&tree, child, Color::rgba8(20, 20, 220, 255));
+        let packet = FramePacket::from_v2_complete_with_legacy(
+            RenderFrame {
+                damage: vec![Rect::new(16.0, 16.0, 32.0, 32.0)],
+                operations: tree.render_all(),
+            },
+            FrameRenderMetadata::new(1.0, 4, 1, 1, 1, DamageSet::new(64, 64)),
+            Frame::new(LegacyDrawList::new(), 64, 64),
+        )
+        .unwrap();
+
+        let plan = packet.render_plan().expect("v2 packet render plan");
+        assert!(plan.is_complete());
+        let left = plan
+            .operations_for_region(DamageRect::new(2, 2, 4, 4))
+            .collect::<Vec<_>>();
+        let child_damage = plan
+            .operations_for_region(DamageRect::new(24, 24, 4, 4))
+            .collect::<Vec<_>>();
+        assert_eq!(left.len(), 1);
+        assert_eq!(child_damage.len(), 2);
+        assert!(left.iter().all(|operation| matches!(
+            operation.kind,
+            crate::frame::RetainedRenderOperationKind::LocalV2(_)
+        )));
+    }
+
+    #[test]
+    fn direct_packet_preserves_opacity_group_boundaries() {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
+        let first = tree
+            .add_child(root, Rect::new(8.0, 8.0, 40.0, 40.0))
+            .unwrap();
+        let second = tree
+            .add_child(root, Rect::new(24.0, 24.0, 32.0, 32.0))
+            .unwrap();
+        tree.set_opacity(root, 0.5).unwrap();
+        record_fill(&tree, root, Color::rgba8(220, 20, 20, 255));
+        record_fill(&tree, first, Color::rgba8(20, 220, 20, 255));
+        record_fill(&tree, second, Color::rgba8(20, 20, 220, 255));
+
+        let packet = FramePacket::from_v2_direct(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, 64.0, 64.0)],
+                operations: tree.render_all(),
+            },
+            FrameRenderMetadata::full(64, 64),
+        )
+        .expect("the direct renderer accepts opacity groups");
+
+        let plan = packet.render_plan().unwrap();
+        assert!(plan.is_complete());
+        assert_eq!(
+            plan.operations_for_region(DamageRect::new(0, 0, 64, 64))
+                .count(),
+            5,
+            "group begin/end enclose the three overlapping local lists"
+        );
+        assert_eq!(
+            plan.operations_for_region(DamageRect::new(40, 40, 1, 1))
+                .count(),
+            5,
+            "partial overlap damage replays the group and every intersecting item"
+        );
+        assert_eq!(
+            plan.operations_for_region(DamageRect::new(60, 60, 1, 1))
+                .count(),
+            3,
+            "group damage outside the children only replays the parent list"
+        );
+        let revisions = [root, first, second].map(|node| {
+            packet.render_plan().unwrap().local_v2_revision(node).unwrap()
+        });
+        let _ = tree.take_damage();
+        tree.set_opacity(root, 0.25).unwrap();
+        let update_damage = tree.take_damage();
+        let updated_packet = FramePacket::from_v2_direct_with_legacy(
+            RenderFrame {
+                damage: update_damage,
+                operations: tree.render_all(),
+            },
+            FrameRenderMetadata::new(1.0, 8, 1, 1, 1, DamageSet::new(64, 64)),
+            Frame::new(LegacyDrawList::new(), 64, 64),
+        )
+        .unwrap();
+        for (node, revision) in [root, first, second].into_iter().zip(revisions) {
+            assert_eq!(
+                updated_packet
+                    .render_plan()
+                    .unwrap()
+                    .local_v2_revision(node),
+                Some(revision),
+                "opacity updates do not rerecord local commands"
+            );
+        }
+    }
+
+    #[test]
+    fn direct_packet_isolates_leaf_opacity_without_rerecording_its_list() {
+        let tree = RenderTree::new();
+        let leaf = tree.add_root(Rect::new(8.0, 8.0, 32.0, 32.0)).unwrap();
+        tree.set_opacity(leaf, 0.25).unwrap();
+        record_fill(&tree, leaf, Color::rgba8(20, 80, 220, 255));
+
+        let packet = FramePacket::from_v2_direct(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, 64.0, 64.0)],
+                operations: tree.render_all(),
+            },
+            FrameRenderMetadata::full(64, 64),
+        )
+        .expect("direct rendering isolates leaf opacity too");
+
+        let plan = packet.render_plan().unwrap();
+        let operations = plan
+            .operations_for_region(DamageRect::new(0, 0, 64, 64))
+            .collect::<Vec<_>>();
+        assert_eq!(operations.len(), 3);
+        assert!(matches!(
+            &operations[0].kind,
+            RetainedRenderOperationKind::OpacityGroupBegin { opacity, .. }
+                if (*opacity - 0.25).abs() < f32::EPSILON
+        ));
+        assert_eq!(plan.local_v2_revision(leaf), Some(1));
+        assert!(matches!(
+            &operations[2].kind,
+            RetainedRenderOperationKind::OpacityGroupEnd { .. }
+        ));
+    }
+
+    #[test]
+    fn direct_packet_rejects_malformed_opacity_groups() {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
+        let child = tree
+            .add_child(root, Rect::new(8.0, 8.0, 32.0, 32.0))
+            .unwrap();
+        tree.set_opacity(root, 0.5).unwrap();
+        record_fill(&tree, root, Color::rgba8(220, 20, 20, 255));
+        record_fill(&tree, child, Color::rgba8(20, 20, 220, 255));
+
+        let mut unbalanced_operations = tree.render_all();
+        unbalanced_operations.pop();
+        let unbalanced = FramePacket::from_v2_direct(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, 64.0, 64.0)],
+                operations: unbalanced_operations,
+            },
+            FrameRenderMetadata::full(64, 64),
+        );
+        assert!(matches!(
+            unbalanced,
+            Err(super::V2FrameAdapterError::UnbalancedOpacityGroup { .. })
+        ));
+
+        let mut invalid_operations = tree.render_all();
+        let RenderOp::BeginOpacityGroup { opacity, .. } = &mut invalid_operations[0] else {
+            panic!("tree starts with its opacity group");
+        };
+        *opacity = 1.5;
+        let invalid = FramePacket::from_v2_direct(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, 64.0, 64.0)],
+                operations: invalid_operations,
+            },
+            FrameRenderMetadata::full(64, 64),
+        );
+        assert!(matches!(
+            invalid,
+            Err(super::V2FrameAdapterError::InvalidOpacity { .. })
+        ));
+    }
+
+    #[test]
+    fn compatibility_adapter_rejects_opacity_groups() {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 40.0, 40.0)).unwrap();
+        tree.add_child(root, Rect::new(4.0, 4.0, 20.0, 20.0)).unwrap();
+        tree.set_opacity(root, 0.5).unwrap();
+
+        let result = FramePacket::from_v2(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
+                operations: tree.render_all(),
+            },
+            FrameRenderMetadata::full(40, 40),
+        );
+        let error = match result {
+            Ok(_) => panic!("opacity groups should not be lowered by the v1 renderer"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, super::V2FrameAdapterError::OpacityGroupUnsupported { .. }));
+    }
+
+    #[test]
+    fn rejects_invalid_scale_damage_and_leaf_opacity() {
+        let invalid_scale = FramePacket::from_v2(
+            RenderFrame {
+                damage: Vec::new(),
+                operations: Vec::new(),
+            },
+            FrameRenderMetadata::new(0.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
+        );
+        assert!(matches!(
+            invalid_scale,
+            Err(super::V2FrameAdapterError::InvalidDeviceScale)
+        ));
+
+        let invalid_damage = FramePacket::from_v2(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, -1.0, 2.0)],
+                operations: Vec::new(),
+            },
+            FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
+        );
+        assert!(matches!(
+            invalid_damage,
+            Err(super::V2FrameAdapterError::InvalidDamage { index: 0 })
+        ));
+
+        let partial_with_full_metadata = FramePacket::from_v2(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, 8.0, 8.0)],
+                operations: Vec::new(),
+            },
+            FrameRenderMetadata::full(10, 10),
+        );
+        assert!(matches!(
+            partial_with_full_metadata,
+            Err(super::V2FrameAdapterError::FullRepaintRequiresCompleteV2Frame)
+        ));
+
+        let partial_promoted_to_full = FramePacket::from_v2(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, 8.0, 8.0)],
+                operations: Vec::new(),
+            },
+            FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
+        );
+        assert!(matches!(
+            partial_promoted_to_full,
+            Err(super::V2FrameAdapterError::FullRepaintRequiresCompleteV2Frame)
+        ));
+
+        let tree = RenderTree::new();
+        let leaf = tree.add_root(Rect::new(0.0, 0.0, 8.0, 8.0)).unwrap();
+        tree.set_opacity(leaf, 0.5).unwrap();
+        let non_opaque_leaf = FramePacket::from_v2(
+            RenderFrame {
+                damage: Vec::new(),
+                operations: tree.render_all(),
+            },
+            FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
+        );
+        assert!(matches!(
+            non_opaque_leaf,
+            Err(super::V2FrameAdapterError::ElementOpacityUnsupported { .. })
+        ));
+    }
+
+    #[test]
+    fn empty_or_off_target_damage_does_not_expand_the_packet_damage() {
+        let packet = FramePacket::from_v2(
+            RenderFrame {
+                damage: vec![
+                    Rect::new(-5.0, -5.0, 0.0, 2.0),
+                    Rect::new(20.0, 20.0, 2.0, 2.0),
+                ],
+                operations: Vec::new(),
+            },
+            FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
+        )
+        .unwrap();
+
+        assert!(packet.metadata().damage().is_empty());
+    }
+
+    #[test]
+    fn retained_custom_commands_reach_the_existing_pipeline_payload_path() {
+        let payload: Arc<[u8]> = Arc::from(vec![1_u8, 2, 3, 4]);
+        let lowered = super::lower_command(
+            DrawCommand::DrawCustom {
+                pipeline_name: Arc::from("test.pipeline"),
+                data: Arc::clone(&payload),
+            },
+            Mat3::identity(),
+            1.0,
+        );
+        let LegacyDrawCommand::Custom {
+            pipeline_name,
+            data,
+        } = lowered
+        else {
+            panic!("a retained custom request lowers to a legacy custom command");
+        };
+
+        assert_eq!(pipeline_name, "test.pipeline");
+        assert_eq!(data.downcast_ref::<Vec<u8>>().unwrap().as_slice(), payload.as_ref());
+    }
+
+    fn record_fill(tree: &RenderTree, node: crate::draw_cmd_v2::RenderNodeId, color: Color) {
+        tree.context(node)
+            .unwrap()
+            .begin_recording()
+            .unwrap()
+            .commit(vec![DrawCommand::FillRect {
+                rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+                color,
+                border_radius: [0.0; 4],
+                border_width: [0.0; 4],
+                border_color: Color::transparent(),
+                outline_width: [0.0; 4],
+                outline_color: Color::transparent(),
+            }])
+            .unwrap();
+    }
+}

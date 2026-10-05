@@ -5,20 +5,21 @@
 //! that wants something else can put the rows inside its own layout, or leave
 //! them out entirely.
 //!
-//! The rows are one element rather than one element per row. A row is a
-//! rectangle, a label and a highlight; measuring the labels once for the whole
-//! panel is what decides the panel's width, and a press is answered from the
-//! rectangles that measurement produced.
+//! A parent element measures the labels and routes hits, while each row owns a
+//! retained paint node. Measuring the labels once for the whole panel decides
+//! its width; a press is answered from the same row rectangles used for paint.
 
 mod geometry;
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use aimer_attribute::{Bounds, ResolvedSize, Vec2d};
+use aimer_cupid::canvas::TextMetrics;
 use aimer_events::element::ElementEvent;
 use aimer_macro::{PortableWidget, Rebuildable};
-use aimer_widget::base::BuildContext;
+use aimer_widget::base::{BuildContext, WindowHandle};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
     VisitorElement, Widget,
@@ -202,20 +203,46 @@ impl ContextMenuRows {
 }
 
 impl Widget for ContextMenuRows {
-    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+    fn to_element(self, ctx: &BuildContext) -> AnyElement {
+        let items = self.items.into_vec();
+        let style = Rc::new(self.style);
+        let paint_state = Rc::new(ContextMenuRowPaintState::default());
+        let row_count = items.len();
+        let row_elements = items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                RawContextMenuRow {
+                    index,
+                    row_count,
+                    shape: self.shape,
+                    label: Arc::from(item.label()),
+                    enabled: item.is_enabled(),
+                    style: Rc::clone(&style),
+                    paint_state: Rc::clone(&paint_state),
+                    painted_highlight: Cell::new(false),
+                }
+                .boxed()
+            })
+            .collect();
         RawContextMenuRows {
-            items: self.items.clone().into_vec(),
+            items,
             shape: self.shape,
-            style: self.style.clone(),
+            style,
             on_select: self.on_select.clone(),
             dismiss: self.dismiss.clone(),
             dismiss_on_select: self.dismiss_on_select,
+            row_elements,
             rows: RefCell::new(Vec::new()),
             label_widths: RefCell::new(Vec::new()),
             measured_scale: Cell::new(0.0),
+            local_rows: RefCell::new(Vec::new()),
+            geometry_scale: Cell::new(0.0),
             pressed: Cell::new(None),
             pressed_by: Cell::new(None),
             hovered: Cell::new(None),
+            paint_state,
+            window: Some(ctx.window.clone()),
         }
         .boxed()
     }
@@ -230,10 +257,11 @@ impl Widget for ContextMenuRows {
 pub(crate) struct RawContextMenuRows {
     items: Vec<ContextMenuItem>,
     shape: ContextMenuShape,
-    style: ContextMenuStyle,
+    style: Rc<ContextMenuStyle>,
     on_select: Option<Rc<dyn Fn(usize)>>,
     dismiss: ContextMenuDismiss,
     dismiss_on_select: bool,
+    row_elements: Vec<AnyElement>,
     /// Where each row was last painted, in absolute logical coordinates —
     /// the space a pointer event arrives in.
     rows: RefCell<Vec<Bounds>>,
@@ -241,9 +269,35 @@ pub(crate) struct RawContextMenuRows {
     /// measured at, so a frame that changes neither measures nothing.
     label_widths: RefCell<Vec<f32>>,
     measured_scale: Cell<f32>,
+    /// The local logical rectangles shared by paint, child geometry and hits.
+    local_rows: RefCell<Vec<Bounds>>,
+    geometry_scale: Cell<f32>,
     pressed: Cell<Option<usize>>,
     pressed_by: Cell<Option<PointerKey>>,
     hovered: Cell<Option<usize>>,
+    paint_state: Rc<ContextMenuRowPaintState>,
+    window: Option<WindowHandle>,
+}
+
+#[derive(Default)]
+struct ContextMenuRowPaintState {
+    highlighted: Cell<Option<usize>>,
+    panel_size: Cell<ResolvedSize>,
+    text_metrics: Cell<Option<TextMetrics>>,
+    metrics_scale: Cell<f32>,
+}
+
+/// One menu item and the only retained paint owner for its visuals.
+#[derive(Rebuildable)]
+struct RawContextMenuRow {
+    index: usize,
+    row_count: usize,
+    shape: ContextMenuShape,
+    label: Arc<str>,
+    enabled: bool,
+    style: Rc<ContextMenuStyle>,
+    paint_state: Rc<ContextMenuRowPaintState>,
+    painted_highlight: Cell<bool>,
 }
 
 impl RawContextMenuRows {
@@ -282,6 +336,66 @@ impl RawContextMenuRows {
         ResolvedSize {
             width: width * scale,
             height: height * scale,
+        }
+    }
+
+    /// Local logical row rectangles, cached for the current scale and item set.
+    fn local_row_rects(&self, ctx: &BuildContext) -> Ref<'_, Vec<Bounds>> {
+        let scale = scale_of(ctx);
+        let needs_update = self.geometry_scale.get() != scale
+            || self.local_rows.borrow().len() != self.items.len();
+        if needs_update {
+            let widths = self.label_widths(ctx);
+            *self.local_rows.borrow_mut() = geometry::row_rects(
+                self.shape,
+                &self.style,
+                Vec2d { x: 0.0, y: 0.0 },
+                &widths,
+            );
+            self.geometry_scale.set(scale);
+        }
+        self.local_rows.borrow()
+    }
+
+    /// Text metrics shared by all rows at the current scale.
+    fn text_metrics(&self, ctx: &BuildContext) -> TextMetrics {
+        let scale = scale_of(ctx);
+        if self.paint_state.metrics_scale.get() == scale
+            && let Some(metrics) = self.paint_state.text_metrics.get()
+        {
+            return metrics;
+        }
+        let Some(first) = self.items.first() else {
+            return TextMetrics::default();
+        };
+        let metrics = ctx.canvas.measure_text_metrics_styled(
+            first.label(),
+            self.style.label.font_size as f32 * scale,
+            0.0,
+            self.style.label.font_family,
+            self.style.label.font_style,
+            self.style.label.font_weight.numeric(),
+        );
+        self.paint_state.text_metrics.set(Some(metrics));
+        self.paint_state.metrics_scale.set(scale);
+        metrics
+    }
+
+    /// A change to the shared highlight schedules row nodes to repaint.
+    fn sync_highlight(&self) -> bool {
+        let highlighted = self.pressed.get().or(self.hovered.get());
+        self.paint_state.highlighted.replace(highlighted) != highlighted
+    }
+
+    fn request_row_repaint(&self, changed: bool) -> bool {
+        if !changed {
+            return false;
+        }
+        if let Some(window) = &self.window {
+            window.request_animation_frame();
+            false
+        } else {
+            true
         }
     }
 
@@ -349,13 +463,7 @@ impl Drawable for RawContextMenuRows {
         }
 
         let scale = scale_of(ctx);
-        let widths = self.label_widths(ctx);
-        let local = geometry::row_rects(
-            self.shape,
-            &self.style,
-            Vec2d { x: 0.0, y: 0.0 },
-            &widths,
-        );
+        let local = self.local_row_rects(ctx);
 
         // The rows are painted in element-local physical pixels and remembered
         // in absolute logical ones: the first is what the canvas draws in, the
@@ -375,20 +483,13 @@ impl Drawable for RawContextMenuRows {
 
         let panel = self.intrinsic_size(ctx);
         let font_size = self.style.label.font_size as f32 * scale;
-        let metrics = ctx.canvas.measure_text_metrics_styled(
-            self.items[0].label(),
-            font_size,
-            0.0,
-            self.style.label.font_family,
-            self.style.label.font_style,
-            self.style.label.font_weight.numeric(),
-        );
+        let metrics = self.text_metrics(ctx);
         let text_height = metrics.ascent - metrics.descent;
         // A pressed row outranks a hovered one: a finger holding a row down is
         // hovering it too, and only one wash may be drawn.
         let lit = self.pressed.get().or(self.hovered.get());
 
-        for (index, (item, rect)) in self.items.iter().zip(&local).enumerate() {
+        for (index, (item, rect)) in self.items.iter().zip(local.iter()).enumerate() {
             let pos = Vec2d {
                 x: rect.x * scale,
                 y: rect.y * scale,
@@ -437,6 +538,298 @@ impl Drawable for RawContextMenuRows {
             );
         }
     }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        !self.items.is_empty() && scale_of(ctx).is_finite() && scale_of(ctx) > 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        canvas.finish();
+    }
+
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        let scale = scale_of(ctx);
+        let local = self.local_row_rects(ctx);
+        for (index, row) in self.row_elements.iter().enumerate() {
+            let Some(rect) = local.get(index).copied() else {
+                continue;
+            };
+            let mut row_ctx = ctx.clone();
+            row_ctx.parent_size = ResolvedSize {
+                width: rect.width * scale,
+                height: rect.height * scale,
+            };
+            row_ctx.box_constraint.max_width = row_ctx.parent_size.width;
+            row_ctx.box_constraint.max_height = row_ctx.parent_size.height;
+            ctx.canvas.save();
+            ctx.canvas.translate(Vec2d {
+                x: rect.x * scale,
+                y: rect.y * scale,
+            });
+            row.draw(&row_ctx);
+            ctx.canvas.restore();
+        }
+    }
+
+    fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
+        false
+    }
+
+    fn sync_paint_geometry(&self, ctx: &BuildContext) {
+        if self.items.is_empty() {
+            self.rows.borrow_mut().clear();
+            return;
+        }
+        let scale = scale_of(ctx);
+        let local = self.local_row_rects(ctx);
+        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
+        *self.rows.borrow_mut() = local
+            .iter()
+            .map(|rect| {
+                Bounds::new(
+                    rect.x + abs_x / scale,
+                    rect.y + abs_y / scale,
+                    rect.width,
+                    rect.height,
+                )
+            })
+            .collect();
+        self.paint_state.panel_size.set(self.intrinsic_size(ctx));
+        let _ = self.text_metrics(ctx);
+    }
+
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        let rect = self.child_row_rect(ctx, child, child_index)?;
+        let scale = scale_of(ctx);
+        let mut child_ctx = ctx.clone();
+        child_ctx.parent_size = ResolvedSize {
+            width: rect.width * scale,
+            height: rect.height * scale,
+        };
+        child_ctx.box_constraint.max_width = child_ctx.parent_size.width;
+        child_ctx.box_constraint.max_height = child_ctx.parent_size.height;
+        Some(child_ctx)
+    }
+
+    fn retained_v2_child_geometry_at(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<(
+        aimer_cupid::draw_cmd_v2::Rect,
+        Option<aimer_cupid::draw_cmd_v2::Rect>,
+    )> {
+        let rect = self.child_row_rect(ctx, child, child_index)?;
+        Some((
+            aimer_cupid::draw_cmd_v2::Rect::new(
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+            ),
+            None,
+        ))
+    }
+}
+
+impl RawContextMenuRows {
+    fn child_row_rect(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<Bounds> {
+        let expected = self.row_elements.get(child_index)?;
+        if !std::ptr::eq(child, expected.as_ref()) {
+            return None;
+        }
+        self.local_row_rects(ctx).get(child_index).copied()
+    }
+}
+
+impl RawContextMenuRow {
+    fn text_metrics(&self, ctx: &BuildContext) -> TextMetrics {
+        let scale = scale_of(ctx);
+        if self.paint_state.metrics_scale.get() == scale
+            && let Some(metrics) = self.paint_state.text_metrics.get()
+        {
+            return metrics;
+        }
+        ctx.canvas.measure_text_metrics_styled(
+            &self.label,
+            self.style.label.font_size as f32 * scale,
+            0.0,
+            self.style.label.font_family,
+            self.style.label.font_style,
+            self.style.label.font_weight.numeric(),
+        )
+    }
+
+    fn radii(&self, scale: f32, row_size: ResolvedSize) -> [f32; 4] {
+        if !self.shape.is_horizontal() {
+            return [0.0; 4];
+        }
+        let mut panel = self.paint_state.panel_size.get();
+        if panel.width <= 0.0 || panel.height <= 0.0 {
+            panel = row_size;
+        }
+        let [tl, tr, br, bl] = self.style.panel_radius(panel.width, panel.height, scale);
+        let first = self.index == 0;
+        let last = self.index + 1 == self.row_count;
+        [
+            if first { tl } else { 0.0 },
+            if last { tr } else { 0.0 },
+            if last { br } else { 0.0 },
+            if first { bl } else { 0.0 },
+        ]
+    }
+}
+
+impl Drawable for RawContextMenuRow {
+    fn draw(&self, ctx: &BuildContext) {
+        let scale = scale_of(ctx);
+        let size = ctx.parent_size;
+        let metrics = self.text_metrics(ctx);
+        let lit = self.paint_state.highlighted.get() == Some(self.index);
+        if lit {
+            ctx.canvas.fill_color_rect_per_corner(
+                Vec2d { x: 0.0, y: 0.0 },
+                size,
+                self.style.highlight_color,
+                self.radii(scale, size),
+            );
+        }
+        if self.shape.is_horizontal() && self.index > 0 {
+            ctx.canvas.fill_color_rect(
+                Vec2d {
+                    x: 0.0,
+                    y: size.height * 0.25,
+                },
+                ResolvedSize {
+                    width: scale,
+                    height: size.height * 0.5,
+                },
+                self.style.separator_color,
+                [0.0; 4],
+            );
+        }
+        ctx.canvas.draw_text_styled(
+            &self.label,
+            Vec2d {
+                x: self.style.item_padding * scale,
+                y: (size.height - (metrics.ascent - metrics.descent)) * 0.5 + metrics.ascent,
+            },
+            self.style.label.font_size as f32 * scale,
+            if self.enabled {
+                self.style.label.color
+            } else {
+                self.style.disabled_label_color
+            },
+            self.style.label.font_family,
+            self.style.label.font_style,
+            self.style.label.font_weight.numeric(),
+        );
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        let size = ctx.parent_size;
+        scale_of(ctx).is_finite()
+            && scale_of(ctx) > 0.0
+            && size.width.is_finite()
+            && size.height.is_finite()
+            && size.width >= 0.0
+            && size.height >= 0.0
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let scale = scale_of(ctx);
+        let size = ResolvedSize {
+            width: ctx.parent_size.width / scale,
+            height: ctx.parent_size.height / scale,
+        };
+        let metrics = self.text_metrics(ctx);
+        let lit = self.paint_state.highlighted.get() == Some(self.index);
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        if lit {
+            let (red, green, blue, alpha) = self.style.highlight_color.to_rgba();
+            let [tl, tr, br, bl] = self.radii(scale, ctx.parent_size).map(|radius| radius / scale);
+            canvas.fill_rect_styled(
+                aimer_cupid::utilities::Rect::new(0.0, 0.0, size.width, size.height),
+                aimer_cupid::utilities::Color::rgba8(red, green, blue, alpha),
+                [tl, tr, br, bl],
+                [0.0; 4],
+                aimer_cupid::utilities::Color::transparent(),
+                [0.0; 4],
+                aimer_cupid::utilities::Color::transparent(),
+            );
+        }
+        if self.shape.is_horizontal() && self.index > 0 {
+            let (red, green, blue, alpha) = self.style.separator_color.to_rgba();
+            canvas.fill_rect(
+                aimer_cupid::utilities::Rect::new(
+                    0.0,
+                    size.height * 0.25,
+                    1.0,
+                    size.height * 0.5,
+                ),
+                [red, green, blue, alpha],
+            );
+        }
+        let color = if self.enabled {
+            self.style.label.color
+        } else {
+            self.style.disabled_label_color
+        };
+        let (red, green, blue, alpha) = color.to_rgba();
+        canvas.draw_text_styled(
+            Arc::clone(&self.label),
+            aimer_cupid::utilities::Vec2d::new(
+                self.style.item_padding,
+                (size.height - (metrics.ascent - metrics.descent) / scale) * 0.5
+                    + metrics.ascent / scale,
+            ),
+            self.style.label.font_size as f32,
+            aimer_cupid::utilities::Color::rgba8(red, green, blue, alpha),
+            None,
+            None,
+            aimer_cupid::text_pipeline::TextOverflowMode::Clip,
+            aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign::Left,
+            self.style.label.font_family,
+            self.style.label.font_style,
+            self.style.label.font_weight.numeric(),
+            None,
+            true,
+        );
+        canvas.finish();
+        self.painted_highlight.set(lit);
+    }
+
+    fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
+        (self.paint_state.highlighted.get() == Some(self.index)) != self.painted_highlight.get()
+    }
+}
+
+impl EventElement for RawContextMenuRow {
+    fn on_event(&self, _event: &ElementEvent) -> EventResult {
+        EventResult::ignored()
+    }
+
+    fn event_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
+}
+
+impl LayoutElement for RawContextMenuRow {}
+
+impl VisitorElement for RawContextMenuRow {
+    fn debug_name(&self) -> &'static str {
+        "ContextMenuRow"
+    }
 }
 
 impl EventElement for RawContextMenuRows {
@@ -449,27 +842,38 @@ impl EventElement for RawContextMenuRows {
                 let pointer = PointerKey::new(info.source, info.id);
                 self.pressed.set(self.enabled_at(info.pos));
                 self.pressed_by.set(Some(pointer));
-                EventResult::consumed()
-                    .with_redraw()
-                    .with_pointer_capture(pointer)
+                let needs_redraw = self.request_row_repaint(self.sync_highlight());
+                let result = EventResult::consumed().with_pointer_capture(pointer);
+                if needs_redraw {
+                    result.with_redraw()
+                } else {
+                    result
+                }
             }
             ElementEvent::PointerMove(info) => {
                 let over = self.enabled_at(info.pos);
-                let moved = self.hovered.replace(over) != over;
+                self.hovered.set(over);
+                let needs_redraw = self.request_row_repaint(self.sync_highlight());
                 // A finger sliding off the row it pressed must un-arm it, the
                 // way every button does.
                 if self.pressed_by.get() == Some(PointerKey::new(info.source, info.id)) {
-                    return EventResult::consumed().with_redraw();
+                    let result = EventResult::consumed();
+                    return if needs_redraw {
+                        result.with_redraw()
+                    } else {
+                        result
+                    };
                 }
-                let mut result = if self.contains(info.pos) {
+                let result = if self.contains(info.pos) {
                     EventResult::consumed()
                 } else {
                     EventResult::ignored()
                 };
-                if moved {
-                    result = result.with_redraw();
+                if needs_redraw {
+                    result.with_redraw()
+                } else {
+                    result
                 }
-                result
             }
             ElementEvent::PointerUp(info) => {
                 let pointer = PointerKey::new(info.source, info.id);
@@ -478,6 +882,7 @@ impl EventElement for RawContextMenuRows {
                 }
                 self.pressed_by.set(None);
                 let pressed = self.pressed.take();
+                let _ = self.request_row_repaint(self.sync_highlight());
                 if let Some(index) = pressed.filter(|index| self.enabled_at(info.pos) == Some(*index))
                 {
                     self.choose(index);
@@ -490,11 +895,14 @@ impl EventElement for RawContextMenuRows {
                 self.pressed.set(None);
                 self.pressed_by.set(None);
                 self.hovered.set(None);
+                let _ = self.request_row_repaint(self.sync_highlight());
                 EventResult::ignored()
             }
             _ => EventResult::ignored(),
         }
     }
+
+    fn event_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn aimer_widget::Element)) {}
 }
 
 impl LayoutElement for RawContextMenuRows {
@@ -508,7 +916,11 @@ impl LayoutElement for RawContextMenuRows {
 }
 
 impl VisitorElement for RawContextMenuRows {
-    fn visit_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn aimer_widget::Element)) {}
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn aimer_widget::Element)) {
+        for row in &self.row_elements {
+            visitor(row.as_ref());
+        }
+    }
 
     fn debug_name(&self) -> &'static str {
         "ContextMenuRows"
@@ -533,16 +945,21 @@ mod tests {
         let element = RawContextMenuRows {
             items,
             shape: ContextMenuShape::List,
-            style: ContextMenuStyle::list(),
+            style: Rc::new(ContextMenuStyle::list()),
             on_select: None,
             dismiss,
             dismiss_on_select: true,
+            row_elements: Vec::new(),
             rows: RefCell::new(Vec::new()),
             label_widths: RefCell::new(Vec::new()),
             measured_scale: Cell::new(0.0),
+            local_rows: RefCell::new(Vec::new()),
+            geometry_scale: Cell::new(0.0),
             pressed: Cell::new(None),
             pressed_by: Cell::new(None),
             hovered: Cell::new(None),
+            paint_state: Rc::new(ContextMenuRowPaintState::default()),
+            window: None,
         };
         element.place_for_test(vec![
             Bounds::new(10.0, 10.0, 150.0, 28.0),

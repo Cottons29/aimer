@@ -6,12 +6,15 @@ use std::rc::Rc;
 #[cfg(not(feature = "portable-guest"))]
 use std::sync::Arc;
 
-use aimer_attribute::ResolvedSize;
+use aimer_attribute::{ResolvedSize, Vec2d};
+use aimer_canvas::Canvas;
 #[cfg(not(feature = "portable-guest"))]
 use aimer_canvas::{
-    Canvas, Mat3, RetainedLayerContent, RetainedLayerPadding, next_retained_layer_id,
+    FrameCanvas, Mat3, RetainedLayerContent, RetainedLayerPadding, next_retained_layer_id,
 };
-use aimer_style::{FontStyle, LineHeight, TextAlign, TextDecorationLine, TextOverflow};
+use aimer_style::{
+    FontFamily, FontStyle, LineHeight, TextAlign, TextDecoration, TextDecorationLine, TextOverflow,
+};
 use aimer_style::TextTransform;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::layout_invalidation_generation;
@@ -339,6 +342,275 @@ impl Paragraph {
             .then_some(ParagraphPaintMode::Prefix(first_link))
     }
 
+    pub(crate) fn supports_retained_v2_rich_text(&self) -> bool {
+        self.text_indent.is_finite()
+            && match self.line_height {
+                LineHeight::Normal => true,
+                LineHeight::Px(value) | LineHeight::Factor(value) => value.is_finite(),
+            }
+            && !self.spans.is_empty()
+            && self.spans.iter().all(|span| {
+                let style = span.style;
+                style.letter_spacing.is_finite()
+                    && style.word_spacing.is_finite()
+                    && style.text_shadow.is_none_or(|shadow| {
+                        shadow.offset_x.is_finite()
+                            && shadow.offset_y.is_finite()
+                            && shadow.blur.is_finite()
+                    })
+            })
+    }
+
+    pub(crate) fn retained_v2_paint_outsets(
+        &self,
+        layout: &PreparedLayout,
+        scale: f32,
+    ) -> [f32; 4] {
+        if !scale.is_finite() || scale <= 0.0 {
+            return [0.0; 4];
+        }
+        let mut min_x = 0.0_f32;
+        let mut min_y = 0.0_f32;
+        let mut max_x = layout.size.width;
+        let mut max_y = layout.size.height;
+
+        for fragment in &layout.fragments {
+            let style = self.spans[fragment.span_index].style;
+            let mut left = fragment.x;
+            let mut right = fragment.x + fragment.width;
+            if style.font_style == FontStyle::Italic
+                || style
+                    .text_decoration
+                    .line
+                    .contains(TextDecorationLine::ITALIC)
+            {
+                let overhang = style.font_size.max(1) as f32 * scale * 0.5;
+                left -= overhang;
+                right += overhang;
+            }
+            let top = fragment.baseline - fragment.ascent;
+            let bottom = top + fragment.height;
+            min_x = min_x.min(left);
+            min_y = min_y.min(top);
+            max_x = max_x.max(right);
+            max_y = max_y.max(bottom);
+
+            if let Some(shadow) = style.text_shadow
+                && shadow.color.as_u32() >> 24 != 0
+            {
+                let offset_x = shadow.offset_x * scale;
+                let offset_y = shadow.offset_y * scale;
+                let blur = shadow.blur.max(0.0) * scale;
+                min_x = min_x.min(fragment.x + offset_x - blur);
+                max_x = max_x.max(fragment.x + fragment.width + offset_x + blur);
+                min_y = min_y.min(top + offset_y - blur);
+                max_y = max_y.max(bottom + offset_y + blur);
+            }
+        }
+
+        for decoration in &layout.decorations {
+            let fragment = &layout.fragments[decoration.fragment_index];
+            let paint = decoration.paint;
+            let centers = [
+                (paint.lines.contains(TextDecorationLine::UNDERLINE))
+                    .then_some(decoration.underline_center),
+                (paint.lines.contains(TextDecorationLine::LINE_THROUGH))
+                    .then_some(decoration.line_through_center),
+                (paint.lines.contains(TextDecorationLine::OVERLINE))
+                    .then_some(decoration.overline_center),
+            ];
+            for center in centers.into_iter().flatten() {
+                let top = center - paint.band_height * 0.5;
+                min_x = min_x.min(fragment.x);
+                max_x = max_x.max(fragment.x + fragment.width);
+                min_y = min_y.min(top);
+                max_y = max_y.max(top + paint.band_height);
+            }
+        }
+
+        [
+            (-min_x).max(0.0) / scale,
+            (-min_y).max(0.0) / scale,
+            (max_x - layout.size.width).max(0.0) / scale,
+            (max_y - layout.size.height).max(0.0) / scale,
+        ]
+    }
+
+    pub(crate) fn record_retained_v2_backgrounds(
+        &self,
+        canvas: &Canvas,
+        layout: &PreparedLayout,
+        scale: f32,
+        origin_offset: Vec2d,
+    ) {
+        for background in &layout.backgrounds {
+            let (red, green, blue, alpha) = background.color.to_rgba();
+            canvas.fill_rect(
+                aimer_cupid::utilities::Rect::new(
+                    background.x / scale + origin_offset.x,
+                    background.y / scale + origin_offset.y,
+                    background.width / scale,
+                    background.height / scale,
+                ),
+                [red, green, blue, alpha],
+            );
+        }
+    }
+
+    pub(crate) fn record_retained_v2_foreground(
+        &self,
+        canvas: &Canvas,
+        layout: &PreparedLayout,
+        scale: f32,
+        origin_offset: Vec2d,
+        hovered_link: Option<&crate::TextSource>,
+        link_hover_color: Option<Color>,
+    ) {
+        use aimer_cupid::text_pipeline::TextShadowRequest;
+        use aimer_cupid::text_pipeline::TextOverflowMode;
+        use aimer_cupid::text_pipeline::text_layout::TextHorizontalAlign;
+
+        for (fragment_index, fragment) in layout.fragments.iter().enumerate() {
+            if fragment.text.is_empty() {
+                continue;
+            }
+            let span = &self.spans[fragment.span_index];
+            let style = span.style;
+            let color = display_color(span, hovered_link, link_hover_color);
+            let italic = style.font_style == FontStyle::Italic
+                || style
+                    .text_decoration
+                    .line
+                    .contains(TextDecorationLine::ITALIC);
+            let shadow = style.text_shadow.and_then(|shadow| {
+                if shadow.color.as_u32() >> 24 == 0 {
+                    return None;
+                }
+                let shadow_color: aimer_cupid::utilities::Color = shadow.color.into();
+                Some(TextShadowRequest {
+                    offset_x: shadow.offset_x * scale,
+                    offset_y: shadow.offset_y * scale,
+                    blur: shadow.blur.max(0.0) * scale,
+                    color: shadow_color.to_rgba8(),
+                })
+            });
+            let font_size = style.font_size.max(1) as f32;
+            if italic {
+                canvas.set_italic(true);
+            }
+            let mut draw_run = |text: &str, x: f32| {
+                canvas.draw_text_styled(
+                    std::sync::Arc::<str>::from(text),
+                    aimer_cupid::utilities::Vec2d::new(
+                        x / scale + origin_offset.x,
+                        fragment.baseline / scale + origin_offset.y,
+                    ),
+                    font_size,
+                    color.into(),
+                    None,
+                    None,
+                    TextOverflowMode::Clip,
+                    TextHorizontalAlign::Left,
+                    style.font_family,
+                    style.font_style,
+                    style.font_weight.numeric(),
+                    shadow,
+                    true,
+                );
+            };
+            let has_spacing = style.letter_spacing != 0.0 || style.word_spacing != 0.0;
+            if has_spacing {
+                for run in &layout.paint_runs[fragment_index] {
+                    draw_run(
+                        &fragment.text[run.rendered_range.clone()],
+                        run.x,
+                    );
+                }
+            } else {
+                draw_run(&fragment.text, fragment.x);
+            }
+            if italic {
+                canvas.set_italic(false);
+            }
+        }
+
+        for decoration in &layout.decorations {
+            let fragment = &layout.fragments[decoration.fragment_index];
+            let span = &self.spans[fragment.span_index];
+            let color = decoration
+                .paint
+                .dedicated_color
+                .unwrap_or_else(|| display_color(span, hovered_link, link_hover_color));
+            let paint = decoration.paint;
+            let draw_decoration = |center_y: f32| {
+                canvas.draw_text_decoration(
+                    aimer_cupid::utilities::Rect::new(
+                        fragment.x / scale + origin_offset.x,
+                        (center_y - paint.band_height / 2.0) / scale + origin_offset.y,
+                        fragment.width / scale,
+                        paint.band_height / scale,
+                    ),
+                    color.into(),
+                    paint.style.id(),
+                    paint.thickness / scale,
+                    paint.period / scale,
+                );
+            };
+            if paint.lines.contains(TextDecorationLine::UNDERLINE) {
+                draw_decoration(decoration.underline_center);
+            }
+            if paint.lines.contains(TextDecorationLine::LINE_THROUGH) {
+                draw_decoration(decoration.line_through_center);
+            }
+            if paint.lines.contains(TextDecorationLine::OVERLINE) {
+                draw_decoration(decoration.overline_center);
+            }
+        }
+    }
+
+    pub(crate) fn visit_link_fragments(
+        &self,
+        layout: &PreparedLayout,
+        visible_rect: Option<(f32, f32, f32, f32)>,
+        mut visit: impl FnMut(&crate::TextSource, &PreparedFragment),
+    ) {
+        for fragment in &layout.fragments {
+            if !vertical_span_is_visible(
+                fragment.baseline - fragment.ascent,
+                fragment.height,
+                visible_rect,
+            ) {
+                continue;
+            }
+            if let Some(target) = self.spans[fragment.span_index].link.as_ref() {
+                visit(target, fragment);
+            }
+        }
+    }
+
+    pub(crate) fn link_at_point(
+        &self,
+        layout: &PreparedLayout,
+        point: Vec2d,
+        origin: Vec2d,
+        scale: f32,
+    ) -> Option<crate::TextSource> {
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let x = point.x * scale - origin.x;
+        let y = point.y * scale - origin.y;
+        layout.fragments.iter().find_map(|fragment| {
+            let target = self.spans[fragment.span_index].link.as_ref()?;
+            let top = fragment.baseline - fragment.ascent;
+            (fragment.x <= x
+                && x <= fragment.x + fragment.width
+                && top <= y
+                && y <= top + fragment.height)
+                .then(|| target.clone())
+        })
+    }
+
     /// The width lines are laid out against, preferring an explicit constraint
     /// over the parent's size.
     pub fn available_width(&self, ctx: &BuildContext) -> f32 {
@@ -373,6 +645,20 @@ impl Paragraph {
     /// clusters already produced by the shared shaper.
     pub(crate) fn prepare_for_paint(&self, ctx: &BuildContext) -> Rc<PreparedLayout> {
         self.prepare_with_graphemes(ctx, false)
+    }
+
+    pub(crate) fn cached_for_paint(&self, ctx: &BuildContext) -> Option<Rc<PreparedLayout>> {
+        let key = PreparedLayoutKey {
+            width_bits: self.wrap_width(ctx).to_bits(),
+            scale_bits: ctx.scale.to_bits(),
+            layout_generation: layout_invalidation_generation(),
+            include_graphemes: false,
+        };
+        self.layout_cache
+            .borrow()
+            .as_ref()
+            .filter(|(cached, _)| *cached == key)
+            .map(|(_, layout)| Rc::clone(layout))
     }
 
     fn prepare_with_graphemes(
@@ -1100,7 +1386,7 @@ impl Paragraph {
         } else {
             let recording_canvas = ctx.canvas.fork_for_recording();
             let mut recording_ctx = ctx.clone();
-            recording_ctx.replace_canvas(Canvas::new(&recording_canvas));
+            recording_ctx.replace_canvas(FrameCanvas::new(&recording_canvas));
             recording_ctx.visible_rect = None;
             self.draw_static_spans(&recording_ctx, layout, mode);
             let recorded = recording_canvas.take_draw_list();
@@ -1464,13 +1750,13 @@ mod tests {
         use std::sync::Arc;
 
         use aimer_attribute::{ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_cupid::draw_cmd::DrawCommand;
         use aimer_style::{TextAlign, TextOverflow, TextShadow};
         use aimer_widget::base::WindowHandle;
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -1579,12 +1865,12 @@ mod tests {
     #[test]
     fn prepared_layout_caches_decoration_geometry_per_fragment() {
         use aimer_attribute::{ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_style::{TextAlign, TextOverflow};
         use aimer_widget::base::{BuildContext, WindowHandle};
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -1642,13 +1928,13 @@ mod tests {
     #[test]
     fn cached_decorations_resolve_inherited_color_when_painted() {
         use aimer_attribute::{ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_cupid::draw_cmd::DrawCommand;
         use aimer_style::{TextAlign, TextDecoration, TextDecorationLine, TextOverflow};
         use aimer_widget::base::WindowHandle;
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -1712,12 +1998,12 @@ mod tests {
     #[test]
     fn explicit_line_height_controls_every_line_box_and_final_height() {
         use aimer_attribute::{ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_style::{TextAlign, TextOverflow};
         use aimer_widget::base::{BuildContext, WindowHandle};
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -1755,13 +2041,13 @@ mod tests {
     #[test]
     fn aimer_interaction_composes_rich_spacing_transform_and_line_box_geometry() {
         use aimer_attribute::{ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_style::{TextAlign, TextOverflow, TextTransform};
         use aimer_widget::base::{BuildContext, WindowHandle};
         use aimer_cupid::text_layout::TextWritingMode;
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -1837,12 +2123,12 @@ mod tests {
     #[test]
     fn aimer_interaction_ellipsis_stops_at_the_visible_source_boundary() {
         use aimer_attribute::{ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_style::{TextAlign, TextOverflow};
         use aimer_widget::base::{BuildContext, WindowHandle};
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -1890,12 +2176,12 @@ mod tests {
     #[test]
     fn aimer_interaction_composes_hard_breaks_across_spans() {
         use aimer_attribute::{ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_style::{TextAlign, TextOverflow};
         use aimer_widget::base::{BuildContext, WindowHandle};
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -1957,12 +2243,12 @@ mod tests {
     #[test]
     fn paint_layout_keeps_shared_interaction_without_grapheme_boxes() {
         use aimer_attribute::{ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_style::{TextAlign, TextOverflow};
         use aimer_widget::base::WindowHandle;
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -1998,12 +2284,12 @@ mod tests {
     #[test]
     fn paint_layout_skips_graphemes_for_unspaced_rich_spans() {
         use aimer_attribute::{ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_style::{FontStyle, FontWeight, TextAlign, TextOverflow};
         use aimer_widget::base::WindowHandle;
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -2053,14 +2339,14 @@ mod tests {
     #[test]
     fn cached_grapheme_boxes_reproduce_the_measured_widths() {
         use aimer_attribute::{ResolvedSize, Vec2d};
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_style::{TextAlign, TextOverflow};
         use aimer_widget::base::{BuildContext, WindowHandle};
 
         use super::Paragraph;
 
         let inner = InnerCanvas::new();
-        let canvas = Canvas::new(&inner);
+        let canvas = FrameCanvas::new(&inner);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();

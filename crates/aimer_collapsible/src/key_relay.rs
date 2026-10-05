@@ -84,6 +84,14 @@ impl Drawable for RawKeyRelay {
     }
 
     #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    #[inline]
     fn paint(&self, ctx: &BuildContext) {
         self.child.paint(ctx);
     }
@@ -180,36 +188,27 @@ fn is_activation_key(event: &ElementEvent) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "event-tree-exp")]
     use std::rc::Rc;
 
     use super::is_activation_key;
     use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 
-    #[cfg(feature = "event-tree-exp")]
     use super::RawKeyRelay;
-    #[cfg(feature = "event-tree-exp")]
     use aimer_widget::base::BuildContext;
-    #[cfg(feature = "event-tree-exp")]
     use aimer_widget::{Drawable, Element, EventElement, LayoutElement, Rebuildable, VisitorElement};
 
-    #[cfg(feature = "event-tree-exp")]
     struct Child;
 
-    #[cfg(feature = "event-tree-exp")]
     impl VisitorElement for Child {
         fn debug_name(&self) -> &'static str {
             "KeyRelayTestChild"
         }
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl EventElement for Child {}
 
-    #[cfg(feature = "event-tree-exp")]
     impl LayoutElement for Child {}
 
-    #[cfg(feature = "event-tree-exp")]
     impl Drawable for Child {
         fn draw(&self, _ctx: &BuildContext) {}
 
@@ -222,10 +221,8 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "event-tree-exp")]
     impl Rebuildable for Child {}
 
-    #[cfg(feature = "event-tree-exp")]
     #[test]
     fn key_relay_is_an_indexed_target() {
         let relay = RawKeyRelay {

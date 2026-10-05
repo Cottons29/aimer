@@ -334,6 +334,59 @@ impl Drawable for AnimatedSwitcherElement {
     }
 
     #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        if !self.current_child.is_paint_bounded()
+            || unsafe { (&*self.old_child.get()).as_ref() }
+                .is_some_and(|child| !child.is_paint_bounded())
+        {
+            return false;
+        }
+        let now = AnimInstant::now();
+        let in_value = self.in_controller.tick(now);
+        let out_value = self.out_controller.tick(now);
+        if !in_value.is_finite() || !out_value.is_finite() {
+            return false;
+        }
+
+        let has_old_child = unsafe { (&*self.old_child.get()).is_some() };
+        if has_old_child
+            && !ctx.set_local_v2_child_presentation_at(
+                0,
+                aimer_canvas::Mat3::identity(),
+                (1.0 - out_value).clamp(0.0, 1.0),
+            )
+        {
+            return false;
+        }
+        ctx.set_local_v2_child_presentation_at(
+            usize::from(has_old_child),
+            aimer_canvas::Mat3::identity(),
+            in_value.clamp(0.0, 1.0),
+        )
+    }
+
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        if let Some(old) = unsafe { &*self.old_child.get() } {
+            old.draw(ctx);
+        }
+        self.current_child.draw(ctx);
+
+        let active = self.in_controller.is_animating() || self.out_controller.is_animating();
+        if active {
+            request_next_frame();
+        } else if self.out_controller.value() >= 1.0 {
+            unsafe { *self.old_child.get() = None };
+        }
+    }
+
+    #[inline]
     fn is_paint_bounded(&self) -> bool {
         self.current_child.is_paint_bounded()
             && unsafe { (&*self.old_child.get()).as_ref() }
@@ -347,6 +400,18 @@ impl VisitorElement for AnimatedSwitcherElement {
         if let Some(old) = unsafe { &*self.old_child.get() } {
             visitor(old.as_ref());
         }
+    }
+
+    fn visit_retained_v2_children<'a>(
+        &'a self,
+        visitor: &mut dyn FnMut(usize, &'a dyn Element),
+    ) {
+        let mut index = 0;
+        if let Some(old) = unsafe { &*self.old_child.get() } {
+            visitor(index, old.as_ref());
+            index += 1;
+        }
+        visitor(index, self.current_child.as_ref());
     }
 
     fn debug_name(&self) -> &'static str {
@@ -568,7 +633,7 @@ mod tests {
         fn context() -> BuildContext<'static> {
             let canvas = {
                 let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-                aimer_canvas::Canvas::new(inner)
+                aimer_canvas::FrameCanvas::new(inner)
             };
             BuildContext::new(
                 canvas,
@@ -845,7 +910,7 @@ mod tests {
             let canvas = {
                 let leaked: &'static aimer_canvas::InnerCanvas =
                     Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-                aimer_canvas::Canvas::new(leaked)
+                aimer_canvas::FrameCanvas::new(leaked)
             };
             BuildContext::new(
                 canvas,

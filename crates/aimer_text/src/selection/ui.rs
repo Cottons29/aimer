@@ -686,7 +686,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn the_layer_paints_a_bar_and_a_knob_for_each_end() {
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_cupid::draw_cmd::DrawCommand;
 
         let (session, slot, _geometry) = session();
@@ -696,7 +696,7 @@ mod tests {
             .build()
             .expect("a current-thread runtime is available in tests");
         let ctx = BuildContext::new(
-            Canvas::new(&inner),
+            FrameCanvas::new(&inner),
             ResolvedSize {
                 width: 400.0,
                 height: 800.0,
@@ -727,7 +727,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn the_layer_retires_with_the_region_it_belongs_to() {
-        use aimer_canvas::{Canvas, InnerCanvas};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
 
         let (session, slot, _geometry) = session();
         select(&session, &slot, 2..5);
@@ -737,7 +737,7 @@ mod tests {
             .build()
             .expect("a current-thread runtime is available in tests");
         let ctx = BuildContext::new(
-            Canvas::new(&inner),
+            FrameCanvas::new(&inner),
             ResolvedSize {
                 width: 400.0,
                 height: 800.0,

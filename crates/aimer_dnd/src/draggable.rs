@@ -346,6 +346,13 @@ impl VisitorElement for RawDraggable {
         }
     }
 
+    fn visit_retained_v2_children<'a>(
+        &'a self,
+        visitor: &mut dyn FnMut(usize, &'a dyn Element),
+    ) {
+        visitor(0, self.visible_child());
+    }
+
     fn debug_name(&self) -> &'static str {
         "Draggable"
     }
@@ -485,6 +492,41 @@ impl Drawable for RawDraggable {
         self.bounds
             .save(ctx.scale, abs_x, abs_y, size.width, size.height);
         child.draw(ctx);
+    }
+
+    #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        let child = self.visible_child();
+        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
+        let size = child.computed_size(ctx);
+        self.bounds
+            .save(ctx.scale, abs_x, abs_y, size.width, size.height);
+        child.sync_paint_geometry(ctx);
+        true
+    }
+
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        let child = self.visible_child();
+        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
+        let size = child.computed_size(ctx);
+        self.bounds
+            .save(ctx.scale, abs_x, abs_y, size.width, size.height);
+        child.draw(ctx);
+    }
+
+    fn retained_v2_child_context<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+    ) -> Option<BuildContext<'a>> {
+        std::ptr::eq(child, self.visible_child()).then(|| ctx.clone())
     }
 }
 

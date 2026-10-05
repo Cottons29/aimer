@@ -32,7 +32,7 @@ use aimer::{
 };
 use aimer::events::pointer::PointerInfo;
 use aimer::quiver::winit::dpi::PhysicalSize;
-use aimer_canvas::{Canvas, InnerCanvas};
+use aimer_canvas::{FrameCanvas, InnerCanvas};
 use aimer_widget::base::WindowHandle;
 
 const ROUNDS: usize = 7;
@@ -63,7 +63,7 @@ fn phase_widget(count: usize) -> AnyWidget {
 fn context(runtime: &tokio::runtime::Runtime) -> BuildContext<'static> {
     let inner = Box::leak(Box::new(InnerCanvas::new()));
     let mut context = BuildContext::new(
-        Canvas::new(inner),
+        FrameCanvas::new(inner),
         aimer::ResolvedSize {
             width: FRAME_WIDTH,
             height: FRAME_HEIGHT,

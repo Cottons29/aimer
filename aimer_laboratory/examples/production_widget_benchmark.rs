@@ -270,7 +270,7 @@ mod borrowing {
 fn consuming_context() -> aimer::BuildContext<'static> {
     let canvas = {
         let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-        aimer_canvas::Canvas::new(inner)
+        aimer_canvas::FrameCanvas::new(inner)
     };
     aimer::BuildContext::new(
         canvas,
@@ -286,7 +286,7 @@ fn consuming_context() -> aimer::BuildContext<'static> {
 fn borrowing_context() -> aimer_legacy::BuildContext<'static> {
     let canvas = {
         let inner = Box::leak(Box::new(aimer_canvas_legacy::InnerCanvas::new()));
-        aimer_canvas_legacy::Canvas::new(inner)
+        aimer_canvas_legacy::FrameCanvas::new(inner)
     };
     aimer_legacy::BuildContext::new(
         canvas,

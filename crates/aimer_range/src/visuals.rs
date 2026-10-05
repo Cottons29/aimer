@@ -1,27 +1,133 @@
 //! Composable visual parts used by [`Slider`](super::Slider) controls.
 
-use std::cell::Cell;
-use std::rc::Rc;
-
 use aimer_attribute::{CacheBounds, Dimension, ResolvedSize, Size, Vec2d};
+use aimer_canvas::Canvas;
+use aimer_cupid::utilities::{Color as V2Color, Rect};
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, LayoutElement, PortableWidget, Rebuildable,
     VisitorElement, Widget,
 };
 
-/// Runtime interaction state shared by a slider and its default visual parts.
-///
-/// This is crate-private because application code controls visuals by passing
-/// ordinary widgets to [`Slider::thumb`](super::Slider::thumb) and
-/// [`Slider::trail`](super::Slider::trail). The shared cell is used by the
-/// slider's built-in visual widgets to update pressed, focus, and disabled
-/// colors during a redraw without rebuilding the slider tree.
+/// Interaction state used to configure a slider's built-in visual children.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct SliderVisualState {
     pub(crate) disabled: bool,
     pub(crate) pressed: bool,
     pub(crate) focused: bool,
+}
+
+/// The default unfilled track rendered by a [`Slider`](super::Slider).
+pub(crate) struct SliderTrack;
+
+impl SliderTrack {
+    pub(crate) fn new() -> Self {
+        Self
+    }
+}
+
+impl Widget for SliderTrack {
+    fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+        RawSliderTrack { bounds: CacheBounds::new() }.boxed()
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "SliderTrack"
+    }
+}
+
+impl PortableWidget for SliderTrack {}
+
+struct RawSliderTrack {
+    bounds: CacheBounds,
+}
+
+impl RawSliderTrack {
+    fn local_size(&self, ctx: &BuildContext) -> Option<(f32, f32)> {
+        let scale = ctx.scale;
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let size = self.computed_size(ctx);
+        let width = size.width / scale;
+        let height = size.height / scale;
+        (width.is_finite()
+            && height.is_finite()
+            && (0.0..=1_000_000.0).contains(&width)
+            && (0.0..=1_000_000.0).contains(&height))
+        .then_some((width, height))
+    }
+}
+
+impl Drawable for RawSliderTrack {
+    fn draw(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let (x, y) = ctx.canvas.get_transform_translation();
+        self.bounds.save(ctx.scale, x, y, size.width, size.height);
+        let radius = size.height.min(size.width) / 2.0;
+        ctx.canvas.fill_color_rect(
+            Vec2d::default(),
+            size,
+            Color::Rgba(190, 196, 205, 255),
+            [radius; 4],
+        );
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.local_size(ctx).is_some()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let (width, height) = self
+            .local_size(ctx)
+            .expect("SliderTrack v2 support must be checked before painting");
+        let color = Color::Rgba(190, 196, 205, 255);
+        let (red, green, blue, alpha) = color.to_rgba();
+        let canvas = Canvas::of(ctx);
+        canvas.fill_rect_styled(
+            Rect::new(0.0, 0.0, width, height),
+            V2Color::rgba8(red, green, blue, alpha),
+            [height.min(width) / 2.0; 4],
+            [0.0; 4],
+            V2Color::transparent(),
+            [0.0; 4],
+            V2Color::transparent(),
+        );
+        canvas.finish();
+    }
+}
+
+impl EventElement for RawSliderTrack {}
+
+impl LayoutElement for RawSliderTrack {
+    fn size(&self) -> Option<Size> {
+        Some(Size::new(Dimension::Percent(100.0), Dimension::Px(4.0)))
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        ResolvedSize {
+            width: ctx.box_constraint.max_width.clamp(
+                ctx.box_constraint.min_width,
+                ctx.box_constraint.max_width,
+            ),
+            height: (4.0 * ctx.scale.max(0.0)).clamp(
+                ctx.box_constraint.min_height,
+                ctx.box_constraint.max_height,
+            ),
+        }
+    }
+
+    fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.bounds.pos_start_end()
+    }
+}
+
+impl Rebuildable for RawSliderTrack {}
+
+impl VisitorElement for RawSliderTrack {
+    fn debug_name(&self) -> &'static str {
+        "SliderTrack"
+    }
 }
 
 /// The default circular thumb rendered by a [`Slider`](super::Slider).
@@ -37,7 +143,6 @@ pub struct SliderThumb {
     color: Color,
     focused_color: Color,
     disabled_color: Color,
-    visual_state: Option<Rc<Cell<SliderVisualState>>>,
 }
 
 impl SliderThumb {
@@ -50,7 +155,6 @@ impl SliderThumb {
             color: Color::WHITE,
             focused_color: Color::Rgba(20, 80, 190, 255),
             disabled_color: Color::Rgba(150, 155, 165, 180),
-            visual_state: None,
         }
     }
 
@@ -81,8 +185,9 @@ impl SliderThumb {
 
     /// Sets the thumb color while a connected slider owns keyboard focus.
     ///
-    /// The slider supplies interaction state to its built-in thumb. A thumb
-    /// passed as a custom child is rendered with its configured normal color.
+    /// The default thumb uses this color when the slider owns keyboard focus.
+    /// A thumb passed as a custom child is rendered with its configured
+    /// [`Self::color`].
     #[inline]
     pub fn focused_color(mut self, color: Color) -> Self {
         self.focused_color = color;
@@ -91,20 +196,22 @@ impl SliderThumb {
 
     /// Sets the thumb color while a connected slider is disabled.
     ///
-    /// The slider supplies interaction state to its built-in thumb. A thumb
-    /// passed as a custom child is rendered with its configured normal color.
+    /// The default thumb uses this color while the slider is disabled. A thumb
+    /// passed as a custom child is rendered with its configured [`Self::color`].
     #[inline]
     pub fn disabled_color(mut self, color: Color) -> Self {
         self.disabled_color = color;
         self
     }
 
-    pub(crate) fn with_visual_state(
-        mut self,
-        visual_state: Rc<Cell<SliderVisualState>>,
-    ) -> Self {
-        self.visual_state = Some(visual_state);
-        self
+    pub(crate) fn for_state(state: SliderVisualState) -> Self {
+        let mut thumb = Self::new();
+        if state.disabled {
+            thumb.color = thumb.disabled_color;
+        } else if state.focused {
+            thumb.color = thumb.focused_color;
+        }
+        thumb
     }
 }
 
@@ -120,9 +227,6 @@ impl Widget for SliderThumb {
             size: self.size,
             radius: self.radius,
             color: self.color,
-            focused_color: self.focused_color,
-            disabled_color: self.disabled_color,
-            visual_state: self.visual_state,
             bounds: CacheBounds::new(),
         }
         .boxed()
@@ -139,10 +243,24 @@ struct RawSliderThumb {
     size: f32,
     radius: f32,
     color: Color,
-    focused_color: Color,
-    disabled_color: Color,
-    visual_state: Option<Rc<Cell<SliderVisualState>>>,
     bounds: CacheBounds,
+}
+
+impl RawSliderThumb {
+    fn local_size(&self, ctx: &BuildContext) -> Option<(f32, f32)> {
+        let scale = ctx.scale;
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let size = self.computed_size(ctx);
+        let width = size.width / scale;
+        let height = size.height / scale;
+        (width.is_finite()
+            && height.is_finite()
+            && (0.0..=1_000_000.0).contains(&width)
+            && (0.0..=1_000_000.0).contains(&height))
+        .then_some((width, height))
+    }
 }
 
 impl Drawable for RawSliderThumb {
@@ -151,24 +269,39 @@ impl Drawable for RawSliderThumb {
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
 
-        let state = self
-            .visual_state
-            .as_ref()
-            .map(|state| state.get())
-            .unwrap_or_default();
-        let color = if state.disabled {
-            self.disabled_color
-        } else if state.focused {
-            self.focused_color
-        } else {
-            self.color
-        };
         let radius = (self.radius * ctx.scale)
             .min(size.width / 2.0)
             .min(size.height / 2.0)
             .max(0.0);
         ctx.canvas
-            .fill_color_rect(Vec2d::default(), size, color, [radius; 4]);
+            .fill_color_rect(Vec2d::default(), size, self.color, [radius; 4]);
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.size.is_finite() && self.radius.is_finite() && self.local_size(ctx).is_some()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let (width, height) = self
+            .local_size(ctx)
+            .expect("SliderThumb v2 support must be checked before painting");
+        let (red, green, blue, alpha) = self.color.to_rgba();
+        let radius = self
+            .radius
+            .max(0.0)
+            .min(width / 2.0)
+            .min(height / 2.0);
+        let canvas = Canvas::of(ctx);
+        canvas.fill_rect_styled(
+            Rect::new(0.0, 0.0, width, height),
+            V2Color::rgba8(red, green, blue, alpha),
+            [radius; 4],
+            [0.0; 4],
+            V2Color::transparent(),
+            [0.0; 4],
+            V2Color::transparent(),
+        );
+        canvas.finish();
     }
 }
 
@@ -214,7 +347,6 @@ pub struct SliderTrail {
     color: Color,
     pressed_color: Color,
     disabled_color: Color,
-    visual_state: Option<Rc<Cell<SliderVisualState>>>,
 }
 
 impl SliderTrail {
@@ -228,7 +360,6 @@ impl SliderTrail {
             color: Color::Rgba(35, 110, 220, 255),
             pressed_color: Color::Rgba(20, 80, 190, 255),
             disabled_color: Color::Rgba(35, 110, 220, 100),
-            visual_state: None,
         }
     }
 
@@ -284,12 +415,14 @@ impl SliderTrail {
         self
     }
 
-    pub(crate) fn with_visual_state(
-        mut self,
-        visual_state: Rc<Cell<SliderVisualState>>,
-    ) -> Self {
-        self.visual_state = Some(visual_state);
-        self
+    pub(crate) fn for_state(state: SliderVisualState) -> Self {
+        let mut trail = Self::new();
+        if state.disabled {
+            trail.color = trail.disabled_color;
+        } else if state.pressed {
+            trail.color = trail.pressed_color;
+        }
+        trail
     }
 }
 
@@ -306,9 +439,6 @@ impl Widget for SliderTrail {
             height: self.height,
             radius: self.radius,
             color: self.color,
-            pressed_color: self.pressed_color,
-            disabled_color: self.disabled_color,
-            visual_state: self.visual_state,
             bounds: CacheBounds::new(),
         }
         .boxed()
@@ -326,9 +456,6 @@ struct RawSliderTrail {
     height: f32,
     radius: f32,
     color: Color,
-    pressed_color: Color,
-    disabled_color: Color,
-    visual_state: Option<Rc<Cell<SliderVisualState>>>,
     bounds: CacheBounds,
 }
 
@@ -338,24 +465,49 @@ impl Drawable for RawSliderTrail {
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
 
-        let state = self
-            .visual_state
-            .as_ref()
-            .map(|state| state.get())
-            .unwrap_or_default();
-        let color = if state.disabled {
-            self.disabled_color
-        } else if state.pressed {
-            self.pressed_color
-        } else {
-            self.color
-        };
         let radius = (self.radius * ctx.scale)
             .min(size.width / 2.0)
             .min(size.height / 2.0)
             .max(0.0);
         ctx.canvas
-            .fill_color_rect(Vec2d::default(), size, color, [radius; 4]);
+            .fill_color_rect(Vec2d::default(), size, self.color, [radius; 4]);
+    }
+
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
+            return false;
+        }
+        let size = self.computed_size(ctx);
+        let width = size.width / ctx.scale;
+        let height = size.height / ctx.scale;
+        width.is_finite()
+            && height.is_finite()
+            && (0.0..=1_000_000.0).contains(&width)
+            && (0.0..=1_000_000.0).contains(&height)
+            && self.radius.is_finite()
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let width = size.width / ctx.scale;
+        let height = size.height / ctx.scale;
+        let (red, green, blue, alpha) = self.color.to_rgba();
+        let radius = self
+            .radius
+            .max(0.0)
+            .min(width / 2.0)
+            .min(height / 2.0);
+        let canvas = Canvas::of(ctx);
+        canvas.fill_rect_styled(
+            Rect::new(0.0, 0.0, width, height),
+            V2Color::rgba8(red, green, blue, alpha),
+            [radius; 4],
+            [0.0; 4],
+            V2Color::transparent(),
+            [0.0; 4],
+            V2Color::transparent(),
+        );
+        canvas.finish();
     }
 }
 

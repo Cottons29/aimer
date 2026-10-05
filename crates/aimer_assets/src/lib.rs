@@ -19,7 +19,9 @@ pub mod font {
 }
 
 use std::fmt::Debug;
+use std::sync::Arc;
 
+use aimer_cupid::draw_cmd_v2::ImageResource;
 pub use aimer_svg::SvgAsset;
 use aimer_widget::base::BuildContext;
 pub use font::{
@@ -82,6 +84,19 @@ pub type LoadingResult = Result<u32, &'static str>;
 ///   image and is expected to be provided by the caller.
 pub trait ImageProvider: Clone + Debug {
     fn get_image(&self, ctx: &BuildContext) -> ImageResult;
+
+    /// Returns a retained image payload when the provider owns its decoded pixels.
+    ///
+    /// Providers that do not own pixel data can keep returning `None`; their
+    /// image remains eligible for v2 drawing only while the current renderer
+    /// still has the texture ID returned by `get_image`.
+    #[doc(hidden)]
+    fn retained_image_resource(
+        &self,
+        _ctx: &BuildContext,
+    ) -> Option<Arc<ImageResource>> {
+        None
+    }
 }
 
 #[cfg(test)]

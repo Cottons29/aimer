@@ -3,6 +3,25 @@ use crate::{Element, ElementId, Key};
 pub trait VisitorElement {
     #[allow(unused_variables)]
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {}
+
+    /// Visits children in retained paint order and reports each child's stable
+    /// source index for layout-aware v2 geometry.
+    ///
+    /// Most elements paint children in structural order. Layered containers
+    /// can override this visitor while keeping `visit_children` unchanged for
+    /// reconciliation and event structure.
+    #[doc(hidden)]
+    fn visit_retained_v2_children<'a>(
+        &'a self,
+        visitor: &mut dyn FnMut(usize, &'a dyn Element),
+    ) {
+        let mut index = 0;
+        self.visit_children(&mut |child| {
+            visitor(index, child);
+            index += 1;
+        });
+    }
+
     fn debug_name(&self) -> &'static str;
 
     /// Returns the `TypeId` of the concrete element type, enabling runtime

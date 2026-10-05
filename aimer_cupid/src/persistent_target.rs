@@ -79,6 +79,17 @@ impl PersistentTargetKey {
         Self { validity, ..self }
     }
 
+    /// Reuses the same renderer and surface identity for an intermediate
+    /// target whose dimensions are local to one retained group.
+    #[inline]
+    pub(crate) const fn with_size(self, width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            ..self
+        }
+    }
+
     #[inline]
     fn same_resource(self, other: Self) -> bool {
         self.width == other.width

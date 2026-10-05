@@ -26,7 +26,7 @@ mod tests {
 
     use aimer_attribute::BoxConstraint;
     use aimer_attribute::size::{ResolvedSize, Size};
-    use aimer_canvas::{Canvas, InnerCanvas};
+    use aimer_canvas::{FrameCanvas, InnerCanvas};
     use aimer_flex::flex_child::RawExpanded;
     use aimer_flex::raw_flex::RawFlex;
     use aimer_flex::{Column, Expanded, FlexDirection, Row};
@@ -274,7 +274,7 @@ mod tests {
     ) -> BuildContext<'static> {
         let canvas = {
             let leaked: &'static InnerCanvas = Box::leak(Box::new(InnerCanvas::new()));
-            Canvas::new(leaked)
+            FrameCanvas::new(leaked)
         };
 
         let mut context = BuildContext::new(

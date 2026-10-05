@@ -4,8 +4,11 @@ pub mod compositor;
 #[doc(hidden)]
 pub mod damage_region;
 pub mod draw_cmd;
+pub mod draw_cmd_v2;
 pub mod font;
 pub mod frame;
+#[doc(hidden)]
+pub mod v2_frame_adapter;
 #[cfg(feature = "wgpu")]
 pub mod gpu_context;
 mod persistent_target;

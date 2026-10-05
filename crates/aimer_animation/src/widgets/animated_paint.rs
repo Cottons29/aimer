@@ -13,7 +13,13 @@ use aimer_widget::{
 use crate::control::controller::AnimationController;
 use crate::primitives::time::AnimInstant;
 
-type PaintEffect = dyn Fn(&BuildContext, f32) + 'static;
+type LegacyPaintEffect = dyn Fn(&BuildContext, f32) + 'static;
+
+enum PaintEffect {
+    Noop,
+    Opacity,
+    Legacy(Box<LegacyPaintEffect>),
+}
 
 #[derive(Clone, Copy)]
 enum DamageMode {
@@ -44,13 +50,13 @@ enum DamageMode {
 ///
 /// let controller = AnimationController::new(Duration::from_millis(250), Curve::Linear);
 /// let animated = AnimatedPaint::new(controller, ErrorWidget::new("Loading"))
-///     .effect(|ctx, value| ctx.canvas.set_alpha(value))
+///     .opacity()
 ///     .bounded();
 /// ```
 pub struct AnimatedPaint<T> {
     controller: AnimationController,
     child: T,
-    effect: Box<PaintEffect>,
+    effect: PaintEffect,
     damage_mode: DamageMode,
 }
 
@@ -62,7 +68,7 @@ impl<T: Widget> AnimatedPaint<T> {
         Self {
             controller,
             child,
-            effect: Box::new(|_, _| {}),
+            effect: PaintEffect::Noop,
             damage_mode: DamageMode::Full,
         }
     }
@@ -76,7 +82,15 @@ impl<T: Widget> AnimatedPaint<T> {
     where
         F: Fn(&BuildContext, f32) + 'static,
     {
-        self.effect = Box::new(effect);
+        self.effect = PaintEffect::Legacy(Box::new(effect));
+        self
+    }
+
+    /// Fades the retained child with compositor opacity, keeping its draw list
+    /// unchanged while the controller advances.
+    #[inline]
+    pub fn opacity(mut self) -> Self {
+        self.effect = PaintEffect::Opacity;
         self
     }
 
@@ -121,7 +135,7 @@ impl<T: Widget + 'static> aimer_widget::PortableWidget for AnimatedPaint<T> {}
 struct AnimatedPaintElement {
     child: AnyElement,
     controller: AnimationController,
-    effect: Box<PaintEffect>,
+    effect: PaintEffect,
     damage_mode: DamageMode,
     damage: PaintDamageTracker,
     last_value: Cell<Option<u32>>,
@@ -141,7 +155,11 @@ impl Drawable for AnimatedPaintElement {
         );
 
         ctx.canvas.save();
-        (self.effect)(ctx, curved_value);
+        match &self.effect {
+            PaintEffect::Noop => {}
+            PaintEffect::Opacity => ctx.canvas.set_alpha(curved_value),
+            PaintEffect::Legacy(effect) => effect(ctx, curved_value),
+        }
 
         match self.damage_mode {
             DamageMode::Full => {
@@ -163,6 +181,44 @@ impl Drawable for AnimatedPaintElement {
         ctx.canvas.restore();
 
         if animating {
+            request_animation_frame();
+        }
+    }
+
+    #[inline]
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        !matches!(&self.effect, PaintEffect::Legacy(_))
+            && self.child.is_paint_bounded()
+            && ctx.scale.is_finite()
+            && ctx.scale > 0.0
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        let progress = self.controller.tick(AnimInstant::now());
+        if !progress.is_finite() {
+            return false;
+        }
+        self.child.sync_paint_geometry(ctx);
+        let opacity = match &self.effect {
+            PaintEffect::Noop => 1.0,
+            PaintEffect::Opacity => progress.clamp(0.0, 1.0),
+            PaintEffect::Legacy(_) => return false,
+        };
+        ctx.set_local_v2_child_presentation_at(
+            0,
+            aimer_canvas::Mat3::identity(),
+            opacity,
+        )
+    }
+
+    #[inline]
+    fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
+        let active = self.controller.is_animating();
+        self.child.draw(ctx);
+        if active {
             request_animation_frame();
         }
     }
@@ -256,7 +312,7 @@ mod tests {
     fn context() -> BuildContext<'static> {
         let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
         let mut context = BuildContext::new(
-            aimer_canvas::Canvas::new(inner),
+            aimer_canvas::FrameCanvas::new(inner),
             ResolvedSize {
                 width: FRAME_WIDTH as f32,
                 height: FRAME_HEIGHT as f32,
