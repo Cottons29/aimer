@@ -400,6 +400,25 @@ fn bench_tree_rebuild() {
     });
     let ui_memory = UiMemory::new(UI_MEMORY_LIMIT);
     let ui_allocator = ui_memory.allocator();
+    measure("UiMemory erased tree frame, matched capacity", NODES * FRAMES, || {
+        ui_allocator.scope(|| {
+            for _ in 0..FRAMES {
+                let mut tree: Vec<Rubick<dyn Node>> = Vec::with_capacity(NODES);
+                for index in 0..NODES {
+                    match index % 3 {
+                        0 => tree.push(Rubick::erase(Tiny::new(index))),
+                        1 => tree.push(Rubick::erase(Medium::new(index))),
+                        _ => tree.push(Rubick::erase(Large::new(index))),
+                    }
+                }
+                let mut total = 0_usize;
+                for node in &tree {
+                    total = total.wrapping_add(node.value());
+                }
+                black_box(total);
+            }
+        });
+    });
     measure("UiMemory erased tree frame, element capacity", NODES * FRAMES, || {
         ui_allocator.scope(|| {
             for _ in 0..FRAMES {
