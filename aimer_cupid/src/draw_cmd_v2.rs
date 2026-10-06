@@ -4,6 +4,8 @@
 //! can snapshot each local command list into a transferable frame representation
 //! before handing work to a raster thread.
 
+mod render_order;
+
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -558,6 +560,7 @@ pub struct DrawCommandList {
     next_id: u64,
     pending_damage: Vec<Rect>,
     legacy_frame_generation: u64,
+    render_workspace: RefCell<render_order::RenderWorkspace>,
 }
 
 impl DrawCommandList {
@@ -780,91 +783,6 @@ impl DrawCommandList {
         }
     }
 
-    fn collect_render_order(
-        &self,
-        id: RenderNodeId,
-        parent_clip: ClipState,
-        damage: Option<&[Rect]>,
-        output: &mut Vec<RenderOp>,
-    ) {
-        let Some(node) = self.node(id) else {
-            return;
-        };
-        let Some(bounds) = self.world_bounds(id) else {
-            return;
-        };
-        let Some(origin) = self.world_origin(id) else {
-            return;
-        };
-        let clip = parent_clip.intersect_state(self.world_clip(id));
-        if matches!(clip, ClipState::Empty) {
-            return;
-        }
-        let subtree_bounds = self.subtree_bounds(id).unwrap_or(bounds);
-        let Some(visible_subtree) = self.visible_subtree_bounds_with_clip(id, parent_clip) else {
-            return;
-        };
-        if visible_subtree.width == 0.0 || visible_subtree.height == 0.0 {
-            return;
-        }
-        if damage.is_some_and(|damage| {
-            !damage
-                .iter()
-                .any(|region| visible_subtree.intersection(*region).is_some())
-        }) {
-            return;
-        }
-
-        let opacity = node.presentation_opacity * node.opacity;
-        let groups_opacity = opacity < 1.0 && !node.children.is_empty();
-        if groups_opacity {
-            output.push(RenderOp::BeginOpacityGroup {
-                element: id,
-                bounds: visible_subtree,
-                opacity,
-                clip: clip.as_option(),
-            });
-        }
-
-        let paint_bounds = if node.paint_source == RenderPaintSource::LegacyIsland {
-            subtree_bounds
-        } else {
-            bounds
-        };
-        let visible_bounds = clip.intersect_bounds(paint_bounds);
-        if let Some(visible_bounds) = visible_bounds
-            && damage.is_none_or(|damage| {
-                damage
-                    .iter()
-                    .any(|region| visible_bounds.intersection(*region).is_some())
-            })
-        {
-            output.push(RenderOp::Draw(RenderItem {
-                element: id,
-                bounds,
-                origin,
-                transform: self.world_transform(id).unwrap_or_else(Mat3::identity),
-                clip: clip.as_option(),
-                opacity: if groups_opacity { 1.0 } else { opacity },
-                paint_source: node.paint_source,
-                legacy_command_range: node
-                    .legacy_command_range
-                    .filter(|(generation, _, _)| *generation == self.legacy_frame_generation)
-                    .map(|(_, start, end)| (start, end)),
-                draw_list: node.draw_list.clone(),
-            }));
-        }
-
-        if node.paint_source != RenderPaintSource::LegacyIsland {
-            // A node without a clip may have children that extend beyond its bounds.
-            for child in node.children.iter().copied() {
-                self.collect_render_order(child, clip, damage, output);
-            }
-        }
-        if groups_opacity {
-            output.push(RenderOp::EndOpacityGroup { element: id });
-        }
-    }
 }
 
 /// A shareable handle to the retained v2 render tree.
@@ -1159,16 +1077,17 @@ impl RenderTree {
         source: RenderPaintSource,
     ) -> Result<(), RenderTreeError> {
         let mut tree = self.draw_cmd.borrow_mut();
-        if tree.node(element).is_none() {
-            return Err(RenderTreeError::UnknownNode(element));
+        let current_source = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?
+            .paint_source;
+        if current_source == source {
+            return Ok(());
         }
-        let old_bounds = tree.visible_subtree_bounds(element);
+        let bounds = tree.visible_subtree_bounds(element);
         let node = tree
             .node_mut(element)
             .ok_or(RenderTreeError::UnknownNode(element))?;
-        if node.paint_source == source {
-            return Ok(());
-        }
         let mut draw_list = node.draw_list.borrow_mut();
         if draw_list.recording {
             return Err(RenderTreeError::RecorderAlreadyOpen(element));
@@ -1188,9 +1107,8 @@ impl RenderTree {
         drop(draw_list);
         node.paint_source = source;
         node.legacy_command_range = None;
-        let new_bounds = tree.visible_subtree_bounds(element);
-        if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
-            tree.push_damage(damage);
+        if let Some(bounds) = bounds {
+            tree.push_damage(bounds);
         }
         Ok(())
     }
@@ -1248,8 +1166,12 @@ impl RenderTree {
             return Err(RenderTreeError::InvalidBounds);
         }
         let mut tree = self.draw_cmd.borrow_mut();
-        if tree.node(element).is_none() {
-            return Err(RenderTreeError::UnknownNode(element));
+        let current_bounds = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?
+            .bounds;
+        if current_bounds == bounds {
+            return Ok(());
         }
         let old = tree.visible_subtree_bounds(element);
         let node = tree
@@ -1385,14 +1307,11 @@ impl RenderTree {
             return Err(RenderTreeError::InvalidBounds);
         }
         let mut tree = self.draw_cmd.borrow_mut();
-        if tree.node(element).is_none() {
-            return Err(RenderTreeError::UnknownNode(element));
-        }
-        let old_bounds = tree.visible_subtree_bounds(element);
         let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
         if node.bounds == bounds && node.clip == clip {
             return Ok(());
         }
+        let old_bounds = tree.visible_subtree_bounds(element);
         let node = tree
             .node_mut(element)
             .ok_or(RenderTreeError::UnknownNode(element))?;
@@ -1419,16 +1338,17 @@ impl RenderTree {
             return Err(RenderTreeError::InvalidOpacity);
         }
         let mut tree = self.draw_cmd.borrow_mut();
-        if tree.node(element).is_none() {
-            return Err(RenderTreeError::UnknownNode(element));
+        let current_opacity = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?
+            .opacity;
+        if current_opacity == opacity {
+            return Ok(());
         }
         let bounds = tree.visible_subtree_bounds(element);
         let node = tree
             .node_mut(element)
             .ok_or(RenderTreeError::UnknownNode(element))?;
-        if node.opacity == opacity {
-            return Ok(());
-        }
         node.opacity = opacity;
         if let Some(bounds) = bounds {
             tree.push_damage(bounds);
@@ -1586,39 +1506,6 @@ impl RenderTree {
         Ok(tree.subtree_uses_only_local_v2(node.id))
     }
 
-    /// Returns visible elements in parent-first paint order for these damage regions.
-    ///
-    /// An empty damage slice means no pixels are dirty. The plan contains every
-    /// intersecting node, including clean nodes behind a dirty transparent node,
-    /// so the renderer can reconstruct the damaged pixels in the right order.
-    pub fn render_order(&self, damage: &[Rect]) -> Vec<RenderOp> {
-        let tree = self.draw_cmd.borrow();
-        let mut output = Vec::new();
-        for root in tree.roots.iter().copied() {
-            tree.collect_render_order(root, ClipState::Unclipped, Some(damage), &mut output);
-        }
-        output
-    }
-
-    /// Returns every render node in paint order, without damage culling.
-    pub fn render_all(&self) -> Vec<RenderOp> {
-        let tree = self.draw_cmd.borrow();
-        let mut output = Vec::new();
-        for root in tree.roots.iter().copied() {
-            tree.collect_render_order(root, ClipState::Unclipped, None, &mut output);
-        }
-        output
-    }
-
-    /// Takes pending damage and creates its parent-first composition plan.
-    pub fn render_pending(&self) -> RenderFrame {
-        let damage = self.take_damage();
-        let operations = self.render_order(&damage);
-        RenderFrame {
-            damage,
-            operations,
-        }
-    }
 }
 
 /// The active node identity and command tree passed while an element records paint.

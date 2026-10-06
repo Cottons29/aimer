@@ -104,10 +104,20 @@ struct HoverHitChain {
     elements: SmallVec<[ElementId; 16]>,
 }
 
+/// O(1) lookup data aligned with the structural path links.
+///
+/// The element pointer is valid only while the dispatcher's indexed root
+/// address and subtree generation still match the tree it was built from.
+#[derive(Clone, Copy)]
+struct IndexedElement {
+    element: *const (dyn Element + 'static),
+    has_structural_children: bool,
+}
+
 struct HitChainRecorder {
     elements: SmallVec<[CachedHitElement; 16]>,
     hover_elements: SmallVec<[ElementId; 16]>,
-    empty_hit_test_nodes: SmallVec<[CachedHitElement; 8]>,
+    empty_hit_test_node_has_children: bool,
     cacheable: bool,
     forwarding_boundary: bool,
 }
@@ -118,7 +128,7 @@ impl HitChainRecorder {
         Self {
             elements: SmallVec::new(),
             hover_elements: SmallVec::new(),
-            empty_hit_test_nodes: SmallVec::new(),
+            empty_hit_test_node_has_children: false,
             cacheable: true,
             forwarding_boundary: false,
         }
@@ -168,16 +178,14 @@ impl HitChainRecorder {
     }
 
     #[inline]
-    fn record_empty_hit_test_node(&mut self) {
+    fn record_empty_hit_test_node(&mut self, has_structural_children: bool) {
         if !self.cacheable
             || self.forwarding_boundary
             || self.elements.is_empty()
         {
             return;
         }
-        if let Some(element) = self.elements.last().copied() {
-            self.empty_hit_test_nodes.push(element);
-        }
+        self.empty_hit_test_node_has_children |= has_structural_children;
     }
 
     #[inline]
@@ -221,16 +229,8 @@ impl HitChainRecorder {
     ) -> Option<CachedHitChain> {
         let root_id = root.element_id()?;
         let first = self.elements.first()?;
-        let empty_node_has_children = !self.forwarding_boundary
-            && self.empty_hit_test_nodes.iter().any(|entry| {
-                // SAFETY: the same root-generation invariant that protects
-                // replay still holds while the just-completed route is being
-                // recorded. These entries point into that retained tree.
-                let element = unsafe { &*entry.element };
-                let mut has_child = false;
-                element.structural_children(&mut |_| has_child = true);
-                has_child
-        });
+        let empty_node_has_children =
+            !self.forwarding_boundary && self.empty_hit_test_node_has_children;
         (self.cacheable
             && !empty_node_has_children
             && first.id == root_id)
@@ -332,8 +332,9 @@ impl Drop for EventHitDepthGuard {
 
 /// Routes pointer events and persists capture ownership across event calls.
 ///
-/// Capture lookup is an average `O(1)` hash-map operation. The saved path is
-/// then resolved from the current root, avoiding a full-tree capture scan.
+/// Capture lookup is an average `O(1)` hash-map operation. The saved owner ID
+/// resolves through a generation-checked structural index, avoiding a repeated
+/// walk of the retained tree.
 /// Uncaptured, non-consuming pointer moves additionally replay the last
 /// single hit chain after validating its element bounds and subtree
 /// generation; overlapping containers and forwarding boundaries retain their
@@ -343,6 +344,8 @@ pub struct EventDispatcher {
     nested_captures: HashMap<(ElementId, PointerKey), ElementId>,
     path_indices: HashMap<ElementId, usize>,
     path_links: Vec<ElementPath>,
+    /// Preorder-aligned with `path_links`; stores direct pointers and child flags.
+    indexed_elements: Vec<IndexedElement>,
     indexed_subtree_generation: u64,
     indexed_root: Option<ElementId>,
     paths_dirty: bool,
@@ -357,7 +360,6 @@ pub struct EventDispatcher {
     focus_candidates: FocusCandidates<ElementId>,
     event_tree: EventTree,
     event_target_by_element: HashMap<ElementId, EventTargetId>,
-    event_target_elements: HashMap<ElementId, *const (dyn Element + 'static)>,
     indexed_root_address: Option<*const ()>,
     event_hit_frames: Vec<EventHitFrame>,
     event_hit_depth: Rc<Cell<usize>>,
@@ -379,6 +381,7 @@ impl EventDispatcher {
             nested_captures: HashMap::new(),
             path_indices: HashMap::new(),
             path_links: Vec::new(),
+            indexed_elements: Vec::new(),
             indexed_subtree_generation: u64::MAX,
             indexed_root: None,
             paths_dirty: true,
@@ -393,7 +396,6 @@ impl EventDispatcher {
             focus_candidates: FocusCandidates::new(),
             event_tree: EventTree::new(),
             event_target_by_element: HashMap::new(),
-            event_target_elements: HashMap::new(),
             indexed_root_address: None,
             event_hit_frames: Vec::new(),
             event_hit_depth: Rc::new(Cell::new(0)),
@@ -427,9 +429,15 @@ impl EventDispatcher {
     }
 
     #[inline]
-    fn record_empty_hit_chain_node(&mut self) {
+    fn record_empty_hit_chain_node(&mut self, element: &dyn Element) {
+        let has_structural_children = element
+            .element_id()
+            .and_then(|id| self.path_indices.get(&id).copied())
+            .and_then(|index| self.indexed_elements.get(index))
+            .map(|element| element.has_structural_children)
+            .unwrap_or(true);
         if let Some(recorder) = self.hit_chain_recorder.as_mut() {
-            recorder.record_empty_hit_test_node();
+            recorder.record_empty_hit_test_node(has_structural_children);
         }
     }
 
@@ -795,7 +803,7 @@ impl EventDispatcher {
         owner: ElementId,
         event: &ElementEvent,
     ) -> Option<RoutedEventResult> {
-        let target = resolve_element_path(path_root, owner, &self.path_indices, &self.path_links)?;
+        let target = self.resolve_indexed_element(path_root, owner)?;
         if target.element_id() != Some(owner) {
             return None;
         }
@@ -1052,9 +1060,7 @@ impl EventDispatcher {
         let Some(owner) = self.captures.remove(&pointer) else {
             return EventResult::ignored();
         };
-        let Some(target) =
-            resolve_element_path(root, owner, &self.path_indices, &self.path_links)
-        else {
+        let Some(target) = self.resolve_indexed_element(root, owner) else {
             return EventResult::ignored();
         };
         if target.element_id() != Some(owner) {
@@ -1198,10 +1204,19 @@ impl EventDispatcher {
     ) -> Option<&'a dyn Element> {
         if self.indexed_subtree_generation != root.subtree_generation()
             || self.indexed_root != root.element_id()
+            || self.indexed_root_address != Some(root as *const dyn Element as *const ())
         {
             return None;
         }
-        let element = resolve_element_path(root, id, &self.path_indices, &self.path_links)?;
+
+        let index = *self.path_indices.get(&id)?;
+        let element = self.indexed_elements.get(index)?.element;
+        // SAFETY: `synchronize_paths` rebuilds `indexed_elements` from this
+        // exact root address and subtree generation. Reconciliation retires
+        // the index before its elements can move or be replaced, and event
+        // dispatch is synchronous on the UI thread without concurrent tree
+        // mutation.
+        let element: &'a dyn Element = unsafe { &*element };
         (element.element_id() == Some(id)).then_some(element)
     }
 
@@ -1255,6 +1270,7 @@ impl EventDispatcher {
             self.hover_chains.clear();
             let mut next_path_indices = HashMap::with_capacity(self.path_indices.len());
             let mut next_path_links = Vec::with_capacity(self.path_links.len());
+            let mut next_indexed_elements = Vec::with_capacity(self.indexed_elements.len());
             let mut next_focus_scope = None;
             index_element_links(
                 root,
@@ -1262,12 +1278,14 @@ impl EventDispatcher {
                 0,
                 &mut next_path_links,
                 &mut next_path_indices,
+                &mut next_indexed_elements,
                 &mut next_focus_scope,
             );
             // Commit the new ID/path index only after the full structural walk
             // succeeds. A partial walk never becomes a usable lookup table.
             self.path_indices = next_path_indices;
             self.path_links = next_path_links;
+            self.indexed_elements = next_indexed_elements;
             self.focus_scope = next_focus_scope;
             self.captures
                 .retain(|_, owner| self.path_indices.contains_key(owner));
@@ -1284,26 +1302,20 @@ impl EventDispatcher {
         if rebuild_paths {
             self.event_tree = EventTree::new();
             self.event_target_by_element.clear();
-            self.event_target_elements.clear();
             build_indexed_event_tree(
                 root,
                 None,
                 None,
                 &mut self.event_tree,
                 &mut self.event_target_by_element,
-                &mut self.event_target_elements,
                 &self.path_indices,
             );
             self.indexed_root_address = Some(root_address);
         } else if event_layout_changed && !self.event_tree.elements().is_empty() {
             for (element_id, target) in &self.event_target_by_element {
-                let bounds = resolve_element_path(
-                    root,
-                    *element_id,
-                    &self.path_indices,
-                    &self.path_links,
-                )
-                .and_then(bounds_from_element);
+                let bounds = self
+                    .resolve_indexed_element(root, *element_id)
+                    .and_then(bounds_from_element);
                 self.event_tree.update_bounds(*target, bounds);
             }
         }
@@ -1453,7 +1465,7 @@ impl EventDispatcher {
         root: &'a dyn Element,
         owner: ElementId,
     ) -> Option<&'a dyn Element> {
-        resolve_element_path(root, owner, &self.path_indices, &self.path_links)
+        self.resolve_indexed_element(root, owner)
     }
 
     fn dispatch_captured(
@@ -1465,9 +1477,7 @@ impl EventDispatcher {
         let Some(owner) = self.captures.get(&pointer).copied() else {
             return EventResult::ignored();
         };
-        let Some(target) =
-            resolve_element_path(root, owner, &self.path_indices, &self.path_links)
-        else {
+        let Some(target) = self.resolve_indexed_element(root, owner) else {
             self.captures.remove(&pointer);
             return EventResult::ignored();
         };
@@ -1493,9 +1503,7 @@ impl EventDispatcher {
         let owners: HashSet<ElementId> = self.captures.values().copied().collect();
         let mut result = EventResult::ignored();
         for owner in owners {
-            let Some(target) =
-                resolve_element_path(root, owner, &self.path_indices, &self.path_links)
-            else {
+            let Some(target) = self.resolve_indexed_element(root, owner) else {
                 continue;
             };
             if target.element_id() == Some(owner) {
@@ -1543,7 +1551,7 @@ mod routing;
 use routing::{
     build_indexed_event_tree, collect_focus_candidates, contains, dispatch_cached_hit_chain_inner,
     dispatch_nested_event, dispatch_routed_event, event_pointer_key,
-    is_indexed_hit_test_boundary, index_element_links, resolve_element_path, RoutedEventResult,
+    is_indexed_hit_test_boundary, index_element_links, RoutedEventResult,
 };
 pub use routing::{broadcast_event, dispatch_event, dispatch_focused_event};
 #[cfg(test)]

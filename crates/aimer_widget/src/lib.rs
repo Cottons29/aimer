@@ -38,6 +38,11 @@ pub mod window_metrics;
 /// ```
 pub struct RequiredChild;
 
+thread_local! {
+    pub static CALLED : Cell<u32> = Cell::default();
+}
+
+
 /// An owned, type-erased [`Element`], stored as a thin two-word owner.
 ///
 /// Elements are the retained side of the tree and are large: the smallest
@@ -91,6 +96,7 @@ pub type AnyElement = aimer_rubick::Rubick<dyn Element, 1>;
 /// ```
 pub type AnyWidget = aimer_rubick::Rubick<dyn DynWidget, 8>;
 
+use std::cell::Cell;
 pub use crate::components::diagnostics::{
     ErrorElement, ErrorWidget, OverflowEdges, OverflowIndicator, detect_overflow,
     paint_overflow_indicator,

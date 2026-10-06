@@ -280,6 +280,58 @@ impl Drawable for StatelessElement {
         child.draw(ctx);
     }
 
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        // Stateless elements rebuild and forward to a child; their retained
+        // node is transparent and the child owns its own paint list.
+        true
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let canvas = aimer_canvas::Canvas::of(ctx);
+        canvas.finish();
+    }
+
+    #[inline]
+    fn retained_v2_bounds(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        unsafe { &*self.child.0.get() }.retained_v2_bounds(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        unsafe { &*self.child.0.get() }.retained_v2_paint_outsets(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_child_geometry(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+    ) -> Option<(aimer_cupid::draw_cmd_v2::Rect, Option<aimer_cupid::draw_cmd_v2::Rect>)> {
+        unsafe { &*self.child.0.get() }.retained_v2_child_geometry(ctx, child)
+    }
+
+    #[inline]
+    fn retained_v2_child_geometry_at(
+        &self,
+        ctx: &BuildContext,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<(aimer_cupid::draw_cmd_v2::Rect, Option<aimer_cupid::draw_cmd_v2::Rect>)> {
+        unsafe { &*self.child.0.get() }
+            .retained_v2_child_geometry_at(ctx, child, child_index)
+    }
+
+    #[inline]
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+        child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        unsafe { &*self.child.0.get() }
+            .retained_v2_child_context_at(ctx, child, child_index)
+    }
+
     #[inline]
     fn paint(&self, ctx: &BuildContext) {
         // A stateless element that exposes stable paint is a transparent
@@ -787,6 +839,14 @@ mod tests {
 
         assert_eq!(wrapper.flex(), Some(2.5));
         assert_eq!(wrapper.event_tree_role(), EventTreeRole::Transparent);
+    }
+
+    #[test]
+    fn stateless_wrapper_is_a_transparent_local_v2_node() {
+        let wrapper = StatelessElement::wrapper(Leaf.boxed(), None, "Wrapper");
+        let context = dummy_build_context();
+
+        assert!(wrapper.can_paint_local_v2(&context));
     }
 
     #[test]

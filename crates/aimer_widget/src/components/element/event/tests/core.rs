@@ -106,6 +106,42 @@ impl Drawable for DefaultStructuralTraversalElement {
 
 impl Rebuildable for DefaultStructuralTraversalElement {}
 
+struct IndexedStructuralChildElement {
+    child: AnyElement,
+    direct_calls: Rc<Cell<usize>>,
+}
+
+impl VisitorElement for IndexedStructuralChildElement {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "IndexedStructuralChildElement"
+    }
+}
+
+impl EventElement for IndexedStructuralChildElement {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
+    fn event_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
+
+    fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.direct_calls.set(self.direct_calls.get() + 1);
+        visitor(self.child.as_ref());
+    }
+}
+
+impl LayoutElement for IndexedStructuralChildElement {}
+
+impl Drawable for IndexedStructuralChildElement {
+    fn draw(&self, _ctx: &BuildContext) {}
+}
+
+impl Rebuildable for IndexedStructuralChildElement {}
+
 #[test]
 fn default_structural_traversal_preserves_event_visual_union() {
     let element = DefaultStructuralTraversalElement {
@@ -134,6 +170,64 @@ fn structural_children_uses_element_specific_traversal() {
     assert_eq!(children.len(), 2);
     assert!(std::ptr::eq(children[0], element.event_child.as_ref()));
     assert!(std::ptr::eq(children[1], element.visual_child.as_ref()));
+}
+
+#[test]
+fn indexed_element_resolution_does_not_walk_the_retained_tree_again() {
+    let direct_calls = Rc::new(Cell::new(0));
+    let visual_child = DowncastableElement.boxed();
+    let visual_child_id = visual_child.id();
+    let root = StructuralTraversalElement {
+        event_child: DowncastableElement.boxed(),
+        visual_child,
+        direct_calls: direct_calls.clone(),
+    }
+    .boxed();
+    let mut dispatcher = EventDispatcher::new();
+
+    dispatcher.synchronize_paths(root.as_ref());
+    assert!(direct_calls.get() > 0, "indexing visits structural children");
+
+    direct_calls.set(0);
+    for _ in 0..10_000 {
+        let resolved = dispatcher.resolve_indexed_element(root.as_ref(), visual_child_id);
+        assert_eq!(
+            resolved.and_then(|element| element.element_id()),
+            Some(visual_child_id)
+        );
+    }
+    assert_eq!(direct_calls.get(), 0, "10,000 indexed lookups must not walk children");
+}
+
+#[test]
+fn hit_chain_cache_checks_structural_children_from_the_index() {
+    let direct_calls = Rc::new(Cell::new(0));
+    let root = IndexedStructuralChildElement {
+        child: DowncastableElement.boxed(),
+        direct_calls: direct_calls.clone(),
+    }
+    .boxed();
+    let mut dispatcher = EventDispatcher::new();
+
+    dispatcher.synchronize_paths(root.as_ref());
+    direct_calls.set(0);
+    dispatcher.begin_hit_chain_recording();
+    dispatcher.record_hit_chain_element(root.as_ref());
+    dispatcher.record_empty_hit_chain_node(root.as_ref());
+    let recorder = dispatcher
+        .hit_chain_recorder
+        .take()
+        .expect("hit-chain recording was started");
+
+    assert!(recorder
+        .finish(
+            PointerKey::new(PointerSource::Mouse, 1),
+            root.as_ref(),
+            root.subtree_generation(),
+            Vec2d::default(),
+        )
+        .is_none(), "a structural child omitted by hit testing blocks caching");
+    assert_eq!(direct_calls.get(), 0, "cache validation must not walk children");
 }
 
 #[test]

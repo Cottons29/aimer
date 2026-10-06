@@ -6,6 +6,7 @@ playground
 error.log
 s_data
 Cargo.lock
+clion_target/
 
 # OS / editor junk
 .DS_Store

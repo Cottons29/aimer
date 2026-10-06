@@ -561,7 +561,7 @@ impl RawTextWidget {
 
 impl Drawable for RawTextWidget {
     fn draw(&self, ctx: &BuildContext) {
-        if aimer_widget::has_active_v2_render_presentation() {
+        if has_active_v2_render_presentation() {
             return;
         }
         self.paint(ctx);
@@ -602,7 +602,6 @@ impl Drawable for RawTextWidget {
         if self.uses_paragraph_layout() {
             if self.text.contains("Published nodes:" ) {
                 debug!("drawing the Text (cached)")
-
             }
             self.draw_paragraph(ctx);
             return;

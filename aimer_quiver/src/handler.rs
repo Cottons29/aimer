@@ -36,14 +36,12 @@ use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
 use aimer_venus::Venus;
 use aimer_rubick::{UiAllocator, UiMemory};
 use aimer_widget::base::{BuildContext, WindowHandle};
-use aimer_widget::{
-    AnyElement, Element, ElementChangeKind, ElementId, ElementInvalidationBatch,
-    EventDispatcher, EventResult, Widget, begin_event_frame,
-};
+use aimer_widget::{begin_event_frame, AnyElement, Element, ElementChangeKind, ElementId, ElementInvalidationBatch, EventDispatcher, EventResult, Widget, CALLED};
 use std::any::Any;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use aimer_utils::debug;
 #[cfg(feature = "wasm-hot-reload")]
 use aimer_anteros::{
     ReloadCommit, ReloadCommitError, ReloadCoordinator, ReloadEventDisposition,
@@ -784,6 +782,9 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let budget = self.venus.idle_budget();
         self.venus.run_idle(&budget);
         self.venus.end_frame();
+        let count = CALLED.get();
+        debug!("structural_children called per frame {}", count);
+        CALLED.set(0);
         // The next platform-input interval is a new event frame. This shared
         // epoch also reaches dispatchers nested inside scrollables and regions.
         begin_event_frame();

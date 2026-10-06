@@ -1,12 +1,30 @@
+use std::collections::HashSet;
 use crate::Element;
 use crate::components::element::{EventDispatchContext, VisitorElement};
 use crate::focus::FocusNode;
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
-use aimer_utils::debug;
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
+use aimer_widget::CALLED;
+
+#[derive(Clone, Copy)]
+struct StructuralChildPointer<'a>(*const (dyn Element + 'a));
+
+impl PartialEq for StructuralChildPointer<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0)
+    }
+}
+
+impl Eq for StructuralChildPointer<'_> {}
+
+impl Hash for StructuralChildPointer<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (self.0 as *const ()).hash(state);
+    }
+}
 
 /// Identifies one pointer independently of pointers from other input sources.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -351,15 +369,39 @@ pub trait EventElement: VisitorElement {
     /// [`Self::event_children`] or [`VisitorElement::visit_children`] exactly
     /// once, in structural order.
     fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        CALLED.update(|c| c + 1);
+
         let mut children: SmallVec<[&'a dyn Element; 8]> = SmallVec::new();
-        // let mut children = Vec::new();
-        debug!("#1");
         self.event_children(&mut |child| children.push(child));
-        // debug!("#2");
+        let event_child_count = children.len();
+        let mut visual_index = 0;
+        let mut seen: Option<HashSet<StructuralChildPointer<'a>>> = None;
         self.visit_children(&mut |child| {
-            if !children.iter().any(|existing| {
-                std::ptr::eq(*existing, child)
-            }) {
+            if visual_index < event_child_count
+                && std::ptr::eq(children[visual_index], child)
+            {
+                visual_index += 1;
+                return;
+            }
+
+            visual_index += 1;
+            let child_pointer = StructuralChildPointer(std::ptr::from_ref(child));
+            let already_seen = if let Some(seen) = seen.as_mut() {
+                !seen.insert(child_pointer)
+            } else if children.len() >= 16 {
+                let mut pointers: HashSet<StructuralChildPointer<'a>> = children
+                    .iter()
+                    .map(|existing| StructuralChildPointer(std::ptr::from_ref(*existing)))
+                    .collect();
+                let already_seen = !pointers.insert(child_pointer);
+                seen = Some(pointers);
+                already_seen
+            } else {
+                children
+                    .iter()
+                    .any(|existing| std::ptr::eq(*existing, child))
+            };
+            if !already_seen {
                 children.push(child);
             }
         });

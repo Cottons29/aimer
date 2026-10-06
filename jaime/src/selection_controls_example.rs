@@ -100,24 +100,14 @@ impl Default for SelectionControlsExample {
 }
 
 pub struct SelectionControlsExampleState {
-    checkbox_value: CheckboxValue,
-    switch_value: bool,
-    radio_selected: &'static str,
-    select_selected: Option<&'static str>,
-    autocomplete_query: String,
-    autocomplete_selected: Option<&'static str>,
+    reset_generation: u64,
     updater: StateUpdater<Self>,
 }
 
 impl SelectionControlsExampleState {
     fn initial() -> Self {
         Self {
-            checkbox_value: CheckboxValue::Unchecked,
-            switch_value: false,
-            radio_selected: "basic",
-            select_selected: None,
-            autocomplete_query: String::new(),
-            autocomplete_selected: None,
+            reset_generation: 0,
             updater: StateUpdater::empty(),
         }
     }
@@ -138,14 +128,120 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
 
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let app_theme = ThemeData::copied(ctx);
+        let reset_generation = self.reset_generation;
 
+        let reset_updater = self.updater;
+        let reset = action_button("Reset all", app_theme, move || {
+            reset_updater.set_state(|state| {
+                state.reset_generation = state.reset_generation.wrapping_add(1);
+            });
+        });
+
+        Scrollable::new()
+            .axis(ScrollAxis::Vertical)
+            .child(
+                Container::new()
+                    .color(app_theme.background_color)
+                    .padding(LayoutSpacing::all(Spacing::Px(4)))
+                    .child(
+                        Column::new()
+                            .gaps(LayoutSpacing::all(Spacing::Px(16)))
+                            .children([
+                                Text::new("Choice controls")
+                                    .text_style(
+                                        TextStyle::new()
+                                            .font_size(26)
+                                            .font_weight(FontWeight::Bold)
+                                            .color(app_theme.on_background_color),
+                                    )
+                                    .boxed(),
+                                Text::new("Every control is live: click, tap, or use the keyboard. Each control updates its own retained section state.")
+                                .text_style(
+                                    TextStyle::new()
+                                        .font_size(15)
+                                        .color(theme::muted_text(&app_theme)),
+                                )
+                                .wrapped()
+                                .boxed(),
+                                CheckboxSection::new()
+                                    .reset_generation(reset_generation)
+                                    .boxed(),
+                                SwitchSection::new()
+                                    .reset_generation(reset_generation)
+                                    .boxed(),
+                                RadioSection::new()
+                                    .reset_generation(reset_generation)
+                                    .boxed(),
+                                SelectSection::new()
+                                    .reset_generation(reset_generation)
+                                    .boxed(),
+                                AutocompleteSection::new()
+                                    .reset_generation(reset_generation)
+                                    .boxed(),
+                                reset,
+                            ]),
+                    ),
+            )
+    }
+}
+
+#[widget(Stateful)]
+struct CheckboxSection {
+    reset_generation: u64,
+}
+
+impl CheckboxSection {
+    #[inline]
+    fn new() -> Self {
+        Self { reset_generation: 0 }
+    }
+
+    #[inline]
+    fn reset_generation(mut self, reset_generation: u64) -> Self {
+        self.reset_generation = reset_generation;
+        self
+    }
+}
+
+struct CheckboxSectionState {
+    reset_generation: u64,
+    value: CheckboxValue,
+    updater: StateUpdater<Self>,
+}
+
+impl StatefulWidget for CheckboxSection {
+    type State = CheckboxSectionState;
+
+    fn create_state(self) -> Self::State {
+        CheckboxSectionState {
+            reset_generation: self.reset_generation,
+            value: CheckboxValue::Unchecked,
+            updater: StateUpdater::empty(),
+        }
+    }
+}
+
+impl State<CheckboxSection> for CheckboxSectionState {
+    fn init_state(&mut self, updater: StateUpdater<Self>) {
+        self.updater = updater;
+    }
+
+    fn adopt_config_from(&mut self, new: Self) {
+        if self.reset_generation != new.reset_generation {
+            self.value = CheckboxValue::Unchecked;
+        }
+        self.reset_generation = new.reset_generation;
+    }
+
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let app_theme = ThemeData::copied(ctx);
         let checkbox_updater = self.updater;
         let checkbox_theme = app_theme;
         let checkbox = Checkbox::new()
-            .with_value(self.checkbox_value)
+            .with_value(self.value)
             .with_label("Accept terms")
             .on_change(move |value| {
-                checkbox_updater.set_state(move |state| state.checkbox_value = value);
+                checkbox_updater.set_state(move |state| state.value = value);
             })
             .builder(move |state| {
                 let mark = if state.is_checked() { "✓" } else { "" };
@@ -208,15 +304,136 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
             .with_label("Locked by policy (disabled)")
             .disabled(true);
 
-        let switch_updater = self.updater;
+        SelectionControlsExample::section(
+            "Checkbox",
+            format!("Proposed value: {:?}", self.value),
+            Column::new()
+                .gaps(LayoutSpacing::all(Spacing::Px(4)))
+                .children([checkbox.boxed(), disabled_checkbox.boxed()])
+                .boxed(),
+            app_theme,
+        )
+    }
+}
+
+#[widget(Stateful)]
+struct SwitchSection {
+    reset_generation: u64,
+}
+
+impl SwitchSection {
+    #[inline]
+    fn new() -> Self {
+        Self { reset_generation: 0 }
+    }
+
+    #[inline]
+    fn reset_generation(mut self, reset_generation: u64) -> Self {
+        self.reset_generation = reset_generation;
+        self
+    }
+}
+
+struct SwitchSectionState {
+    reset_generation: u64,
+    value: bool,
+    updater: StateUpdater<Self>,
+}
+
+impl StatefulWidget for SwitchSection {
+    type State = SwitchSectionState;
+
+    fn create_state(self) -> Self::State {
+        SwitchSectionState {
+            reset_generation: self.reset_generation,
+            value: false,
+            updater: StateUpdater::empty(),
+        }
+    }
+}
+
+impl State<SwitchSection> for SwitchSectionState {
+    fn init_state(&mut self, updater: StateUpdater<Self>) {
+        self.updater = updater;
+    }
+
+    fn adopt_config_from(&mut self, new: Self) {
+        if self.reset_generation != new.reset_generation {
+            self.value = false;
+        }
+        self.reset_generation = new.reset_generation;
+    }
+
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let app_theme = ThemeData::copied(ctx);
+        let updater = self.updater;
         let switch = Switch::new()
-            .with_value(self.switch_value)
+            .with_value(self.value)
             .with_label("Email notifications")
             .on_change(move |value| {
-                switch_updater.set_state(move |state| state.switch_value = value);
+                updater.set_state(move |state| state.value = value);
             });
 
-        let radio_updater = self.updater;
+        SelectionControlsExample::section(
+            "Switch",
+            format!("On: {}", self.value),
+            switch.boxed(),
+            app_theme,
+        )
+    }
+}
+
+#[widget(Stateful)]
+struct RadioSection {
+    reset_generation: u64,
+}
+
+impl RadioSection {
+    #[inline]
+    fn new() -> Self {
+        Self { reset_generation: 0 }
+    }
+
+    #[inline]
+    fn reset_generation(mut self, reset_generation: u64) -> Self {
+        self.reset_generation = reset_generation;
+        self
+    }
+}
+
+struct RadioSectionState {
+    reset_generation: u64,
+    selected: &'static str,
+    updater: StateUpdater<Self>,
+}
+
+impl StatefulWidget for RadioSection {
+    type State = RadioSectionState;
+
+    fn create_state(self) -> Self::State {
+        RadioSectionState {
+            reset_generation: self.reset_generation,
+            selected: "basic",
+            updater: StateUpdater::empty(),
+        }
+    }
+}
+
+impl State<RadioSection> for RadioSectionState {
+    fn init_state(&mut self, updater: StateUpdater<Self>) {
+        self.updater = updater;
+    }
+
+    fn adopt_config_from(&mut self, new: Self) {
+        if self.reset_generation != new.reset_generation {
+            self.selected = "basic";
+        }
+        self.reset_generation = new.reset_generation;
+    }
+
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let app_theme = ThemeData::copied(ctx);
+        let updater = self.updater;
         let radios = RadioGroup::new()
             .try_options([
                 ChoiceOption::new("basic", "Basic", "basic"),
@@ -226,12 +443,71 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
             ])
             .expect("the example uses unique radio keys")
             .with_label("Plan")
-            .with_selected(Some(self.radio_selected))
+            .with_selected(Some(self.selected))
             .on_change(move |value| {
-                radio_updater.set_state(move |state| state.radio_selected = value);
+                updater.set_state(move |state| state.selected = value);
             });
 
-        let select_updater = self.updater;
+        SelectionControlsExample::section(
+            "Radio group",
+            format!("Selected plan: {}", self.selected),
+            radios.boxed(),
+            app_theme,
+        )
+    }
+}
+
+#[widget(Stateful)]
+struct SelectSection {
+    reset_generation: u64,
+}
+
+impl SelectSection {
+    #[inline]
+    fn new() -> Self {
+        Self { reset_generation: 0 }
+    }
+
+    #[inline]
+    fn reset_generation(mut self, reset_generation: u64) -> Self {
+        self.reset_generation = reset_generation;
+        self
+    }
+}
+
+struct SelectSectionState {
+    reset_generation: u64,
+    selected: Option<&'static str>,
+    updater: StateUpdater<Self>,
+}
+
+impl StatefulWidget for SelectSection {
+    type State = SelectSectionState;
+
+    fn create_state(self) -> Self::State {
+        SelectSectionState {
+            reset_generation: self.reset_generation,
+            selected: None,
+            updater: StateUpdater::empty(),
+        }
+    }
+}
+
+impl State<SelectSection> for SelectSectionState {
+    fn init_state(&mut self, updater: StateUpdater<Self>) {
+        self.updater = updater;
+    }
+
+    fn adopt_config_from(&mut self, new: Self) {
+        if self.reset_generation != new.reset_generation {
+            self.selected = None;
+        }
+        self.reset_generation = new.reset_generation;
+    }
+
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let app_theme = ThemeData::copied(ctx);
+        let updater = self.updater;
         let select = Select::new()
             .try_options([
                 ChoiceOption::new("small", "Small", "small"),
@@ -240,12 +516,77 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
             ])
             .expect("the example uses unique select keys")
             .with_label("Size")
-            .with_selected(self.select_selected)
+            .with_selected(self.selected)
             .on_change(move |value| {
-                select_updater.set_state(move |state| state.select_selected = Some(value));
+                updater.set_state(move |state| state.selected = Some(value));
             });
 
-        let autocomplete_updater = self.updater;
+        SelectionControlsExample::section(
+            "Select",
+            format!(
+                "Selected size: {}",
+                self.selected.unwrap_or("(none yet — click to open)")
+            ),
+            select.boxed(),
+            app_theme,
+        )
+    }
+}
+
+#[widget(Stateful)]
+struct AutocompleteSection {
+    reset_generation: u64,
+}
+
+impl AutocompleteSection {
+    #[inline]
+    fn new() -> Self {
+        Self { reset_generation: 0 }
+    }
+
+    #[inline]
+    fn reset_generation(mut self, reset_generation: u64) -> Self {
+        self.reset_generation = reset_generation;
+        self
+    }
+}
+
+struct AutocompleteSectionState {
+    reset_generation: u64,
+    query: String,
+    selected: Option<&'static str>,
+    updater: StateUpdater<Self>,
+}
+
+impl StatefulWidget for AutocompleteSection {
+    type State = AutocompleteSectionState;
+
+    fn create_state(self) -> Self::State {
+        AutocompleteSectionState {
+            reset_generation: self.reset_generation,
+            query: String::new(),
+            selected: None,
+            updater: StateUpdater::empty(),
+        }
+    }
+}
+
+impl State<AutocompleteSection> for AutocompleteSectionState {
+    fn init_state(&mut self, updater: StateUpdater<Self>) {
+        self.updater = updater;
+    }
+
+    fn adopt_config_from(&mut self, new: Self) {
+        if self.reset_generation != new.reset_generation {
+            self.query.clear();
+            self.selected = None;
+        }
+        self.reset_generation = new.reset_generation;
+    }
+
+    fn build(&self, ctx: &BuildContext) -> impl Widget {
+        let app_theme = ThemeData::copied(ctx);
+        let updater = self.updater;
         let autocomplete = Autocomplete::new()
             .try_options([
                 ChoiceOption::new("apple", "Apple", "apple"),
@@ -256,124 +597,45 @@ impl State<SelectionControlsExample> for SelectionControlsExampleState {
             ])
             .expect("the example uses unique autocomplete keys")
             .with_label("Fruit")
-            .with_query(self.autocomplete_query.clone())
-            .with_selected(self.autocomplete_selected)
+            .with_query(self.query.clone())
+            .with_selected(self.selected)
             .on_change(move |value| {
-                autocomplete_updater
-                    .set_state(move |state| state.autocomplete_selected = Some(value));
+                updater.set_state(move |state| state.selected = Some(value));
             });
-
-        let autocomplete_filters = Row::new()
+        let filters = Row::new()
             .gaps(LayoutSpacing::all(Spacing::Px(8)))
             .children([
-                filter_chip("Query: \"ap\"", &self.updater, "ap", app_theme),
-                filter_chip("Query: \"b\"", &self.updater, "b", app_theme),
+                filter_chip("Query: \\\"ap\\\"", &self.updater, "ap", app_theme),
+                filter_chip("Query: \\\"b\\\"", &self.updater, "b", app_theme),
                 filter_chip("Clear query", &self.updater, "", app_theme),
             ])
             .boxed();
 
-        let reset_updater = self.updater;
-        let reset = action_button("Reset all", app_theme, move || {
-            reset_updater.set_state(|state| {
-                *state = SelectionControlsExampleState {
-                    updater: state
-                        .updater,
-                    ..SelectionControlsExampleState::initial()
-                }
-            });
-        });
-
-        Scrollable::new()
-            .axis(ScrollAxis::Vertical)
-            .child(
-                Container::new()
-                    .color(app_theme.background_color)
-                    .padding(LayoutSpacing::all(Spacing::Px(4)))
-                    .child(
-                        Column::new()
-                            .gaps(LayoutSpacing::all(Spacing::Px(16)))
-                            .children([
-                                Text::new("Choice controls")
-                                    .text_style(
-                                        TextStyle::new()
-                                            .font_size(26)
-                                            .font_weight(FontWeight::Bold)
-                                            .color(app_theme.on_background_color),
-                                    )
-                                    .boxed(),
-                                Text::new(
-                                    "Every control is live: click, tap, or use the keyboard. Each \
-                             change flows through a real on_change callback back into this \
-                             page's own state.",
-                                )
-                                .text_style(
-                                    TextStyle::new()
-                                        .font_size(15)
-                                        .color(theme::muted_text(&app_theme)),
-                                )
-                                .wrapped()
-                                .boxed(),
-                                SelectionControlsExample::section(
-                                    "Checkbox",
-                                    format!("Proposed value: {:?}", self.checkbox_value),
-                                    Column::new()
-                                        .gaps(LayoutSpacing::all(Spacing::Px(4)))
-                                        .children([checkbox.boxed(), disabled_checkbox.boxed()])
-                                        .boxed(),
-                                    app_theme,
-                                ),
-                                SelectionControlsExample::section(
-                                    "Switch",
-                                    format!("On: {}", self.switch_value),
-                                    switch.boxed(),
-                                    app_theme,
-                                ),
-                                SelectionControlsExample::section(
-                                    "Radio group",
-                                    format!("Selected plan: {}", self.radio_selected),
-                                    radios.boxed(),
-                                    app_theme,
-                                ),
-                                SelectionControlsExample::section(
-                                    "Select",
-                                    format!(
-                                        "Selected size: {}",
-                                        self.select_selected
-                                            .unwrap_or("(none yet — click to open)")
-                                    ),
-                                    select.boxed(),
-                                    app_theme,
-                                ),
-                                SelectionControlsExample::section(
-                                    "Autocomplete",
-                                    format!(
-                                        "Query: {:?}; selected: {}",
-                                        self.autocomplete_query,
-                                        self.autocomplete_selected
-                                            .unwrap_or("(none yet)")
-                                    ),
-                                    Column::new()
-                                        .gaps(LayoutSpacing::all(Spacing::Px(8)))
-                                        .children([autocomplete_filters, autocomplete.boxed()])
-                                        .boxed(),
-                                    app_theme,
-                                ),
-                                reset,
-                            ]),
-                    ),
-            )
+        SelectionControlsExample::section(
+            "Autocomplete",
+            format!(
+                "Query: {:?}; selected: {}",
+                self.query,
+                self.selected.unwrap_or("(none yet)")
+            ),
+            Column::new()
+                .gaps(LayoutSpacing::all(Spacing::Px(8)))
+                .children([filters, autocomplete.boxed()])
+                .boxed(),
+            app_theme,
+        )
     }
 }
 
 fn filter_chip(
     label: &'static str,
-    updater: &StateUpdater<SelectionControlsExampleState>,
+    updater: &StateUpdater<AutocompleteSectionState>,
     query: &'static str,
     app_theme: ThemeData,
 ) -> AnyWidget {
     let updater = *updater;
     action_button(label, app_theme, move || {
-        updater.set_state(move |state| state.autocomplete_query = query.to_owned());
+        updater.set_state(move |state| state.query = query.to_owned());
     })
 }
 

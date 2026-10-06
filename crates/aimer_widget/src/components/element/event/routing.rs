@@ -42,7 +42,6 @@ pub(super) fn build_indexed_event_tree(
     parent_branch: Option<ElementId>,
     tree: &mut EventTree,
     target_by_element: &mut HashMap<ElementId, EventTargetId>,
-    target_elements: &mut HashMap<ElementId, *const (dyn Element + 'static)>,
     path_indices: &HashMap<ElementId, usize>,
 ) {
     let role = element.event_tree_role();
@@ -65,7 +64,6 @@ pub(super) fn build_indexed_event_tree(
         );
         let target = tree.register_under(id, parent, parent_branch);
         target_by_element.insert(id, target);
-        target_elements.insert(id, retained_element_pointer(element));
         let bounds = bounds_from_element(element);
         tree.update_bounds(target, bounds);
         child_branch = None;
@@ -87,7 +85,6 @@ pub(super) fn build_indexed_event_tree(
             parent_branch,
             tree,
             target_by_element,
-            target_elements,
             path_indices,
         );
         if is_indexed_hit_test_boundary(role)
@@ -104,26 +101,33 @@ pub(super) fn build_indexed_event_tree(
     }
 }
 
-/// Indexes every element in a reusable parent-link arena, reporting the
-/// innermost focus scope on the way.
+/// Indexes every element in reusable parent-link and direct-lookup arenas,
+/// reporting the innermost focus scope on the way.
 ///
 /// The scope is discovered here rather than by a walk of its own because this
 /// walk already visits the whole tree once per structural generation. Each
 /// trapping element seen overwrites the previous one, so the last of them in
 /// depth-first order wins — which is the innermost scope of the deepest
-/// trapping branch, and for siblings the one presented last.
+/// trapping branch, and for siblings the one presented last. The direct
+/// entries retain each element pointer and whether that node has structural
+/// children, so event and invalidation lookups need not traverse parent paths.
 pub(super) fn index_element_links(
     element: &dyn Element,
     parent: Option<usize>,
     child_index: u32,
     links: &mut Vec<ElementPath>,
     path_indices: &mut HashMap<ElementId, usize>,
+    indexed_elements: &mut Vec<IndexedElement>,
     scope: &mut Option<ElementId>,
 ) {
     let link_index = links.len();
     links.push(ElementPath {
         parent,
         child_index,
+    });
+    indexed_elements.push(IndexedElement {
+        element: retained_element_pointer(element),
+        has_structural_children: false,
     });
 
     if let Some(id) = element.element_id() {
@@ -134,7 +138,9 @@ pub(super) fn index_element_links(
     }
 
     let mut child_index = 0u32;
+    let mut has_structural_children = false;
     element.structural_children(&mut |child| {
+        has_structural_children = true;
         let index = child_index;
         child_index = child_index
             .checked_add(1)
@@ -145,9 +151,11 @@ pub(super) fn index_element_links(
             index,
             links,
             path_indices,
+            indexed_elements,
             scope,
         );
     });
+    indexed_elements[link_index].has_structural_children = has_structural_children;
 }
 
 pub(super) fn resolve_element_path<'a>(
@@ -556,7 +564,7 @@ fn dispatch_indexed_target_inner(
     };
     dispatcher.record_hit_chain_children(hit_child_count);
     if hit_child_count == 0 {
-        dispatcher.record_empty_hit_chain_node();
+        dispatcher.record_empty_hit_chain_node(element);
     }
     for child_index in 0..child_count {
         let child_target = dispatcher.event_hit_frames[frame_index].active_children[target.index()][child_index];
@@ -625,14 +633,7 @@ fn resolve_indexed_event_element<'a>(
     {
         return None;
     }
-    let element = *dispatcher.event_target_elements.get(&id)?;
-
-    // SAFETY: `synchronize_paths` builds this map from elements below the exact
-    // root address and subtree generation checked above. Rebuild/reconciliation
-    // retires the map before targets move or are replaced, and dispatch runs
-    // synchronously on the UI thread without concurrent tree mutation.
-    let element: &'a dyn Element = unsafe { &*element };
-    (element.element_id() == Some(id)).then_some(element)
+    dispatcher.resolve_indexed_element(root, id)
 }
 
 pub(super) fn dispatch_cached_hit_chain_inner(
@@ -767,7 +768,7 @@ fn dispatch_routed_event_inner<'tree>(
     });
     dispatcher.record_hit_chain_children(hit_test_children);
     if hit_test_children == 0 {
-        dispatcher.record_empty_hit_chain_node();
+        dispatcher.record_empty_hit_chain_node(root);
     }
 
     while children.len() > start {

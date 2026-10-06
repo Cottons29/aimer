@@ -413,32 +413,6 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
         traversal.complete = true;
     }
 
-    fn adopt_runtime_state_from(&self, old: &dyn Element) {
-        let before = element_tree_generation();
-        self.element.adopt_runtime_state_from(old);
-        let after = element_tree_generation();
-        if after != before {
-            self.set_subtree_generation(after);
-        }
-    }
-
-    fn subtree_generation(&self) -> u64 {
-        if !self.element.is_layout_stable() {
-            return element_tree_generation();
-        }
-        STABLE_SUBTREE_GENERATIONS.with(|generations| {
-            generations.borrow().get(&self.id.get()).copied().unwrap_or(0)
-        })
-    }
-
-    fn set_subtree_generation(&self, generation: u64) {
-        if self.element.is_layout_stable() {
-            STABLE_SUBTREE_GENERATIONS.with(|generations| {
-                generations.borrow_mut().insert(self.id.get(), generation);
-            });
-        }
-    }
-
     fn option_any(&self) -> Option<&dyn std::any::Any> {
         self.element.option_any()
     }
@@ -453,6 +427,15 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
 
     fn compositor_priority(&self) -> bool {
         self.element.compositor_priority()
+    }
+
+    fn adopt_runtime_state_from(&self, old: &dyn Element) {
+        let before = element_tree_generation();
+        self.element.adopt_runtime_state_from(old);
+        let after = element_tree_generation();
+        if after != before {
+            self.set_subtree_generation(after);
+        }
     }
 
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
@@ -483,6 +466,23 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
         if outermost && has_rebuild_source && !element_has_dirty_work(&self.element) {
             mark_paint_invalidations_unknown();
             invalidate_dirty_paths();
+        }
+    }
+
+    fn subtree_generation(&self) -> u64 {
+        if !self.element.is_layout_stable() {
+            return element_tree_generation();
+        }
+        STABLE_SUBTREE_GENERATIONS.with(|generations| {
+            generations.borrow().get(&self.id.get()).copied().unwrap_or(0)
+        })
+    }
+
+    fn set_subtree_generation(&self, generation: u64) {
+        if self.element.is_layout_stable() {
+            STABLE_SUBTREE_GENERATIONS.with(|generations| {
+                generations.borrow_mut().insert(self.id.get(), generation);
+            });
         }
     }
 }
