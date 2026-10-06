@@ -316,14 +316,14 @@ impl Drawable for AnimatedSwitcherElement {
         {
             ctx.canvas.save();
             ctx.canvas.set_alpha(1.0 - out_value);
-            old.draw(ctx);
+            old.update(ctx);
             ctx.canvas.restore();
         }
 
         // Draw new child (fading in)
         ctx.canvas.save();
         ctx.canvas.set_alpha(in_value);
-        self.current_child.draw(ctx);
+        self.current_child.update(ctx);
         ctx.canvas.restore();
 
         if active {
@@ -374,9 +374,9 @@ impl Drawable for AnimatedSwitcherElement {
 
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
         if let Some(old) = unsafe { &*self.old_child.get() } {
-            old.draw(ctx);
+            old.update(ctx);
         }
-        self.current_child.draw(ctx);
+        self.current_child.update(ctx);
 
         let active = self.in_controller.is_animating() || self.out_controller.is_animating();
         if active {
@@ -940,7 +940,7 @@ mod tests {
 
             // Initial frame: only the "home" page is painted.
             drawn.borrow_mut().clear();
-            router.draw(&ctx);
+            router.update(&ctx);
             assert_eq!(
                 *drawn.borrow(),
                 ["home"],
@@ -951,7 +951,7 @@ mod tests {
             updater.set_state(|s| s.route = 1);
             router.rebuild_if_dirty(&ctx);
             drawn.borrow_mut().clear();
-            router.draw(&ctx);
+            router.update(&ctx);
 
             let painted = drawn.borrow().clone();
             assert!(

@@ -267,7 +267,7 @@ mod tests {
         let root = element.boxed();
         root.layout(&ctx);
         ctx.canvas.begin_frame();
-        root.draw(&ctx);
+        root.update(&ctx);
 
         let pointer = PointerInfo::mouse(Vec2d { x: 16.0, y: 16.0 }, PointerButton::Primary);
         let _ = broadcast_event(

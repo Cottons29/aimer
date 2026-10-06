@@ -2619,7 +2619,7 @@ mod tests {
         let layout = text.paragraph.prepare(&context);
         let expected_top = layout.fragments[0].baseline - layout.fragments[0].ascent;
 
-        text.draw(&context);
+        text.update(&context);
 
         let (selection_top, rendered_color) = inner
             .draw_list()
@@ -2690,7 +2690,7 @@ mod tests {
         };
         text.session().select_all();
 
-        text.draw(&context);
+        text.update(&context);
 
         let highlight_count = inner
             .draw_list()
@@ -2757,7 +2757,7 @@ mod tests {
         };
         text.session().select_all();
 
-        text.draw(&context);
+        text.update(&context);
 
         let highlights = inner
             .draw_list()
@@ -2849,7 +2849,7 @@ mod tests {
                 < 0.01
         );
 
-        text.draw(&context);
+        text.update(&context);
 
         let geometry = text.geometry();
         let regions = geometry.regions.borrow();
@@ -2952,7 +2952,7 @@ mod tests {
             focus_node: FocusNode::new(),
         };
 
-        text.draw(&context);
+        text.update(&context);
 
         let commands = inner.draw_list();
         let commands = commands.commands();
@@ -3053,7 +3053,7 @@ mod tests {
             highlighted.paragraph.prepare(&context).size,
             plain.paragraph.prepare(&context).size
         );
-        highlighted.draw(&context);
+        highlighted.update(&context);
         assert_eq!(
             highlighted.hovered_link.borrow().as_deref(),
             Some("https://aimer.dev")

@@ -248,6 +248,9 @@ impl TextHitBounds {
 
 impl RawTextButton {
     const DOUBLE_TAP_INTERVAL: Duration = Duration::from_millis(500);
+    /// Largest normal-versus-hover label size difference, in device pixels,
+    /// that still shares one render node's bounds.
+    const SUBPIXEL_SIZE_TOLERANCE: f32 = 1.0;
 
     fn active_style_for(&self, hovered: bool) -> TextStyle {
         let (mut style, color) = if self.widget.disabled {
@@ -322,11 +325,11 @@ impl RawTextButton {
         }
 
         let text = self.text_element_for(hovered);
-        let size = if wraps {
-            text.computed_size(&text_ctx)
-        } else {
-            intrinsic_size
-        };
+        // Measuring the label that will be painted also prepares its retained
+        // layout (a decorated label lays out as a paragraph), which local v2
+        // paint reads from the label's cache.
+        let measured = text.computed_size(&text_ctx);
+        let size = if wraps { measured } else { intrinsic_size };
         let (line_widths, line_height) = if wraps {
             let font_size = text.font_size(text_ctx.scale);
             let metrics = text_ctx.canvas.measure_text_metrics_styled(
@@ -365,7 +368,13 @@ impl RawTextButton {
         }
         let hover = (!self.widget.disabled).then(|| self.text_layout_for(ctx, true));
         if let Some((hover_text, hover_ctx, hover_size, _, _)) = &hover {
-            if normal.2.width != hover_size.width || normal.2.height != hover_size.height {
+            // A decoration moves the label onto the paragraph path, which does
+            // not round the size up like plain text, so the two states can
+            // differ by a fraction of a pixel. Anything larger is a real
+            // resize that the node's bounds cannot absorb.
+            if (normal.2.width - hover_size.width).abs() > Self::SUBPIXEL_SIZE_TOLERANCE
+                || (normal.2.height - hover_size.height).abs() > Self::SUBPIXEL_SIZE_TOLERANCE
+            {
                 return None;
             }
             if hover_text.text_style.text_shadow.is_some()
@@ -537,10 +546,10 @@ impl Drawable for RawTextButton {
             // this frame instead of waiting for a second repaint.
             let (text, text_ctx, size, line_widths, line_height) = self.text_layout(ctx);
             self.save_bounds(ctx, size, &line_widths, line_height);
-            text.draw(&text_ctx);
+            text.update(&text_ctx);
             return;
         }
-        text.draw(&text_ctx);
+        text.update(&text_ctx);
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -757,7 +766,7 @@ mod tests {
             ),
         );
 
-        button.draw(&ctx);
+        button.update(&ctx);
 
         let draw_list = canvas.draw_list();
         let decorations = draw_list
@@ -787,7 +796,7 @@ mod tests {
             ),
         );
 
-        button.draw(&ctx);
+        button.update(&ctx);
 
         assert!(canvas.draw_list().commands().iter().any(|command| {
             matches!(command, DrawCommand::DrawTextDecoration { .. })
@@ -1008,5 +1017,62 @@ mod tests {
             .to_portable_node(&mut context, source)
             .unwrap();
         context.finish_document(root).unwrap();
+    }
+
+    fn underline_on_hover_button() -> RawTextButton {
+        raw_button(
+            TextButton::new("Tab")
+                .style(TextStyle::new().font_size(20))
+                .hover_style(
+                    TextStyle::new()
+                        .font_size(20)
+                        .text_decoration(TextDecoration::Underline),
+                ),
+        )
+    }
+
+    #[test]
+    fn a_button_that_underlines_on_hover_paints_locally() {
+        // The decoration moves the label onto the paragraph path, whose size is
+        // not rounded up like plain text: normal and hover differ by a
+        // fraction of a pixel, which must not push the button to a legacy
+        // island.
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let _guard = runtime.enter();
+        let mut ctx = context(300.0);
+        ctx.cursor_pos = Vec2d { x: -1.0, y: -1.0 };
+        let button = underline_on_hover_button();
+
+        assert!(button.can_paint_local_v2(&ctx));
+    }
+
+    #[test]
+    fn a_hovered_underlined_button_paints_locally() {
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let _guard = runtime.enter();
+        let ctx = context(300.0);
+        let button = underline_on_hover_button();
+        button.layout(&ctx);
+        let mut hovered = ctx.clone();
+        hovered.cursor_pos = Vec2d { x: 2.0, y: 2.0 };
+
+        assert!(button.can_paint_local_v2(&hovered));
+    }
+
+    #[test]
+    fn a_hover_style_that_resizes_the_label_still_declines() {
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let _guard = runtime.enter();
+        let ctx = context(300.0);
+        let button = raw_button(
+            TextButton::new("Tab")
+                .style(TextStyle::new().font_size(20))
+                .hover_style(TextStyle::new().font_size(28)),
+        );
+
+        assert!(
+            !button.can_paint_local_v2(&ctx),
+            "a hover state of a different size cannot share the node's bounds"
+        );
     }
 }

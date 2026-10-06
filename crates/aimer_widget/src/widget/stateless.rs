@@ -277,7 +277,7 @@ impl Drawable for StatelessElement {
         self.rebuild_if_dirty(ctx);
         // Safety: single-threaded rendering pipeline.
         let child = unsafe { &*self.child.0.get() };
-        child.draw(ctx);
+        child.update(ctx);
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
@@ -657,7 +657,7 @@ mod tests {
         .boxed();
         let context = dummy_build_context();
 
-        root.draw(&context);
+        root.update(&context);
         clean_rebuilds.set(0);
         dirty_rebuilds.set(0);
 
@@ -666,7 +666,7 @@ mod tests {
                 child.mark_needs_rebuild();
             }
         });
-        root.draw(&context);
+        root.update(&context);
 
         assert_eq!(clean_rebuilds.get(), 0);
         assert_eq!(dirty_rebuilds.get(), 1);

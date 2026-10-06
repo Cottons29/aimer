@@ -558,7 +558,7 @@ mod tests {
         let element: AnyElement = TextArea::new()
             .controller(controller.clone())
             .to_element(&ctx);
-        element.draw(&ctx);
+        element.update(&ctx);
         let mut dispatcher = EventDispatcher::new();
         let start = Vec2d { x: 4.0, y: 12.0 };
         let end = Vec2d { x: 50.0, y: 12.0 };
@@ -570,7 +570,7 @@ mod tests {
                 &ElementEvent::PointerDown(PointerInfo::mouse(start, PointerButton::Primary)),
             )
             .is_consumed());
-        element.draw(&ctx);
+        element.update(&ctx);
         assert!(dispatcher
             .dispatch(
                 element.as_ref(),
@@ -578,7 +578,7 @@ mod tests {
                 &ElementEvent::PointerMove(PointerInfo::mouse(end, PointerButton::Primary)),
             )
             .is_consumed());
-        element.draw(&ctx);
+        element.update(&ctx);
         assert!(dispatcher
             .dispatch(
                 element.as_ref(),

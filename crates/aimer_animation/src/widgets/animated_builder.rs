@@ -576,35 +576,33 @@ impl Drawable for AnimatedBuilderElement {
             output_changed || self.controller.is_animating(),
         );
 
-        unsafe { &*self.child.get() }.draw(ctx);
+        unsafe { &*self.child.get() }.update(ctx);
 
         if self.controller.is_animating() {
             self.window.request_redraw();
         }
     }
 
+    /// The builder records nothing itself: its rebuilt child owns its render
+    /// nodes and resolves its own paint source, so the builder never forces the
+    /// subtree onto the legacy path.
     #[inline]
-    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
-        let child = unsafe { &*self.child.get() };
-        child.can_paint_local_v2(ctx) && child.is_paint_bounded()
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
     }
 
     #[inline]
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
 
     fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
-        let child = unsafe { &*self.child.get() };
-        if !child.can_paint_local_v2(ctx) || !child.is_paint_bounded() {
-            return false;
-        }
-        child.sync_paint_geometry(ctx);
+        unsafe { &*self.child.get() }.sync_paint_geometry(ctx);
         true
     }
 
     #[inline]
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
         self.output_changed.set(false);
-        unsafe { &*self.child.get() }.draw(ctx);
+        unsafe { &*self.child.get() }.update(ctx);
         if self.controller.is_animating() {
             self.window.request_redraw();
         }

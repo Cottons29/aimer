@@ -201,7 +201,7 @@ impl Drawable for RawAnchor {
 
     fn draw(&self, ctx: &BuildContext) {
         self.track(ctx, self.child.computed_size(ctx));
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     fn paint(&self, ctx: &BuildContext) {

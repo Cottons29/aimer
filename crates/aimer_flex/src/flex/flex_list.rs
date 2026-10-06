@@ -783,9 +783,9 @@ fn row_state_survives_a_rebuild_of_the_container() {
     let items: Vec<u32> = (0..100).collect();
 
     let old = observed.column(items.clone()).to_element(&ctx);
-    old.draw(&ctx);
+    old.update(&ctx);
     observed.bump(1, 7);
-    old.draw(&ctx);
+    old.update(&ctx);
     assert_eq!(observed.counter_of(1), Some(7), "the row kept no state at all");
 
     // Exactly what a rebuild above the list does: build the replacement, hand
@@ -793,7 +793,7 @@ fn row_state_survives_a_rebuild_of_the_container() {
     let new = observed.column(items).to_element(&ctx);
     observed.seen.borrow_mut().clear();
     carry_element_state(old.as_ref(), new.as_ref(), &ctx);
-    new.draw(&ctx);
+    new.update(&ctx);
 
     assert_eq!(
         observed.counter_of(1),
@@ -813,7 +813,7 @@ fn a_corrected_extent_survives_a_rebuild_of_the_container() {
     let exact = 21.0 * ROW_EXTENT;
 
     let old = varying_column(&counters, 1, 20).to_element(&ctx);
-    old.draw(&ctx);
+    old.update(&ctx);
     assert_eq!(old.computed_size(&ctx).height, exact);
 
     let new = varying_column(&counters, 1, 20).to_element(&ctx);
@@ -840,16 +840,16 @@ fn a_keyed_list_follows_its_data_across_an_insertion() {
     let observed = Observed::default();
 
     let old = observed.keyed_column((0..100).collect()).to_element(&ctx);
-    old.draw(&ctx);
+    old.update(&ctx);
     observed.bump(2, 7);
-    old.draw(&ctx);
+    old.update(&ctx);
 
     let mut shifted: Vec<u32> = vec![900];
     shifted.extend(0..100);
     let new = observed.keyed_column(shifted).to_element(&ctx);
     observed.seen.borrow_mut().clear();
     carry_element_state(old.as_ref(), new.as_ref(), &ctx);
-    new.draw(&ctx);
+    new.update(&ctx);
 
     assert_eq!(
         observed.counter_of(2),
@@ -962,7 +962,7 @@ fn item_extent_paints_only_the_visible_slice() {
     let ctx = dummy_build_context(400.0, VIEWPORT, Some((0.0, 0.0, 400.0, VIEWPORT)));
 
     let element = declared_column(&counters).to_element(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     // Three 200px rows fill a 600px viewport, plus the row that starts
     // exactly on its bottom edge.
@@ -1000,7 +1000,7 @@ fn item_extent_builds_only_the_windowed_rows() {
     let ctx = dummy_build_context(400.0, VIEWPORT, Some((0.0, 0.0, 400.0, VIEWPORT)));
 
     let element = declared_column(&counters).to_element(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     assert!(
         counters.built.get() <= VISIBLE_BUDGET,
@@ -1016,13 +1016,13 @@ fn a_deep_scroll_builds_only_its_own_window() {
     let counters = Counters::default();
     let ctx = dummy_build_context(400.0, VIEWPORT, Some((0.0, 0.0, 400.0, VIEWPORT)));
     let element = declared_column(&counters).to_element(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let offset = 50_000.0 * ROW_EXTENT;
     let scrolled = dummy_build_context(400.0, VIEWPORT, Some((0.0, offset, 400.0, VIEWPORT)));
     counters.built.set(0);
     counters.drawn.set(0);
-    element.draw(&scrolled);
+    element.update(&scrolled);
 
     assert!(counters.drawn.get() > 0, "nothing was painted");
     assert!(
@@ -1039,7 +1039,7 @@ fn scrolling_one_row_rebuilds_one_row() {
     let counters = Counters::default();
     let ctx = dummy_build_context(400.0, VIEWPORT, Some((0.0, 0.0, 400.0, VIEWPORT)));
     let element = declared_column(&counters).to_element(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let nudged = dummy_build_context(
         400.0,
@@ -1047,7 +1047,7 @@ fn scrolling_one_row_rebuilds_one_row() {
         Some((0.0, ROW_EXTENT, 400.0, VIEWPORT)),
     );
     counters.built.set(0);
-    element.draw(&nudged);
+    element.update(&nudged);
 
     assert_eq!(
         counters.built.get(),
@@ -1064,7 +1064,7 @@ fn a_windowed_container_visits_only_its_live_rows() {
     let counters = Counters::default();
     let ctx = dummy_build_context(400.0, VIEWPORT, Some((0.0, 0.0, 400.0, VIEWPORT)));
     let element = declared_column(&counters).to_element(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let mut visited = 0;
     element.visit_children(&mut |_| visited += 1);
@@ -1125,7 +1125,7 @@ fn an_undeclared_list_paints_only_the_visible_slice() {
     let ctx = scrolled_context(0.0);
 
     let element = undeclared_column(&counters).to_element(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     // Three 200px rows fill a 600px viewport, plus the row that starts
     // exactly on its bottom edge.
@@ -1147,7 +1147,7 @@ fn a_disagreeing_painted_row_corrects_the_table_in_place() {
     let element = varying_column(&counters, 1, 20).to_element(&ctx);
     let exact = 21.0 * ROW_EXTENT;
 
-    element.draw(&ctx);
+    element.update(&ctx);
 
     assert_eq!(
         element.computed_size(&ctx).height,
@@ -1165,7 +1165,7 @@ fn a_disagreeing_painted_row_corrects_the_table_in_place() {
 
     let built = counters.built.get();
     counters.measured.set(0);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     assert_eq!(
         element.computed_size(&ctx).height,
@@ -1194,7 +1194,7 @@ fn an_undeclared_list_is_honest_only_about_the_rows_it_painted() {
     let ctx = scrolled_context(0.0);
 
     let element = varying_column(&counters, 15, 20).to_element(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     assert_eq!(element.computed_size(&ctx).height, 20.0 * ROW_EXTENT);
 }
@@ -1210,11 +1210,11 @@ fn a_scrolled_undeclared_list_converges_on_the_exact_extent() {
     let exact = 21.0 * ROW_EXTENT;
 
     let top = scrolled_context(0.0);
-    element.draw(&top);
+    element.update(&top);
     assert_eq!(element.computed_size(&top).height, predicted);
 
     let onto_row_15 = scrolled_context(14.0 * ROW_EXTENT);
-    element.draw(&onto_row_15);
+    element.update(&onto_row_15);
 
     assert_eq!(
         element.computed_size(&onto_row_15).height,
@@ -1227,7 +1227,7 @@ fn a_scrolled_undeclared_list_converges_on_the_exact_extent() {
         counters.built.get()
     );
 
-    element.draw(&top);
+    element.update(&top);
 
     assert_eq!(
         element.computed_size(&top).height,
@@ -1250,7 +1250,7 @@ fn a_windowed_list_keeps_its_corrected_extent_across_a_rebuild() {
     let exact = 21.0 * ROW_EXTENT;
 
     let old = varying_column(&counters, 1, 20).to_element(&ctx);
-    old.draw(&ctx);
+    old.update(&ctx);
     assert_eq!(old.computed_size(&ctx).height, exact);
 
     // What reconciliation does: the replacement claims the runtime state of the

@@ -319,8 +319,8 @@ impl Drop for RawModalHost {
 impl Drawable for RawModalHost {
     fn draw(&self, ctx: &BuildContext) {
         self.prepare_pending_commands(ctx);
-        self.child.draw(ctx);
-        self.overlay.draw(ctx);
+        self.child.update(ctx);
+        self.overlay.update(ctx);
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
@@ -400,7 +400,7 @@ fn draw_hosted_entries(entries: &HostedModalEntries, ctx: &BuildContext) {
     let now = AnimInstant::now();
     for entry in entries.entries() {
         entry.timeline.borrow_mut().tick(now, entry.animation);
-        entry.element.draw(ctx);
+        entry.element.update(ctx);
     }
 
     let finished: HashSet<_> = entries

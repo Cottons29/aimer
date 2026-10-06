@@ -2,7 +2,6 @@ use std::cell::{Cell, UnsafeCell};
 use std::path::PathBuf;
 
 use aimer_attribute::Dimension;
-use aimer_container::ZeroSizedBox;
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::BoxFit;
 use aimer_widget::base::{BuildContext, Color, Colors, ResolvedSize, Size, Vec2d};
@@ -176,6 +175,7 @@ impl Widget for Image {
             original_size: Cell::new(None),
             cached_id: UnsafeCell::new(None),
             cached_texture_epoch: Cell::new(0),
+            paint_changed: Cell::new(false),
             scale: self.scale,
         }
         .boxed()
@@ -201,10 +201,28 @@ pub struct RawImageWidget<P: ImageProvider> {
     /// A changed generation makes the provider revalidate its cached image ID
     /// before the widget records another draw command.
     pub cached_texture_epoch: Cell<u64>,
+    /// Set when the provider result changed after the last local v2 recording,
+    /// so the retained node re-records exactly when its pixels can differ.
+    pub paint_changed: Cell<bool>,
     pub scale: f32,
 }
 
 impl<P: ImageProvider> VisitorElement for RawImageWidget<P> {
+    /// Exposes only the element of the current state, so the retained render
+    /// tree has a node for what is actually shown. An image that has not
+    /// settled yet counts as loading.
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        let state = unsafe { &*self.cached_id.get() };
+        let shown = match state {
+            None | Some(ImageResult::Loading) => self.loading_element.as_ref(),
+            Some(ImageResult::Error(_)) => self.error_element.as_ref(),
+            Some(Success(_)) => None,
+        };
+        if let Some(element) = shown {
+            visitor(element.as_ref());
+        }
+    }
+
     fn debug_name(&self) -> &'static str {
         "RawImageElement"
     }
@@ -245,10 +263,81 @@ impl<P: ImageProvider> RawImageWidget<P> {
             // that case because retained paint may have no damage to replay.
             aimer_widget::mark_paint_damage_full();
         }
-        unsafe { *self.cached_id.get() = Some(result.clone()) };
+        let previous = unsafe { (*self.cached_id.get()).replace(result.clone()) };
+        if previous.as_ref() != Some(&result) {
+            self.paint_changed.set(true);
+        }
         self.cached_texture_epoch
             .set(ctx.canvas.texture_cache_epoch());
         result
+    }
+
+    /// Brings the cached provider result up to date and returns it: polls a
+    /// loading image and revalidates a success after the renderer cache moved.
+    fn refresh(&self, ctx: &BuildContext) -> ImageResult {
+        if let Some(result) = unsafe { &*self.cached_id.get() } {
+            let cache_invalidated = match result {
+                Success(_) => {
+                    let epoch = ctx.canvas.texture_cache_epoch();
+                    let invalidated = epoch != self.cached_texture_epoch.get();
+                    self.cached_texture_epoch.set(epoch);
+                    invalidated
+                }
+                _ => false,
+            };
+            if cache_invalidated {
+                // Keep the previous result in place: `cache_result` compares
+                // against it, so an unchanged texture does not re-record.
+                let r = self.source.get_image(ctx);
+                self.cache_result(r, ctx)
+            } else if result == &ImageResult::Loading {
+                let r = self.source.get_image(ctx);
+                self.cache_result(r, ctx)
+            } else {
+                result.clone()
+            }
+        } else {
+            let result = self.source.get_image(ctx);
+            self.cache_result(result, ctx)
+        }
+    }
+
+    /// Records the magenta/black checkerboard shown for a failed image that has
+    /// no error element. `target` is in device pixels, the list in logical.
+    fn paint_error_checkerboard(
+        &self,
+        canvas: &aimer_canvas::Canvas,
+        target: ResolvedSize,
+        scale: f32,
+    ) {
+        let grid_size = 32.0;
+        let rows = (target.height / grid_size).ceil() as i32;
+        let cols = (target.width / grid_size).ceil() as i32;
+        for row in 0..rows {
+            for col in 0..cols {
+                let color = if (row + col) % 2 == 0 {
+                    Color::Basic(Colors::Magenta)
+                } else {
+                    Color::Basic(Colors::Black)
+                };
+                let x = col as f32 * grid_size;
+                let y = row as f32 * grid_size;
+                let width = grid_size.min(target.width - x);
+                let height = grid_size.min(target.height - y);
+                if width > 0.0 && height > 0.0 {
+                    let (red, green, blue, alpha) = color.to_rgba();
+                    canvas.fill_rect(
+                        aimer_cupid::draw_cmd_v2::Rect::new(
+                            x / scale,
+                            y / scale,
+                            width / scale,
+                            height / scale,
+                        ),
+                        [red, green, blue, alpha],
+                    );
+                }
+            }
+        }
     }
 
     fn local_v2_image_paint(
@@ -325,17 +414,6 @@ impl<P: ImageProvider> RawImageWidget<P> {
             return None;
         }
 
-        let right = geometry.pos.x + geometry.size.width;
-        let bottom = geometry.pos.y + geometry.size.height;
-        if !geometry.use_cover
-            && (geometry.pos.x < 0.0
-                || geometry.pos.y < 0.0
-                || right > target.width
-                || bottom > target.height)
-        {
-            return None;
-        }
-
         Some((id, target, geometry, resource))
     }
 }
@@ -343,30 +421,7 @@ impl<P: ImageProvider> RawImageWidget<P> {
 impl<P: ImageProvider> Drawable for RawImageWidget<P> {
     fn draw(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
-        let image_result = if let Some(result) = unsafe { &*self.cached_id.get() } {
-            let cache_invalidated = match result {
-                Success(_) => {
-                    let epoch = ctx.canvas.texture_cache_epoch();
-                    let invalidated = epoch != self.cached_texture_epoch.get();
-                    self.cached_texture_epoch.set(epoch);
-                    invalidated
-                }
-                _ => false,
-            };
-            if cache_invalidated {
-                unsafe { *self.cached_id.get() = None };
-                let r = self.source.get_image(ctx);
-                self.cache_result(r, ctx)
-            } else if result == &ImageResult::Loading {
-                let r = self.source.get_image(ctx);
-                self.cache_result(r, ctx)
-            } else {
-                result.clone()
-            }
-        } else {
-            let result = self.source.get_image(ctx);
-            self.cache_result(result, ctx)
-        };
+        let image_result = self.refresh(ctx);
 
         match image_result {
             Success(id) => {
@@ -422,15 +477,16 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
             }
 
             ImageResult::Loading => {
-                self.loading_element
-                    .as_ref()
-                    .unwrap_or(&ZeroSizedBox.to_element(ctx))
-                    .draw(ctx);
+                // Nothing to traverse without a loading element. A temporary
+                // placeholder here would be drawn without a render node.
+                if let Some(loading_element) = &self.loading_element {
+                    loading_element.update(ctx);
+                }
             }
 
             ImageResult::Error(_) => {
                 if let Some(error_element) = &self.error_element {
-                    error_element.draw(ctx);
+                    error_element.update(ctx);
                     return;
                 }
                 let grid_size = 32.0;
@@ -464,40 +520,79 @@ impl<P: ImageProvider> Drawable for RawImageWidget<P> {
         }
     }
 
-    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
-        self.local_v2_image_paint(ctx).is_some()
+    /// Every state has a local list: the image, the error checkerboard, or
+    /// nothing while loading (the loading and error elements are retained
+    /// children). Provider work is done by `sync_local_v2_state`, not here.
+    #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        self.sync_paint_geometry(ctx);
+        self.refresh(ctx);
+        true
+    }
+
+    #[inline]
+    fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
+        self.paint_changed.get()
+    }
+
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        let (_, target, geometry, _) = self.local_v2_image_paint(ctx)?;
+        if geometry.use_cover {
+            return None;
+        }
+        let scale = ctx.scale;
+        let outsets = [
+            (-geometry.pos.x).max(0.0),
+            (-geometry.pos.y).max(0.0),
+            (geometry.pos.x + geometry.size.width - target.width).max(0.0),
+            (geometry.pos.y + geometry.size.height - target.height).max(0.0),
+        ]
+        .map(|outset| outset / scale);
+        outsets.iter().any(|outset| *outset > 0.0).then_some(outsets)
     }
 
     fn paint_local_v2(&self, ctx: &BuildContext) {
-        let (id, target, geometry, resource) = self
-            .local_v2_image_paint(ctx)
-            .expect("Image v2 support must be checked before painting");
-        let scale = ctx.scale;
+        self.paint_changed.set(false);
         let canvas = aimer_canvas::Canvas::of(ctx);
-        if geometry.use_cover {
-            canvas.push_clip(
-                aimer_cupid::draw_cmd_v2::Rect::new(
-                    0.0,
-                    0.0,
-                    target.width / scale,
-                    target.height / scale,
-                ),
-                [0.0; 4],
+        let scale = ctx.scale;
+        if let Some((id, target, geometry, resource)) = self.local_v2_image_paint(ctx) {
+            if geometry.use_cover {
+                canvas.push_clip(
+                    aimer_cupid::draw_cmd_v2::Rect::new(
+                        0.0,
+                        0.0,
+                        target.width / scale,
+                        target.height / scale,
+                    ),
+                    [0.0; 4],
+                );
+            }
+            let destination = aimer_cupid::draw_cmd_v2::Rect::new(
+                geometry.pos.x / scale,
+                geometry.pos.y / scale,
+                geometry.size.width / scale,
+                geometry.size.height / scale,
             );
-        }
-        let destination = aimer_cupid::draw_cmd_v2::Rect::new(
-            geometry.pos.x / scale,
-            geometry.pos.y / scale,
-            geometry.size.width / scale,
-            geometry.size.height / scale,
-        );
-        if let Some(resource) = resource {
-            canvas.draw_image_with_resource(destination, resource);
-        } else {
-            canvas.draw_image(destination, id);
-        }
-        if geometry.use_cover {
-            canvas.pop_clip();
+            if let Some(resource) = resource {
+                canvas.draw_image_with_resource(destination, resource);
+            } else {
+                canvas.draw_image(destination, id);
+            }
+            if geometry.use_cover {
+                canvas.pop_clip();
+            }
+        } else if matches!(
+            unsafe { &*self.cached_id.get() },
+            Some(ImageResult::Error(_))
+        ) && self.error_element.is_none()
+            && scale.is_finite()
+            && scale > 0.0
+        {
+            self.paint_error_checkerboard(&canvas, self.computed_size(ctx), scale);
         }
         canvas.finish();
     }
@@ -535,6 +630,7 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
+    use aimer_container::ZeroSizedBox;
     use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect, RenderPaintSource, RenderTree};
     use super::*;
 
@@ -617,6 +713,7 @@ mod tests {
             error_element: None,
             cached_id: UnsafeCell::new(None),
             cached_texture_epoch: Cell::new(0),
+            paint_changed: Cell::new(false),
             scale: 1.0,
         }
     }
@@ -667,11 +764,11 @@ mod tests {
         let image = loading_then_error_image(Rc::new(Cell::new(0)));
 
         aimer_widget::begin_paint_frame(32, 32);
-        image.draw(&ctx);
+        image.update(&ctx);
         let _ = aimer_widget::take_paint_frame_damage(32, 32);
 
         aimer_widget::begin_paint_frame(32, 32);
-        image.draw(&ctx);
+        image.update(&ctx);
         let damage = aimer_widget::take_paint_frame_damage(32, 32);
 
         assert!(
@@ -689,14 +786,14 @@ mod tests {
         });
 
         aimer_widget::begin_paint_frame(32, 32);
-        image.draw(&ctx);
+        image.update(&ctx);
         let _ = aimer_widget::take_paint_frame_damage(32, 32);
         assert_eq!(calls.get(), 1);
 
         let _ = ctx.canvas.load_image(&[1, 2, 3, 4], 1, 1);
 
         aimer_widget::begin_paint_frame(32, 32);
-        image.draw(&ctx);
+        image.update(&ctx);
         let _ = aimer_widget::take_paint_frame_damage(32, 32);
 
         assert_eq!(
@@ -764,24 +861,137 @@ mod tests {
         assert_eq!(tree.take_damage(), vec![image_bounds]);
     }
 
-    #[test]
-    fn loading_and_stale_images_decline_v2_without_touching_the_provider() {
-        let ctx = context();
-        let loading_calls = Rc::new(Cell::new(0));
-        let loading = loading_then_error_image(loading_calls.clone());
-        assert!(!loading.can_paint_local_v2(&ctx));
-        assert_eq!(loading_calls.get(), 0);
+    fn record_paint<P: ImageProvider>(
+        image: &RawImageWidget<P>,
+        ctx: &BuildContext,
+    ) -> aimer_cupid::draw_cmd_v2::DrawListSnapshot {
+        let tree = RenderTree::new();
+        let node = tree.add_root(Rect::new(0.0, 0.0, 16.0, 16.0)).unwrap();
+        let node_context = tree.context(node).unwrap();
+        ctx.with_local_v2_paint_context(node_context, |ctx| image.paint_local_v2(ctx));
+        tree.draw_list_snapshot(node).unwrap()
+    }
 
+    #[test]
+    fn a_loading_image_paints_locally_without_touching_the_provider() {
+        let ctx = context();
+        let calls = Rc::new(Cell::new(0));
+        let loading = loading_then_error_image(calls.clone());
+
+        assert!(
+            loading.can_paint_local_v2(&ctx),
+            "a loading image is an empty local list, never a legacy island"
+        );
+        assert!(record_paint(&loading, &ctx).commands.is_empty());
+        assert_eq!(calls.get(), 0, "recording must not poll the provider");
+    }
+
+    #[test]
+    fn a_stale_image_paints_nothing_until_the_provider_is_revalidated() {
+        let ctx = context();
         let stale_calls = Rc::new(Cell::new(0));
         let stale = image_with_source(CountingSuccess {
             calls: stale_calls.clone(),
         });
         let texture_id = ctx.canvas.load_image(&[1, 2, 3, 4], 1, 1);
         stale.cache_result(ImageResult::Success(texture_id), &ctx);
-        assert!(stale.can_paint_local_v2(&ctx));
+        assert_eq!(record_paint(&stale, &ctx).commands.len(), 1);
 
         let _new_texture = ctx.canvas.load_image(&[5, 6, 7, 8], 1, 1);
-        assert!(!stale.can_paint_local_v2(&ctx));
-        assert_eq!(stale_calls.get(), 0);
+        assert!(stale.can_paint_local_v2(&ctx));
+        assert!(record_paint(&stale, &ctx).commands.is_empty());
+        assert_eq!(stale_calls.get(), 0, "recording must not poll the provider");
+
+        assert!(stale.sync_local_v2_state(&ctx));
+        assert_eq!(stale_calls.get(), 1, "syncing revalidates the stale image");
+        assert_eq!(record_paint(&stale, &ctx).commands.len(), 1);
+    }
+
+    #[test]
+    fn syncing_settles_the_provider_state_and_requests_one_recording() {
+        let ctx = context();
+        let calls = Rc::new(Cell::new(0));
+        let image = loading_then_error_image(calls.clone());
+
+        assert!(image.sync_local_v2_state(&ctx));
+        assert!(image.local_v2_paint_needs_recording(&ctx));
+        record_paint(&image, &ctx);
+        assert!(
+            !image.local_v2_paint_needs_recording(&ctx),
+            "recording consumes the pending paint change"
+        );
+
+        assert!(image.sync_local_v2_state(&ctx));
+        assert_eq!(calls.get(), 2);
+        assert!(
+            image.local_v2_paint_needs_recording(&ctx),
+            "loading to error changes what the node must paint"
+        );
+        record_paint(&image, &ctx);
+
+        assert!(image.sync_local_v2_state(&ctx));
+        assert!(
+            !image.local_v2_paint_needs_recording(&ctx),
+            "an unchanged result must not re-record"
+        );
+    }
+
+    #[test]
+    fn a_failed_image_paints_the_error_checkerboard_locally() {
+        let ctx = context();
+        let image = loading_then_error_image(Rc::new(Cell::new(0)));
+        image.sync_local_v2_state(&ctx);
+        image.sync_local_v2_state(&ctx);
+
+        let snapshot = record_paint(&image, &ctx);
+        assert!(matches!(
+            snapshot.commands.as_ref(),
+            [DrawCommand::FillRect { rect, .. }] if *rect == Rect::new(0.0, 0.0, 16.0, 16.0)
+        ));
+    }
+
+    #[test]
+    fn only_the_active_state_element_is_a_retained_child() {
+        let ctx = context();
+        let calls = Rc::new(Cell::new(0));
+        let mut image = loading_then_error_image(calls);
+        image.loading_element = Some(ZeroSizedBox.to_element(&ctx));
+        image.error_element = Some(ZeroSizedBox.to_element(&ctx));
+        let count = |image: &RawImageWidget<LoadingThenError>| {
+            let mut children = Vec::new();
+            image.visit_children(&mut |child| children.push(child as *const dyn Element as *const ()));
+            children
+        };
+        let loading = image.loading_element.as_ref().unwrap().as_ref() as *const dyn Element as *const ();
+        let error = image.error_element.as_ref().unwrap().as_ref() as *const dyn Element as *const ();
+
+        assert_eq!(count(&image), vec![loading], "an unsettled image shows its loading element");
+        image.sync_local_v2_state(&ctx);
+        assert_eq!(count(&image), vec![loading]);
+        image.sync_local_v2_state(&ctx);
+        assert_eq!(count(&image), vec![error]);
+    }
+
+    #[test]
+    fn an_overflowing_image_reports_its_paint_outsets() {
+        let ctx = context();
+        let mut image = image_with_source(CountingSuccess {
+            calls: Rc::new(Cell::new(0)),
+        });
+        image.scale = 2.0;
+        let texture_id = ctx.canvas.load_image(&[1, 2, 3, 4], 1, 1);
+        image.cache_result(ImageResult::Success(texture_id), &ctx);
+
+        assert!(image.can_paint_local_v2(&ctx));
+        assert_eq!(
+            image.retained_v2_paint_outsets(&ctx),
+            Some([8.0, 8.0, 8.0, 8.0]),
+            "a 2x image overflows its 16px box by half its size on every side"
+        );
+        let snapshot = record_paint(&image, &ctx);
+        assert!(matches!(
+            snapshot.commands.as_ref(),
+            [DrawCommand::DrawImage { rect, .. }] if *rect == Rect::new(-8.0, -8.0, 32.0, 32.0)
+        ));
     }
 }

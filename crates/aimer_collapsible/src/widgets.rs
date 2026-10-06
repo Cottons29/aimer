@@ -198,7 +198,7 @@ impl Drawable for AnimatedCollapseElement {
         if size.width > 0.0 && size.height > 0.0 {
             ctx.canvas.save();
             ctx.canvas.set_clip(Vec2d::ZERO, size);
-            self.child.draw(&self.child_context(ctx, natural));
+            self.child.update(&self.child_context(ctx, natural));
             ctx.canvas.clear_clip();
             ctx.canvas.restore();
         }
@@ -238,7 +238,7 @@ impl Drawable for AnimatedCollapseElement {
         };
         self.update_bounds(ctx, size);
         if size.width > 0.0 && size.height > 0.0 {
-            self.child.draw(&self.child_context(ctx, natural));
+            self.child.update(&self.child_context(ctx, natural));
         }
         if self.controller.is_animating() {
             request_animation_frame();

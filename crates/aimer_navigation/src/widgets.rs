@@ -1955,7 +1955,7 @@ impl Rebuildable for RawNavigationKeyRelay {
 
 impl Drawable for RawNavigationKeyRelay {
     fn draw(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {

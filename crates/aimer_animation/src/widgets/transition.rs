@@ -68,7 +68,7 @@ fn draw_transition_frame(
     } else {
         damage.mark_full();
     }
-    child.draw(ctx);
+    child.update(ctx);
     frame.clear(ctx);
     ctx.canvas.restore();
 
@@ -156,7 +156,7 @@ macro_rules! impl_transition_element {
 
             #[inline]
             fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-                self.child.draw(ctx);
+                self.child.update(ctx);
             }
 
             #[inline]
@@ -380,7 +380,7 @@ impl Drawable for SlideTransitionElement {
 
     #[inline]
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     #[inline]
@@ -592,7 +592,7 @@ impl Drawable for ScaleTransitionElement {
 
     #[inline]
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     #[inline]
@@ -832,7 +832,7 @@ impl Drawable for RotationTransitionElement {
 
     #[inline]
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     #[inline]
@@ -1215,7 +1215,7 @@ mod tests {
     fn render_frame(element: &AnyElement, ctx: &BuildContext) -> Option<aimer_cupid::compositor::CompositorScene> {
         ctx.canvas.begin_frame();
         aimer_widget::begin_paint_frame(64, 64);
-        element.draw(ctx);
+        element.update(ctx);
         let damage = aimer_widget::take_paint_frame_damage(64, 64);
         let draw_list = ctx.canvas.get_inner_canvas().take_draw_list();
         ctx.canvas.take_scene(&draw_list, 64, 64, damage)
@@ -1428,7 +1428,7 @@ mod tests {
         let ctx = dummy_build_context();
         let element = widget.to_element(&ctx);
 
-        element.draw(&ctx);
+        element.update(&ctx);
 
         assert_eq!(test_frame_requester::count(), 1);
         assert!(!ctx.window.take_redraw_request());

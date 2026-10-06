@@ -1920,6 +1920,6 @@ fn layout_child(child: &AnyElement, ctx: &BuildContext, offset: Vec2d) {
 fn draw_child(child: &AnyElement, ctx: &BuildContext, offset: Vec2d) {
     ctx.canvas.save();
     ctx.canvas.translate(offset);
-    child.draw(ctx);
+    child.update(ctx);
     ctx.canvas.restore();
 }

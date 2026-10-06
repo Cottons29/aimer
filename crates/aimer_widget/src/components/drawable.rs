@@ -141,7 +141,30 @@ pub enum CompositorAnimationDecision {
 }
 
 pub trait Drawable {
-    fn draw(&self, ctx: &BuildContext);
+    /// Walks this element for one frame, without recording paint.
+    ///
+    /// This is the per-frame traversal: lay out and position children, advance
+    /// animations, rebuild dirty state, publish interaction geometry, and call
+    /// `update` on every child that should take part in the frame. Visual
+    /// output is recorded separately, by [`Self::paint_local_v2`], so `update`
+    /// must not draw.
+    ///
+    /// The default calls the legacy [`Self::draw`], so an element that has not
+    /// been migrated yet keeps working unchanged.
+    #[inline]
+    fn update(&self, ctx: &BuildContext) {
+        #[allow(deprecated)]
+        self.draw(ctx);
+    }
+
+    /// The legacy per-frame entry point that both traversed and painted.
+    ///
+    /// Implement [`Self::update`] for the traversal and
+    /// [`Self::paint_local_v2`] for paint instead. The default does nothing.
+    #[deprecated(
+        note = "implement `Drawable::update` for the per-frame traversal and `paint_local_v2` for paint"
+    )]
+    fn draw(&self, _ctx: &BuildContext) {}
 
     /// Returns whether this element can record its own visual commands into a
     /// retained v2 list for the current context. Returning `false` keeps the
@@ -185,7 +208,7 @@ pub trait Drawable {
     #[doc(hidden)]
     #[inline]
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        self.draw(ctx);
+        self.update(ctx);
     }
 
     /// Reports whether an already recorded local v2 list must be refreshed.
@@ -287,6 +310,21 @@ pub trait Drawable {
         self.retained_v2_child_geometry(ctx, child)
     }
 
+    /// Returns the corner radii of the clip this element applies to one direct
+    /// child, in logical pixels: top-left, top-right, bottom-right,
+    /// bottom-left.
+    ///
+    /// The radii round the clip rectangle returned by
+    /// [`Self::retained_v2_child_geometry`] (or [`Self::retained_clip`]). The
+    /// renderer keeps one clip at a time and takes its radii from the
+    /// innermost clip, so this must match what the live `draw` path pushes for
+    /// the same child. The default is square corners.
+    #[doc(hidden)]
+    #[inline]
+    fn retained_v2_child_clip_radius(&self, _ctx: &BuildContext, _child: &dyn Element) -> [f32; 4] {
+        [0.0; 4]
+    }
+
     /// Emits only the visual commands for this element.
     ///
     /// This is the paint-only half of [`Self::draw`]. It may be recorded and
@@ -299,6 +337,7 @@ pub trait Drawable {
     #[doc(hidden)]
     #[inline]
     fn paint(&self, ctx: &BuildContext) {
+        #[allow(deprecated)]
         self.draw(ctx);
     }
 
@@ -410,6 +449,7 @@ pub trait Drawable {
         ctx: &BuildContext,
         _frame: CompositorAnimationFrame,
     ) {
+        #[allow(deprecated)]
         self.draw(ctx);
     }
 
@@ -426,6 +466,12 @@ pub trait Drawable {
 }
 
 impl Drawable for Box<dyn Drawable> {
+    #[inline]
+    fn update(&self, ctx: &BuildContext) {
+        self.as_ref().update(ctx);
+    }
+
+    #[allow(deprecated)]
     fn draw(&self, ctx: &BuildContext) {
         self.as_ref().draw(ctx);
     }
@@ -458,6 +504,11 @@ impl Drawable for Box<dyn Drawable> {
     #[inline]
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
         self.as_ref().retained_v2_paint_outsets(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_child_clip_radius(&self, ctx: &BuildContext, child: &dyn Element) -> [f32; 4] {
+        self.as_ref().retained_v2_child_clip_radius(ctx, child)
     }
 
     #[inline]

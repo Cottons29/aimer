@@ -577,7 +577,7 @@ impl Drawable for RetainedChildElement {
 
     fn draw(&self, ctx: &BuildContext) {
         if let Some(child) = self.child() {
-            child.draw(ctx);
+            child.update(ctx);
         }
     }
 

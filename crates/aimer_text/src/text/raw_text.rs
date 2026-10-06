@@ -959,7 +959,7 @@ mod tests {
             _typeface: Cell::new(None),
         };
 
-        widget.draw(&context);
+        widget.update(&context);
         let first = widget.cache.with_extra(|slot: &mut Option<RawTextAuxCache>| {
             slot.as_ref()
                 .and_then(|auxiliary| auxiliary.plain_decorations.as_ref())
@@ -968,7 +968,7 @@ mod tests {
         #[cfg(debug_assertions)]
         let first_stats = inner.text_cache_stats();
 
-        widget.draw(&context);
+        widget.update(&context);
         let second = widget.cache.with_extra(|slot: &mut Option<RawTextAuxCache>| {
             slot.as_ref()
                 .and_then(|auxiliary| auxiliary.plain_decorations.as_ref())

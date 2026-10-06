@@ -668,7 +668,7 @@ impl<T: Theme> VisitorElement for AnimatedThemeElement<T> {
 
 impl<T: Theme> Drawable for AnimatedThemeElement<T> {
     fn draw(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
 
         if self.controller.is_animating() {
             request_next_frame();
@@ -684,7 +684,7 @@ impl<T: Theme> Drawable for AnimatedThemeElement<T> {
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
 
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
         if self.controller.is_animating() {
             request_next_frame();
         }
@@ -1187,7 +1187,7 @@ mod tests {
         .to_element(ctx);
         // Drawing is the frame boundary: it ticks the controller, places the
         // retained child again, and rebuilds the marked subtree before paint.
-        frame.draw(ctx);
+        frame.update(ctx);
     }
 
     #[tokio::test]

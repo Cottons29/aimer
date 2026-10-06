@@ -1355,7 +1355,7 @@ mod focus_tests {
     fn drawn(field: TextField) -> (AnyElement, BuildContext<'static>) {
         let ctx = dummy_build_context(FIELD_WIDTH, FIELD_HEIGHT);
         let element = field.to_element(&ctx);
-        element.draw(&ctx);
+        element.update(&ctx);
         (element, ctx)
     }
 
@@ -1463,7 +1463,7 @@ mod focus_tests {
         let mut dispatcher = EventDispatcher::new();
 
         press(&mut dispatcher, &element, INSIDE);
-        element.draw(&build_context);
+        element.update(&build_context);
 
         let context = context
             .borrow()
@@ -1499,7 +1499,7 @@ mod focus_tests {
             None,
         );
         let element = element.boxed();
-        element.draw(&build_context);
+        element.update(&build_context);
         let mut dispatcher = EventDispatcher::new();
 
         press(&mut dispatcher, &element, append_position);
@@ -1514,7 +1514,7 @@ mod focus_tests {
         );
         updater.set_state(|_| {});
         element.rebuild_if_dirty(&build_context);
-        element.draw(&build_context);
+        element.update(&build_context);
 
         let context = context
             .borrow()
@@ -1662,19 +1662,19 @@ mod focus_tests {
             start,
             &ElementEvent::PointerDown(PointerInfo::mouse(start, PointerButton::Primary)),
         ).is_consumed());
-        element.draw(&ctx);
+        element.update(&ctx);
         assert!(dispatcher.dispatch(
             element.as_ref(),
             end,
             &ElementEvent::PointerMove(PointerInfo::mouse(end, PointerButton::Primary)),
         ).is_consumed());
-        element.draw(&ctx);
+        element.update(&ctx);
         assert!(dispatcher.dispatch(
             element.as_ref(),
             end,
             &ElementEvent::PointerUp(PointerInfo::mouse(end, PointerButton::Primary)),
         ).is_consumed());
-        element.draw(&ctx);
+        element.update(&ctx);
 
         assert_eq!(controller.selection_graphemes(), (1, 9));
     }

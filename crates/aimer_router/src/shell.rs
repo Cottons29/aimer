@@ -115,7 +115,7 @@ impl VisitorElement for ShellElement {
 
 impl Drawable for ShellElement {
     fn draw(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| self.child.draw(ctx));
+        self.scoped(ctx, |ctx| self.child.update(ctx));
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {

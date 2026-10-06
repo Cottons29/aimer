@@ -1,5 +1,7 @@
 //! A themed text field with a retained custom insertion caret.
 
+use std::cell::Cell;
+
 use aimer::style::*;
 use aimer::*;
 use aimer::input::input::{CaretContext, InputType, TextField};
@@ -106,6 +108,7 @@ impl Widget for ThemedCaret {
         ThemedCaretElement {
             context: self.context,
             color: self.color,
+            painted: Cell::new(None),
         }
         .boxed()
     }
@@ -118,9 +121,66 @@ impl Widget for ThemedCaret {
 struct ThemedCaretElement {
     context: CaretContext,
     color: Color,
+    /// The `(visible, composing)` state the retained list was last recorded
+    /// for, so a blink or an IME change re-records exactly once.
+    painted: Cell<Option<(bool, bool)>>,
+}
+
+impl ThemedCaretElement {
+    #[inline]
+    fn state(&self) -> (bool, bool) {
+        (self.context.is_visible(), self.context.is_composing())
+    }
+
+    #[inline]
+    fn paint_color(&self, composing: bool) -> Color {
+        if composing {
+            self.color.lighten(0.18)
+        } else {
+            self.color
+        }
+    }
 }
 
 impl Drawable for ThemedCaretElement {
+    #[inline]
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        ctx.scale.is_finite() && ctx.scale > 0.0
+    }
+
+    #[inline]
+    fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
+        self.painted.get() != Some(self.state())
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        let (visible, composing) = self.state();
+        self.painted.set(Some((visible, composing)));
+        let canvas = aimer::canvas::Canvas::of(ctx);
+        let scale = ctx.scale;
+        let width = ctx.parent_size.width.max(2.0) / scale;
+        let height = ctx.parent_size.height / scale;
+        if visible && height > 0.0 {
+            let rgba = self.paint_color(composing).as_u32();
+            canvas.fill_rect_styled(
+                aimer::cupid::draw_cmd_v2::Rect::new(0.0, 0.0, width, height),
+                aimer::cupid::utilities::Color::rgba8(
+                    ((rgba >> 16) & 0xff) as u8,
+                    ((rgba >> 8) & 0xff) as u8,
+                    (rgba & 0xff) as u8,
+                    ((rgba >> 24) & 0xff) as u8,
+                ),
+                [width / 2.0; 4],
+                [0.0; 4],
+                aimer::cupid::utilities::Color::transparent(),
+                [0.0; 4],
+                aimer::cupid::utilities::Color::transparent(),
+            );
+        }
+        canvas.finish();
+    }
+
+    #[allow(deprecated)]
     fn draw(&self, ctx: &BuildContext) {
         if !self.context.is_visible() {
             return;

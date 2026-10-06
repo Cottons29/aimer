@@ -6,9 +6,12 @@
 //! are resolved for the whole child list, so wrapping is intentionally eager —
 //! a line break depends on every preceding child.
 
+use std::rc::Rc;
+
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
+use aimer_widget::Element;
 use aimer_widget::base::BuildContext;
 
 use crate::flex::raw_flex::{RawFlex, justify_distribution};
@@ -28,6 +31,17 @@ impl WrapLayout {
     pub(crate) fn offset(&self, index: usize) -> (f32, f32) {
         self.offsets[index]
     }
+}
+
+/// A wrapped layout remembered for one constraint and scale.
+///
+/// It lives in the container's [`LayoutCache`](aimer_widget::LayoutCache)
+/// auxiliary slot and is only trusted while the cache's computed-size entry
+/// for the same key is still valid, so it shares that entry's invalidation.
+struct CachedWrap {
+    constraint: BoxConstraint,
+    scale_bits: u32,
+    layout: Rc<(Vec<ResolvedSize>, WrapLayout)>,
 }
 
 /// Lays children out onto as many lines as `max_width` / `max_height` allow.
@@ -169,6 +183,92 @@ impl RawFlex {
             }),
         );
         (sizes, layout)
+    }
+
+    /// Returns the wrapped layout for `ctx`, measuring only when the cached
+    /// computed size has been invalidated or the constraint changed.
+    ///
+    /// The retained tree asks for every child's slot in turn, so recomputing
+    /// the whole line set per child would be quadratic in the child count.
+    pub(crate) fn wrapped_layout_cached(
+        &self,
+        ctx: &BuildContext,
+    ) -> Rc<(Vec<ResolvedSize>, WrapLayout)> {
+        let scale_bits = ctx.scale.to_bits();
+        let constraint = ctx.box_constraint;
+        let valid = self.cache.get_computed(constraint, scale_bits).is_some();
+        if valid {
+            let hit = self.cache.with_extra(|slot: &mut Option<CachedWrap>| {
+                slot.as_ref()
+                    .filter(|cached| {
+                        cached.constraint == constraint && cached.scale_bits == scale_bits
+                    })
+                    .map(|cached| cached.layout.clone())
+            });
+            if let Some(hit) = hit {
+                return hit;
+            }
+        }
+        let (gap_x, gap_y) = self.resole_gaps(ctx);
+        let (sizes, layout) = self.wrapped_layout(ctx, gap_x, gap_y);
+        self.cache.set_computed(constraint, scale_bits, layout.size);
+        let layout = Rc::new((sizes, layout));
+        self.cache.with_extra(|slot: &mut Option<CachedWrap>| {
+            *slot = Some(CachedWrap {
+                constraint,
+                scale_bits,
+                layout: layout.clone(),
+            });
+        });
+        layout
+    }
+
+    /// Resolves one wrapped child's offset and context for the retained tree,
+    /// matching what [`Self::draw_wrapped`] hands the child. A wrapped flex is
+    /// eager, so the child's ordinal is its index.
+    pub(crate) fn retained_wrapped_child_layout<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        child: &dyn Element,
+        index: usize,
+    ) -> Option<(Vec2d, BuildContext<'a>)> {
+        if self.children.get(index)?.id() != child.id() {
+            return None;
+        }
+        let wrapped = self.wrapped_layout_cached(ctx);
+        let (sizes, layout) = (&wrapped.0, &wrapped.1);
+        let child_size = *sizes.get(index)?;
+        let (base_x, base_y) = self.wrapped_base_offset(ctx, layout);
+        let offset_x = layout.offset(index).0 + base_x;
+        let offset_y = layout.offset(index).1 + base_y;
+        let scale = ctx.scale.max(1.0);
+        let offset = Vec2d {
+            x: (offset_x * scale).round() / scale,
+            y: (offset_y * scale).round() / scale,
+        };
+        let mut child_ctx = ctx.clone();
+        child_ctx.parent_size = child_size;
+        child_ctx.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: child_size.width,
+            max_height: child_size.height,
+        };
+        child_ctx.visible_rect = ctx
+            .visible_rect
+            .map(|(x, y, width, height)| (x - offset_x, y - offset_y, width, height));
+        Some((offset, child_ctx))
+    }
+
+    /// Cross-axis alignment shift applied to every line of a wrapped layout.
+    fn wrapped_base_offset(&self, ctx: &BuildContext, layout: &WrapLayout) -> (f32, f32) {
+        let extra_width = (ctx.box_constraint.max_width - layout.size.width).max(0.0);
+        let extra_height = (ctx.box_constraint.max_height - layout.size.height).max(0.0);
+        if matches!(self.direction, FlexDirection::Column) {
+            (align_offset(self.horizontal_alignment, extra_width), 0.0)
+        } else {
+            (0.0, align_offset(self.vertical_alignment, extra_height))
+        }
     }
 
     pub(crate) fn draw_wrapped(&self, ctx: &BuildContext, gap_x: f32, gap_y: f32) {

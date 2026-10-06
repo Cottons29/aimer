@@ -578,7 +578,7 @@ impl Drawable for MorphTransitionElement {
                 // No morph in progress — draw the current child normally.
                 unsafe {
                     if let Some(child) = self.current_child.get() {
-                        child.draw(ctx);
+                        child.update(ctx);
                     }
                 }
             }
@@ -633,7 +633,7 @@ impl Drawable for MorphTransitionElement {
                             }
 
                             ctx.canvas.set_alpha(old_alpha);
-                            old.draw(ctx);
+                            old.update(ctx);
                             ctx.canvas.restore();
                         }
                     }
@@ -678,7 +678,7 @@ impl Drawable for MorphTransitionElement {
                         ctx.canvas.translate((-cx, -cy).into());
 
                         ctx.canvas.set_alpha(new_alpha);
-                        child.draw(ctx);
+                        child.update(ctx);
                         ctx.canvas.restore();
                     }
                 }
@@ -806,22 +806,22 @@ impl Drawable for MorphTransitionElement {
         if self.morph_state.get() == MorphState::MorphingIn {
             unsafe {
                 if let Some(background) = (&*self.old_background.get()).as_ref() {
-                    background.element.draw(ctx);
+                    background.element.update(ctx);
                 }
                 if let Some(old) = self.old_child.get() {
-                    old.draw(ctx);
+                    old.update(ctx);
                 }
                 if let Some(background) = (&*self.new_background.get()).as_ref() {
-                    background.element.draw(ctx);
+                    background.element.update(ctx);
                 }
                 if let Some(child) = self.current_child.get() {
-                    child.draw(ctx);
+                    child.update(ctx);
                 }
             }
         } else {
             unsafe {
                 if let Some(child) = self.current_child.get() {
-                    child.draw(ctx);
+                    child.update(ctx);
                 }
             }
         }

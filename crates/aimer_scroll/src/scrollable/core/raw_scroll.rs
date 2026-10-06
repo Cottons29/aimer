@@ -533,7 +533,7 @@ impl<E: Element> RawScrollableContainer<E> {
                 return;
             }
             self.paint_cache.clear();
-            self.child.draw(child_ctx);
+            self.child.update(child_ctx);
             return;
         }
 
@@ -583,14 +583,14 @@ impl<E: Element> RawScrollableContainer<E> {
                 // duplicate non-cloneable state. The ordinary draw remains the
                 // correct fallback for those trees.
                 self.paint_cache.clear();
-                self.child.draw(child_ctx);
+                self.child.update(child_ctx);
                 return;
             };
 
             let content = Arc::new(aimer_canvas::RetainedLayerContent::from_snapshot(commands));
             if !content.is_compositor_safe() {
                 self.paint_cache.clear();
-                self.child.draw(child_ctx);
+                self.child.update(child_ctx);
                 return;
             }
             self.paint_cache.snapshot.borrow_mut().replace(RetainedPaint {
@@ -626,7 +626,7 @@ impl<E: Element> RawScrollableContainer<E> {
             }
         } else {
             self.paint_cache.clear();
-            self.child.draw(child_ctx);
+            self.child.update(child_ctx);
         }
     }
 
@@ -739,7 +739,7 @@ impl<E: Element> RawScrollableContainer<E> {
                     ctx.canvas.set_clip(Vec2d::ZERO, clip);
                 }
                 ctx.canvas.translate(offset);
-                element.draw(island_ctx);
+                element.update(island_ctx);
                 if clip.is_some() {
                     ctx.canvas.clear_clip();
                 }
@@ -1796,7 +1796,7 @@ mod tests {
                     .map(|(x, visible_y, width, height)| (x, visible_y - y, width, height));
                 child_ctx.canvas.save();
                 child_ctx.canvas.translate(Vec2d { x: 0.0, y });
-                child.draw(&child_ctx);
+                child.update(&child_ctx);
                 child_ctx.canvas.restore();
             }
         }
@@ -2248,7 +2248,7 @@ mod tests {
         let scrollable = raw_scrollable(child);
         let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
 
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(static_draws.get(), 1);
         assert_eq!(dynamic_draws.get(), 1);
         assert_eq!(
@@ -2258,7 +2258,7 @@ mod tests {
 
         ctx.canvas.begin_frame();
         scrollable.ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -20.0 });
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(static_draws.get(), 1, "the stable prefix should be replayed");
         assert_eq!(dynamic_draws.get(), 2, "the dynamic suffix should stay live");
     }
@@ -2269,12 +2269,12 @@ mod tests {
         let scrollable = drawing_scrollable(draws.clone());
         let mut ctx = drawing_context(Some((0.0, 101.0, 100.0, 20.0)));
 
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
 
         assert_eq!(draws.get(), 0);
 
         ctx.visible_rect = Some((0.0, 0.0, 100.0, 100.0));
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(draws.get(), 1);
     }
 
@@ -2285,7 +2285,7 @@ mod tests {
         let scrollable = drawing_scrollable(draws.clone());
         let mut ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
 
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(draws.get(), 1, "the first visible frame records the child");
         assert_eq!(
             ctx.canvas.get_inner_canvas().draw_list().stats().retained_layers,
@@ -2295,7 +2295,7 @@ mod tests {
 
         ctx.canvas.begin_frame();
         scrollable.ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -20.0 });
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(
             draws.get(),
             1,
@@ -2309,7 +2309,7 @@ mod tests {
 
         ctx.canvas.begin_frame();
         ctx.scale = 2.0;
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(
             draws.get(),
             2,
@@ -2323,7 +2323,7 @@ mod tests {
         let scrollable = drawing_scrollable_with_stability(draws.clone(), false);
         let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
 
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(draws.get(), 1);
         assert_eq!(
             ctx.canvas.get_inner_canvas().draw_list().stats().retained_layers,
@@ -2333,7 +2333,7 @@ mod tests {
 
         ctx.canvas.begin_frame();
         scrollable.ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -20.0 });
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(
             draws.get(),
             2,
@@ -2391,7 +2391,7 @@ mod tests {
         };
         let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
 
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(static_draws.get(), 1);
         assert_eq!(dynamic_draws.get(), 1);
         assert_eq!(
@@ -2402,7 +2402,7 @@ mod tests {
 
         ctx.canvas.begin_frame();
         scrollable.ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -20.0 });
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
 
         assert_eq!(static_draws.get(), 1, "the static island must stay cached");
         assert_eq!(dynamic_draws.get(), 2, "the dynamic island must repaint");
@@ -2427,7 +2427,7 @@ mod tests {
         );
         let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
 
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(draws.get(), 1, "the first tile records the child once");
         assert_eq!(
             ctx.canvas.get_inner_canvas().draw_list().stats().retained_layers,
@@ -2437,7 +2437,7 @@ mod tests {
 
         ctx.canvas.begin_frame();
         scrollable.ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -20.0 });
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(
             draws.get(),
             1,
@@ -2509,13 +2509,13 @@ mod tests {
         };
         let ctx = drawing_context(Some((0.0, 0.0, 100.0, 100.0)));
 
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(first_draws.get(), 0);
         assert_eq!(second_draws.get(), 0);
 
         ctx.canvas.begin_frame();
         scrollable.ctrl.scroll_offset.set(Vec2d { x: 0.0, y: -1_900.0 });
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(first_draws.get(), 1);
         assert_eq!(second_draws.get(), 1);
 
@@ -2526,7 +2526,7 @@ mod tests {
         });
 
         ctx.canvas.begin_frame();
-        scrollable.draw(&ctx);
+        scrollable.update(&ctx);
         assert_eq!(
             first_draws.get(),
             2,
@@ -2687,7 +2687,7 @@ mod tests {
                 height: 350.0,
             },
         )
-        .draw(&ctx);
+        .update(&ctx);
 
         size.set(ResolvedSize {
             width: 100.0,
@@ -2701,7 +2701,7 @@ mod tests {
                 height: 350.0,
             },
         )
-        .draw(&ctx);
+        .update(&ctx);
 
         assert_eq!(size.get().height, 350.0);
         assert_eq!(ctrl.scroll_offset.get().y, -250.0);
@@ -2729,7 +2729,7 @@ mod tests {
                 height: 350.0,
             },
         )
-        .draw(&ctx);
+        .update(&ctx);
 
         size.set(ResolvedSize {
             width: 100.0,
@@ -2743,7 +2743,7 @@ mod tests {
                 height: 450.0,
             },
         )
-        .draw(&ctx);
+        .update(&ctx);
 
         assert_eq!(ctrl.cached_content_size.get().height, 450.0);
         assert_eq!(ctrl.cached_max_scroll.get().y, 350.0);
@@ -2790,7 +2790,7 @@ mod tests {
             #[cfg(not(feature = "portable-guest"))]
             paint_cache: Default::default(),
         }
-        .draw(&ctx);
+        .update(&ctx);
 
         size.set(ResolvedSize {
             width: 100.0,
@@ -2820,7 +2820,7 @@ mod tests {
             paint_cache: Default::default(),
         };
 
-        rebuilt.draw(&ctx);
+        rebuilt.update(&ctx);
 
         assert_eq!(painted_y.get(), Some(-350.0));
     }
@@ -2872,7 +2872,7 @@ mod tests {
             paint_cache: Default::default(),
         };
 
-        scrollable.draw(&drawing_context(None));
+        scrollable.update(&drawing_context(None));
 
         assert!(prepared.get());
         assert_eq!(
@@ -2920,7 +2920,7 @@ mod tests {
             #[cfg(not(feature = "portable-guest"))]
             paint_cache: Default::default(),
         }
-        .draw(&ctx);
+        .update(&ctx);
 
         size.set(ResolvedSize {
             width: 100.0,
@@ -2950,7 +2950,7 @@ mod tests {
             paint_cache: Default::default(),
         };
 
-        rebuilt.draw(&ctx);
+        rebuilt.update(&ctx);
 
         assert_eq!(painted_y.get(), Some(-350.0));
     }
@@ -3004,7 +3004,7 @@ mod tests {
                     #[cfg(not(feature = "portable-guest"))]
                     paint_cache: Default::default(),
                 };
-                scrollable.draw(&ctx);
+                scrollable.update(&ctx);
                 let offset = ctrl.scroll_offset.get();
                 assert_eq!(if vertical { offset.y } else { offset.x }, expected);
                 if vertical {

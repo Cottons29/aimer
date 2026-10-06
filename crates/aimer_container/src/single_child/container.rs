@@ -236,6 +236,10 @@ struct LocalV2ContainerGeometry {
     clip_size: ResolvedSize,
     child_origin: Vec2d,
     content_size: ResolvedSize,
+    /// Corner radii of the child clip in device pixels (top-left, top-right,
+    /// bottom-right, bottom-left): the outer radii shrunk by the border, as
+    /// the live path computes them.
+    clip_radii: [f32; 4],
 }
 
 impl<E: Element> RawContainer<E> {
@@ -293,20 +297,22 @@ impl<E: Element> RawContainer<E> {
             }
             Dimension::Auto => parent_height - margin_top - margin_bottom,
         };
-        if !width.is_finite()
-            || !height.is_finite()
-            || width > LOCAL_V2_CONTAINER_EXTENT_LIMIT
-            || height > LOCAL_V2_CONTAINER_EXTENT_LIMIT
-        {
+        // An unbounded axis (a scroll view offers `f32::MAX`) stays huge here,
+        // exactly as in the live `render`: children size themselves to their
+        // content only while their constraint stays unbounded. Rectangles handed
+        // to the render tree are clamped separately with `render_extent`.
+        if !width.is_finite() || !height.is_finite() {
             return None;
         }
 
+        // Rounded corners are supported: the box decoration records its own
+        // radii, and `retained_v2_child_clip_radius` rounds the child's clip.
         if self
             .box_decoration
             .border_radius
             .resolve(width, height, scale)
             .into_iter()
-            .any(|radius| !radius.is_finite() || radius > 0.0)
+            .any(|radius| !radius.is_finite() || radius < 0.0)
         {
             return None;
         }
@@ -374,6 +380,16 @@ impl<E: Element> RawContainer<E> {
             width: (clip_size.width - padding_left - padding_right).max(0.0),
             height: (clip_size.height - padding_top - padding_bottom).max(0.0),
         };
+        let radii = self
+            .box_decoration
+            .border_radius
+            .resolve(width, height, scale);
+        let clip_radii = [
+            (radii[0] - border_top.max(border_left)).max(0.0),
+            (radii[1] - border_top.max(border_right)).max(0.0),
+            (radii[2] - border_bottom.max(border_right)).max(0.0),
+            (radii[3] - border_bottom.max(border_left)).max(0.0),
+        ];
         Some(LocalV2ContainerGeometry {
             clip_origin: Vec2d {
                 x: margin_left + border_left,
@@ -382,6 +398,7 @@ impl<E: Element> RawContainer<E> {
             clip_size,
             child_origin,
             content_size,
+            clip_radii,
         })
     }
 
@@ -411,6 +428,17 @@ fn border_stroke(dimension: Dimension, parent: f32, scale: f32) -> f32 {
         Dimension::Auto => 0.0,
     }
     .max(0.0)
+}
+
+/// Clamps a device-pixel extent to what the render tree can carry.
+///
+/// A scroll view offers an unbounded axis as `f32::MAX`; scaled to device
+/// pixels (or added to a position) that overflows to infinity, which the tree
+/// rejects. `LOCAL_V2_CONTAINER_EXTENT_LIMIT` logical pixels is far beyond any
+/// viewport, so clamping to it does not change what is visible.
+#[inline]
+fn render_extent(device_extent: f32, scale: f32) -> f32 {
+    device_extent.min(LOCAL_V2_CONTAINER_EXTENT_LIMIT * scale)
 }
 
 #[inline]
@@ -499,7 +527,7 @@ impl<T: Element> RawContainer<T> {
             },
             ..ctx.clone()
         };
-        self.box_decoration.draw(&bg_ctx);
+        self.box_decoration.update(&bg_ctx);
 
         let p_left = self.padding.left.value(box_width, scale);
         let p_top = self.padding.top.value(box_height, scale);
@@ -591,7 +619,7 @@ impl<T: Element> RawContainer<T> {
             if paint_only {
                 self.child.paint(&child_ctx);
             } else {
-                self.child.draw(&child_ctx);
+                self.child.update(&child_ctx);
             }
         }
         ctx.canvas.clear_clip();
@@ -621,8 +649,8 @@ impl<T: Element> Drawable for RawContainer<T> {
                 x: margin_left / ctx.scale,
                 y: margin_top / ctx.scale,
             },
-            size.width,
-            size.height,
+            render_extent(size.width, ctx.scale),
+            render_extent(size.height, ctx.scale),
             ctx.scale,
         );
         canvas.finish();
@@ -651,7 +679,11 @@ impl<T: Element> Drawable for RawContainer<T> {
 
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
         let size = self.local_v2_paint_size(ctx)?;
-        Some(self.box_decoration.local_v2_paint_outsets(size.width, size.height, ctx.scale))
+        Some(self.box_decoration.local_v2_paint_outsets(
+            render_extent(size.width, ctx.scale),
+            render_extent(size.height, ctx.scale),
+            ctx.scale,
+        ))
     }
 
     fn retained_v2_child_context<'a>(
@@ -663,6 +695,18 @@ impl<T: Element> Drawable for RawContainer<T> {
             return None;
         }
         self.local_v2_child_context(ctx)
+    }
+
+    fn retained_v2_child_clip_radius(&self, ctx: &BuildContext, child: &dyn Element) -> [f32; 4] {
+        if !std::ptr::eq(child, &self.child as &dyn Element) {
+            return [0.0; 4];
+        }
+        self.local_v2_geometry(ctx)
+            .map_or([0.0; 4], |geometry| {
+                geometry
+                    .clip_radii
+                    .map(|radius| (radius / ctx.scale).min(LOCAL_V2_CONTAINER_EXTENT_LIMIT))
+            })
     }
 
     fn retained_v2_child_geometry(
@@ -692,8 +736,8 @@ impl<T: Element> Drawable for RawContainer<T> {
         let clip = aimer_cupid::draw_cmd_v2::Rect::new(
             (geometry.clip_origin.x - x) / scale,
             (geometry.clip_origin.y - y) / scale,
-            geometry.clip_size.width / scale,
-            geometry.clip_size.height / scale,
+            render_extent(geometry.clip_size.width, scale) / scale,
+            render_extent(geometry.clip_size.height, scale) / scale,
         );
         let clip = child
             .retained_clip(&child_ctx)
@@ -1439,7 +1483,7 @@ mod tests {
                 height: 76.0,
             }
         );
-        element.draw(&ctx);
+        element.update(&ctx);
 
         let commands = inner.draw_list();
         assert!(matches!(commands.commands().first(), Some(DrawCommand::PushTransform { .. })));
@@ -1486,6 +1530,164 @@ mod tests {
         }
     }
 
+    /// A 100x60 container with `decoration`, plus the radii it reports for its
+    /// child's clip and whether it can paint locally.
+    fn rounded_child_clip(decoration: BoxDecoration, scale: f32) -> (bool, [f32; 4]) {
+        let (mut ctx, _inner) = recording_context();
+        ctx.scale = scale;
+        ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 400.0,
+            max_height: 300.0,
+        };
+        let element = Container::new()
+            .width(Dimension::Px(100.0))
+            .height(Dimension::Px(60.0))
+            .box_decoration(decoration)
+            .child(crate::ZeroSizedBox)
+            .to_element(&ctx);
+        // The render tree walker asks the inner node, not the `AnyElement`
+        // wrapper, which does not forward `can_paint_local_v2`.
+        let node: &dyn Element = element.as_ref();
+        let mut child = None;
+        node.visit_children(&mut |element| child = Some(element));
+        let child = child.expect("the container exposes its child");
+        (
+            node.can_paint_local_v2(&ctx),
+            node.retained_v2_child_clip_radius(&ctx, child),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_rounded_container_paints_locally_and_rounds_its_childs_clip() {
+        let (local, radii) = rounded_child_clip(BoxDecoration::new().border_radius(12), 1.0);
+        assert!(local, "a border radius must not force the legacy path");
+        assert_eq!(radii, [12.0; 4]);
+    }
+
+    #[tokio::test]
+    async fn a_square_container_reports_a_square_child_clip() {
+        let (local, radii) = rounded_child_clip(BoxDecoration::new(), 1.0);
+        assert!(local);
+        assert_eq!(radii, [0.0; 4]);
+    }
+
+    #[tokio::test]
+    async fn the_child_clip_radius_shrinks_by_the_border_like_the_live_path() {
+        let border = BorderSlice::new().style(BorderStyle::Solid).stroke(4.0);
+        let decoration = BoxDecoration::new()
+            .border(BoxBorder::all(border))
+            .border_radius(12);
+        let (local, radii) = rounded_child_clip(decoration, 1.0);
+        assert!(local);
+        assert_eq!(radii, [8.0; 4]);
+    }
+
+    #[tokio::test]
+    async fn a_radius_smaller_than_the_border_clamps_the_child_clip_to_square() {
+        let border = BorderSlice::new().style(BorderStyle::Solid).stroke(4.0);
+        let decoration = BoxDecoration::new()
+            .border(BoxBorder::all(border))
+            .border_radius(3);
+        let (_, radii) = rounded_child_clip(decoration, 1.0);
+        assert_eq!(radii, [0.0; 4]);
+    }
+
+    #[tokio::test]
+    async fn the_child_clip_radius_is_reported_in_logical_pixels_at_any_scale() {
+        let border = BorderSlice::new().style(BorderStyle::Solid).stroke(4.0);
+        let decoration = BoxDecoration::new()
+            .border(BoxBorder::all(border))
+            .border_radius(12);
+        let (_, radii) = rounded_child_clip(decoration, 2.0);
+        assert_eq!(radii, [8.0; 4]);
+    }
+
+    /// A container with `decoration` whose parent leaves both axes unbounded in
+    /// the given way, plus what its v2 geometry reports for its child.
+    struct UnboundedProbe {
+        can_paint: bool,
+        clip: Option<aimer_cupid::draw_cmd_v2::Rect>,
+        child_max: Option<(f32, f32)>,
+        outsets: Option<[f32; 4]>,
+    }
+
+    fn unbounded_container(max_width: f32, max_height: f32) -> UnboundedProbe {
+        let (mut ctx, _inner) = recording_context();
+        ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width,
+            max_height,
+        };
+        let element = Container::new()
+            .box_decoration(BoxDecoration::new().background_color(Color::BLUE))
+            .child(crate::ZeroSizedBox)
+            .to_element(&ctx);
+        let node: &dyn Element = element.as_ref();
+        let mut child = None;
+        node.visit_children(&mut |element| child = Some(element));
+        let child = child.expect("the container exposes its child");
+        UnboundedProbe {
+            can_paint: node.can_paint_local_v2(&ctx),
+            clip: node
+                .retained_v2_child_geometry(&ctx, child)
+                .and_then(|(_, clip)| clip),
+            child_max: node
+                .retained_v2_child_context(&ctx, child)
+                .map(|ctx| (ctx.box_constraint.max_width, ctx.box_constraint.max_height)),
+            outsets: node.retained_v2_paint_outsets(&ctx),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_auto_height_container_in_a_scroll_view_paints_locally() {
+        // A scrollable offers an unbounded height as `f32::MAX`.
+        let probe = unbounded_container(400.0, f32::MAX);
+        assert!(probe.can_paint, "an unbounded axis must not force the legacy path");
+
+        // The render tree gets finite, sane rectangles: `f32::MAX` doubles to
+        // infinity when scaled to device pixels.
+        let clip = probe.clip.expect("the child is clipped");
+        assert!(clip.width.is_finite() && clip.height.is_finite());
+        assert!(clip.height <= LOCAL_V2_CONTAINER_EXTENT_LIMIT, "{clip:?}");
+        assert!(probe.outsets.is_some_and(|outsets| outsets.iter().all(|v| v.is_finite())));
+    }
+
+    #[tokio::test]
+    async fn the_child_still_sees_an_unbounded_axis_as_unbounded() {
+        // Clamping the *render tree's* rectangles must not change layout: a
+        // child sizes itself to its content only while its constraint stays
+        // above the unbounded threshold.
+        let probe = unbounded_container(400.0, f32::MAX);
+        let (_, max_height) = probe.child_max.expect("child context");
+        assert!(
+            max_height > LOCAL_V2_CONTAINER_EXTENT_LIMIT,
+            "child max height was clamped to {max_height}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_auto_width_container_under_an_unbounded_width_paints_locally() {
+        // Row-like parents offer a quarter of `f32::MAX` per child.
+        let probe = unbounded_container(f32::MAX / 4.0, 120.0);
+        assert!(probe.can_paint);
+        let clip = probe.clip.expect("the child is clipped");
+        assert!(clip.width.is_finite() && clip.width <= LOCAL_V2_CONTAINER_EXTENT_LIMIT);
+        let (max_width, _) = probe.child_max.expect("child context");
+        assert!(max_width > LOCAL_V2_CONTAINER_EXTENT_LIMIT);
+    }
+
+    #[tokio::test]
+    async fn a_bounded_container_is_unchanged_by_the_unbounded_handling() {
+        let probe = unbounded_container(400.0, 300.0);
+        assert!(probe.can_paint);
+        let clip = probe.clip.expect("the child is clipped");
+        assert_eq!((clip.width, clip.height), (400.0, 300.0));
+        assert_eq!(probe.child_max, Some((400.0, 300.0)));
+    }
+
     #[tokio::test]
     async fn offscreen_container_skips_unknown_child_draw_but_keeps_traversal_views() {
         let draws = Rc::new(Cell::new(0));
@@ -1505,7 +1707,7 @@ mod tests {
         };
         ctx.visible_rect = Some((0.0, 101.0, 100.0, 20.0));
 
-        container.draw(&ctx);
+        container.update(&ctx);
 
         assert_eq!(
             draws.get(),
@@ -1526,7 +1728,7 @@ mod tests {
         assert_eq!(hit_test, 1);
 
         ctx.visible_rect = Some((0.0, 0.0, 100.0, 100.0));
-        container.draw(&ctx);
+        container.update(&ctx);
         assert_eq!(
             draws.get(),
             1,

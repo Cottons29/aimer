@@ -632,7 +632,7 @@ impl RawGrid {
         }
         ctx.canvas.save();
         ctx.canvas.translate(offset);
-        item.child.draw(&child_ctx);
+        item.child.update(&child_ctx);
         ctx.canvas.restore();
         paint_overflow_indicator(ctx, cell_size, overflow, item.child.debug_name());
         if self.overflow == GridOverflow::Clip {
@@ -1222,7 +1222,7 @@ mod tests {
             layout_cache: RefCell::new(Vec::new()),
         };
 
-        grid.draw(&ctx);
+        grid.update(&ctx);
 
         let commands = canvas.draw_list();
         let pushes = commands
@@ -1265,7 +1265,7 @@ mod tests {
             layout_cache: RefCell::new(Vec::new()),
         };
 
-        grid.draw(&ctx);
+        grid.update(&ctx);
 
         assert_eq!(*visible_rect.borrow(), Some((-90.0, -5.0, 200.0, 20.0)));
     }
@@ -1302,7 +1302,7 @@ mod tests {
 
         grid.computed_size(&ctx);
         assert_eq!(*computed_count.borrow(), 2);
-        grid.draw(&ctx);
+        grid.update(&ctx);
 
         assert_eq!(*computed_count.borrow(), 2);
 
@@ -1342,7 +1342,7 @@ mod tests {
         };
 
         grid.computed_size(&ctx);
-        grid.draw(&ctx);
+        grid.update(&ctx);
 
         assert_eq!(*computed_count.borrow(), 1);
     }
@@ -1422,7 +1422,7 @@ mod tests {
             layout_cache: RefCell::new(Vec::new()),
         };
 
-        grid.draw(&ctx);
+        grid.update(&ctx);
 
         assert_eq!(*visible_draws.borrow(), 1);
         assert_eq!(*hidden_draws.borrow(), 0);
@@ -1511,7 +1511,7 @@ mod tests {
             layout_cache: RefCell::new(Vec::new()),
         };
 
-        grid.draw(&ctx);
+        grid.update(&ctx);
 
         assert_eq!(*draw_count.borrow(), 1);
     }

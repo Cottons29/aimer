@@ -175,17 +175,17 @@ fn measure_draw(count: usize, runtime: &tokio::runtime::Runtime) {
     for _ in 0..ROUNDS {
         let (context, root) = build_tree(count, runtime);
         context.canvas.begin_frame();
-        root.draw(&context);
+        root.update(&context);
         for _ in 0..WARMUP_OPERATIONS {
             context.canvas.begin_frame();
-            root.draw(&context);
+            root.update(&context);
         }
 
         let start = Instant::now();
         for _ in 0..MEASURED_OPERATIONS {
             black_box(&root);
             context.canvas.begin_frame();
-            root.draw(&context);
+            root.update(&context);
         }
         samples.values.push(
             start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64,

@@ -5,9 +5,14 @@
 //! before handing work to a raster thread.
 
 mod render_order;
+mod world;
+#[cfg(test)]
+mod world_tests;
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+// `hashbrown`'s default hasher: the keys are process-local node identifiers, and
+// SipHash dominated tree synchronization in profiles.
+use hashbrown::{HashMap, HashSet};
 use std::mem;
 use std::sync::Arc;
 
@@ -396,6 +401,8 @@ struct RenderNode {
     children: Vec<RenderNodeId>,
     bounds: Rect,
     clip: Option<Rect>,
+    /// Corner radii of `clip`, in the clip's local logical pixels.
+    clip_radius: [f32; 4],
     animation_clip: Option<Rect>,
     presentation_transform: Mat3,
     presentation_opacity: f32,
@@ -551,6 +558,23 @@ impl RenderNodeSpec {
     }
 }
 
+// Counts `DrawCommandList::node` lookups so tests can bound the cost of
+// world-space queries. Compiled out of every non-test build.
+#[cfg(test)]
+thread_local! {
+    static NODE_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_node_lookups() {
+    NODE_LOOKUPS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn node_lookups() -> usize {
+    NODE_LOOKUPS.with(std::cell::Cell::get)
+}
+
 /// A retained tree of local paint lists and ordered child links.
 #[derive(Default)]
 pub struct DrawCommandList {
@@ -596,6 +620,7 @@ impl DrawCommandList {
             children: Vec::new(),
             bounds,
             clip: None,
+            clip_radius: [0.0; 4],
             animation_clip: None,
             presentation_transform: Mat3::identity(),
             presentation_opacity: 1.0,
@@ -613,21 +638,15 @@ impl DrawCommandList {
         } else {
             self.roots.push(id);
         }
-        if let Some(world_bounds) = self.world_bounds(id) {
-            let parent_clip = parent
-                .map_or(Some(ClipState::Unclipped), |parent| self.inherited_clip(parent));
-            if let Some(parent_clip) = parent_clip
-                && let Some(bounds) = parent_clip
-                    .intersect_state(self.world_clip(id))
-                    .intersect_bounds(world_bounds)
-            {
-                self.push_damage(bounds);
-            }
+        if let Some(bounds) = self.visible_node_bounds(id) {
+            self.push_damage(bounds);
         }
         Ok(id)
     }
 
     fn node(&self, id: RenderNodeId) -> Option<&RenderNode> {
+        #[cfg(test)]
+        NODE_LOOKUPS.with(|count| count.set(count.get() + 1));
         self.indices
             .get(&id)
             .and_then(|index| self.nodes.get(*index))
@@ -636,83 +655,6 @@ impl DrawCommandList {
     fn node_mut(&mut self, id: RenderNodeId) -> Option<&mut RenderNode> {
         let index = *self.indices.get(&id)?;
         self.nodes.get_mut(index)
-    }
-
-    fn world_origin(&self, id: RenderNodeId) -> Option<(f32, f32)> {
-        let node = self.node(id)?;
-        let parent_origin = node
-            .parent
-            .and_then(|parent| self.world_origin(parent))
-            .unwrap_or((0.0, 0.0));
-        Some((parent_origin.0 + node.bounds.x, parent_origin.1 + node.bounds.y))
-    }
-
-    fn world_bounds(&self, id: RenderNodeId) -> Option<Rect> {
-        let node = self.node(id)?;
-        let (x, y) = self.world_origin(id)?;
-        transform_rect(
-            self.world_transform(id)?,
-            Rect::new(x, y, node.bounds.width, node.bounds.height),
-        )
-    }
-
-    fn world_transform(&self, id: RenderNodeId) -> Option<Mat3> {
-        let node = self.node(id)?;
-        let parent_transform = node
-            .parent
-            .map_or(Some(Mat3::identity()), |parent| self.world_transform(parent))?;
-        let (x, y) = self.world_origin(id)?;
-        let local_transform = Mat3::translate(x, y)
-            .mul(&node.presentation_transform)
-            .mul(&node.transform)
-            .mul(&Mat3::translate(-x, -y));
-        Some(parent_transform.mul(&local_transform))
-    }
-
-    fn subtree_bounds(&self, id: RenderNodeId) -> Option<Rect> {
-        let node = self.node(id)?;
-        let mut bounds = self.world_bounds(id)?;
-        for child in node.children.iter().copied() {
-            bounds = bounds.union(self.subtree_bounds(child)?);
-        }
-        Some(bounds)
-    }
-
-    fn inherited_clip(&self, id: RenderNodeId) -> Option<ClipState> {
-        let node = self.node(id)?;
-        let parent_clip = node
-            .parent
-            .map_or(Some(ClipState::Unclipped), |parent| self.inherited_clip(parent))?;
-        Some(parent_clip.intersect_state(self.world_clip(id)))
-    }
-
-    fn visible_subtree_bounds(&self, id: RenderNodeId) -> Option<Rect> {
-        let node = self.node(id)?;
-        let parent_clip = node
-            .parent
-            .map_or(Some(ClipState::Unclipped), |parent| self.inherited_clip(parent))?;
-        self.visible_subtree_bounds_with_clip(id, parent_clip)
-    }
-
-    fn visible_subtree_bounds_with_clip(
-        &self,
-        id: RenderNodeId,
-        parent_clip: ClipState,
-    ) -> Option<Rect> {
-        let node = self.node(id)?;
-        let clip = parent_clip.intersect_state(self.world_clip(id));
-        let mut bounds = clip.intersect_bounds(self.world_bounds(id)?);
-        for child in node.children.iter().copied() {
-            if let Some(child_bounds) = self.visible_subtree_bounds_with_clip(child, clip) {
-                bounds = Some(bounds.map_or(child_bounds, |bounds| bounds.union(child_bounds)));
-            }
-        }
-        bounds
-    }
-
-    fn visible_node_bounds(&self, id: RenderNodeId) -> Option<Rect> {
-        let clip = self.inherited_clip(id)?;
-        clip.intersect_bounds(self.world_bounds(id)?)
     }
 
     fn subtree_uses_only_local_v2(&self, id: RenderNodeId) -> bool {
@@ -725,47 +667,6 @@ impl DrawCommandList {
                 .iter()
                 .copied()
                 .all(|child| self.subtree_uses_only_local_v2(child))
-    }
-
-    fn world_clip(&self, id: RenderNodeId) -> ClipState {
-        let Some(node) = self.node(id) else {
-            return ClipState::Empty;
-        };
-        let Some((x, y)) = self.world_origin(id) else {
-            return ClipState::Empty;
-        };
-        let mut clip = ClipState::Unclipped;
-        if let Some(local_clip) = node.clip {
-            let Some(world_transform) = self.world_transform(id) else {
-                return ClipState::Empty;
-            };
-            clip = clip.intersect(transform_rect(
-                world_transform,
-                local_clip.translated(x, y),
-            ));
-        }
-        if let Some(local_clip) = node.animation_clip {
-            let Some(world_transform) = self.world_transform_before_animation(id) else {
-                return ClipState::Empty;
-            };
-            clip = clip.intersect(transform_rect(
-                world_transform,
-                local_clip.translated(x, y),
-            ));
-        }
-        clip
-    }
-
-    fn world_transform_before_animation(&self, id: RenderNodeId) -> Option<Mat3> {
-        let node = self.node(id)?;
-        let parent_transform = node
-            .parent
-            .map_or(Some(Mat3::identity()), |parent| self.world_transform(parent))?;
-        let (x, y) = self.world_origin(id)?;
-        let local_transform = Mat3::translate(x, y)
-            .mul(&node.presentation_transform)
-            .mul(&Mat3::translate(-x, -y));
-        Some(parent_transform.mul(&local_transform))
     }
 
     fn push_damage(&mut self, rect: Rect) {
@@ -824,7 +725,7 @@ impl RenderTree {
         &self,
         nodes: &[RenderNodeSpec],
     ) -> Result<Vec<RenderNodeId>, RenderTreeError> {
-        self.sync_structure_inner(nodes, None)
+        self.sync_structure_inner(nodes, None, None)
     }
 
     /// Synchronizes render nodes and their local clips as one geometry update.
@@ -840,14 +741,44 @@ impl RenderTree {
         if nodes.len() != clips.len() || clips.iter().flatten().any(|clip| !clip.is_valid()) {
             return Err(RenderTreeError::InvalidBounds);
         }
-        self.sync_structure_inner(nodes, Some(clips))
+        self.sync_structure_inner(nodes, Some(clips), None)
+    }
+
+    /// Like [`Self::sync_structure_with_clips`], with corner radii for each clip.
+    ///
+    /// `radii` aligns with `nodes` and gives the top-left, top-right,
+    /// bottom-right, and bottom-left radii of the same node's clip in the
+    /// clip's local logical pixels. A radius on a node without a clip is
+    /// ignored by rendering. Radii must be finite and non-negative.
+    #[doc(hidden)]
+    pub fn sync_structure_with_clip_radii(
+        &self,
+        nodes: &[RenderNodeSpec],
+        clips: &[Option<Rect>],
+        radii: &[[f32; 4]],
+    ) -> Result<Vec<RenderNodeId>, RenderTreeError> {
+        if nodes.len() != clips.len()
+            || nodes.len() != radii.len()
+            || clips.iter().flatten().any(|clip| !clip.is_valid())
+            || radii
+                .iter()
+                .flatten()
+                .any(|radius| !radius.is_finite() || *radius < 0.0)
+        {
+            return Err(RenderTreeError::InvalidBounds);
+        }
+        self.sync_structure_inner(nodes, Some(clips), Some(radii))
     }
 
     fn sync_structure_inner(
         &self,
         nodes: &[RenderNodeSpec],
         clip_updates: Option<&[Option<Rect>]>,
+        radius_updates: Option<&[[f32; 4]]>,
     ) -> Result<Vec<RenderNodeId>, RenderTreeError> {
+        // Radii are part of the clip update: without a radius slice the clip
+        // is square.
+        let radius_at = |index: usize| radius_updates.map_or([0.0; 4], |radii| radii[index]);
         let mut tree = self.draw_cmd.borrow_mut();
         let mut seen = HashSet::with_capacity(nodes.len());
         let mut ids = Vec::with_capacity(nodes.len());
@@ -910,7 +841,9 @@ impl RenderTree {
                     return Err(RenderTreeError::UnknownNode(id));
                 }
                 let clip_changed = clip_updates.is_some_and(|clips| {
-                    tree.node(id).is_some_and(|node| node.clip != clips[index])
+                    tree.node(id).is_some_and(|node| {
+                        node.clip != clips[index] || node.clip_radius != radius_at(index)
+                    })
                 });
                 if tree.node(id).is_some_and(|node| node.bounds == spec.bounds)
                     && !clip_changed
@@ -924,6 +857,7 @@ impl RenderTree {
                 node.bounds = spec.bounds;
                 if let Some(clips) = clip_updates {
                     node.clip = clips[index];
+                    node.clip_radius = radius_at(index);
                 }
                 let new_bounds = tree.visible_subtree_bounds(id);
                 if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
@@ -944,7 +878,9 @@ impl RenderTree {
             if let Some(old) = tree.node(id) {
                 if old.children != children[index]
                     || old.bounds != nodes[index].bounds
-                    || clip_updates.is_some_and(|clips| old.clip != clips[index])
+                    || clip_updates.is_some_and(|clips| {
+                        old.clip != clips[index] || old.clip_radius != radius_at(index)
+                    })
                 {
                     structural_damage_ids.insert(id);
                 }
@@ -997,6 +933,7 @@ impl RenderTree {
                     children: Vec::new(),
                     bounds: spec.bounds,
                     clip: None,
+                    clip_radius: [0.0; 4],
                     animation_clip: None,
                     presentation_transform: Mat3::identity(),
                     presentation_opacity: 1.0,
@@ -1015,6 +952,7 @@ impl RenderTree {
             node.bounds = spec.bounds;
             if let Some(clips) = clip_updates {
                 node.clip = clips[index];
+                node.clip_radius = radius_at(index);
             }
             synchronized.push(node);
         }
@@ -1277,7 +1215,11 @@ impl RenderTree {
         if tree.node(element).is_none() {
             return Err(RenderTreeError::UnknownNode(element));
         }
-        if tree.node(element).is_some_and(|node| node.clip == clip) {
+        // This setter describes a square clip: it also clears any radius.
+        if tree
+            .node(element)
+            .is_some_and(|node| node.clip == clip && node.clip_radius == [0.0; 4])
+        {
             return Ok(());
         }
         let old_bounds = tree.visible_subtree_bounds(element);
@@ -1285,6 +1227,7 @@ impl RenderTree {
             .node_mut(element)
             .ok_or(RenderTreeError::UnknownNode(element))?;
         node.clip = clip;
+        node.clip_radius = [0.0; 4];
         let new_bounds = tree.visible_subtree_bounds(element);
         if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
             tree.push_damage(damage);
@@ -1308,7 +1251,7 @@ impl RenderTree {
         }
         let mut tree = self.draw_cmd.borrow_mut();
         let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
-        if node.bounds == bounds && node.clip == clip {
+        if node.bounds == bounds && node.clip == clip && node.clip_radius == [0.0; 4] {
             return Ok(());
         }
         let old_bounds = tree.visible_subtree_bounds(element);
@@ -1317,6 +1260,7 @@ impl RenderTree {
             .ok_or(RenderTreeError::UnknownNode(element))?;
         node.bounds = bounds;
         node.clip = clip;
+        node.clip_radius = [0.0; 4];
         let new_bounds = tree.visible_subtree_bounds(element);
         if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
             tree.push_damage(damage);
@@ -1683,6 +1627,14 @@ pub struct RenderItem {
     pub transform: Mat3,
     /// Effective world-space clip, if any.
     pub clip: Option<Rect>,
+    /// Corner radii of the effective clip in world logical pixels: top-left,
+    /// top-right, bottom-right, bottom-left.
+    ///
+    /// The renderer keeps one clip at a time. It intersects nested clip
+    /// rectangles but takes the radii from the innermost clip, so this is the
+    /// radius of the closest clip-owning node (the item's own node included).
+    /// It is all zeros when `clip` is `None` or square.
+    pub clip_radius: [f32; 4],
     /// Opacity applied directly to this node's commands.
     pub opacity: f32,
     /// Whether this node records local v2 commands or stands for a legacy island.

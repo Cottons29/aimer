@@ -156,7 +156,7 @@ async fn slider_widget_dispatches_pointer_drag_and_keyboard_increment() {
     let size = element.layout(&ctx);
     assert_eq!(size.width, 200.0);
     assert!(size.height > 0.0);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let mut dispatcher = EventDispatcher::new();
     let down = PointerInfo::mouse(Vec2d { x: 20.0, y: 20.0 }, PointerButton::Primary);
@@ -204,7 +204,7 @@ async fn slider_widget_dispatches_pointer_drag_when_nested_in_a_padded_container
         .to_element(&ctx);
 
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let mut dispatcher = EventDispatcher::new();
     let down = PointerInfo::mouse(Vec2d { x: 40.0, y: 40.0 }, PointerButton::Primary);
@@ -236,7 +236,7 @@ async fn range_slider_widget_dispatches_the_nearest_thumb_and_keyboard_increment
         .to_element(&ctx);
     let size = element.layout(&ctx);
     assert_eq!(size.width, 200.0);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let mut dispatcher = EventDispatcher::new();
     let down = PointerInfo::mouse(Vec2d { x: 40.0, y: 20.0 }, PointerButton::Primary);
@@ -282,7 +282,7 @@ async fn slider_state_retains_runtime_press_while_adopting_a_controlled_value() 
         .create_state();
     let element = state.build(&ctx).to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let mut dispatcher = EventDispatcher::new();
     let pointer = PointerInfo::mouse(Vec2d { x: 40.0, y: 20.0 }, PointerButton::Primary);
@@ -321,7 +321,7 @@ async fn range_slider_state_retains_the_selected_thumb_while_adopting_values() {
         .create_state();
     let element = state.build(&ctx).to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let mut dispatcher = EventDispatcher::new();
     let pointer = PointerInfo::mouse(Vec2d { x: 40.0, y: 20.0 }, PointerButton::Primary);
@@ -363,7 +363,7 @@ async fn disabled_slider_does_not_capture_or_propose_input() {
         .on_change(move |value| observed.borrow_mut().push(value))
         .to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let mut dispatcher = EventDispatcher::new();
     let pointer = PointerInfo::mouse(Vec2d { x: 100.0, y: 20.0 }, PointerButton::Primary);
@@ -410,7 +410,7 @@ async fn slider_paints_track_active_segment_and_thumb() {
         .width(200.0)
         .to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let draw_list = canvas.draw_list();
     let commands = draw_list.commands();
@@ -455,7 +455,7 @@ async fn slider_minimum_thumb_stays_inside_the_visual_bounds() {
         .width(200.0)
         .to_element(&ctx);
     let size = element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     {
         let draw_list = canvas.draw_list();
@@ -480,7 +480,7 @@ async fn slider_minimum_thumb_stays_inside_the_visual_bounds() {
         .width(200.0)
         .to_element(&ctx);
     let size = element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let draw_list = canvas.draw_list();
     let thumb = draw_list
         .commands()
@@ -524,7 +524,7 @@ async fn range_slider_endpoint_thumbs_stay_inside_the_visual_bounds() {
         .width(200.0)
         .to_element(&ctx);
     let size = element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let draw_list = canvas.draw_list();
     let thumbs = draw_list

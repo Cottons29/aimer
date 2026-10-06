@@ -63,7 +63,7 @@ fn custom_shape_submits_a_fitted_background_before_its_child() {
         )
         .to_element(&context);
     element.layout(&context);
-    element.draw(&context);
+    element.update(&context);
 
     let draw_list = inner.take_draw_list();
     let svg_index = draw_list
@@ -121,7 +121,7 @@ fn custom_shape_invalid_opacity_keeps_the_child_and_skips_shape_paint() {
         .child(SizedBox::new().width(64.0).height(64.0))
         .to_element(&context);
     element.layout(&context);
-    element.draw(&context);
+    element.update(&context);
 
     let draw_list = inner.take_draw_list();
     assert!(!draw_list

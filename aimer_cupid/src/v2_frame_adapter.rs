@@ -236,6 +236,7 @@ impl FramePacket {
                             origin: item.origin,
                             transform: item.transform,
                             clip: item.clip,
+                            clip_radius: item.clip_radius,
                             commands: snapshot.commands,
                         },
                         bounds,
@@ -366,6 +367,7 @@ impl FramePacket {
                         origin: item.origin,
                         transform: item.transform,
                         clip: item.clip,
+                        clip_radius: item.clip_radius,
                         commands: snapshot.commands,
                     };
                     let start = draw_list.commands().len();
@@ -840,6 +842,7 @@ fn append_item(
         origin: item.origin,
         transform: item.transform,
         clip: item.clip,
+        clip_radius: item.clip_radius,
         commands: snapshot.commands,
     };
     for command in lower_retained_v2_commands(&retained_item, scale)? {
@@ -876,9 +879,11 @@ pub(crate) fn lower_retained_v2_commands(
         output.push(LegacyDrawCommand::SetTransform {
             matrix: Mat3::scale(scale, scale),
         });
+        // Logical clip under the scale transform above, so the renderer
+        // scales the logical radius together with the rectangle.
         output.push(LegacyDrawCommand::PushClip {
             rect: clip,
-            border_radius: [0.0; 4],
+            border_radius: item.clip_radius,
         });
     }
     output.push(LegacyDrawCommand::SetTransform {
@@ -964,9 +969,10 @@ fn append_legacy_item(
         if !valid_rect(device_clip) {
             return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
         }
+        // Island clips are pushed in device space, so the radius is too.
         output.push(LegacyDrawCommand::PushClip {
             rect: device_clip,
-            border_radius: [0.0; 4],
+            border_radius: item.clip_radius.map(|radius| radius * scale),
         });
         added_item_clip = true;
     }
@@ -1044,7 +1050,7 @@ fn legacy_replay_scope(
         }
         prefix.push(LegacyDrawCommand::PushClip {
             rect: device_clip,
-            border_radius: [0.0; 4],
+            border_radius: item.clip_radius.map(|radius| radius * scale),
         });
         has_item_clip = true;
     }
@@ -1232,6 +1238,9 @@ fn lower_command(command: V2DrawCommand, origin: Mat3, scale: f32) -> LegacyDraw
         },
     }
 }
+
+#[cfg(test)]
+mod rounded_clip_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1567,6 +1576,7 @@ mod tests {
             origin: item.origin,
             transform: item.transform,
             clip: item.clip,
+            clip_radius: item.clip_radius,
             commands: snapshot.commands,
         };
         let commands = super::lower_retained_v2_commands(&retained, 2.0).unwrap();

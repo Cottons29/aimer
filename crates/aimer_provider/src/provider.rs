@@ -819,7 +819,7 @@ impl<T: 'static> VisitorElement for ProviderElement<T> {
 
 impl<T: 'static> Drawable for ProviderElement<T> {
     fn draw(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| self.child.draw(ctx));
+        self.scoped(ctx, |ctx| self.child.update(ctx));
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
@@ -1110,7 +1110,7 @@ impl<T: 'static, A: 'static> VisitorElement for StoreElement<T, A> {
 }
 impl<T: 'static, A: 'static> Drawable for StoreElement<T, A> {
     fn draw(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| self.child.draw(ctx));
+        self.scoped(ctx, |ctx| self.child.update(ctx));
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {

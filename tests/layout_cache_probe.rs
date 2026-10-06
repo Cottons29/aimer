@@ -105,7 +105,7 @@ fn frame_cost_while_scrolling() {
             .to_element(&context);
 
         element.layout(&context);
-        element.draw(&context);
+        element.update(&context);
         inner.take_draw_list();
 
         probe::take();
@@ -115,7 +115,7 @@ fn frame_cost_while_scrolling() {
                 // What a wheel/drag does every frame: move the offset.
                 controller.jump_to(Vec2d { x: 0.0, y: i as f32 * 3.0 });
             }
-            element.draw(&context);
+            element.update(&context);
             inner.take_draw_list();
         }
         let elapsed = start.elapsed();

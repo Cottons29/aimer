@@ -320,7 +320,7 @@ fn paint_at(ctx: &BuildContext, element: &AnyElement, position: Vec2d) {
         x: origin.x - ctx.parent_pos.x,
         y: origin.y - ctx.parent_pos.y,
     });
-    element.draw(&child_ctx);
+    element.update(&child_ctx);
     ctx.canvas.restore();
 }
 

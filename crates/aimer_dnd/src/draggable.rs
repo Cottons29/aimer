@@ -491,7 +491,7 @@ impl Drawable for RawDraggable {
         let size = child.computed_size(ctx);
         self.bounds
             .save(ctx.scale, abs_x, abs_y, size.width, size.height);
-        child.draw(ctx);
+        child.update(ctx);
     }
 
     #[inline]
@@ -518,7 +518,7 @@ impl Drawable for RawDraggable {
         let size = child.computed_size(ctx);
         self.bounds
             .save(ctx.scale, abs_x, abs_y, size.width, size.height);
-        child.draw(ctx);
+        child.update(ctx);
     }
 
     fn retained_v2_child_context<'a>(

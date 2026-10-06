@@ -1090,7 +1090,7 @@ mod tests {
         )
         .to_element(&ctx);
         element.layout(&ctx);
-        element.draw(&ctx);
+        element.update(&ctx);
         let text = canvas
             .draw_list()
             .commands()
@@ -1125,7 +1125,7 @@ mod tests {
         .to_element(&ctx);
 
         element.layout(&ctx);
-        element.draw(&ctx);
+        element.update(&ctx);
 
         let draw_list = canvas.draw_list();
         let commands = draw_list.commands();
@@ -1232,7 +1232,7 @@ mod tests {
         .to_element(&ctx);
 
         element.layout(&ctx);
-        element.draw(&ctx);
+        element.update(&ctx);
 
         assert!(canvas.draw_list().commands().iter().all(|command| {
             !matches!(

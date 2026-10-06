@@ -214,7 +214,7 @@ impl<E: Element> Drawable for RawSizedBox<E> {
         child_ctx.parent_size = ResolvedSize { width, height };
         child_ctx.box_constraint.max_width = width;
         child_ctx.box_constraint.max_height = height;
-        self.child.draw(&child_ctx);
+        self.child.update(&child_ctx);
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -442,7 +442,7 @@ mod tests {
             .child(DrawChild { draws: draws.clone() })
             .to_element(&ctx);
 
-        element.draw(&ctx);
+        element.update(&ctx);
 
         assert_eq!(draws.get(), 1);
     }
@@ -469,7 +469,7 @@ mod tests {
         let sibling_node = tree
             .add_root(RenderRect::new(40.0, 0.0, 16.0, 10.0))
             .unwrap();
-        let element_nodes = Rc::new(std::collections::HashMap::from([
+        let element_nodes = Rc::new(aimer_widget::ElementNodeMap::from([
             (background_id, background_node),
             (sibling_id, sibling_node),
         ]));
@@ -482,8 +482,8 @@ mod tests {
             element_nodes.clone(),
             Some(background_id),
             || {
-                background.draw(&ctx);
-                sibling.draw(&ctx);
+                background.update(&ctx);
+                sibling.update(&ctx);
             },
         );
 
@@ -508,8 +508,8 @@ mod tests {
         aimer_widget::begin_paint_frame(100, 80);
         tree.begin_legacy_frame();
         aimer_widget::with_v2_render_tree_context(tree.clone(), element_nodes, None, || {
-            background.draw(&ctx);
-            sibling.draw(&ctx);
+            background.update(&ctx);
+            sibling.update(&ctx);
         });
 
         assert_eq!(tree.draw_list_revision(background_node).unwrap(), 2);

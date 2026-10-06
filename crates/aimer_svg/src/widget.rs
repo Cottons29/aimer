@@ -143,10 +143,11 @@ impl Svg {
 
     /// Declares that this SVG stays inside its layout rectangle while painted.
     ///
-    /// This enables local animation damage and retained paint replay. Use it
-    /// only for assets whose paths, strokes, filters, and style transforms do
-    /// not intentionally overflow the widget bounds. The default remains
-    /// conservative because SVG overflow is not clipped automatically.
+    /// Without this, a document that cannot be proven to stay inside its
+    /// viewport is clipped to its layout rectangle, as SVG does at the root.
+    /// Declaring it skips that clip. Use it only for assets whose paths,
+    /// strokes, filters, and style transforms do not overflow the widget
+    /// bounds, since anything that does would otherwise be cut off.
     #[inline]
     pub fn bounded(mut self) -> Self {
         self.paint_bounded = true;
@@ -714,7 +715,7 @@ impl Drawable for RawSvgAsset {
     fn draw(&self, ctx: &BuildContext) {
         self.refresh(ctx);
         if let Some(element) = self.active_element() {
-            element.draw(ctx);
+            element.update(ctx);
         }
     }
 
@@ -1028,12 +1029,20 @@ impl RawSvg {
     #[inline]
     fn paint_svg(&self, ctx: &BuildContext, size: ResolvedSize) {
         let overrides = self.overrides_for_size(size.width, size.height);
+        // A document that is not provably inside its viewport is clipped to
+        // it, as SVG does at the root, so its paint stays within its box.
+        if !self.paint_bounded {
+            ctx.canvas.set_clip((0.0, 0.0).into(), size);
+        }
         ctx.canvas.draw_svg(
             self.document.scene().clone(),
             (0.0, 0.0).into(),
             size,
             overrides.into(),
         );
+        if !self.paint_bounded {
+            ctx.canvas.clear_clip();
+        }
     }
 }
 
@@ -1082,8 +1091,7 @@ impl Drawable for RawSvg {
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         let size = self.resolved_size(ctx);
-        self.paint_bounded
-            && ctx.scale.is_finite()
+        ctx.scale.is_finite()
             && ctx.scale > 0.0
             && size.width.is_finite()
             && size.height.is_finite()
@@ -1101,11 +1109,17 @@ impl Drawable for RawSvg {
             size.height / scale,
         );
         let canvas = aimer_canvas::Canvas::of(ctx);
+        if !self.paint_bounded {
+            canvas.push_clip(destination, [0.0; 4]);
+        }
         canvas.draw_svg(
             self.document.scene().clone(),
             destination,
             self.overrides_for_size(size.width, size.height).into(),
         );
+        if !self.paint_bounded {
+            canvas.pop_clip();
+        }
         canvas.finish();
     }
 
@@ -1113,8 +1127,10 @@ impl Drawable for RawSvg {
         self.hover_styles.is_empty() && self.pressed_styles.is_empty()
     }
 
+    /// Always true: a document that is not provably inside its viewport is
+    /// clipped to it (see `paint_svg`), so no paint leaves the widget's box.
     fn is_paint_bounded(&self) -> bool {
-        self.paint_bounded
+        true
     }
 }
 
@@ -1662,8 +1678,24 @@ mod tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    fn recorded_commands(
+        element: &dyn Element,
+        context: &BuildContext,
+    ) -> aimer_cupid::draw_cmd_v2::DrawListSnapshot {
+        use aimer_cupid::draw_cmd_v2::{Rect, RenderTree};
+
+        let tree = RenderTree::new();
+        let node = tree.add_root(Rect::new(0.0, 0.0, 32.0, 32.0)).unwrap();
+        let node_context = tree.context(node).unwrap();
+        context.with_local_v2_paint_context(node_context, |ctx| element.paint_local_v2(ctx));
+        tree.draw_list_snapshot(node).unwrap()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn svg_with_geometry_outside_the_viewport_stays_on_the_live_path() {
+    fn svg_with_geometry_outside_the_viewport_is_clipped_to_its_box() {
+        use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect};
+
         let document = SvgDocument::from_svg(
             br#"<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg"><path d="M-1 0h2v2H-1z"/></svg>"#,
         )
@@ -1671,7 +1703,35 @@ mod tests {
         let context = context();
         let element = Svg::new(document).to_element(&context);
 
-        assert!(!element.is_paint_bounded());
+        // SVG overflow is hidden at the root, so the widget stays inside its
+        // box and never needs the legacy live path.
+        assert!(element.is_paint_bounded());
+        assert!(element.can_paint_local_v2(&context));
+        let snapshot = recorded_commands(element.as_ref(), &context);
+        assert!(matches!(
+            snapshot.commands.as_ref(),
+            [
+                DrawCommand::PushClip { rect, .. },
+                DrawCommand::Svg { .. },
+                DrawCommand::PopClip,
+            ] if *rect == Rect::new(0.0, 0.0, 32.0, 32.0)
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_provably_bounded_svg_is_recorded_without_a_clip() {
+        use aimer_cupid::draw_cmd_v2::DrawCommand;
+
+        let document = SvgDocument::from_svg(
+            br#"<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h32v32H0z"/></svg>"#,
+        )
+        .unwrap();
+        let context = context();
+        let element = Svg::new(document).to_element(&context);
+
+        let snapshot = recorded_commands(element.as_ref(), &context);
+        assert!(matches!(snapshot.commands.as_ref(), [DrawCommand::Svg { .. }]));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

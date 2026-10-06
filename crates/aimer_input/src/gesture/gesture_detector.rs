@@ -392,6 +392,13 @@ fn pointer_capture_effect(result: EventResult, event: &ElementEvent) -> EventRes
 // ── Element trait impls ─────────────────────────────────────────────────
 
 impl<E: Element> VisitorElement for RawGestureDetector<E> {
+    /// The detector always paints its child, whatever its event behavior is, so
+    /// the retained render tree (built from this visitor) must see it. Event
+    /// routing is a separate concern handled by `event_children`.
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(&self.child);
+    }
+
     fn debug_name(&self) -> &'static str {
         "GestureDetector"
     }
@@ -508,7 +515,7 @@ impl<E: Element> Drawable for RawGestureDetector<E> {
         self.cached_bounds
             .save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
         self.poll_held_gestures();
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
@@ -803,6 +810,29 @@ mod tests {
         let mut structural_children = 0;
         detector.structural_children(&mut |_| structural_children += 1);
         assert_eq!(structural_children, 1);
+    }
+
+    #[test]
+    fn the_retained_render_tree_can_reach_the_detectors_child() {
+        // The render tree is built from `visit_retained_v2_children`, which
+        // defaults to `visit_children`. A detector that draws its child but does
+        // not expose it there leaves the child without a render node, and its
+        // paint is silently dropped — for every behavior, not only pass-through.
+        for behavior in [
+            GestureDetectorBehavior::PassThrough,
+            GestureDetectorBehavior::BlockChild,
+        ] {
+            let detector =
+                recording_detector(behavior, Rc::new(std::cell::Cell::new(0)));
+
+            let mut visited = 0;
+            detector.visit_children(&mut |_| visited += 1);
+            assert_eq!(visited, 1, "{behavior:?} must expose its child to paint");
+
+            let mut retained = 0;
+            detector.visit_retained_v2_children(&mut |_, _| retained += 1);
+            assert_eq!(retained, 1, "{behavior:?} must expose its child to the render tree");
+        }
     }
 
     #[test]

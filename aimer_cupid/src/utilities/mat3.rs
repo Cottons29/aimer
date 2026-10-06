@@ -18,16 +18,35 @@ impl Mat3 {
     }
 
     /// Multiply self * other (apply self after other).
+    ///
+    /// Written out without loops: this runs for every node on every frame, and
+    /// in an unoptimized build the nested range iterators and bounds checks
+    /// cost more than the arithmetic. Each element is still evaluated as
+    /// `a0*b0 + a1*b1 + a2*b2`, left to right, so results are bit-identical to
+    /// the loop form.
+    #[inline]
     pub fn mul(&self, other: &Mat3) -> Mat3 {
-        let a = &self.cols;
-        let b = &other.cols;
-        let mut out = [[0.0f32; 3]; 3];
-        for c in 0..3 {
-            for r in 0..3 {
-                out[c][r] = a[0][r] * b[c][0] + a[1][r] * b[c][1] + a[2][r] * b[c][2];
-            }
+        let [a0, a1, a2] = self.cols;
+        let [b0, b1, b2] = other.cols;
+        Mat3 {
+            cols: [
+                [
+                    a0[0] * b0[0] + a1[0] * b0[1] + a2[0] * b0[2],
+                    a0[1] * b0[0] + a1[1] * b0[1] + a2[1] * b0[2],
+                    a0[2] * b0[0] + a1[2] * b0[1] + a2[2] * b0[2],
+                ],
+                [
+                    a0[0] * b1[0] + a1[0] * b1[1] + a2[0] * b1[2],
+                    a0[1] * b1[0] + a1[1] * b1[1] + a2[1] * b1[2],
+                    a0[2] * b1[0] + a1[2] * b1[1] + a2[2] * b1[2],
+                ],
+                [
+                    a0[0] * b2[0] + a1[0] * b2[1] + a2[0] * b2[2],
+                    a0[1] * b2[0] + a1[1] * b2[1] + a2[1] * b2[2],
+                    a0[2] * b2[0] + a1[2] * b2[1] + a2[2] * b2[2],
+                ],
+            ],
         }
-        Mat3 { cols: out }
     }
 
     pub fn scale(sx: f32, sy: f32) -> Self {
@@ -128,6 +147,71 @@ mod tests {
             .expect("the affine transform is invertible");
         assert!((recovered.0 - local.0).abs() < 0.00001);
         assert!((recovered.1 - local.1).abs() < 0.00001);
+    }
+
+    /// The straightforward loop definition `mul` must reproduce exactly.
+    fn mul_by_loops(a: &Mat3, b: &Mat3) -> Mat3 {
+        let (a, b) = (&a.cols, &b.cols);
+        let mut out = [[0.0f32; 3]; 3];
+        for c in 0..3 {
+            for r in 0..3 {
+                out[c][r] = a[0][r] * b[c][0] + a[1][r] * b[c][1] + a[2][r] * b[c][2];
+            }
+        }
+        Mat3 { cols: out }
+    }
+
+    #[test]
+    fn mul_reproduces_the_loop_definition_bit_for_bit() {
+        // Deterministic spread of magnitudes and signs, including values whose
+        // products round, so any change in evaluation order would show.
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let unit = (state >> 40) as f32 / (1u64 << 24) as f32;
+            (unit - 0.5) * 2000.0 * (1.0 + (state >> 60) as f32)
+        };
+        for _ in 0..2_000 {
+            let mut cols = [[0.0f32; 3]; 3];
+            let mut other = [[0.0f32; 3]; 3];
+            for c in 0..3 {
+                for r in 0..3 {
+                    cols[c][r] = next();
+                    other[c][r] = next();
+                }
+            }
+            let (a, b) = (Mat3 { cols }, Mat3 { cols: other });
+            let expected = mul_by_loops(&a, &b);
+            let actual = a.mul(&b);
+            for c in 0..3 {
+                for r in 0..3 {
+                    assert_eq!(
+                        actual.cols[c][r].to_bits(),
+                        expected.cols[c][r].to_bits(),
+                        "column {c}, row {r}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mul_keeps_non_finite_values_like_the_loop_definition() {
+        let a = Mat3 {
+            cols: [[f32::INFINITY, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        };
+        let b = Mat3::identity();
+        let (actual, expected) = (a.mul(&b), mul_by_loops(&a, &b));
+        for c in 0..3 {
+            for r in 0..3 {
+                assert_eq!(
+                    actual.cols[c][r].to_bits(),
+                    expected.cols[c][r].to_bits()
+                );
+            }
+        }
     }
 
     #[test]

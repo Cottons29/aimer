@@ -840,7 +840,7 @@ impl<E: Element> Drawable for RawResizable<E> {
         child_ctx.parent_size = size;
 
         if ctx.is_rect_visible(0.0, 0.0, size.width, size.height) {
-            self.child.draw(&child_ctx);
+            self.child.update(&child_ctx);
         }
 
         ctx.canvas.clear_clip();
@@ -944,12 +944,12 @@ mod tests {
         let element = drawing_resizable(draws.clone());
         let mut ctx = draw_context(Some((0.0, 101.0, 100.0, 20.0)));
 
-        element.draw(&ctx);
+        element.update(&ctx);
 
         assert_eq!(draws.get(), 0);
 
         ctx.visible_rect = Some((0.0, 0.0, 100.0, 100.0));
-        element.draw(&ctx);
+        element.update(&ctx);
         assert_eq!(draws.get(), 1);
     }
 

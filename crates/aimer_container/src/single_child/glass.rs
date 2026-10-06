@@ -665,7 +665,7 @@ impl Drawable for RawGlass {
     fn draw(&self, ctx: &BuildContext) {
         let size = self.child.computed_size(ctx);
         if size.width <= 0.0 || size.height <= 0.0 {
-            self.child.draw(ctx);
+            self.child.update(ctx);
             return;
         }
 
@@ -714,7 +714,7 @@ impl Drawable for RawGlass {
         // The material is painted before the child so the child's content stays
         // crisp above the frosted surface. No canvas state is changed on behalf
         // of the child besides the balanced save/restore above.
-        self.child.draw(ctx);
+        self.child.update(ctx);
         ctx.canvas.restore();
     }
 
@@ -775,7 +775,7 @@ impl Drawable for RawGlass {
     }
 
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     fn retained_v2_paint_outsets(&self, _ctx: &BuildContext) -> Option<[f32; 4]> {

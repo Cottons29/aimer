@@ -859,7 +859,7 @@ impl Drawable for RawTextField {
         let decoration = self.active_decoration();
 
         // --- Draw background + border + outline ---
-        decoration.draw(ctx);
+        decoration.update(ctx);
 
         // --- Padding ---
         let pad_top = self.padding.top.value(box_height, scale);
@@ -1044,11 +1044,11 @@ impl Drawable for RawTextField {
                 if !self.prompt.is_empty() {
                     let prompt_widget =
                         self.build_text_widget(&self.prompt, &self.prompt_style, self.text_align);
-                    prompt_widget.draw(&content_ctx);
+                    prompt_widget.update(&content_ctx);
                 } else if !self.hint.is_empty() {
                     let hint_widget =
                         self.build_text_widget(&self.hint, &self.hint_style, self.text_align);
-                    hint_widget.draw(&content_ctx);
+                    hint_widget.update(&content_ctx);
                 }
             }
 
@@ -1165,7 +1165,7 @@ impl Drawable for RawTextField {
                     &style,
                     self.horizontal_text_align(),
                 );
-                text_widget.draw(&content_ctx);
+                text_widget.update(&content_ctx);
                 ctx.canvas.restore();
 
                 // Draw cursor / composition from the same canonical caret.
@@ -1266,7 +1266,7 @@ impl Drawable for RawTextField {
                     &style,
                     self.horizontal_text_align(),
                 );
-                text_widget.draw(&content_ctx);
+                text_widget.update(&content_ctx);
                 ctx.canvas.restore();
 
                 if self.is_focused() {
@@ -1697,7 +1697,7 @@ mod caret_layout_tests {
         let ctx = dummy_build_context(400.0, 200.0);
         let line = line_height(&field, &ctx);
 
-        field.draw(&ctx);
+        field.update(&ctx);
 
         let (_, height) = caret_band(&field);
         assert_line_tall(height, line);
@@ -1709,7 +1709,7 @@ mod caret_layout_tests {
         let ctx = dummy_build_context(400.0, 200.0);
         let line = line_height(&field, &ctx);
 
-        field.draw(&ctx);
+        field.update(&ctx);
 
         let (_, height) = caret_band(&field);
         assert_line_tall(height, line);
@@ -1737,7 +1737,7 @@ mod caret_layout_tests {
         let ctx = dummy_build_context(400.0, 600.0);
         let line = line_height(&field, &ctx);
 
-        field.draw(&ctx);
+        field.update(&ctx);
 
         let (_, height) = caret_band(&field);
         assert_line_tall(height, line);
@@ -1749,7 +1749,7 @@ mod caret_layout_tests {
         let ctx = dummy_build_context(400.0, 600.0);
         let line = line_height(&field, &ctx);
 
-        field.draw(&ctx);
+        field.update(&ctx);
 
         // Text is top aligned by default, so the caret belongs to the first
         // line of the content area rather than to the middle of the box.
@@ -1766,7 +1766,7 @@ mod caret_layout_tests {
         let ctx = dummy_build_context(400.0, 600.0);
         let line = line_height(&field, &ctx);
 
-        field.draw(&ctx);
+        field.update(&ctx);
 
         let (top, height) = caret_band(&field);
         assert!(top < line, "caret of an empty field starts at {top}");
@@ -1780,7 +1780,7 @@ mod caret_layout_tests {
         let ctx = dummy_build_context(400.0, 600.0);
         let line = line_height(&field, &ctx);
 
-        field.draw(&ctx);
+        field.update(&ctx);
 
         // The text is centered in the content area, and the caret centers with
         // it instead of stretching across the box.
@@ -1802,7 +1802,7 @@ mod caret_layout_tests {
         let font_size = field.scaled_font_size(&field.text_style, ctx.scale);
         let expected = 4.0 + ctx.canvas.measure_text("a", font_size) + 8.0;
 
-        field.draw(&ctx);
+        field.update(&ctx);
 
         let caret = field
             .ime_cursor_area
@@ -1822,7 +1822,7 @@ mod caret_layout_tests {
         let ctx = dummy_build_context(400.0, 200.0);
         let line = line_height(&field, &ctx);
 
-        field.draw(&ctx);
+        field.update(&ctx);
 
         let caret = field
             .ime_cursor_area
@@ -1853,14 +1853,14 @@ mod pointer_selection_tests {
         let field = focused_single_line_field(controller.clone());
         let ctx = dummy_build_context(400.0, 60.0);
 
-        field.draw(&ctx);
+        field.update(&ctx);
         assert!(field
             .on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
                 Vec2d { x: 4.0, y: 10.0 },
                 PointerButton::Primary,
             )))
             .is_consumed());
-        field.draw(&ctx);
+        field.update(&ctx);
 
         assert_eq!(field.cursor.offset(), 0);
         assert_eq!(controller.selection_graphemes(), (0, 0));
@@ -1874,7 +1874,7 @@ mod pointer_selection_tests {
         field.test_clock.set(Some(AnimInstant::now()));
         let ctx = dummy_build_context(400.0, 60.0);
 
-        field.draw(&ctx);
+        field.update(&ctx);
         for x in [4.0, 50.0] {
             assert!(field
                 .on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
@@ -1882,7 +1882,7 @@ mod pointer_selection_tests {
                     PointerButton::Primary,
                 )))
                 .is_consumed());
-            field.draw(&ctx);
+            field.update(&ctx);
             let _ = field.on_event(&ElementEvent::PointerUp(PointerInfo::mouse(
                 Vec2d { x, y: 10.0 },
                 PointerButton::Primary,
@@ -1899,12 +1899,12 @@ mod pointer_selection_tests {
         ));
         let ctx = dummy_build_context(400.0, 60.0);
 
-        field.draw(&ctx);
+        field.update(&ctx);
         let _ = field.on_event(&ElementEvent::PointerDown(PointerInfo::mouse(
             Vec2d { x: 4.0, y: 10.0 },
             PointerButton::Primary,
         )));
-        field.draw(&ctx);
+        field.update(&ctx);
         let _ = field.on_event(&ElementEvent::PointerUp(PointerInfo::mouse(
             Vec2d { x: 4.0, y: 10.0 },
             PointerButton::Primary,
@@ -1918,7 +1918,7 @@ mod pointer_selection_tests {
                 PointerButton::Secondary,
             )))
             .is_consumed());
-        field.draw(&ctx);
+        field.update(&ctx);
 
         assert_eq!(field.cursor.selection_range(), Some((6, 11)));
         assert!(field.menu_is_open());

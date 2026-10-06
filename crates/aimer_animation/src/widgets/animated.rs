@@ -273,7 +273,7 @@ impl Drawable for AnimatedElement {
 
     #[inline]
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     #[inline]
@@ -353,7 +353,7 @@ impl AnimatedElement {
         ctx.canvas.save();
         frame.apply(ctx);
         self.update_damage(ctx, frame);
-        self.child.draw(ctx);
+        self.child.update(ctx);
         frame.clear(ctx);
         ctx.canvas.restore();
 
@@ -364,6 +364,13 @@ impl AnimatedElement {
 }
 
 impl VisitorElement for AnimatedElement {
+    /// The animated child is drawn by this element, so the retained render tree
+    /// (built from this visitor) must see it; `event_children` alone is not
+    /// enough to give it a render node.
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
+
     fn debug_name(&self) -> &'static str {
         "AnimatedElement"
     }

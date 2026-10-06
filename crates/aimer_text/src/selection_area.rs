@@ -219,7 +219,7 @@ impl VisitorElement for SelectionAreaElement {
 impl Drawable for SelectionAreaElement {
     fn draw(&self, ctx: &BuildContext) {
         self.session.begin_frame();
-        self.scoped(ctx, |ctx| self.child.draw(ctx));
+        self.scoped(ctx, |ctx| self.child.update(ctx));
         // Neither piece of furniture is painted into this canvas: each knob
         // hangs outside the line it marks and the callout floats above the
         // whole selection, so both go through the modal host's overlay, where

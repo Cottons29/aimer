@@ -301,7 +301,7 @@ impl Drawable for RawOverflowIndicator {
         if self.clip {
             ctx.canvas.set_clip(Vec2d::default(), bounds);
         }
-        self.child.draw(ctx);
+        self.child.update(ctx);
         ctx.canvas.restore();
 
         paint_overflow_indicator(ctx, bounds, overflow, &self.label);

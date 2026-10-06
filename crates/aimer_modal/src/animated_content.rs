@@ -57,7 +57,7 @@ impl AnimatedOverlayContent {
     fn draw_frame(&self, ctx: &BuildContext, frame: CompositorAnimationFrame) {
         ctx.canvas.save();
         frame.apply(ctx);
-        self.child.draw(ctx);
+        self.child.update(ctx);
         frame.clear(ctx);
         ctx.canvas.restore();
     }
@@ -89,7 +89,7 @@ impl Drawable for AnimatedOverlayContent {
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
         // The retained tree applies the animation to this node. The
         // compatibility walk only updates descendant state and recordings.
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     fn paint(&self, ctx: &BuildContext) {

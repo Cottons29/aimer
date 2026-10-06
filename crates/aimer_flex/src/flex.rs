@@ -263,7 +263,7 @@ mod lazy_tests {
         measured.set(0);
         drawn.set(0);
 
-        column.draw(&ctx);
+        column.update(&ctx);
 
         let visible = (VIEWPORT / CHILD_HEIGHT).ceil() as usize + 1;
         assert!(
@@ -287,14 +287,14 @@ mod lazy_tests {
         let drawn = Rc::new(Cell::new(0));
         let column = tall_column(&measured, &drawn);
         let ctx = dummy_build_context(200.0, VIEWPORT, Some((0.0, 0.0, 200.0, VIEWPORT)));
-        column.draw(&ctx);
+        column.update(&ctx);
 
         // Emulate a `Scrollable` that has scrolled 4_000 children down.
         let offset = 4_000.0 * CHILD_HEIGHT;
         let scrolled = dummy_build_context(200.0, VIEWPORT, Some((0.0, offset, 200.0, VIEWPORT)));
         measured.set(0);
         drawn.set(0);
-        column.draw(&scrolled);
+        column.update(&scrolled);
 
         let visible = (VIEWPORT / CHILD_HEIGHT).ceil() as usize + 1;
         assert!(
@@ -317,7 +317,7 @@ mod lazy_tests {
         let drawn = Rc::new(Cell::new(0));
         let column = tall_column(&measured, &drawn);
         let ctx = dummy_build_context(200.0, VIEWPORT, Some((0.0, 0.0, 200.0, VIEWPORT)));
-        column.draw(&ctx);
+        column.update(&ctx);
 
         let mut hit_tested = 0;
         column.hit_test_children(&mut |_| hit_tested += 1);
@@ -346,7 +346,7 @@ mod lazy_tests {
             "Column",
         );
         let ctx = dummy_build_context(100.0, 100.0, Some((0.0, 0.0, 100.0, 100.0)));
-        column.draw(&ctx);
+        column.update(&ctx);
 
         let pos = Vec2d { x: 50.0, y: 30.0 };
         let mut forward = 0;
@@ -466,7 +466,7 @@ mod lazy_tests {
 
     impl Drawable for TransparentDispatchWrapper {
         fn draw(&self, ctx: &BuildContext) {
-            self.child.draw(ctx);
+            self.child.update(ctx);
         }
     }
 
@@ -525,7 +525,7 @@ mod lazy_tests {
             })
             .collect();
         let column = Column::new().children(children).to_element(&ctx);
-        column.draw(&ctx);
+        column.update(&ctx);
 
         let pos = Vec2d { x: 50.0, y: 5.0 };
         let event = ElementEvent::DragOver {
@@ -655,7 +655,7 @@ mod lazy_tests {
         );
         let ctx = dummy_build_context(100.0, CHILD_COUNT as f32 * 10.0, None);
         column.overflow_behavior = OverflowBehavior::Visible;
-        column.draw(&ctx);
+        column.update(&ctx);
         pos_start_end_calls.set(0);
 
         let mut hits = 0;
@@ -683,7 +683,7 @@ mod lazy_tests {
         let column = tall_column(&measured, &drawn);
         let ctx = dummy_build_context(200.0, VIEWPORT, None);
 
-        column.draw(&ctx);
+        column.update(&ctx);
 
         let visible = (VIEWPORT / CHILD_HEIGHT).ceil() as usize + 1;
         assert!(
@@ -730,7 +730,7 @@ mod lazy_tests {
         column.overflow_behavior = OverflowBehavior::Visible;
         let ctx = dummy_build_context(200.0, VIEWPORT, None);
 
-        column.draw(&ctx);
+        column.update(&ctx);
 
         assert_eq!(drawn.get(), CHILD_COUNT);
         let mut hit_tested = 0;
@@ -746,7 +746,7 @@ mod lazy_tests {
         let drawn = Rc::new(Cell::new(0));
         let column = tall_column(&measured, &drawn);
         let ctx = dummy_build_context(200.0, VIEWPORT, Some((0.0, 0.0, 200.0, VIEWPORT)));
-        column.draw(&ctx);
+        column.update(&ctx);
 
         let mut visited = 0;
         column.event_children(&mut |_| visited += 1);
@@ -786,11 +786,11 @@ mod lazy_tests {
         );
         let ctx = dummy_build_context(200.0, 600.0, Some((0.0, 0.0, 200.0, 600.0)));
 
-        column.draw(&ctx);
+        column.update(&ctx);
         assert_eq!(second_at.get().1, 20.0);
 
         height.set(50.0);
-        column.draw(&ctx);
+        column.update(&ctx);
 
         assert_eq!(first_at.get().1, 0.0);
         assert_eq!(second_at.get().1, 50.0);
@@ -894,6 +894,10 @@ pub mod row_column;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub(crate) mod wrap_layout;
+#[cfg(test)]
+mod saturation_tests;
+#[cfg(test)]
+mod wrap_retained_tests;
 
 // pub use raw_flex::RawFlex;
 use aimer_attribute::position::Vec2d;

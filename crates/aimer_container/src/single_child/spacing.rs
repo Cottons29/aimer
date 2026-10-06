@@ -345,7 +345,7 @@ macro_rules! impl_spacing_element {
                     x: spacing.left,
                     y: spacing.top,
                 });
-                self.child.draw(&child_ctx);
+                self.child.update(&child_ctx);
                 ctx.canvas.restore();
             }
 
@@ -593,7 +593,7 @@ mod tests {
             }
         );
 
-        element.draw(&ctx);
+        element.update(&ctx);
         let observed = observation.get();
         assert_eq!(draws.get(), 1);
         assert_eq!(observed.max_width, f32::MAX - 16.0);
@@ -620,7 +620,7 @@ mod tests {
             }
         );
 
-        element.draw(&ctx);
+        element.update(&ctx);
         let observed = observation.get();
         assert_eq!(draws.get(), 1);
         assert_eq!(observed.max_width, f32::MAX - 16.0);
@@ -646,7 +646,7 @@ mod tests {
                 height: 80.0,
             }
         );
-        element.draw(&ctx);
+        element.update(&ctx);
 
         let observed = observation.get();
         assert_eq!(observed.max_width, 68.0);
@@ -673,7 +673,7 @@ mod tests {
                 height: 10.0,
             }
         );
-        element.draw(&ctx);
+        element.update(&ctx);
 
         let observed = observation.get();
         assert_eq!(draws.get(), 1);
@@ -700,7 +700,7 @@ mod tests {
                 height: 80.0,
             }
         );
-        element.draw(&ctx);
+        element.update(&ctx);
 
         let observed = observation.get();
         assert_eq!(observed.max_width, f32::MAX - 16.0);

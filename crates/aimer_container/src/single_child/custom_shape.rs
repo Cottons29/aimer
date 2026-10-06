@@ -190,7 +190,7 @@ impl Drawable for RawCustomShape {
         self.paint_shape(ctx);
         // Shape paint is a background; the retained child remains the canonical
         // event, focus, semantics, and visual subtree.
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     #[inline]
@@ -240,7 +240,7 @@ impl Drawable for RawCustomShape {
     }
 
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     #[inline]

@@ -80,7 +80,7 @@ impl Rebuildable for RawKeyRelay {
 
 impl Drawable for RawKeyRelay {
     fn draw(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     #[inline]

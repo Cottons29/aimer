@@ -2008,7 +2008,7 @@ impl Drawable for StatefulElement {
             // render nodes, so do not collapse them into the state owner's
             // legacy scene cache while collecting v2 compatibility commands.
             child.sync_paint_geometry(ctx);
-            child.draw(ctx);
+            child.update(ctx);
             return;
         }
 
@@ -2048,7 +2048,7 @@ impl Drawable for StatefulElement {
             self.paint_damage.mark_full();
         }
 
-        child.draw(ctx);
+        child.update(ctx);
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
@@ -2413,11 +2413,11 @@ mod tests {
         let element = element.boxed();
 
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         let first_commands = ctx.canvas.get_inner_canvas().take_draw_list().stats().commands;
 
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         let second_commands = ctx.canvas.get_inner_canvas().take_draw_list().stats().commands;
 
         assert_eq!(draws.get(), 0);
@@ -2441,13 +2441,13 @@ mod tests {
         let element = element.boxed();
 
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         let first_commands = ctx.canvas.get_inner_canvas().take_draw_list().stats().commands;
 
         updater.set_state(|_| {});
 
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         let second_commands = ctx.canvas.get_inner_canvas().take_draw_list().stats().commands;
 
         assert_eq!(draws.get(), 0);
@@ -2485,11 +2485,11 @@ mod tests {
         // first draw records the retained paint when there is one. Neither is
         // the frame this test is about.
         crate::begin_paint_frame(TARGET, TARGET);
-        element.draw(&ctx);
+        element.update(&ctx);
         let _ = crate::take_paint_frame_damage(TARGET, TARGET);
 
         crate::begin_paint_frame(TARGET, TARGET);
-        element.draw(&ctx);
+        element.update(&ctx);
         let damage = crate::take_paint_frame_damage(TARGET, TARGET);
 
         if cfg!(all(not(target_arch = "wasm32"), not(feature = "portable-guest"))) {

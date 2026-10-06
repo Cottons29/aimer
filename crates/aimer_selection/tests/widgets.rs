@@ -269,7 +269,7 @@ async fn checkbox_widget_dispatches_a_pointer_tap_to_on_change() {
         .to_element(&ctx);
     let size = element.layout(&ctx);
     assert!(size.width > 0.0 && size.height > 0.0);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let pointer = PointerInfo::mouse(
         aimer_widget::base::Vec2d { x: 8.0, y: 8.0 },
@@ -281,13 +281,13 @@ async fn checkbox_widget_dispatches_a_pointer_tap_to_on_change() {
         pointer.pos,
         &ElementEvent::PointerDown(pointer),
     );
-    element.draw(&ctx);
+    element.update(&ctx);
     let up = dispatcher.dispatch(
         element.as_ref(),
         pointer.pos,
         &ElementEvent::PointerUp(pointer),
     );
-    element.draw(&ctx);
+    element.update(&ctx);
 
     assert!(down.is_consumed());
     assert!(up.is_consumed());

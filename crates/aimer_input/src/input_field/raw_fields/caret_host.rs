@@ -184,7 +184,7 @@ impl Drawable for RawCaretPlacement {
         });
         ctx.canvas.save();
         ctx.canvas.translate(placement.offset);
-        self.child.draw(&caret_ctx);
+        self.child.update(&caret_ctx);
         ctx.canvas.restore();
     }
 
@@ -213,9 +213,9 @@ impl Drawable for RawCaretPlacement {
 
 impl Drawable for RawTextFieldHost {
     fn draw(&self, ctx: &BuildContext) {
-        self.field.draw(ctx);
+        self.field.update(ctx);
         self.sync_caret_placement(ctx);
-        self.caret.draw(ctx);
+        self.caret.update(ctx);
     }
 
     fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
@@ -229,7 +229,7 @@ impl Drawable for RawTextFieldHost {
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
         self.field.draw_local_v2_compatibility(ctx);
         self.sync_caret_placement(ctx);
-        self.caret.draw(ctx);
+        self.caret.update(ctx);
     }
 
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
@@ -389,7 +389,7 @@ mod tests {
             Colors::Red,
             &context,
         );
-        caret.draw(&context);
+        caret.update(&context);
         let first_color = context
             .canvas
             .get_inner_canvas()
@@ -409,7 +409,7 @@ mod tests {
             Colors::Blue,
             &context,
         );
-        caret.draw(&context);
+        caret.update(&context);
         let second_color = context
             .canvas
             .get_inner_canvas()
@@ -438,7 +438,7 @@ mod tests {
         let caret = ProbeCaret(size.clone()).to_element(&context);
         let host = RawTextFieldHost::new(field, caret);
 
-        host.draw(&context);
+        host.update(&context);
 
         let (width, height) = size.get();
         assert_eq!(width, 1.5);

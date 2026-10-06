@@ -345,7 +345,7 @@ impl Drawable for RawContextMenuPanel {
 
         let mut panel_ctx = ctx.clone();
         panel_ctx.parent_size = size;
-        self.style.panel.draw(&panel_ctx);
+        self.style.panel.update(&panel_ctx);
 
         let (left, top, right, bottom) = self.insets(ctx);
         ctx.canvas.save();
@@ -357,7 +357,7 @@ impl Drawable for RawContextMenuPanel {
         };
         child_ctx.box_constraint.max_width = child_ctx.parent_size.width;
         child_ctx.box_constraint.max_height = child_ctx.parent_size.height;
-        self.child.draw(&child_ctx);
+        self.child.update(&child_ctx);
         ctx.canvas.restore();
     }
 
@@ -380,7 +380,7 @@ impl Drawable for RawContextMenuPanel {
         let (offset, _, child_context) = self.retained_child_layout(ctx);
         ctx.canvas.save();
         ctx.canvas.translate(offset);
-        self.child.draw(&child_context);
+        self.child.update(&child_context);
         ctx.canvas.restore();
     }
 

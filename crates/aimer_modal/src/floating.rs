@@ -461,7 +461,7 @@ fn reserved_edges(
 
 impl Drawable for RawFloating {
     fn draw(&self, ctx: &BuildContext) {
-        self.barrier.draw(ctx);
+        self.barrier.update(ctx);
         let child_size = self.child.computed_size(ctx);
         let placement = resolve_placement(
             self.frame_placement(ctx),
@@ -477,7 +477,7 @@ impl Drawable for RawFloating {
             overlay_child_context(ctx, child_size, offset, &self.child_bounds);
         ctx.canvas.save();
         ctx.canvas.translate(offset);
-        self.child.draw(&child_ctx);
+        self.child.update(&child_ctx);
         ctx.canvas.restore();
     }
 
@@ -505,15 +505,15 @@ impl Drawable for RawFloating {
             false
         };
         if barrier_animation_needs_sync {
-            self.barrier.draw(ctx);
+            self.barrier.update(ctx);
         }
         if let Some((_, offset, child_ctx)) = self.retained_child_layout(ctx) {
             ctx.canvas.save();
             ctx.canvas.translate(offset);
-            self.child.draw(&child_ctx);
+            self.child.update(&child_ctx);
             ctx.canvas.restore();
         } else {
-            self.draw(ctx);
+            self.update(ctx);
         }
     }
 

@@ -601,7 +601,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                     let mut v2_child_ctx = child_ctx.clone();
                     v2_child_ctx.parent_pos.x += offset_x;
                     v2_child_ctx.parent_pos.y += offset_y;
-                    self.child.draw(&v2_child_ctx);
+                    self.child.update(&v2_child_ctx);
                 } else {
                     #[cfg(not(feature = "portable-guest"))]
                     if retained_scroll_paint_supported(cfg!(target_arch = "wasm32")) {
@@ -610,7 +610,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                         // Browser backends still have an unstable nested render-target
                         // path for retained scroll paint. Live replay keeps SVG and text
                         // in the main frame's compositor state until that path is safe.
-                        self.child.draw(&child_ctx);
+                        self.child.update(&child_ctx);
                     }
                     #[cfg(feature = "portable-guest")]
                     self.child.draw(&child_ctx);
@@ -677,7 +677,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                     .cross_offset(viewport_w, self.vertical_bar_width),
                 y: 0.0,
             });
-            vertical_bar.draw(&bar_ctx);
+            vertical_bar.update(&bar_ctx);
             ctx.canvas.restore();
         }
         if let Some(horizontal_bar) = &self.horizontal_scroll_bar
@@ -698,7 +698,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                     .scroll_bar_placement
                     .cross_offset(viewport_h, self.horizontal_bar_height),
             });
-            horizontal_bar.draw(&bar_ctx);
+            horizontal_bar.update(&bar_ctx);
             ctx.canvas.restore();
         }
     }

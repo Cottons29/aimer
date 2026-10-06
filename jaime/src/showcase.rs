@@ -1134,6 +1134,88 @@ mod tests {
         }
     }
 
+    /// Pages that still depend on the legacy paint path, by label. Empty: every
+    /// page now paints through the retained v2 path, so
+    /// `every_page_renders_without_legacy_paint` fails for any page that
+    /// regresses. A page may be listed here only as a temporary, reviewed
+    /// exception; the test also fails for a listed page that is clean, and
+    /// run with `--nocapture` it prints what holds a listed page back.
+    const LEGACY_PAGE_BACKLOG: &[&str] = &[];
+
+    /// Every page must paint through the retained v2 path: no element may fall
+    /// back to a legacy island, none may draw without a render node (its paint
+    /// would be silently lost), none may report unusable bounds, and the render
+    /// tree must synchronize. This is the gate for removing the legacy
+    /// `Drawable::draw` path; pages in [`LEGACY_PAGE_BACKLOG`] are the known work.
+    #[test]
+    fn every_page_renders_without_legacy_paint() {
+        use aimer::HeadlessOptions;
+        use aimer::quiver::winit::dpi::PhysicalSize;
+
+        let mut regressions = Vec::new();
+        let mut now_clean = Vec::new();
+        let mut seen_backlog = Vec::new();
+        for example in EXAMPLES {
+            let page = build_example(*example, theme::app_theme());
+            let mut app = AimerApp::start_headless_with(
+                theme::provide(page),
+                HeadlessOptions {
+                    size: PhysicalSize::new(1280, 800),
+                    scale_factor: 1.0,
+                },
+            );
+            app.pump_frames_direct(6);
+            let census = app
+                .paint_source_census()
+                .expect("a mounted page has a root");
+
+            let names = |roots: &[aimer::quiver::handler::census::IslandRoot]| -> Vec<&'static str> {
+                roots.iter().map(|root| root.debug_name).collect()
+            };
+            let islands = names(&census.island_roots);
+            let unmapped = names(&census.drawn_unmapped);
+            let invalid = names(&census.invalid_bounds);
+            let offends = !islands.is_empty()
+                || !unmapped.is_empty()
+                || !invalid.is_empty()
+                || census.sync_error.is_some();
+            let label = example.label();
+            let known = LEGACY_PAGE_BACKLOG.contains(&label);
+            if known {
+                seen_backlog.push(label);
+            }
+            let detail = format!(
+                "{label:?}: legacy islands {islands:?}, drawn without a render node {unmapped:?}, \
+                 invalid bounds {invalid:?}, sync error {:?}",
+                census.sync_error
+            );
+            if offends && known {
+                // Visible with `--nocapture`: what still holds a backlog page back.
+                eprintln!("backlog {detail}");
+            }
+            match (offends, known) {
+                (true, false) => regressions.push(detail),
+                (false, true) => now_clean.push(label),
+                _ => {}
+            }
+        }
+
+        assert!(
+            regressions.is_empty(),
+            "pages that newly paint through the legacy path:\n{}",
+            regressions.join("\n")
+        );
+        assert!(
+            now_clean.is_empty(),
+            "these pages are now clean; remove them from LEGACY_PAGE_BACKLOG: {now_clean:?}"
+        );
+        let unknown: Vec<_> = LEGACY_PAGE_BACKLOG
+            .iter()
+            .filter(|label| !seen_backlog.contains(label))
+            .collect();
+        assert!(unknown.is_empty(), "backlog names no registered page: {unknown:?}");
+    }
+
     #[test]
     fn the_default_selection_is_the_first_registered_example() {
         let state = ExampleShowcase::new().create_state();
@@ -1148,7 +1230,60 @@ mod tests {
         app.pump_frames(2);
     }
 
+    /// Moves the cursor down the sidebar one row at a time, so every frame
+    /// leaves one button and enters the next (hover state changes, rebuilds and
+    /// event-index maintenance).
+    ///
+    /// Run with `cargo test -p jaime --lib -- --ignored --nocapture
+    /// profile_sidebar_hover_frames`. It prints timings only; it asserts nothing.
     #[test]
+    #[ignore = "profiling harness: prints timings and asserts nothing"]
+    fn profile_sidebar_hover_frames() {
+        use std::time::Instant;
+
+        use aimer::HeadlessOptions;
+        use aimer::quiver::winit::dpi::{PhysicalPosition, PhysicalSize};
+        use aimer::quiver::winit::event::{DeviceId, WindowEvent};
+
+        let mut app = AimerApp::start_headless_with(
+            theme::provide(ExampleShowcase::new().boxed()),
+            HeadlessOptions {
+                size: PhysicalSize::new(2560, 1600),
+                scale_factor: 2.0,
+            },
+        );
+        let device = DeviceId::dummy();
+        app.pump_frames(8);
+
+        let frames: usize = std::env::var("HOVER_FRAMES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(400);
+        let mut times = Vec::with_capacity(frames);
+        for step in 0..frames {
+            // Logical y of the first sidebar rows, spaced by one row height.
+            let logical_y = 100.0 + (step % 8) as f64 * 42.0;
+            app.send_window_event(WindowEvent::CursorMoved {
+                device_id: device,
+                // Physical pixels: logical x = 150, at the 2.0 scale factor.
+                position: PhysicalPosition::new(300.0, logical_y * 2.0),
+            });
+            let start = Instant::now();
+            app.render_frame();
+            times.push(start.elapsed().as_secs_f64() * 1e6);
+        }
+        times.sort_by(f64::total_cmp);
+        eprintln!(
+            "=== hover frame: p50={:.0} us  p95={:.0} us  max={:.0} us  ({} frames)",
+            times[times.len() / 2],
+            times[(times.len() as f64 * 0.95) as usize - 1],
+            times[times.len() - 1],
+            times.len(),
+        );
+    }
+
+    #[test]
+    #[ignore = "profiling harness: 30,000 frames (minutes in debug), prints timings and asserts nothing"]
     fn profile_sidebar_scroll_frames() {
         use std::time::Instant;
 

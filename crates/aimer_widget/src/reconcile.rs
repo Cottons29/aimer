@@ -518,7 +518,7 @@ mod tests {
     }
     impl Drawable for DrawWrapper {
         fn draw(&self, ctx: &BuildContext) {
-            self.0.draw(ctx);
+            self.0.update(ctx);
         }
     }
     impl EventElement for DrawWrapper {
@@ -543,7 +543,7 @@ mod tests {
     impl Drawable for DrawRow {
         fn draw(&self, ctx: &BuildContext) {
             for c in &self.0 {
-                c.draw(ctx);
+                c.update(ctx);
             }
         }
     }
@@ -637,7 +637,7 @@ mod tests {
         let (root, _ctor) = StatefulElement::new_with_name(widget, &ctx, "DrawCounter", None);
 
         // First frame: the initial state (counter = 1) is drawn.
-        root.draw(&ctx);
+        root.update(&ctx);
         assert_eq!(drawn.get(), 1, "initial draw must render counter = 1");
 
         // Fire a mutation through the state's OWN updater — exactly what the
@@ -650,7 +650,7 @@ mod tests {
 
         // Next frame: the DRAWN subtree must reflect the new value. If the old
         // child were kept/drawn, `drawn` would stay 1 — the on-screen freeze.
-        root.draw(&ctx);
+        root.update(&ctx);
         assert_eq!(
             drawn.get(),
             2,
@@ -1250,7 +1250,7 @@ mod tests {
         );
 
         // Initial frame: switcher mounts on route "home"; no transition yet.
-        nav.draw(&ctx);
+        nav.update(&ctx);
         assert_eq!(
             transitions.get(),
             0,
@@ -1465,7 +1465,7 @@ mod tests {
 
         impl Drawable for FakeContainer {
             fn draw(&self, ctx: &BuildContext) {
-                self.child.draw(ctx);
+                self.child.update(ctx);
             }
         }
 
@@ -1523,7 +1523,7 @@ mod tests {
                         child_ctx.visible_rect = ctx
                             .visible_rect
                             .map(|(vx, vy, vw, vh)| (vx, vy - current_y, vw, vh));
-                        child.draw(&child_ctx);
+                        child.update(&child_ctx);
                     }
 
                     current_y += c_h;
@@ -1579,7 +1579,7 @@ mod tests {
         impl Drawable for FakeStack {
             fn draw(&self, ctx: &BuildContext) {
                 for child in &self.children {
-                    child.draw(ctx);
+                    child.update(ctx);
                 }
             }
         }
@@ -1621,7 +1621,7 @@ mod tests {
 
         impl Drawable for FakePositioned {
             fn draw(&self, ctx: &BuildContext) {
-                self.child.draw(ctx);
+                self.child.update(ctx);
             }
         }
 
@@ -1674,7 +1674,7 @@ mod tests {
 
         impl Drawable for FakeScrollable {
             fn draw(&self, ctx: &BuildContext) {
-                self.child.draw(ctx);
+                self.child.update(ctx);
             }
         }
 
@@ -1776,10 +1776,10 @@ mod tests {
                 "HomePage",
             );
 
-            driver.draw(&initial_ctx);
+            driver.update(&initial_ctx);
             let current = current_live_updater(&live_updater);
             current.set_state(|state| state.counter = 2);
-            driver.draw(&initial_ctx);
+            driver.update(&initial_ctx);
 
             assert_eq!(
                 observer.get(),
@@ -1796,7 +1796,7 @@ mod tests {
 
             for _ in 0..resize_count {
                 driver.mark_needs_rebuild();
-                driver.draw(&resize_ctx);
+                driver.update(&resize_ctx);
             }
 
             VariantResult {

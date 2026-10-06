@@ -121,7 +121,7 @@ impl RawScalable {
 
 impl Drawable for RawScalable {
     fn draw(&self, ctx: &BuildContext) {
-        self.child.draw(&self.child_context(ctx));
+        self.child.update(&self.child_context(ctx));
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -146,7 +146,7 @@ impl Drawable for RawScalable {
     }
 
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        self.child.draw(&self.child_context(ctx));
+        self.child.update(&self.child_context(ctx));
     }
 
     fn retained_v2_child_context_at<'a>(

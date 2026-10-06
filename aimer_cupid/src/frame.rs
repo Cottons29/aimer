@@ -42,6 +42,8 @@ pub(crate) struct RetainedV2Item {
     pub(crate) origin: (f32, f32),
     pub(crate) transform: Mat3,
     pub(crate) clip: Option<V2Rect>,
+    /// Corner radii of `clip` in world logical pixels.
+    pub(crate) clip_radius: [f32; 4],
     pub(crate) commands: Arc<[V2DrawCommand]>,
 }
 

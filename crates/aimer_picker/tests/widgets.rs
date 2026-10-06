@@ -82,7 +82,7 @@ async fn calendar_view_selects_through_its_public_widget_event_boundary() {
     let ctx = context();
     let element = view.to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     assert!(dispatcher
@@ -108,7 +108,7 @@ async fn calendar_view_consumes_the_provided_surface_token() {
     let ctx = context();
     let element = view.to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     assert!(ctx
         .canvas
@@ -138,7 +138,7 @@ async fn calendar_range_paints_endpoints_opaque_and_interior_dates_dimmed() {
     let ctx = context();
     let element = CalendarView::new().calendar(calendar).to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let selected_alphas = ctx
         .canvas
@@ -173,7 +173,7 @@ async fn calendar_view_bridges_legacy_theme_data_into_semantic_tokens() {
     let ctx = context();
     let element = view.to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
 
     assert!(ctx
         .canvas
@@ -200,7 +200,7 @@ async fn date_picker_view_confirms_a_navigated_date() {
     let ctx = context();
     let element = view.to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     assert!(dispatcher
@@ -259,14 +259,14 @@ async fn date_time_picker_switches_between_date_and_time_segments() {
         .child(DateTimePickerView::new().use_24_hours(false))
         .to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     assert!(dispatcher
         .dispatch(element.as_ref(), Vec2d::default(), &key(NamedKey::Enter))
         .is_consumed());
     ctx.canvas.begin_frame();
-    element.draw(&ctx);
+    element.update(&ctx);
     let (has_date, has_time, has_done) = {
         let draw_list = ctx.canvas.get_inner_canvas().draw_list();
         (
@@ -297,7 +297,7 @@ async fn date_time_picker_switches_between_date_and_time_segments() {
         )
         .is_consumed());
     ctx.canvas.begin_frame();
-    element.draw(&ctx);
+    element.update(&ctx);
     let has_am = {
         let draw_list = ctx.canvas.get_inner_canvas().draw_list();
         draw_list.commands().iter().any(|command| matches!(
@@ -316,7 +316,7 @@ async fn date_time_picker_switches_between_date_and_time_segments() {
         )
         .is_consumed());
     ctx.canvas.begin_frame();
-    element.draw(&ctx);
+    element.update(&ctx);
     let has_month = {
         let draw_list = ctx.canvas.get_inner_canvas().draw_list();
         draw_list.commands().iter().any(|command| matches!(
@@ -336,13 +336,13 @@ async fn date_time_picker_scrolls_the_selected_period_column() {
     let ctx = context_with_max(420.0, 1000.0);
     let element = ModalHost::new().child(view).to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     assert!(dispatcher
         .dispatch(element.as_ref(), Vec2d::default(), &key(NamedKey::Enter))
         .is_consumed());
-    element.draw(&ctx);
+    element.update(&ctx);
     let time_segment = PointerInfo::mouse(Vec2d { x: 240.0, y: 56.0 }, PointerButton::Primary);
     assert!(dispatcher
         .dispatch(
@@ -351,7 +351,7 @@ async fn date_time_picker_scrolls_the_selected_period_column() {
             &ElementEvent::PointerDown(time_segment),
         )
         .is_consumed());
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let period = PointerInfo::mouse(Vec2d { x: 280.0, y: 210.0 }, PointerButton::Primary);
     assert!(dispatcher
@@ -398,14 +398,14 @@ async fn date_time_picker_overlay_paints_a_separating_border() {
         .child(DateTimePickerView::new())
         .to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     assert!(dispatcher
         .dispatch(element.as_ref(), Vec2d::default(), &key(NamedKey::Enter))
         .is_consumed());
     ctx.canvas.begin_frame();
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let outline = ThemeTokens::light().colors.outline;
     let (outline_r, outline_g, outline_b, outline_a) = outline.to_rgba();
@@ -438,14 +438,14 @@ async fn color_picker_overlay_paints_a_separating_border() {
         .child(ColorPickerView::new())
         .to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
     let open = PointerInfo::mouse(Vec2d { x: 10.0, y: 10.0 }, PointerButton::Primary);
 
     assert!(dispatcher
         .dispatch(element.as_ref(), open.pos, &ElementEvent::PointerDown(open))
         .is_consumed());
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let outline = ThemeTokens::light().colors.outline;
     let (outline_r, outline_g, outline_b, outline_a) = outline.to_rgba();
@@ -492,10 +492,10 @@ async fn date_time_and_color_views_open_edit_and_confirm_through_keyboard() {
     let ctx = context();
     let date_time_element = date_time.to_element(&ctx);
     date_time_element.layout(&ctx);
-    date_time_element.draw(&ctx);
+    date_time_element.update(&ctx);
     let color_element = color.to_element(&ctx);
     color_element.layout(&ctx);
-    color_element.draw(&ctx);
+    color_element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     for event in [
@@ -566,13 +566,13 @@ async fn date_time_picker_view_selects_an_hour_from_the_time_wheel() {
     let ctx = context_with_max(420.0, 1000.0);
     let element = ModalHost::new().child(view).to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     assert!(dispatcher
         .dispatch(element.as_ref(), Vec2d::default(), &key(NamedKey::Enter))
         .is_consumed());
-    element.draw(&ctx);
+    element.update(&ctx);
     let time_field = PointerInfo::mouse(Vec2d { x: 240.0, y: 56.0 }, PointerButton::Primary);
     assert!(dispatcher
         .dispatch(
@@ -623,13 +623,13 @@ async fn time_picker_view_scrolls_a_24_hour_column_and_confirms_it() {
     let ctx = context_with_max(420.0, 1000.0);
     let element = ModalHost::new().child(view).to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     assert!(dispatcher
         .dispatch(element.as_ref(), Vec2d::default(), &key(NamedKey::Enter))
         .is_consumed());
-    element.draw(&ctx);
+    element.update(&ctx);
 
     let draw_list = ctx.canvas.get_inner_canvas().draw_list();
     let texts = draw_list
@@ -673,13 +673,13 @@ async fn time_picker_view_applies_a_smooth_scroll_frame_to_the_active_column() {
     let ctx = context_with_max(420.0, 1000.0);
     let element = ModalHost::new().child(view).to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     assert!(dispatcher
         .dispatch(element.as_ref(), Vec2d::default(), &key(NamedKey::Enter))
         .is_consumed());
-    element.draw(&ctx);
+    element.update(&ctx);
     assert!(dispatcher
         .dispatch(
             element.as_ref(),
@@ -711,13 +711,13 @@ async fn time_picker_view_scrolls_the_column_under_the_pointer() {
     let ctx = context_with_max(420.0, 1000.0);
     let element = ModalHost::new().child(view).to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     assert!(dispatcher
         .dispatch(element.as_ref(), Vec2d::default(), &key(NamedKey::Enter))
         .is_consumed());
-    element.draw(&ctx);
+    element.update(&ctx);
     let hover = PointerInfo::mouse(Vec2d { x: 150.0, y: 166.0 }, PointerButton::Primary);
     assert!(dispatcher
         .dispatch(element.as_ref(), hover.pos, &ElementEvent::PointerMove(hover))
@@ -753,13 +753,13 @@ async fn time_picker_uses_one_period_label_and_allows_switching_to_pm() {
     let ctx = context_with_max(420.0, 1000.0);
     let element = ModalHost::new().child(view).to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     assert!(dispatcher
         .dispatch(element.as_ref(), Vec2d::default(), &key(NamedKey::Enter))
         .is_consumed());
-    element.draw(&ctx);
+    element.update(&ctx);
     let period_count = {
         let draw_list = ctx.canvas.get_inner_canvas().draw_list();
         draw_list
@@ -809,14 +809,14 @@ async fn color_picker_view_routes_pointer_swatches_through_the_public_boundary()
     let ctx = context();
     let element = ModalHost::new().child(view).to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     let open = PointerInfo::mouse(Vec2d { x: 10.0, y: 10.0 }, PointerButton::Primary);
     assert!(dispatcher
         .dispatch(element.as_ref(), open.pos, &ElementEvent::PointerDown(open))
         .is_consumed());
-    element.draw(&ctx);
+    element.update(&ctx);
     let disabled_press =
         PointerInfo::mouse(Vec2d { x: 5.0, y: 136.0 }, PointerButton::Primary);
     assert!(dispatcher
@@ -855,14 +855,14 @@ async fn color_picker_view_selects_a_value_through_a_channel_slider_drag() {
     let ctx = context();
     let element = ModalHost::new().child(view).to_element(&ctx);
     element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     let mut dispatcher = EventDispatcher::new();
 
     let open = PointerInfo::mouse(Vec2d { x: 10.0, y: 10.0 }, PointerButton::Primary);
     assert!(dispatcher
         .dispatch(element.as_ref(), open.pos, &ElementEvent::PointerDown(open))
         .is_consumed());
-    element.draw(&ctx);
+    element.update(&ctx);
     let hue_track = PointerInfo::mouse(Vec2d { x: 24.0, y: 162.0 }, PointerButton::Primary);
     assert!(dispatcher
         .dispatch(
@@ -922,7 +922,7 @@ async fn calendar_view_maps_pointer_selection_to_its_clamped_layout_size() {
     let ctx = context_with_max(140.0, 300.0);
     let element = view.to_element(&ctx);
     let size = element.layout(&ctx);
-    element.draw(&ctx);
+    element.update(&ctx);
     assert_eq!(size.width, 140.0);
 
     // May 15, 2024 is row 2 / column 2 in the Monday-first six-week grid.

@@ -388,7 +388,7 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
         if !aimer_widget::mouse_region_hover_reconciliation_deferred() {
             self.sync_hover(self.cached_bounds.is_inside(cursor.x, cursor.y));
         }
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {

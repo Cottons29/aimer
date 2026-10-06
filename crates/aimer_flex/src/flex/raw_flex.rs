@@ -302,7 +302,7 @@ impl RawFlex {
 
     pub(crate) fn render_child(widget: &dyn Element, ctx: &BuildContext) {
         ctx.canvas.save();
-        widget.draw(ctx);
+        widget.update(ctx);
         ctx.canvas.restore();
     }
 
@@ -387,7 +387,7 @@ impl RawFlex {
                     .ok_or(FlexSnapshotError::MissingKey)?;
                 let size = layout.size(index);
                 let main = distribution.0
-                    + layout.offset(index) as f32
+                    + layout.offset_f32(index)
                     + distribution.1 * index as f32;
                 let (x, y) = if is_row {
                     (main, align_offset(self.vertical_alignment, (max_h - size.height).max(0.0)))
@@ -493,7 +493,7 @@ impl RawFlex {
             };
             let child_size = layout.size(index);
             let main = distribution.0
-                + layout.offset(index) as f32
+                + layout.offset_f32(index)
                 + distribution.1 * index as f32;
             let (offset_x, offset_y) = if is_row {
                 (
@@ -631,7 +631,7 @@ pub(crate) fn justify_distribution(
 
 impl RawFlex {
     #[inline]
-    fn resole_gaps(&self, ctx: &BuildContext) -> (f32, f32) {
+    pub(crate) fn resole_gaps(&self, ctx: &BuildContext) -> (f32, f32) {
         let max_width = ctx.box_constraint.max_width;
         let max_height = ctx.box_constraint.max_height;
         let gap_x = self.gaps.left.value(max_width, ctx.scale)
@@ -955,7 +955,7 @@ impl RawFlex {
         child_ordinal: usize,
     ) -> Option<(Vec2d, BuildContext<'a>)> {
         if self.overflow_behavior == OverflowBehavior::Wrap {
-            return None;
+            return self.retained_wrapped_child_layout(ctx, child, child_ordinal);
         }
         let index = self.children.live_start().unwrap_or(0).checked_add(child_ordinal)?;
         if self.children.get(index)?.id() != child.id() {
@@ -969,7 +969,7 @@ impl RawFlex {
         let child_size = layout.size(index);
         let distribution = self.main_distribution(ctx, layout.total(), layout.len());
         let main = distribution.0
-            + layout.offset(index) as f32
+            + layout.offset_f32(index)
             + distribution.1 * index as f32;
         let (offset_x, offset_y) = if self.is_row() {
             (
@@ -1058,8 +1058,7 @@ impl RawFlex {
 
 impl Drawable for RawFlex {
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
-        self.overflow_behavior != OverflowBehavior::Wrap
-            && ctx.scale.is_finite()
+        ctx.scale.is_finite()
             && ctx.scale > 0.0
             && ctx.box_constraint.max_width.is_finite()
             && ctx.box_constraint.max_height.is_finite()
@@ -1344,7 +1343,7 @@ impl Drawable for RawFlex {
             let c_w = child_size.width;
             let c_h = child_size.height;
             let main = distribution.0
-                + layout.offset(index) as f32
+                + layout.offset_f32(index)
                 + distribution.1 * index as f32;
 
             let (offset_x, offset_y) = if is_row {
@@ -1708,11 +1707,7 @@ impl LayoutElement for RawFlex {
         }
 
         if self.overflow_behavior == OverflowBehavior::Wrap {
-            let (gap_x, gap_y) = self.resole_gaps(ctx);
-            let (_, layout) = self.wrapped_layout(ctx, gap_x, gap_y);
-            self.cache
-                .set_computed(ctx.box_constraint, scale_bits, layout.size);
-            return layout.size;
+            return self.wrapped_layout_cached(ctx).1.size;
         }
 
         let layout = self.flex_layout(ctx);

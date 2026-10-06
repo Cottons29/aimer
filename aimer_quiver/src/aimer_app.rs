@@ -847,6 +847,18 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 /// [`take_redraw_request`](Self::take_redraw_request) reports and
 /// [`pump_frames`](Self::pump_frames) acts on.
     pub fn render_frame(&mut self) {
+        self.render_frame_with(false);
+    }
+
+    /// Renders one frame the way a platform window does: through the direct
+    /// retained render plan. [`render_frame`](Self::render_frame) keeps the
+    /// flat legacy presentation that most tests were written against.
+    #[doc(hidden)]
+    pub fn render_frame_direct(&mut self) {
+        self.render_frame_with(true);
+    }
+
+    fn render_frame_with(&mut self, direct_render_plan: bool) {
         if self.exit_requested {
             return;
         }
@@ -877,7 +889,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             let window = self.window.clone();
             let frame_result = self
                 .app
-                .frame_drawer(window)
+                .split_for_frame(window, direct_render_plan)
+                .1
                 .draw(&self.canvas, width, height);
             #[cfg(test)]
             {
@@ -893,6 +906,14 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         if !skip_draw {
             crate::first_frame::notify_first_frame_presented(true);
         }
+    }
+
+    /// Counts the mounted root's render nodes by paint source.
+    ///
+    /// `None` until a root exists. See [`crate::handler::census::PaintSourceCensus`].
+    #[doc(hidden)]
+    pub fn paint_source_census(&self) -> Option<crate::handler::census::PaintSourceCensus> {
+        self.app.paint_source_census()
     }
 
     /// Returns a handle to this application's UI memory pool.
@@ -918,6 +939,18 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         let mut frames = 0;
         while frames < max_frames && self.take_redraw_request() && !self.exit_requested {
             self.render_frame();
+            frames += 1;
+        }
+        frames
+    }
+
+    /// [`pump_frames`](Self::pump_frames) through the direct retained render
+    /// plan, as a platform window presents.
+    #[doc(hidden)]
+    pub fn pump_frames_direct(&mut self, max_frames: usize) -> usize {
+        let mut frames = 0;
+        while frames < max_frames && self.take_redraw_request() && !self.exit_requested {
+            self.render_frame_direct();
             frames += 1;
         }
         frames
@@ -2818,7 +2851,7 @@ mod tests {
                 aimer_widget::base::Color::BLUE,
                 [0.0; 4],
             );
-            self.child.draw(ctx);
+            self.child.update(ctx);
         }
 
         fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
@@ -4825,6 +4858,31 @@ mod tests {
         }
     }
     impl EventElement for ObservingElement {}
+
+    /// A page can be checked for legacy paint without reaching into the frame
+    /// loop: the census names every element that fell back to a legacy island.
+    #[test]
+    fn a_headless_app_reports_which_elements_paint_through_legacy_islands() {
+        let mut app = AimerApp::start_headless(RecordingWidget {
+            builds: Arc::new(AtomicUsize::new(0)),
+            cancels: Arc::new(AtomicUsize::new(0)),
+        });
+        app.pump_frames(3);
+
+        let census = app
+            .paint_source_census()
+            .expect("a mounted app has a root to inspect");
+
+        // `RecordingElement` only implements the legacy `draw`.
+        assert!(
+            census
+                .island_roots
+                .iter()
+                .any(|island| island.debug_name == "RecordingElement"),
+            "{census:?}"
+        );
+        assert!(census.local_v2 > 0, "the host around it paints locally");
+    }
 
     /// The property the whole runtime exists for: an effect produced by a
     /// resolved future is visible to *this* frame's build, not the next one.

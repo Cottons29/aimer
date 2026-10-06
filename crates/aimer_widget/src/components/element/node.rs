@@ -28,7 +28,7 @@ impl<E: Element + 'static> ElementNode<E> {
         if let Some(frame) = frame {
             self.element.draw_with_compositor_animation(ctx, frame);
         } else {
-            self.element.draw(ctx);
+            self.element.update(ctx);
         }
         let after = element_tree_generation();
         if after != before {
@@ -241,6 +241,15 @@ impl<E: Element + 'static> ElementNode<E> {
         render_node: RenderNodeId,
         draw: impl FnOnce(),
     ) {
+        #[cfg(debug_assertions)]
+        if first_legacy_island_report(self.element.debug_name()) {
+            aimer_utils::error!(
+                "`{}` fell back to the legacy paint path (a legacy island). Make \
+                 `can_paint_local_v2` true and record its paint in `paint_local_v2`: \
+                 the legacy path is being removed.",
+                self.element.debug_name()
+            );
+        }
         ctx.with_local_v2_compatibility_paint(false, |_| {
             ctx.canvas.with_paint_commands_enabled(|| {
                 let _ = render_context
@@ -608,7 +617,13 @@ impl<E: Element + 'static> EventElement for ElementNode<E> {
 }
 
 impl<E: Element + 'static> Drawable for ElementNode<E> {
+    #[allow(deprecated)]
+    #[inline]
     fn draw(&self, ctx: &BuildContext) {
+        self.update(ctx);
+    }
+
+    fn update(&self, ctx: &BuildContext) {
         crate::frame_work_stats::record_paint_call();
         #[cfg(feature = "frame-stats")]
         record_draw_traversal();
@@ -778,6 +793,14 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
             }
         }
 
+        // Reached with no render node while a render tree is active: whatever this
+        // element paints as legacy content lies outside every island range and is
+        // never replayed. A transient miss (an element created during this very
+        // draw) is mapped by the next sync; the frame loop reports only those
+        // still unmapped afterwards.
+        if render_context.is_some() {
+            record_unmapped_draw(self.id.get(), self.element.debug_name());
+        }
         self.draw_legacy_content(ctx, priority, stable, bounded);
     }
 
@@ -855,6 +878,11 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
     )> {
         self.element
             .retained_v2_child_geometry_at(ctx, child, child_index)
+    }
+
+    #[inline]
+    fn retained_v2_child_clip_radius(&self, ctx: &BuildContext, child: &dyn Element) -> [f32; 4] {
+        self.element.retained_v2_child_clip_radius(ctx, child)
     }
 
     #[inline]
@@ -1172,6 +1200,22 @@ impl EventElement for AnyElement {
 }
 
 impl Drawable for AnyElement {
+    #[inline]
+    fn update(&self, ctx: &BuildContext) {
+        self.as_ref().update(ctx)
+    }
+
+    #[inline]
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.as_ref().can_paint_local_v2(ctx)
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        self.as_ref().paint_local_v2(ctx)
+    }
+
+    #[allow(deprecated)]
     fn draw(&self, ctx: &BuildContext) {
         self.as_ref().draw(ctx)
     }
@@ -1255,6 +1299,11 @@ impl Drawable for AnyElement {
     )> {
         self.as_ref()
             .retained_v2_child_geometry_at(ctx, child, child_index)
+    }
+
+    #[inline]
+    fn retained_v2_child_clip_radius(&self, ctx: &BuildContext, child: &dyn Element) -> [f32; 4] {
+        self.as_ref().retained_v2_child_clip_radius(ctx, child)
     }
 
     #[inline]
@@ -1513,6 +1562,22 @@ impl EventElement for Box<dyn Element> {
 }
 
 impl Drawable for Box<dyn Element> {
+    #[inline]
+    fn update(&self, ctx: &BuildContext) {
+        self.as_ref().update(ctx)
+    }
+
+    #[inline]
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        self.as_ref().can_paint_local_v2(ctx)
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        self.as_ref().paint_local_v2(ctx)
+    }
+
+    #[allow(deprecated)]
     fn draw(&self, ctx: &BuildContext) {
         self.as_ref().draw(ctx)
     }
@@ -1596,6 +1661,11 @@ impl Drawable for Box<dyn Element> {
     )> {
         self.as_ref()
             .retained_v2_child_geometry_at(ctx, child, child_index)
+    }
+
+    #[inline]
+    fn retained_v2_child_clip_radius(&self, ctx: &BuildContext, child: &dyn Element) -> [f32; 4] {
+        self.as_ref().retained_v2_child_clip_radius(ctx, child)
     }
 
     #[inline]

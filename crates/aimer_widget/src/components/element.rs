@@ -38,6 +38,8 @@ use crate::pointer_claim;
 use crate::{AnyElement, Drawable, Key};
 
 mod event;
+#[cfg(test)]
+mod legacy_island_report_tests;
 mod node;
 
 use node::ElementNode;
@@ -58,6 +60,16 @@ thread_local! {
     /// Active per-window v2 recording context. It is installed only while the
     /// UI thread traverses the retained element tree for one frame.
     static V2_RENDER_CONTEXT_STACK: RefCell<Vec<V2RenderContext>> = const { RefCell::new(Vec::new()) };
+
+    /// Elements that ran `ElementNode::draw` under retained presentation without
+    /// a render node. A frame loop drains this after its final structure sync:
+    /// an element still unmapped then painted into nothing, because the render
+    /// tree never learned of it (typically its parent draws it without
+    /// exposing it through `visit_children`).
+    static UNMAPPED_DRAWS: RefCell<Vec<(ElementId, &'static str)>> = const { RefCell::new(Vec::new()) };
+    /// Element types already reported as legacy islands in this process, so the
+    /// log names each one once instead of every frame.
+    static REPORTED_LEGACY_ISLANDS: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
 
     /// Nested `mark_needs_rebuild` calls share one invalidation generation.
     /// Marking a large tree is already recursive; it must not also perform one
@@ -128,10 +140,18 @@ thread_local! {
     static HOVER_MEMBERSHIP_CHECK_COUNT: Cell<u64> = const { Cell::new(0) };
 }
 
+/// Maps each element to its render node in the window's retained render tree.
+///
+/// It is consulted for every element on every draw, so it uses `hashbrown`'s
+/// default hasher: the keys are process-local identifiers, and the standard
+/// library's DoS-resistant SipHash costs far more than the lookup itself,
+/// especially in unoptimized builds.
+pub type ElementNodeMap = HashMap<ElementId, RenderNodeId>;
+
 #[derive(Clone)]
 pub(crate) struct V2RenderContext {
     pub(crate) tree: RenderTree,
-    element_nodes: Rc<std::collections::HashMap<ElementId, RenderNodeId>>,
+    element_nodes: Rc<ElementNodeMap>,
     legacy_island_depth: Rc<Cell<usize>>,
     prepared_root: Rc<Cell<Option<ElementId>>>,
     retained_presentation: bool,
@@ -191,7 +211,7 @@ impl Drop for V2RenderContextGuard {
 #[doc(hidden)]
 pub fn with_v2_render_tree_context<R>(
     tree: RenderTree,
-    element_nodes: Rc<std::collections::HashMap<ElementId, RenderNodeId>>,
+    element_nodes: Rc<ElementNodeMap>,
     prepared_root: Option<ElementId>,
     callback: impl FnOnce() -> R,
 ) -> R {
@@ -204,7 +224,7 @@ pub fn with_v2_render_tree_context<R>(
 #[doc(hidden)]
 pub fn with_v2_render_tree_presentation_context<R>(
     tree: RenderTree,
-    element_nodes: Rc<std::collections::HashMap<ElementId, RenderNodeId>>,
+    element_nodes: Rc<ElementNodeMap>,
     prepared_root: Option<ElementId>,
     callback: impl FnOnce() -> R,
 ) -> R {
@@ -213,7 +233,7 @@ pub fn with_v2_render_tree_presentation_context<R>(
 
 fn with_v2_render_tree_context_mode<R>(
     tree: RenderTree,
-    element_nodes: Rc<std::collections::HashMap<ElementId, RenderNodeId>>,
+    element_nodes: Rc<ElementNodeMap>,
     prepared_root: Option<ElementId>,
     retained_presentation: bool,
     callback: impl FnOnce() -> R,
@@ -1034,6 +1054,37 @@ pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable +
 
 // SAFETY: The template is `null::<ElementNode<E>>()` coerced to the target, so
 // it carries exactly that node's vtable and a null data address.
+/// Returns `true` the first time `name` is seen as a legacy island, so callers
+/// log each element type once. Only debug builds report islands.
+#[cfg_attr(not(any(debug_assertions, test)), allow(dead_code))]
+#[inline]
+fn first_legacy_island_report(name: &'static str) -> bool {
+    REPORTED_LEGACY_ISLANDS.with(|reported| reported.borrow_mut().insert(name))
+}
+
+/// The most unmapped draws one frame keeps; a runaway tree must not grow it
+/// without bound.
+const UNMAPPED_DRAW_LIMIT: usize = 1024;
+
+/// Notes that `id` was drawn under retained presentation with no render node.
+#[inline]
+fn record_unmapped_draw(id: ElementId, name: &'static str) {
+    UNMAPPED_DRAWS.with(|draws| {
+        let mut draws = draws.borrow_mut();
+        if draws.len() < UNMAPPED_DRAW_LIMIT && !draws.iter().any(|(seen, _)| *seen == id) {
+            draws.push((id, name));
+        }
+    });
+}
+
+/// Takes the elements recorded as drawn without a render node since the last
+/// call. Frame loops call this to discard stale entries at frame start and
+/// again after their final render-tree sync to see which are still unmapped.
+#[doc(hidden)]
+pub fn take_unmapped_draws() -> Vec<(ElementId, &'static str)> {
+    UNMAPPED_DRAWS.with(|draws| std::mem::take(&mut *draws.borrow_mut()))
+}
+
 /// Returns the generation of the currently installed element-tree structure.
 ///
 /// The generation advances whenever a generated child subtree is replaced. It

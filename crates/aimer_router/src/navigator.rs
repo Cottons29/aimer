@@ -293,7 +293,7 @@ impl<R: 'static> VisitorElement for NavigatorElement<R> {
 
 impl<R: 'static> Drawable for NavigatorElement<R> {
     fn draw(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| self.child.draw(ctx));
+        self.scoped(ctx, |ctx| self.child.update(ctx));
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
@@ -1006,7 +1006,7 @@ mod tests {
         let initial_context = context();
         let element = navigator.to_element(&initial_context);
 
-        element.draw(&context());
+        element.update(&context());
 
         assert!(NAVIGATOR_OBSERVED.get());
     }
@@ -1055,7 +1055,7 @@ mod tests {
         let element = navigator.to_element(&initial_context);
 
         for _ in 0..6 {
-            element.draw(&context());
+            element.update(&context());
             element.rebuild_if_dirty(&context());
         }
 

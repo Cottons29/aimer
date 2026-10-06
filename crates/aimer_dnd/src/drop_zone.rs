@@ -487,7 +487,7 @@ impl Drawable for RawDropZone {
         let size = self.child.computed_size(ctx);
         self.bounds
             .save(ctx.scale, abs_x, abs_y, size.width, size.height);
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     fn paint(&self, ctx: &BuildContext) {

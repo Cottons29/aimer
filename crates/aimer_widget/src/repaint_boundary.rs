@@ -280,7 +280,7 @@ impl LayoutElement for RepaintBoundaryTarget {
 
 impl Drawable for RepaintBoundaryTarget {
     fn draw(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     fn paint(&self, ctx: &BuildContext) {
@@ -470,14 +470,14 @@ mod tests {
             .to_element(&ctx);
 
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         let inner = ctx.canvas.get_inner_canvas();
         let first_list = inner.take_draw_list();
         let first_scene = inner
             .take_scene(&first_list, 8, 8, DamageSet::full(8, 8))
             .expect("boundary paint should be represented in the scene");
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         let second_list = inner.take_draw_list();
         let second_scene = inner
             .take_scene(&second_list, 8, 8, DamageSet::full(8, 8))
@@ -512,7 +512,7 @@ mod tests {
         .to_element(&ctx);
 
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         let inner = ctx.canvas.get_inner_canvas();
         let draw_list = inner.take_draw_list();
         let scene = inner
@@ -543,7 +543,7 @@ mod tests {
         .to_element(&ctx);
 
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         let inner = ctx.canvas.get_inner_canvas();
         let first_list = inner.take_draw_list();
         let first_scene = inner
@@ -551,7 +551,7 @@ mod tests {
             .expect("stable element should be represented in the scene");
 
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         let second_list = inner.take_draw_list();
         let second_scene = inner
             .take_scene(&second_list, 8, 8, DamageSet::new(8, 8))
@@ -583,14 +583,14 @@ mod tests {
         .to_element(&ctx);
 
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         let inner = ctx.canvas.get_inner_canvas();
         let first = inner.take_draw_list();
         let first_scene = inner
             .take_scene(&first, 8, 8, DamageSet::full(8, 8))
             .expect("command-retained element should be represented in the scene");
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         let second = inner.take_draw_list();
         let second_scene = inner
             .take_scene(&second, 8, 8, DamageSet::new(8, 8))
@@ -624,10 +624,10 @@ mod tests {
             .to_element(&ctx);
 
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         ctx.canvas.get_inner_canvas().take_draw_list();
         ctx.canvas.begin_frame();
-        element.draw(&ctx);
+        element.update(&ctx);
         let stats = ctx.canvas.get_inner_canvas().take_draw_list().stats();
 
         assert_eq!(draws.get(), 2);

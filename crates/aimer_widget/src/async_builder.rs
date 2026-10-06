@@ -636,7 +636,24 @@ where
 {
     fn draw(&self, ctx: &BuildContext) {
         self.refresh(ctx);
-        self.current_child().draw(ctx);
+        self.current_child().update(ctx);
+    }
+
+    /// The frame records nothing itself: its current child owns the render
+    /// nodes and resolves its own paint source.
+    #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    /// Launches the request and adopts a completed one before the retained
+    /// tree records, so the frame that observes a result renders it.
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        self.refresh(ctx);
+        true
     }
 }
 
@@ -768,7 +785,7 @@ mod tests {
 
     impl Drawable for CachingParent {
         fn draw(&self, ctx: &BuildContext) {
-            self.child.draw(ctx);
+            self.child.update(ctx);
         }
     }
 
@@ -830,6 +847,42 @@ mod tests {
             }
         });
         found.get()
+    }
+
+    /// Returns the first element in the tree whose debug name is `name`.
+    fn find<'a>(element: &'a dyn Element, name: &'static str) -> Option<&'a dyn Element> {
+        if element.debug_name() == name {
+            return Some(element);
+        }
+        let mut found = None;
+        element.visit_children(&mut |child| {
+            if found.is_none() {
+                found = find(child, name);
+            }
+        });
+        found
+    }
+
+    /// The frame records nothing itself: its current child owns the render
+    /// nodes. Declining local paint would put the whole async subtree on the
+    /// legacy path.
+    #[tokio::test]
+    async fn an_async_frame_paints_locally_and_settles_its_state_first() {
+        let (venus, ctx) = context();
+        let widget = AsyncBuilder::new()
+            .future(|| async { Ok::<_, &'static str>(42_usize) })
+            .child(marker);
+        let element = widget.to_element(&ctx);
+        let frame = find(element.as_ref(), "AsyncFrame").expect("the builder mounts a frame");
+
+        assert!(frame.can_paint_local_v2(&ctx));
+        assert!(frame.sync_local_v2_state(&ctx), "the request is launched while syncing");
+        venus.run_microtasks();
+        assert!(frame.sync_local_v2_state(&ctx));
+        assert!(
+            contains(frame, "Data"),
+            "syncing adopts the completed request before paint is recorded"
+        );
     }
 
     fn marker(snapshot: &AsyncSnapshot<usize, &'static str>) -> AnyWidget {

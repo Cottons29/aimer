@@ -449,7 +449,7 @@ impl LayoutElement for RawSliderVisualSlot {
 
 impl Drawable for RawSliderVisualSlot {
     fn draw(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
@@ -1598,6 +1598,6 @@ fn child_context<'a>(ctx: &BuildContext<'a>, size: ResolvedSize) -> BuildContext
 fn draw_child(child: &AnyElement, ctx: &BuildContext, offset: Vec2d) {
     ctx.canvas.save();
     ctx.canvas.translate(offset);
-    child.draw(ctx);
+    child.update(ctx);
     ctx.canvas.restore();
 }

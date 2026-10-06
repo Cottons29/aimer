@@ -207,7 +207,9 @@ struct CachedV2CommandList {
     scale_bits: u32,
     origin_bits: (u32, u32),
     transform_bits: [u32; 9],
-    clip_bits: Option<[u32; 4]>,
+    /// Clip rectangle bits and corner-radius bits; a radius-only change must
+    /// not replay commands lowered with the previous corners.
+    clip_bits: Option<([u32; 4], [u32; 4])>,
     commands: Vec<DrawCommand>,
     last_used_frame: u64,
 }
@@ -1561,12 +1563,15 @@ impl<B: GpuBackend> Renderer<B> {
             item.transform.cols[2][2].to_bits(),
         ];
         let clip_bits = item.clip.map(|clip| {
-            [
-                clip.x.to_bits(),
-                clip.y.to_bits(),
-                clip.width.to_bits(),
-                clip.height.to_bits(),
-            ]
+            (
+                [
+                    clip.x.to_bits(),
+                    clip.y.to_bits(),
+                    clip.width.to_bits(),
+                    clip.height.to_bits(),
+                ],
+                item.clip_radius.map(f32::to_bits),
+            )
         });
         if let Some(mut cached) = self.v2_command_cache.remove(&element)
             && cached.revision == item.revision

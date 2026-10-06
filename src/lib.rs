@@ -2876,7 +2876,7 @@ mod tests {
         impl Drawable for MarkerElement {
             fn draw(&self, ctx: &BuildContext) {
                 PAINTED.with_borrow_mut(|painted| painted.push(self.label));
-                self.child.draw(ctx);
+                self.child.update(ctx);
             }
         }
 
@@ -3371,7 +3371,7 @@ mod tests {
         impl Drawable for MarkerElement {
             fn draw(&self, ctx: &BuildContext) {
                 PAINTED.with_borrow_mut(|painted| painted.push(self.index));
-                self.child.draw(ctx);
+                self.child.update(ctx);
             }
         }
 

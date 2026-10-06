@@ -455,7 +455,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
             && self.bottom == Dimension::Auto;
 
         if is_auto && self.transform == Transform::None {
-            self.child.draw(ctx);
+            self.child.update(ctx);
             return;
         }
 
@@ -537,7 +537,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
         }
 
         if is_auto {
-            self.child.draw(ctx);
+            self.child.update(ctx);
         } else {
             let parent_pos = ctx.parent_pos;
 
@@ -572,7 +572,7 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
                 inherited_states: ctx.inherited_states.clone(),
             };
 
-            self.child.draw(&child_ctx);
+            self.child.update(&child_ctx);
         }
         ctx.canvas.restore();
     }

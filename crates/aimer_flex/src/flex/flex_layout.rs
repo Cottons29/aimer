@@ -442,7 +442,7 @@ impl FlexLayout {
             len,
             child_metadata: Vec::new(),
             stable_children: false,
-            total: sized(main_total as f32, cross, is_row),
+            total: sized(saturate_f32(main_total), cross, is_row),
             has_flex: false,
             origin,
             is_row,
@@ -479,7 +479,7 @@ impl FlexLayout {
                 len,
                 child_metadata: Vec::new(),
                 stable_children: false,
-                total: sized(main_total as f32, cross_max, is_row),
+                total: sized(saturate_f32(main_total), cross_max, is_row),
                 has_flex,
                 origin: Origin::Measured,
                 is_row,
@@ -505,7 +505,7 @@ impl FlexLayout {
             len,
             child_metadata: Vec::new(),
             stable_children: false,
-            total: sized(main_total as f32, cross_max, is_row),
+            total: sized(saturate_f32(main_total), cross_max, is_row),
             has_flex,
             origin: Origin::Measured,
             is_row,
@@ -604,7 +604,7 @@ impl FlexLayout {
 
         let mut total = self.total;
         let main = main_of(total, self.is_row) as f64 + refinement.total;
-        set_main_of(&mut total, self.is_row, main as f32);
+        set_main_of(&mut total, self.is_row, saturate_f32(main));
         if refinement.cross_max > cross_of(total, self.is_row) {
             set_cross_of(&mut total, self.is_row, refinement.cross_max);
         }
@@ -632,6 +632,12 @@ impl FlexLayout {
         } else {
             self.sizes[index]
         }
+    }
+
+    /// [`Self::offset`] as the `f32` layout uses, saturating at `f32::MAX`.
+    #[inline]
+    pub(crate) fn offset_f32(&self, index: usize) -> f32 {
+        saturate_f32(self.offset(index))
     }
 
     /// Main-axis start of child `index`, relative to the container's content
@@ -1272,6 +1278,15 @@ fn set_cross_of(size: &mut ResolvedSize, is_row: bool, value: f32) {
 
 /// Builds a size from main- and cross-axis extents.
 #[inline]
+/// Narrows an `f64` extent to `f32`, saturating at `f32::MAX` instead of
+/// overflowing to infinity. Children that each ask for `f32::MAX` (a percentage
+/// of an unbounded axis) would otherwise sum to a non-finite size that the
+/// render tree cannot hold.
+#[inline]
+pub(crate) fn saturate_f32(value: f64) -> f32 {
+    (value as f32).min(f32::MAX)
+}
+
 fn sized(main: f32, cross: f32, is_row: bool) -> ResolvedSize {
     if is_row {
         ResolvedSize {

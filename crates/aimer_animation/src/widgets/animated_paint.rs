@@ -177,7 +177,7 @@ impl Drawable for AnimatedPaintElement {
             }
         }
 
-        self.child.draw(ctx);
+        self.child.update(ctx);
         ctx.canvas.restore();
 
         if animating {
@@ -217,7 +217,7 @@ impl Drawable for AnimatedPaintElement {
     #[inline]
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
         let active = self.controller.is_animating();
-        self.child.draw(ctx);
+        self.child.update(ctx);
         if active {
             request_animation_frame();
         }
@@ -335,7 +335,7 @@ mod tests {
     macro_rules! draw_frame {
         ($element:expr, $context:expr) => {{
             aimer_widget::begin_paint_frame(FRAME_WIDTH, FRAME_HEIGHT);
-            $element.draw($context);
+            $element.update($context);
             aimer_widget::take_paint_frame_damage(FRAME_WIDTH, FRAME_HEIGHT)
         }};
     }

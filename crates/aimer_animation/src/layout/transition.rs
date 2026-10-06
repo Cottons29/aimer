@@ -1039,7 +1039,7 @@ impl aimer_widget::Drawable for AnimatedLayoutElement {
 
         ctx.canvas.save();
         ctx.canvas.scale(scale_x, scale_y);
-        self.child.draw(ctx);
+        self.child.update(ctx);
         ctx.canvas.restore();
 
         if active {
@@ -1084,7 +1084,7 @@ impl aimer_widget::Drawable for AnimatedLayoutElement {
     }
 
     fn draw_local_v2_compatibility(&self, ctx: &aimer_widget::base::BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
         if self.transition.borrow().is_animating() {
             request_animation_frame();
         }

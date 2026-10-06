@@ -567,7 +567,7 @@ impl Drawable for RawContextMenuRows {
                 x: rect.x * scale,
                 y: rect.y * scale,
             });
-            row.draw(&row_ctx);
+            row.update(&row_ctx);
             ctx.canvas.restore();
         }
     }

@@ -223,7 +223,7 @@ impl Drawable for RawAspectRatio {
             max_width: size.width,
             max_height: size.height,
         };
-        self.child.draw(&child_ctx);
+        self.child.update(&child_ctx);
     }
 
     #[inline]

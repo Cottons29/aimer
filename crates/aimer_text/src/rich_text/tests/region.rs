@@ -479,11 +479,11 @@ fn a_stationary_touch_hold_selects_without_another_pointer_event() {
     );
 
     let _ = text.on_event(&ElementEvent::PointerDown(touch_at(25.0, 10.0, 0)));
-    text.draw(&context);
+    text.update(&context);
     assert_eq!(session.selected_text(), "");
     text.touch_hold.backdate(TOUCH_SELECTION_HOLD);
 
-    text.draw(&context);
+    text.update(&context);
 
     assert_eq!(session.selected_text(), "first");
     let _ = text.on_event(&ElementEvent::PointerUp(touch_at(25.0, 10.0, 0)));

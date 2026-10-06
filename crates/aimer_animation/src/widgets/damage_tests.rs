@@ -53,7 +53,7 @@ fn context() -> BuildContext<'static> {
 macro_rules! draw_frame {
     ($element:expr, $context:expr) => {{
         aimer_widget::begin_paint_frame(FRAME_WIDTH, FRAME_HEIGHT);
-        $element.draw($context);
+        $element.update($context);
         aimer_widget::take_paint_frame_damage(FRAME_WIDTH, FRAME_HEIGHT)
     }};
 }
@@ -312,6 +312,31 @@ fn bounded_crossfade_marks_the_union_of_current_and_outgoing_children() {
 }
 
 #[test]
+fn animated_exposes_its_child_to_the_retained_render_tree() {
+    // The render tree is built from `visit_retained_v2_children`. An element
+    // that draws a child without exposing it there leaves that child without a
+    // render node, so its paint is silently dropped under retained presentation.
+    let controller = AnimationController::with_millis(1000, Curve::Linear);
+    let context = context();
+    let element = Animated::new(
+        controller,
+        AnimationEffect::Rotate { from: 0.0, to: 1.0 },
+        StableLeaf,
+    )
+    .to_element(&context);
+
+    let mut visited = 0;
+    element.as_ref().visit_children(&mut |_| visited += 1);
+    assert_eq!(visited, 1, "the animated child must be visible to paint");
+
+    let mut retained = 0;
+    element
+        .as_ref()
+        .visit_retained_v2_children(&mut |_, _| retained += 1);
+    assert_eq!(retained, 1, "the animated child must get a render node");
+}
+
+#[test]
 fn non_finite_rotation_forces_full_damage() {
     let controller = AnimationController::with_millis(1000, Curve::Linear);
     controller.set_value(0.0);
@@ -380,4 +405,17 @@ fn animated_builder_output_changes_force_full_damage() {
     let damage = draw_frame!(element.as_ref(), &context);
 
     assert!(damage.is_full());
+}
+
+#[test]
+fn animated_builder_paints_locally_whatever_its_child_is() {
+    // The builder records nothing itself: its rebuilt child owns its render
+    // nodes and decides its own paint source. Declining local paint because the
+    // child is not "bounded" would put the whole subtree on the legacy path.
+    let controller = AnimationController::with_millis(1000, Curve::Linear);
+    let context = context();
+    let element = AnimatedBuilder::new(controller, |_value| UnknownLeaf).to_element(&context);
+
+    assert!(element.as_ref().can_paint_local_v2(&context));
+    assert!(element.as_ref().sync_local_v2_state(&context));
 }

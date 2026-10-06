@@ -446,11 +446,11 @@ impl Drawable for RawStackElement {
 
         if self.direction == StackDirection::Reverse {
             for &index in sorted_children.iter().rev() {
-                self.children[index].draw(&child_ctx);
+                self.children[index].update(&child_ctx);
             }
         } else {
             for &index in sorted_children.iter() {
-                self.children[index].draw(&child_ctx);
+                self.children[index].update(&child_ctx);
             }
         }
     }

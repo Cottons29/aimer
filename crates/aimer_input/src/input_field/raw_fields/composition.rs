@@ -189,7 +189,7 @@ impl RawTextField {
         let mut preedit_ctx = content_ctx.clone();
         preedit_ctx.parent_size = ResolvedSize { width, height };
         let preedit_widget = self.build_text_widget(preedit, &style, TextAlign::TopLeft);
-        preedit_widget.draw(&preedit_ctx);
+        preedit_widget.update(&preedit_ctx);
         canvas.restore();
 
         let color: Color = self.caret_color.into();
@@ -442,7 +442,7 @@ mod composition_tests {
         let context = field.caret_context();
         let build_context = dummy_build_context(240.0, 60.0);
 
-        field.draw(&build_context);
+        field.update(&build_context);
 
         assert!(context.is_focused());
         assert!(context.is_composing());

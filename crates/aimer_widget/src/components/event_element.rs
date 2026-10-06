@@ -370,7 +370,6 @@ pub trait EventElement: VisitorElement {
     /// once, in structural order.
     fn structural_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         CALLED.update(|c| c + 1);
-
         let mut children: SmallVec<[&'a dyn Element; 8]> = SmallVec::new();
         self.event_children(&mut |child| children.push(child));
         let event_child_count = children.len();

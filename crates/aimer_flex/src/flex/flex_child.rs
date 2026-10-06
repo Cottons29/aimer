@@ -142,7 +142,7 @@ impl<E: Element> RawExpanded<E> {
 
 impl<E: Element> Drawable for RawExpanded<E> {
     fn draw(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     #[inline]
@@ -155,7 +155,7 @@ impl<E: Element> Drawable for RawExpanded<E> {
 
     #[inline]
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     #[inline]

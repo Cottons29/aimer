@@ -758,7 +758,7 @@ impl Drawable for RawLiquid {
     fn draw(&self, ctx: &BuildContext) {
         let size = self.child.computed_size(ctx);
         if size.width <= 0.0 || size.height <= 0.0 {
-            self.child.draw(ctx);
+            self.child.update(ctx);
             return;
         }
 
@@ -819,7 +819,7 @@ impl Drawable for RawLiquid {
         // Liquid's dynamic fields belong to the Cupid request path. Keeping the
         // fallback static is intentional: reduced motion and unsupported GPU
         // capability must never alter child layout or event routing.
-        self.child.draw(ctx);
+        self.child.update(ctx);
         ctx.canvas.restore();
     }
 
@@ -888,7 +888,7 @@ impl Drawable for RawLiquid {
     }
 
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        self.child.draw(ctx);
+        self.child.update(ctx);
     }
 
     fn retained_v2_paint_outsets(&self, _ctx: &BuildContext) -> Option<[f32; 4]> {

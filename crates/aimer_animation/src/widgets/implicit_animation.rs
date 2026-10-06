@@ -389,7 +389,7 @@ impl<T: Animatable + Clone + PartialEq + 'static> Drawable for ImplicitAnimatedE
             changed || self.controller.is_animating(),
         );
 
-        unsafe { &*self.child.get() }.draw(ctx);
+        unsafe { &*self.child.get() }.update(ctx);
 
         if self.controller.is_animating() {
             request_next_frame();
@@ -729,7 +729,7 @@ mod tests {
             damage: PaintDamageTracker::new(),
         };
 
-        element.draw(&ctx);
+        element.update(&ctx);
 
         assert_eq!(test_frame_requester::count(), 1);
         assert!(!ctx.window.take_redraw_request());
@@ -783,11 +783,11 @@ mod tests {
         // and the child is kept — and a draw that still shows the same value
         // keeps the child it built, so the later draws are separated by
         // enough time for the animation to advance.
-        element.draw(&ctx);
+        element.update(&ctx);
         std::thread::sleep(std::time::Duration::from_millis(10));
-        element.draw(&ctx);
+        element.update(&ctx);
         std::thread::sleep(std::time::Duration::from_millis(10));
-        element.draw(&ctx);
+        element.update(&ctx);
 
         assert_eq!(*log.borrow(), vec![0, 1]);
     }

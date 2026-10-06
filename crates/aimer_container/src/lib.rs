@@ -382,7 +382,7 @@ mod tests {
             "Root",
         );
 
-        driver.draw(&initial_ctx);
+        driver.update(&initial_ctx);
         assert_eq!(
             observer.get(),
             0,
@@ -390,7 +390,7 @@ mod tests {
         );
 
         current_live_updater(&live_updater).set_state(|state| state.index = 3);
-        driver.draw(&initial_ctx);
+        driver.update(&initial_ctx);
 
         assert_eq!(
             observer.get(),
@@ -411,7 +411,7 @@ mod tests {
 
         for _ in 0..resize_count {
             Rebuildable::mark_needs_rebuild(&driver);
-            driver.draw(&resize_ctx);
+            driver.update(&resize_ctx);
         }
 
         let observer_after_resize = observer.get();
@@ -748,7 +748,7 @@ mod tests {
         let child = Rc::new(Cell::new(f32::MAX));
         let row = row_of(vec![expanded_probe(0.0, &child)]);
 
-        row.draw(&ctx);
+        row.update(&ctx);
 
         assert_eq!(child.get(), 0.0);
     }
@@ -839,7 +839,7 @@ mod tests {
             constraint_sensitive_probe(70.0, &second),
         ]);
 
-        row.draw(&ctx);
+        row.update(&ctx);
 
         assert_eq!(first.get(), 50.0);
         assert_eq!(second.get(), 70.0);
@@ -855,7 +855,7 @@ mod tests {
             expanded_probe(1.0, &expanded),
         ]);
 
-        row.draw(&ctx);
+        row.update(&ctx);
 
         assert_eq!(regular.get(), 50.0);
         assert_eq!(expanded.get(), 250.0);
@@ -871,7 +871,7 @@ mod tests {
             constraint_sensitive_column_probe(70.0, &second),
         ]);
 
-        column.draw(&ctx);
+        column.update(&ctx);
 
         assert_eq!(first.get(), 50.0);
         assert_eq!(second.get(), 70.0);
@@ -887,7 +887,7 @@ mod tests {
         .left(12)
         .top(16);
 
-        positioned.draw(&ctx);
+        positioned.update(&ctx);
 
         assert_eq!(
             observed_parent_size.get(),

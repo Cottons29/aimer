@@ -251,7 +251,7 @@ impl Drawable for RawAlign {
             // constraints, so cloning the context and translating by zero
             // would only add work. Keep the save/restore pair: it protects
             // siblings if a child leaves canvas state behind.
-            self.child.draw(ctx);
+            self.child.update(ctx);
         } else {
             let mut child_ctx = ctx.clone();
             child_ctx.parent_size = child_size;
@@ -264,7 +264,7 @@ impl Drawable for RawAlign {
                 x: offset_x,
                 y: offset_y,
             });
-            self.child.draw(&child_ctx);
+            self.child.update(&child_ctx);
         }
         ctx.canvas.restore();
     }

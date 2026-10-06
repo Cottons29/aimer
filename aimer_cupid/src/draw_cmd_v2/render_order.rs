@@ -14,6 +14,7 @@ struct NodeFrameState {
     transform: Mat3,
     bounds: Option<Rect>,
     clip: ClipState,
+    clip_radius: [f32; 4],
     subtree_bounds: Option<Rect>,
     visible_subtree_bounds: Option<Rect>,
 }
@@ -25,6 +26,7 @@ impl Default for NodeFrameState {
             transform: Mat3::identity(),
             bounds: None,
             clip: ClipState::Unclipped,
+            clip_radius: [0.0; 4],
             subtree_bounds: None,
             visible_subtree_bounds: None,
         }
@@ -36,6 +38,7 @@ struct ParentFrameState {
     origin: (f32, f32),
     transform: Mat3,
     clip: ClipState,
+    clip_radius: [f32; 4],
 }
 
 impl Default for ParentFrameState {
@@ -44,8 +47,27 @@ impl Default for ParentFrameState {
             origin: (0.0, 0.0),
             transform: Mat3::identity(),
             clip: ClipState::Unclipped,
+            clip_radius: [0.0; 4],
         }
     }
+}
+
+/// Maps a clip's local corner radii into world space.
+///
+/// Radii scale with the clip's size change under the node transform; for the
+/// translation and uniform scale transforms retained nodes use, the result is
+/// exact, and otherwise it matches the axis-aligned approximation already used
+/// for the clip rectangle.
+#[inline]
+fn world_clip_radius(radius: [f32; 4], local: Rect, world: Rect) -> [f32; 4] {
+    if radius == [0.0; 4] || local.width <= 0.0 || local.height <= 0.0 {
+        return radius;
+    }
+    let scale = (world.width / local.width + world.height / local.height) * 0.5;
+    if scale == 1.0 {
+        return radius;
+    }
+    radius.map(|corner| corner * scale)
 }
 
 enum RenderTraversal {
@@ -78,6 +100,7 @@ impl RenderWorkspace {
                     origin: state.origin,
                     transform: state.transform,
                     clip: state.clip,
+                    clip_radius: state.clip_radius,
                 });
             let origin = (
                 parent.origin.0 + node.bounds.x,
@@ -104,11 +127,16 @@ impl RenderWorkspace {
             };
 
             let mut clip = parent.clip;
+            let mut clip_radius = parent.clip_radius;
             if let Some(local_clip) = node.clip {
-                clip = clip.intersect(transform_rect(
-                    transform,
-                    local_clip.translated(origin.0, origin.1),
-                ));
+                let world_clip =
+                    transform_rect(transform, local_clip.translated(origin.0, origin.1));
+                clip = clip.intersect(world_clip);
+                // The renderer takes radii from the innermost clip, so a clip
+                // owner with square corners resets an inherited radius.
+                if let Some(world_clip) = world_clip {
+                    clip_radius = world_clip_radius(node.clip_radius, local_clip, world_clip);
+                }
             }
             if let Some(local_clip) = node.animation_clip {
                 clip = clip.intersect(transform_rect(
@@ -122,6 +150,7 @@ impl RenderWorkspace {
                 transform,
                 bounds: Some(bounds),
                 clip,
+                clip_radius,
                 subtree_bounds: Some(bounds),
                 visible_subtree_bounds: clip.intersect_bounds(bounds),
             };
@@ -234,6 +263,7 @@ impl RenderWorkspace {
                     origin: state.origin,
                     transform: state.transform,
                     clip: state.clip.as_option(),
+                    clip_radius: state.clip_radius,
                     opacity: if groups_opacity { 1.0 } else { opacity },
                     paint_source: node.paint_source,
                     legacy_command_range: node
