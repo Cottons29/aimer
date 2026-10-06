@@ -1216,6 +1216,54 @@ mod tests {
         assert!(unknown.is_empty(), "backlog names no registered page: {unknown:?}");
     }
 
+    /// Prints, for every page, how many cached interaction rectangles agree with
+    /// the render tree and which element types do not. A diagnostic for moving
+    /// hit-test geometry off the legacy canvas transform stack.
+    #[test]
+    #[ignore = "diagnostic: prints a per-page report and asserts nothing"]
+    fn report_cached_bounds_against_the_render_tree() {
+        use aimer::HeadlessOptions;
+        use aimer::quiver::winit::dpi::PhysicalSize;
+
+        let mut by_type: std::collections::BTreeMap<&'static str, (usize, usize)> =
+            Default::default();
+        for example in EXAMPLES {
+            let mut app = AimerApp::start_headless_with(
+                theme::provide(build_example(*example, theme::app_theme())),
+                HeadlessOptions {
+                    size: PhysicalSize::new(1280, 800),
+                    scale_factor: 2.0,
+                },
+            );
+            app.pump_frames_direct(6);
+            let audit = app.bounds_audit().expect("a mounted page has a root");
+            eprintln!(
+                "bounds {:?}: compared {}, unmapped {}, mismatched {}",
+                example.label(),
+                audit.compared,
+                audit.unmapped,
+                audit.mismatches.len()
+            );
+            for mismatch in &audit.mismatches {
+                by_type.entry(mismatch.debug_name).or_default().1 += 1;
+            }
+            for (name, entry) in by_type.iter_mut() {
+                let _ = name;
+                let _ = entry;
+            }
+            eprintln!(
+                "  first mismatches: {:?}",
+                audit
+                    .mismatches
+                    .iter()
+                    .take(12)
+                    .map(|m| (m.debug_name, m.cached, m.render))
+                    .collect::<Vec<_>>()
+            );
+        }
+        eprintln!("bounds mismatches by element type: {by_type:?}");
+    }
+
     #[test]
     fn the_default_selection_is_the_first_registered_example() {
         let state = ExampleShowcase::new().create_state();

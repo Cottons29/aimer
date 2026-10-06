@@ -1,3 +1,6 @@
+/// Differential audit of cached interaction bounds against the render tree.
+#[doc(hidden)]
+pub mod bounds_audit;
 /// Diagnostic census of render nodes by paint source.
 #[doc(hidden)]
 pub mod census;
@@ -692,6 +695,14 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     pub fn paint_source_census(&self) -> Option<census::PaintSourceCensus> {
         self.active_root()
             .map(|root| self.render_tree.paint_source_census(root.as_ref()))
+    }
+
+    /// Compares every element's cached interaction rectangle with its render
+    /// node's world rectangle, or `None` before a root is mounted.
+    #[doc(hidden)]
+    pub fn bounds_audit(&self) -> Option<bounds_audit::BoundsAudit> {
+        self.active_root()
+            .map(|root| self.render_tree.bounds_audit(root.as_ref()))
     }
 
     /// Borrows the one root currently visible to input and rendering.
@@ -2626,6 +2637,45 @@ mod tests {
                 element: root_id,
                 debug_name: "V2Parent",
             }]
+        );
+    }
+
+    #[test]
+    fn the_bounds_audit_compares_a_cached_rectangle_with_its_render_node() {
+        let canvas = aimer_canvas::InnerCanvas::new();
+        let (_runtime, context) = build_context(&canvas, 1.0);
+        let container = Container::new()
+            .width(Dimension::Px(60.0))
+            .height(Dimension::Px(40.0))
+            .child(V2PaintLeaf {
+                position: Vec2d { x: 0.0, y: 0.0 },
+                width: 20.0,
+                height: 20.0,
+                color: Color::RED,
+                paints: Rc::new(Cell::new(0)),
+            })
+            .to_element(&context);
+        let container_id = container.id();
+        let root = V2PaintTreeRoot {
+            children: [container, aimer_widget::Element::boxed(V2PaintLeaf {
+                position: Vec2d { x: 70.0, y: 0.0 },
+                width: 10.0,
+                height: 10.0,
+                color: Color::GREEN,
+                paints: Rc::new(Cell::new(0)),
+            })],
+        }
+        .boxed();
+        let mut window_tree = WindowRenderTree::default();
+        draw_v2_until_tree_is_current(&root, &context, &mut window_tree);
+
+        let audit = window_tree.bounds_audit(root.as_ref());
+
+        assert!(audit.compared >= 1, "a sized container publishes a rectangle: {audit:?}");
+        assert_eq!(audit.unmapped, 0);
+        assert!(
+            audit.mismatches.iter().all(|mismatch| mismatch.element != container_id),
+            "a fixed-size container's cached box is its render node: {audit:?}"
         );
     }
 

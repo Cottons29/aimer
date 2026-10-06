@@ -916,6 +916,13 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         self.app.paint_source_census()
     }
 
+    /// Compares each element's cached interaction rectangle with its render
+    /// node's world rectangle. See [`crate::handler::bounds_audit::BoundsAudit`].
+    #[doc(hidden)]
+    pub fn bounds_audit(&self) -> Option<crate::handler::bounds_audit::BoundsAudit> {
+        self.app.bounds_audit()
+    }
+
     /// Returns a handle to this application's UI memory pool.
     ///
     /// The handle exposes committed usage and the configured limit, and keeps
