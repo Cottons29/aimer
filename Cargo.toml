@@ -377,6 +377,13 @@ tower-http = { version = "0.7.0", default-features = false, features = ["cors"] 
 worker = { version = "0.8.5", default-features = false }
 worker-macros = { version = "0.8.5", default-features = false }
 
+# macOS defaults dev builds to `unpacked`, which keeps every codegen-unit object
+# file beside the binary and leaks a fresh set of 256 per crate on each rebuild.
+# Hundreds of thousands of them made the first Core Foundation call of every
+# test binary (a scan of its own directory) take 20+ seconds.
+[profile.dev]
+split-debuginfo = "packed"
+
 [profile.dev.package.aimer_rubick]
 opt-level = 3
 

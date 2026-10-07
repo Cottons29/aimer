@@ -1,4 +1,4 @@
-use std::cell::UnsafeCell;
+use std::cell::{Cell, UnsafeCell};
 use std::panic::Location;
 use std::rc::Rc;
 use std::time::Duration;
@@ -329,6 +329,7 @@ impl<T: Animatable + Clone + PartialEq + 'static> Widget for ImplicitAnimatedFra
             controller: self.controller.clone(),
             tween: self.tween.clone(),
             damage: PaintDamageTracker::new(),
+            output_changed: Cell::new(false),
         }
         .boxed()
     }
@@ -347,13 +348,20 @@ struct ImplicitAnimatedElement<T: Animatable + Clone + PartialEq + 'static> {
     controller: AnimationController,
     tween: Rc<LocalCell<Option<Tween<T>>>>,
     damage: PaintDamageTracker,
+    /// Set when `advance` replaced the child, until the next `update` reports it.
+    output_changed: Cell<bool>,
 }
 
 unsafe impl<T: Animatable + Clone + PartialEq + 'static> Send for ImplicitAnimatedElement<T> {}
 unsafe impl<T: Animatable + Clone + PartialEq + 'static> Sync for ImplicitAnimatedElement<T> {}
 
-impl<T: Animatable + Clone + PartialEq + 'static> Drawable for ImplicitAnimatedElement<T> {
-    fn draw(&self, ctx: &BuildContext) {
+impl<T: Animatable + Clone + PartialEq + 'static> ImplicitAnimatedElement<T> {
+    /// Advances the animation one frame and publishes the child it names.
+    ///
+    /// This runs from `rebuild_if_dirty`, which the frame loop calls before the
+    /// render tree synchronizes: a child replaced while drawing would have no
+    /// render node until the next sync and would paint nothing in between.
+    fn advance(&self, ctx: &BuildContext) -> bool {
         let progress = self.controller.tick(AnimInstant::now());
         let value = self.tween.with(|tween| {
             tween
@@ -382,6 +390,19 @@ impl<T: Animatable + Clone + PartialEq + 'static> Drawable for ImplicitAnimatedE
             unsafe { *self.child.get() = new_child };
         }
 
+        if self.controller.is_animating() {
+            request_next_frame();
+        } else {
+            self.current
+                .with_mut(|current| *current = self.target.clone());
+        }
+        changed
+    }
+}
+
+impl<T: Animatable + Clone + PartialEq + 'static> Drawable for ImplicitAnimatedElement<T> {
+    fn update(&self, ctx: &BuildContext) {
+        let changed = self.output_changed.replace(false);
         crate::widgets::damage::mark_bounded_child_damage(
             &self.damage,
             ctx,
@@ -390,14 +411,18 @@ impl<T: Animatable + Clone + PartialEq + 'static> Drawable for ImplicitAnimatedE
         );
 
         unsafe { &*self.child.get() }.update(ctx);
-
-        if self.controller.is_animating() {
-            request_next_frame();
-        } else {
-            self.current
-                .with_mut(|current| *current = self.target.clone());
-        }
     }
+
+    /// The wrapper records nothing itself: its rebuilt child owns its render
+    /// nodes and resolves its own paint source, so the animation never forces
+    /// the subtree onto the legacy path.
+    #[inline]
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn paint_local_v2(&self, _ctx: &BuildContext) {}
 
     #[inline]
     fn is_paint_bounded(&self) -> bool {
@@ -427,6 +452,9 @@ impl<T: Animatable + Clone + PartialEq + 'static> EventElement for ImplicitAnima
 
 impl<T: Animatable + Clone + PartialEq + 'static> Rebuildable for ImplicitAnimatedElement<T> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        if self.advance(ctx) {
+            self.output_changed.set(true);
+        }
         unsafe { &*self.child.get() }.rebuild_if_dirty(ctx);
     }
 }
@@ -469,7 +497,7 @@ mod tests {
     struct TestElement;
 
     impl Drawable for TestElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl EventElement for TestElement {}
@@ -518,7 +546,7 @@ mod tests {
     impl aimer_widget::PortableWidget for RecordingWidget {}
 
     impl Drawable for RecordingElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl EventElement for RecordingElement {}
@@ -727,9 +755,10 @@ mod tests {
             controller,
             tween: Rc::new(LocalCell::new(Some(Tween::new(0.0, 1.0)))),
             damage: PaintDamageTracker::new(),
+            output_changed: Cell::new(false),
         };
 
-        element.update(&ctx);
+        element.rebuild_if_dirty(&ctx);
 
         assert_eq!(test_frame_requester::count(), 1);
         assert!(!ctx.window.take_redraw_request());
@@ -743,7 +772,7 @@ mod tests {
     // `enter_zone` then saw no change on the way out and never reported
     // `Direction::NONE` again.
     #[test]
-    fn draw_carries_runtime_state_into_every_rebuilt_child() {
+    fn advancing_carries_runtime_state_into_every_rebuilt_child() {
         let ctx = dummy_build_context();
         let log: Rc<RefCell<Vec<u32>>> = Rc::new(RefCell::new(Vec::new()));
         let next_id = Rc::new(Cell::new(0u32));
@@ -773,21 +802,22 @@ mod tests {
             controller,
             tween: Rc::new(LocalCell::new(Some(Tween::new(0.0, 1.0)))),
             damage: PaintDamageTracker::new(),
+            output_changed: Cell::new(false),
         };
 
-        // A draw whose interpolated value changed rebuilds the child (ids 1,
+        // A frame whose interpolated value changed rebuilds the child (ids 1,
         // then 2), and each rebuild must hand its state over from the element
         // it replaces (ids 0, then 1) — the same hand-over a normal rebuild
-        // performs for free. The first draw only starts the animation — the
+        // performs for free. The first frame only starts the animation — the
         // controller's first tick is this one, so the value has not moved yet
         // and the child is kept — and a draw that still shows the same value
-        // keeps the child it built, so the later draws are separated by
+        // keeps the child it built, so the later frames are separated by
         // enough time for the animation to advance.
-        element.update(&ctx);
+        element.rebuild_if_dirty(&ctx);
         std::thread::sleep(std::time::Duration::from_millis(10));
-        element.update(&ctx);
+        element.rebuild_if_dirty(&ctx);
         std::thread::sleep(std::time::Duration::from_millis(10));
-        element.update(&ctx);
+        element.rebuild_if_dirty(&ctx);
 
         assert_eq!(*log.borrow(), vec![0, 1]);
     }

@@ -1954,7 +1954,7 @@ impl Rebuildable for RawNavigationKeyRelay {
 }
 
 impl Drawable for RawNavigationKeyRelay {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.child.update(ctx);
     }
 

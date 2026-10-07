@@ -7,7 +7,7 @@ use crate::damage_region::{DamageRect, DamageSet};
 use crate::draw_cmd::DrawList;
 use crate::draw_cmd_v2::{DrawCommand as V2DrawCommand, Mat3, Rect as V2Rect, RenderNodeId};
 
-/// Ordered local lists and legacy command ranges for damage-limited replay.
+/// Ordered local lists for damage-limited replay.
 #[doc(hidden)]
 pub struct RetainedRenderPlan {
     operations: Vec<RetainedRenderOperation>,
@@ -25,11 +25,6 @@ pub(crate) enum RetainedRenderOperationKind {
     OpacityGroupBegin {
         element: u64,
         opacity: f32,
-    },
-    LegacyRange {
-        range: std::ops::Range<usize>,
-        prefix: Vec<crate::draw_cmd::DrawCommand>,
-        suffix: Vec<crate::draw_cmd::DrawCommand>,
     },
     LocalV2(RetainedV2Item),
     OpacityGroupEnd { element: u64 },
@@ -52,36 +47,6 @@ impl RetainedRenderPlan {
         Self {
             operations,
             complete,
-        }
-    }
-
-    pub(crate) fn operation(
-        range: std::ops::Range<usize>,
-        bounds: DamageRect,
-    ) -> RetainedRenderOperation {
-        RetainedRenderOperation {
-            kind: RetainedRenderOperationKind::LegacyRange {
-                range,
-                prefix: Vec::new(),
-                suffix: Vec::new(),
-            },
-            bounds,
-        }
-    }
-
-    pub(crate) fn legacy_range_operation(
-        range: std::ops::Range<usize>,
-        prefix: Vec<crate::draw_cmd::DrawCommand>,
-        suffix: Vec<crate::draw_cmd::DrawCommand>,
-        bounds: DamageRect,
-    ) -> RetainedRenderOperation {
-        RetainedRenderOperation {
-            kind: RetainedRenderOperationKind::LegacyRange {
-                range,
-                prefix,
-                suffix,
-            },
-            bounds,
         }
     }
 
@@ -129,8 +94,7 @@ impl RetainedRenderPlan {
             RetainedRenderOperationKind::LocalV2(item) if item.element == element => {
                 Some(item.revision)
             }
-            RetainedRenderOperationKind::LegacyRange { .. }
-            | RetainedRenderOperationKind::OpacityGroupBegin { .. }
+            RetainedRenderOperationKind::OpacityGroupBegin { .. }
             | RetainedRenderOperationKind::OpacityGroupEnd { .. }
             | RetainedRenderOperationKind::LocalV2(_) => None,
         })
@@ -486,25 +450,23 @@ mod tests {
 
     #[test]
     fn retained_plan_returns_only_nodes_intersecting_each_damage_region() {
-        let mut draw_list = DrawList::new();
-        draw_list.fill_rect(
-            Rect::new(0.0, 0.0, 8.0, 8.0),
-            Color::red(),
-            [0.0; 4],
-            [0.0; 4],
-            Color::transparent(),
-        );
-        draw_list.fill_rect(
-            Rect::new(16.0, 0.0, 8.0, 8.0),
-            Color::blue(),
-            [0.0; 4],
-            [0.0; 4],
-            Color::transparent(),
-        );
+        let tree = crate::draw_cmd_v2::RenderTree::new();
+        let left_node = tree.add_root(V2Rect::new(0.0, 0.0, 8.0, 8.0)).unwrap();
+        let right_node = tree.add_root(V2Rect::new(16.0, 0.0, 8.0, 8.0)).unwrap();
+        let item = |element| RetainedV2Item {
+            element,
+            revision: 1,
+            bounds: V2Rect::new(0.0, 0.0, 8.0, 8.0),
+            origin: (0.0, 0.0),
+            transform: Mat3::identity(),
+            clip: None,
+            clip_radius: [0.0; 4],
+            commands: Arc::from(Vec::new()),
+        };
         let plan = RetainedRenderPlan::new(
             vec![
-                RetainedRenderPlan::operation(0..1, DamageRect::new(0, 0, 8, 8)),
-                RetainedRenderPlan::operation(1..2, DamageRect::new(16, 0, 8, 8)),
+                RetainedRenderPlan::local_v2_operation(item(left_node), DamageRect::new(0, 0, 8, 8)),
+                RetainedRenderPlan::local_v2_operation(item(right_node), DamageRect::new(16, 0, 8, 8)),
             ],
             true,
         );
@@ -518,14 +480,14 @@ mod tests {
 
         assert_eq!(left.len(), 1);
         assert_eq!(right.len(), 1);
-        let RetainedRenderOperationKind::LegacyRange { range: left_range, .. } = &left[0].kind else {
-            panic!("expected a legacy command range");
-        };
-        let RetainedRenderOperationKind::LegacyRange { range: right_range, .. } = &right[0].kind else {
-            panic!("expected a legacy command range");
-        };
-        assert!(matches!(draw_list.commands()[left_range.start], crate::draw_cmd::DrawCommand::FillRect { color, .. } if color == Color::red()));
-        assert!(matches!(draw_list.commands()[right_range.start], crate::draw_cmd::DrawCommand::FillRect { color, .. } if color == Color::blue()));
+        assert!(matches!(
+            &left[0].kind,
+            RetainedRenderOperationKind::LocalV2(item) if item.element == left_node
+        ));
+        assert!(matches!(
+            &right[0].kind,
+            RetainedRenderOperationKind::LocalV2(item) if item.element == right_node
+        ));
         assert!(plan.is_complete());
     }
 }

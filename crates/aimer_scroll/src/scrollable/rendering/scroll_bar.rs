@@ -339,11 +339,13 @@ impl LayoutElement for RawScrollBar {
 }
 
 impl Drawable for RawScrollBar {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let Some(ctrl) = self.ctrl.as_ref() else {
             return;
         };
-        draw_scrollbar(ctx, ctrl, &self.config, self.runtime.as_ref());
+        // The bar is painted by `paint_local_v2`. Preparing its geometry here
+        // publishes the thumb and track metrics hit testing reads.
+        let _ = prepare_scrollbar_paint(ctx, ctrl, &self.config, self.runtime.as_ref());
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -723,46 +725,6 @@ fn local_rect(pos: Vec2d, size: ResolvedSize, scale: f32) -> Rect {
     )
 }
 
-fn draw_scrollbar(
-    ctx: &BuildContext,
-    ctrl: &ScrollState,
-    scroll_bar: &ScrollBar,
-    runtime: &ScrollBarRuntime,
-) {
-    let Some(paint) = prepare_scrollbar_paint(ctx, ctrl, scroll_bar, runtime) else {
-        return;
-    };
-    let track_size = if paint.is_vertical {
-        ResolvedSize {
-            width: paint.track_width,
-            height: paint.track_length,
-        }
-    } else {
-        ResolvedSize {
-            width: paint.track_length,
-            height: paint.track_width,
-        }
-    };
-    ctx.canvas.save();
-    ctx.canvas.set_alpha(paint.alpha);
-    ctx.canvas.fill_color_rect(Vec2d::ZERO, track_size, paint.track_color, [0.0; 4]);
-    if let Some(button) = paint.up_button {
-        ctx.canvas
-            .fill_color_rect(button.pos, button.size, button.color, [0.0; 4]);
-    }
-    if let Some(button) = paint.down_button {
-        ctx.canvas
-            .fill_color_rect(button.pos, button.size, button.color, [0.0; 4]);
-    }
-    ctx.canvas.fill_color_rect(
-        paint.thumb_pos,
-        paint.thumb_size,
-        paint.thumb_color,
-        [paint.thumb_radius; 4],
-    );
-    ctx.canvas.restore_alpha();
-    ctx.canvas.restore();
-}
 
 fn paint_scrollbar_local_v2(canvas: &Canvas, scale: f32, paint: ScrollBarPaint) {
     let track_size = if paint.is_vertical {

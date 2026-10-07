@@ -337,7 +337,7 @@ macro_rules! impl_spacing_element {
                 Some((bounds, child.retained_clip(&child_ctx)))
             }
 
-            fn draw(&self, ctx: &BuildContext) {
+            fn update(&self, ctx: &BuildContext) {
                 let spacing = self.resolved(ctx);
                 let child_ctx = translated_context(ctx, spacing);
                 ctx.canvas.save();
@@ -502,7 +502,7 @@ mod tests {
     }
 
     impl Drawable for Probe {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             let (translation_x, translation_y) = ctx.canvas.get_transform_translation();
             self.observation.set(Observation {
                 max_width: ctx.box_constraint.max_width,

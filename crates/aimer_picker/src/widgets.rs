@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_attribute::CacheBounds;
+use aimer_widget::InteractionBounds;
 use aimer_events::element::{
     ElementEvent, KeyAction, Modifiers, NamedKey, ScrollDeltaKind,
 };
@@ -253,7 +253,7 @@ impl Widget for CalendarSurface {
             height: self.height,
             on_selection: self.on_selection,
             tokens: self.tokens,
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
         })
     }
 
@@ -269,7 +269,7 @@ struct RawCalendar {
     height: f32,
     on_selection: Option<CalendarSelectionCallback>,
     tokens: ThemeTokens,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
 }
 impl RawCalendar {
     fn hit_test(&self, x: f32, y: f32) -> bool {
@@ -423,20 +423,29 @@ impl LayoutElement for RawCalendar {
     }
 }
 impl Drawable for RawCalendar {
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("RawCalendar")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
+        // The surface is painted by `paint_local_v2`; this only publishes where
+        // it sits.
         let size = self.computed_size(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
-        let calendar = self.runtime.calendar.borrow();
-        paint::draw_calendar(
-            ctx,
-            &calendar,
-            Vec2d::default(),
-            size.width,
-            size.height,
-            self.runtime.focused.get(),
-            &self.tokens,
-        );
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -636,7 +645,7 @@ impl Widget for DatePickerSurface {
             height: self.height,
             on_selection: self.on_selection,
             tokens: self.tokens,
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
             popup: self.popup,
         };
         if self.popup {
@@ -661,7 +670,7 @@ struct RawDatePicker {
     height: f32,
     on_selection: Option<DateSelectionCallback>,
     tokens: ThemeTokens,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
     popup: bool,
 }
 impl RawDatePicker {
@@ -902,44 +911,29 @@ impl LayoutElement for RawDatePicker {
     }
 }
 impl Drawable for RawDatePicker {
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("RawDatePicker")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
+        // The surface is painted by `paint_local_v2`; this only publishes where
+        // it sits.
         let size = self.computed_size(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
-        let picker = self.runtime.picker.borrow();
-        if self.popup {
-            paint::draw_calendar(
-                ctx,
-                picker.calendar(),
-                Vec2d::default(),
-                size.width,
-                (size.height - PICKER_FOOTER_HEIGHT * ctx.scale).max(0.0),
-                self.runtime.focused.get(),
-                &self.tokens,
-            );
-            paint::draw_footer(
-                ctx,
-                size.width,
-                size.height,
-                self.runtime.focused.get(),
-                &self.tokens,
-            );
-            paint::draw_overlay_border(ctx, size.width, size.height, &self.tokens);
-        } else {
-            paint::draw_picker_field(
-                ctx,
-                "Date",
-                selection_label(if picker.is_open() {
-                    picker.draft()
-                } else {
-                    picker.selection()
-                }),
-                size.width,
-                picker.is_open(),
-                self.runtime.focused.get(),
-                &self.tokens,
-            );
-        }
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -1184,7 +1178,7 @@ impl Widget for DateTimePickerSurface {
             use_24_hours: self.use_24_hours,
             on_selection: self.on_selection,
             tokens: self.tokens,
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
             popup: self.popup,
         };
         if self.popup {
@@ -1211,7 +1205,7 @@ struct RawDateTimePicker {
     use_24_hours: bool,
     on_selection: Option<DateTimeSelectionCallback>,
     tokens: ThemeTokens,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
     popup: bool,
 }
 
@@ -1744,68 +1738,29 @@ impl LayoutElement for RawDateTimePicker {
 }
 
 impl Drawable for RawDateTimePicker {
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("RawDateTimePicker")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
+        // The surface is painted by `paint_local_v2`; this only publishes where
+        // it sits.
         let size = self.computed_size(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
-        let picker = self.runtime.picker.borrow();
-        let value = picker.draft().expect("date-time picker always has a value");
-        let field = self.runtime.field.get();
-        let (label, display) = if field.is_date() {
-            ("Date", format_datetime(value))
-        } else {
-            ("Time", format_time(value.time(), self.use_24_hours))
-        };
-        if self.popup {
-            paint::draw_segmented_picker_header(
-                ctx,
-                size.width,
-                field.is_date(),
-                &self.tokens,
-            );
-            if field.is_date() {
-                let calendar = self.calendar();
-                paint::draw_calendar(
-                    ctx,
-                    &calendar,
-                    Vec2d { x: 0.0, y: PICKER_FIELD_HEIGHT * ctx.scale },
-                    size.width,
-                    (size.height - (PICKER_FIELD_HEIGHT + PICKER_FOOTER_HEIGHT) * ctx.scale)
-                        .max(0.0),
-                    self.runtime.focused.get(),
-                    &self.tokens,
-                );
-            } else {
-                paint::draw_time_picker(
-                    ctx,
-                    value.time(),
-                    size.width,
-                    size.height,
-                    PICKER_FIELD_HEIGHT,
-                    field.time_column(),
-                    self.use_24_hours,
-                    &self.tokens,
-                );
-            }
-            paint::draw_done_footer(
-                ctx,
-                size.width,
-                size.height,
-                self.runtime.focused.get(),
-                &self.tokens,
-            );
-            paint::draw_overlay_border(ctx, size.width, size.height, &self.tokens);
-        } else {
-            paint::draw_picker_field(
-                ctx,
-                label,
-                display,
-                size.width,
-                picker.is_open(),
-                self.runtime.focused.get(),
-                &self.tokens,
-            );
-        }
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {

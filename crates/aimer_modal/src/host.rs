@@ -3,6 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 
 use aimer_animation::AnimInstant;
+use aimer_canvas::Canvas;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_events::window::request_animation_frame;
@@ -11,7 +12,7 @@ use aimer_widget::base::BuildContext;
 use aimer_widget::focus::FocusTrap;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventDispatcher, EventElement, EventResult, EventTreeRole,
-    LayoutElement, PointerKey, RequiredChild, VisitorElement, Widget, broadcast_event,
+    LayoutElement, PointerKey, Rebuildable as RebuildableTrait, RequiredChild, VisitorElement, Widget, broadcast_event,
     dispatch_focused_event,
 };
 
@@ -25,6 +26,7 @@ thread_local! {
     static COMMANDS: RefCell<VecDeque<ModalCommand>> = const { RefCell::new(VecDeque::new()) };
     static ENTRIES: Rc<HostedModalEntries> = Rc::new(HostedModalEntries::default());
     static LAYERS: RefCell<Vec<HostedLayer>> = const { RefCell::new(Vec::new()) };
+    static CONTENTS: Rc<HostedContents> = Rc::new(HostedContents::default());
 }
 
 fn hosted_entries() -> Rc<HostedModalEntries> {
@@ -40,6 +42,11 @@ fn with_entries_mut<R>(callback: impl FnOnce(&mut Vec<HostedModal>) -> R) -> R {
 }
 
 /// A painter installed above every modal, receiving no events.
+///
+/// The painter records into the overlay's own retained list. Something larger
+/// than a few rectangles, such as an element that follows the pointer, is
+/// hosted with [`OverlayLayer::host_element`] instead, which gives it a render
+/// node of its own.
 ///
 /// A modal is a *mode*: presenting one deliberately cancels the gestures
 /// underneath it and puts a barrier between the user and the rest of the
@@ -60,7 +67,7 @@ fn with_entries_mut<R>(callback: impl FnOnce(&mut Vec<HostedModal>) -> R) -> R {
 /// use aimer_modal::OverlayLayer;
 ///
 /// // Paints for exactly one frame, then removes itself.
-/// let handle = OverlayLayer::install(Rc::new(|_ctx| false));
+/// let handle = OverlayLayer::install(Rc::new(|_ctx, _canvas| false));
 /// handle.remove();
 /// ```
 #[derive(Clone, Copy, Debug, Default)]
@@ -71,7 +78,11 @@ pub struct OverlayLayer;
 pub struct OverlayLayerHandle(u64);
 
 /// Paints one frame of an overlay layer, returning whether to keep it.
-pub type OverlayPainter = Rc<dyn Fn(&BuildContext) -> bool>;
+///
+/// The layer records into the overlay's own retained list through `canvas`, in
+/// logical window coordinates: the overlay covers the window from its origin.
+/// `ctx` supplies the scale and the window.
+pub type OverlayPainter = Rc<dyn Fn(&BuildContext, &Canvas) -> bool>;
 
 struct HostedLayer {
     id: OverlayLayerHandle,
@@ -95,6 +106,169 @@ impl OverlayLayer {
     pub fn is_installed() -> bool {
         LAYERS.with_borrow(|layers| !layers.is_empty())
     }
+
+    /// Hosts `element` above every modal as a retained node of its own.
+    ///
+    /// `position` is asked for the element's top-left corner every time the
+    /// render tree synchronizes, in device pixels relative to the overlay (the
+    /// same unit [`LayoutElement::pos`] reports), so the element follows a
+    /// pointer without being rebuilt. The element takes no events: it is not
+    /// part of the overlay's routed children.
+    #[doc(hidden)]
+    pub fn host_element(
+        element: AnyElement,
+        position: Rc<dyn Fn() -> aimer_attribute::Vec2d>,
+    ) -> OverlayContentHandle {
+        let id = NEXT_ID.with(|next_id| {
+            let id = next_id.get();
+            next_id.set(id.wrapping_add(1).max(1));
+            id
+        });
+        CONTENTS.with(|contents| {
+            contents.items_mut().push(HostedContent {
+                id,
+                element: OverlayFollower { child: element, position }.boxed(),
+            });
+        });
+        aimer_widget::notify_hosted_element_tree_changed();
+        request_animation_frame();
+        OverlayContentHandle(id)
+    }
+}
+
+/// Identifies content hosted with [`OverlayLayer::host_element`].
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OverlayContentHandle(u64);
+
+impl OverlayContentHandle {
+    /// Takes the content down. Repeated calls are harmless.
+    pub fn remove(self) {
+        let removed = CONTENTS.with(|contents| {
+            let items = contents.items_mut();
+            let before = items.len();
+            items.retain(|item| item.id != self.0);
+            before != items.len()
+        });
+        if removed {
+            aimer_widget::notify_hosted_element_tree_changed();
+        }
+        request_animation_frame();
+    }
+}
+
+struct HostedContent {
+    id: u64,
+    element: AnyElement,
+}
+
+/// UI-thread-owned overlay content, shared with the retained overlay's visitors
+/// under the same discipline as [`HostedModalEntries`]: it changes only between
+/// traversals, never while a visitor holds a reference.
+#[derive(Default)]
+struct HostedContents {
+    items: UnsafeCell<Vec<HostedContent>>,
+}
+
+impl HostedContents {
+    fn items(&self) -> &[HostedContent] {
+        // SAFETY: mutated only between traversals on the UI thread.
+        unsafe { &*self.items.get() }
+    }
+
+    fn items_mut(&self) -> &mut Vec<HostedContent> {
+        // SAFETY: as above; callers never hold a visited reference across this.
+        unsafe { &mut *self.items.get() }
+    }
+}
+
+/// Places one hosted element, and positions nothing else.
+struct OverlayFollower {
+    child: AnyElement,
+    position: Rc<dyn Fn() -> aimer_attribute::Vec2d>,
+}
+
+impl VisitorElement for OverlayFollower {
+    fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        visitor(self.child.as_ref());
+    }
+
+    fn debug_name(&self) -> &'static str {
+        "OverlayFollower"
+    }
+}
+
+impl EventElement for OverlayFollower {}
+
+impl RebuildableTrait for OverlayFollower {
+    fn rebuild_if_dirty(&self, ctx: &BuildContext) {
+        self.child.rebuild_if_dirty(ctx);
+    }
+}
+
+impl LayoutElement for OverlayFollower {
+    fn pos(&self) -> Option<aimer_attribute::Vec2d> {
+        Some((self.position)())
+    }
+
+    fn size(&self) -> Option<Size> {
+        self.child.size()
+    }
+
+    fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        // The child is as big as it wants to be, up to the window.
+        let mut loose = ctx.clone();
+        loose.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: ctx.parent_size.width,
+            max_height: ctx.parent_size.height,
+        };
+        self.child.computed_size(&loose)
+    }
+}
+
+impl Drawable for OverlayFollower {
+    fn update(&self, ctx: &BuildContext) {
+        let size = self.computed_size(ctx);
+        let mut child_ctx = ctx.clone();
+        child_ctx.parent_size = size;
+        child_ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: size.width,
+            max_height: size.height,
+        };
+        child_ctx.visible_rect = None;
+        self.child.update(&child_ctx);
+    }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        aimer_canvas::Canvas::of(ctx).finish();
+    }
+
+    fn retained_v2_child_context_at<'a>(
+        &self,
+        ctx: &BuildContext<'a>,
+        _child: &dyn Element,
+        _child_index: usize,
+    ) -> Option<BuildContext<'a>> {
+        let size = self.computed_size(ctx);
+        let mut child_ctx = ctx.clone();
+        child_ctx.parent_size = size;
+        child_ctx.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: size.width,
+            max_height: size.height,
+        };
+        child_ctx.visible_rect = None;
+        Some(child_ctx)
+    }
 }
 
 impl OverlayLayerHandle {
@@ -105,16 +279,17 @@ impl OverlayLayerHandle {
     }
 }
 
-/// Paints the installed layers, dropping the ones that asked to retire.
+/// Records the installed layers into `canvas`, dropping the ones that asked to
+/// retire.
 ///
 /// The list is taken out of the slot for the duration of the walk, so a painter
 /// is free to install or remove a layer while it runs.
-fn draw_layers(ctx: &BuildContext) {
+fn record_layers(ctx: &BuildContext, canvas: &Canvas) {
     let mut layers = LAYERS.with_borrow_mut(std::mem::take);
     if layers.is_empty() {
         return;
     }
-    layers.retain(|layer| (layer.paint)(ctx));
+    layers.retain(|layer| (layer.paint)(ctx, canvas));
     LAYERS.with_borrow_mut(|installed| {
         layers.append(installed);
         *installed = layers;
@@ -317,7 +492,7 @@ impl Drop for RawModalHost {
 }
 
 impl Drawable for RawModalHost {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.prepare_pending_commands(ctx);
         self.child.update(ctx);
         self.overlay.update(ctx);
@@ -378,14 +553,20 @@ impl VisitorElement for RawModalHost {
 #[derive(Rebuildable)]
 struct RawModalOverlay {
     entries: Rc<HostedModalEntries>,
+    /// Elements hosted by overlay layers, above every entry.
+    contents: Rc<HostedContents>,
     promoted_captures: RefCell<HashSet<PointerKey>>,
+    /// Whether the list recorded last frame held any layer.
+    recorded_layers: Cell<bool>,
 }
 
 impl Default for RawModalOverlay {
     fn default() -> Self {
         Self {
             entries: hosted_entries(),
+            contents: CONTENTS.with(Rc::clone),
             promoted_captures: RefCell::new(HashSet::new()),
+            recorded_layers: Cell::new(false),
         }
     }
 }
@@ -393,6 +574,9 @@ impl Default for RawModalOverlay {
 impl RawModalOverlay {
     fn draw_entries(&self, ctx: &BuildContext) {
         draw_hosted_entries(&self.entries, ctx);
+        for content in self.contents.items() {
+            content.element.update(ctx);
+        }
     }
 }
 
@@ -435,11 +619,10 @@ fn draw_hosted_entries(entries: &HostedModalEntries, ctx: &BuildContext) {
         drop(retired);
         aimer_widget::notify_hosted_element_tree_changed();
     }
-    draw_layers(ctx);
 }
 
 impl Drawable for RawModalOverlay {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.draw_entries(ctx);
     }
 
@@ -448,9 +631,18 @@ impl Drawable for RawModalOverlay {
     }
 
     fn paint_local_v2(&self, ctx: &BuildContext) {
-        // The hosted entries are retained children; the overlay owns no paint.
+        // The hosted entries are retained children. The overlay's own list
+        // holds the layers, which paint above every one of them.
         let canvas = aimer_canvas::Canvas::of(ctx);
+        self.recorded_layers.set(OverlayLayer::is_installed());
+        record_layers(ctx, &canvas);
         canvas.finish();
+    }
+
+    fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
+        // A layer may paint something else every frame, and the list recorded
+        // while one was installed has to be replaced once the last one goes.
+        OverlayLayer::is_installed() || self.recorded_layers.get()
     }
 }
 
@@ -574,8 +766,12 @@ impl VisitorElement for RawModalOverlay {
         &'a self,
         visitor: &mut dyn FnMut(usize, &'a dyn Element),
     ) {
-        for (index, entry) in self.entries.entries().iter().enumerate() {
+        let entries = self.entries.entries();
+        for (index, entry) in entries.iter().enumerate() {
             visitor(index, entry.element.as_ref());
+        }
+        for (offset, content) in self.contents.items().iter().enumerate() {
+            visitor(entries.len() + offset, content.element.as_ref());
         }
     }
 
@@ -932,6 +1128,122 @@ mod tests {
     use super::{HostedModal, ModalId, ModalTimeline, dispatch_hosted_event};
     use crate::ModalAnimation;
 
+    fn headless_context() -> BuildContext<'static> {
+        let canvas = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+        BuildContext::new(
+            aimer_canvas::FrameCanvas::new(canvas),
+            aimer_attribute::ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+            1.0,
+            Default::default(),
+            Default::default(),
+            aimer_widget::base::WindowHandle::headless(Default::default(), 1.0),
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::runtime::Handle::current(),
+        )
+    }
+
+    /// What `overlay` records in its own retained list for one frame.
+    fn record_overlay(
+        overlay: &super::RawModalOverlay,
+        ctx: &BuildContext<'_>,
+    ) -> std::sync::Arc<[aimer_cupid::draw_cmd_v2::DrawCommand]> {
+        let tree = aimer_cupid::draw_cmd_v2::RenderTree::new();
+        let root = tree
+            .add_root(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 200.0, 100.0))
+            .unwrap();
+        let node_context = tree.context(root).unwrap();
+        ctx.with_local_v2_paint_context(node_context, |ctx| {
+            overlay.paint_local_v2(ctx);
+        });
+        tree.draw_list_snapshot(root).unwrap().commands
+    }
+
+    /// A layer is painted into the overlay's own retained list, above every
+    /// hosted modal, and the overlay asks to be recorded again for as long as
+    /// a layer is installed (a layer may paint something different each frame)
+    /// and once more after the last one goes, so its pixels are cleared.
+    #[tokio::test]
+    async fn an_installed_layer_is_recorded_into_the_overlay_list() {
+        super::clear_registry();
+        let ctx = headless_context();
+        let overlay = super::RawModalOverlay::default();
+        assert!(!overlay.local_v2_paint_needs_recording(&ctx));
+        assert!(record_overlay(&overlay, &ctx).is_empty());
+
+        let handle = super::OverlayLayer::install(Rc::new(|_ctx, canvas| {
+            canvas.fill_rect(
+                aimer_cupid::draw_cmd_v2::Rect::new(10.0, 10.0, 20.0, 20.0),
+                [255, 0, 0, 255],
+            );
+            true
+        }));
+        assert!(overlay.local_v2_paint_needs_recording(&ctx));
+        let commands = record_overlay(&overlay, &ctx);
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            aimer_cupid::draw_cmd_v2::DrawCommand::FillRect { .. }
+        )));
+        assert!(
+            overlay.local_v2_paint_needs_recording(&ctx),
+            "a layer may paint something else next frame"
+        );
+
+        handle.remove();
+        assert!(
+            overlay.local_v2_paint_needs_recording(&ctx),
+            "the list recorded with the layer has to be replaced"
+        );
+        assert!(record_overlay(&overlay, &ctx).is_empty());
+        assert!(!overlay.local_v2_paint_needs_recording(&ctx));
+    }
+
+    /// Content hosted by an overlay layer is a retained child of the overlay:
+    /// it gets its own render node, placed where the layer says, and it takes
+    /// no events.
+    #[tokio::test]
+    async fn hosted_content_is_a_retained_child_of_the_overlay_at_its_position() {
+        super::clear_registry();
+        let ctx = headless_context();
+        let overlay = super::RawModalOverlay::default();
+        let position = Rc::new(Cell::new(Vec2d { x: 30.0, y: 40.0 }));
+        let handle = super::OverlayLayer::host_element(
+            CapturingModalElement {
+                events: Rc::new(Cell::new(0)),
+            }
+            .boxed(),
+            {
+                let position = Rc::clone(&position);
+                Rc::new(move || position.get())
+            },
+        );
+
+        let mut retained = Vec::new();
+        overlay.visit_retained_v2_children(&mut |index, child| {
+            retained.push((index, child.pos(), child.debug_name()));
+        });
+        assert_eq!(retained.len(), 1, "{retained:?}");
+        // The element reports its place in device pixels, relative to the overlay.
+        assert_eq!(retained[0].1, Some(Vec2d { x: 30.0, y: 40.0 }));
+
+        position.set(Vec2d { x: 50.0, y: 60.0 });
+        let mut moved = None;
+        overlay.visit_retained_v2_children(&mut |_, child| moved = child.pos());
+        assert_eq!(moved, Some(Vec2d { x: 50.0, y: 60.0 }), "the place is read each time");
+
+        let mut routed = 0;
+        overlay.visit_children(&mut |_| routed += 1);
+        assert_eq!(routed, 0, "hosted content takes no events");
+
+        handle.remove();
+        let mut left = 0;
+        overlay.visit_retained_v2_children(&mut |_, _| left += 1);
+        assert_eq!(left, 0);
+        let _ = ctx;
+    }
+
     #[test]
     fn modal_host_and_overlay_opt_into_indexed_event_routing() {
         let host = super::RawModalHost {
@@ -982,7 +1294,7 @@ mod tests {
 
     impl LayoutElement for FocusableModalContent {}
     impl Drawable for FocusableModalContent {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl Rebuildable for FocusableModalContent {}
 
@@ -1069,7 +1381,7 @@ mod tests {
     }
 
     impl Drawable for CapturingModalElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl Rebuildable for CapturingModalElement {}
 

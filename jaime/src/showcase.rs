@@ -1146,7 +1146,7 @@ mod tests {
     /// back to a legacy island, none may draw without a render node (its paint
     /// would be silently lost), none may report unusable bounds, and the render
     /// tree must synchronize. This is the gate for removing the legacy
-    /// `Drawable::draw` path; pages in [`LEGACY_PAGE_BACKLOG`] are the known work.
+    /// `Drawable::update` path; pages in [`LEGACY_PAGE_BACKLOG`] are the known work.
     #[test]
     fn every_page_renders_without_legacy_paint() {
         use aimer::HeadlessOptions;
@@ -1164,18 +1164,20 @@ mod tests {
                     scale_factor: 1.0,
                 },
             );
-            app.pump_frames_direct(6);
+            app.pump_frames(6);
             let census = app
                 .paint_source_census()
                 .expect("a mounted page has a root");
 
-            let names = |roots: &[aimer::quiver::handler::census::IslandRoot]| -> Vec<&'static str> {
+            let names = |roots: &[aimer::quiver::handler::census::CensusElement]| -> Vec<&'static str> {
                 roots.iter().map(|root| root.debug_name).collect()
             };
-            let islands = names(&census.island_roots);
+            let dropped = names(&census.dropped_paint);
+            let declined = names(&census.declined_paint);
             let unmapped = names(&census.drawn_unmapped);
             let invalid = names(&census.invalid_bounds);
-            let offends = !islands.is_empty()
+            let offends = !dropped.is_empty()
+                || !declined.is_empty()
                 || !unmapped.is_empty()
                 || !invalid.is_empty()
                 || census.sync_error.is_some();
@@ -1185,7 +1187,7 @@ mod tests {
                 seen_backlog.push(label);
             }
             let detail = format!(
-                "{label:?}: legacy islands {islands:?}, drawn without a render node {unmapped:?}, \
+                "{label:?}: drew through the dropped legacy path {dropped:?}, had no retained paint {declined:?}, drawn without a render node {unmapped:?}, \
                  invalid bounds {invalid:?}, sync error {:?}",
                 census.sync_error
             );
@@ -1216,6 +1218,189 @@ mod tests {
         assert!(unknown.is_empty(), "backlog names no registered page: {unknown:?}");
     }
 
+    /// Whether a disagreement concerns something on screen. Rows scrolled out of
+    /// view are not drawn, so their canvas measurement is stale while the render
+    /// tree's is current; only visible elements can be compared meaningfully.
+    fn is_on_screen(
+        disagreement: &aimer::InteractionDisagreement,
+        logical_width: f32,
+        logical_height: f32,
+    ) -> bool {
+        let [x, y, width, height] = disagreement.tree;
+        x < logical_width && y < logical_height && x + width > 0.0 && y + height > 0.0
+    }
+
+    /// Element types that take their hit area from the render tree. The gate
+    /// below requires each one to be exercised by some page, so migrating a
+    /// widget cannot pass the differential check by never being adopted.
+    const RENDER_TREE_HIT_AREAS: &[&str] = &[
+        "GestureDetector",
+        "MouseRegion",
+        "Draggable",
+        "DropZone",
+        "DragTarget",
+        "RawCalendar",
+        "RawDatePicker",
+        "RawDateTimePicker",
+        "RawTimePicker",
+        "RawColorPicker",
+        "RawSlider",
+        "RawRangeSlider",
+        "SliderTrack",
+        "SliderThumb",
+        "SliderTrail",
+        "Svg",
+        "TextButton",
+        "Container",
+        "Resizable",
+        "TextField",
+        "AnimatedCollapseElement",
+        "RawPositionedElement",
+        "Anchor",
+        "RawScrollableContainer",
+        "RawRichText",
+    ];
+
+    /// The elements that take their hit area from the render tree must land
+    /// where the legacy canvas transform stack put it. This is the differential
+    /// gate for retiring that stack: any disagreement means a click would land
+    /// somewhere new.
+    #[test]
+    fn render_tree_hit_areas_agree_with_the_canvas_on_every_page() {
+        use aimer::HeadlessOptions;
+        use aimer::quiver::winit::dpi::PhysicalSize;
+
+        let mut adopted = 0;
+        let mut adopted_types = std::collections::BTreeSet::new();
+        let mut disagreements = Vec::new();
+        for example in EXAMPLES {
+            let mut app = AimerApp::start_headless_with(
+                theme::provide(build_example(*example, theme::app_theme())),
+                HeadlessOptions {
+                    size: PhysicalSize::new(1280, 800),
+                    scale_factor: 2.0,
+                },
+            );
+            // Let asynchronous content settle (fonts and assets finish loading
+            // between frames): an audit taken a frame after a page changed
+            // would compare a stale canvas measurement. A disagreement that
+            // survives repeated frames is a real one.
+            app.pump_frames(60);
+            let mut audit = app.bounds_audit().expect("a mounted page has a root");
+            for _ in 0..40 {
+                if !audit
+                    .interaction_disagreements
+                    .iter()
+                    .any(|disagreement| is_on_screen(disagreement, 640.0, 400.0))
+                {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+                for _ in 0..3 {
+                    app.render_frame();
+                }
+                audit = app.bounds_audit().expect("a mounted page has a root");
+            }
+            adopted += audit.interaction_adopted;
+            adopted_types.extend(audit.interaction_adopted_by_type.keys().copied());
+            for disagreement in audit.interaction_disagreements {
+                if is_on_screen(&disagreement, 640.0, 400.0) {
+                    disagreements.push(format!("{:?}: {disagreement:?}", example.label()));
+                }
+            }
+        }
+
+        assert!(adopted > 0, "no page has an element on render-tree hit areas");
+        let unexercised: Vec<_> = RENDER_TREE_HIT_AREAS
+            .iter()
+            .filter(|name| !adopted_types.contains(**name))
+            .collect();
+        assert!(
+            unexercised.is_empty(),
+            "no page exercises these render-tree hit areas: {unexercised:?}"
+        );
+        assert!(
+            disagreements.is_empty(),
+            "render-tree hit areas moved away from the canvas-derived ones:\n{}",
+            disagreements.join("\n")
+        );
+    }
+
+    /// The tree reads each slider visual's position when it syncs, which is
+    /// before the slider's own update has worked the position out. The very
+    /// first frame must already place the track, trail and thumb where they are
+    /// drawn: nothing asks for a second one.
+    #[test]
+    fn slider_visuals_are_placed_by_the_first_frame() {
+        use aimer::HeadlessOptions;
+        use aimer::quiver::winit::dpi::PhysicalSize;
+
+        let mut app = AimerApp::start_headless_with(
+            theme::provide(build_example(ExampleId::RangeControls, theme::app_theme())),
+            HeadlessOptions {
+                size: PhysicalSize::new(1280, 800),
+                scale_factor: 2.0,
+            },
+        );
+        app.render_frame();
+        let audit = app.bounds_audit().expect("a mounted page has a root");
+        let misplaced: Vec<_> = audit
+            .interaction_disagreements
+            .iter()
+            .filter(|disagreement| is_on_screen(disagreement, 640.0, 400.0))
+            .collect();
+        assert!(
+            misplaced.is_empty(),
+            "the first frame left slider visuals off their drawn place: {misplaced:?}"
+        );
+    }
+
+    /// Scrolling moves every row of the sidebar, each a gesture detector. The
+    /// render tree must carry the hit areas along with the canvas.
+    #[test]
+    fn render_tree_hit_areas_follow_a_scrolled_sidebar() {
+        use aimer::HeadlessOptions;
+        use aimer::quiver::winit::dpi::{PhysicalPosition, PhysicalSize};
+        use aimer::quiver::winit::event::{DeviceId, MouseScrollDelta, TouchPhase, WindowEvent};
+
+        let mut app = AimerApp::start_headless_with(
+            theme::provide(ExampleShowcase::new().boxed()),
+            HeadlessOptions {
+                size: PhysicalSize::new(1280, 800),
+                scale_factor: 2.0,
+            },
+        );
+        let device = DeviceId::dummy();
+        app.pump_frames(8);
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id: device,
+            position: PhysicalPosition::new(120.0, 400.0),
+        });
+        app.pump_frames(2);
+
+        let mut adopted = 0;
+        for step in 0..12 {
+            for _ in 0..4 {
+                app.send_window_event(WindowEvent::MouseWheel {
+                    device_id: device,
+                    delta: MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -60.0)),
+                    phase: TouchPhase::Moved,
+                });
+                app.pump_frames(1);
+            }
+            app.pump_frames(30);
+            let audit = app.bounds_audit().expect("a mounted page has a root");
+            adopted = adopted.max(audit.interaction_adopted);
+            let visible: Vec<_> = audit
+                .interaction_disagreements
+                .iter()
+                .filter(|disagreement| is_on_screen(disagreement, 640.0, 400.0))
+                .collect();
+            assert!(visible.is_empty(), "after scroll step {step}: {visible:?}");
+        }
+        assert!(adopted > 0, "the sidebar rows must be on render-tree hit areas");
+    }
+
     /// Prints, for every page, how many cached interaction rectangles agree with
     /// the render tree and which element types do not. A diagnostic for moving
     /// hit-test geometry off the legacy canvas transform stack.
@@ -1235,7 +1420,7 @@ mod tests {
                     scale_factor: 2.0,
                 },
             );
-            app.pump_frames_direct(6);
+            app.pump_frames(6);
             let audit = app.bounds_audit().expect("a mounted page has a root");
             eprintln!(
                 "bounds {:?}: compared {}, unmapped {}, mismatched {}",
@@ -1246,6 +1431,12 @@ mod tests {
             );
             for mismatch in &audit.mismatches {
                 by_type.entry(mismatch.debug_name).or_default().1 += 1;
+            }
+            if !audit.interaction_disagreements.is_empty() {
+                eprintln!(
+                    "  RENDER-TREE HIT AREA DISAGREES: {:?}",
+                    audit.interaction_disagreements.iter().take(6).collect::<Vec<_>>()
+                );
             }
             for (name, entry) in by_type.iter_mut() {
                 let _ = name;

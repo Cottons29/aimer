@@ -1,19 +1,17 @@
-//! Bridge the retained v2 render plan into the existing frame packet path.
-
-use std::collections::HashMap;
+//! Bridge the retained v2 render tree into the direct render plan a frame
+//! packet carries.
 
 use crate::damage_region::{DamageRect, DamageSet};
 use crate::draw_cmd::{DrawCommand as LegacyDrawCommand, DrawList as LegacyDrawList};
 use crate::draw_cmd_v2::{
-    DrawCommand as V2DrawCommand, Rect, RenderFrame, RenderItem, RenderOp, RenderPaintSource,
+    DrawCommand as V2DrawCommand, Rect, RenderFrame, RenderItem, RenderOp,
 };
-use crate::font::TextLanguage;
 use crate::frame::{
     Frame, FramePacket, FrameRenderMetadata, RetainedRenderPlan, RetainedV2Item,
 };
 use crate::utilities::Mat3;
 
-/// Failures while lowering a retained v2 render frame to the legacy renderer.
+/// Failures while building a retained render plan from a v2 render frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum V2FrameAdapterError {
     /// Device scale must be finite and greater than zero.
@@ -24,124 +22,54 @@ pub enum V2FrameAdapterError {
     InvalidRenderItemGeometry { element: u64 },
     /// A full repaint was requested without a full-target v2 damage rectangle.
     FullRepaintRequiresCompleteV2Frame,
-    /// The flattened compatibility adapter cannot composite opacity groups.
-    OpacityGroupUnsupported { element: u64 },
-    /// The flattened compatibility adapter cannot represent element opacity.
-    ElementOpacityUnsupported { element: u64 },
     /// A node's opacity is outside the normalized range.
     InvalidOpacity { element: u64 },
     /// Opacity group begin/end operations are unbalanced or mismatched.
     UnbalancedOpacityGroup { element: u64 },
-    /// A legacy island needs the accompanying frame-wide legacy command list.
-    LegacyIslandRequiresLegacyFrame { element: u64 },
-    /// The legacy command range for an island is missing from its render item.
-    LegacyCommandRangeMissing { element: u64 },
-    /// A legacy command range is outside the accompanying frame's command list.
-    LegacyCommandRangeOutOfBounds {
-        element: u64,
-        start: usize,
-        end: usize,
-        command_count: usize,
-    },
-    /// Legacy command ranges overlap or appear out of their recorded paint order.
-    LegacyCommandRangeOrder { element: u64, previous_end: usize, start: usize },
-    /// A legacy island left a transform, clip, or alpha scope open at its boundary.
-    UnbalancedLegacyCommandRange { element: u64 },
-    /// The legacy frame and render metadata describe different surface sizes.
-    LegacyFrameTargetMismatch {
-        frame_width: u32,
-        frame_height: u32,
-        target_width: u32,
-        target_height: u32,
-    },
 }
 
 impl FramePacket {
-    /// Lowers one retained v2 frame into the existing renderer's frame packet.
-    ///
-    /// This adapter preserves parent-first paint order, element-local transforms,
-    /// clips, and damage. It replaces the metadata damage with damage mapped from
-    /// `render_frame`; if the resulting damage requires a full repaint, the v2
-    /// frame must include a full-target damage rectangle and the complete paint
-    /// plan. Opacity groups require the direct retained-plan API.
-    pub fn from_v2(
-        render_frame: RenderFrame,
-        metadata: FrameRenderMetadata,
-    ) -> Result<Self, V2FrameAdapterError> {
-        Self::from_v2_inner(render_frame, metadata, None, false)
-    }
-
-    /// Builds a complete retained v2 packet without lowering its local lists
-    /// into a frame-wide command buffer. Opacity groups and leaf opacity are
-    /// preserved for offscreen rendering by the GPU compositor.
+    /// Builds a complete retained v2 packet whose local lists stay separate:
+    /// nothing is lowered into a frame-wide command buffer. Opacity groups and
+    /// leaf opacity are preserved for offscreen rendering by the GPU
+    /// compositor.
     #[doc(hidden)]
     pub fn from_v2_direct(
         render_frame: RenderFrame,
         metadata: FrameRenderMetadata,
     ) -> Result<Self, V2FrameAdapterError> {
         let (width, height) = metadata.damage().target_size();
-        let mut legacy_frame = Frame::new(LegacyDrawList::new(), width, height);
+        let mut frame = Frame::new(LegacyDrawList::new(), width, height);
         let (plan, damage) =
-            Self::prepare_v2_direct_render_plan(&render_frame, &metadata, &mut legacy_frame)?;
+            Self::prepare_v2_direct_render_plan(&render_frame, &metadata, &mut frame)?;
         if width != 0 && height != 0 && !damage.is_full() {
             return Err(V2FrameAdapterError::FullRepaintRequiresCompleteV2Frame);
         }
         Ok(FramePacket::with_render_plan(
-            legacy_frame,
+            frame,
             metadata.with_damage(damage),
             None,
             Some(plan),
         ))
     }
 
-    /// Lowers a mixed v2 render tree using command ranges from its matching
-    /// legacy frame for nodes classified as legacy islands.
+    /// [`Self::from_v2_direct`] over a frame the caller already owns.
     ///
-    /// Each island range is replayed in render-tree order. Its incoming canvas
-    /// transform, clip stack, alpha, italic state, and language state are
-    /// reconstructed from the legacy frame prefix so ranges remain isolated
-    /// while preserving ancestor translations such as scrolling.
-    pub fn from_v2_with_legacy(
-        render_frame: RenderFrame,
-        metadata: FrameRenderMetadata,
-        legacy_frame: Frame,
-    ) -> Result<Self, V2FrameAdapterError> {
-        Self::from_v2_inner(render_frame, metadata, Some(legacy_frame), false)
-    }
-
-    /// Lowers a complete retained tree and its current legacy islands.
-    ///
-    /// The packet keeps the compatibility draw list and an ordered set of
-    /// command ranges for each retained node. Backends can replay only the
-    /// ranges intersecting a damage rectangle, and can use the complete plan
-    /// when their persistent target needs a full repaint.
+    /// The frame's draw list keeps the texture references the plan's commands
+    /// use alive; `render_frame` must contain the complete visible tree so the
+    /// renderer can recover a newly allocated or invalid persistent target from
+    /// any packet.
     #[doc(hidden)]
-    pub fn from_v2_complete_with_legacy(
+    pub fn from_v2_direct_with_frame(
         render_frame: RenderFrame,
         metadata: FrameRenderMetadata,
-        legacy_frame: Frame,
+        frame: Frame,
     ) -> Result<Self, V2FrameAdapterError> {
-        Self::from_v2_inner(render_frame, metadata, Some(legacy_frame), true)
-    }
-
-    /// Builds a complete retained packet without flattening local v2 lists into
-    /// the frame-wide compatibility command buffer.
-    ///
-    /// Legacy islands keep ranges into `legacy_frame` and carry the canvas state
-    /// needed to replay each range independently. `render_frame` must contain
-    /// the complete visible tree so the renderer can recover a newly allocated
-    /// or invalid persistent target from any packet.
-    #[doc(hidden)]
-    pub fn from_v2_direct_with_legacy(
-        render_frame: RenderFrame,
-        metadata: FrameRenderMetadata,
-        legacy_frame: Frame,
-    ) -> Result<Self, V2FrameAdapterError> {
-        let mut legacy_frame = legacy_frame;
+        let mut frame = frame;
         let (plan, damage) =
-            Self::prepare_v2_direct_render_plan(&render_frame, &metadata, &mut legacy_frame)?;
+            Self::prepare_v2_direct_render_plan(&render_frame, &metadata, &mut frame)?;
         Ok(FramePacket::with_render_plan(
-            legacy_frame,
+            frame,
             metadata.with_damage(damage),
             None,
             Some(plan),
@@ -149,17 +77,18 @@ impl FramePacket {
     }
 
     /// Validates this frame's damage-culled retained operations and snapshots
-    /// them into a render plan while preserving the legacy frame's command
-    /// buffer for direct ranges.
-    /// Balanced opacity groups and leaf opacity are represented as ordered
-    /// retained operations; the renderer isolates each group in a GPU target.
+    /// them into a render plan.
+    ///
+    /// `frame` owns the texture references the plan's commands use. Balanced
+    /// opacity groups and leaf opacity are represented as ordered retained
+    /// operations; the renderer isolates each group in a GPU target.
     #[doc(hidden)]
     pub fn prepare_v2_direct_render_plan(
         render_frame: &RenderFrame,
         metadata: &FrameRenderMetadata,
-        legacy_frame: &mut Frame,
+        frame: &mut Frame,
     ) -> Result<(RetainedRenderPlan, DamageSet), V2FrameAdapterError> {
-        let validated = validate_frame_input(render_frame, metadata, Some(legacy_frame), true)?;
+        let damage = validate_frame_input(render_frame, metadata)?;
         let scale = metadata.device_scale();
         let (width, height) = metadata.damage().target_size();
         let mut operations = Vec::with_capacity(render_frame.operations.len());
@@ -168,42 +97,6 @@ impl FramePacket {
 
         for (operation_index, operation) in render_frame.operations.iter().enumerate() {
             match operation {
-                RenderOp::Draw(item) if item.paint_source == RenderPaintSource::LegacyIsland => {
-                    let Some(bounds) = item_device_bounds(item, scale, width, height) else {
-                        continue;
-                    };
-                    let element = item.element.get();
-                    let (start, end) = item
-                        .legacy_command_range
-                        .ok_or(V2FrameAdapterError::LegacyCommandRangeMissing { element })?;
-                    if start == end {
-                        continue;
-                    }
-                    let state = validated
-                        .legacy_states
-                        .get(&start)
-                        .expect("validated legacy ranges have an incoming canvas state");
-                    let (prefix, suffix) = legacy_replay_scope(item, state, scale)?;
-                    if item.opacity < 1.0 {
-                        operations.push(RetainedRenderPlan::opacity_group_begin_operation(
-                            item.element.get(),
-                            item.opacity,
-                            bounds,
-                        ));
-                    }
-                    operations.push(RetainedRenderPlan::legacy_range_operation(
-                        start..end,
-                        prefix,
-                        suffix,
-                        bounds,
-                    ));
-                    if item.opacity < 1.0 {
-                        operations.push(RetainedRenderPlan::opacity_group_end_operation(
-                            item.element.get(),
-                            bounds,
-                        ));
-                    }
-                }
                 RenderOp::Draw(item) => {
                     let Some(bounds) = item_device_bounds(item, scale, width, height) else {
                         continue;
@@ -292,113 +185,11 @@ impl FramePacket {
             return Err(V2FrameAdapterError::UnbalancedOpacityGroup { element });
         }
 
-        legacy_frame
+        frame
             .draw_list
             .sync_composed_texture_references_with_ids(direct_texture_ids);
-        let complete = validated.damage.is_full();
-        Ok((RetainedRenderPlan::new(operations, complete), validated.damage))
-    }
-
-    /// Validates a mixed frame before its legacy command list is consumed.
-    ///
-    /// A caller that wants to preserve the original legacy frame as a fallback
-    /// can validate first, then call [`Self::from_v2_with_legacy`] only when this
-    /// returns `Ok(())`.
-    #[doc(hidden)]
-    pub fn validate_v2_with_legacy(
-        render_frame: &RenderFrame,
-        metadata: &FrameRenderMetadata,
-        legacy_frame: &Frame,
-    ) -> Result<(), V2FrameAdapterError> {
-        validate_frame_input(render_frame, metadata, Some(legacy_frame), false).map(|_| ())
-    }
-
-    fn from_v2_inner(
-        render_frame: RenderFrame,
-        metadata: FrameRenderMetadata,
-        legacy_frame: Option<Frame>,
-        complete: bool,
-    ) -> Result<Self, V2FrameAdapterError> {
-        let validated = validate_frame_input(&render_frame, &metadata, legacy_frame.as_ref(), false)?;
-        let scale = metadata.device_scale();
-        let (width, height) = metadata.damage().target_size();
-        let damage = validated.damage;
-        let legacy_states = validated.legacy_states;
-
-        let mut legacy_commands = None;
-        let mut draw_list = if let Some(legacy_frame) = legacy_frame {
-            let mut draw_list = legacy_frame.draw_list;
-            legacy_commands = Some(draw_list.take_commands_for_composition());
-            draw_list
-        } else {
-            LegacyDrawList::new()
-        };
-
-        let mut legacy_commands = legacy_commands
-            .map(|commands| commands.into_iter().map(Some).collect::<Vec<_>>());
-
-        let mut render_operations = Vec::with_capacity(render_frame.operations.len());
-        for operation in render_frame.operations {
-            match operation {
-                RenderOp::Draw(item) if item.paint_source == RenderPaintSource::LegacyIsland => {
-                    let item_bounds = item_device_bounds(&item, scale, width, height);
-                    let commands = legacy_commands
-                        .as_mut()
-                        .expect("a legacy item has a validated matching command list");
-                    let state = legacy_states
-                        .get(&item.legacy_command_range.expect("validated range").0)
-                        .expect("a validated range has a start state");
-                    let start = draw_list.commands().len();
-                    append_legacy_item(&mut draw_list, item, commands, state, scale)?;
-                    let end = draw_list.commands().len();
-                    if start < end
-                        && let Some(bounds) = item_bounds
-                    {
-                        render_operations.push(RetainedRenderPlan::operation(start..end, bounds));
-                    }
-                }
-                RenderOp::Draw(item) => {
-                    let item_bounds = item_device_bounds(&item, scale, width, height);
-                    let snapshot = item.snapshot();
-                    let retained_item = RetainedV2Item {
-                        element: item.element,
-                        revision: snapshot.revision,
-                        bounds: item.bounds,
-                        origin: item.origin,
-                        transform: item.transform,
-                        clip: item.clip,
-                        clip_radius: item.clip_radius,
-                        commands: snapshot.commands,
-                    };
-                    let start = draw_list.commands().len();
-                    append_item(&mut draw_list, item, scale)?;
-                    let end = draw_list.commands().len();
-                    if start < end
-                        && let Some(bounds) = item_bounds
-                    {
-                        render_operations.push(RetainedRenderPlan::local_v2_operation(
-                            retained_item,
-                            bounds,
-                        ));
-                    }
-                }
-                RenderOp::BeginOpacityGroup { element, .. }
-                | RenderOp::EndOpacityGroup { element } => {
-                    return Err(V2FrameAdapterError::OpacityGroupUnsupported {
-                        element: element.get(),
-                    });
-                }
-            }
-        }
-        draw_list.sync_composed_texture_references();
-        let plan_complete = complete || damage.is_full();
-
-        Ok(FramePacket::with_render_plan(
-            Frame::new(draw_list, width, height),
-            metadata.with_damage(damage),
-            None,
-            Some(RetainedRenderPlan::new(render_operations, plan_complete)),
-        ))
+        let complete = damage.is_full();
+        Ok((RetainedRenderPlan::new(operations, complete), damage))
     }
 }
 
@@ -438,34 +229,17 @@ fn item_device_bounds(
     ))
 }
 
-struct ValidatedFrameInput {
-    damage: DamageSet,
-    legacy_states: HashMap<usize, LegacyCommandState>,
-}
-
+/// Checks `render_frame` and maps its logical damage to device pixels.
 fn validate_frame_input(
     render_frame: &RenderFrame,
     metadata: &FrameRenderMetadata,
-    legacy_frame: Option<&Frame>,
-    allow_opacity_groups: bool,
-) -> Result<ValidatedFrameInput, V2FrameAdapterError> {
+) -> Result<DamageSet, V2FrameAdapterError> {
     let scale = metadata.device_scale();
     if !scale.is_finite() || scale <= 0.0 {
         return Err(V2FrameAdapterError::InvalidDeviceScale);
     }
 
     let (width, height) = metadata.damage().target_size();
-    if let Some(legacy_frame) = legacy_frame
-        && (legacy_frame.width, legacy_frame.height) != (width, height)
-    {
-        return Err(V2FrameAdapterError::LegacyFrameTargetMismatch {
-            frame_width: legacy_frame.width,
-            frame_height: legacy_frame.height,
-            target_width: width,
-            target_height: height,
-        });
-    }
-
     let mut damage = DamageSet::new(width, height);
     let full_target = DamageRect::new(0, 0, width, height);
     let mut has_full_target_damage = false;
@@ -483,24 +257,6 @@ fn validate_frame_input(
         return Err(V2FrameAdapterError::FullRepaintRequiresCompleteV2Frame);
     }
 
-    let legacy_states = if let Some(legacy_frame) = legacy_frame {
-        capture_legacy_range_states(
-            &render_frame.operations,
-            legacy_frame.draw_list.commands(),
-        )?
-    } else {
-        for operation in &render_frame.operations {
-            if let RenderOp::Draw(item) = operation
-                && item.paint_source == RenderPaintSource::LegacyIsland
-            {
-                return Err(V2FrameAdapterError::LegacyIslandRequiresLegacyFrame {
-                    element: item.element.get(),
-                });
-            }
-        }
-        HashMap::new()
-    };
-
     let mut opacity_stack = Vec::new();
     for operation in &render_frame.operations {
         match operation {
@@ -510,11 +266,6 @@ fn validate_frame_input(
                 opacity,
                 clip,
             } => {
-                if !allow_opacity_groups {
-                    return Err(V2FrameAdapterError::OpacityGroupUnsupported {
-                        element: element.get(),
-                    });
-                }
                 if !valid_rect(*bounds) || clip.is_some_and(|clip| !valid_rect(clip)) {
                     return Err(V2FrameAdapterError::InvalidRenderItemGeometry {
                         element: element.get(),
@@ -528,35 +279,23 @@ fn validate_frame_input(
                 opacity_stack.push(element.get());
             }
             RenderOp::EndOpacityGroup { element } => {
-                if !allow_opacity_groups {
-                    return Err(V2FrameAdapterError::OpacityGroupUnsupported {
-                        element: element.get(),
-                    });
-                }
                 if opacity_stack.pop() != Some(element.get()) {
                     return Err(V2FrameAdapterError::UnbalancedOpacityGroup {
                         element: element.get(),
                     });
                 }
             }
-            RenderOp::Draw(item) => validate_item(item, scale, allow_opacity_groups)?,
+            RenderOp::Draw(item) => validate_item(item)?,
         }
     }
     if let Some(element) = opacity_stack.pop() {
         return Err(V2FrameAdapterError::UnbalancedOpacityGroup { element });
     }
 
-    Ok(ValidatedFrameInput {
-        damage,
-        legacy_states,
-    })
+    Ok(damage)
 }
 
-fn validate_item(
-    item: &RenderItem,
-    scale: f32,
-    allow_opacity_groups: bool,
-) -> Result<(), V2FrameAdapterError> {
+fn validate_item(item: &RenderItem) -> Result<(), V2FrameAdapterError> {
     let element = item.element.get();
     if !valid_rect(item.bounds)
         || !item.origin.0.is_finite()
@@ -569,21 +308,7 @@ fn validate_item(
     if !item.opacity.is_finite() || !(0.0..=1.0).contains(&item.opacity) {
         return Err(V2FrameAdapterError::InvalidOpacity { element });
     }
-    if item.opacity != 1.0 && !allow_opacity_groups {
-        return Err(V2FrameAdapterError::ElementOpacityUnsupported { element });
-    }
-    if item.paint_source == RenderPaintSource::LegacyIsland {
-        if let Some(clip) = item.clip
-            && !valid_rect(Rect::new(
-                clip.x * scale,
-                clip.y * scale,
-                clip.width * scale,
-                clip.height * scale,
-            ))
-        {
-            return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
-        }
-    } else if let Some(clip) = item.clip {
+    if let Some(clip) = item.clip {
         let local_clip = Rect::new(
             clip.x - item.origin.0,
             clip.y - item.origin.1,
@@ -595,177 +320,6 @@ fn validate_item(
         }
     }
     Ok(())
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct LegacyClipState {
-    rect: Rect,
-    border_radius: [f32; 4],
-}
-
-#[derive(Clone)]
-struct LegacyCommandState {
-    transform: Mat3,
-    transform_stack: Vec<Mat3>,
-    clips: Vec<LegacyClipState>,
-    alpha: f32,
-    alpha_stack: Vec<f32>,
-    italic: bool,
-    language: Option<TextLanguage>,
-}
-
-impl Default for LegacyCommandState {
-    fn default() -> Self {
-        Self {
-            transform: Mat3::identity(),
-            transform_stack: Vec::new(),
-            clips: Vec::new(),
-            alpha: 1.0,
-            alpha_stack: Vec::new(),
-            italic: false,
-            language: None,
-        }
-    }
-}
-
-fn capture_legacy_range_states(
-    operations: &[RenderOp],
-    commands: &[LegacyDrawCommand],
-) -> Result<HashMap<usize, LegacyCommandState>, V2FrameAdapterError> {
-    let mut requested_indices = Vec::new();
-    let mut previous_end = 0;
-    for operation in operations {
-        let RenderOp::Draw(item) = operation else {
-            continue;
-        };
-        if item.paint_source != RenderPaintSource::LegacyIsland {
-            continue;
-        }
-        let element = item.element.get();
-        let (start, end) = item
-            .legacy_command_range
-            .ok_or(V2FrameAdapterError::LegacyCommandRangeMissing { element })?;
-        if end < start || end > commands.len() {
-            return Err(V2FrameAdapterError::LegacyCommandRangeOutOfBounds {
-                element,
-                start,
-                end,
-                command_count: commands.len(),
-            });
-        }
-        if start < previous_end {
-            return Err(V2FrameAdapterError::LegacyCommandRangeOrder {
-                element,
-                previous_end,
-                start,
-            });
-        }
-        previous_end = end;
-        requested_indices.push(start);
-        requested_indices.push(end);
-    }
-
-    requested_indices.sort_unstable();
-    requested_indices.dedup();
-    let mut states = HashMap::with_capacity(requested_indices.len());
-    let mut next_requested = 0;
-    let mut state = LegacyCommandState::default();
-    for index in 0..=commands.len() {
-        while requested_indices.get(next_requested) == Some(&index) {
-            states.insert(index, state.clone());
-            next_requested += 1;
-        }
-        let Some(command) = commands.get(index) else {
-            break;
-        };
-        update_legacy_command_state(&mut state, command);
-    }
-
-    for operation in operations {
-        let RenderOp::Draw(item) = operation else {
-            continue;
-        };
-        if item.paint_source != RenderPaintSource::LegacyIsland {
-            continue;
-        }
-        let (start, end) = item
-            .legacy_command_range
-            .expect("legacy ranges were validated above");
-        let start_state = states
-            .get(&start)
-            .expect("the command-state scanner captured range starts");
-        let end_state = states
-            .get(&end)
-            .expect("the command-state scanner captured range ends");
-        if start_state.transform_stack != end_state.transform_stack
-            || start_state.clips != end_state.clips
-            || start_state.alpha_stack != end_state.alpha_stack
-        {
-            return Err(V2FrameAdapterError::UnbalancedLegacyCommandRange {
-                element: item.element.get(),
-            });
-        }
-    }
-
-    Ok(states)
-}
-
-fn update_legacy_command_state(state: &mut LegacyCommandState, command: &LegacyDrawCommand) {
-    match command {
-        LegacyDrawCommand::PushTransform { matrix } => {
-            state.transform_stack.push(state.transform);
-            state.alpha_stack.push(state.alpha);
-            state.transform = matrix.pixel_aligned();
-        }
-        LegacyDrawCommand::PopTransform => {
-            if let Some(transform) = state.transform_stack.pop() {
-                state.transform = transform;
-            }
-            state.alpha = state.alpha_stack.pop().unwrap_or(1.0);
-        }
-        LegacyDrawCommand::PushClip { rect, border_radius } => {
-            let (x1, y1) = state.transform.transform_point(rect.x, rect.y);
-            let (x2, y2) = state
-                .transform
-                .transform_point(rect.x + rect.width, rect.y + rect.height);
-            let next = Rect::new(
-                x1.min(x2),
-                y1.min(y2),
-                (x2 - x1).abs(),
-                (y2 - y1).abs(),
-            );
-            let rect = state.clips.last().map_or(next, |parent| {
-                intersect_rect(parent.rect, next)
-            });
-            let scale_x = (state.transform.cols[0][0].powi(2)
-                + state.transform.cols[0][1].powi(2))
-            .sqrt();
-            let mut border_radius = *border_radius;
-            for radius in &mut border_radius {
-                *radius *= scale_x;
-            }
-            state.clips.push(LegacyClipState { rect, border_radius });
-        }
-        LegacyDrawCommand::PopClip => {
-            state.clips.pop();
-        }
-        LegacyDrawCommand::SetTransform { matrix } => {
-            state.transform = matrix.pixel_aligned();
-        }
-        LegacyDrawCommand::SetAlpha { alpha } => state.alpha = alpha.clamp(0.0, 1.0),
-        LegacyDrawCommand::RestoreAlpha => state.alpha = 1.0,
-        LegacyDrawCommand::SetItalic { italic } => state.italic = *italic,
-        LegacyDrawCommand::SetTextLanguage { language } => state.language = *language,
-        _ => {}
-    }
-}
-
-fn intersect_rect(parent: Rect, next: Rect) -> Rect {
-    let left = next.x.max(parent.x);
-    let top = next.y.max(parent.y);
-    let right = (next.x + next.width).min(parent.x + parent.width);
-    let bottom = (next.y + next.height).min(parent.y + parent.height);
-    Rect::new(left, top, (right - left).max(0.0), (bottom - top).max(0.0))
 }
 
 fn logical_damage_to_device(
@@ -813,44 +367,21 @@ fn logical_damage_to_device(
     )))
 }
 
-fn append_item(
-    output: &mut LegacyDrawList,
-    item: RenderItem,
-    scale: f32,
-) -> Result<(), V2FrameAdapterError> {
-    let element = item.element.get();
-    if !valid_rect(item.bounds)
-        || !item.origin.0.is_finite()
-        || !item.origin.1.is_finite()
-        || !valid_transform(item.transform)
-        || item.clip.is_some_and(|clip| !valid_rect(clip))
-    {
-        return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
-    }
-    if item.opacity != 1.0 {
-        return Err(V2FrameAdapterError::ElementOpacityUnsupported { element });
-    }
-    if item.paint_source == crate::draw_cmd_v2::RenderPaintSource::LegacyIsland {
-        return Err(V2FrameAdapterError::LegacyIslandRequiresLegacyFrame { element });
-    }
-
-    let snapshot = item.snapshot();
-    let retained_item = RetainedV2Item {
-        element: item.element,
-        revision: snapshot.revision,
-        bounds: item.bounds,
-        origin: item.origin,
-        transform: item.transform,
-        clip: item.clip,
-        clip_radius: item.clip_radius,
-        commands: snapshot.commands,
-    };
-    for command in lower_retained_v2_commands(&retained_item, scale)? {
-        output.push(command);
-    }
-    Ok(())
+fn valid_rect(rect: Rect) -> bool {
+    rect.x.is_finite()
+        && rect.y.is_finite()
+        && rect.width.is_finite()
+        && rect.height.is_finite()
+        && rect.width >= 0.0
+        && rect.height >= 0.0
 }
 
+fn valid_transform(transform: Mat3) -> bool {
+    transform.cols.iter().flatten().all(|value| value.is_finite())
+}
+
+/// Lowers one retained item's local list into the renderer's command
+/// vocabulary, positioned by the item's origin, transform and clip.
 pub(crate) fn lower_retained_v2_commands(
     item: &RetainedV2Item,
     scale: f32,
@@ -909,193 +440,6 @@ pub(crate) fn lower_retained_v2_commands(
     }
     output.restore();
     Ok(output.take_commands_for_composition())
-}
-
-fn append_legacy_item(
-    output: &mut LegacyDrawList,
-    item: RenderItem,
-    legacy_commands: &mut [Option<LegacyDrawCommand>],
-    state: &LegacyCommandState,
-    scale: f32,
-) -> Result<(), V2FrameAdapterError> {
-    let element = item.element.get();
-    if item.paint_source != RenderPaintSource::LegacyIsland {
-        return Err(V2FrameAdapterError::LegacyCommandRangeMissing { element });
-    }
-    if !valid_rect(item.bounds)
-        || !item.origin.0.is_finite()
-        || !item.origin.1.is_finite()
-        || !valid_transform(item.transform)
-        || item.clip.is_some_and(|clip| !valid_rect(clip))
-    {
-        return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
-    }
-    if item.opacity != 1.0 {
-        return Err(V2FrameAdapterError::ElementOpacityUnsupported { element });
-    }
-    let (start, end) = item
-        .legacy_command_range
-        .ok_or(V2FrameAdapterError::LegacyCommandRangeMissing { element })?;
-    if end < start || end > legacy_commands.len() {
-        return Err(V2FrameAdapterError::LegacyCommandRangeOutOfBounds {
-            element,
-            start,
-            end,
-            command_count: legacy_commands.len(),
-        });
-    }
-    if start == end {
-        return Ok(());
-    }
-
-    // The captured legacy transform contains ordinary canvas placement. Apply
-    // the retained node transform in display space without changing the
-    // element's own legacy command range.
-    output.save();
-    for clip in &state.clips {
-        output.push(LegacyDrawCommand::PushClip {
-            rect: clip.rect,
-            border_radius: clip.border_radius,
-        });
-    }
-    let mut added_item_clip = false;
-    if let Some(clip) = item.clip {
-        let device_clip = Rect::new(
-            clip.x * scale,
-            clip.y * scale,
-            clip.width * scale,
-            clip.height * scale,
-        );
-        if !valid_rect(device_clip) {
-            return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
-        }
-        // Island clips are pushed in device space, so the radius is too.
-        output.push(LegacyDrawCommand::PushClip {
-            rect: device_clip,
-            border_radius: item.clip_radius.map(|radius| radius * scale),
-        });
-        added_item_clip = true;
-    }
-    output.push(LegacyDrawCommand::SetTransform {
-        matrix: transformed_legacy_state(item.transform, state.transform, scale),
-    });
-    output.push(LegacyDrawCommand::SetAlpha { alpha: state.alpha });
-    output.push(LegacyDrawCommand::SetItalic {
-        italic: state.italic,
-    });
-    output.push(LegacyDrawCommand::SetTextLanguage {
-        language: state.language,
-    });
-
-    for command in &mut legacy_commands[start..end] {
-        let Some(command) = command.take() else {
-            return Err(V2FrameAdapterError::LegacyCommandRangeOrder {
-                element,
-                previous_end: start,
-                start,
-            });
-        };
-        match command {
-            LegacyDrawCommand::DrawImage { rect, texture_id } => {
-                output.draw_image(rect, texture_id);
-            }
-            LegacyDrawCommand::DrawImageWithResource { rect, resource } => {
-                output.draw_image_with_resource(rect, resource);
-            }
-            command => output.push(command),
-        }
-    }
-
-    output.push(LegacyDrawCommand::SetItalic { italic: false });
-    output.push(LegacyDrawCommand::SetTextLanguage { language: None });
-    if added_item_clip {
-        output.pop_clip();
-    }
-    for _ in &state.clips {
-        output.pop_clip();
-    }
-    output.restore();
-    Ok(())
-}
-
-fn legacy_replay_scope(
-    item: &RenderItem,
-    state: &LegacyCommandState,
-    scale: f32,
-) -> Result<(Vec<LegacyDrawCommand>, Vec<LegacyDrawCommand>), V2FrameAdapterError> {
-    let element = item.element.get();
-    if !valid_transform(item.transform) {
-        return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
-    }
-    let mut prefix = Vec::with_capacity(state.clips.len() * 2 + 5);
-    prefix.push(LegacyDrawCommand::PushTransform {
-        matrix: Mat3::identity(),
-    });
-    for clip in &state.clips {
-        prefix.push(LegacyDrawCommand::PushClip {
-            rect: clip.rect,
-            border_radius: clip.border_radius,
-        });
-    }
-    let mut has_item_clip = false;
-    if let Some(clip) = item.clip {
-        let device_clip = Rect::new(
-            clip.x * scale,
-            clip.y * scale,
-            clip.width * scale,
-            clip.height * scale,
-        );
-        if !valid_rect(device_clip) {
-            return Err(V2FrameAdapterError::InvalidRenderItemGeometry { element });
-        }
-        prefix.push(LegacyDrawCommand::PushClip {
-            rect: device_clip,
-            border_radius: item.clip_radius.map(|radius| radius * scale),
-        });
-        has_item_clip = true;
-    }
-    prefix.push(LegacyDrawCommand::SetTransform {
-        matrix: transformed_legacy_state(item.transform, state.transform, scale),
-    });
-    prefix.push(LegacyDrawCommand::SetAlpha { alpha: state.alpha });
-    prefix.push(LegacyDrawCommand::SetItalic {
-        italic: state.italic,
-    });
-    prefix.push(LegacyDrawCommand::SetTextLanguage {
-        language: state.language,
-    });
-
-    let mut suffix = Vec::with_capacity(state.clips.len() + 4);
-    suffix.push(LegacyDrawCommand::SetItalic { italic: false });
-    suffix.push(LegacyDrawCommand::SetTextLanguage { language: None });
-    if has_item_clip {
-        suffix.push(LegacyDrawCommand::PopClip);
-    }
-    for _ in &state.clips {
-        suffix.push(LegacyDrawCommand::PopClip);
-    }
-    suffix.push(LegacyDrawCommand::PopTransform);
-    Ok((prefix, suffix))
-}
-
-fn valid_rect(rect: Rect) -> bool {
-    rect.x.is_finite()
-        && rect.y.is_finite()
-        && rect.width.is_finite()
-        && rect.height.is_finite()
-        && rect.width >= 0.0
-        && rect.height >= 0.0
-}
-
-fn valid_transform(transform: Mat3) -> bool {
-    transform.cols.iter().flatten().all(|value| value.is_finite())
-}
-
-fn transformed_legacy_state(transform: Mat3, current: Mat3, scale: f32) -> Mat3 {
-    Mat3::scale(scale, scale)
-        .mul(&transform)
-        .mul(&Mat3::scale(1.0 / scale, 1.0 / scale))
-        .mul(&current)
 }
 
 fn lower_command(command: V2DrawCommand, origin: Mat3, scale: f32) -> LegacyDrawCommand {
@@ -1255,44 +599,26 @@ mod tests {
     use crate::utilities::{Color, Mat3};
 
     #[test]
-    fn direct_packet_keeps_local_lists_separate_from_legacy_ranges() {
+    fn direct_packet_keeps_local_lists_in_tree_order_without_a_flat_command_buffer() {
         let tree = RenderTree::new();
         let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
-        let legacy = tree
+        let child = tree
             .add_child(root, Rect::new(16.0, 16.0, 32.0, 32.0))
             .unwrap();
-        tree.set_paint_source(root, RenderPaintSource::LocalV2)
-            .unwrap();
-        tree.set_paint_source(legacy, RenderPaintSource::LegacyIsland)
-            .unwrap();
-        tree.begin_legacy_frame();
         record_fill(&tree, root, Color::rgba8(220, 20, 20, 255));
+        record_fill(&tree, child, Color::rgba8(20, 220, 20, 255));
 
-        let mut legacy_draw_list = LegacyDrawList::new();
-        let start = legacy_draw_list.commands().len();
-        legacy_draw_list.fill_rect(
-            Rect::new(0.0, 0.0, 32.0, 32.0),
-            Color::rgba8(20, 220, 20, 255),
-            [0.0; 4],
-            [0.0; 4],
-            Color::transparent(),
-        );
-        let end = legacy_draw_list.commands().len();
-        tree.set_legacy_command_range(legacy, Some((start, end)))
-            .unwrap();
-        let legacy_command_count = legacy_draw_list.commands().len();
-
-        let packet = FramePacket::from_v2_direct_with_legacy(
+        let packet = FramePacket::from_v2_direct_with_frame(
             RenderFrame {
                 damage: vec![Rect::new(0.0, 0.0, 64.0, 64.0)],
                 operations: tree.render_all(),
             },
             FrameRenderMetadata::new(1.0, 7, 1, 1, 1, DamageSet::new(64, 64)),
-            Frame::new(legacy_draw_list, 64, 64),
+            Frame::new(LegacyDrawList::new(), 64, 64),
         )
         .unwrap();
 
-        assert_eq!(packet.frame().draw_list.commands().len(), legacy_command_count);
+        assert!(packet.frame().draw_list.commands().is_empty());
         let plan = packet.render_plan().expect("direct retained render plan");
         assert!(plan.is_complete());
         assert_eq!(plan.local_v2_revision(root), Some(1));
@@ -1306,158 +632,12 @@ mod tests {
         ));
         assert!(matches!(
             &operations[1].kind,
-            RetainedRenderOperationKind::LegacyRange { range, .. }
-                if range.start == start && range.end == end
+            RetainedRenderOperationKind::LocalV2(item) if item.element == child
         ));
     }
 
     #[test]
-    fn mixed_packet_splices_legacy_islands_between_v2_items_in_tree_order() {
-        let tree = RenderTree::new();
-        let root = tree.add_root(Rect::new(0.0, 0.0, 100.0, 20.0)).unwrap();
-        let first = tree
-            .add_child(root, Rect::new(10.0, 0.0, 10.0, 10.0))
-            .unwrap();
-        let legacy = tree
-            .add_child(root, Rect::new(30.0, 0.0, 10.0, 10.0))
-            .unwrap();
-        let last = tree
-            .add_child(root, Rect::new(50.0, 0.0, 10.0, 10.0))
-            .unwrap();
-        tree.set_clip(root, Some(Rect::new(0.0, 0.0, 80.0, 15.0)))
-            .unwrap();
-
-        for node in [root, first, last] {
-            tree.set_paint_source(node, RenderPaintSource::LocalV2)
-                .unwrap();
-        }
-        record_fill(&tree, first, Color::rgba8(220, 20, 20, 255));
-        record_fill(&tree, last, Color::rgba8(20, 20, 220, 255));
-        tree.set_paint_source(legacy, RenderPaintSource::LegacyIsland)
-            .unwrap();
-        tree.begin_legacy_frame();
-
-        let mut legacy_draw_list = LegacyDrawList::new();
-        legacy_draw_list.fill_rect(
-            Rect::new(90.0, 0.0, 2.0, 2.0),
-            Color::rgba8(220, 220, 20, 255),
-            [0.0; 4],
-            [0.0; 4],
-            Color::transparent(),
-        );
-        legacy_draw_list.save();
-        legacy_draw_list.translate(30.0, 0.0);
-        legacy_draw_list.push_clip(Rect::new(0.0, 0.0, 9.0, 9.0));
-        let start = legacy_draw_list.commands().len();
-        legacy_draw_list.fill_rect(
-            Rect::new(0.0, 0.0, 10.0, 10.0),
-            Color::rgba8(20, 220, 20, 255),
-            [0.0; 4],
-            [0.0; 4],
-            Color::transparent(),
-        );
-        let end = legacy_draw_list.commands().len();
-        legacy_draw_list.pop_clip();
-        legacy_draw_list.restore();
-        legacy_draw_list.fill_rect(
-            Rect::new(90.0, 2.0, 2.0, 2.0),
-            Color::rgba8(20, 220, 220, 255),
-            [0.0; 4],
-            [0.0; 4],
-            Color::transparent(),
-        );
-        tree.set_legacy_command_range(legacy, Some((start, end)))
-            .unwrap();
-
-        let packet = FramePacket::from_v2_with_legacy(
-            RenderFrame {
-                damage: vec![Rect::new(0.0, 0.0, 100.0, 20.0)],
-                operations: tree.render_all(),
-            },
-            FrameRenderMetadata::new(1.0, 1, 1, 1, 1, DamageSet::new(100, 20)),
-            Frame::new(legacy_draw_list, 100, 20),
-        )
-        .unwrap();
-
-        let commands = packet.frame().draw_list.commands();
-        let colors = commands
-            .iter()
-            .filter_map(|command| match command {
-                LegacyDrawCommand::FillRect { color, .. } => Some(*color),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            colors,
-            [
-                Color::rgba8(220, 20, 20, 255),
-                Color::rgba8(20, 220, 20, 255),
-                Color::rgba8(20, 20, 220, 255),
-            ]
-        );
-        assert!(commands.iter().any(|command| matches!(
-            command,
-            LegacyDrawCommand::SetTransform { matrix }
-                if matrix.transform_point(0.0, 0.0) == (30.0, 0.0)
-        )));
-        assert!(commands.iter().any(|command| matches!(
-            command,
-            LegacyDrawCommand::PushClip { rect, .. }
-                if *rect == Rect::new(30.0, 0.0, 9.0, 9.0)
-        )));
-        assert!(commands.iter().any(|command| matches!(
-            command,
-            LegacyDrawCommand::PushClip { rect, .. }
-                if *rect == Rect::new(0.0, 0.0, 80.0, 15.0)
-        )));
-        assert_eq!(
-            packet.metadata().damage().regions(),
-            &[DamageRect::new(0, 0, 100, 20)]
-        );
-    }
-
-    #[test]
-    fn mixed_packet_requires_a_matching_legacy_frame_and_valid_range() {
-        let tree = RenderTree::new();
-        let legacy = tree.add_root(Rect::new(0.0, 0.0, 10.0, 10.0)).unwrap();
-        tree.set_paint_source(legacy, RenderPaintSource::LegacyIsland)
-            .unwrap();
-        tree.begin_legacy_frame();
-        tree.set_legacy_command_range(legacy, Some((0, 1))).unwrap();
-        let render_frame = RenderFrame {
-            damage: vec![Rect::new(0.0, 0.0, 10.0, 10.0)],
-            operations: tree.render_all(),
-        };
-
-        assert!(matches!(
-            FramePacket::from_v2(
-                render_frame,
-                FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
-            ),
-            Err(super::V2FrameAdapterError::LegacyIslandRequiresLegacyFrame { .. })
-        ));
-
-        let packet = FramePacket::from_v2_with_legacy(
-            RenderFrame {
-                damage: vec![Rect::new(0.0, 0.0, 10.0, 10.0)],
-                operations: tree.render_all(),
-            },
-            FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
-            Frame::new(LegacyDrawList::new(), 10, 10),
-        );
-        assert!(matches!(
-            packet,
-            Err(super::V2FrameAdapterError::LegacyCommandRangeOutOfBounds {
-                element,
-                start: 0,
-                end: 1,
-                command_count: 0,
-            }) if element == legacy.get()
-        ));
-    }
-
-    #[test]
-    fn lowers_opaque_local_paint_and_rounds_damage_outward() {
+    fn lowers_local_paint_and_rounds_damage_outward() {
         let tree = RenderTree::new();
         let root = tree.add_root(Rect::new(5.0, 6.0, 80.0, 70.0)).unwrap();
         let child = tree
@@ -1496,12 +676,13 @@ mod tests {
         ];
         tree.context(child).unwrap().begin_recording().unwrap().commit(commands).unwrap();
 
-        let packet = FramePacket::from_v2(
+        let packet = FramePacket::from_v2_direct_with_frame(
             RenderFrame {
                 damage: vec![Rect::new(2.25, 3.2, 4.25, 5.1)],
                 operations: tree.render_all(),
             },
             FrameRenderMetadata::new(1.5, 7, 2, 3, 4, DamageSet::new(128, 128)),
+            Frame::new(LegacyDrawList::new(), 128, 128),
         )
         .unwrap();
 
@@ -1509,7 +690,20 @@ mod tests {
         assert_eq!(packet.metadata().damage().regions(), &[DamageRect::new(3, 4, 7, 9)]);
         assert_eq!(packet.metadata().surface_identity(), 7);
 
-        let commands = packet.frame().draw_list.commands();
+        // The plan keeps each local list as recorded; lowering is what the
+        // renderer does with an item, so check it here.
+        let commands = packet
+            .render_plan()
+            .expect("direct retained render plan")
+            .operations_for_region(DamageRect::new(0, 0, 128, 128))
+            .filter_map(|operation| match &operation.kind {
+                RetainedRenderOperationKind::LocalV2(item) => {
+                    Some(super::lower_retained_v2_commands(item, 1.5).unwrap())
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>();
         let transform = commands.iter().find_map(|command| match command {
             LegacyDrawCommand::SetTransform { matrix }
                 if matrix.transform_point(0.0, 0.0) == (22.5, 39.0) =>
@@ -1602,9 +796,10 @@ mod tests {
             .unwrap();
         record_fill(&tree, root, Color::rgba8(220, 20, 20, 255));
         record_fill(&tree, child, Color::rgba8(20, 20, 220, 255));
-        let packet = FramePacket::from_v2_complete_with_legacy(
+        // The whole target is dirty, so the plan holds the complete tree.
+        let packet = FramePacket::from_v2_direct_with_frame(
             RenderFrame {
-                damage: vec![Rect::new(16.0, 16.0, 32.0, 32.0)],
+                damage: vec![Rect::new(0.0, 0.0, 64.0, 64.0)],
                 operations: tree.render_all(),
             },
             FrameRenderMetadata::new(1.0, 4, 1, 1, 1, DamageSet::new(64, 64)),
@@ -1678,7 +873,7 @@ mod tests {
         let _ = tree.take_damage();
         tree.set_opacity(root, 0.25).unwrap();
         let update_damage = tree.take_damage();
-        let updated_packet = FramePacket::from_v2_direct_with_legacy(
+        let updated_packet = FramePacket::from_v2_direct_with_frame(
             RenderFrame {
                 damage: update_damage,
                 operations: tree.render_all(),
@@ -1776,30 +971,8 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_adapter_rejects_opacity_groups() {
-        let tree = RenderTree::new();
-        let root = tree.add_root(Rect::new(0.0, 0.0, 40.0, 40.0)).unwrap();
-        tree.add_child(root, Rect::new(4.0, 4.0, 20.0, 20.0)).unwrap();
-        tree.set_opacity(root, 0.5).unwrap();
-
-        let result = FramePacket::from_v2(
-            RenderFrame {
-                damage: vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
-                operations: tree.render_all(),
-            },
-            FrameRenderMetadata::full(40, 40),
-        );
-        let error = match result {
-            Ok(_) => panic!("opacity groups should not be lowered by the v1 renderer"),
-            Err(error) => error,
-        };
-
-        assert!(matches!(error, super::V2FrameAdapterError::OpacityGroupUnsupported { .. }));
-    }
-
-    #[test]
-    fn rejects_invalid_scale_damage_and_leaf_opacity() {
-        let invalid_scale = FramePacket::from_v2(
+    fn rejects_invalid_scale_and_damage() {
+        let invalid_scale = FramePacket::from_v2_direct(
             RenderFrame {
                 damage: Vec::new(),
                 operations: Vec::new(),
@@ -1811,7 +984,7 @@ mod tests {
             Err(super::V2FrameAdapterError::InvalidDeviceScale)
         ));
 
-        let invalid_damage = FramePacket::from_v2(
+        let invalid_damage = FramePacket::from_v2_direct(
             RenderFrame {
                 damage: vec![Rect::new(0.0, 0.0, -1.0, 2.0)],
                 operations: Vec::new(),
@@ -1823,7 +996,7 @@ mod tests {
             Err(super::V2FrameAdapterError::InvalidDamage { index: 0 })
         ));
 
-        let partial_with_full_metadata = FramePacket::from_v2(
+        let partial_with_full_metadata = FramePacket::from_v2_direct(
             RenderFrame {
                 damage: vec![Rect::new(0.0, 0.0, 8.0, 8.0)],
                 operations: Vec::new(),
@@ -1835,7 +1008,7 @@ mod tests {
             Err(super::V2FrameAdapterError::FullRepaintRequiresCompleteV2Frame)
         ));
 
-        let partial_promoted_to_full = FramePacket::from_v2(
+        let partial_promoted_to_full = FramePacket::from_v2_direct(
             RenderFrame {
                 damage: vec![Rect::new(0.0, 0.0, 8.0, 8.0)],
                 operations: Vec::new(),
@@ -1846,26 +1019,11 @@ mod tests {
             partial_promoted_to_full,
             Err(super::V2FrameAdapterError::FullRepaintRequiresCompleteV2Frame)
         ));
-
-        let tree = RenderTree::new();
-        let leaf = tree.add_root(Rect::new(0.0, 0.0, 8.0, 8.0)).unwrap();
-        tree.set_opacity(leaf, 0.5).unwrap();
-        let non_opaque_leaf = FramePacket::from_v2(
-            RenderFrame {
-                damage: Vec::new(),
-                operations: tree.render_all(),
-            },
-            FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
-        );
-        assert!(matches!(
-            non_opaque_leaf,
-            Err(super::V2FrameAdapterError::ElementOpacityUnsupported { .. })
-        ));
     }
 
     #[test]
     fn empty_or_off_target_damage_does_not_expand_the_packet_damage() {
-        let packet = FramePacket::from_v2(
+        let packet = FramePacket::from_v2_direct_with_frame(
             RenderFrame {
                 damage: vec![
                     Rect::new(-5.0, -5.0, 0.0, 2.0),
@@ -1874,6 +1032,7 @@ mod tests {
                 operations: Vec::new(),
             },
             FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
+            Frame::new(LegacyDrawList::new(), 10, 10),
         )
         .unwrap();
 

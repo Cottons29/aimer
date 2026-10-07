@@ -4,7 +4,6 @@ use std::rc::Rc;
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::size::ResolvedSize;
 use aimer_container::Container;
-use aimer_cupid::draw_cmd::DrawCommand;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::{PointerButton, PointerInfo};
 use aimer_range::{RangeSlider, RangeThumb, Slider, SliderThumb, SliderTrail};
@@ -381,8 +380,8 @@ async fn disabled_slider_does_not_capture_or_propose_input() {
     assert!(values.borrow().is_empty());
 }
 
-#[tokio::test]
-async fn slider_paints_track_active_segment_and_thumb() {
+/// A build context with room for a 200 px slider.
+fn roomy_context() -> BuildContext<'static> {
     let canvas = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
     let mut ctx = BuildContext::new(
         aimer_canvas::FrameCanvas::new(canvas),
@@ -402,7 +401,66 @@ async fn slider_paints_track_active_segment_and_thumb() {
         max_width: 320.0,
         max_height: 120.0,
     };
+    ctx
+}
 
+/// The visual slots of a slider surface, in paint order (track, trail, thumbs),
+/// placed the way the render tree sync places them: the surface publishes where
+/// each part sits when the tree asks for its bounds.
+fn visual_slots<'a>(
+    element: &'a aimer_widget::AnyElement,
+    ctx: &BuildContext<'_>,
+) -> Vec<&'a dyn aimer_widget::Element> {
+    let mut slots = Vec::new();
+    element.visit_children(&mut |surface| {
+        let _ = surface.retained_v2_bounds(ctx);
+        surface.visit_children(&mut |slot| slots.push(slot));
+    });
+    slots
+}
+
+/// The deepest first child of `element`: the leaf that records the paint when a
+/// part is a chain of wrappers.
+fn innermost(element: &dyn aimer_widget::Element) -> &dyn aimer_widget::Element {
+    let mut inner = None;
+    element.visit_children(&mut |child| {
+        if inner.is_none() {
+            inner = Some(child);
+        }
+    });
+    inner.map_or(element, innermost)
+}
+
+/// How many rectangles `leaf` records in its own retained list.
+fn recorded_fills(leaf: &dyn aimer_widget::Element, ctx: &BuildContext<'_>) -> usize {
+    let leaf = innermost(leaf);
+    let tree = aimer_cupid::draw_cmd_v2::RenderTree::new();
+    let root = tree
+        .add_root(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 320.0, 120.0))
+        .unwrap();
+    let node_context = tree.context(root).unwrap();
+    ctx.with_local_v2_paint_context(node_context, |ctx| {
+        assert!(leaf.can_paint_local_v2(ctx));
+        leaf.paint_local_v2(ctx);
+    });
+    tree.draw_list_snapshot(root)
+        .unwrap()
+        .commands
+        .iter()
+        .filter(|command| matches!(command, aimer_cupid::draw_cmd_v2::DrawCommand::FillRect { .. }))
+        .count()
+}
+
+/// The horizontal extent of one visual slot: where layout put it, and how wide
+/// its content is.
+fn slot_extent(slot: &dyn aimer_widget::Element, ctx: &BuildContext<'_>) -> (f32, f32) {
+    let x = slot.pos().expect("a slider slot reports where it sits").x;
+    (x, slot.computed_size(ctx).width)
+}
+
+#[tokio::test]
+async fn slider_paints_track_active_segment_and_thumb() {
+    let ctx = roomy_context();
     let element = Slider::new()
         .range(0.0..100.0)
         .step(10.0)
@@ -410,113 +468,45 @@ async fn slider_paints_track_active_segment_and_thumb() {
         .width(200.0)
         .to_element(&ctx);
     element.layout(&ctx);
-    element.update(&ctx);
 
-    let draw_list = canvas.draw_list();
-    let commands = draw_list.commands();
-    assert_eq!(
-        commands
-            .iter()
-            .filter(|command| matches!(command, DrawCommand::FillRect { .. }))
-            .count(),
-        3
+    let slots = visual_slots(&element, &ctx);
+    assert_eq!(slots.len(), 3, "track, active segment and thumb");
+    for slot in &slots {
+        let mut leaves = 0;
+        slot.visit_children(&mut |leaf| {
+            leaves += 1;
+            assert_eq!(recorded_fills(leaf, &ctx), 1, "each part records one rectangle");
+        });
+        assert_eq!(leaves, 1);
+    }
+    assert!(
+        slots[1].retained_clip(&ctx).is_some(),
+        "the active segment is clipped to the value"
     );
-    assert!(commands
-        .iter()
-        .any(|command| matches!(command, DrawCommand::PushClip { .. })));
 }
 
 #[tokio::test]
 async fn slider_minimum_thumb_stays_inside_the_visual_bounds() {
-    let canvas = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-    let mut ctx = BuildContext::new(
-        aimer_canvas::FrameCanvas::new(canvas),
-        ResolvedSize {
-            width: 320.0,
-            height: 120.0,
-        },
-        1.0,
-        Default::default(),
-        Default::default(),
-        WindowHandle::headless(Default::default(), 1.0),
-        tokio::runtime::Handle::current(),
-    );
-    ctx.box_constraint = BoxConstraint {
-        min_width: 0.0,
-        min_height: 0.0,
-        max_width: 320.0,
-        max_height: 120.0,
-    };
+    let ctx = roomy_context();
+    for value in [0.0, 100.0] {
+        let element = Slider::new()
+            .range(0.0..100.0)
+            .step(10.0)
+            .value(value)
+            .width(200.0)
+            .to_element(&ctx);
+        let size = element.layout(&ctx);
 
-    let element = Slider::new()
-        .range(0.0..100.0)
-        .step(10.0)
-        .value(0.0)
-        .width(200.0)
-        .to_element(&ctx);
-    let size = element.layout(&ctx);
-    element.update(&ctx);
-
-    {
-        let draw_list = canvas.draw_list();
-        let thumb = draw_list
-            .commands()
-            .iter()
-            .filter_map(|command| match command {
-                DrawCommand::FillRect { rect, .. } => Some(rect),
-                _ => None,
-            })
-            .nth(2)
-            .expect("default slider thumb should be the third rectangle");
-        assert!(thumb.x >= 0.0);
-        assert!(thumb.x + thumb.width <= size.width);
+        let slots = visual_slots(&element, &ctx);
+        let (x, width) = slot_extent(slots[2], &ctx);
+        assert!(x >= 0.0, "value {value}: thumb starts at {x}");
+        assert!(x + width <= size.width, "value {value}: thumb ends at {}", x + width);
     }
-
-    canvas.begin_frame();
-    let element = Slider::new()
-        .range(0.0..100.0)
-        .step(10.0)
-        .value(100.0)
-        .width(200.0)
-        .to_element(&ctx);
-    let size = element.layout(&ctx);
-    element.update(&ctx);
-    let draw_list = canvas.draw_list();
-    let thumb = draw_list
-        .commands()
-        .iter()
-        .filter_map(|command| match command {
-            DrawCommand::FillRect { rect, .. } => Some(rect),
-            _ => None,
-        })
-        .nth(2)
-        .expect("default slider thumb should be the third rectangle");
-    assert!(thumb.x >= 0.0);
-    assert!(thumb.x + thumb.width <= size.width);
 }
 
 #[tokio::test]
 async fn range_slider_endpoint_thumbs_stay_inside_the_visual_bounds() {
-    let canvas = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
-    let mut ctx = BuildContext::new(
-        aimer_canvas::FrameCanvas::new(canvas),
-        ResolvedSize {
-            width: 320.0,
-            height: 120.0,
-        },
-        1.0,
-        Default::default(),
-        Default::default(),
-        WindowHandle::headless(Default::default(), 1.0),
-        tokio::runtime::Handle::current(),
-    );
-    ctx.box_constraint = BoxConstraint {
-        min_width: 0.0,
-        min_height: 0.0,
-        max_width: 320.0,
-        max_height: 120.0,
-    };
-
+    let ctx = roomy_context();
     let element = RangeSlider::new()
         .range(0.0..100.0)
         .step(10.0)
@@ -524,23 +514,13 @@ async fn range_slider_endpoint_thumbs_stay_inside_the_visual_bounds() {
         .width(200.0)
         .to_element(&ctx);
     let size = element.layout(&ctx);
-    element.update(&ctx);
 
-    let draw_list = canvas.draw_list();
-    let thumbs = draw_list
-        .commands()
-        .iter()
-        .filter_map(|command| match command {
-            DrawCommand::FillRect { rect, .. } => Some(rect),
-            _ => None,
-        })
-        .skip(2)
-        .take(2)
-        .collect::<Vec<_>>();
-    assert_eq!(thumbs.len(), 2);
-    for thumb in thumbs {
-        assert!(thumb.x >= 0.0);
-        assert!(thumb.x + thumb.width <= size.width);
+    let slots = visual_slots(&element, &ctx);
+    assert_eq!(slots.len(), 4, "track, active segment and two thumbs");
+    for thumb in &slots[2..] {
+        let (x, width) = slot_extent(*thumb, &ctx);
+        assert!(x >= 0.0);
+        assert!(x + width <= size.width);
     }
 }
 

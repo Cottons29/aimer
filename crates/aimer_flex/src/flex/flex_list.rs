@@ -604,7 +604,7 @@ impl VisitorElement for LeafElement {
 impl aimer_widget::EventElement for LeafElement {}
 impl aimer_widget::Rebuildable for LeafElement {}
 impl aimer_widget::Drawable for LeafElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl LayoutElement for LeafElement {
     fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
@@ -642,7 +642,7 @@ impl VisitorElement for PaintIslandLeafElement {
 impl aimer_widget::EventElement for PaintIslandLeafElement {}
 impl aimer_widget::Rebuildable for PaintIslandLeafElement {}
 impl Drawable for PaintIslandLeafElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 
     fn is_paint_stable(&self) -> bool {
         self.stable

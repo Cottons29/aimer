@@ -337,15 +337,11 @@ fn retained_color(color: Color) -> aimer_cupid::utilities::Color {
 }
 
 impl Drawable for RawContextMenuPanel {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let size = self.panel_size(ctx);
         if size.width <= 0.0 || size.height <= 0.0 {
             return;
         }
-
-        let mut panel_ctx = ctx.clone();
-        panel_ctx.parent_size = size;
-        self.style.panel.update(&panel_ctx);
 
         let (left, top, right, bottom) = self.insets(ctx);
         ctx.canvas.save();

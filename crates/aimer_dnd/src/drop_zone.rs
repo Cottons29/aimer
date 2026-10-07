@@ -42,7 +42,7 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use aimer_attribute::CacheBounds;
+use aimer_widget::InteractionBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
@@ -311,7 +311,7 @@ impl Widget for DropZoneGate {
         RawDropZone {
             child: self.child.to_element(ctx),
             logic: self.logic.clone(),
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
         }
         .boxed()
     }
@@ -326,7 +326,7 @@ impl aimer_widget::PortableWidget for DropZoneGate {}
 struct RawDropZone {
     child: AnyElement,
     logic: Rc<ZoneLogic>,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
 }
 
 /// Appends `path` unless the batch already carries it.
@@ -482,7 +482,24 @@ impl Drawable for RawDropZone {
 
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
 
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.child.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("DropZone")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         let size = self.child.computed_size(ctx);
         self.bounds
@@ -530,7 +547,7 @@ mod tests {
     impl Rebuildable for TestElement {}
 
     impl Drawable for TestElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     #[test]
@@ -543,7 +560,7 @@ mod tests {
                 pending: Rc::new(RefCell::new(Vec::new())),
                 updater: StateUpdater::empty(),
             }),
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
         };
 
         assert_eq!(zone.event_tree_role(), EventTreeRole::IndexedTarget);

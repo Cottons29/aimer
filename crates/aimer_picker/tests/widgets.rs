@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::size::ResolvedSize;
-use aimer_cupid::draw_cmd::DrawCommand;
+use aimer_cupid::draw_cmd_v2::DrawCommand;
 use aimer_events::element::{
     ElementEvent, KeyAction, Modifiers, NamedKey, ScrollDeltaKind, TouchPhase,
 };
@@ -49,6 +49,15 @@ fn context_with_max(max_width: f32, max_height: f32) -> BuildContext<'static> {
         max_height,
     };
     ctx
+}
+
+/// What `element` would paint, as the frame loop records it.
+fn painted(element: &aimer_widget::AnyElement, ctx: &BuildContext<'_>) -> Vec<DrawCommand> {
+    let recorded = aimer_widget::testing::record_retained_paint(element.as_ref(), ctx);
+    aimer_widget::testing::all_commands(&recorded)
+        .into_iter()
+        .cloned()
+        .collect()
 }
 
 fn key(key: NamedKey) -> ElementEvent {
@@ -110,11 +119,7 @@ async fn calendar_view_consumes_the_provided_surface_token() {
     element.layout(&ctx);
     element.update(&ctx);
 
-    assert!(ctx
-        .canvas
-        .get_inner_canvas()
-        .draw_list()
-        .commands()
+    assert!(painted(&element, &ctx).as_slice()
         .iter()
         .any(|command| matches!(command, DrawCommand::FillRect { color, .. }
             if color.r == 1
@@ -140,11 +145,7 @@ async fn calendar_range_paints_endpoints_opaque_and_interior_dates_dimmed() {
     element.layout(&ctx);
     element.update(&ctx);
 
-    let selected_alphas = ctx
-        .canvas
-        .get_inner_canvas()
-        .draw_list()
-        .commands()
+    let selected_alphas = painted(&element, &ctx).as_slice()
         .iter()
         .filter_map(|command| match command {
             DrawCommand::FillRect { color, .. }
@@ -175,11 +176,7 @@ async fn calendar_view_bridges_legacy_theme_data_into_semantic_tokens() {
     element.layout(&ctx);
     element.update(&ctx);
 
-    assert!(ctx
-        .canvas
-        .get_inner_canvas()
-        .draw_list()
-        .commands()
+    assert!(painted(&element, &ctx).as_slice()
         .iter()
         .any(|command| matches!(command, DrawCommand::FillRect { color, .. }
             if color.r == 4
@@ -268,17 +265,17 @@ async fn date_time_picker_switches_between_date_and_time_segments() {
     ctx.canvas.begin_frame();
     element.update(&ctx);
     let (has_date, has_time, has_done) = {
-        let draw_list = ctx.canvas.get_inner_canvas().draw_list();
+        let draw_list = painted(&element, &ctx);
         (
-            draw_list.commands().iter().any(|command| matches!(
+            draw_list.as_slice().iter().any(|command| matches!(
                 command,
                 DrawCommand::DrawText { text, .. } if text.as_ref() == "Date"
             )),
-            draw_list.commands().iter().any(|command| matches!(
+            draw_list.as_slice().iter().any(|command| matches!(
                 command,
                 DrawCommand::DrawText { text, .. } if text.as_ref() == "Time"
             )),
-            draw_list.commands().iter().any(|command| matches!(
+            draw_list.as_slice().iter().any(|command| matches!(
                 command,
                 DrawCommand::DrawText { text, .. } if text.as_ref() == "Done"
             )),
@@ -299,8 +296,8 @@ async fn date_time_picker_switches_between_date_and_time_segments() {
     ctx.canvas.begin_frame();
     element.update(&ctx);
     let has_am = {
-        let draw_list = ctx.canvas.get_inner_canvas().draw_list();
-        draw_list.commands().iter().any(|command| matches!(
+        let draw_list = painted(&element, &ctx);
+        draw_list.as_slice().iter().any(|command| matches!(
             command,
             DrawCommand::DrawText { text, .. } if text.as_ref() == "AM"
         ))
@@ -318,8 +315,8 @@ async fn date_time_picker_switches_between_date_and_time_segments() {
     ctx.canvas.begin_frame();
     element.update(&ctx);
     let has_month = {
-        let draw_list = ctx.canvas.get_inner_canvas().draw_list();
-        draw_list.commands().iter().any(|command| matches!(
+        let draw_list = painted(&element, &ctx);
+        draw_list.as_slice().iter().any(|command| matches!(
             command,
             DrawCommand::DrawText { text, .. } if text.as_ref() == "1970-01"
         ))
@@ -409,11 +406,7 @@ async fn date_time_picker_overlay_paints_a_separating_border() {
 
     let outline = ThemeTokens::light().colors.outline;
     let (outline_r, outline_g, outline_b, outline_a) = outline.to_rgba();
-    assert!(ctx
-        .canvas
-        .get_inner_canvas()
-        .draw_list()
-        .commands()
+    assert!(painted(&element, &ctx).as_slice()
         .iter()
         .any(|command| matches!(
             command,
@@ -449,11 +442,7 @@ async fn color_picker_overlay_paints_a_separating_border() {
 
     let outline = ThemeTokens::light().colors.outline;
     let (outline_r, outline_g, outline_b, outline_a) = outline.to_rgba();
-    assert!(ctx
-        .canvas
-        .get_inner_canvas()
-        .draw_list()
-        .commands()
+    assert!(painted(&element, &ctx).as_slice()
         .iter()
         .any(|command| matches!(
             command,
@@ -631,9 +620,9 @@ async fn time_picker_view_scrolls_a_24_hour_column_and_confirms_it() {
         .is_consumed());
     element.update(&ctx);
 
-    let draw_list = ctx.canvas.get_inner_canvas().draw_list();
+    let draw_list = painted(&element, &ctx);
     let texts = draw_list
-        .commands()
+        .as_slice()
         .iter()
         .filter_map(|command| match command {
             DrawCommand::DrawText { text, .. } => Some(text.as_ref()),
@@ -761,9 +750,9 @@ async fn time_picker_uses_one_period_label_and_allows_switching_to_pm() {
         .is_consumed());
     element.update(&ctx);
     let period_count = {
-        let draw_list = ctx.canvas.get_inner_canvas().draw_list();
+        let draw_list = painted(&element, &ctx);
         draw_list
-            .commands()
+            .as_slice()
             .iter()
             .filter(|command| matches!(
                 command,

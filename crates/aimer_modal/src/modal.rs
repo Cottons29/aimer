@@ -215,7 +215,7 @@ struct RawModal {
 }
 
 impl Drawable for RawModal {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.barrier.update(ctx);
         let child_size = self.child.computed_size(ctx);
         let (offset_x, offset_y) = alignment_offset(self.alignment, ctx.parent_size, child_size);

@@ -164,7 +164,7 @@ impl LayoutElement for RawCaretPlacement {
 }
 
 impl Drawable for RawCaretPlacement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let placement = self.placement.get();
         let mut caret_ctx = ctx.clone();
         caret_ctx.parent_size = placement.size;
@@ -212,7 +212,7 @@ impl Drawable for RawCaretPlacement {
 }
 
 impl Drawable for RawTextFieldHost {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.field.update(ctx);
         self.sync_caret_placement(ctx);
         self.caret.update(ctx);
@@ -246,6 +246,22 @@ impl Drawable for RawTextFieldHost {
 
     fn paint_local_v2(&self, ctx: &BuildContext) {
         self.field.paint_local_v2(ctx);
+    }
+
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        self.field.retained_v2_interaction_size(ctx)
+    }
+
+    fn retained_v2_interaction_offset(&self, ctx: &BuildContext) -> (f32, f32) {
+        self.field.retained_v2_interaction_offset(ctx)
+    }
+
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.field.adopt_retained_v2_interaction_source(source);
+    }
+
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.field.retained_v2_interaction_disagreement()
     }
 }
 
@@ -332,7 +348,6 @@ impl Rebuildable for RawTextFieldHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aimer_cupid::draw_cmd::DrawCommand;
     use aimer_cupid::utilities::Rgba8;
     use crate::input_field::caret::{CaretBlink, CaretGeometry};
     use crate::input_field::raw_fields::test_support::{dummy_build_context, field_config};
@@ -350,7 +365,7 @@ mod tests {
     struct ProbeCaretElement(Rc<Cell<(f32, f32)>>);
 
     impl Drawable for ProbeCaretElement {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.0
                 .set((ctx.parent_size.width, ctx.parent_size.height));
         }
@@ -365,6 +380,43 @@ mod tests {
     impl EventElement for ProbeCaretElement {}
     impl LayoutElement for ProbeCaretElement {}
     impl Rebuildable for ProbeCaretElement {}
+
+    /// The deepest first child of `element`: the leaf that records the paint
+    /// when a widget is a chain of wrappers.
+    fn innermost(element: &dyn Element) -> &dyn Element {
+        let mut inner = None;
+        element.visit_children(&mut |child| {
+            if inner.is_none() {
+                inner = Some(child);
+            }
+        });
+        inner.map_or(element, innermost)
+    }
+
+    /// The color of the last rectangle `caret` records in its own list.
+    fn recorded_fill_color(caret: &AnyElement, context: &BuildContext<'_>) -> Option<[u8; 4]> {
+        let caret = innermost(caret.as_ref());
+        let tree = aimer_cupid::draw_cmd_v2::RenderTree::new();
+        let root = tree
+            .add_root(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 240.0, 60.0))
+            .unwrap();
+        let node_context = tree.context(root).unwrap();
+        context.with_local_v2_paint_context(node_context, |context| {
+            assert!(caret.can_paint_local_v2(context));
+            caret.paint_local_v2(context);
+        });
+        tree.draw_list_snapshot(root)
+            .unwrap()
+            .commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                aimer_cupid::draw_cmd_v2::DrawCommand::FillRect { color, .. } => {
+                    Some(color.to_rgba8().0)
+                }
+                _ => None,
+            })
+    }
 
     #[test]
     fn retained_builtin_caret_tracks_updated_cursor_color() {
@@ -389,19 +441,10 @@ mod tests {
             Colors::Red,
             &context,
         );
-        caret.update(&context);
-        let first_color = context
-            .canvas
-            .get_inner_canvas()
-            .take_draw_list()
-            .commands()
-            .iter()
-            .rev()
-            .find_map(|command| match command {
-                DrawCommand::FillRect { color, .. } => Some(color.to_rgba8().0),
-                _ => None,
-            });
-        assert_eq!(first_color, Some(Rgba8::from_argb(Colors::Red.as_u32()).0));
+        assert_eq!(
+            recorded_fill_color(&caret, &context),
+            Some(Rgba8::from_argb(Colors::Red.as_u32()).0)
+        );
 
         let caret = slot.build(
             None,
@@ -409,19 +452,10 @@ mod tests {
             Colors::Blue,
             &context,
         );
-        caret.update(&context);
-        let second_color = context
-            .canvas
-            .get_inner_canvas()
-            .take_draw_list()
-            .commands()
-            .iter()
-            .rev()
-            .find_map(|command| match command {
-                DrawCommand::FillRect { color, .. } => Some(color.to_rgba8().0),
-                _ => None,
-            });
-        assert_eq!(second_color, Some(Rgba8::from_argb(Colors::Blue.as_u32()).0));
+        assert_eq!(
+            recorded_fill_color(&caret, &context),
+            Some(Rgba8::from_argb(Colors::Blue.as_u32()).0)
+        );
     }
 
     #[test]

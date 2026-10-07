@@ -19,7 +19,7 @@ use crate::selection::cursor::HoverCursor;
 use crate::selection::selectable::{Selectable, SelectionBinding, TextGeometry};
 use crate::selection::session::{SelectionSession, SelectionSlot};
 use crate::selection::touch_hold::{
-    TouchHold, TouchHoldGate, enter_hold, frame_origin, press_touch,
+    TouchHold, TouchHoldGate, enter_hold, press_touch,
 };
 use crate::selection::ui;
 use crate::text_span::ResolvedTextSpan;
@@ -187,16 +187,33 @@ impl LayoutElement for RawSelectableText {
     }
 
     fn pos_start_end(&self) -> Option<(aimer_attribute::Vec2d, aimer_attribute::Vec2d)> {
-        self.geometry().bounds.pos_start_end()
+        self.geometry().pos_start_end()
     }
 }
 
 impl Drawable for RawSelectableText {
+    /// The paragraph's interaction rectangle is its laid-out box. The render
+    /// tree supplies where that box is now, so geometry painted earlier follows
+    /// a scroll.
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.paragraph.prepare_for_paint(ctx).size)
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.geometry().bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.geometry().bounds.disagreement("RawSelectableText")
+    }
+
     fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
         self.slot().stamp();
         self.sync_paint_geometry(ctx);
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
-        let origin = frame_origin(abs_x, abs_y, ctx.scale);
+        let origin = self.geometry().origin(abs_x, abs_y, ctx.scale);
         if let Some((pointer, offset)) = self.touch_hold.poll_stationary(AnimInstant::now(), origin)
         {
             enter_hold(&self.session(), &self.slot(), offset, pointer);
@@ -206,130 +223,10 @@ impl Drawable for RawSelectableText {
 
     fn draw_local_v2_compatibility(&self, _ctx: &BuildContext) {}
 
-    fn draw(&self, ctx: &BuildContext) {
-        let slot = self.slot();
-        let geometry_state = self.geometry();
-        slot.stamp();
-        let layout = self.paragraph.prepare_for_paint(ctx);
-        let paint_mode = self.paragraph.static_paint_mode();
-        let shared_layout = layout.aimer_interaction.clone();
-        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
-        let transform = ctx.canvas.get_transform();
-        geometry_state.save_painted_bounds(
-            ctx.scale,
-            transform,
-            layout.size.width,
-            layout.size.height,
-        );
-        geometry_state.regions.borrow_mut().clear();
-        geometry_state.set_shared_interaction_layout(
-            shared_layout.clone(),
-            transform,
-            ctx.scale,
-        );
-
-        // Where this frame paints tells a resting finger from a page moving
-        // under one, so the hold is polled once the origin is known — and still
-        // before the highlight below, which a promoted hold must paint at once.
-        let origin = frame_origin(abs_x, abs_y, ctx.scale);
-        if let Some((pointer, offset)) = self.touch_hold.poll_stationary(AnimInstant::now(), origin)
-        {
-            enter_hold(&self.session(), &self.slot(), offset, pointer);
-        }
-
-        let clipped = self.paragraph.needs_clip();
-        if clipped {
-            ctx.canvas.save();
-            ctx.canvas.set_clip(
-                (0.0, 0.0).into(),
-                ResolvedSize {
-                    width: self.paragraph.available_width(ctx),
-                    height: ctx.parent_size.height,
-                },
-            );
-        }
-
-        self.paragraph.draw_backgrounds(ctx, &layout);
-        if let Some(shared) = shared_layout.as_ref() {
-            let mut regions = geometry_state.regions.borrow_mut();
-            for cluster in &shared.clusters {
-                let left = cluster.start_x.min(cluster.end_x);
-                let right = cluster.start_x.max(cluster.end_x);
-                let is_hard_break = shared
-                    .text
-                    .get(cluster.text_range.clone())
-                    .is_some_and(|text| text == "\n" || text == "\r\n");
-                regions.push(TextHitRegion::new(
-                    if is_hard_break {
-                        cluster.text_range.start..cluster.text_range.start
-                    } else {
-                        cluster.text_range.clone()
-                    },
-                    Bounds::new(
-                        (abs_x + left) / ctx.scale,
-                        (abs_y + cluster.y) / ctx.scale,
-                        if is_hard_break {
-                            (shared.metrics.width - left).max(ctx.scale) / ctx.scale
-                        } else {
-                            (right - left) / ctx.scale
-                        },
-                        cluster.height / ctx.scale,
-                    ),
-                ));
-            }
-        } else {
-            geometry::hit_regions(
-                &layout,
-                abs_x,
-                abs_y,
-                ctx.scale,
-                ctx.visible_rect,
-                &mut geometry_state.regions.borrow_mut(),
-            );
-        }
-        let selection = slot.selected_range().unwrap_or(0..0);
-        if let Some(shared) = shared_layout.as_ref() {
-            for rect in shared.selection_rects(selection.clone()) {
-                ctx.canvas.fill_color_rect(
-                    (rect.x, rect.y).into(),
-                    ResolvedSize {
-                        width: rect.width,
-                        height: rect.height,
-                    },
-                    self.selection_color,
-                    [0.0; 4],
-                );
-            }
-        } else {
-            for run in geometry::selection_runs(&layout, selection.clone(), ctx.visible_rect) {
-                ctx.canvas.fill_color_rect(
-                    (run.x, run.y).into(),
-                    ResolvedSize {
-                        width: run.width,
-                        height: run.height,
-                    },
-                    self.selection_color,
-                    [0.0; 4],
-                );
-            }
-        }
-
-        if let Some(mode) = paint_mode {
-            if !self
-                .paragraph
-                .draw_cached_static_paint(ctx, &layout, mode)
-            {
-                self.paragraph.draw_static_spans(ctx, &layout, mode);
-            }
-        } else {
-            self.paragraph
-                .draw_spans(ctx, &layout, |span| span.style.color, |_, _| {});
-        }
-
-        if clipped {
-            ctx.canvas.clear_clip();
-            ctx.canvas.restore();
-        }
+    fn update(&self, ctx: &BuildContext) {
+        // The text is painted by `paint_local_v2`; this keeps the geometry the
+        // interaction reads current and polls a resting touch.
+        self.sync_local_v2_state(ctx);
     }
 
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {

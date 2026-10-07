@@ -10,7 +10,7 @@ use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
     PaintDamageTracker, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
-    VisitorElement, Widget,
+    StatelessElement, VisitorElement, Widget,
 };
 
 use crate::control::controller::AnimationController;
@@ -210,6 +210,7 @@ impl<T: Widget + 'static> StatefulWidget for MorphTransition<T> {
                 .or_else(|| Widget::key(&self.child)),
             current_child: self.child,
             old_child: None,
+            old_child_key: None,
             duration: self.duration,
             curve: self.curve,
             current_color: self.background_color,
@@ -239,6 +240,7 @@ pub struct MorphTransitionState<T: Widget + 'static> {
     current_child: ChildBuilder,
     old_child: Option<ChildBuilder>,
     child_key: Option<Key>,
+    old_child_key: Option<Key>,
     duration: Duration,
     curve: Curve,
     current_color: Option<Rgba>,
@@ -261,6 +263,7 @@ impl<T: Widget + 'static> State<MorphTransition<T>> for MorphTransitionState<T> 
 
         if self.child_key != new.child_key || self.current_color != new.current_color {
             self.old_child = Some(self.current_child.clone());
+            self.old_child_key = self.child_key.clone();
             self.old_color = self.current_color;
             self.current_child = new.current_child;
             self.child_key = new.child_key;
@@ -275,8 +278,14 @@ impl<T: Widget + 'static> State<MorphTransition<T>> for MorphTransitionState<T> 
     fn build(&self, _ctx: &BuildContext) -> impl Widget {
         MorphTransitionFrame {
             current_child: self.current_child.clone(),
+            current_child_key: self.child_key.clone(),
             old_child: if self.controller.is_animating() {
                 self.old_child.clone()
+            } else {
+                None
+            },
+            old_child_key: if self.controller.is_animating() {
+                self.old_child_key.clone()
             } else {
                 None
             },
@@ -293,7 +302,9 @@ impl<T: Widget + 'static> State<MorphTransition<T>> for MorphTransitionState<T> 
 
 struct MorphTransitionFrame {
     current_child: ChildBuilder,
+    current_child_key: Option<Key>,
     old_child: Option<ChildBuilder>,
+    old_child_key: Option<Key>,
     current_color: Option<Rgba>,
     old_color: Option<Rgba>,
     controller: AnimationController,
@@ -366,7 +377,7 @@ impl MorphBackgroundElement {
 }
 
 impl Drawable for MorphBackgroundElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let paint = self.paint_value();
         ctx.canvas
             .fill_color_rect(Vec2d::ZERO, paint.size, paint.color.to_color(), [0.0; 4]);
@@ -421,11 +432,26 @@ impl LayoutElement for MorphBackgroundElement {
     }
 }
 
+/// Builds one of the morph's two children under the identity the transition
+/// tracks it by. The current and outgoing children are siblings while a morph
+/// runs; without distinct identities reconciliation matches them positionally,
+/// the render tree is handed the same element twice, and its structure sync
+/// fails for the whole window.
+fn keyed_child_element(child: ChildBuilder, key: Option<Key>, ctx: &BuildContext) -> AnyElement {
+    let child = child.build(ctx);
+    match key {
+        Some(key) => StatelessElement::wrapper(child, Some(key), "MorphTransitionChild").boxed(),
+        None => child,
+    }
+}
+
 impl Widget for MorphTransitionFrame {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
-        let current_child = self.current_child.build(ctx);
+        let current_child = keyed_child_element(self.current_child, self.current_child_key, ctx);
         let current_size = current_child.computed_size(ctx);
-        let old_child = self.old_child.map(|child| child.build(ctx));
+        let old_child = self
+            .old_child
+            .map(|child| keyed_child_element(child, self.old_child_key, ctx));
         let old_size = old_child
             .as_ref()
             .map(|child| child.computed_size(ctx))
@@ -560,7 +586,7 @@ impl MorphTransitionElement {
 }
 
 impl Drawable for MorphTransitionElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let now = AnimInstant::now();
 
         let curved_value = self.controller.tick(now);
@@ -609,28 +635,8 @@ impl Drawable for MorphTransitionElement {
                     unsafe {
                         if let Some(old) = self.old_child.get() {
                             let old_alpha = 1.0 - curved_value * 2.0;
-                            let old_snap = self.old_snapshot.with(Clone::clone);
-                            let old_size = old_snap.size;
 
                             ctx.canvas.save();
-
-                            if self.has_background_color {
-                                let bg = old_snap.color;
-                                let overlay_alpha = bg.a * old_alpha;
-                                if overlay_alpha > 0.001 {
-                                    let overlay_color =
-                                        Rgba::new(bg.r, bg.g, bg.b, overlay_alpha).to_color();
-                                    ctx.canvas.fill_color_rect(
-                                        (0.0, 0.0).into(),
-                                        ResolvedSize {
-                                            width: old_size.0,
-                                            height: old_size.1,
-                                        },
-                                        overlay_color,
-                                        [0.0; 4],
-                                    );
-                                }
-                            }
 
                             ctx.canvas.set_alpha(old_alpha);
                             old.update(ctx);
@@ -654,24 +660,6 @@ impl Drawable for MorphTransitionElement {
                 unsafe {
                     if let Some(child) = self.current_child.get() {
                         ctx.canvas.save();
-
-                        if self.has_background_color {
-                            let bg = layout.color;
-                            let overlay_alpha = bg.a * new_alpha;
-                            if overlay_alpha > 0.001 {
-                                let overlay_color =
-                                    Rgba::new(bg.r, bg.g, bg.b, overlay_alpha).to_color();
-                                ctx.canvas.fill_color_rect(
-                                    (0.0, 0.0).into(),
-                                    ResolvedSize {
-                                        width: new_size.width,
-                                        height: new_size.height,
-                                    },
-                                    overlay_color,
-                                    [0.0; 4],
-                                );
-                            }
-                        }
 
                         ctx.canvas.translate((cx, cy).into());
                         ctx.canvas.scale(sx, sy);
@@ -702,11 +690,9 @@ impl Drawable for MorphTransitionElement {
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
 
     fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
-        if unsafe { self.current_child.get() }.is_some_and(|child| !child.is_paint_bounded())
-            || unsafe { self.old_child.get() }.is_some_and(|child| !child.is_paint_bounded())
-        {
-            return false;
-        }
+        // Both children are presented through their render nodes, so the tree
+        // damages whatever they paint; no promise about the paint extent of
+        // either is needed.
         let progress = self.controller.tick(AnimInstant::now());
         if !progress.is_finite() {
             return false;

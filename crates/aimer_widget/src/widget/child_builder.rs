@@ -575,7 +575,7 @@ impl Drawable for RetainedChildElement {
         }
     }
 
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         if let Some(child) = self.child() {
             child.update(ctx);
         }
@@ -775,7 +775,7 @@ mod tests {
     impl Rebuildable for Counter {}
 
     impl Drawable for Counter {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl LayoutElement for Counter {}
@@ -836,7 +836,7 @@ mod tests {
     impl EventElement for PaintContractElement {}
 
     impl Drawable for PaintContractElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
 
         fn is_paint_stable(&self) -> bool {
             self.stable
@@ -982,7 +982,7 @@ mod tests {
         impl LayoutElement for Parent {}
         impl Rebuildable for Parent {}
         impl Drawable for Parent {
-            fn draw(&self, _ctx: &BuildContext) {}
+            fn update(&self, _ctx: &BuildContext) {}
         }
 
         struct ParentWidget;

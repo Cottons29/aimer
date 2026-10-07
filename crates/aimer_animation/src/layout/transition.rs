@@ -1015,7 +1015,7 @@ impl AnimatedLayoutElement {
 }
 
 impl aimer_widget::Drawable for AnimatedLayoutElement {
-    fn draw(&self, ctx: &aimer_widget::base::BuildContext) {
+    fn update(&self, ctx: &aimer_widget::base::BuildContext) {
         let now = AnimInstant::now();
         let geometry = self.geometry(ctx, now);
         let natural = self.child.computed_size(ctx);
@@ -1054,9 +1054,9 @@ impl aimer_widget::Drawable for AnimatedLayoutElement {
     fn paint_local_v2(&self, _ctx: &aimer_widget::base::BuildContext) {}
 
     fn sync_local_v2_state(&self, ctx: &aimer_widget::base::BuildContext) -> bool {
-        if !self.child.is_paint_bounded() {
-            return false;
-        }
+        // The scale is the child node's presentation transform, so the tree
+        // damages whatever the child paints; no promise about its paint extent
+        // is needed.
         let geometry = self.geometry(ctx, AnimInstant::now());
         let natural = self.child.computed_size(ctx);
         let scale_x = if natural.width > 0.0 {

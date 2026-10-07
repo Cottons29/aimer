@@ -87,61 +87,15 @@ impl ErrorElement {
         }
     }
 
-    /// Fills the available bounds with the diagnostic and writes `message`
-    /// across them.
+    /// Records the diagnostic into the current node's retained list: it fills the
+    /// available bounds and writes `message` across them.
     ///
     /// The message is written in [`FontFamily::MONOSPACE`] — Aimer's bundled
     /// JetBrains Mono — because a recovered panic reports its own source line
     /// followed by a run of carets under the failing expression. Only a
     /// fixed-advance face keeps the two columns aligned; a proportional one
     /// leaves the carets pointing at whatever happens to sit above them.
-    pub fn draw_message(ctx: &BuildContext, message: &str) {
-        let size = diagnostic_bounds(ctx);
-        ctx.canvas
-            .fill_color_rect(Vec2d::default(), size, Color::RED, [0.0; 4]);
-
-        #[cfg(debug_assertions)]
-        let text = message;
-        #[cfg(not(debug_assertions))]
-        let text = "A layout error occurred";
-        #[cfg(not(debug_assertions))]
-        let _ = message;
-
-        let (pos_y, font_size) = if cfg!(target_os = "ios") || cfg!(target_os = "android") {
-            (400f32, 40.0)
-        } else {
-            (200f32, 34f32)
-        };
-
-        ctx.canvas.draw_text_wrapped_styled(
-            text,
-            Vec2d { x: 24.0, y: pos_y },
-            font_size,
-            Color::YELLOW,
-            (size.width - 24.0).max(0.0),
-            FontFamily::MONOSPACE,
-            FontStyle::Normal,
-            600,
-        );
-    }
-}
-
-impl Drawable for ErrorElement {
-    fn draw(&self, ctx: &BuildContext) {
-        Self::draw_message(ctx, &self.message);
-    }
-
-    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
-        let size = diagnostic_bounds(ctx);
-        ctx.scale.is_finite()
-            && ctx.scale > 0.0
-            && size.width.is_finite()
-            && size.height.is_finite()
-            && size.width >= 0.0
-            && size.height >= 0.0
-    }
-
-    fn paint_local_v2(&self, ctx: &BuildContext) {
+    pub fn record_message(ctx: &BuildContext, message: &str) {
         let size = diagnostic_bounds(ctx);
         let scale = ctx.scale;
         let (pos_y, font_size) = if cfg!(target_os = "ios") || cfg!(target_os = "android") {
@@ -151,9 +105,11 @@ impl Drawable for ErrorElement {
         };
 
         #[cfg(debug_assertions)]
-        let text = self.message.as_str();
+        let text = message;
         #[cfg(not(debug_assertions))]
         let text = "A layout error occurred";
+        #[cfg(not(debug_assertions))]
+        let _ = message;
 
         let canvas = aimer_canvas::Canvas::of(ctx);
         let (background_red, background_green, background_blue, background_alpha) =
@@ -184,6 +140,27 @@ impl Drawable for ErrorElement {
             true,
         );
         canvas.finish();
+    }
+
+    /// Whether [`Self::record_message`] has finite, usable bounds to fill.
+    pub fn can_record_message(ctx: &BuildContext) -> bool {
+        let size = diagnostic_bounds(ctx);
+        ctx.scale.is_finite()
+            && ctx.scale > 0.0
+            && size.width.is_finite()
+            && size.height.is_finite()
+            && size.width >= 0.0
+            && size.height >= 0.0
+    }
+}
+
+impl Drawable for ErrorElement {
+    fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        Self::can_record_message(ctx)
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        Self::record_message(ctx, &self.message);
     }
 }
 
@@ -292,10 +269,10 @@ struct OverflowPaintData {
 }
 
 impl Drawable for RawOverflowIndicator {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let bounds = self.computed_size(ctx);
         let child_size = self.child.computed_size(ctx);
-        let overflow = detect_overflow(child_size, bounds, Vec2d::default());
+        let _overflow = detect_overflow(child_size, bounds, Vec2d::default());
 
         ctx.canvas.save();
         if self.clip {
@@ -304,7 +281,6 @@ impl Drawable for RawOverflowIndicator {
         self.child.update(ctx);
         ctx.canvas.restore();
 
-        paint_overflow_indicator(ctx, bounds, overflow, &self.label);
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -414,7 +390,7 @@ struct RawOverflowDecoration {
 }
 
 impl Drawable for RawOverflowDecoration {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         let paint = self.paint.get();
@@ -619,96 +595,12 @@ fn diagnostic_bounds(ctx: &BuildContext) -> ResolvedSize {
     }
 }
 
-#[cfg(debug_assertions)]
-pub fn paint_overflow_indicator(
-    ctx: &BuildContext,
-    bounds: ResolvedSize,
-    overflow: OverflowEdges,
-    label: &str,
-) {
-    if !overflow.has_overflow() || bounds.width <= 0.0 || bounds.height <= 0.0 {
-        return;
-    }
 
-    const THICKNESS: f32 = 8.0;
-    const STRIPE: f32 = 6.0;
-    let paint_horizontal = |y: f32| {
-        let mut x = 0.0;
-        let mut yellow = true;
-        while x < bounds.width {
-            ctx.canvas.fill_color_rect(
-                Vec2d { x, y },
-                ResolvedSize {
-                    width: STRIPE.min(bounds.width - x),
-                    height: THICKNESS.min(bounds.height),
-                },
-                if yellow { Color::YELLOW } else { Color::BLACK },
-                [0.0; 4],
-            );
-            yellow = !yellow;
-            x += STRIPE;
-        }
-    };
-    let paint_vertical = |x: f32| {
-        let mut y = 0.0;
-        let mut yellow = true;
-        while y < bounds.height {
-            ctx.canvas.fill_color_rect(
-                Vec2d { x, y },
-                ResolvedSize {
-                    width: THICKNESS.min(bounds.width),
-                    height: STRIPE.min(bounds.height - y),
-                },
-                if yellow { Color::YELLOW } else { Color::BLACK },
-                [0.0; 4],
-            );
-            yellow = !yellow;
-            y += STRIPE;
-        }
-    };
-
-    if overflow.top > 0.0 {
-        paint_horizontal(0.0);
-    }
-    if overflow.bottom > 0.0 {
-        paint_horizontal((bounds.height - THICKNESS).max(0.0));
-    }
-    if overflow.left > 0.0 {
-        paint_vertical(0.0);
-    }
-    if overflow.right > 0.0 {
-        paint_vertical((bounds.width - THICKNESS).max(0.0));
-    }
-
-    let text = format!("{label} overflowed by {:.1}px", overflow.maximum());
-    let width = ((text.len() as f32 * 6.0) + 8.0).min(bounds.width);
-    ctx.canvas.fill_color_rect(
-        Vec2d { x: 0.0, y: 0.0 },
-        ResolvedSize {
-            width,
-            height: 18.0_f32.min(bounds.height),
-        },
-        Color::BLACK,
-        [0.0; 4],
-    );
-    ctx.canvas
-        .draw_text(&text, Vec2d { x: 4.0, y: 13.0 }, 10.0, Color::YELLOW, 600);
-}
-
-#[cfg(not(debug_assertions))]
-pub fn paint_overflow_indicator(
-    _ctx: &BuildContext,
-    _bounds: ResolvedSize,
-    _overflow: OverflowEdges,
-    _label: &str,
-) {
-}
 
 #[cfg(test)]
 mod tests {
     use aimer_attribute::ResolvedSize;
     use aimer_canvas::{FrameCanvas, FontFamily, InnerCanvas};
-    use aimer_cupid::draw_cmd::DrawCommand;
 
     use super::{ErrorElement, OverflowEdges, detect_overflow};
     use crate::base::{BuildContext, WindowHandle};
@@ -730,14 +622,25 @@ mod tests {
             tokio::runtime::Handle::current(),
         );
 
-        ErrorElement::draw_message(&ctx, "Widget `Broken` panicked during build: boom");
+        let tree = aimer_cupid::draw_cmd_v2::RenderTree::new();
+        let root = tree
+            .add_root(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 800.0, 600.0))
+            .unwrap();
+        let node_context = tree.context(root).unwrap();
+        ctx.with_local_v2_paint_context(node_context, |ctx| {
+            assert!(ErrorElement::can_record_message(ctx));
+            ErrorElement::record_message(ctx, "Widget `Broken` panicked during build: boom");
+        });
 
-        let family = canvas
-            .take_draw_list()
-            .commands()
+        let family = tree
+            .draw_list_snapshot(root)
+            .unwrap()
+            .commands
             .iter()
             .find_map(|command| match command {
-                DrawCommand::DrawText { font_family, .. } => Some(*font_family),
+                aimer_cupid::draw_cmd_v2::DrawCommand::DrawText { font_family, .. } => {
+                    Some(*font_family)
+                }
                 _ => None,
             });
 

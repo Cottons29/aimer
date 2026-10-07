@@ -306,3 +306,80 @@ fn querying_a_whole_subtree_does_not_multiply_by_depth() {
         DEPTH + 1
     );
 }
+
+/// Callers cache a node's world rectangle against the tree's geometry revision,
+/// so every mutation that can move a node has to advance it, and a pure read
+/// must not.
+mod geometry_revision {
+    use super::*;
+
+    fn tree_with_child() -> (RenderTree, RenderNodeId, RenderNodeId) {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap();
+        let child = tree.add_child(root, Rect::new(10.0, 10.0, 20.0, 20.0)).unwrap();
+        (tree, root, child)
+    }
+
+    fn advanced_by(tree: &RenderTree, mutate: impl FnOnce()) -> bool {
+        let before = tree.geometry_revision();
+        mutate();
+        tree.geometry_revision() != before
+    }
+
+    #[test]
+    fn reads_do_not_advance_it() {
+        let (tree, _root, child) = tree_with_child();
+        assert!(!advanced_by(&tree, || {
+            let _ = tree.element_bounds(child);
+            let _ = tree.parent_of(child);
+        }));
+    }
+
+    #[test]
+    fn adding_a_node_advances_it() {
+        let (tree, root, _child) = tree_with_child();
+        assert!(advanced_by(&tree, || {
+            tree.add_child(root, Rect::new(0.0, 0.0, 5.0, 5.0)).unwrap();
+        }));
+        assert!(advanced_by(&tree, || {
+            tree.add_root(Rect::new(0.0, 0.0, 5.0, 5.0)).unwrap();
+        }));
+    }
+
+    #[test]
+    fn every_geometry_mutator_advances_it() {
+        let (tree, root, child) = tree_with_child();
+        assert!(advanced_by(&tree, || {
+            tree.set_bounds(child, Rect::new(11.0, 10.0, 20.0, 20.0)).unwrap();
+        }));
+        assert!(advanced_by(&tree, || {
+            tree.set_geometry(child, Rect::new(12.0, 10.0, 20.0, 20.0), None).unwrap();
+        }));
+        assert!(advanced_by(&tree, || {
+            tree.set_transform(child, Mat3::translate(3.0, 0.0)).unwrap();
+        }));
+        assert!(advanced_by(&tree, || {
+            tree.set_compositor_animation(child, Mat3::translate(4.0, 0.0), 1.0, None)
+                .unwrap();
+        }));
+        assert!(advanced_by(&tree, || {
+            let specs = [
+                RenderNodeSpec::new(Some(root), None, Rect::new(0.0, 0.0, 100.0, 100.0)),
+                RenderNodeSpec::new(Some(child), Some(0), Rect::new(30.0, 10.0, 20.0, 20.0)),
+            ];
+            tree.sync_structure(&specs).unwrap();
+        }));
+    }
+
+    #[test]
+    fn a_moved_ancestor_is_visible_through_the_revision() {
+        let (tree, root, child) = tree_with_child();
+        let before = tree.element_bounds(child).unwrap();
+
+        let revision = tree.geometry_revision();
+        tree.set_bounds(root, Rect::new(50.0, 0.0, 100.0, 100.0)).unwrap();
+
+        assert_ne!(tree.geometry_revision(), revision);
+        assert_eq!(tree.element_bounds(child).unwrap().x, before.x + 50.0);
+    }
+}

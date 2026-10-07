@@ -2,7 +2,8 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::{Rc, Weak};
 
-use aimer_attribute::{Bounds, CacheBounds, Vec2d};
+use aimer_attribute::{Bounds, Vec2d};
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::{BuildContext, Color, WindowHandle};
 
 use crate::selection::session::{SelectionSession, SelectionSlot};
@@ -68,8 +69,10 @@ pub(crate) trait Selectable {
 /// assert!(geometry.painted_bounds().is_some());
 /// ```
 pub(crate) struct TextGeometry {
-    /// Absolute logical bounds of the last painted frame.
-    pub bounds: CacheBounds,
+    /// Absolute logical bounds of the last painted frame. Once the render tree
+    /// supplies this element's node, every absolute rectangle below is shifted
+    /// by how far the node has moved since that paint ([`Self::shift`]).
+    pub bounds: InteractionBounds,
     /// Per-grapheme hit regions of the last painted frame, in absolute logical
     /// coordinates.
     pub regions: RefCell<Vec<TextHitRegion>>,
@@ -90,7 +93,7 @@ impl TextGeometry {
     #[inline]
     pub fn new(window: WindowHandle) -> Self {
         Self {
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
             regions: RefCell::new(Vec::new()),
             interaction: RefCell::new(None),
             retained_v2_link_hover: RefCell::new(None),
@@ -167,9 +170,53 @@ impl TextGeometry {
         ));
     }
 
+    /// How far the paragraph's render node has moved since it was painted, in
+    /// logical pixels. A scroll moves the node without repainting, and the
+    /// geometry saved at paint time is absolute.
+    #[inline]
+    fn shift(&self) -> (f32, f32) {
+        self.bounds.origin_shift()
+    }
+
+    /// The origin this paragraph paints at, in logical pixels: its render
+    /// node's once the tree supplies one, otherwise the canvas translation the
+    /// caller read (`canvas_x`/`canvas_y`, device pixels).
+    pub(crate) fn origin(&self, canvas_x: f32, canvas_y: f32, scale: f32) -> Vec2d {
+        match self
+            .bounds
+            .is_adopted()
+            .then(|| self.bounds.get_bounds())
+            .flatten()
+        {
+            Some(bounds) => Vec2d {
+                x: bounds.x,
+                y: bounds.y,
+            },
+            None => crate::selection::touch_hold::frame_origin(canvas_x, canvas_y, scale),
+        }
+    }
+
+    /// The painted bounds as a start and end corner, where the node is now.
+    pub fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+        self.painted_bounds().map(|bounds| {
+            (
+                Vec2d {
+                    x: bounds.x,
+                    y: bounds.y,
+                },
+                Vec2d {
+                    x: bounds.x + bounds.width,
+                    y: bounds.y + bounds.height,
+                },
+            )
+        })
+    }
+
     /// Reports whether a pointer is inside the transformed paragraph box.
     #[inline]
     pub fn contains_point(&self, x: f32, y: f32) -> bool {
+        let (shift_x, shift_y) = self.shift();
+        let (x, y) = (x - shift_x, y - shift_y);
         if let Some(snapshot) = self.interaction.borrow().as_ref() {
             let scale = valid_device_scale(snapshot.scale);
             let Some((local_x, local_y)) = snapshot
@@ -197,7 +244,8 @@ impl TextGeometry {
                 && local_y <= top + snapshot.layout.metrics.height;
         }
 
-        self.painted_bounds()
+        self.bounds
+            .canvas_bounds()
             .is_some_and(|bounds| bounds.is_inside(x, y))
     }
 
@@ -207,6 +255,8 @@ impl TextGeometry {
     /// This is what separates the I-beam from the default cursor past the end
     /// of a short line.
     pub fn hits_glyph(&self, x: f32, y: f32) -> bool {
+        let (shift_x, shift_y) = self.shift();
+        let (x, y) = (x - shift_x, y - shift_y);
         if let Some(snapshot) = self.interaction.borrow().as_ref() {
             let scale = valid_device_scale(snapshot.scale);
             let Some((local_x, local_y)) = snapshot
@@ -269,11 +319,16 @@ impl TextGeometry {
 impl Selectable for TextGeometry {
     #[inline]
     fn painted_bounds(&self) -> Option<Bounds> {
-        self.bounds.get_bounds()
+        let (shift_x, shift_y) = self.shift();
+        self.bounds
+            .canvas_bounds()
+            .map(|bounds| Bounds::new(bounds.x + shift_x, bounds.y + shift_y, bounds.width, bounds.height))
     }
 
     #[inline]
     fn offset_at(&self, x: f32, y: f32) -> Option<usize> {
+        let (shift_x, shift_y) = self.shift();
+        let (x, y) = (x - shift_x, y - shift_y);
         if let Some(snapshot) = self.interaction.borrow().as_ref() {
             let scale = valid_device_scale(snapshot.scale);
             let (local_x, local_y) = snapshot
@@ -285,6 +340,16 @@ impl Selectable for TextGeometry {
     }
 
     fn caret_rect(&self, offset: usize) -> Option<Bounds> {
+        let (shift_x, shift_y) = self.shift();
+        self.caret_rect_painted(offset).map(|caret| {
+            Bounds::new(caret.x + shift_x, caret.y + shift_y, caret.width, caret.height)
+        })
+    }
+}
+
+impl TextGeometry {
+    /// The caret rectangle where the paragraph was painted.
+    fn caret_rect_painted(&self, offset: usize) -> Option<Bounds> {
         if let Some(snapshot) = self.interaction.borrow().as_ref() {
             let caret = snapshot.layout.caret_geometry(offset)?;
             let bounds = transformed_rect_bounds(
@@ -542,6 +607,43 @@ mod tests {
                 line_index: 0,
                 bounds: Bounds::new(20.0, 42.0, 20.0, 60.0),
             }]
+        );
+    }
+
+    /// A scroll moves the paragraph's node without painting it again. Pointer
+    /// queries and the geometry they report must follow the node, not stay where
+    /// the paragraph was last painted.
+    #[test]
+    fn queries_follow_the_render_node_after_it_moves_without_a_repaint() {
+        use aimer_cupid::draw_cmd_v2::{Rect, RenderTree};
+
+        let geometry = TextGeometry::new(WindowHandle::headless(PhysicalSize::new(200, 200), 1.0));
+        let transform = Mat3::translate(20.0, 100.0);
+        geometry.save_painted_bounds(1.0, transform, 10.0, 20.0);
+        geometry.set_interaction_layout(Some(interaction_layout()), transform, 1.0);
+        let tree = RenderTree::new();
+        let node = tree.add_root(Rect::new(20.0, 100.0, 10.0, 20.0)).unwrap();
+        geometry.bounds.adopt(aimer_widget::InteractionSource::new(
+            tree.clone(),
+            node,
+            (10.0, 20.0),
+        ));
+        assert!(geometry.contains_point(24.0, 104.0), "where it was painted");
+
+        // The content scrolls 30px up.
+        tree.set_bounds(node, Rect::new(20.0, 70.0, 10.0, 20.0)).unwrap();
+
+        assert!(!geometry.contains_point(24.0, 104.0), "the old place no longer hits");
+        assert!(geometry.contains_point(24.0, 74.0));
+        assert!(geometry.hits_glyph(24.0, 74.0));
+        assert_eq!(Selectable::offset_at(&geometry, 24.0, 74.0), Some(0));
+        assert_eq!(
+            geometry.painted_bounds(),
+            Some(Bounds::new(20.0, 70.0, 10.0, 20.0))
+        );
+        assert_eq!(
+            Selectable::caret_rect(&geometry, 1),
+            Some(Bounds::new(30.0, 74.0, 0.0, 20.0))
         );
     }
 

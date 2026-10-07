@@ -361,7 +361,7 @@ fn retained_context_menu_decoration_renders_at_one_and_two_x_under_opacity() {
             })
             .expect("retained panel is in the GPU render plan");
 
-        let packet = FramePacket::from_v2_direct_with_legacy(
+        let packet = FramePacket::from_v2_direct_with_frame(
             RenderFrame {
                 damage: vec![Rect::new(
                     0.0,
@@ -548,6 +548,22 @@ fn context_menu_row_choice_runs_and_dismisses_through_the_retained_overlay() {
     let row_node = app.app.render_node_for_element(row_ids[0]).unwrap();
     assert!(plan.local_v2_revision(row_node).is_some());
     let _ = app.window.take_redraw_request();
+
+    // The menu's hit area comes from the render tree, and agrees with where the
+    // canvas laid it out.
+    let audit = app.app.bounds_audit().expect("the visible menu has a root");
+    assert!(
+        audit
+            .interaction_adopted_by_type
+            .contains_key("ContextMenuRows"),
+        "the rows take their hit area from the render tree: {:?}",
+        audit.interaction_adopted_by_type
+    );
+    assert!(
+        audit.interaction_disagreements.is_empty(),
+        "{:?}",
+        audit.interaction_disagreements
+    );
 
     let rows = app.app.render_tree().element_bounds(rows_node).unwrap();
     let click = Vec2d {

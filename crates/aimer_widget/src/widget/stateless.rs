@@ -273,7 +273,7 @@ impl StatelessElement {
 }
 
 impl Drawable for StatelessElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.rebuild_if_dirty(ctx);
         // Safety: single-threaded rendering pipeline.
         let child = unsafe { &*self.child.0.get() };
@@ -460,7 +460,7 @@ mod tests {
         }
     }
     impl Drawable for Leaf {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl LayoutElement for Leaf {}
     impl EventElement for Leaf {}
@@ -477,7 +477,7 @@ mod tests {
     }
 
     impl Drawable for CountingLeaf {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl LayoutElement for CountingLeaf {}
@@ -506,7 +506,7 @@ mod tests {
     }
 
     impl Drawable for SiblingBranch {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl LayoutElement for SiblingBranch {}
@@ -522,7 +522,7 @@ mod tests {
         }
     }
     impl Drawable for FlexibleLeaf {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl LayoutElement for FlexibleLeaf {
         fn flex(&self) -> Option<f32> {

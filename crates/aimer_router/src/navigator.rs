@@ -292,7 +292,7 @@ impl<R: 'static> VisitorElement for NavigatorElement<R> {
 }
 
 impl<R: 'static> Drawable for NavigatorElement<R> {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.update(ctx));
     }
 
@@ -745,7 +745,7 @@ mod tests {
     impl LayoutElement for NavigatorLookupElement {}
     impl Rebuildable for NavigatorLookupElement {}
     impl Drawable for NavigatorLookupElement {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             let _ = NavigatorController::<TestRoute>::of(ctx);
             NAVIGATOR_OBSERVED.set(true);
         }
@@ -795,7 +795,7 @@ mod tests {
     impl LayoutElement for NavigatorControllerOperationsElement {}
     impl Rebuildable for NavigatorControllerOperationsElement {}
     impl Drawable for NavigatorControllerOperationsElement {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             let navigator = NavigatorController::<TestRoute>::of(ctx);
 
             match NAVIGATOR_OPERATION_STEP.get() {

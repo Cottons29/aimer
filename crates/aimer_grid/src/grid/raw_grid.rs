@@ -6,7 +6,7 @@ use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, Drawable, Element, ErrorElement, EventElement, LayoutElement, Rebuildable,
-    VisitorElement, detect_overflow, paint_overflow_indicator,
+    VisitorElement, detect_overflow,
 };
 
 use super::implementation::{GridAlignment, GridOverflow};
@@ -634,7 +634,6 @@ impl RawGrid {
         ctx.canvas.translate(offset);
         item.child.update(&child_ctx);
         ctx.canvas.restore();
-        paint_overflow_indicator(ctx, cell_size, overflow, item.child.debug_name());
         if self.overflow == GridOverflow::Clip {
             ctx.canvas.clear_clip();
         }
@@ -739,8 +738,10 @@ impl Drawable for RawGrid {
         if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
             return false;
         }
-        let Ok(layout) = self.layout_grid(ctx) else {
-            return false;
+        let layout = match self.layout_grid(ctx) {
+            Ok(layout) => layout,
+            // A grid that cannot be laid out shows the reason in its own list.
+            Err(_) => return ErrorElement::can_record_message(ctx),
         };
         if !layout.size.width.is_finite()
             || !layout.size.height.is_finite()
@@ -804,7 +805,11 @@ impl Drawable for RawGrid {
         })
     }
 
-    fn paint_local_v2(&self, _ctx: &BuildContext) {}
+    fn paint_local_v2(&self, ctx: &BuildContext) {
+        if let Err(error) = self.layout_grid(ctx) {
+            ErrorElement::record_message(ctx, &format!("Grid layout error: {error}"));
+        }
+    }
 
     fn retained_v2_child_context_at<'a>(
         &self,
@@ -860,7 +865,7 @@ impl Drawable for RawGrid {
         Some((bounds, clip))
     }
 
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         match self.layout_grid(ctx) {
             Ok(layout) => {
                 for (item, placement) in self.children.iter().zip(&layout.placements) {
@@ -894,7 +899,9 @@ impl Drawable for RawGrid {
                     self.draw_item(ctx, item, *placement, &layout);
                 }
             }
-            Err(error) => ErrorElement::draw_message(ctx, &format!("Grid layout error: {error}")),
+            // The message is recorded by `paint_local_v2`; there is no child to
+            // visit when the layout failed.
+            Err(_) => {}
         }
     }
 }
@@ -1098,7 +1105,7 @@ mod tests {
     }
 
     impl Drawable for HitTestChild {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl EventElement for HitTestChild {}
@@ -1115,7 +1122,7 @@ mod tests {
     }
 
     impl Drawable for WorkRecorder {
-        fn draw(&self, _ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             *self.draw_count.borrow_mut() += 1;
         }
     }
@@ -1135,7 +1142,7 @@ mod tests {
     }
 
     impl Drawable for VisibleRectRecorder {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             *self.visible_rect.borrow_mut() = ctx.visible_rect;
         }
     }
@@ -1191,6 +1198,57 @@ mod tests {
             max_height: 100.0,
         };
         context
+    }
+
+    #[test]
+    fn a_grid_that_cannot_be_laid_out_records_the_reason_in_its_own_list() {
+        let canvas = Box::leak(Box::new(InnerCanvas::new()));
+        let mut ctx = build_context(canvas);
+        // A fractional column has nothing to divide in an unbounded axis.
+        ctx.box_constraint.max_width = f32::MAX;
+        let grid = RawGrid {
+            columns: vec![GridTrack::Fr(1.0)],
+            rows: vec![GridTrack::Auto],
+            column_gap: 0.0,
+            row_gap: 0.0,
+            horizontal_alignment: GridAlignment::Stretch,
+            vertical_alignment: GridAlignment::Stretch,
+            overflow: GridOverflow::Visible,
+            children: vec![RawGridItem {
+                child: Element::boxed(ZeroSizedBox),
+                placement: GridPlacement::default(),
+                horizontal_alignment: None,
+                vertical_alignment: None,
+            }],
+            layout_cache: RefCell::new(Vec::new()),
+        };
+        assert!(grid.layout_grid(&ctx).is_err());
+
+        let tree = aimer_cupid::draw_cmd_v2::RenderTree::new();
+        let root = tree
+            .add_root(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 200.0, 100.0))
+            .unwrap();
+        let node_context = tree.context(root).unwrap();
+        ctx.with_local_v2_paint_context(node_context, |ctx| {
+            assert!(grid.can_paint_local_v2(ctx));
+            grid.paint_local_v2(ctx);
+        });
+
+        let message = tree
+            .draw_list_snapshot(root)
+            .unwrap()
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                aimer_cupid::draw_cmd_v2::DrawCommand::DrawText { text, .. } => {
+                    Some(text.to_string())
+                }
+                _ => None,
+            });
+        // Release builds replace the detail with a generic line.
+        assert!(message.is_some(), "the failure must be visible");
+        #[cfg(debug_assertions)]
+        assert!(message.unwrap().contains("Grid layout error"));
     }
 
     #[test]

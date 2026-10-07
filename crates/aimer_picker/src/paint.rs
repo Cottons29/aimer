@@ -28,38 +28,6 @@ trait PickerPaintCanvas {
     fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, font_weight: u16);
 }
 
-impl PickerPaintCanvas for BuildContext<'_> {
-    fn scale(&self) -> f32 {
-        self.scale
-    }
-
-    fn fill_color_rect(
-        &self,
-        pos: Vec2d,
-        size: ResolvedSize,
-        color: Color,
-        border_radius: [f32; 4],
-    ) {
-        self.canvas.fill_color_rect(pos, size, color, border_radius);
-    }
-
-    fn stroke_rect(
-        &self,
-        pos: Vec2d,
-        size: ResolvedSize,
-        color: Color,
-        stroke_width: f32,
-        border_radius: [f32; 4],
-    ) {
-        self.canvas
-            .stroke_rect(pos, size, color, stroke_width, border_radius);
-    }
-
-    fn draw_text(&self, text: &str, pos: Vec2d, font_size: f32, color: Color, font_weight: u16) {
-        self.canvas.draw_text(text, pos, font_size, color, font_weight);
-    }
-}
-
 pub(crate) struct RetainedPickerCanvas<'a> {
     canvas: &'a Canvas,
     scale: f32,

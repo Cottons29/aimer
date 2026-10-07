@@ -253,7 +253,7 @@ mod tests {
     }
 
     impl Drawable for Leaf {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl EventElement for Leaf {}

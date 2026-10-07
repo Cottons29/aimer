@@ -1,6 +1,7 @@
 //! Composable visual parts used by [`Slider`](super::Slider) controls.
 
-use aimer_attribute::{CacheBounds, Dimension, ResolvedSize, Size, Vec2d};
+use aimer_attribute::{Dimension, ResolvedSize, Size, Vec2d};
+use aimer_widget::InteractionBounds;
 use aimer_canvas::Canvas;
 use aimer_cupid::utilities::{Color as V2Color, Rect};
 use aimer_widget::base::{BuildContext, Color};
@@ -28,7 +29,7 @@ impl SliderTrack {
 
 impl Widget for SliderTrack {
     fn to_element(self, _ctx: &BuildContext) -> AnyElement {
-        RawSliderTrack { bounds: CacheBounds::new() }.boxed()
+        RawSliderTrack { bounds: InteractionBounds::new() }.boxed()
     }
 
     fn debug_name(&self) -> &'static str {
@@ -39,7 +40,7 @@ impl Widget for SliderTrack {
 impl PortableWidget for SliderTrack {}
 
 struct RawSliderTrack {
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
 }
 
 impl RawSliderTrack {
@@ -60,17 +61,28 @@ impl RawSliderTrack {
 }
 
 impl Drawable for RawSliderTrack {
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("SliderTrack")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
         let radius = size.height.min(size.width) / 2.0;
-        ctx.canvas.fill_color_rect(
-            Vec2d::default(),
-            size,
-            Color::Rgba(190, 196, 205, 255),
-            [radius; 4],
-        );
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -227,7 +239,7 @@ impl Widget for SliderThumb {
             size: self.size,
             radius: self.radius,
             color: self.color,
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
         }
         .boxed()
     }
@@ -243,7 +255,7 @@ struct RawSliderThumb {
     size: f32,
     radius: f32,
     color: Color,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
 }
 
 impl RawSliderThumb {
@@ -264,7 +276,24 @@ impl RawSliderThumb {
 }
 
 impl Drawable for RawSliderThumb {
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("SliderThumb")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
@@ -273,8 +302,6 @@ impl Drawable for RawSliderThumb {
             .min(size.width / 2.0)
             .min(size.height / 2.0)
             .max(0.0);
-        ctx.canvas
-            .fill_color_rect(Vec2d::default(), size, self.color, [radius; 4]);
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -439,7 +466,7 @@ impl Widget for SliderTrail {
             height: self.height,
             radius: self.radius,
             color: self.color,
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
         }
         .boxed()
     }
@@ -456,11 +483,28 @@ struct RawSliderTrail {
     height: f32,
     radius: f32,
     color: Color,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
 }
 
 impl Drawable for RawSliderTrail {
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("SliderTrail")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
@@ -469,8 +513,6 @@ impl Drawable for RawSliderTrail {
             .min(size.width / 2.0)
             .min(size.height / 2.0)
             .max(0.0);
-        ctx.canvas
-            .fill_color_rect(Vec2d::default(), size, self.color, [radius; 4]);
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {

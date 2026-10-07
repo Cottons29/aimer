@@ -114,7 +114,7 @@ impl VisitorElement for ShellElement {
 }
 
 impl Drawable for ShellElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.update(ctx));
     }
 
@@ -483,7 +483,7 @@ mod tests {
     impl EventElement for DeferredOutletElement {}
     impl LayoutElement for DeferredOutletElement {}
     impl Drawable for DeferredOutletElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl Rebuildable for DeferredOutletElement {
         fn rebuild_if_dirty(&self, ctx: &BuildContext) {

@@ -20,7 +20,7 @@ use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-use aimer_attribute::CacheBounds;
+use aimer_widget::InteractionBounds;
 use aimer_attribute::position::Vec2d;
 #[allow(unused)]
 use aimer_macro::key;
@@ -832,7 +832,17 @@ impl Widget for ScrollableFrame {
             viewport_h,
             vertical_bar_width,
             horizontal_bar_height,
-            bounds: CacheBounds::with_vec2d(child_ctx.parent_pos),
+            bounds: {
+                let bounds = InteractionBounds::new();
+                bounds.save(
+                    1.0,
+                    child_ctx.parent_pos.x,
+                    child_ctx.parent_pos.y,
+                    0.0,
+                    0.0,
+                );
+                bounds
+            },
             event_dispatcher: RefCell::new(aimer_widget::EventDispatcher::new()),
             layout_cache: Default::default(),
             #[cfg(not(feature = "portable-guest"))]

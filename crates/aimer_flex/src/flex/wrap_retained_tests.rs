@@ -37,7 +37,7 @@ impl VisitorElement for FixedElement {
 impl EventElement for FixedElement {}
 impl Rebuildable for FixedElement {}
 impl Drawable for FixedElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl LayoutElement for FixedElement {
     fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
@@ -141,7 +141,7 @@ impl VisitorElement for CountedElement {
 impl EventElement for CountedElement {}
 impl Rebuildable for CountedElement {}
 impl Drawable for CountedElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl LayoutElement for CountedElement {
     fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {

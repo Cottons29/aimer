@@ -847,18 +847,6 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
 /// [`take_redraw_request`](Self::take_redraw_request) reports and
 /// [`pump_frames`](Self::pump_frames) acts on.
     pub fn render_frame(&mut self) {
-        self.render_frame_with(false);
-    }
-
-    /// Renders one frame the way a platform window does: through the direct
-    /// retained render plan. [`render_frame`](Self::render_frame) keeps the
-    /// flat legacy presentation that most tests were written against.
-    #[doc(hidden)]
-    pub fn render_frame_direct(&mut self) {
-        self.render_frame_with(true);
-    }
-
-    fn render_frame_with(&mut self, direct_render_plan: bool) {
         if self.exit_requested {
             return;
         }
@@ -889,7 +877,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             let window = self.window.clone();
             let frame_result = self
                 .app
-                .split_for_frame(window, direct_render_plan)
+                .split_for_frame(window)
                 .1
                 .draw(&self.canvas, width, height);
             #[cfg(test)]
@@ -946,18 +934,6 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         let mut frames = 0;
         while frames < max_frames && self.take_redraw_request() && !self.exit_requested {
             self.render_frame();
-            frames += 1;
-        }
-        frames
-    }
-
-    /// [`pump_frames`](Self::pump_frames) through the direct retained render
-    /// plan, as a platform window presents.
-    #[doc(hidden)]
-    pub fn pump_frames_direct(&mut self, max_frames: usize) -> usize {
-        let mut frames = 0;
-        while frames < max_frames && self.take_redraw_request() && !self.exit_requested {
-            self.render_frame_direct();
             frames += 1;
         }
         frames
@@ -1820,18 +1796,6 @@ mod tests {
     }
 
     impl Drawable for HeadlessVirtualizedRowElement {
-        fn draw(&self, ctx: &BuildContext) {
-            let color = headless_virtualized_row_color(self.row_index);
-            ctx.canvas.fill_color_rect(
-                Vec2d::ZERO,
-                ResolvedSize {
-                    width: 100.0 * ctx.scale,
-                    height: 20.0 * ctx.scale,
-                },
-                color,
-                [0.0; 4],
-            );
-        }
 
         fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
             true
@@ -2070,17 +2034,6 @@ mod tests {
 
     impl aimer_widget::PortableWidget for HeadlessHorizontalItemPaintWidget {}
 
-    fn draw_horizontal_item(ctx: &BuildContext, color: Color, height: f32) {
-        ctx.canvas.fill_color_rect(
-            Vec2d::ZERO,
-            ResolvedSize {
-                width: 20.0 * ctx.scale,
-                height: height * ctx.scale,
-            },
-            color,
-            [0.0; 4],
-        );
-    }
 
     fn paint_horizontal_item(ctx: &BuildContext, paints: &Cell<usize>, color: Color, height: f32) {
         paints.set(paints.get() + 1);
@@ -2111,10 +2064,6 @@ mod tests {
     }
 
     impl Drawable for HeadlessHorizontalVirtualizedItemElement {
-        fn draw(&self, ctx: &BuildContext) {
-            draw_horizontal_item(ctx, headless_virtualized_row_color(self.row_index), 80.0);
-        }
-
         fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
             true
         }
@@ -2155,10 +2104,6 @@ mod tests {
     }
 
     impl Drawable for HeadlessHorizontalStatefulItemElement {
-        fn draw(&self, ctx: &BuildContext) {
-            draw_horizontal_item(ctx, self.color, self.height);
-        }
-
         fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
             true
         }
@@ -2180,7 +2125,7 @@ mod tests {
         app.canvas.begin_frame();
         let window = app.window.clone();
         let (scale, damage) = {
-            let (_render_ctx, mut drawer) = app.app.split_for_frame(window, true);
+            let (_render_ctx, mut drawer) = app.app.split_for_frame(window);
             drawer.draw(&app.canvas, width, height)
         };
         app.app.end_frame();
@@ -2848,16 +2793,7 @@ mod tests {
     }
 
     impl Drawable for MixedPacketElement {
-        fn draw(&self, ctx: &BuildContext) {
-            ctx.canvas.fill_color_rect(
-                Vec2d::ZERO,
-                ResolvedSize {
-                    width: 20.0 * ctx.scale,
-                    height: 10.0 * ctx.scale,
-                },
-                aimer_widget::base::Color::BLUE,
-                [0.0; 4],
-            );
+        fn update(&self, ctx: &BuildContext) {
             self.child.update(ctx);
         }
 
@@ -2898,7 +2834,7 @@ mod tests {
     struct LegacyPacketElement;
 
     impl Drawable for LegacyPacketElement {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             ctx.canvas.fill_color_rect(
                 Vec2d::ZERO,
                 ResolvedSize {
@@ -2940,7 +2876,7 @@ mod tests {
     struct LegacyModalElement;
 
     impl Drawable for LegacyModalElement {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             ctx.canvas.fill_color_rect(
                 Vec2d::ZERO,
                 ResolvedSize {
@@ -2970,7 +2906,7 @@ mod tests {
     impl EventElement for LegacyModalElement {}
 
     #[test]
-    fn headless_frame_submits_mixed_local_v2_and_legacy_commands_at_device_scale() {
+    fn headless_frame_keeps_retained_v2_out_of_the_flat_legacy_list() {
         let paints = Rc::new(Cell::new(0));
         let mut app = AimerApp::start_headless_with(
             MixedPacketWidget {
@@ -3001,28 +2937,14 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(
-            &colors[..2],
-            &[
-                aimer_cupid::utilities::Color::rgba8(220, 20, 20, 255),
-                aimer_cupid::utilities::Color::rgba8(0, 255, 0, 255),
-            ]
-        );
-        assert!(colors.contains(&aimer_cupid::utilities::Color::rgba8(128, 0, 128, 255)));
-        assert_eq!(
-            colors.last(),
-            Some(&aimer_cupid::utilities::Color::rgba8(128, 0, 128, 255))
-        );
-        assert!(!colors.contains(&aimer_cupid::utilities::Color::rgba8(0, 0, 255, 255)));
-        assert!(app.canvas.draw_list().commands().iter().any(|command| matches!(
-            command,
-            aimer_cupid::draw_cmd::DrawCommand::SetTransform { matrix }
-                if matrix.cols[0][0] == 2.0 && matrix.cols[1][1] == 2.0
-        )));
+        // Every paint travels in the render plan. The legacy-only elements (the
+        // green packet child and the purple modal content) have no retained
+        // paint and draw nothing, and the flat list holds no paint at all.
+        assert!(colors.is_empty(), "the flat list kept paint commands: {colors:?}");
     }
 
     #[test]
-    fn windowed_drawer_keeps_the_legacy_frame_separate_from_the_complete_plan() {
+    fn windowed_drawer_submits_the_complete_retained_plan_and_no_flat_paint() {
         let paints = Rc::new(Cell::new(0));
         let mut app = AimerApp::start_headless_with(
             MixedPacketWidget {
@@ -3035,7 +2957,7 @@ mod tests {
         );
         app.canvas.begin_frame();
         let window = app.window.clone();
-        let (_, mut drawer) = app.app.split_for_frame(window, true);
+        let (_, mut drawer) = app.app.split_for_frame(window);
         let (scale, damage) = drawer.draw(&app.canvas, 200, 100);
 
         assert_eq!(paints.get(), 1);
@@ -3054,16 +2976,13 @@ mod tests {
             .render_node_for_element(mixed_id)
             .expect("the mixed widget has a retained render node");
         assert!(plan.local_v2_revision(mixed_node).is_some());
-        let legacy_colors = app.canvas.draw_list().commands().iter().filter_map(|command| match command {
+        let flat_colors = app.canvas.draw_list().commands().iter().filter_map(|command| match command {
             aimer_cupid::draw_cmd::DrawCommand::FillRect { color, .. } => Some(*color),
             _ => None,
         }).collect::<Vec<_>>();
-        assert!(legacy_colors.iter().any(|color| {
-            *color == aimer_cupid::utilities::Color::rgba8(0, 255, 0, 255)
-        }));
-        assert!(!legacy_colors.iter().any(|color| {
-            *color == aimer_cupid::utilities::Color::blue()
-        }));
+        // The legacy-only packet child has no retained paint, so it draws
+        // nothing, and the retained blue travels in the plan, not the flat list.
+        assert!(flat_colors.is_empty(), "the flat list kept paint commands: {flat_colors:?}");
     }
 
     #[test]
@@ -4806,7 +4725,7 @@ mod tests {
     }
 
     impl Drawable for RecordingElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl LayoutElement for RecordingElement {}
     impl Rebuildable for RecordingElement {}
@@ -4853,7 +4772,7 @@ mod tests {
     }
 
     impl Drawable for ObservingElement {
-        fn draw(&self, _ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             self.observed.set(self.source.get());
         }
     }
@@ -4866,10 +4785,11 @@ mod tests {
     }
     impl EventElement for ObservingElement {}
 
-    /// A page can be checked for legacy paint without reaching into the frame
-    /// loop: the census names every element that fell back to a legacy island.
+    /// An element that only implements `update` has no retained paint: it
+    /// stays unresolved (and is asked again every frame) while the host around
+    /// it paints locally.
     #[test]
-    fn a_headless_app_reports_which_elements_paint_through_legacy_islands() {
+    fn an_element_without_retained_paint_stays_unresolved_and_is_retried() {
         let mut app = AimerApp::start_headless(RecordingWidget {
             builds: Arc::new(AtomicUsize::new(0)),
             cancels: Arc::new(AtomicUsize::new(0)),
@@ -4880,12 +4800,12 @@ mod tests {
             .paint_source_census()
             .expect("a mounted app has a root to inspect");
 
-        // `RecordingElement` only implements the legacy `draw`.
+        // `RecordingElement` only implements `update`.
         assert!(
             census
-                .island_roots
+                .unresolved_roots
                 .iter()
-                .any(|island| island.debug_name == "RecordingElement"),
+                .any(|element| element.debug_name == "RecordingElement"),
             "{census:?}"
         );
         assert!(census.local_v2 > 0, "the host around it paints locally");
@@ -5045,7 +4965,7 @@ mod tests {
     }
 
     impl Drawable for OrderedElement {
-        fn draw(&self, _ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             self.order.borrow_mut().push("build");
         }
     }
@@ -5084,7 +5004,7 @@ mod tests {
     }
 
     impl Drawable for PreeditElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl LayoutElement for PreeditElement {}
     impl Rebuildable for PreeditElement {}
@@ -5362,7 +5282,7 @@ mod tests {
     }
 
     impl Drawable for CapturingElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl LayoutElement for CapturingElement {
         fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
@@ -5458,7 +5378,7 @@ mod tests {
     }
 
     impl Drawable for ScrollRecordingElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl LayoutElement for ScrollRecordingElement {
         fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
@@ -5653,7 +5573,7 @@ mod tests {
     struct CursorElement;
 
     impl Drawable for CursorElement {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             ctx.window.set_pointer_cursor();
         }
     }
@@ -5803,7 +5723,7 @@ mod tests {
     }
 
     impl Drawable for NoopScrollElement {
-        fn draw(&self, _ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             self.draws.fetch_add(1, Ordering::SeqCst);
         }
     }
@@ -6002,7 +5922,7 @@ mod tests {
     }
 
     impl Drawable for AnimatingElement {
-        fn draw(&self, _ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             // The way an animation, a state update, or an opening overlay asks
             // for the frame that continues it.
             if self.frames.fetch_add(1, Ordering::SeqCst) < 2 {
@@ -6113,7 +6033,7 @@ mod tests {
     struct RedrawElement;
 
     impl Drawable for RedrawElement {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             ctx.window.request_redraw();
         }
     }
@@ -6147,7 +6067,7 @@ mod tests {
     struct UiMemoryProbeElement([u64; 4]);
 
     impl Drawable for UiMemoryProbeElement {
-        fn draw(&self, _ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             let _ = self.0;
         }
     }

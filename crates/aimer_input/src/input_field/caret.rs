@@ -309,18 +309,6 @@ struct DefaultCaretElement {
 }
 
 impl Drawable for DefaultCaretElement {
-    fn draw(&self, ctx: &BuildContext) {
-        if !self.context.is_focused() || !self.context.is_visible() {
-            return;
-        }
-
-        ctx.canvas.fill_color_rect(
-            (0.0, 0.0).into(),
-            ctx.parent_size,
-            self.color.get(),
-            [0.0; 4],
-        );
-    }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         ctx.scale.is_finite()

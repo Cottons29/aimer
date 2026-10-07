@@ -1,10 +1,10 @@
-use std::cell::Cell;
 
 use aimer_attribute::BoxConstraint;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_container::ZeroSizedBox;
-use aimer_widget::base::BuildContext;
+use aimer_widget::InteractionBounds;
+use aimer_widget::base::{BuildContext, ResolvedSize};
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, LayoutElement, Rebuildable,
     VisitorElement, Widget,
@@ -186,7 +186,7 @@ impl<W: Widget> Widget for Positioned<W> {
             bottom: self.bottom,
             transform: self.transform,
             layer: self.layer,
-            bounds: Cell::new(None),
+            bounds: InteractionBounds::new(),
         }
         .boxed()
     }
@@ -226,7 +226,7 @@ pub struct RawPositionedElement<E: Element> {
     pub(crate) bottom: Dimension,
     pub(crate) transform: Transform,
     pub(crate) layer: u32,
-    pub(crate) bounds: Cell<Option<(Vec2d, Vec2d)>>,
+    pub(crate) bounds: InteractionBounds,
 }
 
 impl<E: Element> RawPositionedElement<E> {
@@ -243,7 +243,7 @@ impl<E: Element> RawPositionedElement<E> {
             bottom: Dimension::Auto,
             transform: Default::default(),
             layer: 0,
-            bounds: Cell::new(None),
+            bounds: InteractionBounds::new(),
         }
     }
 
@@ -347,6 +347,28 @@ impl<E: Element> RawPositionedElement<E> {
 }
 
 impl<E: Element> Drawable for RawPositionedElement<E> {
+    /// Hit-tested over the positioned child, which starts `offset` in from the
+    /// node. A transform the layout cannot express has no hit area.
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        let (_, child_ctx) = self.retained_child_layout(ctx)?;
+        Some(self.child.content_size(&child_ctx))
+    }
+
+    fn retained_v2_interaction_offset(&self, ctx: &BuildContext) -> (f32, f32) {
+        self.retained_child_layout(ctx)
+            .map_or((0.0, 0.0), |(offset, _)| (offset.x, offset.y))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("Positioned")
+    }
+
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         let Some((_, child_ctx)) = self.retained_child_layout(ctx) else {
             return false;
@@ -414,21 +436,18 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
 
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         let Some((offset, child_ctx)) = self.retained_child_layout(ctx) else {
-            self.bounds.set(None);
+            self.bounds.clear_canvas();
             return;
         };
         let size = self.child.content_size(&child_ctx);
         let (start_x, start_y) = ctx.canvas.get_transform_translation();
-        self.bounds.set(Some((
-            Vec2d {
-                x: (start_x + offset.x) / ctx.scale,
-                y: (start_y + offset.y) / ctx.scale,
-            },
-            Vec2d {
-                x: (start_x + offset.x + size.width) / ctx.scale,
-                y: (start_y + offset.y + size.height) / ctx.scale,
-            },
-        )));
+        self.bounds.save(
+            ctx.scale,
+            start_x + offset.x,
+            start_y + offset.y,
+            size.width,
+            size.height,
+        );
         ctx.canvas.save();
         ctx.canvas.translate(offset);
         self.child.sync_paint_geometry(&child_ctx);
@@ -443,11 +462,11 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
         self.child.is_paint_bounded()
     }
 
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         // A position or non-identity transform can change the wrapper's
         // screen rectangle. Unknown transforms stay uncached so bounded
         // pointer descent never under-culls a child.
-        self.bounds.set(None);
+        self.bounds.clear_canvas();
         // debug!("Positioned::draw");
         let is_auto = self.top == Dimension::Auto
             && self.left == Dimension::Auto
@@ -494,16 +513,13 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
             | Transform::Rotate(..) => None,
         } {
             let (start_x, start_y) = ctx.canvas.get_transform_translation();
-            let scale = ctx.scale;
-            let l_start = Vec2d {
-                x: (start_x + offset_x + transform_x) / scale,
-                y: (start_y + offset_y + transform_y) / scale,
-            };
-            let l_end = Vec2d {
-                x: (start_x + offset_x + transform_x + child_size.width) / scale,
-                y: (start_y + offset_y + transform_y + child_size.height) / scale,
-            };
-            self.bounds.set(Some((l_start, l_end)));
+            self.bounds.save(
+                ctx.scale,
+                start_x + offset_x + transform_x,
+                start_y + offset_y + transform_y,
+                child_size.width,
+                child_size.height,
+            );
         }
 
         ctx.canvas.translate(Vec2d {
@@ -638,11 +654,11 @@ impl<E: Element> LayoutElement for RawPositionedElement<E> {
 
     #[inline]
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bounds.get()
+        self.bounds.pos_start_end()
     }
 }
 
-// `visit_children` is intentionally empty so `Drawable::draw` doesn't double-
+// `visit_children` is intentionally empty so `Drawable::update` doesn't double-
 // render the child. The default `Rebuildable::mark_needs_rebuild` and
 // `rebuild_if_dirty` both walk `visit_children`, which means in a
 // `Stack → Positioned → Scrollable → Stateful` chain a resize cascade would
@@ -750,7 +766,7 @@ mod tests {
             bottom: Default::default(),
             transform: Default::default(),
             layer: 0,
-            bounds: Cell::new(None),
+            bounds: InteractionBounds::new(),
         };
 
         // `visit_children` is intentionally empty (no double-render).

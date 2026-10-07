@@ -482,7 +482,7 @@ mod tests {
     impl Rebuildable for Probe {}
 
     impl Drawable for Probe {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     #[test]

@@ -16,3 +16,6 @@ aimer_macro.workspace = true
 aimer_space.workspace = true
 aimer_widget.workspace = true
 aimer_cupid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

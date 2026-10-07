@@ -55,6 +55,21 @@ const fn retained_scroll_paint_supported(is_wasm: bool) -> bool {
 }
 
 impl<E: Element> Drawable for RawScrollableContainer<E> {
+    /// Hit-tested over the scroll viewport as laid out.
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.layout_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("Scrollable")
+    }
+
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         let size = self.layout_size(ctx);
         ctx.scale.is_finite()
@@ -243,7 +258,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
         None
     }
 
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         // println!("Scrollable drawing child: {})", self.child.debug_name() );
 
         let scrolling_before_draw = self.ctrl.is_scrolling.get();
@@ -613,7 +628,7 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                         self.child.update(&child_ctx);
                     }
                     #[cfg(feature = "portable-guest")]
-                    self.child.draw(&child_ctx);
+                    self.child.update(&child_ctx);
                 }
 
                 if provisional_extent || !self.child.is_layout_stable() {

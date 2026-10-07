@@ -13,7 +13,7 @@
 //! ```
 //!
 //! The phase boundaries are deliberate. `draw (cached frame)` includes the
-//! production `Drawable::draw` call, which performs its normal clean rebuild
+//! production `Drawable::update` call, which performs its normal clean rebuild
 //! check and cached layout reads. `reconcile (dirty tree)` marks the tree before
 //! the timer starts, because dirty marking normally happens during input or a
 //! state update before the next frame. Hit testing is a pure structural walk;
@@ -275,7 +275,7 @@ struct TraversalElement {
 }
 
 impl Drawable for TraversalElement {
-    fn draw(&self, _context: &BuildContext) {}
+    fn update(&self, _context: &BuildContext) {}
 }
 
 impl VisitorElement for TraversalElement {

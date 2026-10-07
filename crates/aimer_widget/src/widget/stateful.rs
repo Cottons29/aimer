@@ -1996,7 +1996,7 @@ fn register_keyed_subtree(element: &dyn Element) {
 }
 
 impl Drawable for StatefulElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let rebuild_generation = self.rebuild_generation.get();
         self.rebuild_if_dirty(ctx);
         let rebuilt = self.rebuild_generation.get() != rebuild_generation;
@@ -2290,7 +2290,7 @@ mod tests {
         }
     }
     impl Drawable for TestLeaf {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl LayoutElement for TestLeaf {}
     impl EventElement for TestLeaf {}
@@ -2327,7 +2327,7 @@ mod tests {
     }
 
     impl Drawable for PaintCountElement {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.draws.set(self.draws.get() + 1);
             ctx.canvas.fill_rect(
                 Vec2d::ZERO,
@@ -2520,7 +2520,7 @@ mod tests {
     }
 
     impl Drawable for RebuildCountLeaf {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl LayoutElement for RebuildCountLeaf {}
@@ -2755,7 +2755,7 @@ mod tests {
 
     impl LayoutElement for EventProbeElement {}
     impl Drawable for EventProbeElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl Rebuildable for EventProbeElement {}
 
@@ -2803,7 +2803,7 @@ mod tests {
     }
 
     impl Drawable for TraversalElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl LayoutElement for TraversalElement {}
@@ -2929,7 +2929,7 @@ mod tests {
     }
 
     impl Drawable for LifecycleChildElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl LayoutElement for LifecycleChildElement {}

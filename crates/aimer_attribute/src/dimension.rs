@@ -126,6 +126,11 @@ impl CacheBounds {
         self.bound.set(Some(bounds));
     }
 
+    /// Forgets the cached rectangle, so nothing is inside it.
+    pub fn clear(&self) {
+        self.bound.set(None);
+    }
+
     pub fn set_size(&self, size: ResolvedSize) {
         if let Some(mut bound) = self.bound.get() {
             bound.width = size.width;

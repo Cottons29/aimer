@@ -64,7 +64,7 @@ impl AnimatedOverlayContent {
 }
 
 impl Drawable for AnimatedOverlayContent {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.draw_frame(ctx, self.sample_frame(ctx));
     }
 
@@ -296,7 +296,7 @@ mod tests {
     struct TestChild;
 
     impl Drawable for TestChild {
-        fn draw(&self, _ctx: &aimer_widget::base::BuildContext) {}
+        fn update(&self, _ctx: &aimer_widget::base::BuildContext) {}
     }
 
     impl EventElement for TestChild {}

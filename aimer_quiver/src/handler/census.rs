@@ -1,11 +1,9 @@
 //! Diagnostic census of how a window's render nodes obtain their paint.
 //!
-//! A node either records its own commands (`LocalV2`) or is captured as a
-//! legacy island, which owns its whole subtree: every descendant of an island
-//! is drawn by the legacy path no matter what it could do itself. The census
-//! therefore reports islands and the nodes they swallow separately, so a
-//! single non-migrated wrapper high in the tree cannot hide behind a healthy
-//! looking `LocalV2` count.
+//! A node records its own commands (`LocalV2`, possibly an empty list for an
+//! element that paints nothing) or has not been painted yet (`Unresolved`). The
+//! census reports the second group by its topmost nodes, so a wrapper that is
+//! never drawn cannot hide behind a healthy looking `LocalV2` count.
 //!
 //! The frame loop reports it under the `frame-stats` feature; otherwise only
 //! tests call it.
@@ -15,9 +13,9 @@ use super::WindowRenderTree;
 use aimer_cupid::draw_cmd_v2::RenderPaintSource;
 use aimer_widget::{Element, ElementId};
 
-/// A legacy island root and the element type that forced the fallback.
+/// One element a census entry points at, with its type for diagnostics.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct IslandRoot {
+pub struct CensusElement {
     /// The element's identity.
     pub element: ElementId,
     /// The element's `debug_name`.
@@ -27,30 +25,30 @@ pub struct IslandRoot {
 /// Counts of render nodes by paint source for one synchronized tree.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PaintSourceCensus {
-    /// Nodes that record their own v2 commands outside any island.
+    /// Nodes that record their own v2 commands.
     pub local_v2: usize,
-    /// Island roots: nodes captured as one legacy command range.
-    pub legacy_islands: usize,
-    /// Nodes below an island root, drawn legacy regardless of their own
-    /// capabilities.
-    pub swallowed: usize,
-    /// Nodes outside any island that have not selected a paint source.
+    /// Nodes that have not recorded a paint source yet.
     pub unresolved: usize,
     /// Of the unresolved nodes, those the render tree does not know yet: they
     /// were created after the last structure sync, so no node exists to
     /// receive a paint source.
     pub unmapped: usize,
-    /// The island roots, in paint order.
-    pub island_roots: Vec<IslandRoot>,
     /// The tops of unresolved regions: unresolved nodes whose parent is not
     /// itself unresolved. A node that is never drawn stays unresolved and
     /// paints nothing, so these name the elements whose draw never ran.
-    pub unresolved_roots: Vec<IslandRoot>,
+    pub unresolved_roots: Vec<CensusElement>,
     /// Elements that ran `draw` under retained presentation and still have no
     /// render node after the frame's final structure sync. Whatever they paint
     /// is dropped; a parent that draws a child without exposing it through
     /// `visit_children` causes this.
-    pub drawn_unmapped: Vec<IslandRoot>,
+    pub drawn_unmapped: Vec<CensusElement>,
+    /// Elements that drew through `update` without having retained paint, so
+    /// whatever they drew was dropped. Debug builds only.
+    pub dropped_paint: Vec<CensusElement>,
+    /// Elements that had no retained paint to show in some frame: they
+    /// declined (`can_paint_local_v2` was false) or their state was not valid
+    /// enough to paint. They paint nothing. Debug builds only.
+    pub declined_paint: Vec<CensusElement>,
     /// Why the last render-tree synchronization failed (the error's name), if
     /// it did. A failed sync sends the whole frame down the full legacy repaint
     /// path, so every element is "drawn without a render node".
@@ -59,7 +57,7 @@ pub struct PaintSourceCensus {
     /// were collapsed to an empty rectangle so the sync could proceed; they
     /// paint nothing, which is usually a layout bug (for example a percentage of
     /// an unbounded axis).
-    pub invalid_bounds: Vec<IslandRoot>,
+    pub invalid_bounds: Vec<CensusElement>,
 }
 
 impl WindowRenderTree {
@@ -71,11 +69,6 @@ impl WindowRenderTree {
         if self.last_census.as_ref() == Some(&census) {
             return;
         }
-        let islands: Vec<&'static str> = census
-            .island_roots
-            .iter()
-            .map(|island| island.debug_name)
-            .collect();
         let unresolved: Vec<&'static str> = census
             .unresolved_roots
             .iter()
@@ -87,13 +80,10 @@ impl WindowRenderTree {
             .map(|root| root.debug_name)
             .collect();
         aimer_utils::debug!(
-            "render census: local_v2={} legacy_islands={} swallowed={} unresolved={} (unmapped={}) islands={:?} unresolved_roots={:?} drawn_unmapped={:?} sync_error={:?}",
+            "render census: local_v2={} unresolved={} (unmapped={}) unresolved_roots={:?} drawn_unmapped={:?} sync_error={:?}",
             census.local_v2,
-            census.legacy_islands,
-            census.swallowed,
             census.unresolved,
             census.unmapped,
-            islands,
             unresolved,
             drawn_unmapped,
             census.sync_error
@@ -105,8 +95,10 @@ impl WindowRenderTree {
     /// paint order.
     pub(crate) fn paint_source_census(&self, root: &dyn Element) -> PaintSourceCensus {
         let mut census = PaintSourceCensus::default();
-        self.census_node(root, false, false, &mut census);
+        self.census_node(root, false, &mut census);
         census.drawn_unmapped = self.drawn_unmapped.clone();
+        census.dropped_paint = self.dropped_paint.clone();
+        census.declined_paint = self.declined_paint.clone();
         census.sync_error = self.sync_error.map(|error| format!("{error:?}"));
         census.invalid_bounds = self.invalid_bounds.clone();
         census
@@ -117,15 +109,31 @@ impl WindowRenderTree {
     /// after that sync: an element created during the draw itself is mapped by
     /// then and is not a problem.
     pub(crate) fn settle_unmapped_draws(&mut self) {
-        let still_unmapped: Vec<IslandRoot> = aimer_widget::take_unmapped_draws()
+        let still_unmapped: Vec<CensusElement> = aimer_widget::take_unmapped_draws()
             .into_iter()
             .filter(|(id, _)| self.node_for_element(*id).is_none())
-            .map(|(element, debug_name)| IslandRoot {
+            .map(|(element, debug_name)| CensusElement {
                 element,
                 debug_name,
             })
             .collect();
         self.drawn_unmapped = still_unmapped;
+        for (element, debug_name) in aimer_widget::take_declined_paint_elements() {
+            if !self.declined_paint.iter().any(|seen| seen.element == element) {
+                self.declined_paint.push(CensusElement {
+                    element,
+                    debug_name,
+                });
+            }
+        }
+        for (element, debug_name) in aimer_widget::take_dropped_paint_elements() {
+            if !self.dropped_paint.iter().any(|seen| seen.element == element) {
+                self.dropped_paint.push(CensusElement {
+                    element,
+                    debug_name,
+                });
+            }
+        }
     }
 
     // Uses the same retained paint-order traversal as `collect_render_tree_nodes`
@@ -133,44 +141,29 @@ impl WindowRenderTree {
     fn census_node(
         &self,
         element: &dyn Element,
-        inside_island: bool,
         parent_unresolved: bool,
         census: &mut PaintSourceCensus,
     ) {
-        let mut island = inside_island;
         let mut unresolved = false;
-        if inside_island {
-            census.swallowed += 1;
-        } else {
-            let node = self.node_for_element(element.id());
-            if node.is_none() {
-                census.unmapped += 1;
-            }
-            let source = node.and_then(|node| self.tree.paint_source(node).ok());
-            match source {
-                Some(RenderPaintSource::LocalV2) => census.local_v2 += 1,
-                Some(RenderPaintSource::LegacyIsland) => {
-                    census.legacy_islands += 1;
-                    census.island_roots.push(IslandRoot {
+        let node = self.node_for_element(element.id());
+        if node.is_none() {
+            census.unmapped += 1;
+        }
+        match node.and_then(|node| self.tree.paint_source(node).ok()) {
+            Some(RenderPaintSource::LocalV2) => census.local_v2 += 1,
+            Some(RenderPaintSource::Unresolved) | None => {
+                census.unresolved += 1;
+                unresolved = true;
+                if !parent_unresolved {
+                    census.unresolved_roots.push(CensusElement {
                         element: element.id(),
                         debug_name: element.debug_name(),
                     });
-                    island = true;
-                }
-                Some(RenderPaintSource::Unresolved) | None => {
-                    census.unresolved += 1;
-                    unresolved = true;
-                    if !parent_unresolved {
-                        census.unresolved_roots.push(IslandRoot {
-                            element: element.id(),
-                            debug_name: element.debug_name(),
-                        });
-                    }
                 }
             }
         }
         element.visit_retained_v2_children(&mut |_, child| {
-            self.census_node(child, island, unresolved, census);
+            self.census_node(child, unresolved, census);
         });
     }
 }

@@ -565,7 +565,7 @@ impl EventElement for RawFocusable {
 }
 
 impl Drawable for RawFocusable {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.child.update(ctx);
     }
 
@@ -705,7 +705,7 @@ mod tests {
     impl Rebuildable for Bounded {}
 
     impl Drawable for Bounded {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
 
         fn is_paint_stable(&self) -> bool {
             true
@@ -778,7 +778,7 @@ mod tests {
     impl Rebuildable for Greedy {}
 
     impl Drawable for Greedy {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl LayoutElement for Greedy {
@@ -814,7 +814,7 @@ mod tests {
     impl EventElement for Carrier {}
 
     impl Drawable for Carrier {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl LayoutElement for Carrier {}
@@ -853,7 +853,7 @@ mod tests {
     impl Rebuildable for Recorder {}
 
     impl Drawable for Recorder {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl LayoutElement for Recorder {

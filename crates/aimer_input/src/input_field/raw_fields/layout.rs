@@ -448,6 +448,29 @@ impl RawTextField {
 }
 
 impl Drawable for RawTextField {
+    /// Hit-tested over the box inside the outline, sized as it is drawn.
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        let (width, height) = self.compute_dimensions(ctx);
+        Some(ResolvedSize { width, height })
+    }
+
+    /// The box starts inside the outline strokes.
+    fn retained_v2_interaction_offset(&self, ctx: &BuildContext) -> (f32, f32) {
+        let (width, height) = self.compute_dimensions(ctx);
+        let (left, top, _, _) = self.outline_strokes(width, height, ctx.scale);
+        (left, top)
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.cached_bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.cached_bounds.disagreement("TextField")
+    }
+
     fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
         if self.observed_revision.get() != self.controller.revision() {
             self.sync_cursor_from_controller();
@@ -781,7 +804,7 @@ impl Drawable for RawTextField {
 
     fn draw_local_v2_compatibility(&self, _ctx: &BuildContext) {}
 
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         if self.observed_revision.get() != self.controller.revision() {
             self.sync_cursor_from_controller();
         }
@@ -857,9 +880,6 @@ impl Drawable for RawTextField {
 
         // --- Resolve active decoration ---
         let decoration = self.active_decoration();
-
-        // --- Draw background + border + outline ---
-        decoration.update(ctx);
 
         // --- Padding ---
         let pad_top = self.padding.top.value(box_height, scale);
@@ -1040,18 +1060,6 @@ impl Drawable for RawTextField {
                 0.0,
             );
             // --- Draw prompt (visible when field is empty and not composing) ---
-            if self.placeholder_visible() {
-                if !self.prompt.is_empty() {
-                    let prompt_widget =
-                        self.build_text_widget(&self.prompt, &self.prompt_style, self.text_align);
-                    prompt_widget.update(&content_ctx);
-                } else if !self.hint.is_empty() {
-                    let hint_widget =
-                        self.build_text_widget(&self.hint, &self.hint_style, self.text_align);
-                    hint_widget.update(&content_ctx);
-                }
-            }
-
             // --- Draw cursor / composition when field is empty but focused ---
             if self.is_focused() {
                 let caret = geometry
@@ -1069,26 +1077,25 @@ impl Drawable for RawTextField {
                     scale,
                 );
                 self.publish_caret(cursor_x, cursor_top, 1.5 * scale, cursor_height, scale);
-
                 if self.is_composing() {
+                    // The insertion point inside a composition is published here;
+                    // the composition itself is painted by `paint_local_v2`.
                     self.with_preedit(|preedit| {
-                        self.draw_preedit(
+                        self.sync_preedit_caret(
                             preedit,
                             self.preedit_cursor.get(),
                             cursor_x,
                             line_y,
                             line_height,
                             &content_ctx,
-                            font_size,
                             scale,
                         );
                     });
                 }
+
             }
         } else {
-            // --- Draw text ---
-            let display = geometry.display.as_ref();
-
+            // --- Text (painted by `paint_local_v2`) ---
             let is_multiline = self.max_lines != Some(1);
 
             if is_multiline {
@@ -1135,39 +1142,6 @@ impl Drawable for RawTextField {
                     scroll,
                 );
 
-                if let Some((sel_start, sel_end)) = self.cursor.selection_range() {
-                    for rect in geometry.selection_rects(sel_start, sel_end) {
-                        let rect_y = base_y + rect.y - scroll;
-                        if rect_y + rect.height <= 0.0 || rect_y >= content_height {
-                            continue;
-                        }
-                        ctx.canvas.fill_color_rect(
-                            (rect.x, rect_y).into(),
-                            ResolvedSize {
-                                width: rect.width,
-                                height: rect.height,
-                            },
-                            self.selection_color,
-                            [0.0; 4],
-                        );
-                    }
-                }
-
-                // Paint the complete source string with the same shaped
-                // paragraph that produced `geometry`. Per-line slices lose
-                // ligature and bidi context, which is exactly how a caret can
-                // drift away from the glyph it belongs to.
-                let style = self.field_text_style();
-                ctx.canvas.save();
-                ctx.canvas.translate((0.0, base_y - scroll).into());
-                let text_widget = self.build_text_widget(
-                    display,
-                    &style,
-                    self.horizontal_text_align(),
-                );
-                text_widget.update(&content_ctx);
-                ctx.canvas.restore();
-
                 // Draw cursor / composition from the same canonical caret.
                 if self.is_focused() {
                     let caret = geometry
@@ -1191,23 +1165,24 @@ impl Drawable for RawTextField {
                         cursor_height,
                         scale,
                     );
-
-                    // The composition replaces the caret: drawing both would
-                    // blink an insertion bar over the first composing glyph.
                     if self.is_composing() {
+                        // The insertion point inside a composition is published here;
+                        // the composition itself is painted by `paint_local_v2`.
                         self.with_preedit(|preedit| {
-                            self.draw_preedit(
+                            self.sync_preedit_caret(
                                 preedit,
                                 self.preedit_cursor.get(),
                                 cursor_x,
                                 line_y,
                                 line_height,
                                 &content_ctx,
-                                font_size,
                                 scale,
                             );
                         });
                     }
+
+                    // The composition replaces the caret: drawing both would
+                    // blink an insertion bar over the first composing glyph.
                 }
             } else {
                 // --- Single-line rendering (with horizontal scroll) ---
@@ -1235,40 +1210,6 @@ impl Drawable for RawTextField {
                     0.0,
                 );
 
-                if let Some((sel_start, sel_end)) = self.cursor.selection_range() {
-                    for rect in geometry.selection_rects(sel_start, sel_end) {
-                        let rect_x = rect.x - scroll;
-                        let rect_y = base_y + rect.y;
-                        if rect_x + rect.width <= 0.0
-                            || rect_x >= content_width
-                            || rect_y + rect.height <= 0.0
-                            || rect_y >= content_height
-                        {
-                            continue;
-                        }
-                        ctx.canvas.fill_color_rect(
-                            (rect_x, rect_y).into(),
-                            ResolvedSize {
-                                width: rect.width,
-                                height: rect.height,
-                            },
-                            self.selection_color,
-                            [0.0; 4],
-                        );
-                    }
-                }
-
-                let style = self.field_text_style();
-                ctx.canvas.save();
-                ctx.canvas.translate((-scroll, base_y).into());
-                let text_widget = self.build_text_widget(
-                    display,
-                    &style,
-                    self.horizontal_text_align(),
-                );
-                text_widget.update(&content_ctx);
-                ctx.canvas.restore();
-
                 if self.is_focused() {
                     let caret = geometry
                         .caret_geometry(self.cursor.offset())
@@ -1285,21 +1226,22 @@ impl Drawable for RawTextField {
                         scale,
                     );
                     self.publish_caret(cursor_x, cursor_top, 1.5 * scale, cursor_height, scale);
-
                     if self.is_composing() {
+                        // The insertion point inside a composition is published here;
+                        // the composition itself is painted by `paint_local_v2`.
                         self.with_preedit(|preedit| {
-                            self.draw_preedit(
+                            self.sync_preedit_caret(
                                 preedit,
                                 self.preedit_cursor.get(),
                                 cursor_x,
                                 line_y,
                                 line_height,
                                 &content_ctx,
-                                font_size,
                                 scale,
                             );
                         });
                     }
+
                 }
             }
         }

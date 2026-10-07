@@ -92,7 +92,7 @@ mod tests {
     }
     impl LayoutElement for EventProbeElement {}
     impl Drawable for EventProbeElement {
-        fn draw(&self, _ctx: &BuildContext<'_>) {}
+        fn update(&self, _ctx: &BuildContext<'_>) {}
     }
     impl Rebuildable for EventProbeElement {}
 

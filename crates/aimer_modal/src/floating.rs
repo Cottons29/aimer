@@ -460,7 +460,7 @@ fn reserved_edges(
 }
 
 impl Drawable for RawFloating {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.barrier.update(ctx);
         let child_size = self.child.computed_size(ctx);
         let placement = resolve_placement(

@@ -419,102 +419,20 @@ impl<P: ImageProvider> RawImageWidget<P> {
 }
 
 impl<P: ImageProvider> Drawable for RawImageWidget<P> {
-    fn draw(&self, ctx: &BuildContext) {
-        let size = self.computed_size(ctx);
-        let image_result = self.refresh(ctx);
-
-        match image_result {
-            Success(id) => {
-                let resource = self.source.retained_image_resource(ctx);
-                let intrinsic_size = resource
-                    .as_ref()
-                    .map(|resource| (resource.intrinsic_width(), resource.intrinsic_height()))
-                    .or_else(|| ctx.canvas.get_image_size(id));
-                let draw_image = |pos, size| {
-                    if let Some(resource) = &resource {
-                        ctx.canvas
-                            .draw_image_with_resource(resource.clone(), pos, size);
-                    } else {
-                        ctx.canvas.draw_image(id, pos, size);
-                    }
-                };
-                if self.keep_aspect_ratio {
-                    let Some(geometry) = image_paint_geometry(
-                        size,
-                        intrinsic_size,
-                        self.fit,
-                        self.scale,
-                    ) else {
-                        // A preserving fit cannot safely paint until the
-                        // renderer exposes the source dimensions. Filling the
-                        // layout box here makes a wide or tall image visibly
-                        // jump to the wrong aspect ratio for one frame.
-                        return;
-                    };
-
-                    if geometry.use_cover {
-                        // Clip to target box to emulate cover cropping.
-                        ctx.canvas.set_clip(Vec2d { x: 0.0, y: 0.0 }, size);
-                        draw_image(geometry.pos, geometry.size);
-                        ctx.canvas.clear_clip();
-                    } else {
-                        draw_image(geometry.pos, geometry.size);
-                    }
-                } else {
-                    // Not preserving aspect ratio: fill allocated box
-                    let final_w = size.width * self.scale;
-                    let final_h = size.height * self.scale;
-                    let draw_pos = Vec2d {
-                        x: (size.width - final_w) * 0.5,
-                        y: (size.height - final_h) * 0.5,
-                    };
-                    let draw_size = ResolvedSize {
-                        width: final_w,
-                        height: final_h,
-                    };
-                    draw_image(draw_pos, draw_size)
-                }
-            }
-
+    fn update(&self, ctx: &BuildContext) {
+        // The image, or the error checkerboard, is painted by `paint_local_v2`.
+        // This traversal advances the provider and visits the retained loading
+        // and error elements, which own their own render nodes.
+        match self.refresh(ctx) {
+            Success(_) => {}
             ImageResult::Loading => {
-                // Nothing to traverse without a loading element. A temporary
-                // placeholder here would be drawn without a render node.
                 if let Some(loading_element) = &self.loading_element {
                     loading_element.update(ctx);
                 }
             }
-
             ImageResult::Error(_) => {
                 if let Some(error_element) = &self.error_element {
                     error_element.update(ctx);
-                    return;
-                }
-                let grid_size = 32.0;
-                let rows = (size.height / grid_size).ceil() as i32;
-                let cols = (size.width / grid_size).ceil() as i32;
-
-                for row in 0..rows {
-                    for col in 0..cols {
-                        let color = if (row + col) % 2 == 0 {
-                            Color::Basic(Colors::Magenta)
-                        } else {
-                            Color::Basic(Colors::Black)
-                        };
-
-                        let pos = Vec2d {
-                            x: col as f32 * grid_size,
-                            y: row as f32 * grid_size,
-                        };
-
-                        let rect_size = ResolvedSize {
-                            width: grid_size.min(size.width - pos.x),
-                            height: grid_size.min(size.height - pos.y),
-                        };
-
-                        if rect_size.width > 0.0 && rect_size.height > 0.0 {
-                            ctx.canvas.fill_color_rect(pos, rect_size, color, [0.0; 4]);
-                        }
-                    }
                 }
             }
         }

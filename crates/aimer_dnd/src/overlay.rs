@@ -3,24 +3,24 @@
 //! A dragged card has to be visible outside the column it came from, outside
 //! the scrollable that clips that column, and above any modal on screen. No
 //! position in the widget tree satisfies all three, so the feedback is not in
-//! the tree at all: it is painted by an [`OverlayLayer`] installed on the modal
-//! host for exactly as long as the drag lasts.
+//! the tree at all: it is hosted by the modal host's overlay, above every
+//! modal, for exactly as long as the drag lasts.
 //!
-//! The layer is a painter, not an element — it never receives an event, which
-//! matters because it sits directly under the pointer it is chasing and would
-//! otherwise intercept the very moves that drive it.
+//! The hosted element never receives an event, which matters because it sits
+//! directly under the pointer it is chasing and would otherwise intercept the
+//! very moves that drive it. An [`OverlayLayer`] installed alongside it only
+//! advances the drag's state each frame.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
 use aimer_animation::{AnimInstant, Curve};
-use aimer_attribute::BoxConstraint;
 use aimer_attribute::position::Vec2d;
 use aimer_events::window::request_animation_frame;
-use aimer_modal::{OverlayLayer, OverlayLayerHandle};
+use aimer_modal::{OverlayContentHandle, OverlayLayer, OverlayLayerHandle};
 use aimer_widget::base::BuildContext;
-use aimer_widget::{AnyElement, AnyWidget, Drawable, LayoutElement, Widget};
+use aimer_widget::{AnyWidget, Widget};
 
 use crate::DragSession;
 use crate::target::clear_hover;
@@ -73,7 +73,7 @@ impl DragAxis {
 
 /// A refused drop travelling back to its origin.
 struct SpringBack {
-    started: Option<AnimInstant>,
+    started: Cell<Option<AnimInstant>>,
     from: Vec2d,
 }
 
@@ -86,7 +86,14 @@ struct OverlayState {
     /// `None` for a drag with no feedback. The state still exists, because it
     /// is also what settles the drop.
     build: Option<Rc<dyn Fn() -> AnyWidget>>,
-    element: Option<AnyElement>,
+    /// The feedback, once built: hosted by the overlay and taken down with the
+    /// drag.
+    hosted: Option<OverlayContentHandle>,
+    /// The device scale the follower converts the logical position by.
+    scale: Rc<Cell<f32>>,
+    /// The last position the follower reported, kept for the frame after a
+    /// spring-back arrives and the feedback is about to go.
+    last_position: Rc<Cell<Vec2d>>,
     /// Where inside the feedback the pointer grabbed it, so the card does not
     /// jump to have its corner under the cursor.
     grab_offset: Vec2d,
@@ -127,7 +134,9 @@ impl DragOverlay {
         OVERLAY.with_borrow_mut(|overlay| {
             *overlay = Some(OverlayState {
                 build,
-                element: None,
+                hosted: None,
+                scale: Rc::new(Cell::new(1.0)),
+                last_position: Rc::new(Cell::new(start)),
                 grab_offset,
                 start,
                 axis,
@@ -138,7 +147,7 @@ impl DragOverlay {
         });
         HANDLE.with_borrow_mut(|handle| {
             if handle.is_none() {
-                *handle = Some(OverlayLayer::install(Rc::new(paint_frame)));
+                *handle = Some(OverlayLayer::install(Rc::new(|ctx, _canvas| tick(ctx))));
             }
         });
         request_animation_frame();
@@ -163,7 +172,7 @@ impl DragOverlay {
             };
             let from = state.painted_position();
             state.spring = Some(SpringBack {
-                started: None,
+                started: Cell::new(None),
                 from,
             });
             true
@@ -196,7 +205,26 @@ impl DragOverlay {
     }
 }
 
+impl Drop for OverlayState {
+    fn drop(&mut self) {
+        if let Some(hosted) = self.hosted.take() {
+            hosted.remove();
+        }
+    }
+}
+
 impl OverlayState {
+    /// Where the feedback's top-left corner is right now, in logical window
+    /// pixels: under the pointer, or part-way along a spring-back. `None` once
+    /// a spring-back has arrived.
+    fn position_now(&self) -> Option<Vec2d> {
+        if self.spring.is_some() {
+            self.spring_position(AnimInstant::now())
+        } else {
+            Some(self.painted_position())
+        }
+    }
+
     /// Where the feedback's top-left corner is this frame.
     fn painted_position(&self) -> Vec2d {
         let pointer = DragSession::position().unwrap_or(self.start);
@@ -208,13 +236,19 @@ impl OverlayState {
     }
 
     /// Where a spring-back has reached, or `None` once it has arrived.
-    fn spring_position(&mut self, now: AnimInstant) -> Option<Vec2d> {
+    fn spring_position(&self, now: AnimInstant) -> Option<Vec2d> {
         let target = Vec2d {
             x: self.start.x - self.grab_offset.x,
             y: self.start.y - self.grab_offset.y,
         };
-        let spring = self.spring.as_mut()?;
-        let started = *spring.started.get_or_insert(now);
+        let spring = self.spring.as_ref()?;
+        let started = match spring.started.get() {
+            Some(started) => started,
+            None => {
+                spring.started.set(Some(now));
+                now
+            }
+        };
         let elapsed = now.duration_since(started).as_secs_f32();
         let t = (elapsed / SPRING_BACK_DURATION.as_secs_f32()).clamp(0.0, 1.0);
         if t >= 1.0 {
@@ -228,17 +262,19 @@ impl OverlayState {
     }
 }
 
-/// Paints one frame of the drag feedback.
+/// Advances the drag one frame: settles a requested drop, carries a refused
+/// one back, and makes sure the feedback is hosted.
 ///
 /// Returns whether the layer stays installed. It stays for as long as the
 /// application lives once a first drag has happened, because installing and
 /// removing it per drag would cost a modal-host command each time and it does
 /// nothing at all when no drag is in flight.
-fn paint_frame(ctx: &BuildContext) -> bool {
+fn tick(ctx: &BuildContext) -> bool {
     OVERLAY.with_borrow_mut(|overlay| {
         let Some(state) = overlay.as_mut() else {
             return true;
         };
+        state.scale.set(ctx.scale);
 
         if state.resolving {
             state.resolving = false;
@@ -259,69 +295,58 @@ fn paint_frame(ctx: &BuildContext) -> bool {
             DragSession::cancel_any();
             let from = state.painted_position();
             state.spring = Some(SpringBack {
-                started: None,
+                started: Cell::new(None),
                 from,
             });
         }
 
-        let position = if state.spring.is_some() {
-            match state.spring_position(AnimInstant::now()) {
-                Some(position) => {
-                    request_animation_frame();
-                    position
-                }
-                None => {
-                    *overlay = None;
-                    request_animation_frame();
-                    return true;
-                }
+        if state.spring.is_some() {
+            if state.spring_position(AnimInstant::now()).is_some() {
+                request_animation_frame();
+            } else {
+                *overlay = None;
+                request_animation_frame();
+                return true;
             }
-        } else {
-            state.painted_position()
-        };
+        }
 
-        let Some(build) = state.build.clone() else {
-            return true;
-        };
-        let element = state.element.get_or_insert_with(|| build().to_element(ctx));
-        paint_at(ctx, element, position);
+        if state.hosted.is_none()
+            && let Some(build) = state.build.clone()
+        {
+            let element = build().to_element(ctx);
+            state.hosted = Some(OverlayLayer::host_element(
+                element,
+                follower_position(&state.scale, &state.last_position),
+            ));
+        }
         true
     })
 }
 
-/// Draws `element` with its top-left corner at `position`, given in logical
-/// window coordinates.
+/// The place the hosted feedback asks for each time the render tree syncs, in
+/// device pixels.
 ///
-/// `position` comes from pointer events and cached element bounds, which are
-/// logical, while the canvas and every `parent_pos` in a draw pass are device
-/// pixels — so it is scaled here, at the one place the two spaces meet. Skipping
-/// this puts the feedback at `1 / scale` of its distance from the window origin,
-/// which is invisible on a 1:1 display and half a screen out on a retina one.
-fn paint_at(ctx: &BuildContext, element: &AnyElement, position: Vec2d) {
-    let size = element.computed_size(ctx);
-    let origin = Vec2d {
-        x: position.x * ctx.scale,
-        y: position.y * ctx.scale,
-    };
-
-    let mut child_ctx = ctx.clone();
-    child_ctx.parent_pos = origin;
-    child_ctx.parent_size = size;
-    child_ctx.box_constraint = BoxConstraint {
-        min_width: 0.0,
-        min_height: 0.0,
-        max_width: size.width,
-        max_height: size.height,
-    };
-    child_ctx.visible_rect = None;
-
-    ctx.canvas.save();
-    ctx.canvas.translate(Vec2d {
-        x: origin.x - ctx.parent_pos.x,
-        y: origin.y - ctx.parent_pos.y,
-    });
-    element.update(&child_ctx);
-    ctx.canvas.restore();
+/// The drag's position comes from pointer events and cached element bounds,
+/// which are logical, while the tree places elements in device pixels — so it
+/// is scaled here, at the one place the two spaces meet. Skipping this puts the
+/// feedback at `1 / scale` of its distance from the window origin, which is
+/// invisible on a 1:1 display and half a screen out on a retina one.
+fn follower_position(
+    scale: &Rc<Cell<f32>>,
+    last_position: &Rc<Cell<Vec2d>>,
+) -> Rc<dyn Fn() -> Vec2d> {
+    let scale = Rc::clone(scale);
+    let last_position = Rc::clone(last_position);
+    Rc::new(move || {
+        let logical = OVERLAY
+            .with_borrow(|overlay| overlay.as_ref().and_then(OverlayState::position_now))
+            .unwrap_or_else(|| last_position.get());
+        last_position.set(logical);
+        Vec2d {
+            x: logical.x * scale.get(),
+            y: logical.y * scale.get(),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -334,20 +359,24 @@ mod tests {
     use crate::DragPayload;
     use crate::test_support::headless_context;
 
-    /// The feedback's top-left corner, in logical window coordinates, as the
-    /// element itself recorded it while being painted.
+    /// The feedback's top-left corner, in logical window coordinates.
     fn painted_corner() -> Vec2d {
         OVERLAY.with_borrow(|overlay| {
             overlay
                 .as_ref()
                 .expect("the overlay is showing")
-                .element
-                .as_ref()
-                .expect("the feedback was built")
-                .pos_start_end()
-                .expect("the feedback recorded its bounds")
-                .0
+                .position_now()
+                .expect("the feedback is not springing back")
         })
+    }
+
+    /// Where the hosted feedback asks to be placed, in device pixels.
+    fn device_corner() -> Vec2d {
+        let (scale, last) = OVERLAY.with_borrow(|overlay| {
+            let state = overlay.as_ref().expect("the overlay is showing");
+            (Rc::clone(&state.scale), Rc::clone(&state.last_position))
+        });
+        follower_position(&scale, &last)()
     }
 
     /// Coordinates arrive from events in logical units and the canvas draws in
@@ -380,12 +409,17 @@ mod tests {
 
         let mut ctx = headless_context(800.0, 600.0);
         ctx.scale = 2.0;
-        assert!(paint_frame(&ctx), "the layer stays installed");
+        assert!(tick(&ctx), "the layer stays installed");
 
         assert_eq!(
             painted_corner(),
             Vec2d { x: 240.0, y: 180.0 },
             "the corner is the pointer minus the grab offset, whatever the scale"
+        );
+        assert_eq!(
+            device_corner(),
+            Vec2d { x: 480.0, y: 360.0 },
+            "the tree places it in device pixels"
         );
 
         DragSession::cancel_any();

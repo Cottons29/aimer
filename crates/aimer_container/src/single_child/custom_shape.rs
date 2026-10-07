@@ -186,16 +186,14 @@ struct RawCustomShape {
 }
 
 impl Drawable for RawCustomShape {
-    fn draw(&self, ctx: &BuildContext) {
-        self.paint_shape(ctx);
-        // Shape paint is a background; the retained child remains the canonical
-        // event, focus, semantics, and visual subtree.
+    fn update(&self, ctx: &BuildContext) {
+        // The shape is painted by `paint_local_v2`; the retained child remains
+        // the canonical event, focus, semantics, and visual subtree.
         self.child.update(ctx);
     }
 
     #[inline]
     fn paint(&self, ctx: &BuildContext) {
-        self.paint_shape(ctx);
         self.child.paint(ctx);
     }
 
@@ -250,32 +248,6 @@ impl Drawable for RawCustomShape {
 }
 
 impl RawCustomShape {
-    fn paint_shape(&self, ctx: &BuildContext) {
-        let child_size = self.child.computed_size(ctx);
-        if child_size.width > 0.0
-            && child_size.height > 0.0
-            && let Some(path) = self.path.as_ref()
-            && let Ok(transform) = self
-                .fit
-                .transform(path.bounds(), ShapeSize::new(child_size.width, child_size.height))
-        {
-            let mut request = DrawShape::new(path.clone())
-                .transform(transform)
-                .opacity(self.opacity)
-                .hit_test(self.hit_test)
-                .clip(self.clip.clone());
-            if let Some(fill) = self.fill {
-                request = request.fill(fill);
-            }
-            if let Some(stroke) = self.stroke.as_ref() {
-                request = request.stroke(stroke.clone());
-            }
-            let _ = ctx.canvas.draw_shape(
-                &request,
-                ShapeSize::new(child_size.width, child_size.height),
-            );
-        }
-    }
 }
 
 impl VisitorElement for RawCustomShape {

@@ -33,7 +33,7 @@ impl EventElement for FocusTestElement {
 
 impl LayoutElement for FocusTestElement {}
 impl Drawable for FocusTestElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for FocusTestElement {}
 
@@ -244,7 +244,7 @@ impl EventElement for FocusScopeElement {
 
 impl LayoutElement for FocusScopeElement {}
 impl Drawable for FocusScopeElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for FocusScopeElement {
     fn option_any(&self) -> Option<&dyn Any> {
@@ -535,7 +535,7 @@ impl LayoutElement for PressableFocusElement {
 }
 
 impl Drawable for PressableFocusElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for PressableFocusElement {}
 
@@ -593,7 +593,7 @@ impl LayoutElement for FocusKeyElement {
     }
 }
 impl Drawable for FocusKeyElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for FocusKeyElement {}
 
@@ -679,7 +679,7 @@ impl LayoutElement for FocusRequestingElement {
     }
 }
 impl Drawable for FocusRequestingElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for FocusRequestingElement {}
 

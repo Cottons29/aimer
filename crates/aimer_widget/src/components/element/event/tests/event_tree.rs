@@ -30,7 +30,7 @@ impl LayoutElement for CapturingElement {
 }
 
 impl Drawable for CapturingElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for CapturingElement {}
@@ -72,7 +72,7 @@ impl LayoutElement for TreeElement {
 }
 
 impl Drawable for TreeElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for TreeElement {}
@@ -102,7 +102,7 @@ impl EventElement for EffectTreeElement {
 
 impl LayoutElement for EffectTreeElement {}
 impl Drawable for EffectTreeElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for EffectTreeElement {}
 
@@ -349,7 +349,7 @@ impl EventElement for IndexedHitTestBoundaryRoot {
 impl LayoutElement for IndexedHitTestBoundaryRoot {}
 
 impl Drawable for IndexedHitTestBoundaryRoot {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for IndexedHitTestBoundaryRoot {}
@@ -379,7 +379,7 @@ impl EventElement for IndexedBoundaryRouteTarget {
 impl LayoutElement for IndexedBoundaryRouteTarget {}
 
 impl Drawable for IndexedBoundaryRouteTarget {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for IndexedBoundaryRouteTarget {}
@@ -470,7 +470,7 @@ impl EventElement for IndexedBoundaryHoverTarget {
 impl LayoutElement for IndexedBoundaryHoverTarget {}
 
 impl Drawable for IndexedBoundaryHoverTarget {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for IndexedBoundaryHoverTarget {}
@@ -555,7 +555,7 @@ impl LayoutElement for DynamicBoundsTarget {
 }
 
 impl Drawable for DynamicBoundsTarget {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for DynamicBoundsTarget {}
@@ -707,7 +707,7 @@ impl EventElement for SwitchingEventRoot {
 impl LayoutElement for SwitchingEventRoot {}
 
 impl Drawable for SwitchingEventRoot {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for SwitchingEventRoot {

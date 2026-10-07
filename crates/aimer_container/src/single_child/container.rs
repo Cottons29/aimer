@@ -4,6 +4,7 @@ use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_macro::{PortableWidget, Rebuildable};
 pub use aimer_style::*;
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutCache,
@@ -180,7 +181,7 @@ impl<W: Widget> Widget for Container<W> {
             box_decoration,
             cache: LayoutCache::new(),
             debug_name: "Container",
-            bounds: std::cell::Cell::new(None),
+            bounds: InteractionBounds::new(),
             color: None,
             local_v2_background_color: std::cell::Cell::new(None),
         }
@@ -226,7 +227,7 @@ pub struct RawContainer<T: Element> {
     pub cache: LayoutCache,
     pub debug_name: &'static str,
     pub color: Option<Color>,
-    pub bounds: std::cell::Cell<Option<(Vec2d, Vec2d)>>,
+    pub bounds: InteractionBounds,
     local_v2_background_color: std::cell::Cell<Option<Option<(u8, u8, u8, u8)>>>,
 }
 
@@ -335,7 +336,7 @@ impl<E: Element> RawContainer<E> {
             cache: LayoutCache::default(),
             debug_name: "RawContainer",
             color: None,
-            bounds: std::cell::Cell::new(None),
+            bounds: InteractionBounds::new(),
             local_v2_background_color: std::cell::Cell::new(None),
         }
     }
@@ -499,15 +500,13 @@ impl<T: Element> RawContainer<T> {
         // translate and span the actually-drawn size (`draw_width`/`draw_height`).
         if !paint_only {
             let (start_x, start_y) = ctx.canvas.get_transform_translation();
-            let l_start = Vec2d {
-                x: (start_x + m_left) / scale,
-                y: (start_y + m_top) / scale,
-            };
-            let l_end = Vec2d {
-                x: (start_x + m_left + draw_width) / scale,
-                y: (start_y + m_top + draw_height) / scale,
-            };
-            self.bounds.set(Some((l_start, l_end)));
+            self.bounds.save(
+                scale,
+                start_x + m_left,
+                start_y + m_top,
+                draw_width,
+                draw_height,
+            );
         }
 
         // Translate to the decorated box before painting. Margin is layout
@@ -517,17 +516,6 @@ impl<T: Element> RawContainer<T> {
             x: m_left,
             y: m_top,
         });
-
-        let bg_w = box_width;
-        let bg_h = box_height;
-        let bg_ctx = BuildContext {
-            parent_size: ResolvedSize {
-                width: bg_w,
-                height: bg_h,
-            },
-            ..ctx.clone()
-        };
-        self.box_decoration.update(&bg_ctx);
 
         let p_left = self.padding.left.value(box_width, scale);
         let p_top = self.padding.top.value(box_height, scale);
@@ -628,7 +616,34 @@ impl<T: Element> RawContainer<T> {
 }
 
 impl<T: Element> Drawable for RawContainer<T> {
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested over the box that is drawn: the computed size less the
+    /// margins, which start `retained_v2_interaction_offset` in from the node.
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        let (m_left, m_top, m_right, m_bottom) = self.margin(ctx);
+        let computed = self.computed_size(ctx);
+        Some(ResolvedSize {
+            width: (computed.width - m_left - m_right).max(0.0),
+            height: (computed.height - m_top - m_bottom).max(0.0),
+        })
+    }
+
+    #[inline]
+    fn retained_v2_interaction_offset(&self, ctx: &BuildContext) -> (f32, f32) {
+        let (m_left, m_top, _, _) = self.margin(ctx);
+        (m_left, m_top)
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("Container")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
         self.render(ctx, false);
     }
 
@@ -785,16 +800,13 @@ impl<T: Element> Drawable for RawContainer<T> {
         let draw_height = (computed.height - m_top - m_bottom).max(0.0);
         let (start_x, start_y) = ctx.canvas.get_transform_translation();
         if scale.is_finite() && scale > 0.0 {
-            self.bounds.set(Some((
-                Vec2d {
-                    x: (start_x + m_left) / scale,
-                    y: (start_y + m_top) / scale,
-                },
-                Vec2d {
-                    x: (start_x + m_left + draw_width) / scale,
-                    y: (start_y + m_top + draw_height) / scale,
-                },
-            )));
+            self.bounds.save(
+                scale,
+                start_x + m_left,
+                start_y + m_top,
+                draw_width,
+                draw_height,
+            );
         }
 
         let padding_left = self.padding.left.value(box_width, scale);
@@ -883,16 +895,13 @@ impl<T: Element> Drawable for RawContainer<T> {
         // its live screen bounds still participate in routed input and culling.
         let (start_x, start_y) = live_ctx.canvas.get_transform_translation();
         let scale = live_ctx.scale;
-        self.bounds.set(Some((
-            Vec2d {
-                x: start_x / scale,
-                y: start_y / scale,
-            },
-            Vec2d {
-                x: (start_x + child_size.width) / scale,
-                y: (start_y + child_size.height) / scale,
-            },
-        )));
+        self.bounds.save(
+            scale,
+            start_x,
+            start_y,
+            child_size.width,
+            child_size.height,
+        );
 
         // Match the ordinary draw path's child context. A scrollable has an
         // unbounded constraint on its main axis, so replacing it with the
@@ -1265,7 +1274,7 @@ impl<T: Element> LayoutElement for RawContainer<T> {
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bounds.get()
+        self.bounds.pos_start_end()
     }
 }
 
@@ -1286,7 +1295,7 @@ mod tests {
     }
 
     impl Drawable for DrawProbe {
-        fn draw(&self, _ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             self.draws.set(self.draws.get() + 1);
         }
     }
@@ -1304,7 +1313,7 @@ mod tests {
     struct PaintStableProbe;
 
     impl Drawable for PaintStableProbe {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
 
         fn is_paint_stable(&self) -> bool {
             true
@@ -1341,13 +1350,15 @@ mod tests {
             .background_color(Color::BLACK)
             .border_radius(8.0);
 
-        element.paint(&ctx);
+        let commands = record_local_v2(&element, &ctx);
 
-        assert!(inner
-            .draw_list()
-            .commands()
+        assert!(commands
             .iter()
-            .any(|command| matches!(command, DrawCommand::FillRect { .. })));
+            .any(|command| matches!(command, aimer_cupid::draw_cmd_v2::DrawCommand::FillRect { .. })));
+        assert!(
+            inner.draw_list().commands().is_empty(),
+            "the canvas itself is not painted"
+        );
     }
 
     #[test]
@@ -1449,6 +1460,23 @@ mod tests {
         (ctx, inner)
     }
 
+    /// Records `element`'s own retained list, as the frame loop does for a node.
+    fn record_local_v2(
+        element: &impl Drawable,
+        ctx: &BuildContext<'_>,
+    ) -> std::sync::Arc<[aimer_cupid::draw_cmd_v2::DrawCommand]> {
+        let tree = aimer_cupid::draw_cmd_v2::RenderTree::new();
+        let root = tree
+            .add_root(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 400.0, 300.0))
+            .unwrap();
+        let node_context = tree.context(root).unwrap();
+        ctx.with_local_v2_paint_context(node_context, |ctx| {
+            assert!(element.can_paint_local_v2(ctx));
+            element.paint_local_v2(ctx);
+        });
+        tree.draw_list_snapshot(root).unwrap().commands
+    }
+
     #[tokio::test]
     async fn margin_keeps_outline_and_border_inside_the_decorated_box() {
         let (mut ctx, inner) = recording_context();
@@ -1493,8 +1521,11 @@ mod tests {
         });
         assert_eq!(margin_transform.map(|matrix| matrix.cols[2]), Some([30.0, 30.0, 1.0]));
 
-        let fill = commands.commands().iter().find_map(|command| match command {
-            DrawCommand::FillRect {
+        // The decorated box is recorded in the node's own list, offset by the
+        // margin, so the margin itself is never filled.
+        let recorded = record_local_v2(&element, &ctx);
+        let fill = recorded.iter().find_map(|command| match command {
+            aimer_cupid::draw_cmd_v2::DrawCommand::FillRect {
                 rect,
                 border_width,
                 outline_width,
@@ -1504,10 +1535,8 @@ mod tests {
         });
         let (fill, border_width, outline_width) =
             fill.expect("the decorated container should record one fill rectangle");
-        assert_eq!(fill.x, 0.0);
-        assert_eq!(fill.y, 0.0);
-        assert_eq!(fill.width, 140.0);
-        assert_eq!(fill.height, 100.0);
+        assert_eq!((fill.x, fill.y), (30.0, 30.0), "the box starts after the margin");
+        assert_eq!((fill.width, fill.height), (140.0, 100.0));
         assert_eq!(border_width, [4.0; 4]);
         assert_eq!(outline_width, [6.0; 4]);
 

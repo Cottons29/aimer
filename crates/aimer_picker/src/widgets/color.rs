@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_attribute::CacheBounds;
+use aimer_widget::InteractionBounds;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::PointerButton;
 use aimer_modal::{
@@ -208,7 +208,7 @@ impl Widget for ColorPickerSurface {
             on_selection: self.on_selection,
             tokens: self.tokens,
             sliders,
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
             popup: self.popup,
         };
         if self.popup {
@@ -235,7 +235,7 @@ struct RawColorPicker {
     on_selection: Option<ColorSelectionCallback>,
     tokens: ThemeTokens,
     sliders: Vec<AnyElement>,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
     popup: bool,
 }
 
@@ -523,46 +523,33 @@ impl LayoutElement for RawColorPicker {
 }
 
 impl Drawable for RawColorPicker {
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("RawColorPicker")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
+        // The surface is painted by `paint_local_v2`; this only publishes where
+        // it sits and visits the retained children.
         let size = self.computed_size(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
-        let picker = self.runtime.picker.borrow();
-        let value = picker.draft();
-        if self.popup {
-            paint::draw_picker_field(
-                ctx,
-                "Color",
-                format_rgba(value.to_rgba()),
-                size.width,
-                picker.is_open(),
-                self.runtime.focused.get(),
-                &self.tokens,
-            );
-            paint::draw_color_picker(
-                ctx,
-                &picker,
-                size.width,
-                size.height,
-                self.runtime.channel.get(),
-                &self.tokens,
-            );
-            if picker.is_open() {
-                for (index, slider) in self.sliders.iter().enumerate() {
-                    super::draw_child(slider, ctx, super::color_slider_offset(index, ctx.scale));
-                }
+        if self.popup && self.runtime.picker.borrow().is_open() {
+            for (index, slider) in self.sliders.iter().enumerate() {
+                super::draw_child(slider, ctx, super::color_slider_offset(index, ctx.scale));
             }
-            paint::draw_overlay_border(ctx, size.width, size.height, &self.tokens);
-        } else {
-            paint::draw_picker_field(
-                ctx,
-                "Color",
-                format_rgba(value.to_rgba()),
-                size.width,
-                picker.is_open(),
-                self.runtime.focused.get(),
-                &self.tokens,
-            );
         }
     }
 

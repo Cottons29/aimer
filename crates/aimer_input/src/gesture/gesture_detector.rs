@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aimer_attribute::CacheBounds;
+use aimer_widget::InteractionBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
@@ -278,7 +278,7 @@ impl<W: Widget + 'static> Widget for GestureDetector<W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         RawGestureDetector {
             child: self.child.to_element(ctx),
-            cached_bounds: CacheBounds::new(),
+            cached_bounds: InteractionBounds::new(),
             window: ctx.window.clone(),
             // One refcount bump, whatever the detector was configured with.
             handlers: self.handlers.clone(),
@@ -297,7 +297,7 @@ impl<W: Widget + 'static> Widget for GestureDetector<W> {
 /// `GestureDetector` in that respect.
 pub struct RawGestureDetector<E: Element> {
     pub child: E,
-    pub(crate) cached_bounds: CacheBounds,
+    pub(crate) cached_bounds: InteractionBounds,
     pub(crate) window: WindowHandle,
     pub(crate) handlers: Rc<GestureHandlers>,
     pub(crate) behavior: GestureDetectorBehavior,
@@ -318,7 +318,7 @@ impl<E: Element> RawGestureDetector<E> {
     /// Gives the recognizer a chance to report a long press while the pointer is
     /// still held.
     ///
-    /// Called from [`Drawable::draw`], because a frame is the only regular tick
+    /// Called from [`Drawable::update`], because a frame is the only regular tick
     /// available: the windowing layer can be asked to redraw but not to redraw
     /// *later*. A press held in an otherwise completely static frame therefore
     /// reports its long press on release instead, which the recognizer handles as
@@ -360,7 +360,7 @@ fn to_pointer_event(event: &ElementEvent) -> Option<PointerEvent> {
 /// detector is already tracking: the finger that pressed inside owns the gesture
 /// until it lifts, wherever it lifts.
 fn should_accept_pointer_event(
-    cached_bounds: &CacheBounds,
+    cached_bounds: &InteractionBounds,
     state: &GestureState,
     event: &ElementEvent,
     pos: Vec2d,
@@ -509,7 +509,7 @@ impl<E: Element> LayoutElement for RawGestureDetector<E> {
 }
 
 impl<E: Element> Drawable for RawGestureDetector<E> {
-    fn draw(&self, ctx: &BuildContext<'_>) {
+    fn update(&self, ctx: &BuildContext<'_>) {
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         let child_size = self.child.computed_size(ctx);
         self.cached_bounds
@@ -525,6 +525,23 @@ impl<E: Element> Drawable for RawGestureDetector<E> {
     fn paint_local_v2(&self, ctx: &BuildContext) {
         let canvas = aimer_canvas::Canvas::of(ctx);
         canvas.finish();
+    }
+
+    /// The detector hit-tests the border box its child reports, which can be
+    /// larger than the content box the render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.child.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.cached_bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.cached_bounds.disagreement("GestureDetector")
     }
 
     fn paint(&self, ctx: &BuildContext<'_>) {
@@ -630,7 +647,7 @@ mod tests {
 
     impl LayoutElement for RecordingElement {}
     impl Drawable for RecordingElement {
-        fn draw(&self, _ctx: &BuildContext<'_>) {}
+        fn update(&self, _ctx: &BuildContext<'_>) {}
     }
     impl Rebuildable for RecordingElement {}
 
@@ -643,7 +660,7 @@ mod tests {
     impl EventElement for TestElement {}
     impl LayoutElement for TestElement {}
     impl Drawable for TestElement {
-        fn draw(&self, _ctx: &BuildContext<'_>) {}
+        fn update(&self, _ctx: &BuildContext<'_>) {}
     }
     impl Rebuildable for TestElement {}
 
@@ -653,7 +670,7 @@ mod tests {
         let mut handlers = GestureHandlers::new();
         handlers.set_on_tap(move || taps.set(taps.get() + 1));
 
-        let cached_bounds = CacheBounds::new();
+        let cached_bounds = InteractionBounds::new();
         cached_bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
 
         RawGestureDetector {
@@ -681,7 +698,7 @@ mod tests {
         behavior: GestureDetectorBehavior,
         events: Rc<std::cell::Cell<usize>>,
     ) -> RawGestureDetector<RecordingElement> {
-        let cached_bounds = CacheBounds::new();
+        let cached_bounds = InteractionBounds::new();
         cached_bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
 
         RawGestureDetector {
@@ -704,7 +721,7 @@ mod tests {
     impl EventElement for PaintStableElement {}
     impl LayoutElement for PaintStableElement {}
     impl Drawable for PaintStableElement {
-        fn draw(&self, _ctx: &BuildContext<'_>) {}
+        fn update(&self, _ctx: &BuildContext<'_>) {}
 
         fn is_paint_stable(&self) -> bool {
             true
@@ -713,7 +730,7 @@ mod tests {
     impl Rebuildable for PaintStableElement {}
 
     fn paint_stable_detector() -> RawGestureDetector<PaintStableElement> {
-        let cached_bounds = CacheBounds::new();
+        let cached_bounds = InteractionBounds::new();
         cached_bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
         RawGestureDetector {
             child: PaintStableElement,
@@ -940,7 +957,7 @@ mod tests {
 
     #[test]
     fn a_press_inside_the_cached_bounds_is_accepted() {
-        let bounds = CacheBounds::new();
+        let bounds = InteractionBounds::new();
         bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
         let pointer = touch(25.0, 35.0, 7);
 
@@ -954,7 +971,7 @@ mod tests {
 
     #[test]
     fn a_press_outside_the_cached_bounds_is_rejected() {
-        let bounds = CacheBounds::new();
+        let bounds = InteractionBounds::new();
         bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
         let pointer = touch(200.0, 35.0, 7);
 
@@ -968,7 +985,7 @@ mod tests {
 
     #[test]
     fn a_release_outside_the_bounds_is_accepted_for_a_pointer_being_tracked() {
-        let bounds = CacheBounds::new();
+        let bounds = InteractionBounds::new();
         bounds.save(1.0, 10.0, 20.0, 100.0, 50.0);
         let state = pressing(touch(25.0, 35.0, 7));
         let outside = touch(115.0, 35.0, 7);
@@ -1012,6 +1029,64 @@ mod tests {
     // the replacement takes the press over, the release finds no gesture in
     // progress and no tap is ever reported — the button darkens and then does
     // nothing at all.
+    fn click(detector: &RawGestureDetector<TestElement>, x: f32, y: f32) {
+        let pointer = PointerInfo::mouse(Vec2d { x, y }, PointerButton::Primary);
+        let _ = detector.on_event(&ElementEvent::PointerDown(pointer));
+        let _ = detector.on_event(&ElementEvent::PointerUp(pointer));
+    }
+
+    #[test]
+    fn the_render_tree_rectangle_becomes_the_hit_area() {
+        use aimer_cupid::draw_cmd_v2::{Rect, RenderTree};
+
+        let taps = Rc::new(std::cell::Cell::new(0));
+        let detector = counting_detector(taps.clone());
+        let tree = RenderTree::new();
+        let node = tree.add_root(Rect::new(200.0, 200.0, 10.0, 10.0)).unwrap();
+
+        detector.adopt_retained_v2_interaction_source(aimer_widget::InteractionSource::new(
+            tree, node, (50.0, 50.0),
+        ));
+
+        assert_eq!(
+            detector.pos_start_end(),
+            Some((Vec2d { x: 200.0, y: 200.0 }, Vec2d { x: 250.0, y: 250.0 }))
+        );
+        click(&detector, 10.0, 10.0);
+        assert_eq!(taps.get(), 0, "the canvas-derived area no longer hits");
+        click(&detector, 210.0, 210.0);
+        assert_eq!(taps.get(), 1);
+    }
+
+    fn layout_context() -> BuildContext<'static> {
+        let canvas = {
+            let inner = Box::leak(Box::new(aimer_canvas::InnerCanvas::new()));
+            aimer_canvas::FrameCanvas::new(inner)
+        };
+        BuildContext::new(
+            canvas,
+            ResolvedSize::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_detector_opts_in_with_the_size_its_child_reports() {
+        let detector = counting_detector(Rc::new(std::cell::Cell::new(0)));
+        let ctx = layout_context();
+
+        // The interaction size is the child's computed size, which for a box
+        // model widget is the border box, not the render node's content box.
+        assert_eq!(
+            detector.retained_v2_interaction_size(&ctx),
+            Some(detector.child.computed_size(&ctx))
+        );
+    }
+
     #[test]
     fn a_rebuild_between_the_press_and_the_release_still_reports_the_tap() {
         let taps = Rc::new(std::cell::Cell::new(0));

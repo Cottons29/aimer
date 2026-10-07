@@ -1,28 +1,30 @@
 extern crate self as aimer_widget;
 
 mod async_builder;
-mod element_invalidation;
 pub mod components;
+mod element_invalidation;
+mod event_tree;
 pub mod focus_scope;
 pub mod focusable;
+mod frame_work_stats;
+mod hover_reconciliation;
 pub mod key;
 pub mod layout_cache;
 pub mod page_storage;
-pub mod platform_brightness;
-pub mod pointer_claim;
-pub mod repaint_boundary;
-#[doc(hidden)]
-pub mod portable;
-pub mod reconcile;
-mod reconciliation_plan;
-mod frame_work_stats;
-mod hover_reconciliation;
-mod rebuild_stats;
-mod event_tree;
+mod paint_damage;
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 mod paint_isolated;
-mod paint_damage;
+pub mod platform_brightness;
+pub mod pointer_claim;
+#[doc(hidden)]
+pub mod portable;
+mod rebuild_stats;
+pub mod reconcile;
+mod reconciliation_plan;
+pub mod repaint_boundary;
 pub mod safe_area;
+#[doc(hidden)]
+pub mod testing;
 mod widget;
 pub mod window_metrics;
 
@@ -38,10 +40,36 @@ pub mod window_metrics;
 /// ```
 pub struct RequiredChild;
 
-thread_local! {
-    pub static CALLED : Cell<u32> = Cell::default();
-}
+#[derive(Default)]
+pub struct CalledCounter(Cell<(u32, &'static str)>);
 
+
+
+unsafe  impl Send for CalledCounter{}
+unsafe  impl Sync for CalledCounter{}
+impl CalledCounter {
+    pub const fn new() -> Self {
+        Self(Cell::new((0, "NotSet")))
+    }
+
+    pub fn increase(&self) {
+        self.0.update(|(c, l)| (c + 1, l))
+    }
+
+    pub fn reset(&self) {
+        self.0.update(|(c, l)| (0, l))
+    }
+
+    pub fn set_label(&self, label: &'static str) {
+        self.0.update(|(c, _)| (0, label))
+    }
+
+    pub fn print(&self) {
+        let (c, l) = self.0.get();
+        debug!("{}: {}", l, c);
+    }
+}
+pub static CALLED : CalledCounter = CalledCounter::new();
 
 /// An owned, type-erased [`Element`], stored as a thin two-word owner.
 ///
@@ -96,10 +124,8 @@ pub type AnyElement = aimer_rubick::Rubick<dyn Element, 1>;
 /// ```
 pub type AnyWidget = aimer_rubick::Rubick<dyn DynWidget, 8>;
 
-use std::cell::Cell;
 pub use crate::components::diagnostics::{
     ErrorElement, ErrorWidget, OverflowEdges, OverflowIndicator, detect_overflow,
-    paint_overflow_indicator,
 };
 #[doc(hidden)]
 pub use crate::components::drawable::{
@@ -107,60 +133,62 @@ pub use crate::components::drawable::{
 };
 pub use crate::components::element::{
     Element, ElementId, ElementNodeMap, ElementPath, EventDispatchContext, EventDispatcher,
-    begin_event_frame,
-    begin_paint_frame, element_tree_generation, layout_invalidation_generation,
+    begin_event_frame, begin_paint_frame, element_tree_generation,
+    has_active_v2_render_presentation, has_active_v2_render_tree, layout_invalidation_generation,
     mark_paint_damage, mark_paint_damage_full, notify_element_tree_changed,
     notify_hosted_element_tree_changed, notify_retained_render_structure_changed,
-    retained_render_structure_generation,
-    has_active_v2_render_tree, update_v2_render_node_geometry,
-    rebuild_invalidation_generation,
-    set_rebuild_source_path, take_paint_frame_damage, take_unmapped_draws,
-    with_v2_render_tree_context,
-    with_v2_render_tree_presentation_context, has_active_v2_render_presentation,
-};
-#[doc(hidden)]
-pub use crate::element_invalidation::{
-    ElementChangeKind, ElementInvalidation, ElementInvalidationBatch,
-    ElementInvalidationBounds, ElementInvalidationRevisions,
-};
-#[doc(hidden)]
-pub use crate::paint_damage::PaintDamageTracker;
-pub use crate::rebuild_stats::RebuildStats;
-pub use crate::frame_work_stats::FrameWorkStats;
-pub use crate::frame_work_stats::{
-    record_hit_test_visit, record_layout_call, record_paint_call, record_redraw_request,
-    record_root_draw_call, record_scroll_event, record_scroll_offset_update, record_scroll_step,
-    record_smoothing_step, record_state_update, record_invalidation_queued,
-    record_invalidation_coalesced, record_element_index_lookup, record_stale_element_id,
-    reset_frame_work_stats, take_frame_work_stats,
-};
-#[doc(hidden)]
-pub use crate::hover_reconciliation::{
-    mouse_region_hover_reconciliation_deferred, request_mouse_region_hover_reconciliation,
-    with_deferred_mouse_region_hover_reconciliation,
+    rebuild_invalidation_generation, retained_render_structure_generation, set_rebuild_source_path,
+    take_declined_paint_elements, take_dropped_paint_elements, take_paint_frame_damage,
+    take_unmapped_draws, update_v2_render_node_geometry, with_v2_render_tree_context,
 };
 #[cfg(feature = "frame-stats")]
 pub use crate::components::element::{
     reset_draw_traversal_count, reset_routed_event_visit_count, take_draw_traversal_count,
     take_routed_event_visit_count,
 };
-#[cfg(feature = "frame-stats")]
-pub use crate::rebuild_stats::{reset as reset_rebuild_stats, take as take_rebuild_stats};
 pub use crate::components::event_element::{
     CaptureRequest, EventElement, EventResult, EventTreeRole, FollowUp, PointerKey,
 };
+pub use crate::components::interaction_bounds::{
+    InteractionBounds, InteractionDisagreement, InteractionSource,
+};
+pub use crate::components::layout_element::LayoutElement;
+pub use crate::components::rebuildable::Rebuildable;
+pub use crate::components::visitor_element::VisitorElement;
+#[doc(hidden)]
+pub use crate::element_invalidation::{
+    ElementChangeKind, ElementInvalidation, ElementInvalidationBatch, ElementInvalidationBounds,
+    ElementInvalidationRevisions,
+};
+pub use crate::focus_scope::FocusScope;
+pub use crate::focusable::{Focusable, FocusableState, RawFocusable};
+pub use crate::frame_work_stats::FrameWorkStats;
+pub use crate::frame_work_stats::{
+    record_element_index_lookup, record_hit_test_visit, record_invalidation_coalesced,
+    record_invalidation_queued, record_layout_call, record_paint_call, record_redraw_request,
+    record_root_draw_call, record_scroll_event, record_scroll_offset_update, record_scroll_step,
+    record_smoothing_step, record_stale_element_id, record_state_update, reset_frame_work_stats,
+    take_frame_work_stats,
+};
+#[doc(hidden)]
+pub use crate::hover_reconciliation::{
+    mouse_region_hover_reconciliation_deferred, request_mouse_region_hover_reconciliation,
+    with_deferred_mouse_region_hover_reconciliation,
+};
+#[doc(hidden)]
+pub use crate::paint_damage::PaintDamageTracker;
+pub use crate::rebuild_stats::RebuildStats;
+#[cfg(feature = "frame-stats")]
+pub use crate::rebuild_stats::{reset as reset_rebuild_stats, take as take_rebuild_stats};
 /// Keyboard focus lives in its own crate; it is re-exported here so
 /// `aimer_widget::focus::*` keeps naming the focus system.
 pub use aimer_focus as focus;
 pub use aimer_focus::{
-    FocusBehavior, FocusCallback, FocusCandidate, FocusManager, FocusNode, FocusTrap, FocusTrapId,
-    FocusTransition, active_focus_trap,
+    FocusBehavior, FocusCallback, FocusCandidate, FocusManager, FocusNode, FocusTransition,
+    FocusTrap, FocusTrapId, active_focus_trap,
 };
-pub use crate::focus_scope::FocusScope;
-pub use crate::focusable::{Focusable, FocusableState, RawFocusable};
-pub use crate::components::layout_element::LayoutElement;
-pub use crate::components::rebuildable::Rebuildable;
-pub use crate::components::visitor_element::VisitorElement;
+use std::cell::Cell;
+use std::ops::Deref;
 
 pub mod base {
     pub use aimer_attribute::dimension::Dimension;
@@ -172,30 +200,31 @@ pub mod base {
     pub use crate::components::context::BuildConsumer;
     pub use crate::components::context::{BuildContext, WindowHandle};
 }
-pub use aimer_canvas::{TextHorizontalAlign, TextOverflowMode};
-pub use aimer_macro::{PortableValue, PortableWidget, main, widget};
-
 pub use crate::async_builder::{AsyncBuilder, AsyncSnapshot};
 pub use crate::components::element::{broadcast_event, dispatch_event, dispatch_focused_event};
 pub use crate::key::Key;
 pub use crate::layout_cache::LayoutCache;
 pub use crate::platform_brightness::{Brightness, platform_brightness, set_platform_brightness};
-pub use crate::repaint_boundary::RepaintBoundary;
 pub use crate::pointer_claim::{
-    claim_pointer, claimed_pointer_count, is_pointer_claimed, release_all_pointers,
-    release_pointer,
+    claim_pointer, claimed_pointer_count, is_pointer_claimed, release_all_pointers, release_pointer,
 };
 pub use crate::reconciliation_plan::{
     ReconciliationMatch, ReconciliationMatchKind, ReconciliationPlan, ReconciliationPlanError,
     plan_element_reconciliation,
 };
+pub use crate::repaint_boundary::RepaintBoundary;
 pub use crate::safe_area::{SafeAreaInsets, safe_area_insets, set_safe_area_insets};
-pub use crate::widget::{AnyWidgetExt, DynWidget, PortableWidget, Widget};
 pub use crate::widget::child_builder::ChildBuilder;
 #[doc(hidden)]
-pub use crate::widget::stateful::{State, StateReadGuard, StateUpdater, StatefulElement, StatefulWidget};
+pub use crate::widget::stateful::{
+    State, StateReadGuard, StateUpdater, StatefulElement, StatefulWidget,
+};
 pub use crate::widget::stateless::{NamedWidget, StatelessElement, StatelessWidget};
+pub use crate::widget::{AnyWidgetExt, DynWidget, PortableWidget, Widget};
 pub use crate::window_metrics::{WindowMetrics, notify_window_metrics_changed};
+pub use aimer_canvas::{TextHorizontalAlign, TextOverflowMode};
+pub use aimer_macro::{PortableValue, PortableWidget, main, widget};
+use aimer_utils::debug;
 
 /// Carries the live state of an old element subtree into the subtree replacing
 /// it, and transfers its logical identities onto the replacement.
@@ -298,7 +327,10 @@ mod tests {
 
         plan.commit(&context()).unwrap();
 
-        assert_eq!(child_ids(new.as_ref()), [old_ids[1], old_ids[0], old_ids[2]]);
+        assert_eq!(
+            child_ids(new.as_ref()),
+            [old_ids[1], old_ids[0], old_ids[2]]
+        );
         assert_eq!(leaf_states(new.as_ref()), [11, 22, 33]);
         assert!(element_tree_generation() > generation);
     }
@@ -337,7 +369,7 @@ mod tests {
     impl EventElement for StateLeaf {}
     impl LayoutElement for StateLeaf {}
     impl Drawable for StateLeaf {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl Rebuildable for StateLeaf {
         fn option_any(&self) -> Option<&dyn Any> {
@@ -376,7 +408,7 @@ mod tests {
     impl EventElement for Branch {}
     impl LayoutElement for Branch {}
     impl Drawable for Branch {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl Rebuildable for Branch {}
 

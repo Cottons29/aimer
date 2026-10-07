@@ -66,7 +66,7 @@ impl LayoutElement for FourColorElement {
 }
 
 impl Drawable for FourColorElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.paint(ctx);
     }
 
@@ -140,7 +140,7 @@ fn record_packet(
     assert_eq!(measured.width, WIDTH as f32);
     assert_eq!(measured.height, HEIGHT as f32);
     ctx.canvas.save();
-    element.draw(ctx);
+    element.update(ctx);
     ctx.canvas.restore();
 
     let draw_list = inner.take_draw_list();
@@ -329,7 +329,7 @@ fn record_v2_fill(
 }
 
 fn direct_v2_packet(tree: &RenderTree, damage: Vec<V2Rect>) -> FramePacket {
-    FramePacket::from_v2_direct_with_legacy(
+    FramePacket::from_v2_direct_with_frame(
         aimer::cupid::draw_cmd_v2::RenderFrame {
             damage,
             operations: tree.render_all(),
@@ -426,7 +426,7 @@ fn widget_scene_packet_reaches_metal_and_reuses_unchanged_content() {
 }
 
 #[test]
-fn direct_retained_packet_interleaves_local_v2_with_legacy_ranges_on_metal() {
+fn direct_retained_packet_interleaves_clipped_local_v2_lists_on_metal() {
     let require_gpu = std::env::var_os("AIMER_REQUIRE_GPU_E2E").is_some();
     let Some((device, queue, adapter_info)) = gpu() else {
         if require_gpu {
@@ -459,41 +459,23 @@ fn direct_retained_packet_interleaves_local_v2_with_legacy_ranges_on_metal() {
     let legacy = tree
         .add_child(root, V2Rect::new(16.0, 16.0, 32.0, 32.0))
         .unwrap();
-    tree.set_paint_source(legacy, aimer::cupid::draw_cmd_v2::RenderPaintSource::LegacyIsland)
+    // The child paints a 32x32 square but only its top half is inside its clip.
+    tree.set_clip(legacy, Some(V2Rect::new(0.0, 0.0, 32.0, 16.0)))
         .unwrap();
-    tree.begin_legacy_frame();
     record_v2_fill(&tree, root, V2Rect::new(0.0, 0.0, 64.0, 64.0), [220, 20, 30, 255]);
+    record_v2_fill(&tree, legacy, V2Rect::new(0.0, 0.0, 32.0, 32.0), [20, 210, 60, 255]);
 
-    let mut legacy_list = aimer::cupid::draw_cmd::DrawList::new();
-    legacy_list.save();
-    legacy_list.translate(16.0, 16.0);
-    legacy_list.push_clip_rounded(V2Rect::new(0.0, 0.0, 32.0, 16.0), [0.0; 4]);
-    let start = legacy_list.commands().len();
-    legacy_list.fill_rect(
-        V2Rect::new(0.0, 0.0, 32.0, 32.0),
-        aimer::cupid::utilities::Color::rgba8(20, 210, 60, 255),
-        [0.0; 4],
-        [0.0; 4],
-        aimer::cupid::utilities::Color::transparent(),
-    );
-    let end = legacy_list.commands().len();
-    legacy_list.pop_clip();
-    legacy_list.restore();
-    tree.set_legacy_command_range(legacy, Some((start, end)))
-        .unwrap();
-    let legacy_command_count = legacy_list.commands().len();
-
-    let packet = FramePacket::from_v2_direct_with_legacy(
+    let packet = FramePacket::from_v2_direct_with_frame(
         aimer::cupid::draw_cmd_v2::RenderFrame {
             damage: vec![V2Rect::new(0.0, 0.0, 64.0, 64.0)],
             operations: tree.render_all(),
         },
         FrameRenderMetadata::new(1.0, 72, 1, 1, 1, DamageSet::new(WIDTH, HEIGHT)),
-        Frame::new(legacy_list, WIDTH, HEIGHT),
+        Frame::new(aimer::cupid::draw_cmd::DrawList::new(), WIDTH, HEIGHT),
     )
     .expect("build a retained packet without flattening local v2 commands");
     assert!(packet.render_plan().unwrap().is_complete());
-    assert_eq!(packet.frame().draw_list.commands().len(), legacy_command_count);
+    assert!(packet.frame().draw_list.commands().is_empty());
 
     let backend = WgpuBackend::new(device.clone(), queue.clone());
     let mut renderer = Renderer::new(&backend, FORMAT);
@@ -597,7 +579,7 @@ fn retained_v2_packet_updates_only_its_damaged_pixels_on_metal() {
     record_v2_fill(&tree, child, V2Rect::new(0.0, 0.0, 32.0, 32.0), [20, 210, 60, 255]);
     let update_damage = tree.take_damage();
     assert_eq!(update_damage, vec![V2Rect::new(16.0, 16.0, 32.0, 32.0)]);
-    let second_packet = FramePacket::from_v2_direct_with_legacy(
+    let second_packet = FramePacket::from_v2_direct_with_frame(
         aimer::cupid::draw_cmd_v2::RenderFrame {
             damage: update_damage,
             operations: tree.render_all(),
@@ -705,7 +687,7 @@ fn nested_opacity_groups_composite_overlapping_children_and_clip_damage_on_avail
     assert!(update_damage.iter().all(|rect| {
         rect.x >= 0.0 && rect.y >= 0.0 && rect.x + rect.width <= 48.0 && rect.y + rect.height <= 48.0
     }));
-    let second_packet = FramePacket::from_v2_direct_with_legacy(
+    let second_packet = FramePacket::from_v2_direct_with_frame(
         aimer::cupid::draw_cmd_v2::RenderFrame {
             damage: update_damage,
             operations: tree.render_all(),
@@ -737,7 +719,7 @@ fn nested_opacity_groups_composite_overlapping_children_and_clip_damage_on_avail
         (rect.x + rect.width - WIDTH as f32).abs() < f32::EPSILON
             && (rect.y + rect.height - HEIGHT as f32).abs() < f32::EPSILON
     }), "edge group damage reaches both target edges: {edge_damage:?}");
-    let edge_packet = FramePacket::from_v2_direct_with_legacy(
+    let edge_packet = FramePacket::from_v2_direct_with_frame(
         aimer::cupid::draw_cmd_v2::RenderFrame {
             damage: edge_damage,
             operations: tree.render_all(),

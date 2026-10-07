@@ -16,7 +16,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use aimer_animation::AnimInstant;
-use aimer_attribute::CacheBounds;
+use aimer_widget::InteractionBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
@@ -234,7 +234,7 @@ impl<W: Widget + 'static> Widget for Draggable<W> {
             start_mode: self.start_mode,
             axis: self.axis,
             on_drag_completed: self.on_drag_completed.clone(),
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
             press: RefCell::new(None),
             dragging: Cell::new(false),
         }
@@ -261,7 +261,7 @@ struct RawDraggable {
     start_mode: Option<DragStartMode>,
     axis: DragAxis,
     on_drag_completed: Option<Rc<dyn Fn(bool)>>,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
     press: RefCell<Option<Press>>,
     dragging: Cell<bool>,
 }
@@ -485,7 +485,24 @@ impl LayoutElement for RawDraggable {
 }
 
 impl Drawable for RawDraggable {
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.visible_child().computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("Draggable")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
         let child = self.visible_child();
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         let size = child.computed_size(ctx);

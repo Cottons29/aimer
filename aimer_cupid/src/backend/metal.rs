@@ -2823,7 +2823,7 @@ mod tests {
         let _ = tree.take_damage();
 
         tree.set_opacity(nested, 0.25).unwrap();
-        let update_packet = FramePacket::from_v2_direct_with_legacy(
+        let update_packet = FramePacket::from_v2_direct_with_frame(
             RenderFrame {
                 damage: tree.take_damage(),
                 operations: tree.render_all(),

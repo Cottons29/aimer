@@ -217,7 +217,7 @@ impl VisitorElement for SelectionAreaElement {
 }
 
 impl Drawable for SelectionAreaElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.session.begin_frame();
         self.scoped(ctx, |ctx| self.child.update(ctx));
         // Neither piece of furniture is painted into this canvas: each knob
@@ -392,7 +392,7 @@ mod tests {
 
     impl EventElement for StubChild {}
     impl Drawable for StubChild {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl Rebuildable for StubChild {}
 
@@ -504,7 +504,7 @@ mod tests {
 
     impl EventElement for Page {}
     impl Drawable for Page {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl Rebuildable for Page {}
     impl LayoutElement for Page {}

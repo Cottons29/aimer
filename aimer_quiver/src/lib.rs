@@ -1560,7 +1560,7 @@ mod tests {
         impl EventElement for StatefulRoot {}
         impl LayoutElement for StatefulRoot {}
         impl Drawable for StatefulRoot {
-            fn draw(&self, _ctx: &BuildContext) {}
+            fn update(&self, _ctx: &BuildContext) {}
         }
         impl Rebuildable for StatefulRoot {
             fn option_any(&self) -> Option<&dyn Any> {
@@ -2608,7 +2608,7 @@ mod tests {
         impl EventElement for CounterRoot {}
         impl LayoutElement for CounterRoot {}
         impl Drawable for CounterRoot {
-            fn draw(&self, _ctx: &BuildContext) {}
+            fn update(&self, _ctx: &BuildContext) {}
         }
         impl Rebuildable for CounterRoot {
             fn option_any(&self) -> Option<&dyn Any> {

@@ -476,7 +476,7 @@ mod tests {
             (rect.x + rect.width - SIZE as f32).abs() < f32::EPSILON
                 && (rect.y + rect.height - SIZE as f32).abs() < f32::EPSILON
         }), "edge-group damage reaches both target edges: {edge_damage:?}");
-        let update_packet = FramePacket::from_v2_direct_with_legacy(
+        let update_packet = FramePacket::from_v2_direct_with_frame(
             RenderFrame {
                 damage: edge_damage,
                 operations: tree.render_all(),

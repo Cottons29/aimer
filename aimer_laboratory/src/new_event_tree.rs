@@ -1697,7 +1697,7 @@ mod tests {
         }
 
         impl FrameworkDrawable for ComparisonElement {
-            fn draw(&self, _ctx: &BuildContext) {}
+            fn update(&self, _ctx: &BuildContext) {}
         }
 
         impl Rebuildable for ComparisonElement {}
@@ -1768,7 +1768,7 @@ mod tests {
         }
 
         impl FrameworkDrawable for LegacyHitBoundary {
-            fn draw(&self, _ctx: &BuildContext) {}
+            fn update(&self, _ctx: &BuildContext) {}
         }
 
         impl Rebuildable for LegacyHitBoundary {}

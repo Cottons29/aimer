@@ -47,7 +47,7 @@ mod tests {
     }
 
     impl Drawable for MeasuredPositionedChild {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.observed_parent_size.set(ctx.parent_size);
         }
     }
@@ -549,7 +549,7 @@ mod tests {
         }
     }
     impl Drawable for MainAxisProbe {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl EventElement for MainAxisProbe {}
     impl LayoutElement for MainAxisProbe {
@@ -582,7 +582,7 @@ mod tests {
         }
     }
     impl Drawable for IntrinsicProbe {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl EventElement for IntrinsicProbe {}
     impl LayoutElement for IntrinsicProbe {
@@ -615,7 +615,7 @@ mod tests {
         }
     }
     impl Drawable for ConstraintSensitiveProbe {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.drawn_width.set(ctx.box_constraint.max_width);
         }
     }
@@ -653,7 +653,7 @@ mod tests {
         }
     }
     impl Drawable for ConstraintSensitiveColumnProbe {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.drawn_height.set(ctx.box_constraint.max_height);
         }
     }

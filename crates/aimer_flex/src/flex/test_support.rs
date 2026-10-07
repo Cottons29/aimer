@@ -101,7 +101,7 @@ impl EventElement for MarkerChild {}
 impl Rebuildable for MarkerChild {}
 
 impl Drawable for MarkerChild {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl LayoutElement for MarkerChild {}
@@ -145,7 +145,7 @@ impl EventElement for CountingChild {}
 impl Rebuildable for CountingChild {}
 
 impl Drawable for CountingChild {
-    fn draw(&self, _ctx: &BuildContext) {
+    fn update(&self, _ctx: &BuildContext) {
         self.drawn.set(self.drawn.get() + 1);
     }
 }
@@ -193,7 +193,7 @@ impl EventElement for ResizingChild {}
 impl Rebuildable for ResizingChild {}
 
 impl Drawable for ResizingChild {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let translation = ctx.canvas.get_transform_translation();
         self.drawn_at.set((translation.0, translation.1));
     }

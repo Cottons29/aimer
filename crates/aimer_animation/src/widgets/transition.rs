@@ -18,11 +18,6 @@ fn request_next_frame() {
 }
 
 #[inline]
-fn child_paint_is_bounded(child: &dyn Element) -> bool {
-    child.is_paint_bounded()
-}
-
-#[inline]
 fn update_transition_damage(
     tracker: &PaintDamageTracker,
     last_value: &Cell<Option<u32>>,
@@ -136,7 +131,7 @@ macro_rules! impl_transition_element {
         unsafe impl Sync for $name {}
 
         impl Drawable for $name {
-            fn draw(&self, ctx: &BuildContext) {
+            fn update(&self, ctx: &BuildContext) {
                 draw_transition_frame(
                     ctx,
                     self.child.as_ref(),
@@ -177,7 +172,7 @@ macro_rules! impl_transition_element {
             #[inline]
             fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
                 let frame = self.sample_frame(ctx);
-                if frame.valid && child_paint_is_bounded(self.child.as_ref()) {
+                if frame.valid {
                     CompositorAnimationDecision::Compositor(frame)
                 } else {
                     CompositorAnimationDecision::Live(frame)
@@ -360,7 +355,7 @@ unsafe impl Send for SlideTransitionElement {}
 unsafe impl Sync for SlideTransitionElement {}
 
 impl Drawable for SlideTransitionElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         draw_transition_frame(
             ctx,
             self.child.as_ref(),
@@ -401,7 +396,7 @@ impl Drawable for SlideTransitionElement {
     #[inline]
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
         let frame = self.sample_frame(ctx);
-        if frame.valid && child_paint_is_bounded(self.child.as_ref()) {
+        if frame.valid {
             CompositorAnimationDecision::Compositor(frame)
         } else {
             CompositorAnimationDecision::Live(frame)
@@ -572,7 +567,7 @@ unsafe impl Send for ScaleTransitionElement {}
 unsafe impl Sync for ScaleTransitionElement {}
 
 impl Drawable for ScaleTransitionElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         draw_transition_frame(
             ctx,
             self.child.as_ref(),
@@ -613,7 +608,7 @@ impl Drawable for ScaleTransitionElement {
     #[inline]
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
         let frame = self.sample_frame(ctx);
-        if frame.valid && child_paint_is_bounded(self.child.as_ref()) {
+        if frame.valid {
             CompositorAnimationDecision::Compositor(frame)
         } else {
             CompositorAnimationDecision::Live(frame)
@@ -812,7 +807,7 @@ unsafe impl Send for RotationTransitionElement {}
 unsafe impl Sync for RotationTransitionElement {}
 
 impl Drawable for RotationTransitionElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         draw_transition_frame(
             ctx,
             self.child.as_ref(),
@@ -858,7 +853,7 @@ impl Drawable for RotationTransitionElement {
     #[inline]
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
         let frame = self.sample_frame(ctx);
-        if frame.valid && child_paint_is_bounded(self.child.as_ref()) {
+        if frame.valid {
             CompositorAnimationDecision::Compositor(frame)
         } else {
             CompositorAnimationDecision::Live(frame)
@@ -1043,7 +1038,7 @@ mod tests {
     struct TestElement;
 
     impl Drawable for TestElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl EventElement for TestElement {}
@@ -1097,7 +1092,7 @@ mod tests {
 
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
     impl Drawable for CountingElement {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.draws.set(self.draws.get() + 1);
             ctx.canvas.fill_rect(
                 (0.0, 0.0).into(),

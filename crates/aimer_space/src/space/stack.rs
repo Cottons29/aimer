@@ -420,7 +420,7 @@ impl Drawable for RawStackElement {
         self.retained_child_context(ctx)
     }
 
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.invalidate_hit_test_index();
         let content_size = self.content_size(ctx);
         let child_ctx = BuildContext {
@@ -615,7 +615,7 @@ mod tests {
     struct LayeredElement(u32);
 
     impl Drawable for LayeredElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl VisitorElement for LayeredElement {
@@ -644,7 +644,7 @@ mod tests {
     }
 
     impl Drawable for BoundedElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl VisitorElement for BoundedElement {

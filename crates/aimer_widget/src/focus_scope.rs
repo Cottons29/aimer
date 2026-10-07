@@ -159,7 +159,7 @@ impl EventElement for RawFocusScope {
 }
 
 impl Drawable for RawFocusScope {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.child.update(ctx);
     }
 
@@ -239,7 +239,7 @@ mod tests {
     impl Rebuildable for TestChild {}
 
     impl Drawable for TestChild {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     #[test]

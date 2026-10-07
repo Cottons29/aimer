@@ -667,7 +667,7 @@ impl<T: Theme> VisitorElement for AnimatedThemeElement<T> {
 }
 
 impl<T: Theme> Drawable for AnimatedThemeElement<T> {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.child.update(ctx);
 
         if self.controller.is_animating() {

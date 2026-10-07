@@ -1,5 +1,4 @@
 use aimer::canvas::{FrameCanvas, InnerCanvas};
-use aimer::cupid::draw_cmd::DrawCommand;
 use aimer::cupid::draw_cmd_v2::{DrawCommand as V2DrawCommand, Rect, RenderPaintSource, RenderTree};
 use aimer::widget::base::WindowHandle;
 use aimer::{
@@ -34,8 +33,23 @@ fn square_path() -> ShapePath {
         .expect("finite test shape")
 }
 
+/// Records `element`'s own retained list the way the frame loop does.
+fn record_local_v2(
+    element: &aimer::AnyElement,
+    context: &BuildContext<'_>,
+) -> std::sync::Arc<[V2DrawCommand]> {
+    let tree = RenderTree::new();
+    let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
+    let retained_context = tree.context(root).unwrap();
+    context.with_local_v2_paint_context(retained_context, |context| {
+        assert!(element.can_paint_local_v2(context));
+        element.paint_local_v2(context);
+    });
+    tree.draw_list_snapshot(root).unwrap().commands
+}
+
 #[test]
-fn custom_shape_submits_a_fitted_background_before_its_child() {
+fn custom_shape_records_a_fitted_background_in_its_own_list() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("test runtime");
@@ -63,15 +77,13 @@ fn custom_shape_submits_a_fitted_background_before_its_child() {
         )
         .to_element(&context);
     element.layout(&context);
-    element.update(&context);
 
-    let draw_list = inner.take_draw_list();
-    let svg_index = draw_list
-        .commands()
+    let commands = record_local_v2(&element, &context);
+    let svg_index = commands
         .iter()
-        .position(|command| matches!(command, DrawCommand::Svg { .. }))
-        .expect("custom shape should submit one SVG-backed draw");
-    let DrawCommand::Svg { scene, .. } = &draw_list.commands()[svg_index] else {
+        .position(|command| matches!(command, V2DrawCommand::Svg { .. }))
+        .expect("custom shape should record one SVG-backed draw");
+    let V2DrawCommand::Svg { scene, .. } = &commands[svg_index] else {
         unreachable!("the position above identifies the SVG command")
     };
     let node = &scene.nodes[0];
@@ -85,24 +97,23 @@ fn custom_shape_submits_a_fitted_background_before_its_child() {
         node.stroke.as_ref().expect("stroke is retained").width,
         stroke_width,
     );
-    let clip = draw_list
-        .commands()
+    let clip = commands
         .iter()
         .find_map(|command| match command {
-            DrawCommand::PushClip { rect, .. } => Some(*rect),
+            V2DrawCommand::PushClip { rect, .. } => Some(*rect),
             _ => None,
         })
         .expect("bounds clipping should target the transformed path bounds");
-    assert_eq!(clip.x, 8.0);
-    assert_eq!(clip.y, 8.0);
-    assert_eq!(clip.width, 32.0);
-    assert_eq!(clip.height, 32.0);
-    let child_index = draw_list
-        .commands()
-        .iter()
-        .position(|command| matches!(command, DrawCommand::FillRect { .. }))
-        .expect("the retained child should still paint");
-    assert!(svg_index < child_index);
+    assert_eq!((clip.x, clip.y, clip.width, clip.height), (8.0, 8.0, 32.0, 32.0));
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, V2DrawCommand::FillRect { .. })),
+        "the child paints in its own node, after this list"
+    );
+    let mut children = 0;
+    element.visit_children(&mut |_| children += 1);
+    assert_eq!(children, 1, "the child stays a retained node of its own");
 }
 
 #[test]
@@ -121,17 +132,14 @@ fn custom_shape_invalid_opacity_keeps_the_child_and_skips_shape_paint() {
         .child(SizedBox::new().width(64.0).height(64.0))
         .to_element(&context);
     element.layout(&context);
-    element.update(&context);
 
-    let draw_list = inner.take_draw_list();
-    assert!(!draw_list
-        .commands()
+    let commands = record_local_v2(&element, &context);
+    assert!(!commands
         .iter()
-        .any(|command| matches!(command, DrawCommand::Svg { .. })));
-    assert!(draw_list
-        .commands()
-        .iter()
-        .any(|command| matches!(command, DrawCommand::FillRect { .. })));
+        .any(|command| matches!(command, V2DrawCommand::Svg { .. })));
+    let mut children = 0;
+    element.visit_children(&mut |_| children += 1);
+    assert_eq!(children, 1, "the child is kept");
 }
 
 #[test]

@@ -76,7 +76,7 @@ impl LayoutElement for DrawOnly {}
 impl Rebuildable for DrawOnly {}
 
 impl Drawable for DrawOnly {
-    fn draw(&self, _ctx: &BuildContext) {
+    fn update(&self, _ctx: &BuildContext) {
         self.draws.set(self.draws.get() + 1);
     }
 }
@@ -107,19 +107,6 @@ fn a_legacy_draw_only_element_is_driven_by_update() {
     assert_eq!(draws.get(), 1, "update falls back to the legacy draw");
 }
 
-#[test]
-#[allow(deprecated)]
-fn the_deprecated_draw_entry_point_still_reaches_update() {
-    let updates = Rc::new(Cell::new(0));
-    let element = UpdateOnly {
-        updates: updates.clone(),
-    }
-    .boxed();
-
-    element.draw(&context());
-
-    assert_eq!(updates.get(), 1);
-}
 
 #[test]
 fn update_through_a_boxed_drawable_reaches_the_inner_element() {

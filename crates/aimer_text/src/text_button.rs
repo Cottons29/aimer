@@ -1,7 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::time::Duration;
 
-use aimer_attribute::CacheBounds;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
 use aimer_macro::PortableWidget;
@@ -9,6 +8,7 @@ use aimer_events::window::request_animation_frame;
 use aimer_style::{TextOverflow, TextStyle};
 use aimer_utils::AnimInstant;
 use aimer_utils::callback::{CallbackExecutor, VoidCallback};
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::{BuildContext, Color};
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, EventTreeRole, LayoutCache,
@@ -212,9 +212,16 @@ struct RawTextButton {
     bounds: TextHitBounds,
 }
 
+/// The rectangle of each text line a button hit-tests, in logical pixels.
+///
+/// The lines are relative to the button's origin, which comes from the canvas
+/// until the render tree supplies it and from the tree afterwards.
 #[derive(Debug, Default)]
 struct TextHitBounds {
-    lines: RefCell<Vec<CacheBounds>>,
+    /// `(width, offset below the first line, height)` of every line.
+    lines: RefCell<Vec<(f32, f32, f32)>>,
+    /// The whole text block: its origin, the widest line, and the full height.
+    block: InteractionBounds,
 }
 
 impl TextHitBounds {
@@ -229,20 +236,26 @@ impl TextHitBounds {
     ) {
         let mut lines = self.lines.borrow_mut();
         lines.clear();
+        let mut widest: f32 = 0.0;
         for (index, width) in line_widths.iter().copied().enumerate() {
             let offset_y = index as f32 * line_height;
             let height = line_height.min((total_height - offset_y).max(0.0));
-            let bounds = CacheBounds::new();
-            bounds.save(scale, x, y + offset_y, width, height);
-            lines.push(bounds);
+            lines.push((width / scale, offset_y / scale, height / scale));
+            widest = widest.max(width);
         }
+        self.block.save(scale, x, y, widest, total_height);
     }
 
     fn is_inside(&self, x: f32, y: f32) -> bool {
-        self.lines
-            .borrow()
-            .iter()
-            .any(|bounds| bounds.is_inside(x, y))
+        let Some(origin) = self.block.get_bounds() else {
+            return false;
+        };
+        self.lines.borrow().iter().any(|(width, offset, height)| {
+            origin.x <= x
+                && x <= origin.x + width
+                && origin.y + offset <= y
+                && y <= origin.y + offset + height
+        })
     }
 }
 
@@ -367,16 +380,16 @@ impl RawTextButton {
             return None;
         }
         let hover = (!self.widget.disabled).then(|| self.text_layout_for(ctx, true));
+        let mut sizes_differ = false;
         if let Some((hover_text, hover_ctx, hover_size, _, _)) = &hover {
             // A decoration moves the label onto the paragraph path, which does
             // not round the size up like plain text, so the two states can
             // differ by a fraction of a pixel. Anything larger is a real
-            // resize that the node's bounds cannot absorb.
-            if (normal.2.width - hover_size.width).abs() > Self::SUBPIXEL_SIZE_TOLERANCE
-                || (normal.2.height - hover_size.height).abs() > Self::SUBPIXEL_SIZE_TOLERANCE
-            {
-                return None;
-            }
+            // resize: the node's bounds follow the state the button is in, so
+            // the label is painted in that state rather than the cursor's.
+            sizes_differ = (normal.2.width - hover_size.width).abs()
+                > Self::SUBPIXEL_SIZE_TOLERANCE
+                || (normal.2.height - hover_size.height).abs() > Self::SUBPIXEL_SIZE_TOLERANCE;
             if hover_text.text_style.text_shadow.is_some()
                 || hover_text.text_style.background_color.is_some()
                 || !hover_text.can_paint_local_v2(hover_ctx)
@@ -386,7 +399,11 @@ impl RawTextButton {
         }
 
         let hovered = !self.widget.disabled
-            && self.bounds.is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y);
+            && if sizes_differ {
+                self.hovered.get()
+            } else {
+                self.bounds.is_inside(ctx.cursor_pos.x, ctx.cursor_pos.y)
+            };
         let (text, text_ctx, size, _, _) = if hovered {
             hover.expect("enabled buttons have a hover layout")
         } else {
@@ -534,7 +551,26 @@ impl LayoutElement for RawTextButton {
 }
 
 impl Drawable for RawTextButton {
-    fn draw(&self, ctx: &BuildContext) {
+    /// The button hit-tests its text block: the widest line by the full height.
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<aimer_attribute::ResolvedSize> {
+        let (_, _, size, line_widths, _) = self.text_layout(ctx);
+        Some(aimer_attribute::ResolvedSize {
+            width: line_widths.iter().copied().fold(0.0, f32::max),
+            height: size.height,
+        })
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.block.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.block.disagreement("TextButton")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
         let (text, text_ctx, size, line_widths, line_height) = self.text_layout(ctx);
         self.save_bounds(ctx, size, &line_widths, line_height);
         let hover_changed = !self.widget.disabled
@@ -587,7 +623,7 @@ mod tests {
     use std::rc::Rc;
 
     use aimer_attribute::{BoxConstraint, ResolvedSize, Vec2d};
-    use aimer_cupid::draw_cmd::DrawCommand;
+    
     use aimer_events::pointer::{PointerButton, PointerInfo};
     use aimer_style::TextDecoration;
     use aimer_widget::base::WindowHandle;
@@ -615,6 +651,23 @@ mod tests {
         );
         ctx.box_constraint = BoxConstraint::new().max_width(max_width).max_height(100.0);
         (ctx, canvas)
+    }
+
+    /// Records `element`'s own retained list, as the frame loop does for a node.
+    fn record_local_v2(
+        element: &impl Drawable,
+        ctx: &BuildContext<'_>,
+    ) -> std::sync::Arc<[aimer_cupid::draw_cmd_v2::DrawCommand]> {
+        let tree = aimer_cupid::draw_cmd_v2::RenderTree::new();
+        let root = tree
+            .add_root(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 400.0, 300.0))
+            .unwrap();
+        let node_context = tree.context(root).unwrap();
+        ctx.with_local_v2_paint_context(node_context, |ctx| {
+            assert!(element.can_paint_local_v2(ctx));
+            element.paint_local_v2(ctx);
+        });
+        tree.draw_list_snapshot(root).unwrap().commands
     }
 
     fn raw_button(widget: TextButton) -> RawTextButton {
@@ -756,7 +809,7 @@ mod tests {
             .build()
             .unwrap();
         let _guard = runtime.enter();
-        let (mut ctx, canvas) = context_with_canvas(45.0);
+        let (mut ctx, _canvas) = context_with_canvas(45.0);
         ctx.cursor_pos = Vec2d { x: -1.0, y: -1.0 };
         let button = raw_button(
             TextButton::new("MMMM i").style(
@@ -766,14 +819,16 @@ mod tests {
             ),
         );
 
-        button.update(&ctx);
-
-        let draw_list = canvas.draw_list();
-        let decorations = draw_list
-            .commands()
+        // Layout establishes the hit bounds and the shaped paragraph the
+        // retained paint reads, as the frame's tree sync does.
+        button.layout(&ctx);
+        let commands = record_local_v2(&button, &ctx);
+        let decorations = commands
             .iter()
             .filter_map(|command| match command {
-                DrawCommand::DrawTextDecoration { rect, .. } => Some(rect),
+                aimer_cupid::draw_cmd_v2::DrawCommand::DrawTextDecoration { rect, .. } => {
+                    Some(rect)
+                }
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -788,7 +843,7 @@ mod tests {
             .build()
             .unwrap();
         let _guard = runtime.enter();
-        let (mut ctx, canvas) = context_with_canvas(300.0);
+        let (mut ctx, _canvas) = context_with_canvas(300.0);
         ctx.cursor_pos = Vec2d { x: 1.0, y: 1.0 };
         let button = raw_button(
             TextButton::new("Open").hover_style(
@@ -796,10 +851,12 @@ mod tests {
             ),
         );
 
-        button.update(&ctx);
-
-        assert!(canvas.draw_list().commands().iter().any(|command| {
-            matches!(command, DrawCommand::DrawTextDecoration { .. })
+        button.layout(&ctx);
+        assert!(record_local_v2(&button, &ctx).iter().any(|command| {
+            matches!(
+                command,
+                aimer_cupid::draw_cmd_v2::DrawCommand::DrawTextDecoration { .. }
+            )
         }));
     }
 
@@ -1060,7 +1117,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hover_style_that_resizes_the_label_still_declines() {
+    fn a_hover_style_that_resizes_the_label_paints_the_state_the_button_is_in() {
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
         let _guard = runtime.enter();
         let ctx = context(300.0);
@@ -1069,10 +1126,20 @@ mod tests {
                 .style(TextStyle::new().font_size(20))
                 .hover_style(TextStyle::new().font_size(28)),
         );
+        button.layout(&ctx);
 
-        assert!(
-            !button.can_paint_local_v2(&ctx),
-            "a hover state of a different size cannot share the node's bounds"
-        );
+        let font_size = |button: &RawTextButton| {
+            record_local_v2(button, &ctx).iter().find_map(|command| match command {
+                aimer_cupid::draw_cmd_v2::DrawCommand::DrawText { font_size, .. } => {
+                    Some(*font_size)
+                }
+                _ => None,
+            })
+        };
+        // The node's bounds follow the state, so the label is painted in it
+        // rather than left blank because the two states differ in size.
+        assert_eq!(font_size(&button), Some(20.0));
+        button.set_hovered(true);
+        assert_eq!(font_size(&button), Some(28.0));
     }
 }

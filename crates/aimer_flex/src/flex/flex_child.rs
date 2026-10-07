@@ -141,7 +141,7 @@ impl<E: Element> RawExpanded<E> {
 }
 
 impl<E: Element> Drawable for RawExpanded<E> {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.child.update(ctx);
     }
 

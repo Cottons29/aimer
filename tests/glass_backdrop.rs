@@ -96,7 +96,7 @@ fn glass_frame(blur_radius: f32) -> aimer::cupid::draw_cmd::DrawList {
         x: GLASS_X as f32,
         y: 0.0,
     });
-    element.draw(&context);
+    element.update(&context);
     canvas.restore();
 
     inner.take_draw_list()
@@ -160,7 +160,7 @@ fn tinted_glass_frame() -> aimer::cupid::draw_cmd::DrawList {
         x: GLASS_X as f32,
         y: 0.0,
     });
-    element.draw(&context);
+    element.update(&context);
     canvas.restore();
 
     inner.take_draw_list()

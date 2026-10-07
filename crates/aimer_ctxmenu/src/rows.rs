@@ -20,6 +20,7 @@ use aimer_cupid::canvas::TextMetrics;
 use aimer_events::element::ElementEvent;
 use aimer_macro::{PortableWidget, Rebuildable};
 use aimer_widget::base::{BuildContext, WindowHandle};
+use aimer_widget::InteractionBounds;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, PointerKey,
     VisitorElement, Widget,
@@ -234,6 +235,7 @@ impl Widget for ContextMenuRows {
             dismiss_on_select: self.dismiss_on_select,
             row_elements,
             rows: RefCell::new(Vec::new()),
+            bounds: InteractionBounds::new(),
             label_widths: RefCell::new(Vec::new()),
             measured_scale: Cell::new(0.0),
             local_rows: RefCell::new(Vec::new()),
@@ -265,6 +267,10 @@ pub(crate) struct RawContextMenuRows {
     /// Where each row was last painted, in absolute logical coordinates —
     /// the space a pointer event arrives in.
     rows: RefCell<Vec<Bounds>>,
+    /// The rows' whole area. Once the render tree supplies it, each row's
+    /// absolute rectangle is its local rectangle plus this area's origin, and
+    /// `rows` is only the canvas-derived fallback.
+    bounds: InteractionBounds,
     /// The measured label widths, in logical pixels, and the scale they were
     /// measured at, so a frame that changes neither measures nothing.
     label_widths: RefCell<Vec<f32>>,
@@ -399,9 +405,26 @@ impl RawContextMenuRows {
         }
     }
 
+    /// The rows in absolute logical coordinates, the space a pointer event
+    /// arrives in: from the render tree once it supplies the menu's origin,
+    /// otherwise where the canvas last painted them.
+    fn hit_rows(&self) -> Vec<Bounds> {
+        if self.bounds.is_adopted()
+            && let Some(origin) = self.bounds.get_bounds()
+        {
+            return self
+                .local_rows
+                .borrow()
+                .iter()
+                .map(|row| Bounds::new(row.x + origin.x, row.y + origin.y, row.width, row.height))
+                .collect();
+        }
+        self.rows.borrow().clone()
+    }
+
     /// The index of the *choosable* row under an absolute logical position.
     fn enabled_at(&self, pos: Vec2d) -> Option<usize> {
-        let rows = self.rows.borrow();
+        let rows = self.hit_rows();
         let index = geometry::row_at(self.shape, &rows, pos.x, pos.y)?;
         self.items
             .get(index)
@@ -411,7 +434,7 @@ impl RawContextMenuRows {
 
     /// Whether an absolute logical position landed on the rows at all.
     fn contains(&self, pos: Vec2d) -> bool {
-        geometry::union(&self.rows.borrow())
+        geometry::union(&self.hit_rows())
             .is_some_and(|bounds| geometry::contains(bounds, pos.x, pos.y))
     }
 
@@ -429,25 +452,6 @@ impl RawContextMenuRows {
         }
     }
 
-    /// The corner radii of one row's highlight, in physical pixels.
-    ///
-    /// A tiled item at either end is as round as the panel, or the wash would
-    /// square off the panel's own corner. A stacked row is square, because the
-    /// panel's padding already keeps it clear of the corners.
-    fn row_radii(&self, index: usize, panel: ResolvedSize, scale: f32) -> [f32; 4] {
-        if !self.shape.is_horizontal() {
-            return [0.0; 4];
-        }
-        let [tl, tr, br, bl] = self.style.panel_radius(panel.width, panel.height, scale);
-        let first = index == 0;
-        let last = index + 1 == self.items.len();
-        [
-            if first { tl } else { 0.0 },
-            if last { tr } else { 0.0 },
-            if last { br } else { 0.0 },
-            if first { bl } else { 0.0 },
-        ]
-    }
 
     #[cfg(test)]
     pub(crate) fn place_for_test(&self, rows: Vec<Bounds>) {
@@ -456,87 +460,28 @@ impl RawContextMenuRows {
 }
 
 impl Drawable for RawContextMenuRows {
-    fn draw(&self, ctx: &BuildContext) {
-        if self.items.is_empty() {
-            self.rows.borrow_mut().clear();
-            return;
-        }
+    /// The menu hit-tests the rows' whole area, which is also its node.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.computed_size(ctx))
+    }
 
-        let scale = scale_of(ctx);
-        let local = self.local_row_rects(ctx);
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
 
-        // The rows are painted in element-local physical pixels and remembered
-        // in absolute logical ones: the first is what the canvas draws in, the
-        // second is what a pointer event arrives in.
-        let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
-        *self.rows.borrow_mut() = local
-            .iter()
-            .map(|rect| {
-                Bounds::new(
-                    rect.x + abs_x / scale,
-                    rect.y + abs_y / scale,
-                    rect.width,
-                    rect.height,
-                )
-            })
-            .collect();
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("ContextMenuRows")
+    }
 
-        let panel = self.intrinsic_size(ctx);
-        let font_size = self.style.label.font_size as f32 * scale;
-        let metrics = self.text_metrics(ctx);
-        let text_height = metrics.ascent - metrics.descent;
-        // A pressed row outranks a hovered one: a finger holding a row down is
-        // hovering it too, and only one wash may be drawn.
-        let lit = self.pressed.get().or(self.hovered.get());
-
-        for (index, (item, rect)) in self.items.iter().zip(local.iter()).enumerate() {
-            let pos = Vec2d {
-                x: rect.x * scale,
-                y: rect.y * scale,
-            };
-            let size = ResolvedSize {
-                width: rect.width * scale,
-                height: rect.height * scale,
-            };
-            if lit == Some(index) {
-                ctx.canvas.fill_color_rect_per_corner(
-                    pos,
-                    size,
-                    self.style.highlight_color,
-                    self.row_radii(index, panel, scale),
-                );
-            }
-            if self.shape.is_horizontal() && index > 0 {
-                ctx.canvas.fill_color_rect(
-                    Vec2d {
-                        x: pos.x,
-                        y: pos.y + size.height * 0.25,
-                    },
-                    ResolvedSize {
-                        width: scale,
-                        height: size.height * 0.5,
-                    },
-                    self.style.separator_color,
-                    [0.0; 4],
-                );
-            }
-            ctx.canvas.draw_text_styled(
-                item.label(),
-                Vec2d {
-                    x: pos.x + self.style.item_padding * scale,
-                    y: pos.y + (size.height - text_height) * 0.5 + metrics.ascent,
-                },
-                font_size,
-                if item.is_enabled() {
-                    self.style.label.color
-                } else {
-                    self.style.disabled_label_color
-                },
-                self.style.label.font_family,
-                self.style.label.font_style,
-                self.style.label.font_weight.numeric(),
-            );
-        }
+    fn update(&self, ctx: &BuildContext) {
+        // The rows' washes, separators and labels are recorded by the row
+        // elements themselves. This traversal publishes where the rows are and
+        // visits them.
+        self.sync_paint_geometry(ctx);
+        self.draw_local_v2_compatibility(ctx);
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -584,6 +529,9 @@ impl Drawable for RawContextMenuRows {
         let scale = scale_of(ctx);
         let local = self.local_row_rects(ctx);
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
+        let area = self.computed_size(ctx);
+        self.bounds
+            .save(ctx.scale, abs_x, abs_y, area.width, area.height);
         *self.rows.borrow_mut() = local
             .iter()
             .map(|rect| {
@@ -693,50 +641,6 @@ impl RawContextMenuRow {
 }
 
 impl Drawable for RawContextMenuRow {
-    fn draw(&self, ctx: &BuildContext) {
-        let scale = scale_of(ctx);
-        let size = ctx.parent_size;
-        let metrics = self.text_metrics(ctx);
-        let lit = self.paint_state.highlighted.get() == Some(self.index);
-        if lit {
-            ctx.canvas.fill_color_rect_per_corner(
-                Vec2d { x: 0.0, y: 0.0 },
-                size,
-                self.style.highlight_color,
-                self.radii(scale, size),
-            );
-        }
-        if self.shape.is_horizontal() && self.index > 0 {
-            ctx.canvas.fill_color_rect(
-                Vec2d {
-                    x: 0.0,
-                    y: size.height * 0.25,
-                },
-                ResolvedSize {
-                    width: scale,
-                    height: size.height * 0.5,
-                },
-                self.style.separator_color,
-                [0.0; 4],
-            );
-        }
-        ctx.canvas.draw_text_styled(
-            &self.label,
-            Vec2d {
-                x: self.style.item_padding * scale,
-                y: (size.height - (metrics.ascent - metrics.descent)) * 0.5 + metrics.ascent,
-            },
-            self.style.label.font_size as f32 * scale,
-            if self.enabled {
-                self.style.label.color
-            } else {
-                self.style.disabled_label_color
-            },
-            self.style.label.font_family,
-            self.style.label.font_style,
-            self.style.label.font_weight.numeric(),
-        );
-    }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         let size = ctx.parent_size;
@@ -951,6 +855,7 @@ mod tests {
             dismiss_on_select: true,
             row_elements: Vec::new(),
             rows: RefCell::new(Vec::new()),
+            bounds: InteractionBounds::new(),
             label_widths: RefCell::new(Vec::new()),
             measured_scale: Cell::new(0.0),
             local_rows: RefCell::new(Vec::new()),

@@ -568,7 +568,7 @@ unsafe impl Send for AnimatedBuilderElement {}
 unsafe impl Sync for AnimatedBuilderElement {}
 
 impl Drawable for AnimatedBuilderElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let output_changed = self.output_changed.replace(false);
 
         crate::widgets::damage::mark_dynamic_animation_damage(

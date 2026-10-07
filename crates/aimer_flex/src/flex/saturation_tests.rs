@@ -39,7 +39,7 @@ impl VisitorElement for HugeElement {
 impl EventElement for HugeElement {}
 impl Rebuildable for HugeElement {}
 impl Drawable for HugeElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl LayoutElement for HugeElement {
     fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {

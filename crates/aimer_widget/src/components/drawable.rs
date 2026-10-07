@@ -141,30 +141,18 @@ pub enum CompositorAnimationDecision {
 }
 
 pub trait Drawable {
-    /// Walks this element for one frame, without recording paint.
+    /// Walks this element for one frame.
     ///
     /// This is the per-frame traversal: lay out and position children, advance
     /// animations, rebuild dirty state, publish interaction geometry, and call
     /// `update` on every child that should take part in the frame. Visual
-    /// output is recorded separately, by [`Self::paint_local_v2`], so `update`
-    /// must not draw.
+    /// output belongs to [`Self::paint_local_v2`]. While the legacy canvas path
+    /// still exists an element's `update` may also issue legacy paint commands,
+    /// which the retained presentation suppresses.
     ///
-    /// The default calls the legacy [`Self::draw`], so an element that has not
-    /// been migrated yet keeps working unchanged.
+    /// The default does nothing.
     #[inline]
-    fn update(&self, ctx: &BuildContext) {
-        #[allow(deprecated)]
-        self.draw(ctx);
-    }
-
-    /// The legacy per-frame entry point that both traversed and painted.
-    ///
-    /// Implement [`Self::update`] for the traversal and
-    /// [`Self::paint_local_v2`] for paint instead. The default does nothing.
-    #[deprecated(
-        note = "implement `Drawable::update` for the per-frame traversal and `paint_local_v2` for paint"
-    )]
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 
     /// Returns whether this element can record its own visual commands into a
     /// retained v2 list for the current context. Returning `false` keeps the
@@ -253,6 +241,54 @@ pub trait Drawable {
         None
     }
 
+    /// Opts this element into render-tree interaction bounds and reports the
+    /// size of the rectangle it hit-tests against, in device pixels.
+    ///
+    /// An element that returns `Some` is handed a live reference to its render
+    /// node through [`Self::adopt_retained_v2_interaction_source`] after every
+    /// retained tree synchronization, so it no longer has to read the canvas
+    /// transform stack while updating, and keeps following the node when a
+    /// scroll moves it without a new synchronization. The size is separate from the node's own size because a
+    /// box model widget lays its node out as the content box while pointers hit
+    /// the border box (`computed_size`).
+    #[doc(hidden)]
+    #[inline]
+    fn retained_v2_interaction_size(
+        &self,
+        _ctx: &BuildContext,
+    ) -> Option<aimer_attribute::size::ResolvedSize> {
+        None
+    }
+
+    /// Where the interaction rectangle starts relative to this element's render
+    /// node, in device pixels (a margin, for instance). Zero by default.
+    #[doc(hidden)]
+    #[inline]
+    fn retained_v2_interaction_offset(&self, _ctx: &BuildContext) -> (f32, f32) {
+        (0.0, 0.0)
+    }
+
+    /// Receives the live render-tree source of this element's interaction
+    /// rectangle, after it reported an interaction size.
+    #[doc(hidden)]
+    #[inline]
+    fn adopt_retained_v2_interaction_source(
+        &self,
+        _source: crate::components::interaction_bounds::InteractionSource,
+    ) {
+    }
+
+    /// Reports how the render-tree rectangle currently differs from the last one
+    /// measured through the legacy canvas transform, if it does by more than a
+    /// pixel. Diagnostic: it gates retiring the canvas measurement.
+    #[doc(hidden)]
+    #[inline]
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<crate::components::interaction_bounds::InteractionDisagreement> {
+        None
+    }
+
     /// Supplies a specialized context for one direct child during retained
     /// tree synchronization. Scroll viewports use it to preserve their
     /// unbounded scroll-axis constraint and visible window for virtualization.
@@ -327,7 +363,7 @@ pub trait Drawable {
 
     /// Emits only the visual commands for this element.
     ///
-    /// This is the paint-only half of [`Self::draw`]. It may be recorded and
+    /// This is the paint-only half of [`Self::update`]. It may be recorded and
     /// replayed by an internal retained-paint owner, so it must not rebuild a
     /// child, update hit-test or focus geometry, advance animation/input
     /// state, start asynchronous work, or depend on the cursor or viewport.
@@ -337,8 +373,7 @@ pub trait Drawable {
     #[doc(hidden)]
     #[inline]
     fn paint(&self, ctx: &BuildContext) {
-        #[allow(deprecated)]
-        self.draw(ctx);
+        self.update(ctx);
     }
 
     /// Synchronizes live geometry needed by interaction and hit testing before
@@ -405,7 +440,7 @@ pub trait Drawable {
     /// Draws a subtree whose stable prefix and dynamic suffix can be composed
     /// independently by a retained viewport.
     ///
-    /// The default is conservative: the caller must use [`Self::draw`] for
+    /// The default is conservative: the caller must use [`Self::update`] for
     /// the complete subtree. Implementors may opt in only when they can
     /// preserve their normal paint order and provide child contexts that are
     /// valid both for a full retained recording (`retained_ctx`) and for the
@@ -449,8 +484,7 @@ pub trait Drawable {
         ctx: &BuildContext,
         _frame: CompositorAnimationFrame,
     ) {
-        #[allow(deprecated)]
-        self.draw(ctx);
+        self.update(ctx);
     }
 
     /// Updates damage bookkeeping after a retained compositor frame was
@@ -469,11 +503,6 @@ impl Drawable for Box<dyn Drawable> {
     #[inline]
     fn update(&self, ctx: &BuildContext) {
         self.as_ref().update(ctx);
-    }
-
-    #[allow(deprecated)]
-    fn draw(&self, ctx: &BuildContext) {
-        self.as_ref().draw(ctx);
     }
 
     #[inline]
@@ -504,6 +533,34 @@ impl Drawable for Box<dyn Drawable> {
     #[inline]
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
         self.as_ref().retained_v2_paint_outsets(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_interaction_size(
+        &self,
+        ctx: &BuildContext,
+    ) -> Option<aimer_attribute::size::ResolvedSize> {
+        self.as_ref().retained_v2_interaction_size(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_interaction_offset(&self, ctx: &BuildContext) -> (f32, f32) {
+        self.as_ref().retained_v2_interaction_offset(ctx)
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(
+        &self,
+        source: crate::components::interaction_bounds::InteractionSource,
+    ) {
+        self.as_ref().adopt_retained_v2_interaction_source(source)
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<crate::components::interaction_bounds::InteractionDisagreement> {
+        self.as_ref().retained_v2_interaction_disagreement()
     }
 
     #[inline]

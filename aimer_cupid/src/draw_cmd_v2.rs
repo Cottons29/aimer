@@ -409,7 +409,6 @@ struct RenderNode {
     transform: Mat3,
     opacity: f32,
     paint_source: RenderPaintSource,
-    legacy_command_range: Option<(u64, usize, usize)>,
     draw_list: Shared<RefCell<DrawList>>,
 }
 
@@ -508,22 +507,16 @@ pub enum RenderTreeError {
     UnbalancedState,
     /// A node transform is non-finite or overflows its subtree bounds.
     InvalidTransform,
-    /// A legacy frame-command range has an end before its start.
-    InvalidLegacyCommandRange,
-    /// A legacy command range was assigned to an element painted locally by v2.
-    NotLegacyIsland(RenderNodeId),
 }
 
 /// How one synchronized render node supplies its paint content.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RenderPaintSource {
-    /// The element has not selected v2 paint or legacy fallback yet.
+    /// The element has not recorded its paint yet.
     #[default]
     Unresolved,
     /// The node records only its own commands in its v2 local list.
     LocalV2,
-    /// The node owns its entire subtree through one range in the frame's legacy list.
-    LegacyIsland,
 }
 
 /// One element's place in a synchronized retained render structure.
@@ -583,7 +576,12 @@ pub struct DrawCommandList {
     roots: Vec<RenderNodeId>,
     next_id: u64,
     pending_damage: Vec<Rect>,
-    legacy_frame_generation: u64,
+    /// Advances whenever a node is added, handed out mutably, or the structure
+    /// is replaced. Those are the only ways a node's world rectangle can
+    /// change, so a cached rectangle is current while this is unchanged. It
+    /// may advance without any rectangle changing (a paint source is set
+    /// through the same accessor); that only costs a recomputation.
+    geometry_revision: u64,
     render_workspace: RefCell<render_order::RenderWorkspace>,
 }
 
@@ -596,6 +594,7 @@ impl DrawCommandList {
         if !bounds.is_valid() {
             return Err(RenderTreeError::InvalidBounds);
         }
+        self.geometry_revision = self.geometry_revision.wrapping_add(1);
         let parent_index = match parent {
             Some(parent) => Some(
                 *self
@@ -627,7 +626,6 @@ impl DrawCommandList {
             transform: Mat3::identity(),
             opacity: 1.0,
             paint_source: RenderPaintSource::Unresolved,
-            legacy_command_range: None,
             draw_list: Shared::new(RefCell::new(DrawList {
                 dirty: true,
                 ..DrawList::default()
@@ -654,6 +652,7 @@ impl DrawCommandList {
 
     fn node_mut(&mut self, id: RenderNodeId) -> Option<&mut RenderNode> {
         let index = *self.indices.get(&id)?;
+        self.geometry_revision = self.geometry_revision.wrapping_add(1);
         self.nodes.get_mut(index)
     }
 
@@ -940,7 +939,6 @@ impl RenderTree {
                     transform: Mat3::identity(),
                     opacity: 1.0,
                     paint_source: RenderPaintSource::Unresolved,
-                    legacy_command_range: None,
                     draw_list: Shared::new(RefCell::new(DrawList {
                         dirty: true,
                         ..DrawList::default()
@@ -957,6 +955,7 @@ impl RenderTree {
             synchronized.push(node);
         }
 
+        tree.geometry_revision = tree.geometry_revision.wrapping_add(1);
         tree.nodes = synchronized;
         tree.indices = tree
             .nodes
@@ -1004,8 +1003,7 @@ impl RenderTree {
     pub fn needs_recording(&self, element: RenderNodeId) -> Result<bool, RenderTreeError> {
         let tree = self.draw_cmd.borrow();
         let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
-        Ok(node.paint_source != RenderPaintSource::LegacyIsland
-            && node.draw_list.borrow().needs_recording())
+        Ok(node.draw_list.borrow().needs_recording())
     }
 
     /// Changes the paint source for one retained node.
@@ -1026,73 +1024,11 @@ impl RenderTree {
         let node = tree
             .node_mut(element)
             .ok_or(RenderTreeError::UnknownNode(element))?;
-        let mut draw_list = node.draw_list.borrow_mut();
-        if draw_list.recording {
+        if node.draw_list.borrow().recording {
             return Err(RenderTreeError::RecorderAlreadyOpen(element));
         }
-        if source == RenderPaintSource::LegacyIsland {
-            if !draw_list.commands.is_empty() {
-                draw_list.commands = Arc::from([]);
-                draw_list.revision = draw_list
-                    .revision
-                    .checked_add(1)
-                    .expect("draw-list revisions exhausted");
-            }
-            draw_list.dirty = false;
-        } else if node.paint_source == RenderPaintSource::LegacyIsland {
-            draw_list.dirty = true;
-        }
-        drop(draw_list);
         node.paint_source = source;
-        node.legacy_command_range = None;
         if let Some(bounds) = bounds {
-            tree.push_damage(bounds);
-        }
-        Ok(())
-    }
-
-    /// Associates this legacy island with its command range in the current frame.
-    pub fn set_legacy_command_range(
-        &self,
-        element: RenderNodeId,
-        range: Option<(usize, usize)>,
-    ) -> Result<(), RenderTreeError> {
-        if range.is_some_and(|(start, end)| end < start) {
-            return Err(RenderTreeError::InvalidLegacyCommandRange);
-        }
-        let mut tree = self.draw_cmd.borrow_mut();
-        let frame_generation = tree.legacy_frame_generation;
-        let node = tree
-            .node_mut(element)
-            .ok_or(RenderTreeError::UnknownNode(element))?;
-        if range.is_some() && node.paint_source != RenderPaintSource::LegacyIsland {
-            return Err(RenderTreeError::NotLegacyIsland(element));
-        }
-        node.legacy_command_range = range.map(|(start, end)| (frame_generation, start, end));
-        Ok(())
-    }
-
-    /// Starts a new frame for frame-local legacy command ranges.
-    #[inline]
-    pub fn begin_legacy_frame(&self) {
-        let mut tree = self.draw_cmd.borrow_mut();
-        tree.legacy_frame_generation = tree
-            .legacy_frame_generation
-            .checked_add(1)
-            .expect("legacy render frame generations exhausted");
-    }
-
-    /// Damages a legacy island after paint inside its retained subtree changes.
-    pub fn invalidate_legacy_island(
-        &self,
-        element: RenderNodeId,
-    ) -> Result<(), RenderTreeError> {
-        let mut tree = self.draw_cmd.borrow_mut();
-        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
-        if node.paint_source != RenderPaintSource::LegacyIsland {
-            return Err(RenderTreeError::NotLegacyIsland(element));
-        }
-        if let Some(bounds) = tree.visible_subtree_bounds(element) {
             tree.push_damage(bounds);
         }
         Ok(())
@@ -1394,6 +1330,21 @@ impl RenderTree {
         Ok(revision)
     }
 
+    /// Whether `other` is a handle to this same tree.
+    #[inline]
+    pub fn same_tree(&self, other: &Self) -> bool {
+        Shared::ptr_eq(&self.draw_cmd, &other.draw_cmd)
+    }
+
+    /// A counter that changes whenever any node's world rectangle may have.
+    ///
+    /// Callers that cache [`Self::element_bounds`] results are current while
+    /// this is unchanged. It can also advance when nothing moved.
+    #[inline]
+    pub fn geometry_revision(&self) -> u64 {
+        self.draw_cmd.borrow().geometry_revision
+    }
+
     /// Returns an element's current world-space layout bounds.
     pub fn element_bounds(&self, element: RenderNodeId) -> Result<Rect, RenderTreeError> {
         self.draw_cmd
@@ -1637,10 +1588,8 @@ pub struct RenderItem {
     pub clip_radius: [f32; 4],
     /// Opacity applied directly to this node's commands.
     pub opacity: f32,
-    /// Whether this node records local v2 commands or stands for a legacy island.
+    /// Whether this node has recorded its local v2 commands yet.
     pub paint_source: RenderPaintSource,
-    /// Legacy command range in the frame-wide DrawList, when this is an island.
-    pub legacy_command_range: Option<(usize, usize)>,
     draw_list: Shared<RefCell<DrawList>>,
 }
 

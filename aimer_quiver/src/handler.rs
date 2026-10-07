@@ -293,14 +293,27 @@ pub(crate) struct WindowRenderTree {
     synced: Option<RenderTreeSyncStamp>,
     /// Elements drawn in the last frame that still had no render node after its
     /// final sync (see [`census::PaintSourceCensus::drawn_unmapped`]).
-    drawn_unmapped: Vec<census::IslandRoot>,
+    drawn_unmapped: Vec<census::CensusElement>,
+    /// Elements that drew through `update` without having retained paint, so
+    /// their drawing was dropped. Accumulated, one entry per element.
+    dropped_paint: Vec<census::CensusElement>,
+    /// Elements that had no retained paint to show in some frame: they declined
+    /// (`can_paint_local_v2` was false) or their state was not valid. One entry
+    /// per element, accumulated.
+    declined_paint: Vec<census::CensusElement>,
     /// Why the last [`Self::sync`] failed, if it did. A failed sync leaves the
     /// frame on the full legacy repaint path.
     sync_error: Option<RenderTreeError>,
     /// Elements whose bounds or clip were not finite at the last sync. They are
     /// collapsed to an empty rectangle so one bad node cannot fail the whole
     /// sync, and reported here so the bug stays visible.
-    invalid_bounds: Vec<census::IslandRoot>,
+    invalid_bounds: Vec<census::CensusElement>,
+    /// How many elements took their hit area from the render tree at the last
+    /// sync.
+    interaction_adopted: usize,
+    /// The same count by element type, so a gate can require each migrated
+    /// widget to have been exercised rather than passing vacuously.
+    interaction_adopted_by_type: std::collections::BTreeMap<&'static str, usize>,
     /// The last census that was reported, so only changes are logged.
     #[cfg(feature = "frame-stats")]
     last_census: Option<census::PaintSourceCensus>,
@@ -350,6 +363,7 @@ impl WindowRenderTree {
         let mut clip_radii = Vec::new();
         let mut invalid_bounds = Vec::new();
         let mut new_elements = Vec::new();
+        let mut interactive = Vec::new();
         if let Some(root) = root {
             let mut element_path = Vec::new();
             collect_render_tree_nodes(
@@ -364,8 +378,10 @@ impl WindowRenderTree {
                 &mut clip_radii,
                 &mut invalid_bounds,
                 &mut new_elements,
+                &mut interactive,
                 None,
                 [0.0; 4],
+                (0.0, 0.0),
                 &mut element_path,
             );
         }
@@ -383,6 +399,15 @@ impl WindowRenderTree {
         );
         self.synced = Some(stamp);
         self.invalid_bounds = invalid_bounds;
+        self.adopt_interaction_bounds(&interactive, &render_ids, scale);
+        self.interaction_adopted = interactive.len();
+        self.interaction_adopted_by_type.clear();
+        for (_, element, _, _) in &interactive {
+            *self
+                .interaction_adopted_by_type
+                .entry(element.debug_name())
+                .or_default() += 1;
+        }
         Ok(RenderTreeSyncResult {
             refreshed: true,
             added_nodes,
@@ -396,6 +421,32 @@ impl WindowRenderTree {
                 })
                 .collect(),
         })
+    }
+
+    /// Hands every element that opted into render-tree interaction bounds a
+    /// live reference to its render node, plus the interaction size it reported
+    /// while the tree was collected (logical pixels). The element reads the
+    /// node's world rectangle when it is hit-tested, so a scroll that moves the
+    /// node without a new synchronization is followed.
+    fn adopt_interaction_bounds(
+        &self,
+        interactive: &[(usize, &dyn Element, ResolvedSize, (f32, f32))],
+        render_ids: &[RenderNodeId],
+        scale: f32,
+    ) {
+        for (index, element, size, offset) in interactive {
+            let Some(node) = render_ids.get(*index) else {
+                continue;
+            };
+            element.adopt_retained_v2_interaction_source(
+                aimer_widget::InteractionSource::new(
+                    self.tree.clone(),
+                    *node,
+                    (size.width / scale, size.height / scale),
+                )
+                .with_offset((offset.0 / scale, offset.1 / scale)),
+            );
+        }
     }
 
     /// Returns the retained tree owned by this window handler.
@@ -474,15 +525,20 @@ fn collect_render_tree_nodes<'element, 'context>(
     element_ids: &mut Vec<ElementId>,
     clips: &mut Vec<Option<RenderRect>>,
     clip_radii: &mut Vec<[f32; 4]>,
-    invalid_bounds: &mut Vec<census::IslandRoot>,
+    invalid_bounds: &mut Vec<census::CensusElement>,
     new_elements: &mut Vec<(
         usize,
         &'element dyn Element,
         BuildContext<'context>,
         Vec<ElementId>,
     )>,
+    interactive: &mut Vec<(usize, &'element dyn Element, ResolvedSize, (f32, f32))>,
     geometry: Option<(RenderRect, Option<RenderRect>)>,
     geometry_clip_radius: [f32; 4],
+    // How far the parent's node origin sits outside its layout box, because
+    // its bounds grew outward to cover its paint. Children are positioned
+    // relative to the layout box, so they move back in by this much.
+    origin_shift: (f32, f32),
     element_path: &mut Vec<ElementId>,
 ) {
     let element_id = element.id();
@@ -502,11 +558,19 @@ fn collect_render_tree_nodes<'element, 'context>(
             element.retained_clip(ctx),
         )
     });
+    bounds = RenderRect::new(
+        bounds.x + origin_shift.0,
+        bounds.y + origin_shift.1,
+        bounds.width,
+        bounds.height,
+    );
+    let mut own_outset = (0.0, 0.0);
     if let Some([left, top, right, bottom]) = element.retained_v2_paint_outsets(ctx)
         && [left, top, right, bottom]
             .iter()
             .all(|outset| outset.is_finite() && *outset >= 0.0)
     {
+        own_outset = (left, top);
         bounds = RenderRect::new(
             bounds.x - left,
             bounds.y - top,
@@ -523,7 +587,7 @@ fn collect_render_tree_nodes<'element, 'context>(
     let (bounds, clip) = if bounds_valid && clip_valid {
         (bounds, clip)
     } else {
-        invalid_bounds.push(census::IslandRoot {
+        invalid_bounds.push(census::CensusElement {
             element: element_id,
             debug_name: element.debug_name(),
         });
@@ -535,6 +599,20 @@ fn collect_render_tree_nodes<'element, 'context>(
         )
     };
     let node_index = specs.len();
+    if let Some(interaction_size) = element.retained_v2_interaction_size(ctx) {
+        // The node starts `own_outset` (logical) outside the element's layout
+        // box, so the interaction rectangle starts that far inside the node.
+        let offset = element.retained_v2_interaction_offset(ctx);
+        interactive.push((
+            node_index,
+            element,
+            interaction_size,
+            (
+                offset.0 + own_outset.0 * scale,
+                offset.1 + own_outset.1 * scale,
+            ),
+        ));
+    }
     if !existing.contains_key(&element_id) {
         new_elements.push((node_index, element, ctx.clone(), element_path.clone()));
     }
@@ -560,12 +638,32 @@ fn collect_render_tree_nodes<'element, 'context>(
         x: ctx.parent_pos.x + position.x,
         y: ctx.parent_pos.y + position.y,
     };
-    child_base_ctx.box_constraint = BoxConstraint {
-        min_width: 0.0,
-        min_height: 0.0,
-        max_width: size.width,
-        max_height: size.height,
-    };
+    // A transparent wrapper hands `draw`'s own context to its child. It adds
+    // nothing of its own, so its size is exactly what its only child measures
+    // under the constraint it received. Feeding that size back down as the
+    // child's constraint would shrink the child again at every wrapper level
+    // (a padded descendant measures smaller than the space it was given).
+    let mut retained_children = 0;
+    let mut only_child_size = None;
+    element.visit_retained_v2_children(&mut |_, child| {
+        retained_children += 1;
+        if retained_children == 1 {
+            only_child_size = Some(child.content_size(ctx));
+        }
+    });
+    let is_transparent = retained_children == 1
+        && only_child_size.is_some_and(|child| child == size);
+    if is_transparent {
+        child_base_ctx.box_constraint = ctx.box_constraint;
+        child_base_ctx.parent_size = ctx.parent_size;
+    } else {
+        child_base_ctx.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: size.width,
+            max_height: size.height,
+        };
+    }
 
     element.visit_retained_v2_children(&mut |index, child| {
         let child_geometry = element.retained_v2_child_geometry_at(ctx, child, index);
@@ -589,8 +687,10 @@ fn collect_render_tree_nodes<'element, 'context>(
             clip_radii,
             invalid_bounds,
             new_elements,
+            interactive,
             child_geometry,
             child_clip_radius,
+            own_outset,
             element_path,
         );
     });
@@ -890,9 +990,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let budget = self.venus.idle_budget();
         self.venus.run_idle(&budget);
         self.venus.end_frame();
-        let count = CALLED.get();
-        debug!("structural_children called per frame {}", count);
-        CALLED.set(0);
+        CALLED.print();
+        CALLED.reset();
         // The next platform-input interval is a new event frame. This shared
         // epoch also reaches dispatchers nested inside scrollables and regions.
         begin_event_frame();
@@ -1074,7 +1173,6 @@ pub(crate) struct FrameDrawer<'a, W: Widget + 'static> {
     window: WindowHandle,
     ui_allocator: UiAllocator,
     scale: f32,
-    direct_render_plan: bool,
     cursor_pos: Vec2d,
     #[cfg(not(target_arch = "wasm32"))]
     async_handle: tokio::runtime::Handle,
@@ -1189,8 +1287,6 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             .window_render_tree
             .sync(root, &build_ctx, (width, height), self.scale)
             .is_err();
-        let retained_presentation_active = self.direct_render_plan && !render_tree_sync_incomplete;
-        self.window_render_tree.tree.begin_legacy_frame();
         // Stale entries from earlier work must not be mistaken for this frame's.
         let _ = aimer_widget::take_unmapped_draws();
         {
@@ -1204,21 +1300,12 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                     build_ctx.canvas.restore();
                 }
             };
-            if retained_presentation_active {
-                aimer_widget::with_v2_render_tree_presentation_context(
-                    tree,
-                    element_nodes,
-                    prepared_root,
-                    draw_widget_tree,
-                );
-            } else {
-                aimer_widget::with_v2_render_tree_context(
-                    tree,
-                    element_nodes,
-                    prepared_root,
-                    draw_widget_tree,
-                );
-            }
+            aimer_widget::with_v2_render_tree_context(
+                tree,
+                element_nodes,
+                prepared_root,
+                draw_widget_tree,
+            );
         }
 
         match self
@@ -1251,8 +1338,7 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             self.event_dispatcher
                 .complete_pending_element_invalidations(root.as_ref(), &mut invalidations);
         }
-        let retained_v2_damage_covers_stateful_invalidations = self.direct_render_plan
-            && !render_tree_sync_incomplete
+        let retained_v2_damage_covers_stateful_invalidations = !render_tree_sync_incomplete
             && self.scale.is_finite()
             && self.scale > 0.0
             && self
@@ -1276,12 +1362,19 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             aimer_widget::mark_paint_damage_full();
             overlay.layout(&build_ctx);
             build_ctx.canvas.save();
-            overlay.draw(&build_ctx);
+            overlay.update(&build_ctx);
             build_ctx.canvas.restore();
         }
 
         let mut damage = aimer_widget::take_paint_frame_damage(width, height);
         if render_tree_sync_incomplete {
+            // The tree could not be brought up to date, so the plan below is
+            // composed from its last consistent state. Repaint everything from
+            // that rather than trusting what this frame says changed.
+            aimer_utils::error!(
+                "the render tree could not be synchronized with the widget tree; \
+                 presenting its last consistent state"
+            );
             damage.mark_full();
         }
         let rebuild_changed =
@@ -1298,9 +1391,7 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             damage.mark_full();
         }
 
-        let can_compose_v2 = !render_tree_sync_incomplete
-            && self.scale.is_finite()
-            && self.scale > 0.0;
+        let can_compose_v2 = self.scale.is_finite() && self.scale > 0.0;
         #[cfg(feature = "wasm-hot-reload")]
         let can_compose_v2 = can_compose_v2 && !untracked_overlay;
         if can_compose_v2 {
@@ -1344,68 +1435,31 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                 DamageSet::new(width, height),
             );
             let mut legacy_frame = Frame::new(inner_canvas.take_draw_list(), width, height);
-            if self.direct_render_plan {
-                match FramePacket::prepare_v2_direct_render_plan(
-                    &render_frame,
-                    &adapter_metadata,
-                    &mut legacy_frame,
-                ) {
-                    Ok((plan, packet_damage)) => {
-                        damage = packet_damage;
-                        inner_canvas.set_retained_render_plan(Some(plan));
-                        inner_canvas.recycle_draw_list(legacy_frame.into_draw_list());
-                        inner_canvas.discard_scene_recording();
-                    }
-                    Err(_) => {
-                        inner_canvas.recycle_draw_list(legacy_frame.into_draw_list());
-                        inner_canvas.begin_frame();
-                        if let Some(root) = root {
-                            build_ctx.canvas.save();
-                            aimer_widget::record_root_draw_call();
-                            root.update(&build_ctx);
-                            build_ctx.canvas.restore();
-                        }
-                        #[cfg(feature = "wasm-hot-reload")]
-                        if let Some(overlay) = self
-                            .live_reload
-                            .as_ref()
-                            .and_then(crate::hot_reload::LiveReloadHost::reload_overlay)
-                        {
-                            overlay.layout(&build_ctx);
-                            build_ctx.canvas.save();
-                            overlay.draw(&build_ctx);
-                            build_ctx.canvas.restore();
-                        }
-                        damage.mark_full();
-                        aimer_widget::mark_paint_damage_full();
-                    }
-                }
-            } else if FramePacket::validate_v2_with_legacy(
+            match FramePacket::prepare_v2_direct_render_plan(
                 &render_frame,
                 &adapter_metadata,
-                &legacy_frame,
-            )
-            .is_ok()
-            {
-                let mut packet = FramePacket::from_v2_with_legacy(
-                    render_frame,
-                    adapter_metadata,
-                    legacy_frame,
-                )
-                .expect("a prevalidated mixed render frame must lower successfully");
-                damage = packet.metadata().damage().clone();
-                inner_canvas.set_retained_render_plan(packet.take_render_plan());
-                inner_canvas.recycle_draw_list(packet.into_frame().into_draw_list());
-                inner_canvas.discard_scene_recording();
-            } else {
-                inner_canvas.recycle_draw_list(legacy_frame.into_draw_list());
-                damage.mark_full();
-                aimer_widget::mark_paint_damage_full();
+                &mut legacy_frame,
+            ) {
+                Ok((plan, packet_damage)) => {
+                    damage = packet_damage;
+                    inner_canvas.set_retained_render_plan(Some(plan));
+                    inner_canvas.recycle_draw_list(legacy_frame.into_draw_list());
+                    inner_canvas.discard_scene_recording();
+                }
+                Err(error) => {
+                    // The tree describes something the renderer cannot lower.
+                    // Present nothing new instead of a blank frame: the target
+                    // keeps its last pixels, and no redraw is requested so a
+                    // persistent error cannot spin the frame loop.
+                    aimer_utils::error!("the render plan could not be lowered: {error:?}");
+                    inner_canvas.recycle_draw_list(legacy_frame.into_draw_list());
+                    damage = DamageSet::new(width, height);
+                }
             }
-        } else if retained_presentation_active {
-            // If tree synchronization becomes incomplete after the v2 traversal,
-            // discard its partially suppressed compatibility frame and repaint
-            // once through the legacy path so every visible node remains present.
+        } else {
+            // No usable scale, or an overlay that only paints through the
+            // canvas (hot reload): repaint once through the canvas so every
+            // visible element remains present.
             inner_canvas.begin_frame();
             if let Some(root) = root {
                 build_ctx.canvas.save();
@@ -1421,7 +1475,7 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             {
                 overlay.layout(&build_ctx);
                 build_ctx.canvas.save();
-                overlay.draw(&build_ctx);
+                overlay.update(&build_ctx);
                 build_ctx.canvas.restore();
             }
             damage.mark_full();
@@ -1648,14 +1702,13 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     ///
     /// The two have to be borrowed apart because the tree is drawn from inside
     /// a closure the renderer runs: the closure cannot hold the handler while
-    /// the renderer is being borrowed out of it. A headless application takes
-    /// the drawer alone through [`frame_drawer`](Self::frame_drawer) and paints
-    /// into its own canvas, so the tree is built, laid out, and drawn by
-    /// identical code whichever way the frame was asked for.
+    /// the renderer is being borrowed out of it. A headless application uses
+    /// the drawer alone and paints into its own canvas, so the tree is built,
+    /// laid out, and drawn by identical code whichever way the frame was asked
+    /// for.
     pub(crate) fn split_for_frame(
         &mut self,
         window: WindowHandle,
-        direct_render_plan: bool,
     ) -> (&mut AimerRenderContext, FrameDrawer<'_, W>) {
         let scale = self.window_scale as f32;
         let cursor_pos = self.cursor_pos;
@@ -1687,18 +1740,11 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 window,
                 ui_allocator,
                 scale,
-                direct_render_plan,
                 cursor_pos,
                 #[cfg(not(target_arch = "wasm32"))]
                 async_handle,
             },
         )
-    }
-
-    /// Borrows everything a frame needs to build and draw the widget tree.
-    #[inline]
-    pub(crate) fn frame_drawer(&mut self, window: WindowHandle) -> FrameDrawer<'_, W> {
-        self.split_for_frame(window, false).1
     }
 
     #[allow(unused)]
@@ -1734,7 +1780,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let Some(window) = self.window.clone() else {
             return;
         };
-        let (render_ctx, mut drawer) = self.split_for_frame(window, true);
+        let (render_ctx, mut drawer) = self.split_for_frame(window);
 
         #[cfg(target_arch = "wasm32")]
         let outcome = render_ctx.render_frame_packet(move |canvas, width, height| {
@@ -1778,7 +1824,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use super::census::IslandRoot;
+    use super::census::CensusElement;
     use super::{WindowRenderTree, record_new_local_v2_paints, run_startup_hooks};
     use aimer_container::Container;
     use aimer_attribute::size::{ResolvedSize, Size};
@@ -1818,7 +1864,7 @@ mod tests {
     }
 
     impl Drawable for SizedLeaf {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     struct V2Parent {
@@ -1846,7 +1892,7 @@ mod tests {
     }
 
     impl Drawable for V2Parent {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.child.update(ctx);
         }
 
@@ -1884,7 +1930,7 @@ mod tests {
     }
 
     impl Drawable for HiddenChildParent {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.child.update(ctx);
         }
 
@@ -1920,7 +1966,7 @@ mod tests {
     }
 
     impl Drawable for NonFiniteLeaf {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     struct LegacyBranch {
@@ -1947,7 +1993,7 @@ mod tests {
     }
 
     impl Drawable for LegacyBranch {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             ctx.canvas.fill_color_rect(
                 Vec2d::ZERO,
                 ResolvedSize {
@@ -1981,7 +2027,7 @@ mod tests {
     }
 
     impl Drawable for V2Grandchild {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
 
         fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
             true
@@ -2025,17 +2071,6 @@ mod tests {
     }
 
     impl Drawable for V2PaintLeaf {
-        fn draw(&self, ctx: &BuildContext) {
-            ctx.canvas.fill_color_rect(
-                Vec2d::ZERO,
-                ResolvedSize {
-                    width: self.width * ctx.scale,
-                    height: self.height * ctx.scale,
-                },
-                self.color,
-                [0.0; 4],
-            );
-        }
 
         fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
             true
@@ -2129,7 +2164,7 @@ mod tests {
     }
 
     impl Drawable for ScrollContentClipElement {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.child.update(ctx);
         }
 
@@ -2176,7 +2211,7 @@ mod tests {
     }
 
     impl Drawable for V2PaintTreeRoot {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             for child in &self.children {
                 child.update(ctx);
             }
@@ -2189,6 +2224,50 @@ mod tests {
         fn paint_local_v2(&self, ctx: &BuildContext) {
             let canvas = aimer_canvas::Canvas::of(ctx);
             canvas.finish();
+        }
+    }
+
+    /// A wrapper that adds nothing: its sizes are its child's, and it draws the
+    /// child with the context it was given (as a theme, provider or stateful
+    /// wrapper does).
+    struct PassThrough {
+        child: AnyElement,
+    }
+
+    impl VisitorElement for PassThrough {
+        fn debug_name(&self) -> &'static str {
+            "PassThrough"
+        }
+
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(self.child.as_ref());
+        }
+    }
+
+    impl EventElement for PassThrough {}
+    impl Rebuildable for PassThrough {}
+
+    impl LayoutElement for PassThrough {
+        fn computed_size(&self, ctx: &BuildContext) -> ResolvedSize {
+            self.child.computed_size(ctx)
+        }
+
+        fn content_size(&self, ctx: &BuildContext) -> ResolvedSize {
+            self.child.content_size(ctx)
+        }
+    }
+
+    impl Drawable for PassThrough {
+        fn update(&self, ctx: &BuildContext) {
+            self.child.update(ctx);
+        }
+
+        fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+            true
+        }
+
+        fn paint_local_v2(&self, ctx: &BuildContext) {
+            aimer_canvas::Canvas::of(ctx).finish();
         }
     }
 
@@ -2257,7 +2336,6 @@ mod tests {
                 .expect("synchronize the scroll render tree");
             context.canvas.begin_frame();
             aimer_widget::begin_paint_frame(100, 80);
-            window_tree.tree.begin_legacy_frame();
             let tree = window_tree.tree.clone();
             let element_nodes = window_tree.element_nodes.clone();
             aimer_widget::with_v2_render_tree_context(
@@ -2327,7 +2405,7 @@ mod tests {
     }
 
     #[test]
-    fn local_v2_paint_and_legacy_islands_keep_subtree_order() {
+    fn an_element_without_retained_paint_does_not_swallow_its_retained_children() {
         let canvas = aimer_canvas::InnerCanvas::new();
         let (_runtime, context) = build_context(&canvas, 1.0);
         let grandchild_paints = Rc::new(Cell::new(0));
@@ -2356,7 +2434,6 @@ mod tests {
         for _ in 0..2 {
             canvas.begin_frame();
             aimer_widget::begin_paint_frame(100, 80);
-            window_tree.tree.begin_legacy_frame();
             let tree = window_tree.tree.clone();
             let nodes = window_tree.element_nodes.clone();
             aimer_widget::with_v2_render_tree_context(tree, nodes, Some(root_id), || {
@@ -2372,19 +2449,20 @@ mod tests {
         let root_node = window_tree.node_for_element(root_id).unwrap();
         let legacy_node = window_tree.node_for_element(legacy_element_id).unwrap();
         let grandchild_node = window_tree.node_for_element(grandchild_id).unwrap();
+        // The legacy-only branch paints nothing itself and owns nothing below
+        // it: the retained grandchild paints on its own.
         assert_eq!(parent_paints.get(), 1);
-        assert_eq!(grandchild_paints.get(), 0);
-        assert_eq!(
-            window_tree.tree.paint_source(root_node).unwrap(),
-            RenderPaintSource::LocalV2
-        );
+        assert_eq!(grandchild_paints.get(), 1);
+        for node in [root_node, grandchild_node] {
+            assert_eq!(
+                window_tree.tree.paint_source(node).unwrap(),
+                RenderPaintSource::LocalV2
+            );
+        }
         assert_eq!(
             window_tree.tree.paint_source(legacy_node).unwrap(),
-            RenderPaintSource::LegacyIsland
-        );
-        assert_eq!(
-            window_tree.tree.paint_source(grandchild_node).unwrap(),
-            RenderPaintSource::Unresolved
+            RenderPaintSource::Unresolved,
+            "with no paint to record it is asked again next frame"
         );
         assert_eq!(window_tree.tree.draw_list_revision(root_node).unwrap(), 1);
 
@@ -2393,29 +2471,26 @@ mod tests {
             .render_all()
             .into_iter()
             .filter_map(|operation| match operation {
-                RenderOp::Draw(item) => Some((
-                    item.element,
-                    item.paint_source,
-                    item.legacy_command_range,
-                )),
+                RenderOp::Draw(item) => Some((item.element, item.paint_source)),
                 RenderOp::BeginOpacityGroup { .. } | RenderOp::EndOpacityGroup { .. } => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(draw_items.len(), 2);
-        assert_eq!(draw_items[0].0, root_node);
-        assert_eq!(draw_items[1].0, legacy_node);
-        assert_eq!(draw_items[1].1, RenderPaintSource::LegacyIsland);
-        assert!(draw_items[1]
-            .2
-            .is_some_and(|(start, end)| end == start + 1));
+        let painted = draw_items
+            .iter()
+            .filter(|(_, source)| *source == RenderPaintSource::LocalV2)
+            .map(|(element, _)| *element)
+            .collect::<Vec<_>>();
+        assert_eq!(painted, [root_node, grandchild_node]);
+        let position = |node| draw_items.iter().position(|(element, _)| *element == node);
+        assert!(position(root_node).unwrap() < position(grandchild_node).unwrap());
     }
 
     #[test]
-    fn census_reports_islands_and_the_subtree_they_swallow() {
+    fn census_leaves_an_element_without_retained_paint_unresolved_and_counts_its_children() {
         let canvas = aimer_canvas::InnerCanvas::new();
         let (_runtime, context) = build_context(&canvas, 1.0);
-        // The grandchild could paint locally, but it sits below a legacy
-        // island, so the island owns it and it never selects a paint source.
+        // The grandchild could paint locally and nothing stops it: its
+        // legacy-only parent paints nothing and owns nothing.
         let grandchild = V2Grandchild {
             paints: Rc::new(Cell::new(0)),
         }
@@ -2432,14 +2507,11 @@ mod tests {
         draw_v2_until_tree_is_current(&root, &context, &mut window_tree);
         let census = window_tree.paint_source_census(root.as_ref());
 
-        assert_eq!(census.local_v2, 1);
-        assert_eq!(census.legacy_islands, 1);
-        assert_eq!(census.swallowed, 1);
-        assert_eq!(census.unresolved, 0);
-        assert!(census.unresolved_roots.is_empty());
+        assert_eq!(census.local_v2, 2);
+        assert_eq!(census.unresolved, 1);
         assert_eq!(
-            census.island_roots,
-            vec![IslandRoot {
+            census.unresolved_roots,
+            vec![CensusElement {
                 element: legacy_id,
                 debug_name: "LegacyBranch",
             }]
@@ -2465,7 +2537,7 @@ mod tests {
         // painted was dropped: exactly what must never go unnoticed.
         assert_eq!(
             census.drawn_unmapped,
-            vec![IslandRoot {
+            vec![CensusElement {
                 element: child_id,
                 debug_name: "V2Grandchild",
             }]
@@ -2530,7 +2602,7 @@ mod tests {
         assert_eq!(census.sync_error, None);
         assert_eq!(
             census.invalid_bounds,
-            vec![IslandRoot {
+            vec![CensusElement {
                 element: leaf_id,
                 debug_name: "NonFiniteLeaf",
             }]
@@ -2633,11 +2705,132 @@ mod tests {
         // Only the top of the unresolved region is named, not each descendant.
         assert_eq!(
             census.unresolved_roots,
-            vec![IslandRoot {
+            vec![CensusElement {
                 element: root_id,
                 debug_name: "V2Parent",
             }]
         );
+    }
+
+    /// A wrapper that adds nothing hands `draw`'s own context to its child. The
+    /// sync must do the same: feeding the wrapper's content size back down as
+    /// the constraint shrinks a padded descendant once per wrapper, so a centred
+    /// column ended up higher than `draw` placed it.
+    #[test]
+    fn transparent_wrappers_do_not_shrink_what_a_padded_descendant_is_offered() {
+        let canvas = aimer_canvas::InnerCanvas::new();
+        let (_runtime, mut context) = build_context(&canvas, 1.0);
+        context.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 100.0,
+            max_height: 80.0,
+        };
+        let leaf = || V2PaintLeaf {
+            position: Vec2d { x: 0.0, y: 0.0 },
+            width: 10.0,
+            height: 10.0,
+            color: Color::RED,
+            paints: Rc::new(Cell::new(0)),
+        };
+        let padded_column = || {
+            Container::new()
+                .color(Color::BLUE)
+                .padding(aimer_style::LayoutSpacing {
+                    top: aimer_style::Spacing::Px(10),
+                    ..Default::default()
+                })
+                .child(
+                    aimer_flex::Column::new()
+                        .vertical_alignment(aimer_flex::BoxAlignment::Center)
+                        .children([leaf()]),
+                )
+        };
+        let mut root = padded_column().to_element(&context);
+        for _ in 0..4 {
+            root = aimer_widget::Element::boxed(PassThrough { child: root });
+        }
+        let mut window_tree = WindowRenderTree::default();
+
+        draw_v2_until_tree_is_current(&root, &context, &mut window_tree);
+
+        // The context is 100x80 and the padding takes 10 of it. A 10px leaf
+        // centred in the remaining 70px sits at 10 + (70 - 10) / 2 = 40.
+        let mut pending = vec![root.as_ref() as &dyn Element];
+        let mut leaf_y = None;
+        while let Some(element) = pending.pop() {
+            if element.debug_name() == "V2PaintLeaf" {
+                let node = window_tree.node_for_element(element.id()).expect("leaf is mapped");
+                leaf_y = Some(window_tree.tree.element_bounds(node).unwrap().y);
+            }
+            element.visit_retained_v2_children(&mut |_, child| pending.push(child));
+        }
+        assert_eq!(leaf_y, Some(40.0));
+    }
+
+    /// A node whose paint extends past its layout box (a shadow) is given
+    /// larger bounds, which moves its origin outward. Its children are placed
+    /// relative to the layout box, so they must not move with it.
+    #[test]
+    fn paint_outsets_do_not_displace_the_children_of_a_decorated_node() {
+        let canvas = aimer_canvas::InnerCanvas::new();
+        let (_runtime, mut context) = build_context(&canvas, 1.0);
+        context.box_constraint = aimer_attribute::BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 100.0,
+            max_height: 80.0,
+        };
+        let shadow = aimer_style::BoxShadow {
+            blur: 4.0,
+            ..aimer_style::BoxShadow::new()
+        };
+        let container = Container::new()
+            .width(Dimension::Px(60.0))
+            .height(Dimension::Px(40.0))
+            .box_decoration(aimer_style::BoxDecoration::new().box_shadow([shadow]))
+            .child(V2PaintLeaf {
+                position: Vec2d { x: 0.0, y: 0.0 },
+                width: 10.0,
+                height: 10.0,
+                color: Color::RED,
+                paints: Rc::new(Cell::new(0)),
+            })
+            .to_element(&context);
+        let container_id = container.id();
+        let root = V2PaintTreeRoot {
+            children: [
+                container,
+                aimer_widget::Element::boxed(V2PaintLeaf {
+                    position: Vec2d { x: 70.0, y: 0.0 },
+                    width: 5.0,
+                    height: 5.0,
+                    color: Color::GREEN,
+                    paints: Rc::new(Cell::new(0)),
+                }),
+            ],
+        }
+        .boxed();
+        let mut window_tree = WindowRenderTree::default();
+        draw_v2_until_tree_is_current(&root, &context, &mut window_tree);
+
+        let node_of = |id| window_tree.node_for_element(id).expect("mapped");
+        let container_bounds = window_tree.tree.element_bounds(node_of(container_id)).unwrap();
+        let mut leaf_bounds = None;
+        let mut pending = vec![root.as_ref() as &dyn Element];
+        while let Some(element) = pending.pop() {
+            if element.debug_name() == "V2PaintLeaf" && element.pos() != Some(Vec2d { x: 70.0, y: 0.0 }) {
+                leaf_bounds = Some(window_tree.tree.element_bounds(node_of(element.id())).unwrap());
+            }
+            element.visit_retained_v2_children(&mut |_, child| pending.push(child));
+        }
+        let leaf_bounds = leaf_bounds.expect("the container's child is in the tree");
+
+        // The shadow makes the container's own node larger than 60x40 ...
+        assert!(container_bounds.width > 60.0, "{container_bounds:?}");
+        // ... but the child sits at the layout box's origin, which is the
+        // origin of the container's *layout* box (0, 0), not of the larger node.
+        assert_eq!((leaf_bounds.x, leaf_bounds.y), (0.0, 0.0), "{leaf_bounds:?}");
     }
 
     #[test]
@@ -2723,8 +2916,6 @@ mod tests {
 
         // A rounded container used to become a legacy island and swallow its
         // whole subtree.
-        assert_eq!(census.legacy_islands, 0, "{:?}", census.island_roots);
-        assert_eq!(census.swallowed, 0);
         assert_eq!(
             window_tree
                 .tree
@@ -2804,7 +2995,6 @@ mod tests {
         let draw_frame = || {
             context.canvas.begin_frame();
             aimer_widget::begin_paint_frame(100, 80);
-            retained_tree.begin_legacy_frame();
             aimer_widget::with_v2_render_tree_context(
                 retained_tree.clone(),
                 element_nodes.clone(),

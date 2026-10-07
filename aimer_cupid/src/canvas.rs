@@ -245,6 +245,16 @@ impl CupidCanvas {
         callback()
     }
 
+    /// How many paint commands suppression has dropped on this canvas so far.
+    ///
+    /// A difference across a suppressed traversal means some element drew
+    /// through the legacy paint path while the frame presents only retained
+    /// content, so that drawing is lost.
+    #[doc(hidden)]
+    pub fn dropped_paint_commands(&self) -> u64 {
+        self.draw_list.borrow().dropped_paint_commands()
+    }
+
     /// Temporarily resumes paint command recording inside a legacy island.
     #[doc(hidden)]
     pub fn with_paint_commands_enabled<R>(&self, callback: impl FnOnce() -> R) -> R {
@@ -1449,6 +1459,36 @@ impl CupidCanvas {
 impl Default for CupidCanvas {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod dropped_paint_tests {
+    use super::CupidCanvas;
+    use crate::utilities::Color;
+
+    #[test]
+    fn suppressed_paint_commands_are_counted_and_state_commands_are_not() {
+        let canvas = CupidCanvas::new();
+        assert_eq!(canvas.dropped_paint_commands(), 0);
+
+        canvas.fill_color_rect(0.0, 0.0, 4.0, 4.0, Color::rgba8(255, 0, 0, 255), [0.0; 4]);
+        assert_eq!(canvas.dropped_paint_commands(), 0, "a recorded command is not dropped");
+
+        canvas.with_paint_commands_suppressed(|| {
+            canvas.save();
+            canvas.fill_color_rect(0.0, 0.0, 4.0, 4.0, Color::rgba8(255, 0, 0, 255), [0.0; 4]);
+            canvas.fill_color_rect(1.0, 1.0, 2.0, 2.0, Color::rgba8(0, 255, 0, 255), [0.0; 4]);
+            canvas.restore();
+        });
+        assert_eq!(canvas.dropped_paint_commands(), 2);
+
+        canvas.with_paint_commands_suppressed(|| {
+            canvas.with_paint_commands_enabled(|| {
+                canvas.fill_color_rect(0.0, 0.0, 4.0, 4.0, Color::rgba8(0, 0, 255, 255), [0.0; 4]);
+            });
+        });
+        assert_eq!(canvas.dropped_paint_commands(), 2, "a re-enabled region records");
     }
 }
 

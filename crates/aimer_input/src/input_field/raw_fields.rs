@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use unicode_segmentation::UnicodeSegmentation;
 
 use aimer_animation::AnimInstant;
-use aimer_attribute::CacheBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_ctxmenu::{ContextMenuShape, ModalHandle};

@@ -60,7 +60,7 @@ mod lazy_tests {
     impl EventElement for HitTestChild {}
     impl Rebuildable for HitTestChild {}
     impl Drawable for HitTestChild {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
 
         fn is_paint_stable(&self) -> bool {
             true
@@ -93,7 +93,7 @@ mod lazy_tests {
     impl EventElement for CountingHitTestChild {}
     impl Rebuildable for CountingHitTestChild {}
     impl Drawable for CountingHitTestChild {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl LayoutElement for CountingHitTestChild {
         fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
@@ -174,7 +174,7 @@ mod lazy_tests {
     impl EventElement for PaintProbe {}
     impl Rebuildable for PaintProbe {}
     impl Drawable for PaintProbe {
-        fn draw(&self, _ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             self.draws.set(self.draws.get() + 1);
         }
 
@@ -392,7 +392,7 @@ mod lazy_tests {
     }
 
     impl Drawable for DispatchProbe {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl LayoutElement for DispatchProbe {
@@ -465,7 +465,7 @@ mod lazy_tests {
     }
 
     impl Drawable for TransparentDispatchWrapper {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.child.update(ctx);
         }
     }

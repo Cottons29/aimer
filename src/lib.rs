@@ -942,7 +942,7 @@ mod tests {
         impl aimer::PortableWidget for PositionProbe {}
 
         impl Drawable for PositionProbeElement {
-            fn draw(&self, ctx: &BuildContext) {
+            fn update(&self, ctx: &BuildContext) {
                 self.observed.set(ctx.canvas.get_transform_translation());
             }
         }
@@ -1167,7 +1167,7 @@ mod tests {
         impl aimer::PortableWidget for SizeProbe {}
 
         impl Drawable for SizeProbeElement {
-            fn draw(&self, ctx: &BuildContext) {
+            fn update(&self, ctx: &BuildContext) {
                 self.observed.set(ctx.parent_size);
             }
         }
@@ -2874,7 +2874,7 @@ mod tests {
         }
 
         impl Drawable for MarkerElement {
-            fn draw(&self, ctx: &BuildContext) {
+            fn update(&self, ctx: &BuildContext) {
                 PAINTED.with_borrow_mut(|painted| painted.push(self.label));
                 self.child.update(ctx);
             }
@@ -3369,7 +3369,7 @@ mod tests {
         }
 
         impl Drawable for MarkerElement {
-            fn draw(&self, ctx: &BuildContext) {
+            fn update(&self, ctx: &BuildContext) {
                 PAINTED.with_borrow_mut(|painted| painted.push(self.index));
                 self.child.update(ctx);
             }

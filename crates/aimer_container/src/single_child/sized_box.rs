@@ -1,5 +1,4 @@
 use aimer_attribute::dimension::Dimension;
-use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_cupid::draw_cmd_v2::Rect;
 use aimer_macro::{PortableWidget, Rebuildable};
@@ -198,17 +197,10 @@ impl<E: Element> EventElement for RawSizedBox<E> {
 }
 
 impl<E: Element> Drawable for RawSizedBox<E> {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
         let width = size.width;
         let height = size.height;
-
-        ctx.canvas.fill_color_rect(
-            Vec2d { x: 0.0, y: 0.0 },
-            ResolvedSize { width, height },
-            self.color,
-            [0.0; 4],
-        );
 
         let mut child_ctx = ctx.clone();
         child_ctx.parent_size = ResolvedSize { width, height };
@@ -337,7 +329,7 @@ mod tests {
     struct FixedChild;
 
     impl Drawable for FixedChild {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     struct DrawChild {
@@ -345,7 +337,7 @@ mod tests {
     }
 
     impl Drawable for DrawChild {
-        fn draw(&self, _ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             self.draws.set(self.draws.get() + 1);
         }
     }
@@ -476,7 +468,6 @@ mod tests {
 
         ctx.canvas.begin_frame();
         aimer_widget::begin_paint_frame(100, 80);
-        tree.begin_legacy_frame();
         aimer_widget::with_v2_render_tree_context(
             tree.clone(),
             element_nodes.clone(),
@@ -506,7 +497,6 @@ mod tests {
         tree.invalidate_paint(background_node).unwrap();
         ctx.canvas.begin_frame();
         aimer_widget::begin_paint_frame(100, 80);
-        tree.begin_legacy_frame();
         aimer_widget::with_v2_render_tree_context(tree.clone(), element_nodes, None, || {
             background.update(&ctx);
             sibling.update(&ctx);

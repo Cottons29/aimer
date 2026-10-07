@@ -95,7 +95,7 @@ struct RawOpacity {
 }
 
 impl Drawable for RawOpacity {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         ctx.canvas.set_alpha(self.opacity);
         self.child.update(ctx);
         ctx.canvas.restore_alpha();

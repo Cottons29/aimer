@@ -44,7 +44,7 @@ impl LayoutElement for RoutedElement {
 }
 
 impl Drawable for RoutedElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for RoutedElement {}
@@ -83,7 +83,7 @@ impl LayoutElement for HitChainCacheLeaf {
 }
 
 impl Drawable for HitChainCacheLeaf {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for HitChainCacheLeaf {}
@@ -123,7 +123,7 @@ impl LayoutElement for HitChainCacheRoot {
 }
 
 impl Drawable for HitChainCacheRoot {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for HitChainCacheRoot {}
@@ -170,7 +170,7 @@ impl LayoutElement for HitChainCacheForwarder {
 }
 
 impl Drawable for HitChainCacheForwarder {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for HitChainCacheForwarder {}
@@ -209,7 +209,7 @@ impl LayoutElement for HoverProbe {
 }
 
 impl Drawable for HoverProbe {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for HoverProbe {}
@@ -256,7 +256,7 @@ impl LayoutElement for HoverProbeRoot {
 }
 
 impl Drawable for HoverProbeRoot {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for HoverProbeRoot {}
@@ -614,7 +614,7 @@ impl EventElement for ForwardOnlyHitTestElement {
 impl LayoutElement for ForwardOnlyHitTestElement {}
 
 impl Drawable for ForwardOnlyHitTestElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for ForwardOnlyHitTestElement {}
@@ -716,7 +716,7 @@ impl LayoutElement for DragCarrier {
 }
 
 impl Drawable for DragCarrier {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for DragCarrier {}
@@ -759,7 +759,7 @@ impl LayoutElement for DragReceiver {
 }
 
 impl Drawable for DragReceiver {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for DragReceiver {}
@@ -817,7 +817,7 @@ impl LayoutElement for RoutedIdentityBranch {
 }
 
 impl Drawable for RoutedIdentityBranch {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for RoutedIdentityBranch {}
@@ -1239,7 +1239,7 @@ impl EventElement for CaptureChainElement {
 
 impl LayoutElement for CaptureChainElement {}
 impl Drawable for CaptureChainElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for CaptureChainElement {}
 

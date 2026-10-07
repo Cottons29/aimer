@@ -1260,7 +1260,7 @@ impl Drawable for RawFlex {
         }
     }
 
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.layout.invalidate_hit_test_index();
         let (gap_x, gap_y) = self.resole_gaps(ctx);
         let max_w = ctx.box_constraint.max_width;

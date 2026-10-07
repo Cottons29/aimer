@@ -79,7 +79,7 @@ impl Rebuildable for RawKeyRelay {
 }
 
 impl Drawable for RawKeyRelay {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.child.update(ctx);
     }
 
@@ -210,7 +210,7 @@ mod tests {
     impl LayoutElement for Child {}
 
     impl Drawable for Child {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
 
         fn is_paint_stable(&self) -> bool {
             true

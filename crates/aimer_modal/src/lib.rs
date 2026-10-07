@@ -11,7 +11,8 @@ pub use anchor::{Anchor, AnchorHandle};
 pub use animation::ModalAnimation;
 pub use floating::Floating;
 pub use host::{
-    ModalController, ModalHandle, ModalHost, ModalId, OverlayLayer, OverlayLayerHandle,
+    ModalController, ModalHandle, ModalHost, ModalId, OverlayContentHandle, OverlayLayer,
+    OverlayLayerHandle,
     OverlayPainter, prepare_retained_render_tree,
 };
 pub use modal::Modal;

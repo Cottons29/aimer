@@ -163,8 +163,8 @@ impl Drawable for ThemedCaretElement {
         if visible && height > 0.0 {
             let rgba = self.paint_color(composing).as_u32();
             canvas.fill_rect_styled(
-                aimer::cupid::draw_cmd_v2::Rect::new(0.0, 0.0, width, height),
-                aimer::cupid::utilities::Color::rgba8(
+                cupid::draw_cmd_v2::Rect::new(0.0, 0.0, width, height),
+                cupid::utilities::Color::rgba8(
                     ((rgba >> 16) & 0xff) as u8,
                     ((rgba >> 8) & 0xff) as u8,
                     (rgba & 0xff) as u8,
@@ -172,39 +172,14 @@ impl Drawable for ThemedCaretElement {
                 ),
                 [width / 2.0; 4],
                 [0.0; 4],
-                aimer::cupid::utilities::Color::transparent(),
+                cupid::utilities::Color::transparent(),
                 [0.0; 4],
-                aimer::cupid::utilities::Color::transparent(),
+                cupid::utilities::Color::transparent(),
             );
         }
         canvas.finish();
     }
 
-    #[allow(deprecated)]
-    fn draw(&self, ctx: &BuildContext) {
-        if !self.context.is_visible() {
-            return;
-        }
-
-        let width = ctx.parent_size.width.max(2.0);
-        let height = ctx.parent_size.height;
-        if height <= 0.0 {
-            return;
-        }
-
-        let color = if self.context.is_composing() {
-            self.color.lighten(0.18)
-        } else {
-            self.color
-        };
-
-        ctx.canvas.fill_color_rect(
-            (0.0, 0.0).into(),
-            ResolvedSize { width, height },
-            color,
-            [width / 2.0; 4],
-        );
-    }
 }
 
 impl VisitorElement for ThemedCaretElement {

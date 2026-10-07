@@ -231,7 +231,7 @@ impl Drawable for RawAlign {
         Some((bounds, child.retained_clip(&child_ctx)))
     }
 
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let child_size = self.child.computed_size(ctx);
         let (offset_x, offset_y) = alignment_offset(self.alignment, ctx.parent_size, child_size);
         let child_constraint = BoxConstraint {

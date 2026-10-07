@@ -846,6 +846,8 @@ pub struct DrawList {
     transform_stack: Vec<Mat3>,
     current_transform: Mat3,
     paint_command_suppression_depth: usize,
+    /// Paint commands dropped while suppression was active.
+    dropped_paint_commands: std::cell::Cell<u64>,
     texture_sizes: HashMap<TextureId, TextureMetadata>,
     texture_registry: Arc<TextureRegistry>,
     referenced_textures: HashSet<TextureId>,
@@ -882,6 +884,7 @@ impl DrawList {
             transform_stack: Vec::with_capacity(16),
             current_transform: Mat3::identity(),
             paint_command_suppression_depth: 0,
+            dropped_paint_commands: std::cell::Cell::new(0),
             texture_sizes: HashMap::new(),
             texture_registry,
             referenced_textures: HashSet::new(),
@@ -899,6 +902,8 @@ impl DrawList {
     pub fn push(&mut self, cmd: DrawCommand) {
         if self.paint_command_suppression_depth == 0 || !cmd.is_paint_command() {
             self.commands.push(cmd);
+        } else {
+            self.note_dropped_paint_command();
         }
     }
 
@@ -926,8 +931,25 @@ impl DrawList {
     }
 
     #[inline]
+    /// Whether a paint command being recorded right now is dropped, counting it
+    /// when it is.
     pub(crate) fn is_suppressing_paint_commands(&self) -> bool {
-        self.paint_command_suppression_depth != 0
+        let suppressing = self.paint_command_suppression_depth != 0;
+        if suppressing {
+            self.note_dropped_paint_command();
+        }
+        suppressing
+    }
+
+    #[inline]
+    fn note_dropped_paint_command(&self) {
+        self.dropped_paint_commands
+            .set(self.dropped_paint_commands.get().wrapping_add(1));
+    }
+
+    /// How many paint commands suppression has dropped so far.
+    pub(crate) fn dropped_paint_commands(&self) -> u64 {
+        self.dropped_paint_commands.get()
     }
 
     pub fn fill_rect(

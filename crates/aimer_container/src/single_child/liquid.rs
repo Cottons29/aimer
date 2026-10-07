@@ -755,72 +755,10 @@ struct RawLiquid {
 impl Rebuildable for RawLiquid {}
 
 impl Drawable for RawLiquid {
-    fn draw(&self, ctx: &BuildContext) {
-        let size = self.child.computed_size(ctx);
-        if size.width <= 0.0 || size.height <= 0.0 {
-            self.child.update(ctx);
-            return;
-        }
-
-        let material = self.material.normalized();
-        let base = material.glass_material();
-        ctx.canvas.save();
-        let radii = resolved_radii(base.corner_radii_value(), size);
-
-        let shadow = with_opacity(base.shadow_color_value(), base.opacity_value());
-        if shadow.alpha() != 0 && base.shadow_blur_value() > 0.0 {
-            ctx.canvas.draw_shadow_rect(
-                Vec2d { x: 0.0, y: 0.0 },
-                size,
-                shadow,
-                [0.0, base.elevation_value(), base.shadow_blur_value(), 0.0],
-                radii,
-                false,
-                [0.0; 3],
-            );
-        }
-        ctx.canvas.fill_color_rect_per_corner(
-            Vec2d { x: 0.0, y: 0.0 },
-            size,
-            with_opacity(base.tint_color(), base.opacity_value()),
-            radii,
-        );
-        let border = with_opacity(base.border_color_value(), base.opacity_value());
-        if base.border_width_value() > 0.0 && border.alpha() != 0 {
-            ctx.canvas.stroke_rect_per_side(
-                Vec2d { x: 0.0, y: 0.0 },
-                size,
-                border,
-                [base.border_width_value(); 4],
-                radii,
-            );
-        }
-
-        ctx.canvas.draw_material(build_material_request(
-            MaterialKind::Liquid,
-            base,
-            size,
-            material.effective_distortion(),
-            material.edge_lighting_value(),
-            material.specular_highlight_value(),
-            material.effective_animation_speed(),
-            material.animation_time_value(),
-            material.interaction_value(),
-            [
-                material.blob_amount_value(),
-                material.blob_seed_value(),
-                material.magnification_value(),
-                material.tip_pull_value(),
-                material.chromatic_aberration_value(),
-                material.bevel_radius_value(),
-            ],
-        ));
-
-        // Liquid's dynamic fields belong to the Cupid request path. Keeping the
-        // fallback static is intentional: reduced motion and unsupported GPU
-        // capability must never alter child layout or event routing.
+    fn update(&self, ctx: &BuildContext) {
+        // The liquid surface is painted by `paint_local_v2`; the child keeps its
+        // own render node above it.
         self.child.update(ctx);
-        ctx.canvas.restore();
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {

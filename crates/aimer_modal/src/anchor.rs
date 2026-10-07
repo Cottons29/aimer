@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
 use aimer_attribute::bounds::Bounds;
-use aimer_attribute::dimension::CacheBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 use aimer_macro::Rebuildable;
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{
     AnyElement, AnyWidget, Drawable, Element, EventElement, EventResult, LayoutElement,
@@ -41,7 +41,7 @@ use aimer_widget::{
 /// ```
 #[derive(Clone, Debug)]
 pub struct AnchorHandle {
-    bounds: Rc<CacheBounds>,
+    bounds: Rc<InteractionBounds>,
 }
 
 impl PartialEq for AnchorHandle {
@@ -62,14 +62,15 @@ impl AnchorHandle {
     #[inline]
     pub fn new() -> Self {
         Self {
-            bounds: Rc::new(CacheBounds::new()),
+            bounds: Rc::new(InteractionBounds::new()),
         }
     }
 
     /// Records the anchor rectangle in logical, viewport-relative units.
     #[inline]
     pub fn set_bounds(&self, bounds: Bounds) {
-        self.bounds.set_bounds(bounds);
+        self.bounds
+            .save(1.0, bounds.x, bounds.y, bounds.width, bounds.height);
     }
 
     /// Returns the last recorded rectangle, or [`None`] before the first pass.
@@ -81,7 +82,7 @@ impl AnchorHandle {
     /// Returns whether a rectangle has been recorded.
     #[inline]
     pub fn is_tracked(&self) -> bool {
-        self.bounds.is_cached()
+        self.bounds.get_bounds().is_some()
     }
 }
 
@@ -199,7 +200,23 @@ impl Drawable for RawAnchor {
 
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
 
-    fn draw(&self, ctx: &BuildContext) {
+    /// The anchor reports its child's rectangle, which a floating panel is
+    /// pinned to.
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.child.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.handle.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.handle.bounds.disagreement("Anchor")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
         self.track(ctx, self.child.computed_size(ctx));
         self.child.update(ctx);
     }

@@ -8,7 +8,7 @@ pub(super) struct ElementNode<E> {
 impl<E: Element + 'static> ElementNode<E> {
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
     fn clear_retained_compositor_animation(&self, render_context: Option<&V2RenderContext>) {
-        let Some(scope) = render_context.filter(|scope| scope.uses_retained_presentation()) else {
+        let Some(scope) = render_context else {
             return;
         };
         let Some(render_node) = scope.node_for_element(self.id.get()) else {
@@ -133,6 +133,37 @@ impl<E: Element + 'static> ElementNode<E> {
             .is_ok()
     }
 
+    /// Brings a node that already has a render node to a resolved local v2
+    /// paint: settles the element's state, drops a stale list and records a
+    /// fresh one when needed. Returns `false` when the element cannot paint
+    /// through the retained path this frame.
+    fn resolve_local_v2_paint(
+        &self,
+        ctx: &BuildContext,
+        scope: &V2RenderContext,
+        render_node: RenderNodeId,
+    ) -> bool {
+        let source = scope
+            .tree
+            .paint_source(render_node)
+            .unwrap_or(RenderPaintSource::Unresolved);
+        if (source == RenderPaintSource::LocalV2 || self.element.can_paint_local_v2(ctx))
+            && !self.sync_local_v2_state(ctx, scope, render_node)
+        {
+            return false;
+        }
+        if source == RenderPaintSource::LocalV2
+            && (super::take_event_paint_invalidated(self.id.get())
+                || local_paint_element_was_invalidated(self.id.get())
+                || self.element.local_v2_paint_needs_recording(ctx))
+        {
+            let _ = scope.tree.invalidate_paint(render_node);
+        }
+        let needs_recording = source == RenderPaintSource::Unresolved
+            || scope.tree.needs_recording(render_node).unwrap_or(true);
+        !needs_recording || self.record_local_v2_paint(ctx, scope, render_node)
+    }
+
     #[inline]
     fn sync_local_v2_state(
         &self,
@@ -234,53 +265,205 @@ impl<E: Element + 'static> ElementNode<E> {
         self.draw_live(ctx, None);
     }
 
-    fn draw_legacy_island(
+    fn update_inner(&self, ctx: &BuildContext) {
+        crate::frame_work_stats::record_paint_call();
+        #[cfg(feature = "frame-stats")]
+        record_draw_traversal();
+        record_paint_element(self.id.get());
+        let (_draw, outermost) = begin_draw();
+        let render_context = current_v2_render_context();
+        let prepared_root = outermost
+            && render_context
+                .as_ref()
+                .is_some_and(|scope| scope.take_prepared_root(self.id.get()));
+        if outermost && !prepared_root {
+            // Native frame dispatch enters through `draw`; keep the retained-
+            // tree rebuild prepass here so direct draw callers also benefit
+            // from the precise dirty-subtree index. Child draws belong to the
+            // same pass and must not reset paths relative to a new root.
+            self.rebuild_if_dirty(ctx);
+        }
+        let priority = self.element.compositor_priority();
+        let stable = self.element.is_paint_stable() && self.element.is_layout_stable();
+        let bounded = self.element.is_paint_bounded();
+        let _invalidation_owner = (!stable || !bounded || self.element.is_stateful_element())
+            .then(|| DrawInvalidationOwnerGuard::enter(self.id.get()));
+
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+        let retained_animation_candidate = render_context.as_ref().is_some_and(|scope| {
+            scope.node_for_element(self.id.get()).is_some()
+                && self.element.can_paint_local_v2(ctx)
+        });
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+        if !stable && (bounded || retained_animation_candidate) {
+            match self.element.compositor_animation(ctx) {
+                CompositorAnimationDecision::Compositor(frame) => {
+                    if frame.valid
+                        && self.element.can_paint_local_v2(ctx)
+                        && let Some(scope) = render_context.as_ref()
+                        && let Some(render_node) = scope.node_for_element(self.id.get())
+                        && scope
+                            .tree
+                            .set_compositor_animation(
+                                render_node,
+                                compositor_transform_matrix(frame.transform, ctx.scale),
+                                frame.opacity.unwrap_or(1.0),
+                                frame.clip.map(|size| {
+                                    Rect::new(0.0, 0.0, size.width, size.height)
+                                }),
+                            )
+                            .is_ok()
+                        && scope
+                            .node_for_element(self.id.get())
+                            .is_some_and(|render_node| {
+                                self.resolve_local_v2_paint(ctx, scope, render_node)
+                            })
+                    {
+                        self.draw_v2_compatibility(ctx, priority, stable, bounded);
+                        if frame.active {
+                            request_animation_frame();
+                        }
+                        return;
+                    }
+                    self.clear_retained_compositor_animation(render_context.as_ref());
+                    if let Some(scope) = render_context.as_ref()
+                        && let Some(render_node) = scope.node_for_element(self.id.get())
+                    {
+                        // The frame is not usable for the retained path (a
+                        // non-finite sample, say): keep the element's state
+                        // advancing and paint nothing this frame.
+                        self.paint_nothing(ctx, scope, render_node, || {
+                            self.draw_live(ctx, Some(frame));
+                        });
+                    } else {
+                        self.draw_compositor_animation(ctx, frame);
+                    }
+                    return;
+                }
+                CompositorAnimationDecision::Live(frame) => {
+                    self.clear_retained_compositor_animation(render_context.as_ref());
+                    if let Some(scope) = render_context.as_ref()
+                        && let Some(render_node) = scope.node_for_element(self.id.get())
+                    {
+                        self.paint_nothing(ctx, scope, render_node, || {
+                            self.draw_live(ctx, Some(frame));
+                        });
+                    } else {
+                        self.draw_live(ctx, Some(frame));
+                    }
+                    return;
+                }
+                CompositorAnimationDecision::None => {
+                    self.clear_retained_compositor_animation(render_context.as_ref());
+                }
+            }
+        }
+
+        if let Some(scope) = render_context.as_ref() {
+            if let Some(render_node) = scope.node_for_element(self.id.get()) {
+                if !self.resolve_local_v2_paint(ctx, scope, render_node) {
+                    self.paint_nothing(ctx, scope, render_node, || {
+                        self.draw_v2_compatibility(ctx, priority, stable, bounded);
+                    });
+                    return;
+                }
+
+                // Keep the compatibility traversal for draw-time state and
+                // descendants. Direct retained presentation drops its paint
+                // commands in `draw_v2_compatibility`; legacy islands reopen
+                // recording for their own ranges.
+                self.draw_v2_compatibility(ctx, priority, stable, bounded);
+                return;
+            }
+        }
+
+        // Reached with no render node while a render tree is active: whatever this
+        // element paints as legacy content lies outside every island range and is
+        // never replayed. A transient miss (an element created during this very
+        // draw) is mapped by the next sync; the frame loop reports only those
+        // still unmapped afterwards.
+        if render_context.is_some() {
+            record_unmapped_draw(self.id.get(), self.element.debug_name());
+        }
+        self.draw_legacy_content(ctx, priority, stable, bounded);
+    }
+
+    /// Handles an element that has no retained paint this frame: it cannot
+    /// record one (`can_paint_local_v2` is false), or its state is not valid
+    /// enough to paint (a non-finite animation value, say).
+    ///
+    /// Such an element paints nothing. A node that already holds a list loses
+    /// it (stale paint must not stay on screen) and is marked dirty; one that
+    /// has none stays unresolved. Either way the next frame asks the element
+    /// again, because an element can become paintable later (a layout that was
+    /// not ready, an asset that arrived). `run`, its traversal, goes on with
+    /// paint commands suppressed so state and children still update. Whatever
+    /// the element tried to draw through `update` is dropped; debug builds
+    /// report that once per element type.
+    fn paint_nothing(
         &self,
         ctx: &BuildContext,
         render_context: &V2RenderContext,
         render_node: RenderNodeId,
-        draw: impl FnOnce(),
+        run: impl FnOnce(),
     ) {
-        #[cfg(debug_assertions)]
-        if first_legacy_island_report(self.element.debug_name()) {
-            aimer_utils::error!(
-                "`{}` fell back to the legacy paint path (a legacy island). Make \
-                 `can_paint_local_v2` true and record its paint in `paint_local_v2`: \
-                 the legacy path is being removed.",
-                self.element.debug_name()
-            );
-        }
-        ctx.with_local_v2_compatibility_paint(false, |_| {
-            ctx.canvas.with_paint_commands_enabled(|| {
-                let _ = render_context
-                    .tree
-                    .set_paint_source(render_node, RenderPaintSource::LegacyIsland);
-                let start = legacy_draw_command_cursor(ctx);
-                let _legacy_island = render_context.enter_legacy_island();
-                draw();
-                let end = legacy_draw_command_cursor(ctx);
-                let _ = render_context
-                    .tree
-                    .set_legacy_command_range(render_node, start.zip(end));
+        if render_context.tree.paint_source(render_node) == Ok(RenderPaintSource::LocalV2)
+            && let Ok(build_context) = render_context.tree.context(render_node)
+        {
+            ctx.with_local_v2_paint_context(build_context, |ctx| {
+                aimer_canvas::Canvas::of(ctx).finish();
             });
-        });
+            let _ = render_context.tree.invalidate_paint(render_node);
+        }
+        ctx.canvas.with_paint_commands_suppressed(run);
+        #[cfg(debug_assertions)]
+        {
+            record_declined_paint(self.id.get(), self.element.debug_name());
+        }
+    }
+
+    /// Runs one `update` and, in debug builds, reports an element that drew
+    /// through the removed legacy paint path.
+    ///
+    /// Each element claims the dropped commands it caused itself, so a parent
+    /// is not blamed for what its children drew.
+    #[cfg(debug_assertions)]
+    fn update_reporting_dropped_paint(&self, ctx: &BuildContext) {
+        let dropped_before = dropped_paint_cursor(ctx);
+        let claimed_before = CLAIMED_DROPPED_PAINT.with(Cell::get);
+        self.update_inner(ctx);
+        let dropped = dropped_paint_cursor(ctx).saturating_sub(dropped_before);
+        let claimed = CLAIMED_DROPPED_PAINT.with(Cell::get).saturating_sub(claimed_before);
+        let own = dropped.saturating_sub(claimed);
+        if own > 0 {
+            CLAIMED_DROPPED_PAINT.with(|total| total.set(total.get() + own));
+            record_dropped_paint(self.id.get(), self.element.debug_name());
+            if first_dropped_paint_report(self.element.debug_name()) {
+                aimer_utils::error!(
+                    "`{}` drew through `update`, which no longer paints: that drawing is \
+                     dropped. Record it in `paint_local_v2` (and make `can_paint_local_v2` \
+                     true) instead.",
+                    self.element.debug_name()
+                );
+            }
+        }
     }
 }
 
-#[cfg(not(feature = "portable-guest"))]
-fn legacy_draw_command_cursor(ctx: &BuildContext) -> Option<usize> {
-    Some(
-        ctx.canvas
-            .get_inner_canvas()
-            .draw_list()
-            .commands()
-            .len(),
-    )
+#[cfg(debug_assertions)]
+thread_local! {
+    /// Dropped paint commands already attributed to some element this thread.
+    static CLAIMED_DROPPED_PAINT: Cell<u64> = const { Cell::new(0) };
 }
 
-#[cfg(feature = "portable-guest")]
-fn legacy_draw_command_cursor(_ctx: &BuildContext) -> Option<usize> {
-    None
+#[cfg(all(debug_assertions, not(feature = "portable-guest")))]
+fn dropped_paint_cursor(ctx: &BuildContext) -> u64 {
+    ctx.canvas.get_inner_canvas().dropped_paint_commands()
+}
+
+#[cfg(all(debug_assertions, feature = "portable-guest"))]
+fn dropped_paint_cursor(_ctx: &BuildContext) -> u64 {
+    0
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
@@ -617,191 +800,11 @@ impl<E: Element + 'static> EventElement for ElementNode<E> {
 }
 
 impl<E: Element + 'static> Drawable for ElementNode<E> {
-    #[allow(deprecated)]
-    #[inline]
-    fn draw(&self, ctx: &BuildContext) {
-        self.update(ctx);
-    }
-
     fn update(&self, ctx: &BuildContext) {
-        crate::frame_work_stats::record_paint_call();
-        #[cfg(feature = "frame-stats")]
-        record_draw_traversal();
-        record_paint_element(self.id.get());
-        let (_draw, outermost) = begin_draw();
-        let render_context = current_v2_render_context();
-        let prepared_root = outermost
-            && render_context
-                .as_ref()
-                .is_some_and(|scope| scope.take_prepared_root(self.id.get()));
-        if outermost && !prepared_root {
-            // Native frame dispatch enters through `draw`; keep the retained-
-            // tree rebuild prepass here so direct draw callers also benefit
-            // from the precise dirty-subtree index. Child draws belong to the
-            // same pass and must not reset paths relative to a new root.
-            self.rebuild_if_dirty(ctx);
-        }
-        let priority = self.element.compositor_priority();
-        let stable = self.element.is_paint_stable() && self.element.is_layout_stable();
-        let bounded = self.element.is_paint_bounded();
-        let _invalidation_owner = (!stable || !bounded || self.element.is_stateful_element())
-            .then(|| DrawInvalidationOwnerGuard::enter(self.id.get()));
-
-        #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-        let retained_animation_candidate = render_context.as_ref().is_some_and(|scope| {
-            scope.uses_retained_presentation()
-                && scope.node_for_element(self.id.get()).is_some()
-                && self.element.can_paint_local_v2(ctx)
-        });
-        #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-        if !stable && (bounded || retained_animation_candidate) {
-            match self.element.compositor_animation(ctx) {
-                CompositorAnimationDecision::Compositor(frame) => {
-                    if frame.valid
-                        && self.element.can_paint_local_v2(ctx)
-                        && let Some(scope) = render_context
-                            .as_ref()
-                            .filter(|scope| scope.uses_retained_presentation())
-                        && let Some(render_node) = scope.node_for_element(self.id.get())
-                        && scope
-                            .tree
-                            .set_compositor_animation(
-                                render_node,
-                                compositor_transform_matrix(frame.transform, ctx.scale),
-                                frame.opacity.unwrap_or(1.0),
-                                frame.clip.map(|size| {
-                                    Rect::new(0.0, 0.0, size.width, size.height)
-                                }),
-                            )
-                            .is_ok()
-                    {
-                        self.draw_v2_compatibility(ctx, priority, stable, bounded);
-                        if frame.active {
-                            request_animation_frame();
-                        }
-                        return;
-                    }
-                    self.clear_retained_compositor_animation(render_context.as_ref());
-                    if let Some(scope) = render_context
-                        .as_ref()
-                        .filter(|scope| !scope.inside_legacy_island())
-                        && let Some(render_node) = scope.node_for_element(self.id.get())
-                    {
-                        self.draw_legacy_island(ctx, scope, render_node, || {
-                            self.draw_compositor_animation(ctx, frame);
-                        });
-                    } else {
-                        self.draw_compositor_animation(ctx, frame);
-                    }
-                    return;
-                }
-                CompositorAnimationDecision::Live(frame) => {
-                    self.clear_retained_compositor_animation(render_context.as_ref());
-                    if let Some(scope) = render_context
-                        .as_ref()
-                        .filter(|scope| !scope.inside_legacy_island())
-                        && let Some(render_node) = scope.node_for_element(self.id.get())
-                    {
-                        self.draw_legacy_island(ctx, scope, render_node, || {
-                            self.draw_live(ctx, Some(frame));
-                        });
-                    } else {
-                        self.draw_live(ctx, Some(frame));
-                    }
-                    return;
-                }
-                CompositorAnimationDecision::None => {
-                    self.clear_retained_compositor_animation(render_context.as_ref());
-                }
-            }
-        }
-
-        if let Some(scope) = render_context.as_ref() {
-            if scope.inside_legacy_island() {
-                self.draw_legacy_content(ctx, priority, stable, bounded);
-                return;
-            }
-            if let Some(render_node) = scope.node_for_element(self.id.get()) {
-                let source = scope
-                    .tree
-                    .paint_source(render_node)
-                    .unwrap_or(RenderPaintSource::Unresolved);
-                if source == RenderPaintSource::LegacyIsland {
-                    if paint_subtree_was_invalidated(self.id.get())
-                        || super::take_event_paint_invalidated(self.id.get())
-                    {
-                        let _ = scope.tree.invalidate_legacy_island(render_node);
-                    }
-                    // An element can become v2-capable after asynchronous
-                    // content arrives. Retry the promotion before recording
-                    // another legacy island frame.
-                    if self.element.can_paint_local_v2(ctx)
-                        && scope
-                            .tree
-                            .set_paint_source(render_node, RenderPaintSource::Unresolved)
-                            .is_ok()
-                    {
-                        let state_ready = !scope.uses_retained_presentation()
-                            || self.sync_local_v2_state(ctx, scope, render_node);
-                        if state_ready && self.record_local_v2_paint(ctx, scope, render_node) {
-                            self.draw_v2_compatibility(ctx, priority, stable, bounded);
-                            return;
-                        }
-                        let _ = scope
-                            .tree
-                            .set_paint_source(render_node, RenderPaintSource::LegacyIsland);
-                    }
-                    self.draw_legacy_island(ctx, scope, render_node, || {
-                        self.draw_legacy_content(ctx, priority, stable, bounded);
-                    });
-                    return;
-                }
-
-                if scope.uses_retained_presentation()
-                    && (source == RenderPaintSource::LocalV2
-                        || self.element.can_paint_local_v2(ctx))
-                    && !self.sync_local_v2_state(ctx, scope, render_node)
-                {
-                    self.draw_legacy_island(ctx, scope, render_node, || {
-                        self.draw_legacy_content(ctx, priority, stable, bounded);
-                    });
-                    return;
-                }
-
-                if source == RenderPaintSource::LocalV2
-                    && (super::take_event_paint_invalidated(self.id.get())
-                        || local_paint_element_was_invalidated(self.id.get())
-                        || self.element.local_v2_paint_needs_recording(ctx))
-                {
-                    let _ = scope.tree.invalidate_paint(render_node);
-                }
-                let needs_recording = source == RenderPaintSource::Unresolved
-                    || scope.tree.needs_recording(render_node).unwrap_or(true);
-                if needs_recording && !self.record_local_v2_paint(ctx, scope, render_node) {
-                    self.draw_legacy_island(ctx, scope, render_node, || {
-                        self.draw_legacy_content(ctx, priority, stable, bounded);
-                    });
-                    return;
-                }
-
-                // Keep the compatibility traversal for draw-time state and
-                // descendants. Direct retained presentation drops its paint
-                // commands in `draw_v2_compatibility`; legacy islands reopen
-                // recording for their own ranges.
-                self.draw_v2_compatibility(ctx, priority, stable, bounded);
-                return;
-            }
-        }
-
-        // Reached with no render node while a render tree is active: whatever this
-        // element paints as legacy content lies outside every island range and is
-        // never replayed. A transient miss (an element created during this very
-        // draw) is mapped by the next sync; the frame loop reports only those
-        // still unmapped afterwards.
-        if render_context.is_some() {
-            record_unmapped_draw(self.id.get(), self.element.debug_name());
-        }
-        self.draw_legacy_content(ctx, priority, stable, bounded);
+        #[cfg(debug_assertions)]
+        self.update_reporting_dropped_paint(ctx);
+        #[cfg(not(debug_assertions))]
+        self.update_inner(ctx);
     }
 
     #[inline]
@@ -832,6 +835,34 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
     #[inline]
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
         self.element.retained_v2_paint_outsets(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_interaction_size(
+        &self,
+        ctx: &BuildContext,
+    ) -> Option<aimer_attribute::size::ResolvedSize> {
+        self.element.retained_v2_interaction_size(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_interaction_offset(&self, ctx: &BuildContext) -> (f32, f32) {
+        self.element.retained_v2_interaction_offset(ctx)
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(
+        &self,
+        source: crate::components::interaction_bounds::InteractionSource,
+    ) {
+        self.element.adopt_retained_v2_interaction_source(source)
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<crate::components::interaction_bounds::InteractionDisagreement> {
+        self.element.retained_v2_interaction_disagreement()
     }
 
     #[inline]
@@ -1215,11 +1246,6 @@ impl Drawable for AnyElement {
         self.as_ref().paint_local_v2(ctx)
     }
 
-    #[allow(deprecated)]
-    fn draw(&self, ctx: &BuildContext) {
-        self.as_ref().draw(ctx)
-    }
-
     #[inline]
     fn paint(&self, ctx: &BuildContext) {
         self.as_ref().paint(ctx)
@@ -1253,6 +1279,34 @@ impl Drawable for AnyElement {
     #[inline]
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
         self.as_ref().retained_v2_paint_outsets(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_interaction_size(
+        &self,
+        ctx: &BuildContext,
+    ) -> Option<aimer_attribute::size::ResolvedSize> {
+        self.as_ref().retained_v2_interaction_size(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_interaction_offset(&self, ctx: &BuildContext) -> (f32, f32) {
+        self.as_ref().retained_v2_interaction_offset(ctx)
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(
+        &self,
+        source: crate::components::interaction_bounds::InteractionSource,
+    ) {
+        self.as_ref().adopt_retained_v2_interaction_source(source)
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<crate::components::interaction_bounds::InteractionDisagreement> {
+        self.as_ref().retained_v2_interaction_disagreement()
     }
 
     #[inline]
@@ -1577,11 +1631,6 @@ impl Drawable for Box<dyn Element> {
         self.as_ref().paint_local_v2(ctx)
     }
 
-    #[allow(deprecated)]
-    fn draw(&self, ctx: &BuildContext) {
-        self.as_ref().draw(ctx)
-    }
-
     #[inline]
     fn paint(&self, ctx: &BuildContext) {
         self.as_ref().paint(ctx)
@@ -1615,6 +1664,34 @@ impl Drawable for Box<dyn Element> {
     #[inline]
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
         self.as_ref().retained_v2_paint_outsets(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_interaction_size(
+        &self,
+        ctx: &BuildContext,
+    ) -> Option<aimer_attribute::size::ResolvedSize> {
+        self.as_ref().retained_v2_interaction_size(ctx)
+    }
+
+    #[inline]
+    fn retained_v2_interaction_offset(&self, ctx: &BuildContext) -> (f32, f32) {
+        self.as_ref().retained_v2_interaction_offset(ctx)
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(
+        &self,
+        source: crate::components::interaction_bounds::InteractionSource,
+    ) {
+        self.as_ref().adopt_retained_v2_interaction_source(source)
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(
+        &self,
+    ) -> Option<crate::components::interaction_bounds::InteractionDisagreement> {
+        self.as_ref().retained_v2_interaction_disagreement()
     }
 
     #[inline]

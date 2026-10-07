@@ -7,7 +7,6 @@ use aimer_attribute::Vec2d;
 use aimer_macro::{EventElement, Rebuildable};
 use aimer_style::*;
 use aimer_utils::debug;
-use aimer_utils::log::debug;
 use aimer_widget::base::BuildContext;
 use aimer_widget::{TextOverflowMode, *};
 
@@ -422,164 +421,10 @@ impl RawTextWidget {
         })
     }
 
-    fn draw_plain_decorations(
-        &self,
-        ctx: &BuildContext,
-        width: f32,
-        max_width: f32,
-        height: f32,
-        y: f32,
-        line_height: f32,
-        ascent: f32,
-        descent: f32,
-        font_size: f32,
-        font_weight: u16,
-    ) {
-        let Some(paint) = prepare_decoration_paint(
-            self.text_style.text_decoration,
-            font_size,
-            ctx.scale,
-        ) else {
-            return;
-        };
-        let key = PlainDecorationCacheKey {
-            width_bits: width.to_bits(),
-            height_bits: height.to_bits(),
-            scale_bits: ctx.scale.to_bits(),
-            font_size_bits: font_size.to_bits(),
-            layout_generation: aimer_widget::layout_invalidation_generation(),
-        };
 
-        self.cache.with_extra(|slot: &mut Option<RawTextAuxCache>| {
-            let auxiliary = slot.get_or_insert_with(RawTextAuxCache::default);
-            let cache_miss = auxiliary
-                .plain_decorations
-                .as_ref()
-                .is_none_or(|cached| cached.key != key || cached.paint != paint);
-            if cache_miss {
-                let line_widths = ctx.canvas.measure_text_line_widths_styled(
-                    &self.text,
-                    font_size,
-                    max_width,
-                    self.text_style.font_family,
-                    self.text_style.font_style,
-                    font_weight,
-                );
-                let lines = line_widths
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, line_width)| {
-                        let baseline = y + index as f32 * line_height;
-                        PlainDecorationLine {
-                            x: horizontal_alignment_offset(self.text_align, width, line_width),
-                            width: line_width,
-                            underline_center: baseline + descent.max(1.0) * 0.5 + paint.offset,
-                            line_through_center: baseline - ascent * 0.35 + paint.offset,
-                            overline_center: baseline - ascent + paint.offset,
-                        }
-                    })
-                    .collect();
-                auxiliary.plain_decorations = Some(PlainDecorationCache { key, paint, lines });
-            }
-
-            let cached = auxiliary
-                .plain_decorations
-                .as_ref()
-                .expect("plain decoration cache must be populated");
-            let color = cached.paint.dedicated_color.unwrap_or(self.text_style.color);
-            for line in &cached.lines {
-                let draw_decoration = |center_y: f32| {
-                    ctx.canvas.draw_text_decoration(
-                        (line.x, center_y - cached.paint.band_height / 2.0).into(),
-                        ResolvedSize {
-                            width: line.width,
-                            height: cached.paint.band_height,
-                        },
-                        color,
-                        cached.paint.style.id(),
-                        cached.paint.thickness,
-                        cached.paint.period,
-                    );
-                };
-                if cached.paint.lines.contains(TextDecorationLine::UNDERLINE) {
-                    draw_decoration(line.underline_center);
-                }
-                if cached.paint.lines.contains(TextDecorationLine::LINE_THROUGH) {
-                    draw_decoration(line.line_through_center);
-                }
-                if cached.paint.lines.contains(TextDecorationLine::OVERLINE) {
-                    draw_decoration(line.overline_center);
-                }
-            }
-        });
-    }
-
-    fn draw_paragraph(&self, ctx: &BuildContext) {
-        self.with_paragraph(|paragraph| {
-            let layout = paragraph.prepare_for_paint(ctx);
-            let vertical_offset = match self.text_align {
-                TextAlign::TopLeft | TextAlign::TopCenter | TextAlign::TopRight => 0.0,
-                TextAlign::MidLeft | TextAlign::MidCenter | TextAlign::MidRight => {
-                    (ctx.parent_size.height - layout.size.height).max(0.0) / 2.0
-                }
-                TextAlign::BotLeft | TextAlign::BotCenter | TextAlign::BotRight => {
-                    (ctx.parent_size.height - layout.size.height).max(0.0)
-                }
-            };
-
-            ctx.canvas.save();
-            if vertical_offset != 0.0 {
-                ctx.canvas.translate((0.0, vertical_offset).into());
-            }
-            let clipped = paragraph.needs_clip();
-            if clipped {
-                ctx.canvas.set_clip(
-                    (0.0, 0.0).into(),
-                    ResolvedSize {
-                        width: paragraph.available_width(ctx),
-                        height: ctx.parent_size.height,
-                    },
-                );
-            }
-            if self.text_style.text_shadow.is_some() {
-                let mode = paragraph
-                    .static_paint_mode()
-                    .expect("plain text paragraphs cannot contain interleaved links");
-                if !paragraph.draw_cached_static_paint(ctx, &layout, mode) {
-                    paragraph.draw_static_spans(ctx, &layout, mode);
-                }
-            } else {
-                paragraph.draw_spans(ctx, &layout, |span| span.style.color, |_, _| {});
-            }
-            if clipped {
-                ctx.canvas.clear_clip();
-            }
-            ctx.canvas.restore();
-        });
-    }
 }
 
 impl Drawable for RawTextWidget {
-    fn draw(&self, ctx: &BuildContext) {
-        if has_active_v2_render_presentation() {
-            return;
-        }
-        self.paint(ctx);
-    }
-
-    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
-        if let Some(data) = self.local_v2_paragraph_paint_data(ctx) {
-            return data.outsets.iter().any(|outset| *outset > 0.0).then_some(data.outsets);
-        }
-        let data = self.local_v2_paint_data(ctx)?;
-        (data.origin_offset.x > 0.0).then_some([
-            data.origin_offset.x,
-            0.0,
-            data.origin_offset.x,
-            0.0,
-        ])
-    }
-
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         self.local_v2_paint_data(ctx).is_some()
             || self.local_v2_paragraph_paint_data(ctx).is_some()
@@ -597,158 +442,19 @@ impl Drawable for RawTextWidget {
         canvas.finish();
     }
 
-    #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        if self.uses_paragraph_layout() {
-            if self.text.contains("Published nodes:" ) {
-                debug!("drawing the Text (cached)")
-            }
-            self.draw_paragraph(ctx);
-            return;
+    fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
+        if let Some(data) = self.local_v2_paragraph_paint_data(ctx) {
+            return data.outsets.iter().any(|outset| *outset > 0.0).then_some(data.outsets);
         }
-
-        if self.text.contains("Published nodes:" ) {
-            debug!("drawing the Text (uncached)")
-
-        }
-        let font_size = self.font_size(ctx.scale);
-        let width = ctx.parent_size.width;
-        let height = ctx.parent_size.height;
-        let max_width = if self.text_style.text_overflow == TextOverflow::Wrap {
-            width
-        } else {
-            0.0
-        };
-        let metrics = ctx.canvas.measure_text_metrics_styled(
-            &self.text,
-            font_size,
-            max_width,
-            self.text_style.font_family,
-            self.text_style.font_style,
-            self.text_style.font_weight.numeric(),
-        );
-        let ascent = metrics.ascent;
-        let descent = -metrics.descent;
-        let x = 0.0;
-        let baseline_offset = ascent + metrics.line_gap * 0.5;
-        let y = vertical_alignment_baseline(
-            self.text_align,
-            height,
-            metrics.height,
-            baseline_offset,
-        );
-        let horizontal_align = match self.text_align {
-            TextAlign::TopLeft | TextAlign::MidLeft | TextAlign::BotLeft => {
-                TextHorizontalAlign::Left
-            }
-            TextAlign::TopCenter | TextAlign::MidCenter | TextAlign::BotCenter => {
-                TextHorizontalAlign::Center
-            }
-            TextAlign::TopRight | TextAlign::MidRight | TextAlign::BotRight => {
-                TextHorizontalAlign::Right
-            }
-        };
-
-        let color = self.text_style.color;
-        let font_weight = self.text_style.font_weight.numeric();
-
-        // Synthetic italic is carried on the decoration line set; enable it on the
-        // canvas so the glyphs are sheared, then reset it after the text is drawn.
-        let is_italic = self
-            .text_style
-            .text_decoration
-            .line
-            .contains(TextDecorationLine::ITALIC);
-        if is_italic {
-            ctx.canvas.set_italic(true);
-        }
-
-        match self.text_style.text_overflow {
-            TextOverflow::Clip => {
-                ctx.canvas.save();
-                let width = ctx.parent_size.width;
-                ctx.canvas
-                    .set_clip((0.0, 0.0).into(), ResolvedSize { width, height });
-                ctx.canvas.draw_text_aligned_with_overflow_styled(
-                    &self.text,
-                    (x, y).into(),
-                    font_size,
-                    color,
-                    width,
-                    height,
-                    TextOverflowMode::Clip,
-                    horizontal_align,
-                    self.text_style.font_family,
-                    self.text_style.font_style,
-                    font_weight,
-                );
-                ctx.canvas.clear_clip();
-                ctx.canvas.restore();
-            }
-            TextOverflow::Ellipsis => {
-                ctx.canvas.draw_text_aligned_with_overflow_styled(
-                    &self.text,
-                    (x, y).into(),
-                    font_size,
-                    color,
-                    width,
-                    height,
-                    TextOverflowMode::Ellipsis,
-                    horizontal_align,
-                    self.text_style.font_family,
-                    self.text_style.font_style,
-                    font_weight,
-                );
-            }
-            TextOverflow::Wrap => {
-                ctx.canvas.draw_text_aligned_with_overflow_styled(
-                    &self.text,
-                    (x, y).into(),
-                    font_size,
-                    color,
-                    width,
-                    height,
-                    TextOverflowMode::Wrap,
-                    horizontal_align,
-                    self.text_style.font_family,
-                    self.text_style.font_style,
-                    font_weight,
-                );
-            }
-            _ => {
-                ctx.canvas.draw_text_aligned_with_overflow_styled(
-                    &self.text,
-                    (x, y).into(),
-                    font_size,
-                    color,
-                    width,
-                    height,
-                    TextOverflowMode::Clip,
-                    horizontal_align,
-                    self.text_style.font_family,
-                    self.text_style.font_style,
-                    font_weight,
-                );
-            }
-        }
-
-        if is_italic {
-            ctx.canvas.set_italic(false);
-        }
-
-        self.draw_plain_decorations(
-            ctx,
-            width,
-            max_width,
-            height,
-            y,
-            metrics.line_height,
-            ascent,
-            descent,
-            font_size,
-            font_weight,
-        );
+        let data = self.local_v2_paint_data(ctx)?;
+        (data.origin_offset.x > 0.0).then_some([
+            data.origin_offset.x,
+            0.0,
+            data.origin_offset.x,
+            0.0,
+        ])
     }
+
 
     #[inline]
     fn is_paint_stable(&self) -> bool {

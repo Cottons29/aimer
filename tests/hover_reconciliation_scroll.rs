@@ -44,7 +44,7 @@ impl EventElement for PointerMoveProbe {
 
 impl LayoutElement for PointerMoveProbe {}
 impl Drawable for PointerMoveProbe {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for PointerMoveProbe {}
 

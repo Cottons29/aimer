@@ -416,26 +416,6 @@ pub(crate) fn open_context_menu(
     true
 }
 
-/// Turns absolute logical coordinates into the element-local physical ones the
-/// canvas draws in.
-///
-/// Every knob is placed in the absolute logical space participants record their
-/// geometry in, so the two spaces meet here and nowhere else.
-fn placer(ctx: &BuildContext, scale: f32) -> impl Fn(Bounds) -> (Vec2d, ResolvedSize) {
-    let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
-    move |bounds: Bounds| {
-        (
-            Vec2d {
-                x: bounds.x * scale - abs_x,
-                y: bounds.y * scale - abs_y,
-            },
-            ResolvedSize {
-                width: bounds.width * scale,
-                height: bounds.height * scale,
-            },
-        )
-    }
-}
 
 /// Keeps an open pill over the selection it belongs to.
 ///
@@ -486,11 +466,11 @@ pub(crate) fn track_handles(session: &Rc<SelectionSession>) {
 /// the layer down.
 fn handles_painter(session: &Rc<SelectionSession>) -> OverlayPainter {
     let session = Rc::downgrade(session);
-    Rc::new(move |ctx: &BuildContext| {
+    Rc::new(move |ctx: &BuildContext, canvas: &aimer_canvas::Canvas| {
         let Some(session) = session.upgrade() else {
             return false;
         };
-        paint_handles(ctx, &session);
+        paint_handles(ctx, canvas, &session);
         true
     })
 }
@@ -523,23 +503,30 @@ pub(crate) fn hit_bounds_with_handles(
     ))
 }
 
-/// Paints the handles of `session`, from inside its overlay layer.
-fn paint_handles(ctx: &BuildContext, session: &Rc<SelectionSession>) {
+/// Records the handles of `session` into its overlay layer.
+///
+/// The layer covers the window from its origin, so a knob's absolute logical
+/// bounds are already the coordinates it is recorded at.
+fn paint_handles(ctx: &BuildContext, canvas: &aimer_canvas::Canvas, session: &Rc<SelectionSession>) {
     let Some((start, end)) = session.handle_circles() else {
         return;
     };
-    let scale = if ctx.scale > 0.0 { ctx.scale } else { 1.0 };
-    let place = placer(ctx, scale);
+    let _ = ctx;
+    let (red, green, blue, alpha) = HANDLE_COLOR.to_rgba();
+    let color = aimer_cupid::utilities::Color::rgba8(red, green, blue, alpha);
+    let rect = |bounds: Bounds| {
+        aimer_cupid::draw_cmd_v2::Rect::new(bounds.x, bounds.y, bounds.width, bounds.height)
+    };
     for knob in [start, end] {
-        let (bar_pos, bar_size) = place(knob.bar_bounds());
-        ctx.canvas
-            .fill_color_rect(bar_pos, bar_size, HANDLE_COLOR, [0.0; 4]);
-        let (circle_pos, circle_size) = place(knob.circle_bounds());
-        ctx.canvas.fill_color_rect(
-            circle_pos,
-            circle_size,
-            HANDLE_COLOR,
-            [HANDLE_RADIUS * scale; 4],
+        canvas.fill_rect(rect(knob.bar_bounds()), [red, green, blue, alpha]);
+        canvas.fill_rect_styled(
+            rect(knob.circle_bounds()),
+            color,
+            [HANDLE_RADIUS; 4],
+            [0.0; 4],
+            aimer_cupid::utilities::Color::transparent(),
+            [0.0; 4],
+            aimer_cupid::utilities::Color::transparent(),
         );
     }
 }
@@ -687,7 +674,7 @@ mod tests {
     #[test]
     fn the_layer_paints_a_bar_and_a_knob_for_each_end() {
         use aimer_canvas::{FrameCanvas, InnerCanvas};
-        use aimer_cupid::draw_cmd::DrawCommand;
+        use aimer_cupid::draw_cmd_v2::{DrawCommand, Rect, RenderTree};
 
         let (session, slot, _geometry) = session();
         select(&session, &slot, 2..5);
@@ -708,12 +695,24 @@ mod tests {
             runtime.handle().clone(),
         );
 
-        assert!(handles_painter(&session)(&ctx), "the layer stays installed");
+        // The layer records into the overlay's own list, as the host does.
+        let tree = RenderTree::new();
+        let overlay = tree.add_root(Rect::new(0.0, 0.0, 400.0, 800.0)).unwrap();
+        let node_context = tree.context(overlay).unwrap();
+        ctx.with_local_v2_paint_context(node_context, |ctx| {
+            let canvas = aimer_canvas::Canvas::of(ctx);
+            assert!(
+                handles_painter(&session)(ctx, &canvas),
+                "the layer stays installed"
+            );
+            canvas.finish();
+        });
 
         let tint: aimer_cupid::utilities::Color = HANDLE_COLOR.into();
-        let painted = inner
-            .draw_list()
-            .commands()
+        let painted = tree
+            .draw_list_snapshot(overlay)
+            .unwrap()
+            .commands
             .iter()
             .filter(|command| {
                 matches!(command, DrawCommand::FillRect { color, .. }
@@ -751,10 +750,19 @@ mod tests {
 
         drop(session);
 
-        assert!(
-            !painter(&ctx),
-            "a region that went away leaves no knobs to paint"
-        );
+        let tree = aimer_cupid::draw_cmd_v2::RenderTree::new();
+        let overlay = tree
+            .add_root(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 400.0, 800.0))
+            .unwrap();
+        let node_context = tree.context(overlay).unwrap();
+        ctx.with_local_v2_paint_context(node_context, |ctx| {
+            let canvas = aimer_canvas::Canvas::of(ctx);
+            assert!(
+                !painter(ctx, &canvas),
+                "a region that went away leaves no knobs to paint"
+            );
+            canvas.finish();
+        });
     }
 
     #[test]

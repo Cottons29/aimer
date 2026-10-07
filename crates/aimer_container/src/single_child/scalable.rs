@@ -120,7 +120,7 @@ impl RawScalable {
 }
 
 impl Drawable for RawScalable {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.child.update(&self.child_context(ctx));
     }
 
@@ -273,7 +273,7 @@ mod portable_tests {
     struct ScaleProbe(Rc<Cell<f32>>);
 
     impl Drawable for ScaleProbe {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.0.set(ctx.scale);
         }
     }
@@ -367,7 +367,7 @@ mod portable_tests {
             .child(ScaleProbeWidget(observed.clone()))
             .to_element(&context);
 
-        element.draw(&context);
+        element.update(&context);
 
         assert_eq!(observed.get(), 1.5);
     }

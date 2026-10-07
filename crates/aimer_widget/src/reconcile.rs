@@ -36,7 +36,7 @@ impl crate::EventElement for ScrollableLikeWrapper {
 }
 
 impl crate::Drawable for ScrollableLikeWrapper {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl crate::LayoutElement for ScrollableLikeWrapper {}
@@ -60,7 +60,7 @@ mod tests {
         }
     }
     impl Drawable for Leaf {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl EventElement for Leaf {}
     impl LayoutElement for Leaf {}
@@ -78,7 +78,7 @@ mod tests {
         }
     }
     impl Drawable for Wrapper {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
     impl EventElement for Wrapper {}
     impl LayoutElement for Wrapper {}
@@ -96,7 +96,7 @@ mod tests {
         }
     }
     impl Drawable for Branches {
-        fn draw(&self, _: &BuildContext) {}
+        fn update(&self, _: &BuildContext) {}
     }
     impl EventElement for Branches {}
     impl LayoutElement for Branches {}
@@ -115,7 +115,7 @@ mod tests {
         }
     }
     impl Drawable for SplitTraversal {
-        fn draw(&self, _: &BuildContext) {}
+        fn update(&self, _: &BuildContext) {}
     }
     impl EventElement for SplitTraversal {
         fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
@@ -177,7 +177,7 @@ mod tests {
         }
     }
     impl Drawable for EmptyLeaf {
-        fn draw(&self, _: &BuildContext) {}
+        fn update(&self, _: &BuildContext) {}
     }
     impl EventElement for EmptyLeaf {}
     impl LayoutElement for EmptyLeaf {}
@@ -497,7 +497,7 @@ mod tests {
         }
     }
     impl Drawable for RecordingLeaf {
-        fn draw(&self, _ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             self.drawn.set(self.value);
         }
     }
@@ -517,7 +517,7 @@ mod tests {
         }
     }
     impl Drawable for DrawWrapper {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.0.update(ctx);
         }
     }
@@ -541,7 +541,7 @@ mod tests {
         }
     }
     impl Drawable for DrawRow {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             for c in &self.0 {
                 c.update(ctx);
             }
@@ -1430,7 +1430,7 @@ mod tests {
         }
 
         impl Drawable for FakeLeaf {
-            fn draw(&self, _ctx: &BuildContext) {}
+            fn update(&self, _ctx: &BuildContext) {}
         }
 
         impl EventElement for FakeLeaf {}
@@ -1464,7 +1464,7 @@ mod tests {
         }
 
         impl Drawable for FakeContainer {
-            fn draw(&self, ctx: &BuildContext) {
+            fn update(&self, ctx: &BuildContext) {
                 self.child.update(ctx);
             }
         }
@@ -1500,7 +1500,7 @@ mod tests {
         }
 
         impl Drawable for FakeFlex {
-            fn draw(&self, ctx: &BuildContext) {
+            fn update(&self, ctx: &BuildContext) {
                 let mut current_y = 0.0;
                 for child in &self.children {
                     let child_size = child.computed_size(ctx);
@@ -1577,7 +1577,7 @@ mod tests {
         }
 
         impl Drawable for FakeStack {
-            fn draw(&self, ctx: &BuildContext) {
+            fn update(&self, ctx: &BuildContext) {
                 for child in &self.children {
                     child.update(ctx);
                 }
@@ -1620,7 +1620,7 @@ mod tests {
         }
 
         impl Drawable for FakePositioned {
-            fn draw(&self, ctx: &BuildContext) {
+            fn update(&self, ctx: &BuildContext) {
                 self.child.update(ctx);
             }
         }
@@ -1673,7 +1673,7 @@ mod tests {
         }
 
         impl Drawable for FakeScrollable {
-            fn draw(&self, ctx: &BuildContext) {
+            fn update(&self, ctx: &BuildContext) {
                 self.child.update(ctx);
             }
         }

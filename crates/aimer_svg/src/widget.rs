@@ -1,7 +1,8 @@
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::sync::Arc;
 
-use aimer_attribute::{Bounds, CacheBounds, Dimension, ResolvedSize};
+use aimer_attribute::{Bounds, Dimension, ResolvedSize};
+use aimer_widget::InteractionBounds;
 use aimer_cupid::svg::{
     SvgAspectMode, SvgFillRule, SvgFitPolicy, SvgGeometry, SvgNode, SvgNodeId,
     SvgNodeStyleOverride, SvgPathCommand, SvgScene, SvgTransform, SvgViewport,
@@ -321,7 +322,7 @@ impl Widget for Svg {
             hover_styles: self.hover_styles,
             pressed_styles: self.pressed_styles,
             callbacks: self.callbacks,
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
             hovered: Cell::new(None),
             interaction: RefCell::new(SvgInteraction::default()),
             paint_bounded,
@@ -712,7 +713,7 @@ impl LayoutElement for RawSvgAsset {
 }
 
 impl Drawable for RawSvgAsset {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.refresh(ctx);
         if let Some(element) = self.active_element() {
             element.update(ctx);
@@ -781,7 +782,7 @@ pub struct RawSvg {
     hover_styles: Vec<StyleRule>,
     pressed_styles: Vec<StyleRule>,
     callbacks: Vec<CallbackRule>,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
     hovered: Cell<Option<SvgNodeId>>,
     interaction: RefCell<SvgInteraction>,
     paint_bounded: bool,
@@ -1026,24 +1027,6 @@ impl RawSvg {
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
     }
 
-    #[inline]
-    fn paint_svg(&self, ctx: &BuildContext, size: ResolvedSize) {
-        let overrides = self.overrides_for_size(size.width, size.height);
-        // A document that is not provably inside its viewport is clipped to
-        // it, as SVG does at the root, so its paint stays within its box.
-        if !self.paint_bounded {
-            ctx.canvas.set_clip((0.0, 0.0).into(), size);
-        }
-        ctx.canvas.draw_svg(
-            self.document.scene().clone(),
-            (0.0, 0.0).into(),
-            size,
-            overrides.into(),
-        );
-        if !self.paint_bounded {
-            ctx.canvas.clear_clip();
-        }
-    }
 }
 
 impl VisitorElement for RawSvg {
@@ -1075,14 +1058,27 @@ impl LayoutElement for RawSvg {
 }
 
 impl Drawable for RawSvg {
-    fn draw(&self, ctx: &BuildContext) {
-        let size = self.resolved_size(ctx);
-        self.save_bounds(ctx, size);
-        self.paint_svg(ctx, size);
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.resolved_size(ctx))
     }
 
-    fn paint(&self, ctx: &BuildContext) {
-        self.paint_svg(ctx, self.resolved_size(ctx));
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("Svg")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
+        // The document is painted by `paint_local_v2`.
+        let size = self.resolved_size(ctx);
+        self.save_bounds(ctx, size);
     }
 
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
@@ -1128,7 +1124,7 @@ impl Drawable for RawSvg {
     }
 
     /// Always true: a document that is not provably inside its viewport is
-    /// clipped to it (see `paint_svg`), so no paint leaves the widget's box.
+    /// clipped to it (see `paint_local_v2`), so no paint leaves the widget's box.
     fn is_paint_bounded(&self) -> bool {
         true
     }

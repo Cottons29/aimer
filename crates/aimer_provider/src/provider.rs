@@ -6,7 +6,7 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
-use aimer_rubick::{ShareRef, Shared};
+use aimer_rubick::ShareRef;
 use aimer_widget::base::{BuildConsumer, BuildContext, ResolvedSize, Size, Vec2d, WindowHandle};
 use aimer_widget::{
     AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, EventTreeRole,
@@ -818,7 +818,7 @@ impl<T: 'static> VisitorElement for ProviderElement<T> {
 }
 
 impl<T: 'static> Drawable for ProviderElement<T> {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.update(ctx));
     }
 
@@ -1109,7 +1109,7 @@ impl<T: 'static, A: 'static> VisitorElement for StoreElement<T, A> {
     }
 }
 impl<T: 'static, A: 'static> Drawable for StoreElement<T, A> {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.update(ctx));
     }
 
@@ -1234,7 +1234,7 @@ mod tests {
         }
     }
     impl Drawable for Leaf {
-        fn draw(&self, _context: &BuildContext) {}
+        fn update(&self, _context: &BuildContext) {}
     }
     impl EventElement for Leaf {}
     impl LayoutElement for Leaf {}

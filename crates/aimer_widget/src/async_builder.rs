@@ -634,7 +634,7 @@ where
     T: 'static,
     E: 'static,
 {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.refresh(ctx);
         self.current_child().update(ctx);
     }
@@ -738,7 +738,7 @@ mod tests {
     }
 
     impl Drawable for MarkerElement {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     impl EventElement for MarkerElement {}
@@ -784,7 +784,7 @@ mod tests {
     }
 
     impl Drawable for CachingParent {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.child.update(ctx);
         }
     }

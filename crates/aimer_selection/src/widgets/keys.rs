@@ -103,7 +103,7 @@ impl Rebuildable for RawKeyRelay {
 }
 
 impl Drawable for RawKeyRelay {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.child.update(ctx);
     }
 

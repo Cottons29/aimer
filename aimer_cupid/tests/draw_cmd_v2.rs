@@ -226,25 +226,6 @@ fn invalid_geometry_and_opacity_are_rejected_without_adding_damage() {
 }
 
 #[test]
-fn legacy_island_is_selected_when_damage_hits_an_outlying_child() {
-    let tree = RenderTree::new();
-    let island = tree.add_root(Rect::new(0.0, 0.0, 10.0, 10.0)).unwrap();
-    tree.add_child(island, Rect::new(20.0, 0.0, 10.0, 10.0))
-        .unwrap();
-    tree.set_paint_source(island, RenderPaintSource::LegacyIsland)
-        .unwrap();
-    tree.begin_legacy_frame();
-    tree.set_legacy_command_range(island, Some((0, 1))).unwrap();
-
-    let operations = tree.render_order(&[Rect::new(22.0, 2.0, 2.0, 2.0)]);
-    assert!(matches!(
-        operations.as_slice(),
-        [RenderOp::Draw(item)] if item.element == island
-            && item.paint_source == RenderPaintSource::LegacyIsland
-    ));
-}
-
-#[test]
 fn disjoint_nested_clips_hide_descendants_without_creating_damage() {
     let tree = RenderTree::new();
     let root = tree.add_root(Rect::new(10.0, 10.0, 40.0, 40.0)).unwrap();
@@ -321,7 +302,7 @@ fn subtree_local_v2_check_accepts_fully_retained_descendants() {
 }
 
 #[test]
-fn subtree_local_v2_check_rejects_unresolved_or_legacy_descendants() {
+fn subtree_local_v2_check_rejects_unresolved_descendants() {
     let tree = RenderTree::new();
     let viewport = tree.add_root(Rect::new(0.0, 0.0, 100.0, 80.0)).unwrap();
     let content = tree
@@ -343,7 +324,7 @@ fn subtree_local_v2_check_rejects_unresolved_or_legacy_descendants() {
         .subtree_uses_only_local_v2(viewport)
         .unwrap());
 
-    tree.set_paint_source(leaf, RenderPaintSource::LegacyIsland)
+    tree.set_paint_source(leaf, RenderPaintSource::Unresolved)
         .unwrap();
     assert!(!tree
         .subtree_uses_only_local_v2(viewport)

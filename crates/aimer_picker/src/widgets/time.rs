@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_attribute::CacheBounds;
+use aimer_widget::InteractionBounds;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey, ScrollDeltaKind};
 use aimer_events::pointer::{PointerButton, PointerInfo};
 use aimer_modal::{
@@ -225,7 +225,7 @@ impl Widget for TimePickerSurface {
             use_24_hours: self.use_24_hours,
             on_selection: self.on_selection,
             tokens: self.tokens,
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
             popup: self.popup,
         };
         if self.popup {
@@ -252,7 +252,7 @@ struct RawTimePicker {
     use_24_hours: bool,
     on_selection: Option<TimeSelectionCallback>,
     tokens: ThemeTokens,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
     popup: bool,
 }
 
@@ -628,42 +628,29 @@ impl LayoutElement for RawTimePicker {
 }
 
 impl Drawable for RawTimePicker {
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("RawTimePicker")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
+        // The surface is painted by `paint_local_v2`; this only publishes where
+        // it sits.
         let size = self.computed_size(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
-        let picker = self.runtime.picker.borrow();
-        let value = picker.draft();
-        if self.popup {
-            paint::draw_time_picker(
-                ctx,
-                value,
-                size.width,
-                size.height,
-                0.0,
-                self.runtime.active_column.get(),
-                self.use_24_hours,
-                &self.tokens,
-            );
-            paint::draw_done_footer(
-                ctx,
-                size.width,
-                size.height,
-                self.runtime.focused.get(),
-                &self.tokens,
-            );
-            paint::draw_overlay_border(ctx, size.width, size.height, &self.tokens);
-        } else {
-            paint::draw_picker_field(
-                ctx,
-                "Time",
-                format_time(value, self.use_24_hours),
-                size.width,
-                picker.is_open(),
-                self.runtime.focused.get(),
-                &self.tokens,
-            );
-        }
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {

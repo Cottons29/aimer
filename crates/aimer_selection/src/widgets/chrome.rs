@@ -159,22 +159,6 @@ impl LayoutElement for RawSelectionIndicator {
 }
 
 impl Drawable for RawSelectionIndicator {
-    fn draw(&self, ctx: &BuildContext) {
-        let size = self.size * ctx.scale;
-        ctx.canvas.fill_rect_with_border_and_outline_per_side(
-            Vec2d::ZERO,
-            ResolvedSize {
-                width: size,
-                height: size,
-            },
-            self.fill,
-            [self.radius * ctx.scale; 4],
-            [2.0 * ctx.scale; 4],
-            self.border_color,
-            [0.0; 4],
-            Color::Transparent,
-        );
-    }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         ctx.scale.is_finite()

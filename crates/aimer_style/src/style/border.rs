@@ -1,6 +1,4 @@
 use aimer_attribute::dimension::Dimension;
-use aimer_attribute::position::Vec2d;
-use aimer_attribute::size::ResolvedSize;
 use aimer_color::prelude::Color;
 use aimer_widget::Drawable;
 use aimer_widget::base::BuildContext;
@@ -316,177 +314,7 @@ impl BoxOutline {
     }
 }
 
-#[allow(dead_code)]
 impl Drawable for RawBoxBorder {
-    fn draw(&self, ctx: &BuildContext) {
-        let canvas = &ctx.canvas;
-        let box_width = ctx.parent_size.width;
-        let box_height = ctx.parent_size.height;
-        let scale = ctx.scale;
-        let is_outline = self.mode == BorderMode::Outside;
-
-        let left_stroke = resolve_dim(self.left.stroke, box_width, scale);
-        let right_stroke = resolve_dim(self.right.stroke, box_width, scale);
-        let top_stroke = resolve_dim(self.top.stroke, box_height, scale);
-        let bottom_stroke = resolve_dim(self.bottom.stroke, box_height, scale);
-
-        let is_uniform_style = self.left.style == self.right.style
-            && self.left.style == self.top.style
-            && self.left.style == self.bottom.style;
-        let is_uniform_stroke = left_stroke == right_stroke
-            && left_stroke == top_stroke
-            && left_stroke == bottom_stroke;
-        let is_uniform_color = self.left.color == self.right.color
-            && self.left.color == self.top.color
-            && self.left.color == self.bottom.color;
-
-        // Uniform border: single stroke_rect call
-        if is_uniform_style
-            && is_uniform_stroke
-            && is_uniform_color
-            && left_stroke > 0.0
-            && self.left.style != BorderStyle::None
-        {
-            let (x, y, w, h) = if is_outline {
-                (
-                    -left_stroke / 2.0,
-                    -left_stroke / 2.0,
-                    box_width + left_stroke,
-                    box_height + left_stroke,
-                )
-            } else {
-                (
-                    left_stroke / 2.0,
-                    left_stroke / 2.0,
-                    box_width - left_stroke,
-                    box_height - left_stroke,
-                )
-            };
-            canvas.stroke_rect(
-                Vec2d { x, y },
-                ResolvedSize {
-                    width: w,
-                    height: h,
-                },
-                self.left.color,
-                left_stroke,
-                self.radius,
-            );
-            return;
-        }
-
-        // Per-side borders with per-corner radii using the new per-side API.
-        // When all colors are the same we can use a single stroke_rect_per_side call.
-        if is_uniform_color && self.left.style != BorderStyle::None {
-            let border_radius = self.radius;
-            let border_width = [top_stroke, right_stroke, bottom_stroke, left_stroke];
-
-            canvas.stroke_rect_per_side(
-                Vec2d { x: 0.0, y: 0.0 },
-                ResolvedSize {
-                    width: box_width,
-                    height: box_height,
-                },
-                self.left.color,
-                border_width,
-                border_radius,
-            );
-            return;
-        }
-
-        // Fallback: draw each side as a filled rectangle
-        // Top border
-        if self.top.style != BorderStyle::None && top_stroke > 0.0 {
-            let (x, y, w, h) = if is_outline {
-                (
-                    -left_stroke,
-                    -top_stroke,
-                    box_width + left_stroke + right_stroke,
-                    top_stroke,
-                )
-            } else {
-                (0.0, 0.0, box_width, top_stroke)
-            };
-            canvas.fill_color_rect(
-                Vec2d { x, y },
-                ResolvedSize {
-                    width: w,
-                    height: h,
-                },
-                self.top.color,
-                self.radius,
-            );
-        }
-
-        // Bottom border
-        if self.bottom.style != BorderStyle::None && bottom_stroke > 0.0 {
-            let (x, y, w, h) = if is_outline {
-                (
-                    -left_stroke,
-                    box_height,
-                    box_width + left_stroke + right_stroke,
-                    bottom_stroke,
-                )
-            } else {
-                (0.0, box_height - bottom_stroke, box_width, bottom_stroke)
-            };
-            canvas.fill_color_rect(
-                Vec2d { x, y },
-                ResolvedSize {
-                    width: w,
-                    height: h,
-                },
-                self.bottom.color,
-                self.radius,
-            );
-        }
-
-        // Left border
-        if self.left.style != BorderStyle::None && left_stroke > 0.0 {
-            let (x, y, w, h) = if is_outline {
-                (
-                    -left_stroke,
-                    -top_stroke,
-                    left_stroke,
-                    box_height + top_stroke + bottom_stroke,
-                )
-            } else {
-                (0.0, 0.0, left_stroke, box_height)
-            };
-            canvas.fill_color_rect(
-                Vec2d { x, y },
-                ResolvedSize {
-                    width: w,
-                    height: h,
-                },
-                self.left.color,
-                self.radius,
-            );
-        }
-
-        // Right border
-        if self.right.style != BorderStyle::None && right_stroke > 0.0 {
-            let (x, y, w, h) = if is_outline {
-                (
-                    box_width,
-                    -top_stroke,
-                    right_stroke,
-                    box_height + top_stroke + bottom_stroke,
-                )
-            } else {
-                (box_width - right_stroke, 0.0, right_stroke, box_height)
-            };
-            canvas.fill_color_rect(
-                Vec2d { x, y },
-                ResolvedSize {
-                    width: w,
-                    height: h,
-                },
-                self.right.color,
-                self.radius,
-            );
-        }
-    }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
         ctx.scale.is_finite()
@@ -533,7 +361,7 @@ impl Drawable for RawBoxBorder {
                 Color::Transparent.into(),
             );
         } else {
-            let mut fill_side = |slice: BorderSlice, x: f32, y: f32, width: f32, height: f32| {
+            let fill_side = |slice: BorderSlice, x: f32, y: f32, width: f32, height: f32| {
                 if slice.style != BorderStyle::None && width > 0.0 && height > 0.0 {
                     canvas.fill_rect_styled(
                         aimer_cupid::utilities::Rect::new(

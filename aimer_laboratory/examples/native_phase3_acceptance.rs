@@ -105,7 +105,7 @@ struct StaticProbeElement {
 }
 
 impl Drawable for StaticProbeElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let color = if self.index % 2 == 0 {
             Color::WHITE
         } else {
@@ -168,7 +168,7 @@ struct DynamicProbeElement {
 }
 
 impl Drawable for DynamicProbeElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.draws.set(self.draws.get().saturating_add(1));
         let color = if self.index % 2 == 0 {
             Color::BLACK

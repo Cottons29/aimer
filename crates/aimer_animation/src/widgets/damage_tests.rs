@@ -71,7 +71,7 @@ impl aimer_widget::PortableWidget for StableLeaf {}
 struct StableElement;
 
 impl Drawable for StableElement {
-    fn draw(&self, _context: &BuildContext) {}
+    fn update(&self, _context: &BuildContext) {}
 
     fn paint(&self, _context: &BuildContext) {}
 
@@ -120,7 +120,7 @@ impl aimer_widget::PortableWidget for UnknownLeaf {}
 struct UnknownElement;
 
 impl Drawable for UnknownElement {
-    fn draw(&self, _context: &BuildContext) {}
+    fn update(&self, _context: &BuildContext) {}
 }
 
 impl EventElement for UnknownElement {}
@@ -147,7 +147,7 @@ struct VariableBoundedElement {
 }
 
 impl Drawable for VariableBoundedElement {
-    fn draw(&self, _context: &BuildContext) {}
+    fn update(&self, _context: &BuildContext) {}
 
     fn is_paint_bounded(&self) -> bool {
         true

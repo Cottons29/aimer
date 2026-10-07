@@ -662,60 +662,10 @@ struct RawGlass {
 impl Rebuildable for RawGlass {}
 
 impl Drawable for RawGlass {
-    fn draw(&self, ctx: &BuildContext) {
-        let size = self.child.computed_size(ctx);
-        if size.width <= 0.0 || size.height <= 0.0 {
-            self.child.update(ctx);
-            return;
-        }
-
-        let material = self.material.normalized();
-        ctx.canvas.save();
-        let radii = resolved_radii(material.corner_radii_value(), size);
-
-        let shadow = material.fallback_shadow();
-        if shadow.alpha() != 0 && material.shadow_blur_value() > 0.0 {
-            ctx.canvas.draw_shadow_rect(
-                Vec2d { x: 0.0, y: 0.0 },
-                size,
-                shadow,
-                [0.0, material.elevation_value(), material.shadow_blur_value(), 0.0],
-                radii,
-                false,
-                [0.0; 3],
-            );
-        }
-
-        ctx.canvas
-            .fill_color_rect_per_corner(Vec2d { x: 0.0, y: 0.0 }, size, material.fallback_tint(), radii);
-        if material.border_width_value() > 0.0 && material.fallback_border().alpha() != 0 {
-            ctx.canvas.stroke_rect_per_side(
-                Vec2d { x: 0.0, y: 0.0 },
-                size,
-                material.fallback_border(),
-                [material.border_width_value(); 4],
-                radii,
-            );
-        }
-
-        ctx.canvas.draw_material(build_material_request(
-            MaterialKind::Glass,
-            material,
-            size,
-            0.0,
-            material.edge_lighting_value(),
-            material.specular_highlight_value(),
-            0.0,
-            0.0,
-            0.0,
-            [0.0; 6],
-        ));
-
-        // The material is painted before the child so the child's content stays
-        // crisp above the frosted surface. No canvas state is changed on behalf
-        // of the child besides the balanced save/restore above.
+    fn update(&self, ctx: &BuildContext) {
+        // The frosted surface is painted by `paint_local_v2`; the child keeps its
+        // own render node above it.
         self.child.update(ctx);
-        ctx.canvas.restore();
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -914,7 +864,7 @@ mod tests {
     }
 
     impl Drawable for StableChild {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
 
         fn is_paint_stable(&self) -> bool {
             true

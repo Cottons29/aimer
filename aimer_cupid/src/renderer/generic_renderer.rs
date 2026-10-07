@@ -1105,21 +1105,6 @@ impl<B: GpuBackend> Renderer<B> {
         let mut slices = Vec::with_capacity(operations.len() * 3);
         for operation in operations.iter().copied() {
             match &operation.kind {
-                RetainedRenderOperationKind::LegacyRange {
-                    range,
-                    prefix,
-                    suffix,
-                } => {
-                    if !prefix.is_empty() {
-                        slices.push(prefix.as_slice());
-                    }
-                    if let Some(commands) = draw_list.commands().get(range.clone()) {
-                        slices.push(commands);
-                    }
-                    if !suffix.is_empty() {
-                        slices.push(suffix.as_slice());
-                    }
-                }
                 RetainedRenderOperationKind::LocalV2(item) => {
                     if let Some(index) = retained_indices.get(&item.element.get()) {
                         slices.push(retained_lists[*index].1.commands.as_slice());
@@ -1266,8 +1251,7 @@ impl<B: GpuBackend> Renderer<B> {
                     );
                     self.opacity_group_targets[group.depth].target.mark_valid();
                 }
-                RetainedRenderOperationKind::LegacyRange { .. }
-                | RetainedRenderOperationKind::LocalV2(_) => chunk.push(operation),
+                RetainedRenderOperationKind::LocalV2(_) => chunk.push(operation),
             }
         }
         self.flush_opacity_group_chunk(
@@ -2911,8 +2895,7 @@ fn render_plan_uses_custom_pipeline(plan: &RetainedRenderPlan, width: u32, heigh
                     matches!(command, crate::draw_cmd_v2::DrawCommand::DrawCustom { .. })
                 },
             ),
-            crate::frame::RetainedRenderOperationKind::LegacyRange { .. }
-            | crate::frame::RetainedRenderOperationKind::OpacityGroupBegin { .. }
+            crate::frame::RetainedRenderOperationKind::OpacityGroupBegin { .. }
             | crate::frame::RetainedRenderOperationKind::OpacityGroupEnd { .. } => false,
         })
 }
@@ -2929,8 +2912,7 @@ fn render_plan_uses_material(plan: &RetainedRenderPlan, width: u32, height: u32)
                     )
                 },
             ),
-            crate::frame::RetainedRenderOperationKind::LegacyRange { .. }
-            | crate::frame::RetainedRenderOperationKind::OpacityGroupBegin { .. }
+            crate::frame::RetainedRenderOperationKind::OpacityGroupBegin { .. }
             | crate::frame::RetainedRenderOperationKind::OpacityGroupEnd { .. } => false,
         })
 }

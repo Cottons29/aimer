@@ -146,7 +146,7 @@ unsafe impl Send for AnimatedPaintElement {}
 unsafe impl Sync for AnimatedPaintElement {}
 
 impl Drawable for AnimatedPaintElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let curved_value = self.controller.tick(AnimInstant::now());
         let animating = self.controller.is_animating();
         let visual_changed = crate::widgets::damage::sample_changed(
@@ -187,8 +187,9 @@ impl Drawable for AnimatedPaintElement {
 
     #[inline]
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
+        // Opacity is the child node's presentation, so the child's paint extent
+        // is irrelevant; only an arbitrary canvas effect needs the legacy path.
         !matches!(&self.effect, PaintEffect::Legacy(_))
-            && self.child.is_paint_bounded()
             && ctx.scale.is_finite()
             && ctx.scale > 0.0
     }
@@ -353,7 +354,7 @@ mod tests {
     struct StableElement;
 
     impl Drawable for StableElement {
-        fn draw(&self, _context: &BuildContext) {}
+        fn update(&self, _context: &BuildContext) {}
 
         fn is_paint_bounded(&self) -> bool {
             true
@@ -392,7 +393,7 @@ mod tests {
     struct UnknownElement;
 
     impl Drawable for UnknownElement {
-        fn draw(&self, _context: &BuildContext) {}
+        fn update(&self, _context: &BuildContext) {}
     }
 
     impl EventElement for UnknownElement {}

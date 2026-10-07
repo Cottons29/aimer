@@ -259,7 +259,7 @@ unsafe impl Send for AnimatedElement {}
 unsafe impl Sync for AnimatedElement {}
 
 impl Drawable for AnimatedElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.draw_frame(ctx, self.sample_frame(ctx));
     }
 
@@ -294,7 +294,7 @@ impl Drawable for AnimatedElement {
     #[inline]
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
         let frame = self.sample_frame(ctx);
-        if frame.valid && self.child.is_paint_bounded() {
+        if frame.valid {
             CompositorAnimationDecision::Compositor(frame)
         } else {
             CompositorAnimationDecision::Live(frame)

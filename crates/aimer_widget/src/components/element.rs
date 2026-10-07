@@ -39,7 +39,7 @@ use crate::{AnyElement, Drawable, Key};
 
 mod event;
 #[cfg(test)]
-mod legacy_island_report_tests;
+mod dropped_paint_report_tests;
 mod node;
 
 use node::ElementNode;
@@ -67,9 +67,13 @@ thread_local! {
     /// tree never learned of it (typically its parent draws it without
     /// exposing it through `visit_children`).
     static UNMAPPED_DRAWS: RefCell<Vec<(ElementId, &'static str)>> = const { RefCell::new(Vec::new()) };
+    #[cfg(debug_assertions)]
+    static DROPPED_PAINT_ELEMENTS: RefCell<Vec<(ElementId, &'static str)>> = const { RefCell::new(Vec::new()) };
+    #[cfg(debug_assertions)]
+    static DECLINED_PAINT_ELEMENTS: RefCell<Vec<(ElementId, &'static str)>> = const { RefCell::new(Vec::new()) };
     /// Element types already reported as legacy islands in this process, so the
     /// log names each one once instead of every frame.
-    static REPORTED_LEGACY_ISLANDS: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
+    static REPORTED_DROPPED_PAINT: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
 
     /// Nested `mark_needs_rebuild` calls share one invalidation generation.
     /// Marking a large tree is already recursive; it must not also perform one
@@ -152,9 +156,7 @@ pub type ElementNodeMap = HashMap<ElementId, RenderNodeId>;
 pub(crate) struct V2RenderContext {
     pub(crate) tree: RenderTree,
     element_nodes: Rc<ElementNodeMap>,
-    legacy_island_depth: Rc<Cell<usize>>,
     prepared_root: Rc<Cell<Option<ElementId>>>,
-    retained_presentation: bool,
 }
 
 impl V2RenderContext {
@@ -164,36 +166,8 @@ impl V2RenderContext {
     }
 
     #[inline]
-    pub(crate) fn inside_legacy_island(&self) -> bool {
-        self.legacy_island_depth.get() != 0
-    }
-
-    #[inline]
-    pub(crate) fn uses_retained_presentation(&self) -> bool {
-        self.retained_presentation && !self.inside_legacy_island()
-    }
-
-    pub(crate) fn enter_legacy_island(&self) -> LegacyIslandGuard {
-        self.legacy_island_depth
-            .set(self.legacy_island_depth.get() + 1);
-        LegacyIslandGuard {
-            depth: self.legacy_island_depth.clone(),
-        }
-    }
-
-    #[inline]
     pub(crate) fn take_prepared_root(&self, element: ElementId) -> bool {
         self.prepared_root.get() == Some(element) && self.prepared_root.take().is_some()
-    }
-}
-
-pub(crate) struct LegacyIslandGuard {
-    depth: Rc<Cell<usize>>,
-}
-
-impl Drop for LegacyIslandGuard {
-    fn drop(&mut self) {
-        self.depth.set(self.depth.get() - 1);
     }
 }
 
@@ -207,7 +181,11 @@ impl Drop for V2RenderContextGuard {
     }
 }
 
-/// Runs one element-tree traversal with the window's retained v2 render map.
+/// Runs the element traversal with the retained tree as the paint source.
+///
+/// Elements that have a render node record their paint into it, and the
+/// traversal drops whatever they also draw through the canvas while it still
+/// visits children and updates state.
 #[doc(hidden)]
 pub fn with_v2_render_tree_context<R>(
     tree: RenderTree,
@@ -215,36 +193,11 @@ pub fn with_v2_render_tree_context<R>(
     prepared_root: Option<ElementId>,
     callback: impl FnOnce() -> R,
 ) -> R {
-    with_v2_render_tree_context_mode(tree, element_nodes, prepared_root, false, callback)
-}
-
-/// Runs the element traversal with the retained tree as the active paint
-/// source. Local v2 nodes suppress their duplicate legacy paint commands while
-/// still traversing children; legacy islands temporarily resume recording.
-#[doc(hidden)]
-pub fn with_v2_render_tree_presentation_context<R>(
-    tree: RenderTree,
-    element_nodes: Rc<ElementNodeMap>,
-    prepared_root: Option<ElementId>,
-    callback: impl FnOnce() -> R,
-) -> R {
-    with_v2_render_tree_context_mode(tree, element_nodes, prepared_root, true, callback)
-}
-
-fn with_v2_render_tree_context_mode<R>(
-    tree: RenderTree,
-    element_nodes: Rc<ElementNodeMap>,
-    prepared_root: Option<ElementId>,
-    retained_presentation: bool,
-    callback: impl FnOnce() -> R,
-) -> R {
     V2_RENDER_CONTEXT_STACK.with(|stack| {
         stack.borrow_mut().push(V2RenderContext {
             tree,
             element_nodes,
-            legacy_island_depth: Rc::new(Cell::new(0)),
             prepared_root: Rc::new(Cell::new(prepared_root)),
-            retained_presentation,
         });
     });
     let _guard = V2RenderContextGuard;
@@ -255,20 +208,17 @@ pub(crate) fn current_v2_render_context() -> Option<V2RenderContext> {
     V2_RENDER_CONTEXT_STACK.with(|stack| stack.borrow().last().cloned())
 }
 
-/// Returns whether the current draw is using the window's retained v2 tree
-/// outside a legacy-island replay.
+/// Returns whether the current draw is using the window's retained v2 tree.
 #[doc(hidden)]
 pub fn has_active_v2_render_tree() -> bool {
-    current_v2_render_context().is_some_and(|context| !context.inside_legacy_island())
+    current_v2_render_context().is_some()
 }
 
-/// Returns whether retained v2 paint is the current presentation source.
-///
-/// Legacy-island replay returns false because those subtrees are intentionally
-/// recorded into the compatibility command list.
+/// Returns whether retained v2 paint is the current presentation source, which
+/// it is whenever a render tree is active.
 #[doc(hidden)]
 pub fn has_active_v2_render_presentation() -> bool {
-    current_v2_render_context().is_some_and(|context| context.uses_retained_presentation())
+    has_active_v2_render_tree()
 }
 
 /// Updates one mapped element's local bounds and clip during retained drawing.
@@ -281,9 +231,7 @@ pub fn update_v2_render_node_geometry(
     bounds: Rect,
     clip: Option<Rect>,
 ) -> bool {
-    let Some(context) = current_v2_render_context()
-        .filter(|context| !context.inside_legacy_island())
-    else {
+    let Some(context) = current_v2_render_context() else {
         return false;
     };
     let Some(node) = context.node_for_element(element) else {
@@ -1054,12 +1002,12 @@ pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable +
 
 // SAFETY: The template is `null::<ElementNode<E>>()` coerced to the target, so
 // it carries exactly that node's vtable and a null data address.
-/// Returns `true` the first time `name` is seen as a legacy island, so callers
-/// log each element type once. Only debug builds report islands.
+/// Returns `true` the first time `name` is seen dropping legacy paint, so
+/// callers log each element type once. Only debug builds report it.
 #[cfg_attr(not(any(debug_assertions, test)), allow(dead_code))]
 #[inline]
-fn first_legacy_island_report(name: &'static str) -> bool {
-    REPORTED_LEGACY_ISLANDS.with(|reported| reported.borrow_mut().insert(name))
+fn first_dropped_paint_report(name: &'static str) -> bool {
+    REPORTED_DROPPED_PAINT.with(|reported| reported.borrow_mut().insert(name))
 }
 
 /// The most unmapped draws one frame keeps; a runaway tree must not grow it
@@ -1075,6 +1023,58 @@ fn record_unmapped_draw(id: ElementId, name: &'static str) {
             draws.push((id, name));
         }
     });
+}
+
+/// Notes that `id` drew through the removed legacy paint path and had no retained
+/// paint to show for it.
+#[cfg(debug_assertions)]
+fn record_dropped_paint(id: ElementId, name: &'static str) {
+    DROPPED_PAINT_ELEMENTS.with(|elements| {
+        let mut elements = elements.borrow_mut();
+        if elements.len() < UNMAPPED_DRAW_LIMIT && !elements.iter().any(|(seen, _)| *seen == id) {
+            elements.push((id, name));
+        }
+    });
+}
+
+/// Notes that `id` had no retained paint to show this frame (it declined, or
+/// its state was not valid enough to paint).
+#[cfg(debug_assertions)]
+fn record_declined_paint(id: ElementId, name: &'static str) {
+    DECLINED_PAINT_ELEMENTS.with(|elements| {
+        let mut elements = elements.borrow_mut();
+        if elements.len() < UNMAPPED_DRAW_LIMIT && !elements.iter().any(|(seen, _)| *seen == id) {
+            elements.push((id, name));
+        }
+    });
+}
+
+/// Takes the elements that had no retained paint to show since the last call.
+/// Only debug builds measure this, so release builds see none.
+#[doc(hidden)]
+pub fn take_declined_paint_elements() -> Vec<(ElementId, &'static str)> {
+    #[cfg(debug_assertions)]
+    {
+        DECLINED_PAINT_ELEMENTS.with(|elements| std::mem::take(&mut *elements.borrow_mut()))
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        Vec::new()
+    }
+}
+
+/// Takes the elements that drew through the removed legacy paint path since
+/// the last call. Only debug builds measure this, so release builds see none.
+#[doc(hidden)]
+pub fn take_dropped_paint_elements() -> Vec<(ElementId, &'static str)> {
+    #[cfg(debug_assertions)]
+    {
+        DROPPED_PAINT_ELEMENTS.with(|elements| std::mem::take(&mut *elements.borrow_mut()))
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        Vec::new()
+    }
 }
 
 /// Takes the elements recorded as drawn without a render node since the last

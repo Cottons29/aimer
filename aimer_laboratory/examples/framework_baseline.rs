@@ -337,7 +337,7 @@ struct TraversalElement {
 }
 
 impl Drawable for TraversalElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl VisitorElement for TraversalElement {

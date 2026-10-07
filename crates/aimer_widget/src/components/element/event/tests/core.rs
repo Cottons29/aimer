@@ -72,7 +72,7 @@ impl EventElement for StructuralTraversalElement {
 impl LayoutElement for StructuralTraversalElement {}
 
 impl Drawable for StructuralTraversalElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for StructuralTraversalElement {}
@@ -101,7 +101,7 @@ impl EventElement for DefaultStructuralTraversalElement {
 impl LayoutElement for DefaultStructuralTraversalElement {}
 
 impl Drawable for DefaultStructuralTraversalElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for DefaultStructuralTraversalElement {}
@@ -137,7 +137,7 @@ impl EventElement for IndexedStructuralChildElement {
 impl LayoutElement for IndexedStructuralChildElement {}
 
 impl Drawable for IndexedStructuralChildElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for IndexedStructuralChildElement {}
@@ -277,7 +277,7 @@ impl VisitorElement for DowncastableElement {
 impl EventElement for DowncastableElement {}
 impl LayoutElement for DowncastableElement {}
 impl Drawable for DowncastableElement {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for DowncastableElement {
     fn option_any(&self) -> Option<&dyn Any> {
@@ -307,7 +307,7 @@ impl<const N: usize> VisitorElement for StorageElement<N> {
 impl<const N: usize> EventElement for StorageElement<N> {}
 impl<const N: usize> LayoutElement for StorageElement<N> {}
 impl<const N: usize> Drawable for StorageElement<N> {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl<const N: usize> Rebuildable for StorageElement<N> {
     fn option_any(&self) -> Option<&dyn Any> {
@@ -371,7 +371,7 @@ impl VisitorElement for IdentityLeaf {
 impl EventElement for IdentityLeaf {}
 impl LayoutElement for IdentityLeaf {}
 impl Drawable for IdentityLeaf {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for IdentityLeaf {}
 
@@ -386,7 +386,7 @@ impl VisitorElement for ReplacementLeaf {
 impl EventElement for ReplacementLeaf {}
 impl LayoutElement for ReplacementLeaf {}
 impl Drawable for ReplacementLeaf {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for ReplacementLeaf {}
 
@@ -407,7 +407,7 @@ impl VisitorElement for IdentityBranch {
 impl EventElement for IdentityBranch {}
 impl LayoutElement for IdentityBranch {}
 impl Drawable for IdentityBranch {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for IdentityBranch {}
 
@@ -436,7 +436,7 @@ impl LayoutElement for StableRoot {
     }
 }
 impl Drawable for StableRoot {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 impl Rebuildable for StableRoot {}
 
@@ -584,7 +584,7 @@ impl LayoutElement for LayoutInvalidationLeaf {
 }
 
 impl Drawable for LayoutInvalidationLeaf {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for LayoutInvalidationLeaf {}
@@ -612,7 +612,7 @@ impl LayoutElement for LayoutInvalidationBranch {
 }
 
 impl Drawable for LayoutInvalidationBranch {
-    fn draw(&self, _ctx: &BuildContext) {}
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 impl Rebuildable for LayoutInvalidationBranch {}

@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use aimer_attribute::CacheBounds;
+use aimer_widget::InteractionBounds;
 use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
@@ -398,7 +398,7 @@ impl<W: Widget + 'static> Widget for Resizable<W> {
             direction: self.direction,
             on_resize: self.on_resize,
             on_resize_zone: self.on_resize_zone,
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
             active: Cell::new(None),
             grab: Cell::new(Grab::IDLE),
             hovered: Cell::new(None),
@@ -461,7 +461,7 @@ pub struct RawResizable<E: Element> {
     direction: Direction,
     on_resize: Callback<ResolvedSize>,
     on_resize_zone: Callback<Direction>,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
     active: Cell<Option<ResizeHandle>>,
     grab: Cell<Grab>,
     hovered: Cell<Option<ResizeHandle>>,
@@ -823,7 +823,24 @@ impl<E: Element> Drawable for RawResizable<E> {
 
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
 
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.effective_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("Resizable")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
         let size = self.effective_size(ctx);
 
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
@@ -873,7 +890,7 @@ mod tests {
     impl LayoutElement for StubChild {}
     impl Rebuildable for StubChild {}
     impl Drawable for StubChild {
-        fn draw(&self, _ctx: &BuildContext) {}
+        fn update(&self, _ctx: &BuildContext) {}
     }
 
     struct DrawProbe {
@@ -890,7 +907,7 @@ mod tests {
     impl LayoutElement for DrawProbe {}
     impl Rebuildable for DrawProbe {}
     impl Drawable for DrawProbe {
-        fn draw(&self, _ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             self.draws.set(self.draws.get() + 1);
         }
     }
@@ -930,7 +947,7 @@ mod tests {
             direction: Direction::ALL,
             on_resize: Callback::default(),
             on_resize_zone: Callback::default(),
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
             active: Cell::new(None),
             grab: Cell::new(Grab::IDLE),
             hovered: Cell::new(None),
@@ -1010,7 +1027,7 @@ mod tests {
             direction,
             on_resize,
             on_resize_zone,
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
             active: Cell::new(None),
             grab: Cell::new(Grab::IDLE),
             hovered: Cell::new(None),

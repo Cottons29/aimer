@@ -37,18 +37,35 @@ pub struct BoundsAudit {
     pub unmapped: usize,
     /// Compared elements that disagree.
     pub mismatches: Vec<BoundsMismatch>,
+    /// How many elements took their hit area from the render tree at the last
+    /// sync. A gate over `interaction_disagreements` is only meaningful when
+    /// this is non-zero.
+    pub interaction_adopted: usize,
+    /// [`Self::interaction_adopted`] by element `debug_name`.
+    pub interaction_adopted_by_type: std::collections::BTreeMap<&'static str, usize>,
+    /// Elements that already take their hit area from the render tree and whose
+    /// last canvas measurement differs from it now. This is the gate
+    /// for retiring the canvas transform stack: it must stay empty.
+    pub interaction_disagreements: Vec<aimer_widget::InteractionDisagreement>,
 }
 
 impl WindowRenderTree {
     /// Compares every cached element rectangle under `root` with its node's
     /// world rectangle.
     pub(crate) fn bounds_audit(&self, root: &dyn Element) -> BoundsAudit {
-        let mut audit = BoundsAudit::default();
+        let mut audit = BoundsAudit {
+            interaction_adopted: self.interaction_adopted,
+            interaction_adopted_by_type: self.interaction_adopted_by_type.clone(),
+            ..BoundsAudit::default()
+        };
         self.audit_node(root, &mut audit);
         audit
     }
 
     fn audit_node(&self, element: &dyn Element, audit: &mut BoundsAudit) {
+        if let Some(disagreement) = element.retained_v2_interaction_disagreement() {
+            audit.interaction_disagreements.push(disagreement);
+        }
         if let Some((start, end)) = element.pos_start_end() {
             match self
                 .node_for_element(element.id())

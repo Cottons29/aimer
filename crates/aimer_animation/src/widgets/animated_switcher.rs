@@ -294,7 +294,7 @@ unsafe impl Send for AnimatedSwitcherElement {}
 unsafe impl Sync for AnimatedSwitcherElement {}
 
 impl Drawable for AnimatedSwitcherElement {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let now = AnimInstant::now();
 
         // Tick both controllers
@@ -342,12 +342,9 @@ impl Drawable for AnimatedSwitcherElement {
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
 
     fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
-        if !self.current_child.is_paint_bounded()
-            || unsafe { (&*self.old_child.get()).as_ref() }
-                .is_some_and(|child| !child.is_paint_bounded())
-        {
-            return false;
-        }
+        // The crossfade is each child node's presentation opacity, so the tree
+        // damages whatever the child paints, inside its layout box or not. It
+        // needs no promise about the children's paint extent.
         let now = AnimInstant::now();
         let in_value = self.in_controller.tick(now);
         let out_value = self.out_controller.tick(now);
@@ -819,7 +816,7 @@ mod tests {
             }
         }
         impl Drawable for RecordingLeaf {
-            fn draw(&self, _ctx: &BuildContext) {
+            fn update(&self, _ctx: &BuildContext) {
                 self.drawn.borrow_mut().push(self.label);
             }
         }

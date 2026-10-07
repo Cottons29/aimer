@@ -3,7 +3,8 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use aimer_attribute::{BoxConstraint, CacheBounds};
+use aimer_attribute::BoxConstraint;
+use aimer_widget::InteractionBounds;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_cupid::draw_cmd_v2::Rect;
@@ -357,7 +358,7 @@ impl<T: RangeValue> Widget for SliderSurface<T> {
             track,
             trail,
             thumb,
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
             visual_inset: Cell::new(0.0),
             track_geometry,
             trail_geometry,
@@ -376,6 +377,25 @@ impl<T: RangeValue> PortableWidget for SliderSurface<T> {}
 struct SliderVisualGeometry {
     position: Vec2d,
     clip: Option<Rect>,
+}
+
+/// Where a [`RawSlider`] puts its visuals. Offsets are device pixels; the
+/// trail's clip is carried twice, logical in its geometry and in device pixels
+/// as `(x, width, height)` for the canvas clip.
+struct SliderPlacement {
+    track: SliderVisualGeometry,
+    trail: SliderVisualGeometry,
+    thumb: SliderVisualGeometry,
+    trail_clip_px: (f32, f32, f32),
+}
+
+/// [`SliderPlacement`] for a [`RawRangeSlider`], which has two thumbs.
+struct RangePlacement {
+    track: SliderVisualGeometry,
+    trail: SliderVisualGeometry,
+    lower: SliderVisualGeometry,
+    upper: SliderVisualGeometry,
+    trail_clip_px: (f32, f32, f32),
 }
 
 struct RawSliderVisualSlot {
@@ -448,7 +468,7 @@ impl LayoutElement for RawSliderVisualSlot {
 }
 
 impl Drawable for RawSliderVisualSlot {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.child.update(ctx);
     }
 
@@ -485,7 +505,7 @@ struct RawSlider<T: RangeValue> {
     track: AnyElement,
     trail: AnyElement,
     thumb: AnyElement,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
     /// Logical inset reserved for half of the visual thumb at each endpoint.
     visual_inset: Cell<f32>,
     track_geometry: Rc<Cell<SliderVisualGeometry>>,
@@ -583,6 +603,70 @@ impl<T: RangeValue> RawSlider<T> {
             .unwrap_or(0.0) as f32
             * ctx.scale;
         (inset + position).clamp(inset, width - inset)
+    }
+
+    /// Works out where the visuals go and publishes it to their slots.
+    ///
+    /// The render tree reads a slot's position when it syncs, which is before
+    /// this slider's `update` runs, so the placement has to be available from
+    /// `retained_v2_bounds` as well: a position written only while drawing
+    /// reaches the tree one frame late, and a first frame nothing follows left
+    /// the visuals at the slider's origin.
+    fn place_visuals(&self, ctx: &BuildContext) -> (ResolvedSize, SliderPlacement) {
+        let size = self.computed_size(ctx);
+        let thumb_inset = self.thumb_inset(ctx, size);
+        self.visual_inset
+            .set((thumb_inset / ctx.scale.max(f32::EPSILON)).max(0.0));
+        let child_ctx = child_context(ctx, size);
+        let logical_scale = ctx.scale.max(f32::EPSILON);
+
+        let track_size = self.track.computed_size(&child_ctx);
+        let track = SliderVisualGeometry {
+            position: Vec2d {
+                x: 0.0,
+                y: (size.height - track_size.height) / 2.0,
+            },
+            clip: None,
+        };
+
+        let position = self.position_px(ctx, size, thumb_inset);
+        let trail_size = self.trail.computed_size(&child_ctx);
+        let trail_width = position.clamp(0.0, size.width);
+        let trail_height = trail_size.height.max(0.0);
+        let trail = SliderVisualGeometry {
+            position: Vec2d {
+                x: 0.0,
+                y: (size.height - trail_size.height) / 2.0,
+            },
+            clip: Some(Rect::new(
+                0.0,
+                0.0,
+                trail_width / logical_scale,
+                trail_height / logical_scale,
+            )),
+        };
+
+        let thumb_size = self.thumb.computed_size(&child_ctx);
+        let thumb = SliderVisualGeometry {
+            position: Vec2d {
+                x: position - thumb_size.width / 2.0,
+                y: (size.height - thumb_size.height) / 2.0,
+            },
+            clip: None,
+        };
+
+        self.track_geometry.set(track);
+        self.trail_geometry.set(trail);
+        self.thumb_geometry.set(thumb);
+        (
+            size,
+            SliderPlacement {
+                track,
+                trail,
+                thumb,
+                trail_clip_px: (0.0, trail_width, trail_height),
+            },
+        )
     }
 
     fn thumb_inset(&self, ctx: &BuildContext, size: ResolvedSize) -> f32 {
@@ -720,63 +804,13 @@ impl<T: RangeValue> LayoutElement for RawSlider<T> {
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        let size = self.computed_size(ctx);
+        let (size, placement) = self.place_visuals(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
-        let thumb_inset = self.thumb_inset(ctx, size);
-        self.visual_inset
-            .set((thumb_inset / ctx.scale.max(f32::EPSILON)).max(0.0));
         let child_ctx = child_context(ctx, size);
-        let logical_scale = ctx.scale.max(f32::EPSILON);
-        let track_size = self.track.computed_size(&child_ctx);
-        let track_offset = Vec2d {
-            x: 0.0,
-            y: (size.height - track_size.height) / 2.0,
-        };
-        self.track_geometry.set(SliderVisualGeometry {
-            position: track_offset,
-            clip: None,
-        });
-        layout_child(
-            &self.track,
-            &child_ctx,
-            track_offset,
-        );
-        let trail_size = self.trail.computed_size(&child_ctx);
-        let position = self.position_px(ctx, size, thumb_inset);
-        let trail_offset = Vec2d {
-            x: 0.0,
-            y: (size.height - trail_size.height) / 2.0,
-        };
-        let trail_width = position.clamp(0.0, size.width);
-        self.trail_geometry.set(SliderVisualGeometry {
-            position: trail_offset,
-            clip: Some(Rect::new(
-                0.0,
-                0.0,
-                trail_width / logical_scale,
-                trail_size.height.max(0.0) / logical_scale,
-            )),
-        });
-        layout_child(
-            &self.trail,
-            &child_ctx,
-            trail_offset,
-        );
-        let thumb_size = self.thumb.computed_size(&child_ctx);
-        let thumb_offset = Vec2d {
-            x: position - thumb_size.width / 2.0,
-            y: (size.height - thumb_size.height) / 2.0,
-        };
-        self.thumb_geometry.set(SliderVisualGeometry {
-            position: thumb_offset,
-            clip: None,
-        });
-        layout_child(
-            &self.thumb,
-            &child_ctx,
-            thumb_offset,
-        );
+        layout_child(&self.track, &child_ctx, placement.track.position);
+        layout_child(&self.trail, &child_ctx, placement.trail.position);
+        layout_child(&self.thumb, &child_ctx, placement.thumb.position);
         size
     }
 
@@ -786,76 +820,60 @@ impl<T: RangeValue> LayoutElement for RawSlider<T> {
 }
 
 impl<T: RangeValue> Drawable for RawSlider<T> {
-    fn draw(&self, ctx: &BuildContext) {
-        let size = self.computed_size(ctx);
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("RawSlider")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
+        let (size, placement) = self.place_visuals(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
-        let thumb_inset = self.thumb_inset(ctx, size);
-        self.visual_inset
-            .set((thumb_inset / ctx.scale.max(f32::EPSILON)).max(0.0));
         let child_ctx = child_context(ctx, size);
 
         let track_height = (4.0 * ctx.scale).min(size.height.max(0.0));
         if size.width <= 0.0 || track_height <= 0.0 {
             return;
         }
-        let track_size = self.track.computed_size(&child_ctx);
-        let track_offset = Vec2d {
-            x: 0.0,
-            y: (size.height - track_size.height) / 2.0,
-        };
-        let logical_scale = ctx.scale.max(f32::EPSILON);
-        self.track_geometry.set(SliderVisualGeometry {
-            position: track_offset,
-            clip: None,
-        });
-        draw_child(&self.track, &child_ctx, track_offset);
+        draw_child(&self.track, &child_ctx, placement.track.position);
 
-        let position = self.position_px(ctx, size, thumb_inset);
-        let trail_size = self.trail.computed_size(&child_ctx);
-        let trail_y = (size.height - trail_size.height) / 2.0;
-        let trail_width = position.clamp(0.0, size.width);
-        self.trail_geometry.set(SliderVisualGeometry {
-            position: Vec2d { x: 0.0, y: trail_y },
-            clip: Some(Rect::new(
-                0.0,
-                0.0,
-                trail_width / logical_scale,
-                trail_size.height.max(0.0) / logical_scale,
-            )),
-        });
+        let (clip_x, clip_width, clip_height) = placement.trail_clip_px;
         ctx.canvas.save();
         ctx.canvas.set_clip(
             Vec2d {
-                x: 0.0,
-                y: trail_y,
+                x: clip_x,
+                y: placement.trail.position.y,
             },
             ResolvedSize {
-                width: trail_width,
-                height: trail_size.height.max(0.0),
+                width: clip_width,
+                height: clip_height,
             },
         );
-        draw_child(
-            &self.trail,
-            &child_ctx,
-            Vec2d {
-                x: 0.0,
-                y: trail_y,
-            },
-        );
+        draw_child(&self.trail, &child_ctx, placement.trail.position);
         ctx.canvas.clear_clip();
         ctx.canvas.restore();
 
-        let thumb_size = self.thumb.computed_size(&child_ctx);
-        let thumb_offset = Vec2d {
-            x: position - thumb_size.width / 2.0,
-            y: (size.height - thumb_size.height) / 2.0,
-        };
-        self.thumb_geometry.set(SliderVisualGeometry {
-            position: thumb_offset,
-            clip: None,
-        });
-        draw_child(&self.thumb, &child_ctx, thumb_offset);
+        draw_child(&self.thumb, &child_ctx, placement.thumb.position);
+    }
+
+    /// Publishes the visuals' placement before the render tree reads their
+    /// positions. See [`RawSlider::place_visuals`]; it does not change the
+    /// bounds themselves.
+    fn retained_v2_bounds(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        self.place_visuals(ctx);
+        None
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {
@@ -1088,7 +1106,7 @@ impl<T: RangeValue> Widget for RangeSliderSurface<T> {
             trail,
             lower_thumb,
             upper_thumb,
-            bounds: CacheBounds::new(),
+            bounds: InteractionBounds::new(),
             visual_inset: Cell::new(0.0),
             track_geometry,
             trail_geometry,
@@ -1111,7 +1129,7 @@ struct RawRangeSlider<T: RangeValue> {
     trail: AnyElement,
     lower_thumb: AnyElement,
     upper_thumb: AnyElement,
-    bounds: CacheBounds,
+    bounds: InteractionBounds,
     /// Logical inset shared by both visual thumbs at the range endpoints.
     visual_inset: Cell<f32>,
     track_geometry: Rc<Cell<SliderVisualGeometry>>,
@@ -1223,6 +1241,78 @@ impl<T: RangeValue> RawRangeSlider<T> {
             .unwrap_or(0.0) as f32
             * ctx.scale;
         (inset + position).clamp(inset, width - inset)
+    }
+
+    /// Works out where the visuals go and publishes it to their slots. See
+    /// [`RawSlider::place_visuals`] for why this also runs while the render
+    /// tree syncs.
+    fn place_visuals(&self, ctx: &BuildContext) -> (ResolvedSize, RangePlacement) {
+        let size = self.computed_size(ctx);
+        let thumb_inset = self.thumb_inset(ctx, size);
+        self.visual_inset
+            .set((thumb_inset / ctx.scale.max(f32::EPSILON)).max(0.0));
+        let child_ctx = child_context(ctx, size);
+        let logical_scale = ctx.scale.max(f32::EPSILON);
+
+        let track_size = self.track.computed_size(&child_ctx);
+        let track = SliderVisualGeometry {
+            position: Vec2d {
+                x: 0.0,
+                y: (size.height - track_size.height) / 2.0,
+            },
+            clip: None,
+        };
+
+        let lower = self.position_px(ctx, size, self.runtime.lower.get(), thumb_inset);
+        let upper = self.position_px(ctx, size, self.runtime.upper.get(), thumb_inset);
+        let trail_size = self.trail.computed_size(&child_ctx);
+        let clip_x = lower.min(upper);
+        let clip_width = (upper - lower).abs().min(size.width.max(0.0));
+        let trail_height = trail_size.height.max(0.0);
+        let trail = SliderVisualGeometry {
+            position: Vec2d {
+                x: 0.0,
+                y: (size.height - trail_size.height) / 2.0,
+            },
+            clip: Some(Rect::new(
+                clip_x / logical_scale,
+                0.0,
+                clip_width / logical_scale,
+                trail_height / logical_scale,
+            )),
+        };
+
+        let lower_size = self.lower_thumb.computed_size(&child_ctx);
+        let lower_geometry = SliderVisualGeometry {
+            position: Vec2d {
+                x: lower - lower_size.width / 2.0,
+                y: (size.height - lower_size.height) / 2.0,
+            },
+            clip: None,
+        };
+        let upper_size = self.upper_thumb.computed_size(&child_ctx);
+        let upper_geometry = SliderVisualGeometry {
+            position: Vec2d {
+                x: upper - upper_size.width / 2.0,
+                y: (size.height - upper_size.height) / 2.0,
+            },
+            clip: None,
+        };
+
+        self.track_geometry.set(track);
+        self.trail_geometry.set(trail);
+        self.lower_thumb_geometry.set(lower_geometry);
+        self.upper_thumb_geometry.set(upper_geometry);
+        (
+            size,
+            RangePlacement {
+                track,
+                trail,
+                lower: lower_geometry,
+                upper: upper_geometry,
+                trail_clip_px: (clip_x, clip_width, trail_height),
+            },
+        )
     }
 
     fn thumb_inset(&self, ctx: &BuildContext, size: ResolvedSize) -> f32 {
@@ -1393,64 +1483,14 @@ impl<T: RangeValue> LayoutElement for RawRangeSlider<T> {
     }
 
     fn layout(&self, ctx: &BuildContext) -> ResolvedSize {
-        let size = self.computed_size(ctx);
+        let (size, placement) = self.place_visuals(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
-        let thumb_inset = self.thumb_inset(ctx, size);
-        self.visual_inset
-            .set((thumb_inset / ctx.scale.max(f32::EPSILON)).max(0.0));
         let child_ctx = child_context(ctx, size);
-        let logical_scale = ctx.scale.max(f32::EPSILON);
-        let track_size = self.track.computed_size(&child_ctx);
-        let track_offset = Vec2d {
-            x: 0.0,
-            y: (size.height - track_size.height) / 2.0,
-        };
-        self.track_geometry.set(SliderVisualGeometry {
-            position: track_offset,
-            clip: None,
-        });
-        layout_child(&self.track, &child_ctx, track_offset);
-        let trail_size = self.trail.computed_size(&child_ctx);
-        let trail_offset = Vec2d {
-            x: 0.0,
-            y: (size.height - trail_size.height) / 2.0,
-        };
-        let lower = self.position_px(ctx, size, self.runtime.lower.get(), thumb_inset);
-        let upper = self.position_px(ctx, size, self.runtime.upper.get(), thumb_inset);
-        let clip_width = (upper - lower).abs().min(size.width.max(0.0));
-        self.trail_geometry.set(SliderVisualGeometry {
-            position: trail_offset,
-            clip: Some(Rect::new(
-                lower.min(upper) / logical_scale,
-                0.0,
-                clip_width / logical_scale,
-                trail_size.height.max(0.0) / logical_scale,
-            )),
-        });
-        layout_child(&self.trail, &child_ctx, trail_offset);
-
-        let lower_size = self.lower_thumb.computed_size(&child_ctx);
-        let lower_offset = Vec2d {
-            x: lower - lower_size.width / 2.0,
-            y: (size.height - lower_size.height) / 2.0,
-        };
-        self.lower_thumb_geometry.set(SliderVisualGeometry {
-            position: lower_offset,
-            clip: None,
-        });
-        layout_child(&self.lower_thumb, &child_ctx, lower_offset);
-
-        let upper_size = self.upper_thumb.computed_size(&child_ctx);
-        let upper_offset = Vec2d {
-            x: upper - upper_size.width / 2.0,
-            y: (size.height - upper_size.height) / 2.0,
-        };
-        self.upper_thumb_geometry.set(SliderVisualGeometry {
-            position: upper_offset,
-            clip: None,
-        });
-        layout_child(&self.upper_thumb, &child_ctx, upper_offset);
+        layout_child(&self.track, &child_ctx, placement.track.position);
+        layout_child(&self.trail, &child_ctx, placement.trail.position);
+        layout_child(&self.lower_thumb, &child_ctx, placement.lower.position);
+        layout_child(&self.upper_thumb, &child_ctx, placement.upper.position);
         size
     }
 
@@ -1460,88 +1500,59 @@ impl<T: RangeValue> LayoutElement for RawRangeSlider<T> {
 }
 
 impl<T: RangeValue> Drawable for RawRangeSlider<T> {
-    fn draw(&self, ctx: &BuildContext) {
-        let size = self.computed_size(ctx);
+    /// Hit-tested against the rectangle this element reports as its own size,
+    /// which can be larger than the content box its render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("RawRangeSlider")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
+        let (size, placement) = self.place_visuals(ctx);
         let (x, y) = ctx.canvas.get_transform_translation();
         self.bounds.save(ctx.scale, x, y, size.width, size.height);
-        let thumb_inset = self.thumb_inset(ctx, size);
-        self.visual_inset
-            .set((thumb_inset / ctx.scale.max(f32::EPSILON)).max(0.0));
         let child_ctx = child_context(ctx, size);
         let track_height = (4.0 * ctx.scale).min(size.height.max(0.0));
         if size.width <= 0.0 || track_height <= 0.0 {
             return;
         }
-        let logical_scale = ctx.scale.max(f32::EPSILON);
-        let track_size = self.track.computed_size(&child_ctx);
-        let track_offset = Vec2d {
-            x: 0.0,
-            y: (size.height - track_size.height) / 2.0,
-        };
-        self.track_geometry.set(SliderVisualGeometry {
-            position: track_offset,
-            clip: None,
-        });
-        draw_child(&self.track, &child_ctx, track_offset);
+        draw_child(&self.track, &child_ctx, placement.track.position);
 
-        let lower = self.position_px(ctx, size, self.runtime.lower.get(), thumb_inset);
-        let upper = self.position_px(ctx, size, self.runtime.upper.get(), thumb_inset);
-        let trail_size = self.trail.computed_size(&child_ctx);
-        let trail_y = (size.height - trail_size.height) / 2.0;
-        let clip_x = lower.min(upper);
-        let clip_width = (upper - lower).abs().min(size.width.max(0.0));
-        self.trail_geometry.set(SliderVisualGeometry {
-            position: Vec2d { x: 0.0, y: trail_y },
-            clip: Some(Rect::new(
-                clip_x / logical_scale,
-                0.0,
-                clip_width / logical_scale,
-                trail_size.height.max(0.0) / logical_scale,
-            )),
-        });
+        let (clip_x, clip_width, clip_height) = placement.trail_clip_px;
         ctx.canvas.save();
         ctx.canvas.set_clip(
             Vec2d {
                 x: clip_x,
-                y: trail_y,
+                y: placement.trail.position.y,
             },
             ResolvedSize {
                 width: clip_width,
-                height: trail_size.height.max(0.0),
+                height: clip_height,
             },
         );
-        draw_child(
-            &self.trail,
-            &child_ctx,
-            Vec2d {
-                x: 0.0,
-                y: trail_y,
-            },
-        );
+        draw_child(&self.trail, &child_ctx, placement.trail.position);
         ctx.canvas.clear_clip();
         ctx.canvas.restore();
 
-        let lower_size = self.lower_thumb.computed_size(&child_ctx);
-        let lower_offset = Vec2d {
-            x: lower - lower_size.width / 2.0,
-            y: (size.height - lower_size.height) / 2.0,
-        };
-        self.lower_thumb_geometry.set(SliderVisualGeometry {
-            position: lower_offset,
-            clip: None,
-        });
-        draw_child(&self.lower_thumb, &child_ctx, lower_offset);
+        draw_child(&self.lower_thumb, &child_ctx, placement.lower.position);
+        draw_child(&self.upper_thumb, &child_ctx, placement.upper.position);
+    }
 
-        let upper_size = self.upper_thumb.computed_size(&child_ctx);
-        let upper_offset = Vec2d {
-            x: upper - upper_size.width / 2.0,
-            y: (size.height - upper_size.height) / 2.0,
-        };
-        self.upper_thumb_geometry.set(SliderVisualGeometry {
-            position: upper_offset,
-            clip: None,
-        });
-        draw_child(&self.upper_thumb, &child_ctx, upper_offset);
+    /// Publishes the visuals' placement before the render tree reads their
+    /// positions. See [`RawSlider::place_visuals`].
+    fn retained_v2_bounds(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        self.place_visuals(ctx);
+        None
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {

@@ -279,7 +279,7 @@ impl LayoutElement for RepaintBoundaryTarget {
 }
 
 impl Drawable for RepaintBoundaryTarget {
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         self.child.update(ctx);
     }
 
@@ -421,7 +421,7 @@ mod tests {
     }
 
     impl Drawable for ProbeElement {
-        fn draw(&self, ctx: &BuildContext) {
+        fn update(&self, ctx: &BuildContext) {
             self.draws.set(self.draws.get() + 1);
             ctx.canvas.fill_rect(
                 (0.0, 0.0).into(),

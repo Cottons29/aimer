@@ -10,6 +10,7 @@ use aimer_events::window::request_animation_frame;
 use aimer_flex::{BoxAlignment, Column, Expanded, Row};
 use aimer_style::{LayoutSpacing, ThemeData};
 use aimer_svg::{Svg, SvgDocument, SvgStyle};
+use aimer_widget::InteractionBounds;
 use aimer_widget::base::{BuildContext, ResolvedSize, Vec2d};
 use aimer_widget::{
     AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, EventResult,
@@ -87,7 +88,7 @@ impl<T: Widget + 'static> Widget for AnimatedCollapse<T> {
             controller: self.controller,
             damage: PaintDamageTracker::new(),
             last_progress: Cell::new(None),
-            bounds: Cell::new(None),
+            bounds: InteractionBounds::new(),
         }
         .boxed()
     }
@@ -104,7 +105,7 @@ struct AnimatedCollapseElement {
     controller: AnimationController,
     damage: PaintDamageTracker,
     last_progress: Cell<Option<u32>>,
-    bounds: Cell<Option<(Vec2d, Vec2d)>>,
+    bounds: InteractionBounds,
 }
 
 // SAFETY: Aimer renders and mutates retained elements on one UI thread.
@@ -146,36 +147,50 @@ impl AnimatedCollapseElement {
         child_ctx
     }
 
+    /// The size the body currently occupies: its natural width and a height
+    /// that follows the animation.
+    fn current_size(&self, ctx: &BuildContext) -> ResolvedSize {
+        let natural = self.natural_size(ctx);
+        ResolvedSize {
+            width: nonnegative_extent(natural.width),
+            height: collapsed_height(natural.height, self.progress()),
+        }
+    }
+
     fn update_bounds(&self, ctx: &BuildContext, size: ResolvedSize) {
         let scale = ctx.scale;
         if !scale.is_finite() || scale <= 0.0 {
-            self.bounds.set(None);
             return;
         }
 
         let width = size.width.max(0.0);
         let height = size.height.max(0.0);
         if !width.is_finite() || !height.is_finite() {
-            self.bounds.set(None);
             return;
         }
 
         let (start_x, start_y) = ctx.canvas.get_transform_translation();
-        self.bounds.set(Some((
-            Vec2d {
-                x: start_x / scale,
-                y: start_y / scale,
-            },
-            Vec2d {
-                x: (start_x + width) / scale,
-                y: (start_y + height) / scale,
-            },
-        )));
+        self.bounds.save(scale, start_x, start_y, width, height);
     }
 }
 
 impl Drawable for AnimatedCollapseElement {
-    fn draw(&self, ctx: &BuildContext) {
+    /// Hit-tested over the body as it currently occupies space.
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.current_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.bounds.disagreement("AnimatedCollapse")
+    }
+
+    fn update(&self, ctx: &BuildContext) {
         let progress = self.progress();
         let natural = self.natural_size(ctx);
         let size = ResolvedSize {
@@ -384,7 +399,7 @@ impl LayoutElement for AnimatedCollapseElement {
     }
 
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bounds.get()
+        self.bounds.pos_start_end()
     }
 }
 
@@ -801,7 +816,7 @@ mod paint_stability_tests {
     impl EventElement for StablePaintElement {}
     impl LayoutElement for StablePaintElement {}
     impl Drawable for StablePaintElement {
-        fn draw(&self, _ctx: &BuildContext<'_>) {}
+        fn update(&self, _ctx: &BuildContext<'_>) {}
 
         fn is_paint_stable(&self) -> bool {
             true
@@ -816,7 +831,7 @@ mod paint_stability_tests {
             controller: AnimationController::new(Duration::from_millis(100), Curve::Linear),
             damage: PaintDamageTracker::new(),
             last_progress: Cell::new(None),
-            bounds: Cell::new(None),
+            bounds: InteractionBounds::new(),
         };
 
         assert!(element.is_paint_stable());

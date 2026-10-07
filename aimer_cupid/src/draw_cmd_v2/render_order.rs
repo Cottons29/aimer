@@ -244,12 +244,7 @@ impl RenderWorkspace {
                 });
             }
 
-            let paint_bounds = if node.paint_source == RenderPaintSource::LegacyIsland {
-                state.subtree_bounds.unwrap_or(bounds)
-            } else {
-                bounds
-            };
-            let visible_bounds = state.clip.intersect_bounds(paint_bounds);
+            let visible_bounds = state.clip.intersect_bounds(bounds);
             if let Some(visible_bounds) = visible_bounds
                 && damage.is_none_or(|damage| {
                     damage
@@ -266,12 +261,6 @@ impl RenderWorkspace {
                     clip_radius: state.clip_radius,
                     opacity: if groups_opacity { 1.0 } else { opacity },
                     paint_source: node.paint_source,
-                    legacy_command_range: node
-                        .legacy_command_range
-                        .filter(|(generation, _, _)| {
-                            *generation == tree.legacy_frame_generation
-                        })
-                        .map(|(_, start, end)| (start, end)),
                     draw_list: node.draw_list.clone(),
                 }));
             }
@@ -280,12 +269,10 @@ impl RenderWorkspace {
                 self.render_stack
                     .push(RenderTraversal::EndOpacityGroup(id));
             }
-            if node.paint_source != RenderPaintSource::LegacyIsland {
-                // A node without a clip may have children that extend beyond its bounds.
-                for child in node.children.iter().rev() {
-                    if let Some(child_index) = tree.indices.get(child).copied() {
-                        self.render_stack.push(RenderTraversal::Node(child_index));
-                    }
+            // A node without a clip may have children that extend beyond its bounds.
+            for child in node.children.iter().rev() {
+                if let Some(child_index) = tree.indices.get(child).copied() {
+                    self.render_stack.push(RenderTraversal::Node(child_index));
                 }
             }
         }

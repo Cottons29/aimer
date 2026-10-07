@@ -213,7 +213,7 @@ impl Drawable for RawAspectRatio {
         Some(child_ctx)
     }
 
-    fn draw(&self, ctx: &BuildContext) {
+    fn update(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
         let mut child_ctx = ctx.clone();
         child_ctx.parent_size = size;

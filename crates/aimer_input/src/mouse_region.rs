@@ -2,6 +2,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use aimer_attribute::CacheBounds;
+use aimer_widget::InteractionBounds;
 use aimer_events::element::ElementEvent;
 use aimer_events::pointer::PointerSource;
 use aimer_events::window::request_animation_frame;
@@ -154,7 +155,7 @@ impl<W: Widget + 'static> Widget for MouseRegion<W> {
             on_hover_exit: self.on_hover_exit.clone(),
             cursor: self.cursor,
             current_state: self.current_state.clone(),
-            cached_bounds: self.cached_bounds.clone(),
+            cached_bounds: seeded_interaction_bounds(&self.cached_bounds),
             window: ctx.window.clone(),
             child,
         }
@@ -179,7 +180,7 @@ pub struct RawMouseRegion<E: Element> {
     pub(crate) on_hover_exit: VoidCallback,
     pub(crate) cursor: Option<winit::window::CursorIcon>,
     pub(crate) current_state: Rc<Cell<PointerState>>,
-    pub(crate) cached_bounds: CacheBounds,
+    pub(crate) cached_bounds: InteractionBounds,
     pub(crate) child: E,
     pub(crate) window: WindowHandle,
 }
@@ -378,8 +379,18 @@ impl<E: Element> LayoutElement for RawMouseRegion<E> {
     }
 }
 
+/// Starts an element's interaction bounds from the rectangle the widget was
+/// built with, if it was given one. The rectangle is already in logical pixels.
+fn seeded_interaction_bounds(seed: &CacheBounds) -> InteractionBounds {
+    let bounds = InteractionBounds::new();
+    if let Some(seed) = seed.get_bounds() {
+        bounds.save(1.0, seed.x, seed.y, seed.width, seed.height);
+    }
+    bounds
+}
+
 impl<E: Element> Drawable for RawMouseRegion<E> {
-    fn draw(&self, ctx: &BuildContext<'_>) {
+    fn update(&self, ctx: &BuildContext<'_>) {
         let child_size = self.child.computed_size(ctx);
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         self.cached_bounds
@@ -398,6 +409,23 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
     fn paint_local_v2(&self, ctx: &BuildContext) {
         let canvas = aimer_canvas::Canvas::of(ctx);
         canvas.finish();
+    }
+
+    /// The region hit-tests the border box its child reports, which can be
+    /// larger than the content box the render node is laid out as.
+    #[inline]
+    fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        Some(self.child.computed_size(ctx))
+    }
+
+    #[inline]
+    fn adopt_retained_v2_interaction_source(&self, source: aimer_widget::InteractionSource) {
+        self.cached_bounds.adopt(source);
+    }
+
+    #[inline]
+    fn retained_v2_interaction_disagreement(&self) -> Option<aimer_widget::InteractionDisagreement> {
+        self.cached_bounds.disagreement("MouseRegion")
     }
 
     fn paint(&self, ctx: &BuildContext<'_>) {
@@ -458,7 +486,7 @@ mod tests {
     impl EventElement for TestElement {}
     impl LayoutElement for TestElement {}
     impl Drawable for TestElement {
-        fn draw(&self, _ctx: &BuildContext<'_>) {}
+        fn update(&self, _ctx: &BuildContext<'_>) {}
     }
     impl Rebuildable for TestElement {
         fn option_any(&self) -> Option<&dyn Any> {
@@ -476,7 +504,7 @@ mod tests {
     impl EventElement for PaintStableElement {}
     impl LayoutElement for PaintStableElement {}
     impl Drawable for PaintStableElement {
-        fn draw(&self, _ctx: &BuildContext<'_>) {}
+        fn update(&self, _ctx: &BuildContext<'_>) {}
 
         fn is_paint_stable(&self) -> bool {
             true
@@ -491,7 +519,7 @@ mod tests {
             on_hover_exit: VoidCallback::default(),
             cursor: None,
             current_state: Rc::new(Cell::new(PointerState::Outside)),
-            cached_bounds: CacheBounds::new(),
+            cached_bounds: InteractionBounds::new(),
             child: PaintStableElement,
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
         };
@@ -515,7 +543,7 @@ mod tests {
 
     impl LayoutElement for ResultElement {}
     impl Drawable for ResultElement {
-        fn draw(&self, _ctx: &BuildContext<'_>) {}
+        fn update(&self, _ctx: &BuildContext<'_>) {}
     }
     impl Rebuildable for ResultElement {}
 
@@ -544,7 +572,7 @@ mod tests {
 
     impl LayoutElement for CapturingElement {}
     impl Drawable for CapturingElement {
-        fn draw(&self, _ctx: &BuildContext<'_>) {}
+        fn update(&self, _ctx: &BuildContext<'_>) {}
     }
     impl Rebuildable for CapturingElement {}
 
@@ -584,7 +612,7 @@ mod tests {
             on_hover_exit: VoidCallback::default(),
             cursor: None,
             current_state: current_state.clone(),
-            cached_bounds: CacheBounds::new(),
+            cached_bounds: InteractionBounds::new(),
             child: TestElement,
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
         };
@@ -596,7 +624,7 @@ mod tests {
 
     #[test]
     fn forwards_the_child_event_result_without_losing_redraw() {
-        let bounds = CacheBounds::new();
+        let bounds = InteractionBounds::new();
         bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
         let region = RawMouseRegion {
             on_hover_enter: VoidCallback::default(),
@@ -626,7 +654,7 @@ mod tests {
     // frame.
     #[test]
     fn a_consumed_hover_move_is_forwarded_without_inventing_a_redraw() {
-        let bounds = CacheBounds::new();
+        let bounds = InteractionBounds::new();
         bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
         let region = RawMouseRegion {
             on_hover_enter: VoidCallback::default(),
@@ -656,7 +684,7 @@ mod tests {
     // make the claim so expensive.
     #[test]
     fn a_cursor_region_claims_the_hover_move_its_icon_depends_on() {
-        let bounds = CacheBounds::new();
+        let bounds = InteractionBounds::new();
         bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
         let region = RawMouseRegion {
             on_hover_enter: VoidCallback::default(),
@@ -683,6 +711,75 @@ mod tests {
     // has to come from the transition itself — once per crossing, not once per
     // move.
     #[test]
+    fn the_render_tree_rectangle_becomes_the_hover_area() {
+        use aimer_cupid::draw_cmd_v2::{Rect, RenderTree};
+
+        let bounds = InteractionBounds::new();
+        bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let state = Rc::new(Cell::new(PointerState::Outside));
+        let region = RawMouseRegion {
+            on_hover_enter: VoidCallback::default(),
+            on_hover_exit: VoidCallback::default(),
+            cursor: None,
+            current_state: state.clone(),
+            cached_bounds: bounds,
+            child: TestElement,
+            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+        };
+        let tree = RenderTree::new();
+        let node = tree.add_root(Rect::new(200.0, 200.0, 10.0, 10.0)).unwrap();
+        region.adopt_retained_v2_interaction_source(aimer_widget::InteractionSource::new(
+            tree,
+            node,
+            (50.0, 50.0),
+        ));
+        let moved_to = |x: f32, y: f32| {
+            ElementEvent::PointerMove(PointerInfo::new(
+                aimer_attribute::position::Vec2d { x, y },
+                PointerSource::Mouse,
+                7,
+                PointerButton::Primary,
+            ))
+        };
+
+        let _ = region.on_event(&moved_to(10.0, 10.0));
+        assert!(
+            matches!(state.get(), PointerState::Outside),
+            "the old area no longer hovers"
+        );
+        let _ = region.on_event(&moved_to(210.0, 210.0));
+        assert!(matches!(state.get(), PointerState::Inside));
+    }
+
+    #[tokio::test]
+    async fn a_region_opts_in_with_the_size_its_child_reports() {
+        let region = RawMouseRegion {
+            on_hover_enter: VoidCallback::default(),
+            on_hover_exit: VoidCallback::default(),
+            cursor: None,
+            current_state: Rc::new(Cell::new(PointerState::Outside)),
+            cached_bounds: InteractionBounds::new(),
+            child: TestElement,
+            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+        };
+        let canvas = aimer_canvas::InnerCanvas::new();
+        let ctx = aimer_widget::base::BuildContext::new(
+            aimer_canvas::FrameCanvas::new(Box::leak(Box::new(canvas))),
+            ResolvedSize::default(),
+            1.0,
+            Default::default(),
+            Default::default(),
+            WindowHandle::headless(Default::default(), 1.0),
+            tokio::runtime::Handle::current(),
+        );
+
+        assert_eq!(
+            region.retained_v2_interaction_size(&ctx),
+            Some(region.child.computed_size(&ctx))
+        );
+    }
+
+    #[test]
     fn a_hover_transition_schedules_exactly_one_frame() {
         let frames = Rc::new(Cell::new(0usize));
         let counted = frames.clone();
@@ -690,7 +787,7 @@ mod tests {
             counted.set(counted.get() + 1);
         });
 
-        let bounds = CacheBounds::new();
+        let bounds = InteractionBounds::new();
         bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
         let region = RawMouseRegion {
             on_hover_enter: VoidCallback::default(),
@@ -721,7 +818,7 @@ mod tests {
 
     #[test]
     fn captured_child_receives_move_and_up_outside_region() {
-        let bounds = CacheBounds::new();
+        let bounds = InteractionBounds::new();
         bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
         let events = Rc::new(Cell::new(0));
         let region = RawMouseRegion {
@@ -775,7 +872,7 @@ mod tests {
     fn nested_regions_share_one_capture_state_across_the_boundary_chain() {
         let events = Rc::new(Cell::new(0));
         let inner = capturing_region(events.clone()).boxed();
-        let bounds = CacheBounds::new();
+        let bounds = InteractionBounds::new();
         bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
         let root = RawMouseRegion {
             on_hover_enter: VoidCallback::default(),
@@ -843,7 +940,7 @@ mod tests {
     /// A region laid out over the top-left 100x100 corner, wrapping a child that
     /// captures the pointer it is pressed with.
     fn capturing_region(events: Rc<Cell<usize>>) -> RawMouseRegion<AnyElement> {
-        let cached_bounds = CacheBounds::new();
+        let cached_bounds = InteractionBounds::new();
         cached_bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
 
         RawMouseRegion {
