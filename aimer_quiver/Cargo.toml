@@ -136,6 +136,7 @@ console_error_panic_hook.workspace = true
 web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "Node", "HtmlCanvasElement", "Element", "Event", "EventTarget", "CssStyleDeclaration", "WebSocket", "MessageEvent", "ErrorEvent"] }
 
 [dev-dependencies]
+aimer_assets.workspace = true
 aimer_macro.workspace = true
 aimer_container.workspace = true
 aimer_flex.workspace = true

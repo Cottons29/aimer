@@ -444,9 +444,6 @@ struct CurrentBuildConsumer(Rc<BuildConsumer>);
 #[derive(Clone)]
 struct CurrentLocalV2PaintContext(CurrentBuildContext);
 
-#[derive(Clone, Copy)]
-struct CurrentLocalV2CompatibilityPaint(bool);
-
 struct StateScopeGuard {
     states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
     type_id: TypeId,
@@ -690,21 +687,6 @@ impl<'a> BuildContext<'a> {
                     .0
                     .set_child_presentation_at(child_index, transform, opacity)
             })
-    }
-
-    #[doc(hidden)]
-    pub(crate) fn with_local_v2_compatibility_paint<R>(
-        &self,
-        active: bool,
-        callback: impl FnOnce(&Self) -> R,
-    ) -> R {
-        self.with_state(CurrentLocalV2CompatibilityPaint(active), callback)
-    }
-
-    #[doc(hidden)]
-    pub(crate) fn is_local_v2_compatibility_paint(&self) -> bool {
-        self.get_state::<CurrentLocalV2CompatibilityPaint>()
-            .is_some_and(|state| state.0)
     }
 
     #[doc(hidden)]

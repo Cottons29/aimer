@@ -1581,6 +1581,8 @@ mod tests {
     use super::*;
 
     mod broadcast;
+    mod retained_button;
+    mod retained_switcher;
     mod retained_modal;
 
     static VIRTUALIZED_RENDER_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -1810,9 +1812,6 @@ mod tests {
             canvas.finish();
         }
 
-        fn is_paint_bounded(&self) -> bool {
-            true
-        }
     }
 
     struct HeadlessHorizontalVirtualizedWidget {
@@ -2078,9 +2077,6 @@ mod tests {
             );
         }
 
-        fn is_paint_bounded(&self) -> bool {
-            true
-        }
     }
 
     struct HeadlessHorizontalStatefulItemElement {
@@ -2113,9 +2109,6 @@ mod tests {
             paint_horizontal_item(ctx, self.paints.as_ref(), self.color, self.height);
         }
 
-        fn is_paint_bounded(&self) -> bool {
-            true
-        }
     }
 
     fn direct_headless_frame_packet<W: Widget + 'static>(
@@ -2836,15 +2829,6 @@ mod tests {
 
     impl Drawable for LegacyPacketElement {
         fn update(&self, ctx: &BuildContext) {
-            ctx.canvas.fill_color_rect(
-                Vec2d::ZERO,
-                ResolvedSize {
-                    width: 10.0 * ctx.scale,
-                    height: 10.0 * ctx.scale,
-                },
-                aimer_widget::base::Color::GREEN,
-                [0.0; 4],
-            );
         }
     }
 
@@ -2878,15 +2862,6 @@ mod tests {
 
     impl Drawable for LegacyModalElement {
         fn update(&self, ctx: &BuildContext) {
-            ctx.canvas.fill_color_rect(
-                Vec2d::ZERO,
-                ResolvedSize {
-                    width: 12.0 * ctx.scale,
-                    height: 12.0 * ctx.scale,
-                },
-                aimer_widget::base::Color::PURPLE,
-                [0.0; 4],
-            );
         }
     }
 
@@ -2942,6 +2917,369 @@ mod tests {
         // green packet child and the purple modal content) have no retained
         // paint and draw nothing, and the flat list holds no paint at all.
         assert!(colors.is_empty(), "the flat list kept paint commands: {colors:?}");
+    }
+
+    /// An animation whose damage covers more than half of the target is
+    /// repainted in full, so its frame must carry the whole tree. The culled
+    /// slice used to be rejected, which left the animation frozen.
+    #[test]
+    fn an_animation_over_most_of_the_window_still_lowers_a_plan_every_frame() {
+        use aimer_animation::{AnimationController, Curve, FadeTransition};
+        use aimer_container::SizedBox;
+
+        struct Page;
+
+        impl Widget for Page {
+            fn to_element(self, ctx: &BuildContext) -> AnyElement {
+                let controller = AnimationController::with_millis(5_000, Curve::Linear);
+                controller.forward_from_first_tick();
+                FadeTransition::new(
+                    controller,
+                    SizedBox::new()
+                        .width(150.0)
+                        .height(90.0)
+                        .color(aimer_widget::base::Color::Rgb(20, 120, 220)),
+                )
+                .to_element(ctx)
+            }
+        }
+
+        impl aimer_widget::PortableWidget for Page {}
+
+        let mut app = AimerApp::start_headless_with(
+            Page,
+            HeadlessOptions {
+                size: PhysicalSize::new(200, 100),
+                scale_factor: 1.0,
+            },
+        );
+        for frame in 0..4 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            app.canvas.begin_frame();
+            let window = app.window.clone();
+            let (_, mut drawer) = app.app.split_for_frame(window);
+            let (_, damage) = drawer.draw(&app.canvas, 200, 100);
+            let plan = app.canvas.take_retained_render_plan();
+
+            assert!(plan.is_some(), "frame {frame}: the render plan could not be lowered");
+            assert!(!damage.is_empty(), "frame {frame}: the animation produced no damage");
+        }
+    }
+
+    /// Presents headless frames through the real renderer on Metal and reads
+    /// the pixels back, as a window does after each resize.
+    #[cfg(all(feature = "wgpu", target_os = "macos"))]
+    mod resize_gpu {
+        use aimer_cupid::frame::FramePacket;
+
+        pub(super) struct ResizeGpu {
+            device: wgpu::Device,
+            queue: wgpu::Queue,
+            backend: aimer_cupid::WgpuBackend,
+            renderer: aimer_cupid::renderer::Renderer<aimer_cupid::WgpuBackend>,
+            target: Option<(wgpu::Texture, u32, u32)>,
+            pub(super) resource_generation: u64,
+        }
+
+        impl ResizeGpu {
+            pub(super) fn new() -> Option<Self> {
+                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::METAL,
+                    flags: wgpu::InstanceFlags::default(),
+                    backend_options: wgpu::BackendOptions::default(),
+                    memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+                    display: None,
+                });
+                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
+                let adapter = runtime
+                    .block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                        apply_limit_buckets: true,
+                    }))
+                    .ok()?;
+                let (device, queue) = runtime
+                    .block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+                    .ok()?;
+                let backend = aimer_cupid::WgpuBackend::new(device.clone(), queue.clone());
+                let renderer =
+                    aimer_cupid::renderer::Renderer::new(&backend, wgpu::TextureFormat::Rgba8Unorm);
+                Some(Self { device, queue, backend, renderer, target: None, resource_generation: 0 })
+            }
+
+            /// Renders one packet at `width` x `height` and returns the RGBA pixels.
+            pub(super) fn present(&mut self, packet: &FramePacket, width: u32, height: u32) -> Vec<u8> {
+                if self.target.as_ref().map(|(_, w, h)| (*w, *h)) != Some((width, height)) {
+                    let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("probe target"),
+                        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                        view_formats: &[],
+                    });
+                    self.target = Some((texture, width, height));
+                }
+                let texture = self.target.as_ref().unwrap().0.clone();
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                self.renderer.render_packet(&self.backend, &view, packet, false);
+
+                let unpadded = width * 4;
+                let padded = unpadded.div_ceil(256) * 256;
+                let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("probe readback"),
+                    size: u64::from(padded) * u64::from(height),
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                let mut encoder = self
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                encoder.copy_texture_to_buffer(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: &readback,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(padded),
+                            rows_per_image: Some(height),
+                        },
+                    },
+                    wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                );
+                self.queue.submit(Some(encoder.finish()));
+                let slice = readback.slice(..);
+                slice.map_async(wgpu::MapMode::Read, |result| {
+                    result.expect("map probe readback");
+                });
+                self.device.poll(wgpu::PollType::wait_indefinitely()).expect("wait for probe readback");
+                let mapped = slice.get_mapped_range().expect("probe range");
+                let mut pixels = vec![0u8; (unpadded * height) as usize];
+                for row in 0..height as usize {
+                    let source = row * padded as usize;
+                    let dest = row * unpadded as usize;
+                    pixels[dest..dest + unpadded as usize]
+                        .copy_from_slice(&mapped[source..source + unpadded as usize]);
+                }
+                pixels
+            }
+        }
+    }
+
+    /// When a crossfade ends, the outgoing child leaves the element tree, so its
+    /// render node has to leave the render tree too, or the old picture stays
+    /// painted behind the new one.
+    fn a_finished_transition_leaves_only_the_incoming_child(morph: bool) {
+        use aimer_animation::{AnimatedSwitcher, Curve, MorphTransition};
+
+        thread_local! {
+            static SWITCH: RefCell<Option<StateUpdater<SwitchState>>> = const { RefCell::new(None) };
+        }
+
+        struct SwitchPage {
+            morph: bool,
+        }
+        struct SwitchState {
+            morph: bool,
+            second: bool,
+        }
+
+        impl StatefulWidget for SwitchPage {
+            type State = SwitchState;
+            fn create_state(self) -> Self::State {
+                SwitchState { morph: self.morph, second: false }
+            }
+        }
+
+        impl State<SwitchPage> for SwitchState {
+            fn init_state(&mut self, updater: StateUpdater<Self>) {
+                SWITCH.replace(Some(updater));
+            }
+
+            fn build(&self, _ctx: &BuildContext) -> impl Widget {
+                let (key, width) = if self.second { ("b", 60.0) } else { ("a", 90.0) };
+                let picture = SizedBox::new().width(width).height(40.0).color(Color::Rgb(200, 30, 30));
+                let duration = std::time::Duration::from_millis(120);
+                if self.morph {
+                    MorphTransition::new(duration, Curve::Linear, picture)
+                        .child_key(key)
+                        .boxed()
+                } else {
+                    AnimatedSwitcher::new(duration, Curve::Linear, picture)
+                        .child_key(key)
+                        .boxed()
+                }
+            }
+        }
+
+        impl Widget for SwitchPage {
+            fn to_element(self, ctx: &BuildContext) -> AnyElement {
+                StatefulElement::new_with_name(self, ctx, "SwitchPage", None).0.boxed()
+            }
+        }
+        impl aimer_widget::PortableWidget for SwitchPage {}
+
+        let mut app = AimerApp::start_headless_with(
+            SwitchPage { morph },
+            HeadlessOptions { size: PhysicalSize::new(200, 100), scale_factor: 1.0 },
+        );
+        app.pump_frames(4);
+        let draws = |app: &HeadlessAimerApp<_>| {
+            app.app
+                .render_tree()
+                .render_all()
+                .iter()
+                .filter(|op| matches!(op, aimer_cupid::draw_cmd_v2::RenderOp::Draw(_)))
+                .count()
+        };
+        let single = draws(&app);
+
+        SWITCH.with_borrow(|updater| {
+            updater.as_ref().unwrap().set_state(|state| state.second = true)
+        });
+        app.render_frame();
+        assert!(
+            draws(&app) > single,
+            "mid-transition both pictures are in the render tree"
+        );
+
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            app.render_frame();
+        }
+        app.pump_frames(4);
+        assert_eq!(
+            draws(&app),
+            single,
+            "the outgoing picture is gone for good once the transition ends"
+        );
+    }
+
+    #[test]
+    fn a_finished_crossfade_removes_the_outgoing_child_from_the_render_tree() {
+        a_finished_transition_leaves_only_the_incoming_child(false);
+    }
+
+    #[test]
+    fn a_finished_morph_removes_the_outgoing_child_from_the_render_tree() {
+        a_finished_transition_leaves_only_the_incoming_child(true);
+    }
+
+    /// A frame that was built but never reached the screen (the surface could
+    /// not be acquired, as happens constantly while a window is being resized)
+    /// has already consumed its damage. The next frame must repaint everything,
+    /// or whatever the lost frame changed stays missing until something else
+    /// happens to repaint it.
+    #[test]
+    fn a_frame_after_a_lost_present_repaints_the_whole_target() {
+        use aimer_container::SizedBox;
+
+        struct Page;
+        impl Widget for Page {
+            fn to_element(self, ctx: &BuildContext) -> AnyElement {
+                SizedBox::new()
+                    .width(Dimension::Percent(100.0))
+                    .height(Dimension::Percent(100.0))
+                    .color(aimer_widget::base::Color::Rgb(20, 120, 220))
+                    .to_element(ctx)
+            }
+        }
+        impl aimer_widget::PortableWidget for Page {}
+
+        let mut app = AimerApp::start_headless_with(
+            Page,
+            HeadlessOptions {
+                size: PhysicalSize::new(200, 100),
+                scale_factor: 1.0,
+            },
+        );
+        app.pump_frames(4);
+        app.render_frame();
+        let (_, settled) = app.last_frame_result.take().expect("a frame was drawn");
+        assert!(settled.is_empty(), "nothing changed, so nothing is damaged");
+
+        crate::render_ctx::note_frame_not_presented();
+        app.render_frame();
+        let (_, retried) = app.last_frame_result.take().expect("a frame was drawn");
+        assert!(retried.is_full(), "the retry after a lost present must be a full repaint");
+
+        app.render_frame();
+        let (_, after) = app.last_frame_result.take().expect("a frame was drawn");
+        assert!(after.is_empty(), "the request is consumed by the retry");
+    }
+
+    /// A node that grows has to be recorded again: its background fills its
+    /// size, so a list recorded for the old size left the new area of a resized
+    /// window unpainted.
+    #[cfg(all(feature = "wgpu", target_os = "macos"))]
+    #[test]
+    fn a_resized_window_paints_the_area_it_gained_on_metal() {
+        use aimer_container::SizedBox;
+
+        struct Page;
+        impl Widget for Page {
+            fn to_element(self, ctx: &BuildContext) -> AnyElement {
+                SizedBox::new()
+                    .width(Dimension::Percent(100.0))
+                    .height(Dimension::Percent(100.0))
+                    .color(aimer_widget::base::Color::Rgb(20, 120, 220))
+                    .to_element(ctx)
+            }
+        }
+        impl aimer_widget::PortableWidget for Page {}
+
+        let _serial = VIRTUALIZED_RENDER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(mut gpu) = resize_gpu::ResizeGpu::new() else {
+            assert!(
+                std::env::var_os("AIMER_REQUIRE_GPU_E2E").is_none(),
+                "Metal adapter unavailable; run this test in a host GPU session"
+            );
+            eprintln!("skipping: Metal adapter unavailable");
+            return;
+        };
+        let mut app = AimerApp::start_headless_with(
+            Page,
+            HeadlessOptions {
+                size: PhysicalSize::new(200, 100),
+                scale_factor: 1.0,
+            },
+        );
+        app.render_frame();
+        for (width, height) in [(200u32, 100u32), (300, 180), (400, 250), (260, 140)] {
+            gpu.resource_generation += 1;
+            app.send_window_event(WindowEvent::Resized(PhysicalSize::new(width, height)));
+            let (scale, damage) = app
+                .last_frame_result
+                .take()
+                .expect("the resize event draws a frame");
+            let plan = app
+                .canvas
+                .take_retained_render_plan()
+                .expect("the resize frame includes its retained plan");
+            let frame = Frame::new(app.canvas.take_draw_list(), width, height);
+            let metadata = FrameRenderMetadata::new(scale, 0, 0, 0, gpu.resource_generation, damage);
+            let packet = FramePacket::with_render_plan(frame, metadata, None, Some(plan));
+            let pixels = gpu.present(&packet, width, height);
+
+            for (x, y) in [(0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)] {
+                let index = ((y * width + x) * 4) as usize;
+                assert_eq!(
+                    pixels[index..index + 4],
+                    [20, 120, 220, 255],
+                    "({x}, {y}) of the {width}x{height} window was left unpainted"
+                );
+            }
+        }
     }
 
     #[test]

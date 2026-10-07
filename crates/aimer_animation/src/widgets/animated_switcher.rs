@@ -9,7 +9,7 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
-    PaintDamageTracker, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
+    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
     StatelessElement, VisitorElement, Widget,
 };
 
@@ -259,7 +259,6 @@ impl Widget for AnimatedSwitcherFrame {
             })),
             in_controller,
             out_controller,
-            damage: PaintDamageTracker::new(),
         }
         .boxed()
     }
@@ -287,7 +286,6 @@ struct AnimatedSwitcherElement {
     old_child: UnsafeCell<Option<AnyElement>>,
     in_controller: AnimationController,
     out_controller: AnimationController,
-    damage: PaintDamageTracker,
 }
 
 unsafe impl Send for AnimatedSwitcherElement {}
@@ -295,42 +293,12 @@ unsafe impl Sync for AnimatedSwitcherElement {}
 
 impl Drawable for AnimatedSwitcherElement {
     fn update(&self, ctx: &BuildContext) {
+        // The crossfade itself is the children's presentation opacity, applied
+        // by `sync_local_v2_state`; this only advances the controllers.
         let now = AnimInstant::now();
-
-        // Tick both controllers
-        let in_value = self.in_controller.tick(now);
-        let out_value = self.out_controller.tick(now);
-        let active = self.in_controller.is_animating() || self.out_controller.is_animating();
-        let has_old_child = unsafe { (&*self.old_child.get()).is_some() };
-        crate::widgets::damage::mark_bounded_crossfade_damage(
-            &self.damage,
-            ctx,
-            self.current_child.as_ref(),
-            unsafe { (&*self.old_child.get()).as_deref() },
-            active || has_old_child,
-        );
-
-        // Draw old child (fading out)
-        if let Some(old) = unsafe { &*self.old_child.get() }
-            && out_value < 1.0
-        {
-            ctx.canvas.save();
-            ctx.canvas.set_alpha(1.0 - out_value);
-            old.update(ctx);
-            ctx.canvas.restore();
-        }
-
-        // Draw new child (fading in)
-        ctx.canvas.save();
-        ctx.canvas.set_alpha(in_value);
-        self.current_child.update(ctx);
-        ctx.canvas.restore();
-
-        if active {
-            request_next_frame();
-        } else if out_value >= 1.0 {
-            unsafe { *self.old_child.get() = None };
-        }
+        self.in_controller.tick(now);
+        self.out_controller.tick(now);
+        self.draw_local_v2_compatibility(ctx);
     }
 
     #[inline]
@@ -378,17 +346,18 @@ impl Drawable for AnimatedSwitcherElement {
         let active = self.in_controller.is_animating() || self.out_controller.is_animating();
         if active {
             request_next_frame();
-        } else if self.out_controller.value() >= 1.0 {
+        } else if self.out_controller.value() >= 1.0
+            && unsafe { (&*self.old_child.get()).is_some() }
+        {
             unsafe { *self.old_child.get() = None };
+            // The render tree still holds the outgoing child's nodes: tell it
+            // the structure changed and give it a frame to resync, or the old
+            // picture stays painted behind the new one.
+            aimer_widget::notify_hosted_element_tree_changed();
+            request_next_frame();
         }
     }
 
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        self.current_child.is_paint_bounded()
-            && unsafe { (&*self.old_child.get()).as_ref() }
-                .map_or(true, |child| child.is_paint_bounded())
-    }
 }
 
 impl VisitorElement for AnimatedSwitcherElement {

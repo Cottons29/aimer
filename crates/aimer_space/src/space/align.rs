@@ -269,17 +269,6 @@ impl Drawable for RawAlign {
         ctx.canvas.restore();
     }
 
-    fn paint(&self, ctx: &BuildContext) {
-        let Some((offset, child_ctx)) = self.retained_child_layout(ctx) else {
-            self.child.paint(ctx);
-            return;
-        };
-        ctx.canvas.save();
-        ctx.canvas.translate(offset);
-        self.child.paint(&child_ctx);
-        ctx.canvas.restore();
-    }
-
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         let Some((offset, child_ctx)) = self.retained_child_layout(ctx) else {
             self.child.sync_paint_geometry(ctx);
@@ -291,13 +280,6 @@ impl Drawable for RawAlign {
         ctx.canvas.restore();
     }
 
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
-    }
 }
 
 impl LayoutElement for RawAlign {

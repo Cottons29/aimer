@@ -350,19 +350,6 @@ macro_rules! impl_spacing_element {
             }
 
             #[inline]
-            fn paint(&self, ctx: &BuildContext) {
-                let spacing = self.resolved(ctx);
-                let child_ctx = translated_context(ctx, spacing);
-                ctx.canvas.save();
-                ctx.canvas.translate(Vec2d {
-                    x: spacing.left,
-                    y: spacing.top,
-                });
-                self.child.paint(&child_ctx);
-                ctx.canvas.restore();
-            }
-
-            #[inline]
             fn sync_paint_geometry(&self, ctx: &BuildContext) {
                 let spacing = self.resolved(ctx);
                 let child_ctx = translated_context(ctx, spacing);
@@ -375,10 +362,6 @@ macro_rules! impl_spacing_element {
                 ctx.canvas.restore();
             }
 
-            #[inline]
-            fn is_paint_stable(&self) -> bool {
-                self.child.is_paint_stable()
-            }
         }
 
         impl LayoutElement for $raw {

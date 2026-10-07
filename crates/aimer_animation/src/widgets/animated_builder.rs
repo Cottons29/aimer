@@ -7,7 +7,7 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, AnyWidget, ChildBuilder, Drawable, Element, EventElement, EventResult,
-    LayoutElement, PaintDamageTracker, Rebuildable, VisitorElement, Widget, carry_element_state,
+    LayoutElement, Rebuildable, VisitorElement, Widget, carry_element_state,
 };
 use aimer_widget::portable::__anteros::{
     BUILTIN_WIDGET_SCHEMA_VERSION, ChildCardinality, PortableWidgetSchemaMetadata,
@@ -541,7 +541,6 @@ impl Widget for AnimatedBuilder {
             last_value: Cell::new(curved_value),
             output_changed: Cell::new(false),
             window,
-            damage: PaintDamageTracker::new(),
         }
         .boxed()
     }
@@ -560,7 +559,6 @@ struct AnimatedBuilderElement {
     last_value: Cell<f32>,
     output_changed: Cell<bool>,
     window: WindowHandle,
-    damage: PaintDamageTracker,
 }
 
 // Safety: rendering pipeline is single-threaded
@@ -571,10 +569,9 @@ impl Drawable for AnimatedBuilderElement {
     fn update(&self, ctx: &BuildContext) {
         let output_changed = self.output_changed.replace(false);
 
-        crate::widgets::damage::mark_dynamic_animation_damage(
-            &self.damage,
-            output_changed || self.controller.is_animating(),
-        );
+        if output_changed || self.controller.is_animating() {
+            aimer_widget::mark_paint_damage_full();
+        }
 
         unsafe { &*self.child.get() }.update(ctx);
 

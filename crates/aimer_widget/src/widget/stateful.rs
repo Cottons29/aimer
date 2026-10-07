@@ -23,12 +23,10 @@ use super::state_slots::{
 };
 use crate::widget::recovery::{BuildPhase, PanicDiagnostic, recover_operation};
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-use crate::paint_isolated::{PaintCache, PaintContract};
 use crate::{
     AnyElement, Drawable, Element, EventElement, EventResult, EventTreeRole, LayoutElement,
     Rebuildable, VisitorElement, Widget,
 };
-use crate::PaintDamageTracker;
 
 trait FetchAdd {
     fn fetch_add(&self, val: u64) -> u64;
@@ -965,14 +963,6 @@ pub struct StatefulElement {
     /// not touch a state cell that reconciliation has already consumed.
     failed: Rc<Cell<bool>>,
     failure: Rc<FailureState>,
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    paint_cache: PaintCache,
-    /// The boundary's own footprint for each frame it paints live.
-    ///
-    /// This is the damage contract, not retained paint: it is compiled on
-    /// every target, while [`Self::paint_cache`] exists only where the
-    /// renderer can replay retained content.
-    paint_damage: PaintDamageTracker,
 }
 
 impl StatefulElement {
@@ -1077,9 +1067,6 @@ impl StatefulElement {
                     adopt_config_fn: SyncAdoptConfigFn(UnsafeCell::new(live.adopt_config_fn)),
                     failed: live.failed,
                     failure: live.failure,
-                    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-                    paint_cache: PaintCache::default(),
-                    paint_damage: PaintDamageTracker::new(),
                 };
                 let updater = element
                     .state_updater()
@@ -1248,9 +1235,6 @@ impl StatefulElement {
             adopt_config_fn: SyncAdoptConfigFn(UnsafeCell::new(adopt_config_fn)),
             failed,
             failure,
-            #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-            paint_cache: PaintCache::default(),
-            paint_damage: PaintDamageTracker::new(),
         };
 
         let element = if KeyedStateScope::is_active() {
@@ -1997,57 +1981,13 @@ fn register_keyed_subtree(element: &dyn Element) {
 
 impl Drawable for StatefulElement {
     fn update(&self, ctx: &BuildContext) {
-        let rebuild_generation = self.rebuild_generation.get();
         self.rebuild_if_dirty(ctx);
-        let rebuilt = self.rebuild_generation.get() != rebuild_generation;
         // Safety: single-threaded rendering pipeline
         let child = unsafe { &*self.child.0.get() };
 
-        if ctx.is_local_v2_compatibility_paint() {
-            // The retained tree draws the generated child through its own
-            // render nodes, so do not collapse them into the state owner's
-            // legacy scene cache while collecting v2 compatibility commands.
-            child.sync_paint_geometry(ctx);
-            child.update(ctx);
-            return;
-        }
-
-        #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-        {
-            child.sync_paint_geometry(ctx);
-            if let Some(key) = PaintContract::new(
-                ctx,
-                child.content_size(ctx),
-                self.rebuild_generation.get(),
-            ) && self
-                .paint_cache
-                .paint_or_replay(
-                    ctx,
-                    child,
-                    key,
-                    self.compositor_priority(),
-                    child.is_paint_stable(),
-                )
-            {
-                // A replay already accounted for the retained footprint, old
-                // and new, so the frame owes nothing more here.
-                return;
-            }
-            self.paint_cache.clear();
-        }
-
-        // The damage contract belongs to every target, not only the ones that
-        // own a retained paint cache. A boundary that paints its child live
-        // still owes the frame its footprint, or a damage-driven renderer
-        // (wasm32, portable guests) reuses the previous target and the new
-        // paint is recorded but never presented.
-        if child.is_paint_bounded() {
-            self.paint_damage
-                .mark_current_bounds(ctx, child.content_size(ctx), rebuilt);
-        } else {
-            self.paint_damage.mark_full();
-        }
-
+        // The retained tree draws the generated child through its own render
+        // nodes; this element only keeps the state owner's subtree current.
+        child.sync_paint_geometry(ctx);
         child.update(ctx);
     }
 
@@ -2112,29 +2052,11 @@ impl Drawable for StatefulElement {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        // Stateful elements are cache owners, not transparent retained
-        // children. If an outer recording reaches one, it must not trigger a
-        // rebuild or recursively create a second retained layer.
-        let child = unsafe { &*self.child.0.get() };
-        child.paint(ctx);
-    }
-
-    #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         let child = unsafe { &*self.child.0.get() };
         child.sync_paint_geometry(ctx);
     }
 
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        unsafe { &*self.child.0.get() }.is_paint_bounded()
-    }
-
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        unsafe { &*self.child.0.get() }.is_paint_stable()
-    }
 }
 
 impl VisitorElement for StatefulElement {
@@ -2216,10 +2138,6 @@ impl Rebuildable for StatefulElement {
 
     fn is_stateful_element(&self) -> bool {
         true
-    }
-
-    fn compositor_priority(&self) -> bool {
-        self.debug_name.get() == "RepaintBoundary"
     }
 
     fn mark_needs_rebuild(&self) {
@@ -2327,31 +2245,10 @@ mod tests {
     }
 
     impl Drawable for PaintCountElement {
-        fn update(&self, ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             self.draws.set(self.draws.get() + 1);
-            ctx.canvas.fill_rect(
-                Vec2d::ZERO,
-                ResolvedSize {
-                    width: 8.0,
-                    height: 8.0,
-                },
-            );
         }
 
-        fn paint(&self, ctx: &BuildContext) {
-            self.paints.set(self.paints.get() + 1);
-            ctx.canvas.fill_rect(
-                Vec2d::ZERO,
-                ResolvedSize {
-                    width: 8.0,
-                    height: 8.0,
-                },
-            );
-        }
-
-        fn is_paint_stable(&self) -> bool {
-            true
-        }
     }
 
     impl LayoutElement for PaintCountElement {
@@ -2394,118 +2291,6 @@ mod tests {
                 draws: self.draws.clone(),
                 paints: self.paints.clone(),
             }
-        }
-    }
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    #[test]
-    fn a_clean_stateful_frame_replays_paint_without_redrawing_the_child() {
-        let ctx = dummy_build_context();
-        let draws = Rc::new(Cell::new(0));
-        let paints = Rc::new(Cell::new(0));
-        let (element, _updater) = StatefulElement::new(
-            PaintCountStateful {
-                draws: draws.clone(),
-                paints: paints.clone(),
-            },
-            &ctx,
-        );
-        let element = element.boxed();
-
-        ctx.canvas.begin_frame();
-        element.update(&ctx);
-        let first_commands = ctx.canvas.get_inner_canvas().take_draw_list().stats().commands;
-
-        ctx.canvas.begin_frame();
-        element.update(&ctx);
-        let second_commands = ctx.canvas.get_inner_canvas().take_draw_list().stats().commands;
-
-        assert_eq!(draws.get(), 0);
-        assert!(paints.get() >= 1);
-        assert_eq!(first_commands, second_commands);
-    }
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    #[test]
-    fn a_stateful_update_re_records_only_the_changed_paint() {
-        let ctx = dummy_build_context();
-        let draws = Rc::new(Cell::new(0));
-        let paints = Rc::new(Cell::new(0));
-        let (element, updater) = StatefulElement::new(
-            PaintCountStateful {
-                draws: draws.clone(),
-                paints: paints.clone(),
-            },
-            &ctx,
-        );
-        let element = element.boxed();
-
-        ctx.canvas.begin_frame();
-        element.update(&ctx);
-        let first_commands = ctx.canvas.get_inner_canvas().take_draw_list().stats().commands;
-
-        updater.set_state(|_| {});
-
-        ctx.canvas.begin_frame();
-        element.update(&ctx);
-        let second_commands = ctx.canvas.get_inner_canvas().take_draw_list().stats().commands;
-
-        assert_eq!(draws.get(), 0);
-        assert!(paints.get() >= 2);
-        assert_eq!(first_commands, second_commands);
-    }
-
-    /// A stateful boundary owes the frame a damage footprint whenever it
-    /// paints its child live instead of replaying retained paint.
-    ///
-    /// Native builds own a retained paint cache, so a clean frame is replayed
-    /// and its footprint is accounted for by that replay. A build without the
-    /// cache (wasm32, portable guests) has no other damage producer for a
-    /// paint-only change, and an empty damage set makes the renderer reuse the
-    /// previous target — the new paint is recorded but never presented, which
-    /// is what made a text edit invisible until an unrelated rebuild asked for
-    /// a full repaint.
-    #[test]
-    fn a_live_painted_boundary_reports_frame_damage() {
-        const TARGET: u32 = 80;
-
-        let ctx = dummy_build_context();
-        let draws = Rc::new(Cell::new(0));
-        let paints = Rc::new(Cell::new(0));
-        let (element, _updater) = StatefulElement::new(
-            PaintCountStateful {
-                draws: draws.clone(),
-                paints: paints.clone(),
-            },
-            &ctx,
-        );
-        let element = element.boxed();
-
-        // The first collection for a target is conservatively full, and the
-        // first draw records the retained paint when there is one. Neither is
-        // the frame this test is about.
-        crate::begin_paint_frame(TARGET, TARGET);
-        element.update(&ctx);
-        let _ = crate::take_paint_frame_damage(TARGET, TARGET);
-
-        crate::begin_paint_frame(TARGET, TARGET);
-        element.update(&ctx);
-        let damage = crate::take_paint_frame_damage(TARGET, TARGET);
-
-        if cfg!(all(not(target_arch = "wasm32"), not(feature = "portable-guest"))) {
-            // `PaintCountElement` is not paint bounded, so the retained cache
-            // recorded the frame; replaying it already owns the pixels.
-            assert!(
-                !damage.is_full(),
-                "a replayed retained frame should not mark full damage"
-            );
-        } else {
-            assert!(
-                !damage.is_empty(),
-                "a boundary that paints live must mark frame damage, or the \
-                 renderer reuses the previous target and the new paint never \
-                 reaches the screen"
-            );
         }
     }
 

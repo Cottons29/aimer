@@ -724,9 +724,7 @@ impl Drawable for RawSvgAsset {
         self.phase.get() == SvgAssetPhase::Ready
             && self
                 .active_element()
-                .is_some_and(|element| {
-                    element.can_paint_local_v2(ctx) && element.is_paint_bounded()
-                })
+                .is_some_and(|element| element.can_paint_local_v2(ctx))
     }
 
     fn paint_local_v2(&self, ctx: &BuildContext) {
@@ -734,15 +732,6 @@ impl Drawable for RawSvgAsset {
         canvas.finish();
     }
 
-    fn is_paint_stable(&self) -> bool {
-        self.active_element()
-            .is_some_and(|element| element.is_paint_stable())
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.active_element()
-            .is_some_and(|element| element.is_paint_bounded())
-    }
 }
 
 impl EventElement for RawSvgAsset {
@@ -1119,15 +1108,6 @@ impl Drawable for RawSvg {
         canvas.finish();
     }
 
-    fn is_paint_stable(&self) -> bool {
-        self.hover_styles.is_empty() && self.pressed_styles.is_empty()
-    }
-
-    /// Always true: a document that is not provably inside its viewport is
-    /// clipped to it (see `paint_local_v2`), so no paint leaves the widget's box.
-    fn is_paint_bounded(&self) -> bool {
-        true
-    }
 }
 
 impl EventElement for RawSvg {
@@ -1659,21 +1639,6 @@ mod tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn static_svg_advertises_retained_bounded_paint() {
-        let document = SvgDocument::from_svg(
-            br#"<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg"><path d="M0 0h32v32H0z"/></svg>"#,
-        )
-        .unwrap();
-        let context = context();
-        let element = Svg::new(document).to_element(&context);
-
-        assert!(element.is_layout_stable());
-        assert!(element.is_paint_stable());
-        assert!(element.is_paint_bounded());
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     fn recorded_commands(
         element: &dyn Element,
         context: &BuildContext,
@@ -1701,7 +1666,6 @@ mod tests {
 
         // SVG overflow is hidden at the root, so the widget stays inside its
         // box and never needs the legacy live path.
-        assert!(element.is_paint_bounded());
         assert!(element.can_paint_local_v2(&context));
         let snapshot = recorded_commands(element.as_ref(), &context);
         assert!(matches!(
@@ -1730,16 +1694,4 @@ mod tests {
         assert!(matches!(snapshot.commands.as_ref(), [DrawCommand::Svg { .. }]));
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn explicitly_bounded_svg_opts_into_local_damage_contract() {
-        let document = SvgDocument::from_svg(
-            br#"<svg width="32" height="32" xmlns="http://www.w3.org/2000/svg"><path d="M-1 0h2v2H-1z"/></svg>"#,
-        )
-        .unwrap();
-        let context = context();
-        let element = Svg::new(document).bounded().to_element(&context);
-
-        assert!(element.is_paint_bounded());
-    }
 }

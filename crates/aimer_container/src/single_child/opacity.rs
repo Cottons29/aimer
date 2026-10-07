@@ -96,22 +96,20 @@ struct RawOpacity {
 
 impl Drawable for RawOpacity {
     fn update(&self, ctx: &BuildContext) {
-        ctx.canvas.set_alpha(self.opacity);
         self.child.update(ctx);
-        ctx.canvas.restore_alpha();
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
-        self.opacity == 1.0
+        true
     }
 
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
 
-    #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        ctx.canvas.set_alpha(self.opacity);
-        self.child.paint(ctx);
-        ctx.canvas.restore_alpha();
+    /// The alpha is the child node's presentation, so the child keeps its
+    /// recorded paint and the render tree dims whatever it shows.
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        self.child.sync_paint_geometry(ctx);
+        ctx.set_local_v2_child_presentation_at(0, aimer_canvas::Mat3::identity(), self.opacity)
     }
 
     #[inline]
@@ -119,10 +117,6 @@ impl Drawable for RawOpacity {
         self.child.sync_paint_geometry(ctx);
     }
 
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
 }
 
 impl LayoutElement for RawOpacity {

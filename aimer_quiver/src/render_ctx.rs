@@ -17,6 +17,27 @@ fn choose_native_backend(
     }
 }
 
+/// Set when a frame was built but did not reach the screen.
+static FRAME_NOT_PRESENTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Records that the last frame was built and then lost, so the next one must
+/// repaint the whole target.
+///
+/// Building a frame consumes the damage it covered. When the surface cannot be
+/// acquired (constantly, while a window is being resized) that damage is gone
+/// but the screen never saw it; a retry that only paints what changed since
+/// would leave those areas stale. Callable from any thread, because the raster
+/// thread is where most presents fail.
+pub(crate) fn note_frame_not_presented() {
+    FRAME_NOT_PRESENTED.store(true, std::sync::atomic::Ordering::Release);
+}
+
+/// Consumes the request left by [`note_frame_not_presented`].
+pub(crate) fn take_frame_not_presented() -> bool {
+    FRAME_NOT_PRESENTED.swap(false, std::sync::atomic::Ordering::AcqRel)
+}
+
 #[cfg(all(target_arch = "wasm32", any(feature = "wgpu", feature = "web")))]
 mod h5canva;
 #[cfg(all(target_arch = "wasm32", any(feature = "wgpu", feature = "web")))]

@@ -395,6 +395,21 @@ impl DrawList {
     }
 }
 
+impl RenderNode {
+    /// Replaces the node's bounds.
+    ///
+    /// A local list is authored against the node's size: a background fills it
+    /// and a border follows it. A node that grew or shrank therefore needs its
+    /// list recorded again, or the new area stays unpainted. A move keeps the
+    /// list, because it is expressed relative to the node's own origin.
+    fn assign_bounds(&mut self, bounds: Rect) {
+        if self.bounds.width != bounds.width || self.bounds.height != bounds.height {
+            self.draw_list.borrow_mut().dirty = true;
+        }
+        self.bounds = bounds;
+    }
+}
+
 struct RenderNode {
     id: RenderNodeId,
     parent: Option<RenderNodeId>,
@@ -853,7 +868,7 @@ impl RenderTree {
                 let node = tree
                     .node_mut(id)
                     .ok_or(RenderTreeError::UnknownNode(id))?;
-                node.bounds = spec.bounds;
+                node.assign_bounds(spec.bounds);
                 if let Some(clips) = clip_updates {
                     node.clip = clips[index];
                     node.clip_radius = radius_at(index);
@@ -947,7 +962,7 @@ impl RenderTree {
             });
             node.parent = parents[index];
             node.children = mem::take(&mut children[index]);
-            node.bounds = spec.bounds;
+            node.assign_bounds(spec.bounds);
             if let Some(clips) = clip_updates {
                 node.clip = clips[index];
                 node.clip_radius = radius_at(index);
@@ -1051,7 +1066,7 @@ impl RenderTree {
         let node = tree
             .node_mut(element)
             .ok_or(RenderTreeError::UnknownNode(element))?;
-        node.bounds = bounds;
+        node.assign_bounds(bounds);
         let new = tree.visible_subtree_bounds(element);
         if let Some(damage) = old.into_iter().chain(new).reduce(Rect::union) {
             tree.push_damage(damage);

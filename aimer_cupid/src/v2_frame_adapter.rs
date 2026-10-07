@@ -29,6 +29,46 @@ pub enum V2FrameAdapterError {
 }
 
 impl FramePacket {
+    /// Returns the whole-target logical rectangle when `damage`, mapped to
+    /// device pixels, would be repainted in full anyway.
+    ///
+    /// [`DamageSet`] promotes a set to a full repaint when its regions cover
+    /// half the target or are too many. A full repaint needs every visible
+    /// node, so a caller that culls the render order by `damage` must widen it
+    /// to this rectangle first; otherwise the packet is rejected with
+    /// [`V2FrameAdapterError::FullRepaintRequiresCompleteV2Frame`]. Returns
+    /// `None` for a partial set, an invalid rectangle (the adapter reports it)
+    /// or an unusable scale or target.
+    #[doc(hidden)]
+    pub fn full_target_if_damage_promotes(
+        damage: &[Rect],
+        scale: f32,
+        target_width: u32,
+        target_height: u32,
+    ) -> Option<Rect> {
+        if !scale.is_finite() || scale <= 0.0 || target_width == 0 || target_height == 0 {
+            return None;
+        }
+        let mut set = DamageSet::new(target_width, target_height);
+        for (index, rect) in damage.iter().copied().enumerate() {
+            if let Ok(Some(rect)) =
+                logical_damage_to_device(rect, scale, target_width, target_height, index)
+            {
+                set.add(rect);
+            }
+        }
+        set.is_full().then(|| {
+            Rect::new(
+                0.0,
+                0.0,
+                target_width as f32 / scale,
+                target_height as f32 / scale,
+            )
+        })
+    }
+}
+
+impl FramePacket {
     /// Builds a complete retained v2 packet whose local lists stay separate:
     /// nothing is lowered into a frame-wide command buffer. Opacity groups and
     /// leaf opacity are preserved for offscreen rendering by the GPU
@@ -1019,6 +1059,28 @@ mod tests {
             partial_promoted_to_full,
             Err(super::V2FrameAdapterError::FullRepaintRequiresCompleteV2Frame)
         ));
+    }
+
+    #[test]
+    fn damage_that_the_device_set_promotes_to_full_is_widened_to_the_target() {
+        // Two thirds of the target is partial for the caller but a full repaint
+        // for the damage set, which the adapter then insists on drawing complete.
+        let large = [Rect::new(0.0, 0.0, 10.0, 7.0)];
+        let widened = FramePacket::full_target_if_damage_promotes(&large, 1.0, 10, 10)
+            .expect("two thirds of the target promotes to a full repaint");
+        assert_eq!(widened, Rect::new(0.0, 0.0, 10.0, 10.0));
+        assert!(FramePacket::from_v2_direct(
+            RenderFrame { damage: vec![widened], operations: Vec::new() },
+            FrameRenderMetadata::new(1.0, 0, 0, 0, 0, DamageSet::new(10, 10)),
+        )
+        .is_ok());
+
+        let small = [Rect::new(0.0, 0.0, 4.0, 4.0)];
+        assert_eq!(FramePacket::full_target_if_damage_promotes(&small, 1.0, 10, 10), None);
+        let scaled = FramePacket::full_target_if_damage_promotes(&large, 2.0, 20, 20)
+            .expect("the same fraction promotes on a scaled target");
+        assert_eq!(scaled, Rect::new(0.0, 0.0, 10.0, 10.0));
+        assert_eq!(FramePacket::full_target_if_damage_promotes(&large, 0.0, 10, 10), None);
     }
 
     #[test]

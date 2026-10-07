@@ -455,34 +455,6 @@ impl Drawable for RawStackElement {
         }
     }
 
-    fn paint(&self, ctx: &BuildContext) {
-        self.invalidate_hit_test_index();
-        let Some(child_ctx) = self.retained_child_context(ctx) else {
-            let child_ctx = self.child_context(ctx);
-            let sorted_children = self.sorted_child_indices();
-            if self.direction == StackDirection::Reverse {
-                for &index in sorted_children.iter().rev() {
-                    self.children[index].paint(&child_ctx);
-                }
-            } else {
-                for &index in sorted_children.iter() {
-                    self.children[index].paint(&child_ctx);
-                }
-            }
-            return;
-        };
-        let sorted_children = self.sorted_child_indices();
-        if self.direction == StackDirection::Reverse {
-            for &index in sorted_children.iter().rev() {
-                self.children[index].paint(&child_ctx);
-            }
-        } else {
-            for &index in sorted_children.iter() {
-                self.children[index].paint(&child_ctx);
-            }
-        }
-    }
-
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.invalidate_hit_test_index();
         let Some(child_ctx) = self.retained_child_context(ctx) else {

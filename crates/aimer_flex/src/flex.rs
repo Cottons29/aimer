@@ -62,9 +62,6 @@ mod lazy_tests {
     impl Drawable for HitTestChild {
         fn update(&self, _ctx: &BuildContext) {}
 
-        fn is_paint_stable(&self) -> bool {
-            true
-        }
     }
     impl LayoutElement for HitTestChild {
         fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
@@ -118,20 +115,6 @@ mod lazy_tests {
     }
 
     #[test]
-    fn raw_flex_does_not_advertise_paint_stability_for_live_layout_bookkeeping() {
-        let column = RawFlex::new(
-            FlexDirection::Column,
-            vec![HitTestChild::boxed((
-                Vec2d::ZERO,
-                Vec2d { x: 100.0, y: 20.0 },
-            ))],
-            "Column",
-        );
-
-        assert!(!column.is_paint_stable());
-    }
-
-    #[test]
     fn expanded_is_transparent_to_event_routing() {
         let expanded = crate::flex::flex_child::RawExpanded::new(
             HitTestChild {
@@ -142,111 +125,6 @@ mod lazy_tests {
         );
 
         assert_eq!(expanded.event_tree_role(), EventTreeRole::Transparent);
-    }
-
-    #[test]
-    fn an_eager_flex_with_stable_children_can_replay_its_paint() {
-        let row = RawFlex::new(
-            FlexDirection::Row,
-            vec![HitTestChild::boxed((
-                Vec2d::ZERO,
-                Vec2d { x: 100.0, y: 20.0 },
-            ))],
-            "Row",
-        );
-        let ctx = dummy_build_context(200.0, VIEWPORT, None);
-        let _ = row.computed_size(&ctx);
-
-        assert!(row.is_paint_stable());
-    }
-
-    struct PaintProbe {
-        draws: Rc<Cell<usize>>,
-        paints: Rc<Cell<usize>>,
-        syncs: Rc<Cell<usize>>,
-    }
-
-    impl VisitorElement for PaintProbe {
-        fn debug_name(&self) -> &'static str {
-            "PaintProbe"
-        }
-    }
-    impl EventElement for PaintProbe {}
-    impl Rebuildable for PaintProbe {}
-    impl Drawable for PaintProbe {
-        fn update(&self, _ctx: &BuildContext) {
-            self.draws.set(self.draws.get() + 1);
-        }
-
-        fn paint(&self, _ctx: &BuildContext) {
-            self.paints.set(self.paints.get() + 1);
-        }
-
-        fn sync_paint_geometry(&self, _ctx: &BuildContext) {
-            self.syncs.set(self.syncs.get() + 1);
-        }
-
-        fn is_paint_stable(&self) -> bool {
-            true
-        }
-    }
-    impl LayoutElement for PaintProbe {
-        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
-            ResolvedSize {
-                width: 60.0,
-                height: 20.0,
-            }
-        }
-    }
-
-    #[test]
-    fn stable_flex_paint_emits_child_paint_without_running_draw_lifecycle() {
-        let draws = Rc::new(Cell::new(0));
-        let paints = Rc::new(Cell::new(0));
-        let row = RawFlex::new(
-            FlexDirection::Row,
-            vec![PaintProbe {
-                draws: draws.clone(),
-                paints: paints.clone(),
-                syncs: Rc::new(Cell::new(0)),
-            }
-            .boxed()],
-            "Row",
-        );
-        let ctx = dummy_build_context(200.0, VIEWPORT, None);
-        let _ = row.computed_size(&ctx);
-
-        row.paint(&ctx);
-
-        assert_eq!(draws.get(), 0);
-        assert_eq!(paints.get(), 1);
-    }
-
-    #[test]
-    fn stable_flex_paint_prepares_a_layout_for_new_constraints() {
-        let draws = Rc::new(Cell::new(0));
-        let paints = Rc::new(Cell::new(0));
-        let syncs = Rc::new(Cell::new(0));
-        let row = RawFlex::new(
-            FlexDirection::Row,
-            vec![PaintProbe {
-                draws,
-                paints: paints.clone(),
-                syncs: syncs.clone(),
-            }
-            .boxed()],
-            "Row",
-        );
-        let measured_ctx = dummy_build_context(200.0, VIEWPORT, None);
-        let paint_ctx = dummy_build_context(240.0, VIEWPORT, None);
-        let _ = row.computed_size(&measured_ctx);
-
-        assert!(row.is_paint_stable());
-        row.sync_paint_geometry(&paint_ctx);
-        row.paint(&paint_ctx);
-
-        assert_eq!(syncs.get(), 1);
-        assert_eq!(paints.get(), 1);
     }
 
     /// A `Column` under a viewport must paint only the children intersecting it,
@@ -1113,23 +991,6 @@ impl PortableMaterializeProperty for OverflowBehavior {
                 Err(PortableMaterializeError::InvalidPropertyValue { property })
             }
             _ => Err(PortableMaterializeError::InvalidPropertyType { property }),
-        }
-    }
-}
-
-impl OverflowBehavior {
-    fn apply_overflow_behave(&self, ctx: &BuildContext) {
-        match self {
-            Self::Hidden => {
-                ctx.canvas.set_clip(
-                    Vec2d { x: 0.0, y: 0.0 },
-                    ResolvedSize {
-                        width: ctx.box_constraint.max_width,
-                        height: ctx.box_constraint.max_height,
-                    },
-                );
-            }
-            Self::Wrap | Self::Visible => {}
         }
     }
 }

@@ -26,6 +26,7 @@ pub struct EventDispatchContext<'dispatcher, 'tree> {
     dispatcher: &'dispatcher mut EventDispatcher,
     path_root: &'tree dyn Element,
     boundary: Option<ElementId>,
+    position: Vec2d,
 }
 
 impl<'dispatcher, 'tree> EventDispatchContext<'dispatcher, 'tree> {
@@ -34,12 +35,21 @@ impl<'dispatcher, 'tree> EventDispatchContext<'dispatcher, 'tree> {
         dispatcher: &'dispatcher mut EventDispatcher,
         path_root: &'tree dyn Element,
         boundary: Option<ElementId>,
+        position: Vec2d,
     ) -> Self {
         Self {
             dispatcher,
             path_root,
             boundary,
+            position,
         }
+    }
+
+    /// The hit-test position supplied by the dispatcher, including for Scroll
+    /// events whose payload has no pointer position.
+    #[inline]
+    pub(crate) fn position(&self) -> Vec2d {
+        self.position
     }
 
     /// Returns whether a pointer is captured by this forwarding boundary.
@@ -813,7 +823,7 @@ impl EventDispatcher {
                 // Continue nested capture routing from this owner. Reusing its
                 // parent boundary would resolve the same captured owner again
                 // when a forwarding element dispatches to its own child.
-                let mut context = EventDispatchContext::new(self, path_root, Some(owner));
+                let mut context = EventDispatchContext::new(self, path_root, Some(owner), event.get_pointer_pos().unwrap_or_default());
                 target.on_event_with_context(event, &mut context)
             } else {
                 EventResult::ignored()
@@ -1067,7 +1077,7 @@ impl EventDispatcher {
             return EventResult::ignored();
         }
         if event_callback_enabled(target) {
-            let mut context = EventDispatchContext::new(self, root, Some(owner));
+            let mut context = EventDispatchContext::new(self, root, Some(owner), Vec2d::default());
             target
                 .on_event_with_context(&ElementEvent::Cancel, &mut context)
                 .without_capture_request()
@@ -1487,7 +1497,7 @@ impl EventDispatcher {
         }
 
         let result = if event_callback_enabled(target) {
-            let mut context = EventDispatchContext::new(self, root, Some(owner));
+            let mut context = EventDispatchContext::new(self, root, Some(owner), event.get_pointer_pos().unwrap_or_default());
             target.on_event_with_context(event, &mut context)
         } else {
             EventResult::ignored()
@@ -1508,7 +1518,7 @@ impl EventDispatcher {
             };
             if target.element_id() == Some(owner) {
                 if event_callback_enabled(target) {
-                    let mut context = EventDispatchContext::new(self, root, Some(owner));
+                    let mut context = EventDispatchContext::new(self, root, Some(owner), event.get_pointer_pos().unwrap_or_default());
                     result = result.merge(target.on_event_with_context(event, &mut context));
                 }
             }

@@ -42,9 +42,6 @@ pub struct PaintSourceCensus {
     /// is dropped; a parent that draws a child without exposing it through
     /// `visit_children` causes this.
     pub drawn_unmapped: Vec<CensusElement>,
-    /// Elements that drew through `update` without having retained paint, so
-    /// whatever they drew was dropped. Debug builds only.
-    pub dropped_paint: Vec<CensusElement>,
     /// Elements that had no retained paint to show in some frame: they
     /// declined (`can_paint_local_v2` was false) or their state was not valid
     /// enough to paint. They paint nothing. Debug builds only.
@@ -97,7 +94,6 @@ impl WindowRenderTree {
         let mut census = PaintSourceCensus::default();
         self.census_node(root, false, &mut census);
         census.drawn_unmapped = self.drawn_unmapped.clone();
-        census.dropped_paint = self.dropped_paint.clone();
         census.declined_paint = self.declined_paint.clone();
         census.sync_error = self.sync_error.map(|error| format!("{error:?}"));
         census.invalid_bounds = self.invalid_bounds.clone();
@@ -121,14 +117,6 @@ impl WindowRenderTree {
         for (element, debug_name) in aimer_widget::take_declined_paint_elements() {
             if !self.declined_paint.iter().any(|seen| seen.element == element) {
                 self.declined_paint.push(CensusElement {
-                    element,
-                    debug_name,
-                });
-            }
-        }
-        for (element, debug_name) in aimer_widget::take_dropped_paint_elements() {
-            if !self.dropped_paint.iter().any(|seen| seen.element == element) {
-                self.dropped_paint.push(CensusElement {
                     element,
                     debug_name,
                 });

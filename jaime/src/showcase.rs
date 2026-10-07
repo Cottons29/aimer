@@ -1071,6 +1071,8 @@ mod tests {
 
     use super::*;
 
+    mod scrolling;
+
     #[test]
     fn showcase_has_unique_registered_examples() {
         assert!(!EXAMPLES.is_empty());
@@ -1172,12 +1174,10 @@ mod tests {
             let names = |roots: &[aimer::quiver::handler::census::CensusElement]| -> Vec<&'static str> {
                 roots.iter().map(|root| root.debug_name).collect()
             };
-            let dropped = names(&census.dropped_paint);
             let declined = names(&census.declined_paint);
             let unmapped = names(&census.drawn_unmapped);
             let invalid = names(&census.invalid_bounds);
-            let offends = !dropped.is_empty()
-                || !declined.is_empty()
+            let offends = !declined.is_empty()
                 || !unmapped.is_empty()
                 || !invalid.is_empty()
                 || census.sync_error.is_some();
@@ -1187,7 +1187,7 @@ mod tests {
                 seen_backlog.push(label);
             }
             let detail = format!(
-                "{label:?}: drew through the dropped legacy path {dropped:?}, had no retained paint {declined:?}, drawn without a render node {unmapped:?}, \
+                "{label:?}: had no retained paint {declined:?}, drawn without a render node {unmapped:?}, \
                  invalid bounds {invalid:?}, sync error {:?}",
                 census.sync_error
             );

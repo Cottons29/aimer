@@ -263,6 +263,7 @@ struct RenderTreeSyncStamp {
 }
 
 struct AddedRenderNode<'element, 'context> {
+    // Includes existing direct parents whose new child slots need state sync.
     element: &'element dyn Element,
     render_node: RenderNodeId,
     context: BuildContext<'context>,
@@ -294,9 +295,6 @@ pub(crate) struct WindowRenderTree {
     /// Elements drawn in the last frame that still had no render node after its
     /// final sync (see [`census::PaintSourceCensus::drawn_unmapped`]).
     drawn_unmapped: Vec<census::CensusElement>,
-    /// Elements that drew through `update` without having retained paint, so
-    /// their drawing was dropped. Accumulated, one entry per element.
-    dropped_paint: Vec<census::CensusElement>,
     /// Elements that had no retained paint to show in some frame: they declined
     /// (`can_paint_local_v2` was false) or their state was not valid. One entry
     /// per element, accumulated.
@@ -613,7 +611,8 @@ fn collect_render_tree_nodes<'element, 'context>(
             ),
         ));
     }
-    if !existing.contains_key(&element_id) {
+    let is_new = !existing.contains_key(&element_id);
+    if is_new {
         new_elements.push((node_index, element, ctx.clone(), element_path.clone()));
     }
     specs.push(RenderNodeSpec::new(
@@ -665,7 +664,9 @@ fn collect_render_tree_nodes<'element, 'context>(
         };
     }
 
+    let mut has_new_child = false;
     element.visit_retained_v2_children(&mut |index, child| {
+        has_new_child |= !existing.contains_key(&child.id());
         let child_geometry = element.retained_v2_child_geometry_at(ctx, child, index);
         let child_clip_radius = if child_geometry.is_some() {
             element.retained_v2_child_clip_radius(ctx, child)
@@ -694,6 +695,11 @@ fn collect_render_tree_nodes<'element, 'context>(
             element_path,
         );
     });
+    if !is_new && has_new_child && element.can_paint_local_v2(ctx) {
+        // This owner's previous synchronization saw the old child slots.
+        // Reapply its presentation after the new children have render nodes.
+        new_elements.push((node_index, element, ctx.clone(), element_path.clone()));
+    }
     element_path.pop();
 }
 
@@ -713,9 +719,23 @@ fn record_new_local_v2_paints<'element, 'context>(
             return false;
         };
         aimer_widget::set_rebuild_source_path(node.element, &node.element_path);
-        node.context.with_local_v2_paint_context(paint_context, |ctx| {
-            node.element.paint_local_v2(ctx);
+        let resolved = node.context.with_local_v2_paint_context(paint_context, |ctx| {
+            // A child created during drawing missed the normal mapped-node
+            // state pass. Cached pixels must not appear at default opacity
+            // before their animation's first sample is applied.
+            if !node.element.sync_local_v2_state(ctx) {
+                return false;
+            }
+            if tree.needs_recording(node.render_node).unwrap_or(true)
+                || node.element.local_v2_paint_needs_recording(ctx)
+            {
+                node.element.paint_local_v2(ctx);
+            }
+            true
         });
+        if !resolved {
+            return false;
+        }
         if tree
             .set_paint_source(node.render_node, RenderPaintSource::LocalV2)
             .is_err()
@@ -1361,22 +1381,11 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             aimer_widget::mark_paint_damage_full();
         }
 
-        #[cfg(feature = "wasm-hot-reload")]
-        let mut untracked_overlay = false;
-        #[cfg(feature = "wasm-hot-reload")]
-        if let Some(overlay) = self
-            .live_reload
-            .as_ref()
-            .and_then(crate::hot_reload::LiveReloadHost::reload_overlay)
-        {
-            untracked_overlay = true;
+        if crate::render_ctx::take_frame_not_presented() {
+            // The frame before this one was built and lost, taking its damage
+            // with it; the screen is out of date by an unknown amount.
             aimer_widget::mark_paint_damage_full();
-            overlay.layout(&build_ctx);
-            build_ctx.canvas.save();
-            overlay.update(&build_ctx);
-            build_ctx.canvas.restore();
         }
-
         let mut damage = aimer_widget::take_paint_frame_damage(width, height);
         if render_tree_sync_incomplete {
             // The tree could not be brought up to date, so the plan below is
@@ -1402,10 +1411,7 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             damage.mark_full();
         }
 
-        let can_compose_v2 = self.scale.is_finite() && self.scale > 0.0;
-        #[cfg(feature = "wasm-hot-reload")]
-        let can_compose_v2 = can_compose_v2 && !untracked_overlay;
-        if can_compose_v2 {
+        if self.scale.is_finite() && self.scale > 0.0 {
             let mut render_damage = self.window_render_tree.tree.take_damage();
             if damage.is_full() {
                 render_damage.clear();
@@ -1424,6 +1430,17 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                         region.height as f32 / self.scale,
                     )
                 }));
+            }
+            // A damage set that covers enough of the target is repainted in
+            // full, which needs the whole tree rather than the culled slice.
+            if let Some(full) = FramePacket::full_target_if_damage_promotes(
+                &render_damage,
+                self.scale,
+                width,
+                height,
+            ) {
+                render_damage.clear();
+                render_damage.push(full);
             }
             // The retained target keeps pixels outside damage, so even a
             // direct plan only needs the nodes that can affect this frame's
@@ -1455,7 +1472,6 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                     damage = packet_damage;
                     inner_canvas.set_retained_render_plan(Some(plan));
                     inner_canvas.recycle_draw_list(legacy_frame.into_draw_list());
-                    inner_canvas.discard_scene_recording();
                 }
                 Err(error) => {
                     // The tree describes something the renderer cannot lower.
@@ -1468,27 +1484,9 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                 }
             }
         } else {
-            // No usable scale, or an overlay that only paints through the
-            // canvas (hot reload): repaint once through the canvas so every
-            // visible element remains present.
+            // Without a usable scale nothing can be placed on the target. Keep
+            // the whole frame damaged so the first valid scale repaints it.
             inner_canvas.begin_frame();
-            if let Some(root) = root {
-                build_ctx.canvas.save();
-                aimer_widget::record_root_draw_call();
-                root.update(&build_ctx);
-                build_ctx.canvas.restore();
-            }
-            #[cfg(feature = "wasm-hot-reload")]
-            if let Some(overlay) = self
-                .live_reload
-                .as_ref()
-                .and_then(crate::hot_reload::LiveReloadHost::reload_overlay)
-            {
-                overlay.layout(&build_ctx);
-                build_ctx.canvas.save();
-                overlay.update(&build_ctx);
-                build_ctx.canvas.restore();
-            }
             damage.mark_full();
             aimer_widget::mark_paint_damage_full();
         }
@@ -1813,6 +1811,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         // because the outcome is not known until a frame later.
         crate::first_frame::notify_first_frame_presented(outcome.is_presented());
         if outcome.needs_retry() {
+            crate::render_ctx::note_frame_not_presented();
             // Surface texture was not available (e.g. surface outdated or
             // window not ready).  Request a redraw so we retry next frame
             // instead of staying blank.  Critical on web (async GPU init)
@@ -2005,15 +2004,6 @@ mod tests {
 
     impl Drawable for LegacyBranch {
         fn update(&self, ctx: &BuildContext) {
-            ctx.canvas.fill_color_rect(
-                Vec2d::ZERO,
-                ResolvedSize {
-                    width: 20.0,
-                    height: 20.0,
-                },
-                Color::ORANGE,
-                [0.0; 4],
-            );
             self.child.update(ctx);
         }
     }
@@ -2098,9 +2088,6 @@ mod tests {
             canvas.finish();
         }
 
-        fn is_paint_bounded(&self) -> bool {
-            true
-        }
     }
 
     impl Widget for V2PaintLeaf {

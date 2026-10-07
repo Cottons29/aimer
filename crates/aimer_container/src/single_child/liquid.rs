@@ -833,14 +833,6 @@ impl Drawable for RawLiquid {
         shadow_outsets(self.material.normalized().glass_material())
     }
 
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        // Liquid is an effect surface: its material request can depend on
-        // interaction, animation policy, and the framebuffer behind it. Keep
-        // the complete effect on the live path until a renderer-specific
-        // backdrop/resource contract exists.
-        false
-    }
 }
 
 impl EventElement for RawLiquid {
@@ -1006,13 +998,4 @@ mod tests {
         assert_eq!(material.effective_phase(), material.effective_phase());
     }
 
-    #[test]
-    fn liquid_effects_stay_on_the_live_paint_path() {
-        let liquid = RawLiquid {
-            child: Element::boxed(ZeroSizedBox),
-            material: LiquidMaterial::new(),
-        };
-
-        assert!(!liquid.is_paint_stable());
-    }
 }

@@ -6,7 +6,7 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, CompositorAnimationDecision, CompositorAnimationFrame, CompositorTransform,
-    Drawable, Element, EventElement, EventResult, LayoutElement, PaintDamageTracker, Rebuildable,
+    Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
     VisitorElement, Widget,
 };
 
@@ -17,56 +17,17 @@ fn request_next_frame() {
     aimer_events::window::request_animation_frame();
 }
 
+/// Updates the child for one sampled frame and keeps the animation running.
+///
+/// The retained render tree applies the sampled transform and opacity to the
+/// child's node, so nothing is drawn or transformed here.
 #[inline]
-fn update_transition_damage(
-    tracker: &PaintDamageTracker,
-    last_value: &Cell<Option<u32>>,
+fn update_transition_frame(
     ctx: &BuildContext,
     child: &dyn Element,
     frame: CompositorAnimationFrame,
 ) {
-    if frame.valid {
-        let visual_changed =
-            crate::widgets::damage::sample_changed(last_value, frame.progress);
-        crate::widgets::damage::mark_bounded_animation_damage(
-            tracker,
-            ctx,
-            child,
-            frame.progress,
-            visual_changed,
-        );
-    } else {
-        tracker.mark_full();
-    }
-}
-
-#[inline]
-fn draw_transition_frame(
-    ctx: &BuildContext,
-    child: &dyn Element,
-    damage: &PaintDamageTracker,
-    last_value: &Cell<Option<u32>>,
-    frame: CompositorAnimationFrame,
-) {
-    ctx.canvas.save();
-    frame.apply(ctx);
-    let visual_changed =
-        crate::widgets::damage::sample_changed(last_value, frame.progress);
-    if frame.valid {
-        crate::widgets::damage::mark_bounded_animation_damage(
-            damage,
-            ctx,
-            child,
-            frame.progress,
-            visual_changed,
-        );
-    } else {
-        damage.mark_full();
-    }
     child.update(ctx);
-    frame.clear(ctx);
-    ctx.canvas.restore();
-
     if frame.active {
         request_next_frame();
     }
@@ -110,8 +71,6 @@ impl<T: Widget + 'static> Widget for FadeTransition<T> {
             child,
             controller,
             animating,
-            damage: aimer_widget::PaintDamageTracker::new(),
-            last_value: Cell::new(None),
         }
         .boxed()
     }
@@ -123,8 +82,6 @@ macro_rules! impl_transition_element {
             child: AnyElement,
             controller: AnimationController,
             animating: Cell<bool>,
-            damage: aimer_widget::PaintDamageTracker,
-            last_value: Cell<Option<u32>>,
         }
 
         unsafe impl Send for $name {}
@@ -132,13 +89,7 @@ macro_rules! impl_transition_element {
 
         impl Drawable for $name {
             fn update(&self, ctx: &BuildContext) {
-                draw_transition_frame(
-                    ctx,
-                    self.child.as_ref(),
-                    &self.damage,
-                    &self.last_value,
-                    self.sample_frame(ctx),
-                );
+                update_transition_frame(ctx, self.child.as_ref(), self.sample_frame(ctx));
             }
 
             #[inline]
@@ -155,18 +106,8 @@ macro_rules! impl_transition_element {
             }
 
             #[inline]
-            fn paint(&self, ctx: &BuildContext) {
-                self.child.paint(ctx);
-            }
-
-            #[inline]
             fn sync_paint_geometry(&self, ctx: &BuildContext) {
                 self.child.sync_paint_geometry(ctx);
-            }
-
-            #[inline]
-            fn is_paint_bounded(&self) -> bool {
-                self.child.is_paint_bounded()
             }
 
             #[inline]
@@ -179,35 +120,6 @@ macro_rules! impl_transition_element {
                 }
             }
 
-            #[inline]
-            fn draw_with_compositor_animation(
-                &self,
-                ctx: &BuildContext,
-                frame: CompositorAnimationFrame,
-            ) {
-                draw_transition_frame(
-                    ctx,
-                    self.child.as_ref(),
-                    &self.damage,
-                    &self.last_value,
-                    frame,
-                );
-            }
-
-            #[inline]
-            fn update_compositor_animation_damage(
-                &self,
-                ctx: &BuildContext,
-                frame: CompositorAnimationFrame,
-            ) {
-                update_transition_damage(
-                    &self.damage,
-                    &self.last_value,
-                    ctx,
-                    self.child.as_ref(),
-                    frame,
-                );
-            }
         }
 
         impl $name {
@@ -335,8 +247,6 @@ impl<T: Widget + 'static> Widget for SlideTransition<T> {
             controller,
             animating,
             offset,
-            damage: aimer_widget::PaintDamageTracker::new(),
-            last_value: Cell::new(None),
         }
         .boxed()
     }
@@ -347,8 +257,6 @@ struct SlideTransitionElement {
     controller: AnimationController,
     animating: Cell<bool>,
     offset: (f32, f32),
-    damage: aimer_widget::PaintDamageTracker,
-    last_value: Cell<Option<u32>>,
 }
 
 unsafe impl Send for SlideTransitionElement {}
@@ -356,13 +264,7 @@ unsafe impl Sync for SlideTransitionElement {}
 
 impl Drawable for SlideTransitionElement {
     fn update(&self, ctx: &BuildContext) {
-        draw_transition_frame(
-            ctx,
-            self.child.as_ref(),
-            &self.damage,
-            &self.last_value,
-            self.sample_frame(ctx),
-        );
+        update_transition_frame(ctx, self.child.as_ref(), self.sample_frame(ctx));
     }
 
     #[inline]
@@ -379,18 +281,8 @@ impl Drawable for SlideTransitionElement {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        self.child.paint(ctx);
-    }
-
-    #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
-    }
-
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
     }
 
     #[inline]
@@ -403,35 +295,6 @@ impl Drawable for SlideTransitionElement {
         }
     }
 
-    #[inline]
-    fn draw_with_compositor_animation(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        draw_transition_frame(
-            ctx,
-            self.child.as_ref(),
-            &self.damage,
-            &self.last_value,
-            frame,
-        );
-    }
-
-    #[inline]
-    fn update_compositor_animation_damage(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        update_transition_damage(
-            &self.damage,
-            &self.last_value,
-            ctx,
-            self.child.as_ref(),
-            frame,
-        );
-    }
 }
 
 impl SlideTransitionElement {
@@ -548,8 +411,6 @@ impl<T: Widget + 'static> Widget for ScaleTransition<T> {
             child,
             controller,
             animating,
-            damage: aimer_widget::PaintDamageTracker::new(),
-            last_value: Cell::new(None),
         }
         .boxed()
     }
@@ -559,8 +420,6 @@ struct ScaleTransitionElement {
     child: AnyElement,
     controller: AnimationController,
     animating: Cell<bool>,
-    damage: aimer_widget::PaintDamageTracker,
-    last_value: Cell<Option<u32>>,
 }
 
 unsafe impl Send for ScaleTransitionElement {}
@@ -568,13 +427,7 @@ unsafe impl Sync for ScaleTransitionElement {}
 
 impl Drawable for ScaleTransitionElement {
     fn update(&self, ctx: &BuildContext) {
-        draw_transition_frame(
-            ctx,
-            self.child.as_ref(),
-            &self.damage,
-            &self.last_value,
-            self.sample_frame(ctx),
-        );
+        update_transition_frame(ctx, self.child.as_ref(), self.sample_frame(ctx));
     }
 
     #[inline]
@@ -591,18 +444,8 @@ impl Drawable for ScaleTransitionElement {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        self.child.paint(ctx);
-    }
-
-    #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
-    }
-
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
     }
 
     #[inline]
@@ -615,35 +458,6 @@ impl Drawable for ScaleTransitionElement {
         }
     }
 
-    #[inline]
-    fn draw_with_compositor_animation(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        draw_transition_frame(
-            ctx,
-            self.child.as_ref(),
-            &self.damage,
-            &self.last_value,
-            frame,
-        );
-    }
-
-    #[inline]
-    fn update_compositor_animation_damage(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        update_transition_damage(
-            &self.damage,
-            &self.last_value,
-            ctx,
-            self.child.as_ref(),
-            frame,
-        );
-    }
 }
 
 impl ScaleTransitionElement {
@@ -786,8 +600,6 @@ impl<T: Widget + 'static> Widget for RotationTransition<T> {
             begin_turns: self.begin_turns,
             end_turns: self.end_turns,
             animating,
-            damage: aimer_widget::PaintDamageTracker::new(),
-            last_value: Cell::new(None),
         }
         .boxed()
     }
@@ -799,8 +611,6 @@ struct RotationTransitionElement {
     begin_turns: f32,
     end_turns: f32,
     animating: Cell<bool>,
-    damage: aimer_widget::PaintDamageTracker,
-    last_value: Cell<Option<u32>>,
 }
 
 unsafe impl Send for RotationTransitionElement {}
@@ -808,13 +618,7 @@ unsafe impl Sync for RotationTransitionElement {}
 
 impl Drawable for RotationTransitionElement {
     fn update(&self, ctx: &BuildContext) {
-        draw_transition_frame(
-            ctx,
-            self.child.as_ref(),
-            &self.damage,
-            &self.last_value,
-            self.sample_frame(ctx),
-        );
+        update_transition_frame(ctx, self.child.as_ref(), self.sample_frame(ctx));
     }
 
     #[inline]
@@ -831,23 +635,8 @@ impl Drawable for RotationTransitionElement {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        let frame = self.settled_frame(ctx);
-        ctx.canvas.save();
-        frame.apply(ctx);
-        self.child.paint(ctx);
-        frame.clear(ctx);
-        ctx.canvas.restore();
-    }
-
-    #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
-    }
-
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
     }
 
     #[inline]
@@ -860,35 +649,6 @@ impl Drawable for RotationTransitionElement {
         }
     }
 
-    #[inline]
-    fn draw_with_compositor_animation(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        draw_transition_frame(
-            ctx,
-            self.child.as_ref(),
-            &self.damage,
-            &self.last_value,
-            frame,
-        );
-    }
-
-    #[inline]
-    fn update_compositor_animation_damage(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        update_transition_damage(
-            &self.damage,
-            &self.last_value,
-            ctx,
-            self.child.as_ref(),
-            frame,
-        );
-    }
 }
 
 impl RotationTransitionElement {
@@ -899,12 +659,6 @@ impl RotationTransitionElement {
         self.animating.set(active);
 
         self.frame_at(ctx, progress, active)
-    }
-
-    #[inline]
-    fn settled_frame(&self, ctx: &BuildContext) -> CompositorAnimationFrame {
-        let progress = self.controller.curve().transform(self.controller.value());
-        self.frame_at(ctx, progress, false)
     }
 
     #[inline]
@@ -1023,14 +777,9 @@ impl_portable_transition_lowering!(RotationTransition);
 
 #[cfg(test)]
 mod tests {
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    use std::rc::Rc;
-
     use super::*;
     use aimer_attribute::BoxConstraint;
     use crate::primitives::curve::Curve;
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    use crate::widgets::animated::{Animated, AnimationEffect};
     use crate::widgets::test_frame_requester;
 
     struct TestWidget;
@@ -1060,95 +809,6 @@ mod tests {
     }
 
     impl aimer_widget::PortableWidget for TestWidget {}
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    struct CountingWidget {
-        draws: Rc<Cell<u32>>,
-        paints: Rc<Cell<u32>>,
-        stable: bool,
-    }
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    struct CountingElement {
-        draws: Rc<Cell<u32>>,
-        paints: Rc<Cell<u32>>,
-        stable: bool,
-    }
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    impl Widget for CountingWidget {
-        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
-            CountingElement {
-                draws: self.draws,
-                paints: self.paints,
-                stable: self.stable,
-            }
-            .boxed()
-        }
-    }
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    impl aimer_widget::PortableWidget for CountingWidget {}
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    impl Drawable for CountingElement {
-        fn update(&self, ctx: &BuildContext) {
-            self.draws.set(self.draws.get() + 1);
-            ctx.canvas.fill_rect(
-                (0.0, 0.0).into(),
-                ResolvedSize {
-                    width: 8.0,
-                    height: 8.0,
-                },
-            );
-        }
-
-        fn paint(&self, ctx: &BuildContext) {
-            self.paints.set(self.paints.get() + 1);
-            ctx.canvas.fill_rect(
-                (0.0, 0.0).into(),
-                ResolvedSize {
-                    width: 8.0,
-                    height: 8.0,
-                },
-            );
-        }
-
-        fn is_paint_stable(&self) -> bool {
-            self.stable
-        }
-
-        fn is_paint_bounded(&self) -> bool {
-            true
-        }
-    }
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    impl EventElement for CountingElement {}
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    impl LayoutElement for CountingElement {
-        fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
-            ResolvedSize {
-                width: 8.0,
-                height: 8.0,
-            }
-        }
-
-        fn is_layout_stable(&self) -> bool {
-            true
-        }
-    }
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    impl Rebuildable for CountingElement {}
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    impl VisitorElement for CountingElement {
-        fn debug_name(&self) -> &'static str {
-            "CountingElement"
-        }
-    }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn dummy_async_handle() -> tokio::runtime::Handle {
@@ -1191,48 +851,6 @@ mod tests {
         context
     }
 
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    fn counting_child(stable: bool) -> (CountingWidget, Rc<Cell<u32>>, Rc<Cell<u32>>) {
-        let draws = Rc::new(Cell::new(0));
-        let paints = Rc::new(Cell::new(0));
-        (
-            CountingWidget {
-                draws: draws.clone(),
-                paints: paints.clone(),
-                stable,
-            },
-            draws,
-            paints,
-        )
-    }
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    fn render_frame(element: &AnyElement, ctx: &BuildContext) -> Option<aimer_cupid::compositor::CompositorScene> {
-        ctx.canvas.begin_frame();
-        aimer_widget::begin_paint_frame(64, 64);
-        element.update(ctx);
-        let damage = aimer_widget::take_paint_frame_damage(64, 64);
-        let draw_list = ctx.canvas.get_inner_canvas().take_draw_list();
-        ctx.canvas.take_scene(&draw_list, 64, 64, damage)
-    }
-
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    fn assert_cached_transition(
-        element: AnyElement,
-        ctx: &BuildContext,
-        draws: &Rc<Cell<u32>>,
-        paints: &Rc<Cell<u32>>,
-    ) {
-        let first = render_frame(&element, ctx).expect("stable transition should record a scene");
-        assert_eq!(draws.get(), 0);
-        assert_eq!(paints.get(), 1);
-
-        let second = render_frame(&element, ctx).expect("stable transition should replay a scene");
-        assert_eq!(draws.get(), 0);
-        assert_eq!(paints.get(), 1);
-        assert!(second.diff(Some(&first)).is_empty());
-    }
-
     fn controller() -> AnimationController {
         let controller = AnimationController::with_millis(100, Curve::Linear);
         controller.forward_from_first_tick();
@@ -1247,175 +865,24 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    fn a_settled_rotation_retains_the_child_with_its_final_transform() {
-        let child_ctx = dummy_build_context();
-        let (child, _, _) = counting_child(true);
-        let child = child.to_element(&child_ctx);
-        child.paint(&child_ctx);
-        let child_commands = child_ctx
-            .canvas
-            .get_inner_canvas()
-            .take_draw_list()
-            .stats()
-            .commands;
-
+    fn a_valid_sample_goes_to_the_compositor_and_an_invalid_one_stays_live() {
         let ctx = dummy_build_context();
-        let (child, _, _) = counting_child(true);
-        let controller = AnimationController::with_millis(100, Curve::Linear);
-        controller.set_value(1.0);
-        let rotation = RotationTransition::new(controller, child)
-            .turn_range(0.0, -0.25)
-            .to_element(&ctx);
 
-        assert!(rotation.is_paint_stable());
-        rotation.paint(&ctx);
-        let rotation_commands = ctx
-            .canvas
-            .get_inner_canvas()
-            .take_draw_list()
-            .stats()
-            .commands;
-        assert!(rotation_commands > child_commands);
-    }
-
-    #[test]
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    fn an_active_rotation_stays_on_the_live_paint_path() {
-        let ctx = dummy_build_context();
-        let (child, _, _) = counting_child(true);
-        let controller = AnimationController::with_millis(100, Curve::Linear);
-        controller.forward_from_first_tick();
-        let rotation = RotationTransition::new(controller, child)
-            .turn_range(0.0, -0.25)
-            .to_element(&ctx);
-
-        assert!(!rotation.is_paint_stable());
-    }
-
-    #[test]
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    fn fixed_visual_transitions_retain_stable_child_paint() {
-        let ctx = dummy_build_context();
-        let (child, draws, paints) = counting_child(true);
         let controller = AnimationController::with_millis(100, Curve::Linear);
         controller.set_value(0.5);
-        assert_cached_transition(
-            FadeTransition::new(controller, child).to_element(&ctx),
-            &ctx,
-            &draws,
-            &paints,
-        );
+        let element = FadeTransition::new(controller, TestWidget).to_element(&ctx);
+        assert!(matches!(
+            element.compositor_animation(&ctx),
+            CompositorAnimationDecision::Compositor(frame) if frame.valid
+        ));
 
-        let ctx = dummy_build_context();
-        let (child, draws, paints) = counting_child(true);
-        let controller = AnimationController::with_millis(100, Curve::Linear);
-        controller.set_value(0.5);
-        assert_cached_transition(
-            SlideTransition::new(controller, (10.0, 4.0), child).to_element(&ctx),
-            &ctx,
-            &draws,
-            &paints,
-        );
-
-        let ctx = dummy_build_context();
-        let (child, draws, paints) = counting_child(true);
-        let controller = AnimationController::with_millis(100, Curve::Linear);
-        controller.set_value(0.5);
-        assert_cached_transition(
-            ScaleTransition::new(controller, child).to_element(&ctx),
-            &ctx,
-            &draws,
-            &paints,
-        );
-
-        let ctx = dummy_build_context();
-        let (child, draws, paints) = counting_child(true);
-        let controller = AnimationController::with_millis(100, Curve::Linear);
-        controller.set_value(0.5);
-        assert_cached_transition(
-            RotationTransition::new(controller, child).to_element(&ctx),
-            &ctx,
-            &draws,
-            &paints,
-        );
-    }
-
-    #[test]
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    fn animated_widget_reuses_static_paint_and_keeps_its_clip() {
-        let ctx = dummy_build_context();
-        let (child, draws, paints) = counting_child(true);
-        let controller = AnimationController::with_millis(100, Curve::Linear);
-        controller.set_value(0.5);
-        let element = Animated::new(
-            controller,
-            AnimationEffect::SlideX { from: 1.0, to: 0.0 },
-            child,
-        )
-        .to_element(&ctx);
-
-        let scene = render_frame(&element, &ctx).expect("animated widget should record a scene");
-        assert_eq!(draws.get(), 0);
-        assert_eq!(paints.get(), 1);
-        assert_eq!(scene.nodes().len(), 1);
-        assert!(!scene.nodes()[0].clip_chain().clips().is_empty());
-
-        let scene = render_frame(&element, &ctx).expect("animated widget should replay a scene");
-        assert_eq!(draws.get(), 0);
-        assert_eq!(paints.get(), 1);
-        assert_eq!(scene.nodes().len(), 1);
-    }
-
-    #[test]
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    fn compositor_property_changes_preserve_retained_content() {
-        let ctx = dummy_build_context();
-        let (child, draws, paints) = counting_child(true);
-        let controller = AnimationController::with_millis(100, Curve::Linear);
-        controller.set_value(0.25);
-        let element = FadeTransition::new(controller.clone(), child).to_element(&ctx);
-
-        let first = render_frame(&element, &ctx).expect("first scene should be present");
-        controller.set_value(0.75);
-        let second = render_frame(&element, &ctx).expect("second scene should be present");
-
-        assert_eq!(draws.get(), 0);
-        assert_eq!(paints.get(), 1);
-        let diff = second.diff(Some(&first));
-        assert!(diff
-            .changes()
-            .iter()
-            .any(|change| change.kind == aimer_cupid::compositor::SceneChangeKind::Opacity));
-        assert!(!diff
-            .changes()
-            .iter()
-            .any(|change| change.kind == aimer_cupid::compositor::SceneChangeKind::Content));
-    }
-
-    #[test]
-    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    fn dynamic_and_invalid_transitions_stay_on_the_live_path() {
-        let ctx = dummy_build_context();
-        let (child, draws, paints) = counting_child(false);
-        let controller = AnimationController::with_millis(100, Curve::Linear);
-        controller.set_value(0.5);
-        let element = FadeTransition::new(controller, child).to_element(&ctx);
-
-        assert!(render_frame(&element, &ctx).is_none());
-        assert!(render_frame(&element, &ctx).is_none());
-        assert_eq!(draws.get(), 2);
-        assert_eq!(paints.get(), 0);
-
-        let ctx = dummy_build_context();
-        let (child, draws, paints) = counting_child(true);
         let controller = AnimationController::with_millis(100, Curve::Linear);
         controller.set_value(f32::NAN);
-        let element = FadeTransition::new(controller, child).to_element(&ctx);
-
-        assert!(render_frame(&element, &ctx).is_some());
-        assert_eq!(draws.get(), 0);
-        assert_eq!(paints.get(), 1);
+        let element = FadeTransition::new(controller, TestWidget).to_element(&ctx);
+        assert!(matches!(
+            element.compositor_animation(&ctx),
+            CompositorAnimationDecision::Live(frame) if !frame.valid
+        ));
     }
 
     fn assert_defers_next_frame(widget: impl Widget + 'static) {

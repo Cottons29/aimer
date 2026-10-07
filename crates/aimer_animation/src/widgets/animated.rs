@@ -7,7 +7,7 @@ use aimer_events::window::request_animation_frame;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, CompositorAnimationDecision, CompositorAnimationFrame, CompositorTransform,
-    Drawable, Element, EventElement, EventResult, LayoutElement, PaintDamageTracker, Rebuildable,
+    Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
     RequiredChild, VisitorElement, Widget,
 };
 
@@ -234,24 +234,21 @@ impl<T: Widget + 'static> Widget for Animated<T> {
             effect: self.effect,
             animating,
             window,
-            damage: PaintDamageTracker::new(),
-            last_value: Cell::new(None),
         }
         .boxed()
     }
 }
 
-/// The element produced by [`Animated`]. On each `draw`, it ticks the
-/// controller, applies the canvas transform, draws the child, then requests
-/// another redraw if the animation is still running.
+/// The element produced by [`Animated`]. On each frame it ticks the
+/// controller, updates the child, then requests another redraw if the
+/// animation is still running. The retained render tree applies the sampled
+/// transform and opacity to the child's node.
 struct AnimatedElement {
     child: AnyElement,
     controller: AnimationController,
     effect: AnimationEffect,
     animating: Cell<bool>,
     window: WindowHandle,
-    damage: PaintDamageTracker,
-    last_value: Cell<Option<u32>>,
 }
 
 // Safety: rendering pipeline is single-threaded
@@ -260,7 +257,11 @@ unsafe impl Sync for AnimatedElement {}
 
 impl Drawable for AnimatedElement {
     fn update(&self, ctx: &BuildContext) {
-        self.draw_frame(ctx, self.sample_frame(ctx));
+        let frame = self.sample_frame(ctx);
+        self.child.update(ctx);
+        if frame.active {
+            request_animation_frame();
+        }
     }
 
     #[inline]
@@ -277,18 +278,8 @@ impl Drawable for AnimatedElement {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        self.child.paint(ctx);
-    }
-
-    #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
-    }
-
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
     }
 
     #[inline]
@@ -301,23 +292,6 @@ impl Drawable for AnimatedElement {
         }
     }
 
-    #[inline]
-    fn draw_with_compositor_animation(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        self.draw_frame(ctx, frame);
-    }
-
-    #[inline]
-    fn update_compositor_animation_damage(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        self.update_damage(ctx, frame);
-    }
 }
 
 impl AnimatedElement {
@@ -329,37 +303,6 @@ impl AnimatedElement {
         self.animating.set(active);
         self.effect
             .compositor_frame(ctx, progress, active, Some(self.child.computed_size(ctx)))
-    }
-
-    #[inline]
-    fn update_damage(&self, ctx: &BuildContext, frame: CompositorAnimationFrame) {
-        if frame.valid {
-            let visual_changed =
-                crate::widgets::damage::sample_changed(&self.last_value, frame.progress);
-            crate::widgets::damage::mark_bounded_animation_damage(
-                &self.damage,
-                ctx,
-                self.child.as_ref(),
-                frame.progress,
-                visual_changed,
-            );
-        } else {
-            self.damage.mark_full();
-        }
-    }
-
-    #[inline]
-    fn draw_frame(&self, ctx: &BuildContext, frame: CompositorAnimationFrame) {
-        ctx.canvas.save();
-        frame.apply(ctx);
-        self.update_damage(ctx, frame);
-        self.child.update(ctx);
-        frame.clear(ctx);
-        ctx.canvas.restore();
-
-        if frame.active {
-            request_animation_frame();
-        }
     }
 }
 

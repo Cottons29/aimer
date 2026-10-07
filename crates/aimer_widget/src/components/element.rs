@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
-use aimer_cupid::compositor::{SceneNodeDescriptor, SceneNodeId, SceneRevision};
 use aimer_cupid::damage_region::{DamageRect, DamageSet};
 use aimer_cupid::draw_cmd_v2::{RenderNodeId, RenderPaintSource, RenderTree};
 use aimer_cupid::utilities::Rect;
@@ -38,8 +37,6 @@ use crate::pointer_claim;
 use crate::{AnyElement, Drawable, Key};
 
 mod event;
-#[cfg(test)]
-mod dropped_paint_report_tests;
 mod node;
 
 use node::ElementNode;
@@ -68,12 +65,7 @@ thread_local! {
     /// exposing it through `visit_children`).
     static UNMAPPED_DRAWS: RefCell<Vec<(ElementId, &'static str)>> = const { RefCell::new(Vec::new()) };
     #[cfg(debug_assertions)]
-    static DROPPED_PAINT_ELEMENTS: RefCell<Vec<(ElementId, &'static str)>> = const { RefCell::new(Vec::new()) };
-    #[cfg(debug_assertions)]
     static DECLINED_PAINT_ELEMENTS: RefCell<Vec<(ElementId, &'static str)>> = const { RefCell::new(Vec::new()) };
-    /// Element types already reported as legacy islands in this process, so the
-    /// log names each one once instead of every frame.
-    static REPORTED_DROPPED_PAINT: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
 
     /// Nested `mark_needs_rebuild` calls share one invalidation generation.
     /// Marking a large tree is already recursive; it must not also perform one
@@ -111,10 +103,7 @@ thread_local! {
     /// rebuild/tree generations so a retained scroll tile can distinguish a
     /// local dirty element from an unrelated branch's rebuild.
     static PAINT_INVALIDATION_EPOCH: Cell<Option<(u64, u64)>> = const { Cell::new(None) };
-    static PAINT_INVALIDATED_ELEMENTS: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
     static PAINT_INVALIDATED_LOCAL_ELEMENTS: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
-    static PAINT_INVALIDATED_SUBTREES: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
-    static PAINT_INVALIDATION_UNKNOWN: Cell<bool> = const { Cell::new(false) };
     /// Visual event changes invalidate one element's retained list for the
     /// next collection, then are consumed without dirtying later frames.
     static EVENT_PAINT_INVALIDATIONS: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
@@ -132,10 +121,6 @@ thread_local! {
     /// it instead of silently dropping the invalidation.
     static PENDING_PAINT_DAMAGE_FULL: Cell<bool> = const { Cell::new(false) };
     static FRAME_PAINT_TARGET: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
-    /// One identity set per retained recording operation. A stack keeps a
-    /// nested scroll's recording isolated from the tile currently being
-    /// recorded by its parent.
-    static PAINT_TRACKING_STACK: RefCell<Vec<HashSet<ElementId>>> = const { RefCell::new(Vec::new()) };
     #[cfg(feature = "frame-stats")]
     static DRAW_TRAVERSAL_COUNT: Cell<u64> = const { Cell::new(0) };
     #[cfg(feature = "frame-stats")]
@@ -356,28 +341,12 @@ fn sync_paint_invalidation_epoch() {
         }
     });
     if changed {
-        PAINT_INVALIDATED_ELEMENTS.with(|elements| elements.borrow_mut().clear());
         PAINT_INVALIDATED_LOCAL_ELEMENTS.with(|elements| elements.borrow_mut().clear());
-        PAINT_INVALIDATED_SUBTREES.with(|subtrees| subtrees.borrow_mut().clear());
-        PAINT_INVALIDATION_UNKNOWN.with(|unknown| unknown.set(false));
     }
 }
 
-fn record_paint_invalidation_path(path: &[ElementId]) {
-    let Some(element) = path.last().copied() else {
-        return;
-    };
-    sync_paint_invalidation_epoch();
-    PAINT_INVALIDATED_ELEMENTS.with(|elements| {
-        elements.borrow_mut().insert(element);
-    });
-    PAINT_INVALIDATED_SUBTREES.with(|subtrees| {
-        subtrees.borrow_mut().extend(path.iter().copied());
-    });
-}
-
 fn record_local_paint_invalidation_path(path: &[ElementId]) {
-    record_paint_invalidation_path(path);
+    sync_paint_invalidation_epoch();
     if let Some(element) = path.last().copied() {
         PAINT_INVALIDATED_LOCAL_ELEMENTS.with(|elements| {
             elements.borrow_mut().insert(element);
@@ -412,20 +381,17 @@ fn queue_element_invalidation_for(
 }
 
 fn record_current_paint_invalidation(element: ElementId, owns_paint: bool) {
+    // Only an element that owns its paint has a local list to refresh; a
+    // descendant's rebuild reaches its own paint owner through the dirty path.
+    if !owns_paint {
+        return;
+    }
     REBUILD_PATH.with(|path| {
         let path = path.borrow();
         if path.is_empty() {
-            if owns_paint {
-                record_local_paint_invalidation_path(&[element]);
-            } else {
-                record_paint_invalidation_path(&[element]);
-            }
+            record_local_paint_invalidation_path(&[element]);
         } else {
-            if owns_paint {
-                record_local_paint_invalidation_path(&path);
-            } else {
-                record_paint_invalidation_path(&path);
-            }
+            record_local_paint_invalidation_path(&path);
         }
     });
 }
@@ -455,46 +421,7 @@ fn element_invalidation_bounds(element: &dyn Element) -> Option<ElementInvalidat
 
 fn mark_paint_invalidations_unknown() {
     sync_paint_invalidation_epoch();
-    PAINT_INVALIDATION_UNKNOWN.with(|unknown| unknown.set(true));
     queue_element_invalidation(None, ElementChangeKind::Unknown);
-}
-
-/// Starts collecting the logical element identities reached by one retained
-/// paint recording operation.
-#[doc(hidden)]
-pub fn begin_paint_tracking() {
-    PAINT_TRACKING_STACK.with(|stack| stack.borrow_mut().push(HashSet::new()));
-}
-
-/// Finishes the innermost retained paint recording operation and returns the
-/// identities it reached. The returned set is empty when tracking was not
-/// active.
-#[doc(hidden)]
-pub fn take_paint_tracking() -> Vec<ElementId> {
-    PAINT_TRACKING_STACK.with(|stack| {
-        stack
-            .borrow_mut()
-            .pop()
-            .map(|elements| elements.into_iter().collect())
-            .unwrap_or_default()
-    })
-}
-
-#[inline]
-fn record_paint_element(element: ElementId) {
-    PAINT_TRACKING_STACK.with(|stack| {
-        if let Some(elements) = stack.borrow_mut().last_mut() {
-            elements.insert(element);
-        }
-    });
-}
-
-/// Returns whether an element in the current invalidation epoch was marked as
-/// dirty or rebuilt.
-#[doc(hidden)]
-pub fn paint_element_was_invalidated(element: ElementId) -> bool {
-    sync_paint_invalidation_epoch();
-    PAINT_INVALIDATED_ELEMENTS.with(|elements| elements.borrow().contains(&element))
 }
 
 /// Returns whether this element's own local retained paint was invalidated.
@@ -508,9 +435,6 @@ pub fn local_paint_element_was_invalidated(element: ElementId) -> bool {
 #[doc(hidden)]
 pub(crate) fn mark_paint_element_invalidated(element: ElementId) {
     sync_paint_invalidation_epoch();
-    PAINT_INVALIDATED_ELEMENTS.with(|elements| {
-        elements.borrow_mut().insert(element);
-    });
     PAINT_INVALIDATED_LOCAL_ELEMENTS.with(|elements| {
         elements.borrow_mut().insert(element);
     });
@@ -526,22 +450,6 @@ pub(crate) fn mark_event_paint_invalidated(element: ElementId) {
 #[inline]
 pub(crate) fn take_event_paint_invalidated(element: ElementId) -> bool {
     EVENT_PAINT_INVALIDATIONS.with(|invalidations| invalidations.borrow_mut().remove(&element))
-}
-
-/// Returns whether the current invalidation epoch crossed a retained subtree.
-#[doc(hidden)]
-pub fn paint_subtree_was_invalidated(root: ElementId) -> bool {
-    sync_paint_invalidation_epoch();
-    PAINT_INVALIDATED_SUBTREES.with(|subtrees| subtrees.borrow().contains(&root))
-}
-
-/// Returns whether all known paint invalidations in the current epoch could be
-/// attributed to an element path. Unknown producers must use the conservative
-/// complete-cache invalidation path.
-#[doc(hidden)]
-pub fn paint_invalidations_are_known() -> bool {
-    sync_paint_invalidation_epoch();
-    PAINT_INVALIDATION_UNKNOWN.with(|unknown| !unknown.get())
 }
 
 /// Resets the draw traversal counter for the next measured frame.
@@ -1002,14 +910,6 @@ pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable +
 
 // SAFETY: The template is `null::<ElementNode<E>>()` coerced to the target, so
 // it carries exactly that node's vtable and a null data address.
-/// Returns `true` the first time `name` is seen dropping legacy paint, so
-/// callers log each element type once. Only debug builds report it.
-#[cfg_attr(not(any(debug_assertions, test)), allow(dead_code))]
-#[inline]
-fn first_dropped_paint_report(name: &'static str) -> bool {
-    REPORTED_DROPPED_PAINT.with(|reported| reported.borrow_mut().insert(name))
-}
-
 /// The most unmapped draws one frame keeps; a runaway tree must not grow it
 /// without bound.
 const UNMAPPED_DRAW_LIMIT: usize = 1024;
@@ -1021,18 +921,6 @@ fn record_unmapped_draw(id: ElementId, name: &'static str) {
         let mut draws = draws.borrow_mut();
         if draws.len() < UNMAPPED_DRAW_LIMIT && !draws.iter().any(|(seen, _)| *seen == id) {
             draws.push((id, name));
-        }
-    });
-}
-
-/// Notes that `id` drew through the removed legacy paint path and had no retained
-/// paint to show for it.
-#[cfg(debug_assertions)]
-fn record_dropped_paint(id: ElementId, name: &'static str) {
-    DROPPED_PAINT_ELEMENTS.with(|elements| {
-        let mut elements = elements.borrow_mut();
-        if elements.len() < UNMAPPED_DRAW_LIMIT && !elements.iter().any(|(seen, _)| *seen == id) {
-            elements.push((id, name));
         }
     });
 }
@@ -1056,20 +944,6 @@ pub fn take_declined_paint_elements() -> Vec<(ElementId, &'static str)> {
     #[cfg(debug_assertions)]
     {
         DECLINED_PAINT_ELEMENTS.with(|elements| std::mem::take(&mut *elements.borrow_mut()))
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        Vec::new()
-    }
-}
-
-/// Takes the elements that drew through the removed legacy paint path since
-/// the last call. Only debug builds measure this, so release builds see none.
-#[doc(hidden)]
-pub fn take_dropped_paint_elements() -> Vec<(ElementId, &'static str)> {
-    #[cfg(debug_assertions)]
-    {
-        DROPPED_PAINT_ELEMENTS.with(|elements| std::mem::take(&mut *elements.borrow_mut()))
     }
     #[cfg(not(debug_assertions))]
     {
@@ -1118,6 +992,23 @@ pub fn notify_retained_render_structure_changed() {
             generation.checked_add(1)
         })
         .expect("exhausted all retained render structure generations");
+}
+
+/// Makes the next rebuild pass reach every ticking element again.
+///
+/// A rebuild pass normally visits only the elements that were marked dirty and
+/// the paths leading to them, and a stateless ancestor does not descend at all
+/// while the rebuild generation is the one it last saw. An element that
+/// advances on its own clock, such as a running animation, is never marked, so
+/// a tick that publishes nothing new (an eased animation's first steps round to
+/// the start value) would leave the pass skipping it, and the animation would
+/// stop where it stood. Such an element calls this from `rebuild_if_dirty` for
+/// as long as it still has frames to produce. It repaints the target, like any
+/// rebuild invalidation, and leaves layout alone.
+#[doc(hidden)]
+#[inline]
+pub fn keep_ticking_elements_reachable() {
+    advance_rebuild_invalidation_generation();
 }
 
 /// Invalidates event paths and retained render nodes for a hosted child change.

@@ -1964,21 +1964,10 @@ impl Drawable for RawNavigationKeyRelay {
 
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
 
-    fn paint(&self, ctx: &BuildContext) {
-        self.child.paint(ctx);
-    }
-
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
     }
 
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
-    }
 }
 
 impl LayoutElement for RawNavigationKeyRelay {

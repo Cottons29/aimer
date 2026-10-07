@@ -229,6 +229,7 @@ pub mod render_ctx {
     fn report_presented(presented: bool) {
         crate::first_frame::notify_first_frame_presented(presented);
         if !presented {
+            crate::render_ctx::note_frame_not_presented();
             aimer_events::window::request_animation_frame();
         }
     }
@@ -440,21 +441,12 @@ pub mod render_ctx {
                 damage,
             );
             let scene = render_plan.is_none().then(|| {
-                canvas
-                    .take_scene(
-                        &frame.draw_list,
-                        width,
-                        height,
-                        metadata.damage().clone(),
-                    )
-                    .unwrap_or_else(|| {
-                        CompositorScene::from_draw_list(
-                            &frame.draw_list,
-                            width,
-                            height,
-                            metadata.damage().clone(),
-                        )
-                    })
+                CompositorScene::from_draw_list(
+                    &frame.draw_list,
+                    width,
+                    height,
+                    metadata.damage().clone(),
+                )
             });
             build.finish(FramePhase::Build);
 

@@ -133,21 +133,10 @@ impl Drawable for ShellElement {
             .with(ctx, |ctx| Some(ctx.fork_with_state(self.slot.clone())))
     }
 
-    fn paint(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| self.child.paint(ctx));
-    }
-
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.sync_paint_geometry(ctx));
     }
 
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
-    }
 }
 
 impl LayoutElement for ShellElement {

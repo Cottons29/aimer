@@ -380,13 +380,11 @@ struct SliderVisualGeometry {
 }
 
 /// Where a [`RawSlider`] puts its visuals. Offsets are device pixels; the
-/// trail's clip is carried twice, logical in its geometry and in device pixels
-/// as `(x, width, height)` for the canvas clip.
+/// trail's clip is logical, in its geometry.
 struct SliderPlacement {
     track: SliderVisualGeometry,
     trail: SliderVisualGeometry,
     thumb: SliderVisualGeometry,
-    trail_clip_px: (f32, f32, f32),
 }
 
 /// [`SliderPlacement`] for a [`RawRangeSlider`], which has two thumbs.
@@ -395,7 +393,6 @@ struct RangePlacement {
     trail: SliderVisualGeometry,
     lower: SliderVisualGeometry,
     upper: SliderVisualGeometry,
-    trail_clip_px: (f32, f32, f32),
 }
 
 struct RawSliderVisualSlot {
@@ -482,21 +479,10 @@ impl Drawable for RawSliderVisualSlot {
         self.geometry.get().clip
     }
 
-    fn paint(&self, ctx: &BuildContext) {
-        self.child.paint(ctx);
-    }
-
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
     }
 
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
-    }
 }
 
 struct RawSlider<T: RangeValue> {
@@ -664,7 +650,6 @@ impl<T: RangeValue> RawSlider<T> {
                 track,
                 trail,
                 thumb,
-                trail_clip_px: (0.0, trail_width, trail_height),
             },
         )
     }
@@ -849,21 +834,7 @@ impl<T: RangeValue> Drawable for RawSlider<T> {
         }
         draw_child(&self.track, &child_ctx, placement.track.position);
 
-        let (clip_x, clip_width, clip_height) = placement.trail_clip_px;
-        ctx.canvas.save();
-        ctx.canvas.set_clip(
-            Vec2d {
-                x: clip_x,
-                y: placement.trail.position.y,
-            },
-            ResolvedSize {
-                width: clip_width,
-                height: clip_height,
-            },
-        );
         draw_child(&self.trail, &child_ctx, placement.trail.position);
-        ctx.canvas.clear_clip();
-        ctx.canvas.restore();
 
         draw_child(&self.thumb, &child_ctx, placement.thumb.position);
     }
@@ -1310,7 +1281,6 @@ impl<T: RangeValue> RawRangeSlider<T> {
                 trail,
                 lower: lower_geometry,
                 upper: upper_geometry,
-                trail_clip_px: (clip_x, clip_width, trail_height),
             },
         )
     }
@@ -1528,21 +1498,7 @@ impl<T: RangeValue> Drawable for RawRangeSlider<T> {
         }
         draw_child(&self.track, &child_ctx, placement.track.position);
 
-        let (clip_x, clip_width, clip_height) = placement.trail_clip_px;
-        ctx.canvas.save();
-        ctx.canvas.set_clip(
-            Vec2d {
-                x: clip_x,
-                y: placement.trail.position.y,
-            },
-            ResolvedSize {
-                width: clip_width,
-                height: clip_height,
-            },
-        );
         draw_child(&self.trail, &child_ctx, placement.trail.position);
-        ctx.canvas.clear_clip();
-        ctx.canvas.restore();
 
         draw_child(&self.lower_thumb, &child_ctx, placement.lower.position);
         draw_child(&self.upper_thumb, &child_ctx, placement.upper.position);

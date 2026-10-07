@@ -53,19 +53,13 @@ impl AnimatedOverlayContent {
             size,
         )
     }
-
-    fn draw_frame(&self, ctx: &BuildContext, frame: CompositorAnimationFrame) {
-        ctx.canvas.save();
-        frame.apply(ctx);
-        self.child.update(ctx);
-        frame.clear(ctx);
-        ctx.canvas.restore();
-    }
 }
 
 impl Drawable for AnimatedOverlayContent {
     fn update(&self, ctx: &BuildContext) {
-        self.draw_frame(ctx, self.sample_frame(ctx));
+        // The retained tree applies the sampled animation to this node.
+        self.sample_frame(ctx);
+        self.child.update(ctx);
     }
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
@@ -92,20 +86,12 @@ impl Drawable for AnimatedOverlayContent {
         self.child.update(ctx);
     }
 
-    fn paint(&self, ctx: &BuildContext) {
-        self.child.paint(ctx);
-    }
-
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
     }
 
     fn prepare_layout(&self, ctx: &BuildContext) -> bool {
         self.child.prepare_layout(ctx)
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
     }
 
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
@@ -115,14 +101,6 @@ impl Drawable for AnimatedOverlayContent {
         } else {
             CompositorAnimationDecision::Live(frame)
         }
-    }
-
-    fn draw_with_compositor_animation(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        self.draw_frame(ctx, frame);
     }
 
 }

@@ -428,10 +428,6 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
         self.cached_bounds.disagreement("MouseRegion")
     }
 
-    fn paint(&self, ctx: &BuildContext<'_>) {
-        self.child.paint(ctx);
-    }
-
     fn sync_paint_geometry(&self, ctx: &BuildContext<'_>) {
         let child_size = self.child.computed_size(ctx);
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
@@ -445,13 +441,6 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
         self.child.sync_paint_geometry(ctx);
     }
 
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
-    }
 }
 
 #[cfg(test)]
@@ -492,39 +481,6 @@ mod tests {
         fn option_any(&self) -> Option<&dyn Any> {
             Some(self)
         }
-    }
-
-    struct PaintStableElement;
-
-    impl VisitorElement for PaintStableElement {
-        fn debug_name(&self) -> &'static str {
-            "PaintStableElement"
-        }
-    }
-    impl EventElement for PaintStableElement {}
-    impl LayoutElement for PaintStableElement {}
-    impl Drawable for PaintStableElement {
-        fn update(&self, _ctx: &BuildContext<'_>) {}
-
-        fn is_paint_stable(&self) -> bool {
-            true
-        }
-    }
-    impl Rebuildable for PaintStableElement {}
-
-    #[test]
-    fn mouse_region_preserves_a_stable_child_paint_contract() {
-        let region = RawMouseRegion {
-            on_hover_enter: VoidCallback::default(),
-            on_hover_exit: VoidCallback::default(),
-            cursor: None,
-            current_state: Rc::new(Cell::new(PointerState::Outside)),
-            cached_bounds: InteractionBounds::new(),
-            child: PaintStableElement,
-            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
-        };
-
-        assert!(region.is_paint_stable());
     }
 
     struct ResultElement;

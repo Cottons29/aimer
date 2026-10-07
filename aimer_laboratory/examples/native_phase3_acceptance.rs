@@ -105,27 +105,27 @@ struct StaticProbeElement {
 }
 
 impl Drawable for StaticProbeElement {
-    fn update(&self, ctx: &BuildContext) {
+    fn update(&self, _ctx: &BuildContext) {}
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
         let color = if self.index % 2 == 0 {
             Color::WHITE
         } else {
             Color::BLACK
         };
-        ctx.canvas.fill_color_rect(
-            Vec2d::ZERO,
-            ResolvedSize {
-                width: 1_000.0,
-                height: 32.0,
-            },
-            color,
-            [0.0; 4],
-        );
+        probe_fill(ctx, color);
     }
+}
 
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        true
-    }
+/// Records the probe's 1000 x 32 band into the element's own retained list.
+fn probe_fill(ctx: &BuildContext, color: Color) {
+    let canvas = aimer::canvas::Canvas::of(ctx);
+    canvas.fill_color_rect(Vec2d::ZERO, ResolvedSize { width: 1_000.0, height: 32.0 }, color);
+    canvas.finish();
 }
 
 impl VisitorElement for StaticProbeElement {
@@ -168,22 +168,26 @@ struct DynamicProbeElement {
 }
 
 impl Drawable for DynamicProbeElement {
-    fn update(&self, ctx: &BuildContext) {
+    fn update(&self, _ctx: &BuildContext) {
         self.draws.set(self.draws.get().saturating_add(1));
+    }
+
+    fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
+        true
+    }
+
+    fn paint_local_v2(&self, ctx: &BuildContext) {
         let color = if self.index % 2 == 0 {
             Color::BLACK
         } else {
             Color::WHITE
         };
-        ctx.canvas.fill_color_rect(
-            Vec2d::ZERO,
-            ResolvedSize {
-                width: 1_000.0,
-                height: 32.0,
-            },
-            color,
-            [0.0; 4],
-        );
+        probe_fill(ctx, color);
+    }
+
+    /// A dynamic probe stands for content that changes on every frame.
+    fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
+        true
     }
 }
 

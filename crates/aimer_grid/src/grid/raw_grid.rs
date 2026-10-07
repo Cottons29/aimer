@@ -627,16 +627,10 @@ impl RawGrid {
 
         ctx.canvas.save();
         ctx.canvas.translate(cell_pos);
-        if self.overflow == GridOverflow::Clip {
-            ctx.canvas.set_clip(Vec2d::default(), cell_size);
-        }
         ctx.canvas.save();
         ctx.canvas.translate(offset);
         item.child.update(&child_ctx);
         ctx.canvas.restore();
-        if self.overflow == GridOverflow::Clip {
-            ctx.canvas.clear_clip();
-        }
         ctx.canvas.restore();
     }
 
@@ -1249,52 +1243,6 @@ mod tests {
         assert!(message.is_some(), "the failure must be visible");
         #[cfg(debug_assertions)]
         assert!(message.unwrap().contains("Grid layout error"));
-    }
-
-    #[test]
-    fn clipped_grid_balances_each_child_clip() {
-        let canvas = Box::leak(Box::new(InnerCanvas::new()));
-        let ctx = build_context(canvas);
-        let grid = RawGrid {
-            columns: vec![GridTrack::Px(100.0), GridTrack::Px(100.0)],
-            rows: vec![GridTrack::Px(100.0)],
-            column_gap: 0.0,
-            row_gap: 0.0,
-            horizontal_alignment: GridAlignment::Stretch,
-            vertical_alignment: GridAlignment::Stretch,
-            overflow: GridOverflow::Clip,
-            children: vec![
-                RawGridItem {
-                    child: Element::boxed(ZeroSizedBox),
-                    placement: GridPlacement::default(),
-                    horizontal_alignment: None,
-                    vertical_alignment: None,
-                },
-                RawGridItem {
-                    child: Element::boxed(ZeroSizedBox),
-                    placement: GridPlacement::default(),
-                    horizontal_alignment: None,
-                    vertical_alignment: None,
-                },
-            ],
-            layout_cache: RefCell::new(Vec::new()),
-        };
-
-        grid.update(&ctx);
-
-        let commands = canvas.draw_list();
-        let pushes = commands
-            .commands()
-            .iter()
-            .filter(|command| matches!(command, DrawCommand::PushClip { .. }))
-            .count();
-        let pops = commands
-            .commands()
-            .iter()
-            .filter(|command| matches!(command, DrawCommand::PopClip))
-            .count();
-        assert_eq!(pushes, 2);
-        assert_eq!(pops, pushes);
     }
 
     #[test]

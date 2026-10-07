@@ -125,7 +125,5 @@ mod tests {
             .to_element(&context);
 
         assert!(element.is_layout_stable());
-        assert!(element.is_paint_stable());
-        assert!(element.is_paint_bounded());
     }
 }

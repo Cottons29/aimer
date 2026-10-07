@@ -187,7 +187,7 @@ impl EventElement for RepaintBoundaryTarget {
         event: &ElementEvent,
         context: &mut EventDispatchContext<'_, '_>,
     ) -> EventResult {
-        let pos = event.get_pointer_pos().unwrap_or_default();
+        let pos = context.position();
         context.dispatch_child(self.child.as_ref(), pos, event)
     }
 
@@ -283,46 +283,10 @@ impl Drawable for RepaintBoundaryTarget {
         self.child.update(ctx);
     }
 
-    fn paint(&self, ctx: &BuildContext) {
-        self.child.paint(ctx);
-    }
-
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
     }
 
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
-    }
-
-    fn draw_paint_islands(
-        &self,
-        retained_ctx: &BuildContext,
-        live_ctx: &BuildContext,
-        draw_stable: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-        draw_dynamic: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-    ) -> bool {
-        self.child.draw_paint_islands(
-            retained_ctx,
-            live_ctx,
-            draw_stable,
-            draw_dynamic,
-        )
-    }
 }
 
 #[cfg(all(test, feature = "portable-guest"))]
@@ -346,8 +310,6 @@ mod tests {
     use std::sync::OnceLock;
 
     use aimer_attribute::size::ResolvedSize;
-    use aimer_cupid::compositor::SceneContent;
-    use aimer_cupid::damage_region::DamageSet;
     use super::*;
     use crate::components::context::WindowHandle;
 
@@ -380,29 +342,17 @@ mod tests {
 
     struct ProbeWidget {
         draws: Rc<Cell<usize>>,
-        paints: Rc<Cell<usize>>,
-        stable: bool,
-        paint_commands: usize,
     }
 
     struct ProbeElement {
         draws: Rc<Cell<usize>>,
-        paints: Rc<Cell<usize>>,
-        stable: bool,
-        paint_commands: usize,
     }
 
     impl crate::widget::PortableWidget for ProbeWidget {}
 
     impl Widget for ProbeWidget {
         fn to_element(self, _ctx: &BuildContext) -> AnyElement {
-            ProbeElement {
-                draws: self.draws,
-                paints: self.paints,
-                stable: self.stable,
-                paint_commands: self.paint_commands,
-            }
-            .boxed()
+            ProbeElement { draws: self.draws }.boxed()
         }
     }
 
@@ -421,217 +371,24 @@ mod tests {
     }
 
     impl Drawable for ProbeElement {
-        fn update(&self, ctx: &BuildContext) {
+        fn update(&self, _ctx: &BuildContext) {
             self.draws.set(self.draws.get() + 1);
-            ctx.canvas.fill_rect(
-                (0.0, 0.0).into(),
-                ResolvedSize {
-                    width: 8.0,
-                    height: 8.0,
-                },
-            );
-        }
-
-        fn paint(&self, ctx: &BuildContext) {
-            self.paints.set(self.paints.get() + 1);
-            for _ in 0..self.paint_commands {
-                ctx.canvas.fill_rect(
-                    (0.0, 0.0).into(),
-                    ResolvedSize {
-                        width: 8.0,
-                        height: 8.0,
-                    },
-                );
-            }
-        }
-
-        fn is_paint_stable(&self) -> bool {
-            self.stable
-        }
-
-        fn is_paint_bounded(&self) -> bool {
-            true
         }
     }
 
     #[test]
-    fn stable_child_is_painted_once_and_replayed_through_the_boundary() {
-        let _generation_guard = crate::components::element::test_generation_guard();
+    fn the_boundary_updates_its_child_every_frame() {
         let ctx = context();
         let draws = Rc::new(Cell::new(0));
-        let paints = Rc::new(Cell::new(0));
         let element = RepaintBoundary::new()
             .child(ProbeWidget {
                 draws: draws.clone(),
-                paints: paints.clone(),
-                stable: true,
-                paint_commands: 4,
             })
             .to_element(&ctx);
 
-        ctx.canvas.begin_frame();
         element.update(&ctx);
-        let inner = ctx.canvas.get_inner_canvas();
-        let first_list = inner.take_draw_list();
-        let first_scene = inner
-            .take_scene(&first_list, 8, 8, DamageSet::full(8, 8))
-            .expect("boundary paint should be represented in the scene");
-        ctx.canvas.begin_frame();
         element.update(&ctx);
-        let second_list = inner.take_draw_list();
-        let second_scene = inner
-            .take_scene(&second_list, 8, 8, DamageSet::full(8, 8))
-            .expect("boundary paint should be represented in the scene");
-        let first = first_list.stats();
-        let second = second_list.stats();
-
-        assert_eq!(draws.get(), 0);
-        assert_eq!(paints.get(), 1);
-        assert_eq!(first.commands, second.commands);
-        assert_eq!(second.retained_layers, 1);
-        assert_eq!(first_scene.nodes().len(), 1);
-        assert!(matches!(
-            first_scene.nodes()[0].content(),
-            SceneContent::CachedSurface(_)
-        ));
-        assert!(second_scene.diff(Some(&first_scene)).is_empty());
-    }
-
-    #[test]
-    fn stable_element_without_a_boundary_uses_the_scene_cache() {
-        let _generation_guard = crate::components::element::test_generation_guard();
-        let ctx = context();
-        let draws = Rc::new(Cell::new(0));
-        let paints = Rc::new(Cell::new(0));
-        let element = ProbeWidget {
-            draws: draws.clone(),
-            paints: paints.clone(),
-            stable: true,
-            paint_commands: 4,
-        }
-        .to_element(&ctx);
-
-        ctx.canvas.begin_frame();
-        element.update(&ctx);
-        let inner = ctx.canvas.get_inner_canvas();
-        let draw_list = inner.take_draw_list();
-        let scene = inner
-            .take_scene(&draw_list, 8, 8, DamageSet::full(8, 8))
-            .expect("all drawn elements still produce scene metadata");
-
-        assert_eq!(draws.get(), 0);
-        assert_eq!(paints.get(), 1);
-        assert_eq!(draw_list.stats().retained_layers, 1);
-        assert!(matches!(
-            scene.nodes()[0].content(),
-            SceneContent::CachedSurface(_)
-        ));
-    }
-
-    #[test]
-    fn stable_element_is_retained_by_the_scene_tree_without_a_wrapper() {
-        let _generation_guard = crate::components::element::test_generation_guard();
-        let ctx = context();
-        let draws = Rc::new(Cell::new(0));
-        let paints = Rc::new(Cell::new(0));
-        let element = ProbeWidget {
-            draws: draws.clone(),
-            paints: paints.clone(),
-            stable: true,
-            paint_commands: 4,
-        }
-        .to_element(&ctx);
-
-        ctx.canvas.begin_frame();
-        element.update(&ctx);
-        let inner = ctx.canvas.get_inner_canvas();
-        let first_list = inner.take_draw_list();
-        let first_scene = inner
-            .take_scene(&first_list, 8, 8, DamageSet::full(8, 8))
-            .expect("stable element should be represented in the scene");
-
-        ctx.canvas.begin_frame();
-        element.update(&ctx);
-        let second_list = inner.take_draw_list();
-        let second_scene = inner
-            .take_scene(&second_list, 8, 8, DamageSet::new(8, 8))
-            .expect("retained scene should survive an empty-damage frame");
-
-        assert_eq!(draws.get(), 0);
-        assert_eq!(paints.get(), 1);
-        assert_eq!(first_list.stats().retained_layers, 1);
-        assert_eq!(second_list.stats().retained_layers, 1);
-        assert!(matches!(
-            first_scene.nodes()[0].content(),
-            SceneContent::CachedSurface(_)
-        ));
-        assert!(second_scene.diff(Some(&first_scene)).is_empty());
-    }
-
-    #[test]
-    fn small_stable_leaf_replays_commands_without_a_gpu_surface() {
-        let _generation_guard = crate::components::element::test_generation_guard();
-        let ctx = context();
-        let draws = Rc::new(Cell::new(0));
-        let paints = Rc::new(Cell::new(0));
-        let element = ProbeWidget {
-            draws: draws.clone(),
-            paints: paints.clone(),
-            stable: true,
-            paint_commands: 1,
-        }
-        .to_element(&ctx);
-
-        ctx.canvas.begin_frame();
-        element.update(&ctx);
-        let inner = ctx.canvas.get_inner_canvas();
-        let first = inner.take_draw_list();
-        let first_scene = inner
-            .take_scene(&first, 8, 8, DamageSet::full(8, 8))
-            .expect("command-retained element should be represented in the scene");
-        ctx.canvas.begin_frame();
-        element.update(&ctx);
-        let second = inner.take_draw_list();
-        let second_scene = inner
-            .take_scene(&second, 8, 8, DamageSet::new(8, 8))
-            .expect("command-retained element should remain in the scene");
-
-        assert_eq!(draws.get(), 0);
-        assert_eq!(paints.get(), 1);
-        assert_eq!(first.stats().retained_layers, 0);
-        assert_eq!(second.stats().retained_layers, 0);
-        assert_eq!(first.stats().commands, second.stats().commands);
-        assert_eq!(first_scene.nodes().len(), 1);
-        assert!(matches!(
-            first_scene.nodes()[0].content(),
-            SceneContent::Live
-        ));
-        assert!(second_scene.diff(Some(&first_scene)).is_empty());
-    }
-
-    #[test]
-    fn dynamic_child_uses_the_live_path_instead_of_being_promoted() {
-        let ctx = context();
-        let draws = Rc::new(Cell::new(0));
-        let paints = Rc::new(Cell::new(0));
-        let element = RepaintBoundary::new()
-            .child(ProbeWidget {
-                draws: draws.clone(),
-                paints: paints.clone(),
-                stable: false,
-                paint_commands: 1,
-            })
-            .to_element(&ctx);
-
-        ctx.canvas.begin_frame();
-        element.update(&ctx);
-        ctx.canvas.get_inner_canvas().take_draw_list();
-        ctx.canvas.begin_frame();
-        element.update(&ctx);
-        let stats = ctx.canvas.get_inner_canvas().take_draw_list().stats();
 
         assert_eq!(draws.get(), 2);
-        assert_eq!(paints.get(), 0);
-        assert_eq!(stats.retained_layers, 0);
     }
 }

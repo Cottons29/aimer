@@ -9,7 +9,7 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, ChildBuilder, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
-    PaintDamageTracker, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
+    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
     StatelessElement, VisitorElement, Widget,
 };
 
@@ -377,11 +377,7 @@ impl MorphBackgroundElement {
 }
 
 impl Drawable for MorphBackgroundElement {
-    fn update(&self, ctx: &BuildContext) {
-        let paint = self.paint_value();
-        ctx.canvas
-            .fill_color_rect(Vec2d::ZERO, paint.size, paint.color.to_color(), [0.0; 4]);
-    }
+    fn update(&self, _ctx: &BuildContext) {}
 
     fn can_paint_local_v2(&self, _ctx: &BuildContext) -> bool {
         true
@@ -399,9 +395,6 @@ impl Drawable for MorphBackgroundElement {
         self.recorded_signature.get() != Some(Self::signature(self.paint_value()))
     }
 
-    fn is_paint_bounded(&self) -> bool {
-        true
-    }
 }
 
 impl VisitorElement for MorphBackgroundElement {
@@ -500,7 +493,6 @@ impl Widget for MorphTransitionFrame {
             } else {
                 MorphState::Idle
             }),
-            damage: PaintDamageTracker::new(),
         }
         .boxed()
     }
@@ -565,7 +557,6 @@ struct MorphTransitionElement {
     new_snapshot: LocalCell<LayoutSnapshot>,
     has_background_color: bool,
     morph_state: Cell<MorphState>,
-    damage: PaintDamageTracker,
 }
 
 // Safety: rendering pipeline is single-threaded
@@ -587,98 +578,13 @@ impl MorphTransitionElement {
 
 impl Drawable for MorphTransitionElement {
     fn update(&self, ctx: &BuildContext) {
-        let now = AnimInstant::now();
-
-        let curved_value = self.controller.tick(now);
-        let is_animating = self.controller.is_animating();
-
-        let morph_state = self.morph_state.get();
-
-        crate::widgets::damage::mark_dynamic_animation_damage(
-            &self.damage,
-            is_animating || morph_state != MorphState::Idle,
-        );
-
-        match morph_state {
-            MorphState::Idle => {
-                // No morph in progress — draw the current child normally.
-                unsafe {
-                    if let Some(child) = self.current_child.get() {
-                        child.update(ctx);
-                    }
-                }
-            }
-            MorphState::MorphingIn => {
-                let layout = self.interpolated_layout(curved_value);
-                let new_size = unsafe {
-                    self.current_child
-                        .get()
-                        .map(|c| c.computed_size(ctx))
-                        .unwrap_or(ResolvedSize {
-                            width: 0.0,
-                            height: 0.0,
-                        })
-                };
-                let scale_x = if new_size.width > 0.01 {
-                    layout.size.0 / new_size.width
-                } else {
-                    1.0
-                };
-                let scale_y = if new_size.height > 0.01 {
-                    layout.size.1 / new_size.height
-                } else {
-                    1.0
-                };
-
-                // --- Phase 1: Draw old child fading out (first half) ---
-                if curved_value < 0.5 {
-                    unsafe {
-                        if let Some(old) = self.old_child.get() {
-                            let old_alpha = 1.0 - curved_value * 2.0;
-
-                            ctx.canvas.save();
-
-                            ctx.canvas.set_alpha(old_alpha);
-                            old.update(ctx);
-                            ctx.canvas.restore();
-                        }
-                    }
-                }
-
-                // --- Phase 2: Draw new child morphing in (second half) ---
-                let new_alpha = if curved_value < 0.5 {
-                    curved_value * 2.0
-                } else {
-                    1.0
-                };
-
-                let sx = lerp_f32(scale_x, 1.0, curved_value);
-                let sy = lerp_f32(scale_y, 1.0, curved_value);
-                let cx = new_size.width / 2.0;
-                let cy = new_size.height / 2.0;
-
-                unsafe {
-                    if let Some(child) = self.current_child.get() {
-                        ctx.canvas.save();
-
-                        ctx.canvas.translate((cx, cy).into());
-                        ctx.canvas.scale(sx, sy);
-                        ctx.canvas.translate((-cx, -cy).into());
-
-                        ctx.canvas.set_alpha(new_alpha);
-                        child.update(ctx);
-                        ctx.canvas.restore();
-                    }
-                }
-            }
+        self.controller.tick(AnimInstant::now());
+        if self.controller.is_animating() || self.morph_state.get() != MorphState::Idle {
+            aimer_widget::mark_paint_damage_full();
         }
-
-        if is_animating {
-            self.window.request_redraw();
-        } else if morph_state == MorphState::MorphingIn {
-            let _ = unsafe { self.old_child.take() };
-            self.morph_state.set(MorphState::Idle);
-        }
+        // The morph itself is the children's presentation (see
+        // `sync_local_v2_state`); this walks them and settles the state.
+        self.draw_local_v2_compatibility(ctx);
     }
 
     #[inline]
@@ -821,6 +727,10 @@ impl Drawable for MorphTransitionElement {
                 let _ = (&mut *self.new_background.get()).take();
             }
             self.morph_state.set(MorphState::Idle);
+            // The render tree still holds the outgoing child's nodes: tell it
+            // the structure changed and give it a frame to resync.
+            aimer_widget::notify_hosted_element_tree_changed();
+            self.window.request_redraw();
         }
     }
 }

@@ -28,8 +28,8 @@ use crate::{AnyElement, AnyWidget};
 /// into an element, so a plain child value can serve exactly one build. That is
 /// enough for a container, which is rebuilt by its own parent and therefore
 /// receives a fresh child widget every time, but not for a widget that rebuilds
-/// *itself*: a button rebuilds on hover and press, a scrollable on every offset
-/// change, a theme on every tick of its transition. Each of those rebuilds needs
+/// *itself*: a scrollable may rebuild on offset changes, a theme on every tick
+/// of its transition. Each of those rebuilds needs
 /// the child's element again, and a consumed widget cannot produce a second one.
 ///
 /// Reproducing the widget is not available either — cloning it would need a
@@ -38,7 +38,7 @@ use crate::{AnyElement, AnyWidget};
 /// and keeps the element it produced; every later build hands the tree a thin
 /// proxy over that same element. A self-rebuilding parent therefore does not
 /// rebuild its subtree at all, which is strictly cheaper than rebuilding it on
-/// every hover.
+/// every update.
 ///
 /// # Identity
 ///
@@ -497,7 +497,7 @@ impl EventElement for RetainedChildElement {
         let Some(child) = self.child() else {
             return EventResult::ignored();
         };
-        let pos = event.get_pointer_pos().unwrap_or_default();
+        let pos = context.position();
         context.dispatch_child(child, pos, event)
     }
 
@@ -663,62 +663,12 @@ impl Drawable for RetainedChildElement {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        if let Some(child) = self.child() {
-            child.paint(ctx);
-        }
-    }
-
-    #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         if let Some(child) = self.child() {
             child.sync_paint_geometry(ctx);
         }
     }
 
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        self.child()
-            .map(Drawable::is_paint_stable)
-            .unwrap_or(false)
-    }
-
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        self.child()
-            .map(Drawable::is_paint_bounded)
-            .unwrap_or(false)
-    }
-
-    #[doc(hidden)]
-    fn draw_paint_islands(
-        &self,
-        retained_ctx: &BuildContext,
-        live_ctx: &BuildContext,
-        draw_stable: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-        draw_dynamic: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-    ) -> bool {
-        self.child()
-            .map(|child| {
-                child.draw_paint_islands(
-                    retained_ctx,
-                    live_ctx,
-                    draw_stable,
-                    draw_dynamic,
-                )
-            })
-            .unwrap_or(false)
-    }
 }
 
 impl Rebuildable for RetainedChildElement {
@@ -750,6 +700,8 @@ mod tests {
     use aimer_attribute::size::ResolvedSize;
 
     use super::*;
+
+    mod scroll_position;
     use crate::base::WindowHandle;
     use crate::components::element::broadcast_event;
     use crate::portable::{
@@ -805,64 +757,6 @@ mod tests {
     }
 
     impl crate::widget::PortableWidget for Counting {}
-
-    struct PaintContract {
-        stable: bool,
-    }
-
-    impl Widget for PaintContract {
-        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
-            PaintContractElement {
-                stable: self.stable,
-            }
-            .boxed()
-        }
-    }
-
-    impl crate::widget::PortableWidget for PaintContract {}
-
-    struct PaintContractElement {
-        stable: bool,
-    }
-
-    impl VisitorElement for PaintContractElement {
-        fn debug_name(&self) -> &'static str {
-            "PaintContract"
-        }
-    }
-
-    impl Rebuildable for PaintContractElement {}
-    impl LayoutElement for PaintContractElement {}
-    impl EventElement for PaintContractElement {}
-
-    impl Drawable for PaintContractElement {
-        fn update(&self, _ctx: &BuildContext) {}
-
-        fn is_paint_stable(&self) -> bool {
-            self.stable
-        }
-
-        fn draw_paint_islands(
-            &self,
-            _retained_ctx: &BuildContext,
-            live_ctx: &BuildContext,
-            _draw_stable: &mut dyn FnMut(
-                &dyn Element,
-                &BuildContext,
-                Vec2d,
-                Option<ResolvedSize>,
-            ),
-            draw_dynamic: &mut dyn FnMut(
-                &dyn Element,
-                &BuildContext,
-                Vec2d,
-                Option<ResolvedSize>,
-            ),
-        ) -> bool {
-            draw_dynamic(self, live_ctx, Vec2d::ZERO, None);
-            true
-        }
-    }
 
     impl Widget for Probe {
         fn to_element(self, ctx: &BuildContext) -> AnyElement {
@@ -1037,25 +931,6 @@ mod tests {
             "reconciliation matches on the key of the widget, not of its holder"
         );
         assert_eq!(child.debug_name(), "Probe");
-    }
-
-    #[tokio::test]
-    async fn a_placement_forwards_the_retained_child_paint_contract() {
-        let ctx = context();
-        let stable = ChildBuilder::from_widget(PaintContract { stable: true }).build(&ctx);
-        assert!(stable.is_paint_stable());
-
-        let dynamic = ChildBuilder::from_widget(PaintContract { stable: false }).build(&ctx);
-        let mut dynamic_calls = 0;
-        let handled = dynamic.draw_paint_islands(
-            &ctx,
-            &ctx,
-            &mut |_element, _ctx, _offset, _clip| {},
-            &mut |_element, _ctx, _offset, _clip| dynamic_calls += 1,
-        );
-
-        assert!(handled);
-        assert_eq!(dynamic_calls, 1);
     }
 
     #[tokio::test]

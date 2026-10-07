@@ -274,13 +274,7 @@ impl Drawable for RawOverflowIndicator {
         let child_size = self.child.computed_size(ctx);
         let _overflow = detect_overflow(child_size, bounds, Vec2d::default());
 
-        ctx.canvas.save();
-        if self.clip {
-            ctx.canvas.set_clip(Vec2d::default(), bounds);
-        }
         self.child.update(ctx);
-        ctx.canvas.restore();
-
     }
 
     fn can_paint_local_v2(&self, ctx: &BuildContext) -> bool {

@@ -848,8 +848,6 @@ impl<E: Element> Drawable for RawResizable<E> {
             .save(ctx.scale, abs_x, abs_y, size.width, size.height);
 
         ctx.canvas.save();
-        ctx.canvas
-            .set_clip_rounded(Vec2d { x: 0.0, y: 0.0 }, size, [0.0; 4]);
 
         let mut child_ctx = ctx.clone();
         child_ctx.box_constraint.max_width = size.width;
@@ -860,7 +858,6 @@ impl<E: Element> Drawable for RawResizable<E> {
             self.child.update(&child_ctx);
         }
 
-        ctx.canvas.clear_clip();
         ctx.canvas.restore();
     }
 }

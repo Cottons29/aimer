@@ -194,7 +194,6 @@ fn retained_paint_probe() -> AnyWidget {
         SizedBox::new().width(1.0).height(1.0),
     )
     .opacity()
-    .bounded()
     .boxed()
 }
 

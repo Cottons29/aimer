@@ -1,4 +1,3 @@
-use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 
 use crate::base::BuildContext;
@@ -64,64 +63,6 @@ impl CompositorAnimationFrame {
             clip,
             active,
             valid,
-        }
-    }
-
-    /// Applies this frame to the current canvas state.
-    #[inline]
-    #[doc(hidden)]
-    pub fn apply(self, ctx: &BuildContext) {
-        if !self.valid {
-            return;
-        }
-
-        if let Some(size) = self.clip {
-            ctx.canvas.set_clip((0.0, 0.0).into(), size);
-        }
-
-        match self.transform {
-            CompositorTransform::Identity => {}
-            CompositorTransform::Translate { x, y } => {
-                ctx.canvas.translate((x, y).into());
-            }
-            CompositorTransform::Scale {
-                sx,
-                sy,
-                origin_x,
-                origin_y,
-            } => {
-                ctx.canvas.translate((origin_x, origin_y).into());
-                ctx.canvas.scale(sx, sy);
-                ctx.canvas.translate((-origin_x, -origin_y).into());
-            }
-            CompositorTransform::Rotate {
-                radians,
-                origin_x,
-                origin_y,
-            } => {
-                ctx.canvas.translate((origin_x, origin_y).into());
-                ctx.canvas.rotate(radians);
-                ctx.canvas.translate((-origin_x, -origin_y).into());
-            }
-        }
-
-        if let Some(opacity) = self.opacity {
-            ctx.canvas.set_alpha(opacity);
-        }
-    }
-
-    /// Removes the clip and opacity state installed by [`Self::apply`].
-    #[inline]
-    #[doc(hidden)]
-    pub fn clear(self, ctx: &BuildContext) {
-        if !self.valid {
-            return;
-        }
-        if self.clip.is_some() {
-            ctx.canvas.clear_clip();
-        }
-        if self.opacity.is_some() {
-            ctx.canvas.restore_alpha();
         }
     }
 }
@@ -361,21 +302,6 @@ pub trait Drawable {
         [0.0; 4]
     }
 
-    /// Emits only the visual commands for this element.
-    ///
-    /// This is the paint-only half of [`Self::update`]. It may be recorded and
-    /// replayed by an internal retained-paint owner, so it must not rebuild a
-    /// child, update hit-test or focus geometry, advance animation/input
-    /// state, start asynchronous work, or depend on the cursor or viewport.
-    /// The default keeps existing custom elements on the ordinary live path;
-    /// an implementation must override this method before opting into
-    /// [`Self::is_paint_stable`].
-    #[doc(hidden)]
-    #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        self.update(ctx);
-    }
-
     /// Synchronizes live geometry needed by interaction and hit testing before
     /// a retained paint replay.
     ///
@@ -399,76 +325,6 @@ pub trait Drawable {
         false
     }
 
-    /// Returns whether this element's paint can be recorded once and replayed
-    /// under a different transform without running its live `draw` lifecycle
-    /// again.
-    ///
-    /// Implementors must return `true` only when drawing has no observable
-    /// side effects outside the command stream: it must not update event or
-    /// hit-test geometry, advance animation/input state, start asynchronous
-    /// work, or depend on the current viewport/cursor. The matching
-    /// [`Self::paint`] implementation must emit the complete visual command
-    /// stream without those side effects. Structural, style, text, image, and
-    /// scale changes are still invalidated by the owner of a retained stream.
-    /// The conservative default keeps custom and dynamic elements on the
-    /// normal draw path.
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        false
-    }
-
-    /// Returns whether live drawing stays within the element's current
-    /// [`LayoutElement::content_size`](crate::LayoutElement::content_size)
-    /// rectangle.
-    ///
-    /// This contract is intentionally weaker than [`Self::is_paint_stable`].
-    /// A bounded element may still perform live work, rebuild children, or
-    /// start asynchronous loading; it is only promising that its visual
-    /// output remains inside its current layout bounds. Animation damage
-    /// tracking uses this to invalidate a local rectangle without opting the
-    /// element into retained paint replay.
-    ///
-    /// Implementations must return `false` when painting can extend outside
-    /// the layout rectangle, or when that fact cannot be established
-    /// conservatively.
-    #[doc(hidden)]
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        false
-    }
-
-    /// Draws a subtree whose stable prefix and dynamic suffix can be composed
-    /// independently by a retained viewport.
-    ///
-    /// The default is conservative: the caller must use [`Self::update`] for
-    /// the complete subtree. Implementors may opt in only when they can
-    /// preserve their normal paint order and provide child contexts that are
-    /// valid both for a full retained recording (`retained_ctx`) and for the
-    /// currently visible frame (`live_ctx`). The callbacks receive the child,
-    /// its un-translated context, its device-snapped local offset, and an
-    /// optional parent clip. A caller owns the actual recording/compositing
-    /// policy; this method only exposes the safe partition.
-    #[doc(hidden)]
-    fn draw_paint_islands(
-        &self,
-        _retained_ctx: &BuildContext,
-        _live_ctx: &BuildContext,
-        _draw_stable: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-        _draw_dynamic: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-    ) -> bool {
-        false
-    }
-
     /// Samples the compositor animation for the current frame.
     #[doc(hidden)]
     #[inline]
@@ -476,38 +332,12 @@ pub trait Drawable {
         CompositorAnimationDecision::None
     }
 
-    /// Draws a sampled animation on the live path without ticking it again.
-    #[doc(hidden)]
-    #[inline]
-    fn draw_with_compositor_animation(
-        &self,
-        ctx: &BuildContext,
-        _frame: CompositorAnimationFrame,
-    ) {
-        self.update(ctx);
-    }
-
-    /// Updates damage bookkeeping after a retained compositor frame was
-    /// replayed.
-    #[doc(hidden)]
-    #[inline]
-    fn update_compositor_animation_damage(
-        &self,
-        _ctx: &BuildContext,
-        _frame: CompositorAnimationFrame,
-    ) {
-    }
 }
 
 impl Drawable for Box<dyn Drawable> {
     #[inline]
     fn update(&self, ctx: &BuildContext) {
         self.as_ref().update(ctx);
-    }
-
-    #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        self.as_ref().paint(ctx);
     }
 
     #[inline]
@@ -518,16 +348,6 @@ impl Drawable for Box<dyn Drawable> {
     #[inline]
     fn prepare_layout(&self, ctx: &BuildContext) -> bool {
         self.as_ref().prepare_layout(ctx)
-    }
-
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        self.as_ref().is_paint_stable()
-    }
-
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        self.as_ref().is_paint_bounded()
     }
 
     #[inline]
@@ -569,52 +389,8 @@ impl Drawable for Box<dyn Drawable> {
     }
 
     #[inline]
-    fn draw_paint_islands(
-        &self,
-        retained_ctx: &BuildContext,
-        live_ctx: &BuildContext,
-        draw_stable: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-        draw_dynamic: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-    ) -> bool {
-        self.as_ref().draw_paint_islands(
-            retained_ctx,
-            live_ctx,
-            draw_stable,
-            draw_dynamic,
-        )
-    }
-
-    #[inline]
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
         self.as_ref().compositor_animation(ctx)
     }
 
-    #[inline]
-    fn draw_with_compositor_animation(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        self.as_ref().draw_with_compositor_animation(ctx, frame);
-    }
-
-    #[inline]
-    fn update_compositor_animation_damage(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        self.as_ref()
-            .update_compositor_animation_damage(ctx, frame);
-    }
 }

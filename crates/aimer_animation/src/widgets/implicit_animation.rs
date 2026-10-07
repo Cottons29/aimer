@@ -1,4 +1,4 @@
-use std::cell::{Cell, UnsafeCell};
+use std::cell::UnsafeCell;
 use std::panic::Location;
 use std::rc::Rc;
 use std::time::Duration;
@@ -9,7 +9,7 @@ use aimer_events::element::ElementEvent;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, Key, LayoutElement,
-    PaintDamageTracker, Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
+    Rebuildable, State, StateUpdater, StatefulElement, StatefulWidget,
     VisitorElement, Widget,
     carry_element_state,
 };
@@ -328,8 +328,6 @@ impl<T: Animatable + Clone + PartialEq + 'static> Widget for ImplicitAnimatedFra
             builder: self.builder.clone(),
             controller: self.controller.clone(),
             tween: self.tween.clone(),
-            damage: PaintDamageTracker::new(),
-            output_changed: Cell::new(false),
         }
         .boxed()
     }
@@ -347,9 +345,6 @@ struct ImplicitAnimatedElement<T: Animatable + Clone + PartialEq + 'static> {
     builder: Rc<ImplicitElementBuilder<T>>,
     controller: AnimationController,
     tween: Rc<LocalCell<Option<Tween<T>>>>,
-    damage: PaintDamageTracker,
-    /// Set when `advance` replaced the child, until the next `update` reports it.
-    output_changed: Cell<bool>,
 }
 
 unsafe impl<T: Animatable + Clone + PartialEq + 'static> Send for ImplicitAnimatedElement<T> {}
@@ -402,14 +397,6 @@ impl<T: Animatable + Clone + PartialEq + 'static> ImplicitAnimatedElement<T> {
 
 impl<T: Animatable + Clone + PartialEq + 'static> Drawable for ImplicitAnimatedElement<T> {
     fn update(&self, ctx: &BuildContext) {
-        let changed = self.output_changed.replace(false);
-        crate::widgets::damage::mark_bounded_child_damage(
-            &self.damage,
-            ctx,
-            unsafe { &*self.child.get() }.as_ref(),
-            changed || self.controller.is_animating(),
-        );
-
         unsafe { &*self.child.get() }.update(ctx);
     }
 
@@ -424,10 +411,6 @@ impl<T: Animatable + Clone + PartialEq + 'static> Drawable for ImplicitAnimatedE
     #[inline]
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
 
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        unsafe { &*self.child.get() }.is_paint_bounded()
-    }
 }
 
 impl<T: Animatable + Clone + PartialEq + 'static> VisitorElement for ImplicitAnimatedElement<T> {
@@ -452,9 +435,7 @@ impl<T: Animatable + Clone + PartialEq + 'static> EventElement for ImplicitAnima
 
 impl<T: Animatable + Clone + PartialEq + 'static> Rebuildable for ImplicitAnimatedElement<T> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        if self.advance(ctx) {
-            self.output_changed.set(true);
-        }
+        self.advance(ctx);
         unsafe { &*self.child.get() }.rebuild_if_dirty(ctx);
     }
 }
@@ -754,8 +735,6 @@ mod tests {
             builder: Rc::new(|_, _| TestElement.boxed()),
             controller,
             tween: Rc::new(LocalCell::new(Some(Tween::new(0.0, 1.0)))),
-            damage: PaintDamageTracker::new(),
-            output_changed: Cell::new(false),
         };
 
         element.rebuild_if_dirty(&ctx);
@@ -801,8 +780,6 @@ mod tests {
             builder,
             controller,
             tween: Rc::new(LocalCell::new(Some(Tween::new(0.0, 1.0)))),
-            damage: PaintDamageTracker::new(),
-            output_changed: Cell::new(false),
         };
 
         // A frame whose interpolated value changed rebuilds the child (ids 1,

@@ -32,6 +32,3 @@ desktop-bin = []
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.50"
 
-
-[profile.dev]
-debug = "full"

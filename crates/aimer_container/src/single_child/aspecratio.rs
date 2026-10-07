@@ -227,20 +227,6 @@ impl Drawable for RawAspectRatio {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        let size = self.computed_size(ctx);
-        let mut child_ctx = ctx.clone();
-        child_ctx.parent_size = size;
-        child_ctx.box_constraint = BoxConstraint {
-            min_width: 0.0,
-            min_height: 0.0,
-            max_width: size.width,
-            max_height: size.height,
-        };
-        self.child.paint(&child_ctx);
-    }
-
-    #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         let size = self.computed_size(ctx);
         let mut child_ctx = ctx.clone();
@@ -254,10 +240,6 @@ impl Drawable for RawAspectRatio {
         self.child.sync_paint_geometry(&child_ctx);
     }
 
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
 }
 
 impl LayoutElement for RawAspectRatio {

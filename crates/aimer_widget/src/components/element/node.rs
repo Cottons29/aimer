@@ -23,13 +23,9 @@ impl<E: Element + 'static> ElementNode<E> {
     }
 
     #[inline]
-    fn draw_live(&self, ctx: &BuildContext, frame: Option<CompositorAnimationFrame>) {
+    fn draw_live(&self, ctx: &BuildContext) {
         let before = element_tree_generation();
-        if let Some(frame) = frame {
-            self.element.draw_with_compositor_animation(ctx, frame);
-        } else {
-            self.element.update(ctx);
-        }
+        self.element.update(ctx);
         let after = element_tree_generation();
         if after != before {
             self.set_subtree_generation(after);
@@ -46,69 +42,13 @@ impl<E: Element + 'static> ElementNode<E> {
         }
     }
 
+    /// Walks the subtree of an element whose animation was already sampled this
+    /// frame, so its controller is not ticked a second time.
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-    fn draw_compositor_animation(&self, ctx: &BuildContext, frame: CompositorAnimationFrame) {
-        let bounds = self.element.content_size(ctx);
-        let priority = self.element.compositor_priority();
-        let descriptor = SceneNodeDescriptor {
-            id: SceneNodeId::from_raw(self.id.get().get()),
-            bounds: Rect::new(0.0, 0.0, bounds.width, bounds.height),
-            order: self.element.layer(),
-            revision: SceneRevision::new(
-                self.subtree_generation(),
-                paint_element_was_invalidated(self.id.get())
-                    .then_some(rebuild_invalidation_generation())
-                    .unwrap_or(0),
-                layout_invalidation_generation(),
-                ctx.canvas.texture_cache_epoch(),
-            ),
-            // The provider has proved that its static paint is safe to retain;
-            // the animation itself is represented by the scene state captured
-            // after `frame.apply` below.
-            cache_eligible: true,
-            bounded: true,
-            priority,
-        };
-
-        ctx.canvas.save();
-        frame.apply(ctx);
-        let scene_node = ctx.canvas.begin_scene_node(descriptor);
-        self.element.sync_paint_geometry(ctx);
-
-        let retained = if let Some(key) = crate::paint_isolated::PaintContract::new(
-            ctx,
-            bounds,
-            self.subtree_generation(),
-        ) {
-            crate::paint_isolated::paint_or_replay_scene_node(
-                self.id.get(),
-                ctx,
-                &self.element,
-                key,
-                priority,
-                true,
-            )
-        } else {
-            false
-        };
-
-        if retained {
-            self.element.update_compositor_animation_damage(ctx, frame);
-        }
-
-        drop(scene_node);
-        frame.clear(ctx);
-        ctx.canvas.restore();
-
-        if retained {
-            if frame.active {
-                request_animation_frame();
-            }
-        } else {
-            // The retained recorder can reject a command stream or be
-            // invalidated by an unknown paint source. Replay the same sample
-            // on the live path so the controller is not ticked twice.
-            self.draw_live(ctx, Some(frame));
+    fn draw_sampled_frame(&self, ctx: &BuildContext, frame: CompositorAnimationFrame) {
+        self.draw_local_v2_compatibility_live(ctx);
+        if frame.active {
+            request_animation_frame();
         }
     }
 
@@ -175,101 +115,24 @@ impl<E: Element + 'static> ElementNode<E> {
             return false;
         };
         ctx.with_local_v2_paint_context(paint_context, |ctx| {
-            ctx.canvas.with_paint_commands_suppressed(|| {
-                self.element.sync_local_v2_state(ctx)
-            })
+            self.element.sync_local_v2_state(ctx)
         })
     }
 
-    fn draw_v2_compatibility(&self, ctx: &BuildContext, priority: bool, stable: bool, bounded: bool) {
-        ctx.with_local_v2_compatibility_paint(true, |ctx| {
-            if has_active_v2_render_presentation() {
-                ctx.canvas.with_paint_commands_suppressed(|| {
-                    self.draw_local_v2_compatibility_live(ctx);
-                });
-                return;
-            }
-
-            if (stable && bounded) || priority {
-                let bounds = self.element.content_size(ctx);
-                let descriptor = SceneNodeDescriptor {
-                    id: SceneNodeId::from_raw(self.id.get().get()),
-                    bounds: Rect::new(0.0, 0.0, bounds.width, bounds.height),
-                    order: self.element.layer(),
-                    revision: SceneRevision::new(
-                        self.subtree_generation(),
-                        paint_element_was_invalidated(self.id.get())
-                            .then_some(rebuild_invalidation_generation())
-                            .unwrap_or(0),
-                        layout_invalidation_generation(),
-                        ctx.canvas.texture_cache_epoch(),
-                    ),
-                    cache_eligible: stable && bounded,
-                    bounded,
-                    priority,
-                };
-                let _scene_node = ctx.canvas.begin_scene_node(descriptor);
-                self.element.sync_paint_geometry(ctx);
-                self.draw_live(ctx, None);
-            } else {
-                self.draw_live(ctx, None);
-            }
-        });
-    }
-
-    fn draw_legacy_content(&self, ctx: &BuildContext, priority: bool, stable: bool, bounded: bool) {
-        let _scene_node = if (stable && bounded) || priority {
-            let bounds = self.element.content_size(ctx);
-            let descriptor = SceneNodeDescriptor {
-                id: SceneNodeId::from_raw(self.id.get().get()),
-                bounds: Rect::new(0.0, 0.0, bounds.width, bounds.height),
-                order: self.element.layer(),
-                revision: SceneRevision::new(
-                    self.subtree_generation(),
-                    paint_element_was_invalidated(self.id.get())
-                        .then_some(rebuild_invalidation_generation())
-                        .unwrap_or(0),
-                    layout_invalidation_generation(),
-                    ctx.canvas.texture_cache_epoch(),
-                ),
-                cache_eligible: stable && bounded,
-                bounded,
-                priority,
-            };
-            let scene_node = Some(ctx.canvas.begin_scene_node(descriptor));
-            self.element.sync_paint_geometry(ctx);
-
-            #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-            if stable
-                && bounded
-                && let Some(key) = crate::paint_isolated::PaintContract::new(
-                    ctx,
-                    bounds,
-                    self.subtree_generation(),
-                )
-                && crate::paint_isolated::paint_or_replay_scene_node(
-                    self.id.get(),
-                    ctx,
-                    &self.element,
-                    key,
-                    priority,
-                    stable,
-                )
-            {
-                return;
-            }
-            scene_node
+    /// Walks the subtree after this element's local paint is settled: state,
+    /// bounds and children still update; the render tree owns presentation.
+    fn draw_v2_compatibility(&self, ctx: &BuildContext) {
+        if has_active_v2_render_presentation() {
+            self.draw_local_v2_compatibility_live(ctx);
         } else {
-            None
-        };
-        self.draw_live(ctx, None);
+            self.draw_live(ctx);
+        }
     }
 
     fn update_inner(&self, ctx: &BuildContext) {
         crate::frame_work_stats::record_paint_call();
         #[cfg(feature = "frame-stats")]
         record_draw_traversal();
-        record_paint_element(self.id.get());
         let (_draw, outermost) = begin_draw();
         let render_context = current_v2_render_context();
         let prepared_root = outermost
@@ -283,11 +146,7 @@ impl<E: Element + 'static> ElementNode<E> {
             // same pass and must not reset paths relative to a new root.
             self.rebuild_if_dirty(ctx);
         }
-        let priority = self.element.compositor_priority();
-        let stable = self.element.is_paint_stable() && self.element.is_layout_stable();
-        let bounded = self.element.is_paint_bounded();
-        let _invalidation_owner = (!stable || !bounded || self.element.is_stateful_element())
-            .then(|| DrawInvalidationOwnerGuard::enter(self.id.get()));
+        let _invalidation_owner = DrawInvalidationOwnerGuard::enter(self.id.get());
 
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
         let retained_animation_candidate = render_context.as_ref().is_some_and(|scope| {
@@ -295,7 +154,7 @@ impl<E: Element + 'static> ElementNode<E> {
                 && self.element.can_paint_local_v2(ctx)
         });
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-        if !stable && (bounded || retained_animation_candidate) {
+        if retained_animation_candidate {
             match self.element.compositor_animation(ctx) {
                 CompositorAnimationDecision::Compositor(frame) => {
                     if frame.valid
@@ -319,7 +178,7 @@ impl<E: Element + 'static> ElementNode<E> {
                                 self.resolve_local_v2_paint(ctx, scope, render_node)
                             })
                     {
-                        self.draw_v2_compatibility(ctx, priority, stable, bounded);
+                        self.draw_v2_compatibility(ctx);
                         if frame.active {
                             request_animation_frame();
                         }
@@ -333,10 +192,8 @@ impl<E: Element + 'static> ElementNode<E> {
                         // non-finite sample, say): keep the element's state
                         // advancing and paint nothing this frame.
                         self.paint_nothing(ctx, scope, render_node, || {
-                            self.draw_live(ctx, Some(frame));
+                            self.draw_sampled_frame(ctx, frame);
                         });
-                    } else {
-                        self.draw_compositor_animation(ctx, frame);
                     }
                     return;
                 }
@@ -346,10 +203,8 @@ impl<E: Element + 'static> ElementNode<E> {
                         && let Some(render_node) = scope.node_for_element(self.id.get())
                     {
                         self.paint_nothing(ctx, scope, render_node, || {
-                            self.draw_live(ctx, Some(frame));
+                            self.draw_sampled_frame(ctx, frame);
                         });
-                    } else {
-                        self.draw_live(ctx, Some(frame));
                     }
                     return;
                 }
@@ -363,7 +218,7 @@ impl<E: Element + 'static> ElementNode<E> {
             if let Some(render_node) = scope.node_for_element(self.id.get()) {
                 if !self.resolve_local_v2_paint(ctx, scope, render_node) {
                     self.paint_nothing(ctx, scope, render_node, || {
-                        self.draw_v2_compatibility(ctx, priority, stable, bounded);
+                        self.draw_v2_compatibility(ctx);
                     });
                     return;
                 }
@@ -372,7 +227,7 @@ impl<E: Element + 'static> ElementNode<E> {
                 // descendants. Direct retained presentation drops its paint
                 // commands in `draw_v2_compatibility`; legacy islands reopen
                 // recording for their own ranges.
-                self.draw_v2_compatibility(ctx, priority, stable, bounded);
+                self.draw_v2_compatibility(ctx);
                 return;
             }
         }
@@ -385,7 +240,7 @@ impl<E: Element + 'static> ElementNode<E> {
         if render_context.is_some() {
             record_unmapped_draw(self.id.get(), self.element.debug_name());
         }
-        self.draw_legacy_content(ctx, priority, stable, bounded);
+        self.draw_live(ctx);
     }
 
     /// Handles an element that has no retained paint this frame: it cannot
@@ -415,61 +270,11 @@ impl<E: Element + 'static> ElementNode<E> {
             });
             let _ = render_context.tree.invalidate_paint(render_node);
         }
-        ctx.canvas.with_paint_commands_suppressed(run);
+        run();
         #[cfg(debug_assertions)]
         {
             record_declined_paint(self.id.get(), self.element.debug_name());
         }
-    }
-
-    /// Runs one `update` and, in debug builds, reports an element that drew
-    /// through the removed legacy paint path.
-    ///
-    /// Each element claims the dropped commands it caused itself, so a parent
-    /// is not blamed for what its children drew.
-    #[cfg(debug_assertions)]
-    fn update_reporting_dropped_paint(&self, ctx: &BuildContext) {
-        let dropped_before = dropped_paint_cursor(ctx);
-        let claimed_before = CLAIMED_DROPPED_PAINT.with(Cell::get);
-        self.update_inner(ctx);
-        let dropped = dropped_paint_cursor(ctx).saturating_sub(dropped_before);
-        let claimed = CLAIMED_DROPPED_PAINT.with(Cell::get).saturating_sub(claimed_before);
-        let own = dropped.saturating_sub(claimed);
-        if own > 0 {
-            CLAIMED_DROPPED_PAINT.with(|total| total.set(total.get() + own));
-            record_dropped_paint(self.id.get(), self.element.debug_name());
-            if first_dropped_paint_report(self.element.debug_name()) {
-                aimer_utils::error!(
-                    "`{}` drew through `update`, which no longer paints: that drawing is \
-                     dropped. Record it in `paint_local_v2` (and make `can_paint_local_v2` \
-                     true) instead.",
-                    self.element.debug_name()
-                );
-            }
-        }
-    }
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    /// Dropped paint commands already attributed to some element this thread.
-    static CLAIMED_DROPPED_PAINT: Cell<u64> = const { Cell::new(0) };
-}
-
-#[cfg(all(debug_assertions, not(feature = "portable-guest")))]
-fn dropped_paint_cursor(ctx: &BuildContext) -> u64 {
-    ctx.canvas.get_inner_canvas().dropped_paint_commands()
-}
-
-#[cfg(all(debug_assertions, feature = "portable-guest"))]
-fn dropped_paint_cursor(_ctx: &BuildContext) -> u64 {
-    0
-}
-
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-impl<E> Drop for ElementNode<E> {
-    fn drop(&mut self) {
-        crate::paint_isolated::drop_scene_paint_cache(self.id.get());
     }
 }
 
@@ -615,10 +420,6 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
 
     fn is_carry_state(&self) -> bool {
         self.element.is_carry_state()
-    }
-
-    fn compositor_priority(&self) -> bool {
-        self.element.compositor_priority()
     }
 
     fn adopt_runtime_state_from(&self, old: &dyn Element) {
@@ -801,9 +602,6 @@ impl<E: Element + 'static> EventElement for ElementNode<E> {
 
 impl<E: Element + 'static> Drawable for ElementNode<E> {
     fn update(&self, ctx: &BuildContext) {
-        #[cfg(debug_assertions)]
-        self.update_reporting_dropped_paint(ctx);
-        #[cfg(not(debug_assertions))]
         self.update_inner(ctx);
     }
 
@@ -922,12 +720,6 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        record_paint_element(self.id.get());
-        self.element.paint(ctx);
-    }
-
-    #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.element.sync_paint_geometry(ctx);
     }
@@ -938,64 +730,10 @@ impl<E: Element + 'static> Drawable for ElementNode<E> {
     }
 
     #[inline]
-    fn is_paint_stable(&self) -> bool {
-        self.element.is_paint_stable()
-    }
-
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        self.element.is_paint_bounded()
-    }
-
-    #[inline]
-    fn draw_paint_islands(
-        &self,
-        retained_ctx: &BuildContext,
-        live_ctx: &BuildContext,
-        draw_stable: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-        draw_dynamic: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-    ) -> bool {
-        self.element.draw_paint_islands(
-            retained_ctx,
-            live_ctx,
-            draw_stable,
-            draw_dynamic,
-        )
-    }
-
-    #[inline]
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
         self.element.compositor_animation(ctx)
     }
 
-    #[inline]
-    fn draw_with_compositor_animation(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        self.element.draw_with_compositor_animation(ctx, frame);
-    }
-
-    #[inline]
-    fn update_compositor_animation_damage(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        self.element
-            .update_compositor_animation_damage(ctx, frame);
-    }
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
@@ -1137,10 +875,6 @@ impl Rebuildable for AnyElement {
         self.as_ref().is_carry_state()
     }
 
-    fn compositor_priority(&self) -> bool {
-        self.as_ref().compositor_priority()
-    }
-
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
         self.as_ref().with_rebuild_context(ctx, callback)
     }
@@ -1244,11 +978,6 @@ impl Drawable for AnyElement {
     #[inline]
     fn paint_local_v2(&self, ctx: &BuildContext) {
         self.as_ref().paint_local_v2(ctx)
-    }
-
-    #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        self.as_ref().paint(ctx)
     }
 
     #[inline]
@@ -1366,64 +1095,10 @@ impl Drawable for AnyElement {
     }
 
     #[inline]
-    fn is_paint_stable(&self) -> bool {
-        self.as_ref().is_paint_stable()
-    }
-
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        self.as_ref().is_paint_bounded()
-    }
-
-    #[inline]
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
         self.as_ref().compositor_animation(ctx)
     }
 
-    #[inline]
-    fn draw_with_compositor_animation(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        self.as_ref().draw_with_compositor_animation(ctx, frame)
-    }
-
-    #[inline]
-    fn update_compositor_animation_damage(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        self.as_ref()
-            .update_compositor_animation_damage(ctx, frame)
-    }
-
-    #[inline]
-    fn draw_paint_islands(
-        &self,
-        retained_ctx: &BuildContext,
-        live_ctx: &BuildContext,
-        draw_stable: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-        draw_dynamic: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-    ) -> bool {
-        self.as_ref().draw_paint_islands(
-            retained_ctx,
-            live_ctx,
-            draw_stable,
-            draw_dynamic,
-        )
-    }
 }
 
 impl VisitorElement for Box<dyn Element> {
@@ -1520,10 +1195,6 @@ impl Rebuildable for Box<dyn Element> {
 
     fn is_carry_state(&self) -> bool {
         self.as_ref().is_carry_state()
-    }
-
-    fn compositor_priority(&self) -> bool {
-        self.as_ref().compositor_priority()
     }
 
     fn with_rebuild_context(&self, ctx: &BuildContext, callback: &mut dyn FnMut(&BuildContext)) {
@@ -1632,11 +1303,6 @@ impl Drawable for Box<dyn Element> {
     }
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        self.as_ref().paint(ctx)
-    }
-
-    #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.as_ref().sync_paint_geometry(ctx)
     }
@@ -1751,62 +1417,8 @@ impl Drawable for Box<dyn Element> {
     }
 
     #[inline]
-    fn is_paint_stable(&self) -> bool {
-        self.as_ref().is_paint_stable()
-    }
-
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        self.as_ref().is_paint_bounded()
-    }
-
-    #[inline]
     fn compositor_animation(&self, ctx: &BuildContext) -> CompositorAnimationDecision {
         self.as_ref().compositor_animation(ctx)
     }
 
-    #[inline]
-    fn draw_with_compositor_animation(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        self.as_ref().draw_with_compositor_animation(ctx, frame)
-    }
-
-    #[inline]
-    fn update_compositor_animation_damage(
-        &self,
-        ctx: &BuildContext,
-        frame: CompositorAnimationFrame,
-    ) {
-        self.as_ref()
-            .update_compositor_animation_damage(ctx, frame)
-    }
-
-    #[inline]
-    fn draw_paint_islands(
-        &self,
-        retained_ctx: &BuildContext,
-        live_ctx: &BuildContext,
-        draw_stable: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-        draw_dynamic: &mut dyn FnMut(
-            &dyn Element,
-            &BuildContext,
-            Vec2d,
-            Option<ResolvedSize>,
-        ),
-    ) -> bool {
-        self.as_ref().draw_paint_islands(
-            retained_ctx,
-            live_ctx,
-            draw_stable,
-            draw_dynamic,
-        )
-    }
 }

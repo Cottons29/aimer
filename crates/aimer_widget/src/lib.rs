@@ -13,7 +13,6 @@ pub mod layout_cache;
 pub mod page_storage;
 mod paint_damage;
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-mod paint_isolated;
 pub mod platform_brightness;
 pub mod pointer_claim;
 #[doc(hidden)]
@@ -134,11 +133,11 @@ pub use crate::components::drawable::{
 pub use crate::components::element::{
     Element, ElementId, ElementNodeMap, ElementPath, EventDispatchContext, EventDispatcher,
     begin_event_frame, begin_paint_frame, element_tree_generation,
-    has_active_v2_render_presentation, has_active_v2_render_tree, layout_invalidation_generation,
+    has_active_v2_render_presentation, has_active_v2_render_tree, keep_ticking_elements_reachable, layout_invalidation_generation,
     mark_paint_damage, mark_paint_damage_full, notify_element_tree_changed,
     notify_hosted_element_tree_changed, notify_retained_render_structure_changed,
     rebuild_invalidation_generation, retained_render_structure_generation, set_rebuild_source_path,
-    take_declined_paint_elements, take_dropped_paint_elements, take_paint_frame_damage,
+    take_declined_paint_elements, take_paint_frame_damage,
     take_unmapped_draws, update_v2_render_node_geometry, with_v2_render_tree_context,
 };
 #[cfg(feature = "frame-stats")]

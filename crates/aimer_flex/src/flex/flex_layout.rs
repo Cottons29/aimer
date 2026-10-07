@@ -920,11 +920,6 @@ impl FlexLayoutCache {
         }
     }
 
-    #[inline]
-    pub(crate) fn has_table(&self) -> bool {
-        unsafe { &*self.table.get() }.is_some()
-    }
-
     /// Returns the cached table when it was measured under the same inputs and
     /// the element tree still holds the children it was measured from.
     #[inline]

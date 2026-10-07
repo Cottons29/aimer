@@ -2,19 +2,13 @@ use std::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::draw_cmd::{DrawList, RetainedDrawList, RetainedLayerContent, TextureRegistry};
-use crate::compositor::{
-    CompositorScene, SceneNodeDescriptor, SceneNodeGuard, SceneRecorder,
-};
+use crate::draw_cmd::{DrawList, TextureRegistry};
 use crate::frame::RetainedRenderPlan;
 use crate::font::{FontFamily, FontStyle, FontWeight, TextLanguage};
 use crate::lru_map::LruMap;
-use crate::svg::{SvgNodeStyleOverride, SvgScene};
-use crate::text_pipeline::TextOverflowMode;
 use crate::text_pipeline::glyph_rasterizer::GlyphRasterizer;
 use crate::text_pipeline::text_layout::line_break_opportunities;
-use crate::text_pipeline::TextShadowRequest;
-use crate::utilities::{Color, Mat3, Rect, TextureId, Vec2d};
+use crate::utilities::{Mat3, TextureId};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TextMetrics {
@@ -130,7 +124,6 @@ const UNWRAPPED_LAYOUT_CACHE_CAPACITY: usize = 2048;
 #[derive(Clone)]
 pub struct CupidCanvas {
     draw_list: Rc<RefCell<DrawList>>,
-    scene_recorder: Rc<RefCell<Option<SceneRecorder>>>,
     retained_render_plan: Rc<RefCell<Option<RetainedRenderPlan>>>,
     texture_registry: Arc<TextureRegistry>,
     rasterizer: Rc<RefCell<GlyphRasterizer>>,
@@ -154,19 +147,6 @@ pub struct CupidCanvas {
     metrics_cache_misses: Rc<Cell<u64>>,
 }
 
-struct PaintCommandSuppressionGuard {
-    draw_list: Rc<RefCell<DrawList>>,
-    previous_depth: usize,
-}
-
-impl Drop for PaintCommandSuppressionGuard {
-    fn drop(&mut self) {
-        self.draw_list
-            .borrow_mut()
-            .restore_paint_command_suppression(self.previous_depth);
-    }
-}
-
 impl CupidCanvas {
     pub fn new() -> Self {
         let texture_registry = Arc::new(TextureRegistry::default());
@@ -174,7 +154,6 @@ impl CupidCanvas {
             draw_list: Rc::new(RefCell::new(DrawList::with_texture_registry(
                 texture_registry.clone(),
             ))),
-            scene_recorder: Rc::new(RefCell::new(None)),
             retained_render_plan: Rc::new(RefCell::new(None)),
             texture_registry,
             rasterizer: Rc::new(RefCell::new(GlyphRasterizer::new())),
@@ -191,20 +170,16 @@ impl CupidCanvas {
         }
     }
 
-    /// Creates a short-lived recording canvas that shares the parent's text,
-    /// font, metrics, and texture state.
-    ///
-    /// The returned canvas starts with an identity transform and an empty draw
-    /// list. It is intended for side-effect-free static subtrees: take its
-    /// draw list, call [`DrawList::retained_snapshot`], then replay that local
-    /// stream on the parent canvas with [`Self::replay_retained`].
+    /// Creates a short-lived canvas that shares the parent's text, font,
+    /// metrics, and texture state but starts with an identity transform and an
+    /// empty draw list. Measurement code uses it so its transform and language
+    /// changes cannot leak into the frame's canvas.
     #[inline]
     pub fn fork_for_recording(&self) -> Self {
         Self {
             draw_list: Rc::new(RefCell::new(DrawList::with_texture_registry(
                 self.texture_registry.clone(),
             ))),
-            scene_recorder: Rc::new(RefCell::new(None)),
             retained_render_plan: Rc::new(RefCell::new(None)),
             texture_registry: self.texture_registry.clone(),
             rasterizer: self.rasterizer.clone(),
@@ -221,52 +196,12 @@ impl CupidCanvas {
 
     pub fn begin_frame(&self) {
         self.draw_list.borrow_mut().clear();
-        self.scene_recorder
-            .borrow_mut()
-            .replace(SceneRecorder::new());
         self.retained_render_plan.borrow_mut().take();
         #[cfg(debug_assertions)]
         {
             self.metrics_cache_hits.set(0);
             self.metrics_cache_misses.set(0);
         }
-    }
-
-    /// Runs legacy traversal while omitting paint commands from the
-    /// compatibility list. Canvas state commands still record, so nested
-    /// legacy islands can reconstruct their incoming transform and clip.
-    #[doc(hidden)]
-    pub fn with_paint_commands_suppressed<R>(&self, callback: impl FnOnce() -> R) -> R {
-        let previous_depth = self.draw_list.borrow_mut().suppress_paint_commands();
-        let _guard = PaintCommandSuppressionGuard {
-            draw_list: self.draw_list.clone(),
-            previous_depth,
-        };
-        callback()
-    }
-
-    /// How many paint commands suppression has dropped on this canvas so far.
-    ///
-    /// A difference across a suppressed traversal means some element drew
-    /// through the legacy paint path while the frame presents only retained
-    /// content, so that drawing is lost.
-    #[doc(hidden)]
-    pub fn dropped_paint_commands(&self) -> u64 {
-        self.draw_list.borrow().dropped_paint_commands()
-    }
-
-    /// Temporarily resumes paint command recording inside a legacy island.
-    #[doc(hidden)]
-    pub fn with_paint_commands_enabled<R>(&self, callback: impl FnOnce() -> R) -> R {
-        let previous_depth = self
-            .draw_list
-            .borrow_mut()
-            .suspend_paint_command_suppression();
-        let _guard = PaintCommandSuppressionGuard {
-            draw_list: self.draw_list.clone(),
-            previous_depth,
-        };
-        callback()
     }
 
     /// Moves the frame recorded so far out of the canvas.
@@ -297,55 +232,6 @@ impl CupidCanvas {
         *self.draw_list.borrow_mut() = draw_list;
     }
 
-    /// Opens one logical compositor node at the current paint cursor.
-    ///
-    /// The guard is deliberately tied to the DrawList and closes even when a
-    /// widget's paint implementation unwinds. Forked recording canvases do not
-    /// own a frame recorder and return an inactive guard.
-    #[doc(hidden)]
-    #[inline]
-    pub fn begin_scene_node(&self, descriptor: SceneNodeDescriptor) -> SceneNodeGuard {
-        let command_start = self.draw_list.borrow().commands().len();
-        let mut recorder = self.scene_recorder.borrow_mut();
-        let Some(recorder) = recorder.as_mut() else {
-            return SceneNodeGuard::inactive();
-        };
-        let index = recorder.begin_node(descriptor, command_start);
-        SceneNodeGuard::active(self.scene_recorder.clone(), self.draw_list.clone(), index)
-    }
-
-    /// Takes the scene recorded alongside `draw_list`.
-    #[doc(hidden)]
-    pub fn take_scene(
-        &self,
-        draw_list: &DrawList,
-        target_width: u32,
-        target_height: u32,
-        damage: crate::damage_region::DamageSet,
-    ) -> Option<CompositorScene> {
-        let recorder = self.scene_recorder.borrow_mut().take()?;
-        if recorder.is_empty() {
-            return None;
-        }
-        Some(recorder.finish(
-            draw_list,
-            target_width,
-            target_height,
-            damage,
-        ))
-    }
-
-    /// Discards scene markers recorded alongside a compatibility command list.
-    ///
-    /// A mixed v2 packet replaces that list with commands assembled from local
-    /// render nodes and legacy ranges. Its compositor scene must be rebuilt
-    /// from the composed list instead of reusing offsets from the discarded
-    /// compatibility stream.
-    #[doc(hidden)]
-    pub fn discard_scene_recording(&self) {
-        self.scene_recorder.borrow_mut().take();
-    }
-
     /// Stores the retained render plan for the frame being assembled.
     #[doc(hidden)]
     pub fn set_retained_render_plan(&self, plan: Option<RetainedRenderPlan>) {
@@ -358,128 +244,12 @@ impl CupidCanvas {
         self.retained_render_plan.borrow_mut().take()
     }
 
-    /// Replays a local-coordinate retained stream under the canvas's current
-    /// transform. Returns `false` only if a future stream implementation
-    /// rejects the replay; current snapshots are validated before exposure.
-    #[inline]
-    pub fn replay_retained(&self, retained: &RetainedDrawList) -> bool {
-        let base = *self.draw_list.borrow().current_transform();
-        self.draw_list
-            .borrow_mut()
-            .append_retained(retained, base);
-        true
-    }
-
-    /// Records a renderer-owned retained layer at the current canvas state.
-    ///
-    /// The layer payload is not expanded into the current command buffer. The
-    /// renderer rasterizes it once and reuses the resulting texture until the
-    /// payload is replaced. The current transform, clip, and alpha state still
-    /// apply to the layer's composite draw.
-    #[inline]
-    pub fn draw_retained_layer(
-        &self,
-        layer_id: u64,
-        width: f32,
-        height: f32,
-        content: Arc<RetainedLayerContent>,
-    ) {
-        self.draw_retained_layer_at(layer_id, 0.0, 0.0, width, height, content);
-    }
-
-    /// Records a renderer-owned retained layer at a local content position.
-    #[inline]
-    pub fn draw_retained_layer_at(
-        &self,
-        layer_id: u64,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        content: Arc<RetainedLayerContent>,
-    ) {
-        self.draw_list.borrow_mut().draw_retained_layer(
-            layer_id,
-            Rect::new(x, y, width, height),
-            content,
-        );
-    }
-
     pub fn register_font_bytes(&self, bytes: Vec<u8>) -> Option<crate::text_layout::FontId> {
         let font_id = self.rasterizer.borrow_mut().register_font_bytes(bytes)?;
         self.metrics_cache.borrow_mut().clear();
         self.shaping_cache.borrow_mut().clear();
         self.unwrapped_layout_cache.borrow_mut().clear();
         Some(font_id)
-    }
-
-    pub fn fill_rect(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        color: Color,
-        border_radius: [f32; 4],
-    ) {
-        self.draw_list.borrow_mut().fill_rect(
-            Rect::new(x, y, width, height),
-            color,
-            border_radius,
-            [0.0; 4],
-            Color::transparent(),
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn fill_rect_with_border(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        color: Color,
-        border_radius: [f32; 4],
-        border_width: f32,
-        border_color: Color,
-    ) {
-        self.draw_list.borrow_mut().fill_rect(
-            Rect::new(x, y, width, height),
-            color,
-            border_radius,
-            [border_width; 4],
-            border_color,
-        );
-    }
-
-    /// Draws a filled rectangle with per-corner border radii and per-side
-    /// border widths. `border_radius`: [top-left, top-right, bottom-right,
-    /// bottom-left] `border_width`: [top, right, bottom, left]
-    #[allow(clippy::too_many_arguments)]
-    pub fn fill_rect_with_per_side_border(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        color: Color,
-        border_radius: [f32; 4],
-        border_width: [f32; 4],
-        border_color: Color,
-    ) {
-        self.draw_list.borrow_mut().fill_rect(
-            Rect::new(x, y, width, height),
-            color,
-            border_radius,
-            border_width,
-            border_color,
-        );
-    }
-
-    pub fn clear_rect(&self, x: f32, y: f32, width: f32, height: f32) {
-        self.draw_list
-            .borrow_mut()
-            .clear_rect(Rect::new(x, y, width, height));
     }
 
     pub fn translate(&self, x: f32, y: f32) {
@@ -500,275 +270,6 @@ impl CupidCanvas {
 
     pub fn restore(&self) {
         self.draw_list.borrow_mut().restore();
-    }
-
-    pub fn draw_text(
-        &self,
-        x: f32,
-        y: f32,
-        text: &str,
-        font_size: f32,
-        color: Color,
-        font_weight: u16,
-    ) {
-        self.draw_text_styled(
-            x,
-            y,
-            text,
-            font_size,
-            color,
-            FontFamily::SANS_SERIF,
-            FontStyle::Normal,
-            font_weight,
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_text_styled(
-        &self,
-        x: f32,
-        y: f32,
-        text: &str,
-        font_size: f32,
-        color: Color,
-        font_family: FontFamily,
-        font_style: FontStyle,
-        font_weight: u16,
-    ) {
-        self.draw_list.borrow_mut().draw_text_styled(
-            Vec2d::new(x, y),
-            Arc::from(text),
-            font_size,
-            color,
-            font_family,
-            font_style,
-            font_weight,
-        );
-    }
-
-    /// Records a shadow-only styled text request for the glyph pipeline.
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_text_shadow_styled(
-        &self,
-        x: f32,
-        y: f32,
-        text: &str,
-        font_size: f32,
-        color: Color,
-        font_family: FontFamily,
-        font_style: FontStyle,
-        font_weight: u16,
-        shadow: TextShadowRequest,
-    ) {
-        self.draw_list.borrow_mut().draw_text_shadow_styled(
-            Vec2d::new(x, y),
-            Arc::from(text),
-            font_size,
-            color,
-            font_family,
-            font_style,
-            font_weight,
-            shadow,
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_text_wrapped(
-        &self,
-        x: f32,
-        y: f32,
-        text: &str,
-        font_size: f32,
-        color: Color,
-        max_width: f32,
-        font_weight: u16,
-    ) {
-        self.draw_text_wrapped_styled(
-            x,
-            y,
-            text,
-            font_size,
-            color,
-            max_width,
-            FontFamily::SANS_SERIF,
-            FontStyle::Normal,
-            font_weight,
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_text_wrapped_styled(
-        &self,
-        x: f32,
-        y: f32,
-        text: &str,
-        font_size: f32,
-        color: Color,
-        max_width: f32,
-        font_family: FontFamily,
-        font_style: FontStyle,
-        font_weight: u16,
-    ) {
-        self.draw_list.borrow_mut().draw_text_with_overflow(
-            Vec2d::new(x, y),
-            Arc::from(text),
-            font_size,
-            color,
-            Some(max_width),
-            None,
-            TextOverflowMode::Wrap,
-            font_family,
-            font_style,
-            font_weight,
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_text_with_overflow(
-        &self,
-        x: f32,
-        y: f32,
-        text: &str,
-        font_size: f32,
-        color: Color,
-        bounds_width: f32,
-        bounds_height: f32,
-        overflow: TextOverflowMode,
-        font_weight: u16,
-    ) {
-        self.draw_text_with_overflow_styled(
-            x,
-            y,
-            text,
-            font_size,
-            color,
-            bounds_width,
-            bounds_height,
-            overflow,
-            FontFamily::SANS_SERIF,
-            FontStyle::Normal,
-            font_weight,
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_text_with_overflow_styled(
-        &self,
-        x: f32,
-        y: f32,
-        text: &str,
-        font_size: f32,
-        color: Color,
-        bounds_width: f32,
-        bounds_height: f32,
-        overflow: TextOverflowMode,
-        font_family: FontFamily,
-        font_style: FontStyle,
-        font_weight: u16,
-    ) {
-        self.draw_text_aligned_with_overflow_styled(
-            x,
-            y,
-            text,
-            font_size,
-            color,
-            bounds_width,
-            bounds_height,
-            overflow,
-            crate::text_pipeline::text_layout::TextHorizontalAlign::Left,
-            font_family,
-            font_style,
-            font_weight,
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_text_aligned_with_overflow_styled(
-        &self,
-        x: f32,
-        y: f32,
-        text: &str,
-        font_size: f32,
-        color: Color,
-        bounds_width: f32,
-        bounds_height: f32,
-        overflow: TextOverflowMode,
-        horizontal_align: crate::text_pipeline::text_layout::TextHorizontalAlign,
-        font_family: FontFamily,
-        font_style: FontStyle,
-        font_weight: u16,
-    ) {
-        self.draw_list.borrow_mut().draw_text_aligned_with_overflow(
-            Vec2d::new(x, y),
-            Arc::from(text),
-            font_size,
-            color,
-            Some(bounds_width),
-            Some(bounds_height),
-            overflow,
-            horizontal_align,
-            font_family,
-            font_style,
-            font_weight,
-        );
-    }
-
-    pub fn draw_image(&self, x: f32, y: f32, width: f32, height: f32, texture_id: TextureId) {
-        self.draw_list
-            .borrow_mut()
-            .draw_image(Rect::new(x, y, width, height), texture_id);
-    }
-
-    /// Draws an image while retaining pixels needed to restore its texture.
-    pub fn draw_image_with_resource(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        resource: Arc<crate::draw_cmd_v2::ImageResource>,
-    ) {
-        self.draw_list
-            .borrow_mut()
-            .draw_image_with_resource(Rect::new(x, y, width, height), resource);
-    }
-
-    pub fn draw_svg(
-        &self,
-        scene: Arc<SvgScene>,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        overrides: Arc<[SvgNodeStyleOverride]>,
-    ) {
-        self.draw_list
-            .borrow_mut()
-            .draw_svg(scene, Rect::new(x, y, width, height), overrides);
-    }
-
-    /// Draw a styled text-decoration line. `(x, y)` is the band top-left,
-    /// `width`/`band_height` its extent; the text engine renders the styled
-    /// stroke (`style` id, `thickness`, `period`) inside the band.
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_text_decoration(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        band_height: f32,
-        color: Color,
-        style: u32,
-        thickness: f32,
-        period: f32,
-    ) {
-        self.draw_list.borrow_mut().draw_text_decoration(
-            Rect::new(x, y, width, band_height),
-            color,
-            style,
-            thickness,
-            period,
-        );
     }
 
     /// Measure text width using the cached text rasterizer.
@@ -1152,190 +653,6 @@ impl CupidCanvas {
             .unwrap_or_default()
     }
 
-    /// Draws a filled rectangle with border and outline in a single pass (no
-    /// gap).
-    #[allow(clippy::too_many_arguments)]
-    pub fn fill_rect_with_border_and_outline(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        color: Color,
-        border_radius: [f32; 4],
-        border_width: f32,
-        border_color: Color,
-        outline_width: f32,
-        outline_color: Color,
-    ) {
-        self.draw_list.borrow_mut().fill_rect_with_outline(
-            Rect::new(x, y, width, height),
-            color,
-            border_radius,
-            [border_width; 4],
-            border_color,
-            [outline_width; 4],
-            outline_color,
-        );
-    }
-
-    /// Draws a filled rectangle with border and outline with
-    /// per-corner/per-side control.
-    #[allow(clippy::too_many_arguments)]
-    pub fn fill_rect_with_border_and_outline_per_side(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        color: Color,
-        border_radius: [f32; 4],
-        border_width: [f32; 4],
-        border_color: Color,
-        outline_width: [f32; 4],
-        outline_color: Color,
-    ) {
-        self.draw_list.borrow_mut().fill_rect_with_outline(
-            Rect::new(x, y, width, height),
-            color,
-            border_radius,
-            border_width,
-            border_color,
-            outline_width,
-            outline_color,
-        );
-    }
-
-    /// Draws a stroked (outline-only) rectangle.
-    #[allow(clippy::too_many_arguments)]
-    pub fn stroke_rect(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        stroke_color: Color,
-        stroke_width: f32,
-        border_radius: [f32; 4],
-    ) {
-        self.draw_list.borrow_mut().fill_rect(
-            Rect::new(x, y, width, height),
-            Color::transparent(),
-            border_radius,
-            [stroke_width; 4],
-            stroke_color,
-        );
-    }
-
-    /// Draws a stroked (outline-only) rectangle with per-corner radii and
-    /// per-side widths. `border_radius`: [top-left, top-right,
-    /// bottom-right, bottom-left] `stroke_width`: [top, right, bottom,
-    /// left]
-    #[allow(clippy::too_many_arguments)]
-    pub fn stroke_rect_per_side(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        stroke_color: Color,
-        stroke_width: [f32; 4],
-        border_radius: [f32; 4],
-    ) {
-        self.draw_list.borrow_mut().fill_rect(
-            Rect::new(x, y, width, height),
-            Color::transparent(),
-            border_radius,
-            stroke_width,
-            stroke_color,
-        );
-    }
-
-    /// Draws a filled rectangle with a specific color (convenience method).
-    pub fn fill_color_rect(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        color: Color,
-        border_radius: [f32; 4],
-    ) {
-        self.draw_list.borrow_mut().fill_rect(
-            Rect::new(x, y, width, height),
-            color,
-            border_radius,
-            [0.0; 4],
-            Color::transparent(),
-        );
-    }
-
-    /// Draws a filled rectangle with per-corner border radii.
-    /// `border_radius`: [top-left, top-right, bottom-right, bottom-left]
-    pub fn fill_color_rect_per_corner(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        color: Color,
-        border_radius: [f32; 4],
-    ) {
-        self.draw_list.borrow_mut().fill_rect(
-            Rect::new(x, y, width, height),
-            color,
-            border_radius,
-            [0.0; 4],
-            Color::transparent(),
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_shadow_rect(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        shadow_color: Color,
-        shadow_params: [f32; 4],
-        border_radius: [f32; 4],
-        inset: bool,
-        side_params: [f32; 3],
-    ) {
-        self.draw_list.borrow_mut().draw_shadow_rect(
-            Rect::new(x, y, width, height),
-            shadow_color,
-            shadow_params,
-            border_radius,
-            inset,
-            side_params,
-        );
-    }
-
-    pub fn set_clip(&self, x: f32, y: f32, width: f32, height: f32) {
-        self.draw_list
-            .borrow_mut()
-            .push_clip(Rect::new(x, y, width, height));
-    }
-
-    pub fn set_clip_rounded(
-        &self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        border_radius: [f32; 4],
-    ) {
-        self.draw_list
-            .borrow_mut()
-            .push_clip_rounded(Rect::new(x, y, width, height), border_radius);
-    }
-
-    pub fn clear_clip(&self) {
-        self.draw_list.borrow_mut().pop_clip();
-    }
-
     pub fn get_transform_translation(&self) -> (f32, f32) {
         let transform = self.draw_list.borrow();
         let t = transform.current_transform();
@@ -1346,15 +663,6 @@ impl CupidCanvas {
     #[inline]
     pub fn get_transform(&self) -> Mat3 {
         *self.draw_list.borrow().current_transform()
-    }
-
-    pub fn set_alpha(&self, alpha: f32) {
-        self.draw_list.borrow_mut().set_alpha(alpha);
-    }
-
-    /// Enables/disables synthetic italic for subsequent plain text draws.
-    pub fn set_italic(&self, italic: bool) {
-        self.draw_list.borrow_mut().set_italic(italic);
     }
 
     /// Declares the language subsequent text is written in.
@@ -1377,8 +685,9 @@ impl CupidCanvas {
     /// # use aimer_cupid::font::TextLanguage;
     /// # let canvas = CupidCanvas::new();
     /// canvas.set_text_language(Some(TextLanguage::Chinese));
-    /// canvas.draw_text(0.0, 0.0, "你好", 16.0, Default::default(), 400);
+    /// let width = canvas.measure_text("你好", 16.0);
     /// canvas.set_text_language(None);
+    /// # let _ = width;
     /// ```
     pub fn set_text_language(&self, language: Option<TextLanguage>) {
         self.text_language.set(language);
@@ -1389,10 +698,6 @@ impl CupidCanvas {
     #[inline]
     pub fn text_language(&self) -> Option<TextLanguage> {
         self.text_language.get()
-    }
-
-    pub fn restore_alpha(&self) {
-        self.draw_list.borrow_mut().restore_alpha();
     }
 
     pub fn load_image(&self, bytes: &[u8], width: u32, height: u32) -> TextureId {
@@ -1459,36 +764,6 @@ impl CupidCanvas {
 impl Default for CupidCanvas {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod dropped_paint_tests {
-    use super::CupidCanvas;
-    use crate::utilities::Color;
-
-    #[test]
-    fn suppressed_paint_commands_are_counted_and_state_commands_are_not() {
-        let canvas = CupidCanvas::new();
-        assert_eq!(canvas.dropped_paint_commands(), 0);
-
-        canvas.fill_color_rect(0.0, 0.0, 4.0, 4.0, Color::rgba8(255, 0, 0, 255), [0.0; 4]);
-        assert_eq!(canvas.dropped_paint_commands(), 0, "a recorded command is not dropped");
-
-        canvas.with_paint_commands_suppressed(|| {
-            canvas.save();
-            canvas.fill_color_rect(0.0, 0.0, 4.0, 4.0, Color::rgba8(255, 0, 0, 255), [0.0; 4]);
-            canvas.fill_color_rect(1.0, 1.0, 2.0, 2.0, Color::rgba8(0, 255, 0, 255), [0.0; 4]);
-            canvas.restore();
-        });
-        assert_eq!(canvas.dropped_paint_commands(), 2);
-
-        canvas.with_paint_commands_suppressed(|| {
-            canvas.with_paint_commands_enabled(|| {
-                canvas.fill_color_rect(0.0, 0.0, 4.0, 4.0, Color::rgba8(0, 0, 255, 255), [0.0; 4]);
-            });
-        });
-        assert_eq!(canvas.dropped_paint_commands(), 2, "a re-enabled region records");
     }
 }
 
@@ -1654,53 +929,5 @@ mod family_metrics_tests {
                 "line {index} stopped at {width}px of {max_width}px"
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod scene_tests {
-    use super::*;
-    use crate::compositor::{SceneNodeDescriptor, SceneNodeId};
-    use crate::damage_region::DamageSet;
-    use crate::utilities::Color;
-
-    #[test]
-    fn scene_guard_captures_canvas_state_at_each_element_scope() {
-        let canvas = CupidCanvas::new();
-        canvas.begin_frame();
-        let root = canvas.begin_scene_node(SceneNodeDescriptor::new(
-            SceneNodeId::from_raw(1),
-            Rect::new(0.0, 0.0, 30.0, 30.0),
-            0,
-        ));
-        canvas.save();
-        canvas.translate(10.0, 20.0);
-        canvas.set_clip(0.0, 0.0, 5.0, 5.0);
-        let child = canvas.begin_scene_node(SceneNodeDescriptor::new(
-            SceneNodeId::from_raw(2),
-            Rect::new(0.0, 0.0, 10.0, 10.0),
-            1,
-        ));
-        canvas.fill_rect(0.0, 0.0, 10.0, 10.0, Color::black(), [0.0; 4]);
-        drop(child);
-        canvas.clear_clip();
-        canvas.restore();
-        drop(root);
-
-        let draw_list = canvas.take_draw_list();
-        let scene = canvas
-            .take_scene(&draw_list, 64, 64, DamageSet::full(64, 64))
-            .expect("scene recorder should contain both scopes");
-
-        assert!(scene.is_recorded());
-        assert_eq!(scene.roots(), &[SceneNodeId::from_raw(1)]);
-        let root = scene.node(SceneNodeId::from_raw(1)).unwrap();
-        assert_eq!(root.children(), &[SceneNodeId::from_raw(2)]);
-        let child = scene.node(SceneNodeId::from_raw(2)).unwrap();
-        assert_eq!(child.transform(), Mat3::translate(10.0, 20.0));
-        assert_eq!(
-            child.effective_bounds(),
-            Some(Rect::new(10.0, 20.0, 5.0, 5.0))
-        );
     }
 }

@@ -1,13 +1,11 @@
-//! An element with no retained paint paints nothing; it is not drawn legacy.
+//! An element with no retained paint paints nothing.
 //!
-//! The legacy canvas path is being removed. An element that only draws through
-//! `update` (it does not implement `paint_local_v2`) used to be captured as a
-//! legacy island and painted by replaying its recorded commands. It now paints
-//! nothing and stays unresolved, so the frame asks it again next time, and
-//! debug builds report the element.
+//! The legacy canvas path is gone. An element that does not implement
+//! `paint_local_v2` has nothing to show and stays unresolved, so the frame
+//! asks it again next time.
 
 use aimer::{
-    AimerApp, AnyElement, BuildContext, Color, Drawable, Element, EventElement, LayoutElement,
+    AimerApp, AnyElement, BuildContext, Drawable, Element, EventElement, LayoutElement,
     Rebuildable, ResolvedSize, Size, VisitorElement, Widget,
 };
 
@@ -44,17 +42,7 @@ impl LayoutElement for LegacyPainter {
 }
 
 impl Drawable for LegacyPainter {
-    fn update(&self, ctx: &BuildContext) {
-        ctx.canvas.fill_color_rect(
-            (0.0, 0.0).into(),
-            ResolvedSize {
-                width: 40.0 * ctx.scale,
-                height: 40.0 * ctx.scale,
-            },
-            Color::Rgb(255, 0, 0),
-            [0.0; 4],
-        );
-    }
+    fn update(&self, _ctx: &BuildContext) {}
 }
 
 #[test]
@@ -75,14 +63,4 @@ fn an_element_without_retained_paint_paints_nothing_and_is_asked_again() {
     );
     assert!(census.drawn_unmapped.is_empty(), "{:?}", census.drawn_unmapped);
     assert_eq!(census.sync_error, None);
-    // Debug builds name the element whose drawing was dropped.
-    #[cfg(debug_assertions)]
-    assert!(
-        census
-            .dropped_paint
-            .iter()
-            .any(|element| element.debug_name == "LegacyPainter"),
-        "{:?}",
-        census.dropped_paint
-    );
 }

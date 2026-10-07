@@ -974,7 +974,6 @@ impl<T: aimer_widget::Widget + 'static> aimer_widget::Widget for AnimatedLayout<
             child: self.child.to_element(ctx),
             transition: std::cell::RefCell::new(LayoutTransition::new(self.config)),
             window: ctx.window.clone(),
-            damage: aimer_widget::PaintDamageTracker::new(),
             last_geometry: std::cell::Cell::new(None),
         }
         .boxed()
@@ -991,7 +990,6 @@ struct AnimatedLayoutElement {
     child: aimer_widget::AnyElement,
     transition: std::cell::RefCell<LayoutTransition>,
     window: aimer_widget::base::WindowHandle,
-    damage: aimer_widget::PaintDamageTracker,
     last_geometry: std::cell::Cell<Option<LayoutGeometry>>,
 }
 
@@ -1024,7 +1022,7 @@ impl aimer_widget::Drawable for AnimatedLayoutElement {
         if geometry_changed || active || !geometry.is_finite() || !natural.width.is_finite()
             || !natural.height.is_finite()
         {
-            self.damage.mark_full();
+            aimer_widget::mark_paint_damage_full();
         }
         let scale_x = if natural.width > 0.0 {
             (geometry.width / natural.width).max(0.0)

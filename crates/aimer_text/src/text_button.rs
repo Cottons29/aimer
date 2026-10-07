@@ -599,20 +599,6 @@ impl Drawable for RawTextButton {
         text.paint_local_v2(&text_ctx);
     }
 
-    fn is_paint_stable(&self) -> bool {
-        self.widget.disabled || self.active_style_for(false) == self.active_style_for(true)
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        let normal = self.text_element_for(false);
-        if !normal.is_paint_bounded() || normal.text_style.text_shadow.is_some() {
-            return false;
-        }
-        self.widget.disabled || {
-            let hover = self.text_element_for(true);
-            hover.is_paint_bounded() && hover.text_style.text_shadow.is_none()
-        }
-    }
 }
 
 impl Rebuildable for RawTextButton {}

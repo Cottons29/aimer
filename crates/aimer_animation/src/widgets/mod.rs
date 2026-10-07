@@ -1,4 +1,3 @@
-mod damage;
 pub mod animated;
 pub mod animated_builder;
 pub mod animated_switcher;
@@ -10,7 +9,7 @@ pub mod transition;
 pub use animated::{Animated, AnimationEffect};
 pub use animated_builder::AnimatedBuilder;
 pub use animated_switcher::AnimatedSwitcher;
-pub use animated_paint::AnimatedPaint;
+pub use animated_paint::{AnimatedPaint, PaintPresentation};
 pub use implicit_animation::ImplicitAnimatedBuilder;
 pub use morph_transition::{MorphTransition, Rgba};
 pub use transition::{FadeTransition, RotationTransition, ScaleTransition, SlideTransition};
@@ -42,4 +41,4 @@ pub(crate) mod test_frame_requester {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-mod damage_tests;
+mod builder_tests;

@@ -360,6 +360,58 @@ fn fill_command(rect: Rect) -> DrawCommand {
     }
 }
 
+/// A local list is authored against the node's size (a background fills it), so
+/// a node that grows must be recorded again or the new area stays unpainted.
+#[test]
+fn resizing_a_node_marks_its_recorded_list_stale_but_moving_it_does_not() {
+    let tree = RenderTree::new();
+    let root = tree.add_root(Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap();
+    record_fill(&tree, root);
+    assert!(tree.dirty_elements().is_empty());
+
+    tree.set_bounds(root, Rect::new(10.0, 5.0, 100.0, 100.0)).unwrap();
+    assert!(tree.dirty_elements().is_empty(), "a move keeps the recorded list");
+
+    tree.set_bounds(root, Rect::new(10.0, 5.0, 140.0, 100.0)).unwrap();
+    assert_eq!(tree.dirty_elements(), vec![root]);
+}
+
+#[test]
+fn structure_sync_that_resizes_a_node_marks_its_recorded_list_stale() {
+    let tree = RenderTree::new();
+    let root = tree.add_root(Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap();
+    let child = tree.add_child(root, Rect::new(0.0, 0.0, 40.0, 40.0)).unwrap();
+    record_fill(&tree, root);
+    record_fill(&tree, child);
+    assert!(tree.dirty_elements().is_empty());
+
+    // Same structure: only the root grows.
+    tree.sync_structure_with_clips(
+        &[
+            RenderNodeSpec::new(Some(root), None, Rect::new(0.0, 0.0, 160.0, 100.0)),
+            RenderNodeSpec::new(Some(child), Some(0), Rect::new(0.0, 0.0, 40.0, 40.0)),
+        ],
+        &[None, None],
+    )
+    .unwrap();
+    assert_eq!(tree.dirty_elements(), vec![root]);
+    record_fill(&tree, root);
+
+    // A new sibling changes the structure while the child grows.
+    tree.sync_structure_with_clips(
+        &[
+            RenderNodeSpec::new(Some(root), None, Rect::new(0.0, 0.0, 160.0, 100.0)),
+            RenderNodeSpec::new(Some(child), Some(0), Rect::new(0.0, 0.0, 60.0, 40.0)),
+            RenderNodeSpec::new(None, Some(0), Rect::new(70.0, 0.0, 20.0, 20.0)),
+        ],
+        &[None, None, None],
+    )
+    .unwrap();
+    let dirty = tree.dirty_elements();
+    assert!(dirty.contains(&child), "the grown child must be recorded again");
+    assert!(!dirty.contains(&root), "the unchanged root keeps its list");
+}
+
 fn record_fill(tree: &RenderTree, node: aimer_cupid::draw_cmd_v2::RenderNodeId) {
     tree.context(node)
         .unwrap()

@@ -48,12 +48,6 @@ fn intersect_rect(left: Rect, right: Rect) -> Rect {
     Rect::new(x, y, (right_edge - x).max(0.0), (bottom_edge - y).max(0.0))
 }
 
-#[cfg(not(feature = "portable-guest"))]
-#[inline]
-const fn retained_scroll_paint_supported(is_wasm: bool) -> bool {
-    !is_wasm
-}
-
 impl<E: Element> Drawable for RawScrollableContainer<E> {
     /// Hit-tested over the scroll viewport as laid out.
     fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
@@ -485,13 +479,6 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
 
         // Clip to viewport
         ctx.canvas.save();
-        ctx.canvas.set_clip(
-            Vec2d { x: 0.0, y: 0.0 },
-            ResolvedSize {
-                width: viewport_w.round(),
-                height: viewport_h.round(),
-            },
-        );
 
         // Scroll offsets are already scaled into physical canvas coordinates.
         // Snap them directly so text keeps a stable rasterization phase while
@@ -618,16 +605,6 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
                     v2_child_ctx.parent_pos.y += offset_y;
                     self.child.update(&v2_child_ctx);
                 } else {
-                    #[cfg(not(feature = "portable-guest"))]
-                    if retained_scroll_paint_supported(cfg!(target_arch = "wasm32")) {
-                        self.draw_child_with_retained_paint(ctx, &child_ctx, content_size);
-                    } else {
-                        // Browser backends still have an unstable nested render-target
-                        // path for retained scroll paint. Live replay keeps SVG and text
-                        // in the main frame's compositor state until that path is safe.
-                        self.child.update(&child_ctx);
-                    }
-                    #[cfg(feature = "portable-guest")]
                     self.child.update(&child_ctx);
                 }
 
@@ -669,9 +646,8 @@ impl<E: Element> Drawable for RawScrollableContainer<E> {
             }
         }
 
-        // Restore before drawing scrollbars, which are painted separately from
-        // the clipped content whether they overlay it or reserve inline space.
-        ctx.canvas.clear_clip();
+        // Restore before the scrollbars, which are separate nodes from the
+        // clipped content whether they overlay it or reserve inline space.
         ctx.canvas.restore();
 
         if let Some(vertical_bar) = &self.vertical_scroll_bar
@@ -755,11 +731,5 @@ mod tests {
         assert_eq!(snapped.y, -21.0);
         assert_eq!(snapped.x.fract(), 0.0);
         assert_eq!(snapped.y.fract(), 0.0);
-    }
-
-    #[test]
-    fn browser_scroll_paint_uses_the_live_path() {
-        assert!(!retained_scroll_paint_supported(true));
-        assert!(retained_scroll_paint_supported(false));
     }
 }

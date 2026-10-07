@@ -263,6 +263,21 @@ impl<E: Element> RawPositionedElement<E> {
         self
     }
 
+    /// The child node's own scale or rotation, about the child's origin. `None`
+    /// for translation-only transforms, which move the child instead.
+    fn child_presentation(&self) -> Option<aimer_cupid::utilities::Mat3> {
+        match self.transform {
+            Transform::Scale(sx, sy) => Some(aimer_cupid::utilities::Mat3::scale(sx, sy)),
+            Transform::ScaleX(sx) => Some(aimer_cupid::utilities::Mat3::scale(sx, 1.0)),
+            Transform::ScaleY(sy) => Some(aimer_cupid::utilities::Mat3::scale(1.0, sy)),
+            Transform::Rotate(radians) => Some(aimer_cupid::utilities::Mat3::rotate(radians)),
+            Transform::Translate(..)
+            | Transform::TranslateX(..)
+            | Transform::TranslateY(..)
+            | Transform::None => None,
+        }
+    }
+
     fn retained_child_layout<'a>(
         &self,
         ctx: &BuildContext<'a>,
@@ -270,15 +285,17 @@ impl<E: Element> RawPositionedElement<E> {
         if !ctx.scale.is_finite() || ctx.scale <= 0.0 {
             return None;
         }
+        // Scale and rotation do not move the child's origin; they are the child
+        // node's presentation (see `sync_local_v2_state`).
         let (transform_x, transform_y) = match self.transform {
             Transform::Translate(x, y) => (x, y),
             Transform::TranslateX(x) => (x, 0.0),
             Transform::TranslateY(y) => (0.0, y),
-            Transform::None => (0.0, 0.0),
-            Transform::Scale(..)
+            Transform::None
+            | Transform::Scale(..)
             | Transform::ScaleX(..)
             | Transform::ScaleY(..)
-            | Transform::Rotate(..) => return None,
+            | Transform::Rotate(..) => (0.0, 0.0),
         };
         let is_auto = self.top == Dimension::Auto
             && self.left == Dimension::Auto
@@ -350,6 +367,9 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
     /// Hit-tested over the positioned child, which starts `offset` in from the
     /// node. A transform the layout cannot express has no hit area.
     fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
+        if self.child_presentation().is_some() {
+            return None;
+        }
         let (_, child_ctx) = self.retained_child_layout(ctx)?;
         Some(self.child.content_size(&child_ctx))
     }
@@ -391,6 +411,14 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
     }
 
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
+
+    fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
+        self.sync_paint_geometry(ctx);
+        match self.child_presentation() {
+            Some(transform) => ctx.set_local_v2_child_presentation_at(0, transform, 1.0),
+            None => true,
+        }
+    }
 
     fn retained_v2_child_context_at<'a>(
         &self,
@@ -452,14 +480,6 @@ impl<E: Element> Drawable for RawPositionedElement<E> {
         ctx.canvas.translate(offset);
         self.child.sync_paint_geometry(&child_ctx);
         ctx.canvas.restore();
-    }
-
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
     }
 
     fn update(&self, ctx: &BuildContext) {

@@ -705,6 +705,12 @@ impl<T: Theme> Rebuildable for AnimatedThemeElement<T> {
             *self.current.borrow_mut() = value.clone();
             self.handle.update(|theme| *theme = value);
         }
+        if self.controller.is_animating() {
+            // Nothing marks this element dirty while the transition runs, and a
+            // tick that changes nothing visible publishes nothing, so the next
+            // pass would skip it and the transition would stall.
+            aimer_widget::keep_ticking_elements_reachable();
+        }
         self.child.rebuild_if_dirty(ctx);
     }
 

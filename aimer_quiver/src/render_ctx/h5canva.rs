@@ -297,22 +297,12 @@ pub mod render_ctx {
                 damage,
             );
             let scene = render_plan.is_none().then(|| {
-                state
-                    .canvas
-                    .take_scene(
-                        &frame.draw_list,
-                        width,
-                        height,
-                        metadata.damage().clone(),
-                    )
-                    .unwrap_or_else(|| {
-                        CompositorScene::from_draw_list(
-                            &frame.draw_list,
-                            width,
-                            height,
-                            metadata.damage().clone(),
-                        )
-                    })
+                CompositorScene::from_draw_list(
+                    &frame.draw_list,
+                    width,
+                    height,
+                    metadata.damage().clone(),
+                )
             });
             build.finish(FramePhase::Build);
 

@@ -20,6 +20,6 @@ pub use widgets::AnimatedBuilder;
 pub use widgets::animated_builder::ensure_portable_native_registrations;
 pub use widgets::{
     Animated, AnimatedPaint, AnimatedSwitcher, AnimationEffect, FadeTransition,
-    ImplicitAnimatedBuilder, MorphTransition, Rgba, RotationTransition, ScaleTransition,
+    ImplicitAnimatedBuilder, MorphTransition, PaintPresentation, Rgba, RotationTransition, ScaleTransition,
     SlideTransition,
 };

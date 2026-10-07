@@ -69,6 +69,8 @@ impl StatelessWidget for ThemedPanel {
     fn build(&self, ctx: &BuildContext) -> impl Widget {
         let theme = ThemeData::of(ctx);
         let updater = self.updater;
+        #[cfg(test)]
+        tests::BUILT_BACKGROUNDS.with(|seen| seen.borrow_mut().push(theme.background_color));
 
         Container::new()
             .color(theme.background_color)
@@ -127,5 +129,67 @@ impl StatelessWidget for ThemedPanel {
                             .boxed(),
                     ]),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::time::Duration;
+
+    use aimer::Color;
+    use aimer::quiver::winit::dpi::PhysicalPosition;
+    use aimer::quiver::winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
+
+    use super::*;
+
+    thread_local! {
+        pub(super) static BUILT_BACKGROUNDS: RefCell<Vec<Color>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn click(app: &mut aimer::quiver::aimer_app::HeadlessAimerApp<impl Widget + 'static>, x: f64, y: f64) {
+        app.send_window_event(WindowEvent::CursorMoved {
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(x, y),
+        });
+        app.render_frame();
+        for state in [ElementState::Pressed, ElementState::Released] {
+            app.send_window_event(WindowEvent::MouseInput {
+                device_id: DeviceId::dummy(),
+                state,
+                button: MouseButton::Left,
+            });
+            app.render_frame();
+        }
+    }
+
+    #[test]
+    fn switching_the_theme_animates_to_the_target_and_stops_asking_for_frames() {
+        let mut app = AimerApp::start_headless(AnimatedThemeExample::new());
+        app.pump_frames(8);
+        BUILT_BACKGROUNDS.with(|seen| seen.borrow_mut().clear());
+        let size = app.logical_size();
+
+        click(&mut app, (size.width / 2.0) as f64, (size.height / 2.0 + 30.0) as f64);
+
+        let mut frames = 0;
+        while app.take_redraw_request() && frames < 200 {
+            app.render_frame();
+            frames += 1;
+            if let Some(census) = app.paint_source_census() {
+                assert!(census.unresolved_roots.is_empty(), "frame {frames}: {census:?}");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let seen = BUILT_BACKGROUNDS.with(|seen| seen.borrow().clone());
+        assert!(frames < 200, "the 400ms transition never finished ({frames} frames)");
+        assert!(seen.len() > 3, "the panel was rebuilt {} times", seen.len());
+        let (light, dark) = (ThemeData::light().background_color, ThemeData::dark().background_color);
+        assert_eq!(*seen.last().unwrap(), dark);
+        assert!(
+            seen.iter().any(|color| *color != light && *color != dark),
+            "the panel never saw an in-between theme: {seen:?}"
+        );
     }
 }

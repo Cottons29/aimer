@@ -836,21 +836,10 @@ impl<T: 'static> Drawable for ProviderElement<T> {
         Some(ctx.fork_with_state(Provided(self.handle.clone())))
     }
 
-    fn paint(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| self.child.paint(ctx));
-    }
-
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.sync_paint_geometry(ctx));
     }
 
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
-    }
 }
 
 impl<T: 'static> LayoutElement for ProviderElement<T> {
@@ -1130,21 +1119,10 @@ impl<T: 'static, A: 'static> Drawable for StoreElement<T, A> {
         )
     }
 
-    fn paint(&self, ctx: &BuildContext) {
-        self.scoped(ctx, |ctx| self.child.paint(ctx));
-    }
-
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.scoped(ctx, |ctx| self.child.sync_paint_geometry(ctx));
     }
 
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
-    }
 }
 impl<T: 'static, A: 'static> LayoutElement for StoreElement<T, A> {
     fn pos(&self) -> Option<Vec2d> {

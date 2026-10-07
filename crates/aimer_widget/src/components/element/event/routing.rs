@@ -475,7 +475,7 @@ fn dispatch_indexed_event_children(
     }
 
     let child_result = {
-        let mut context = EventDispatchContext::new(dispatcher, path_root, Some(boundary_id));
+        let mut context = EventDispatchContext::new(dispatcher, path_root, Some(boundary_id), pos);
         root.on_event_with_context(event, &mut context)
     };
     if outcome.capture_owner.is_none()
@@ -606,7 +606,7 @@ fn dispatch_indexed_target_inner(
     }
     if !outcome.result.is_consumed() {
         let own_result = {
-            let mut context = EventDispatchContext::new(dispatcher, path_root, Some(id));
+            let mut context = EventDispatchContext::new(dispatcher, path_root, Some(id), pos);
             element.on_event_with_context(event, &mut context)
         };
         if outcome.capture_owner.is_none()
@@ -696,7 +696,7 @@ pub(super) fn dispatch_cached_hit_chain_inner(
     let own_result = if !event_callback_enabled(root) {
         EventResult::ignored()
     } else {
-        let mut context = EventDispatchContext::new(dispatcher, path_root, root.element_id());
+        let mut context = EventDispatchContext::new(dispatcher, path_root, root.element_id(), pos);
         root.on_event_with_context(event, &mut context)
     };
     if focus_owner.is_none() {
@@ -826,7 +826,7 @@ fn dispatch_routed_event_inner<'tree>(
     let own_result = if !event_callback_enabled(root) {
         EventResult::ignored()
     } else {
-        let mut context = EventDispatchContext::new(dispatcher, path_root, root.element_id());
+        let mut context = EventDispatchContext::new(dispatcher, path_root, root.element_id(), pos);
         root.on_event_with_context(event, &mut context)
     };
     if focus_owner.is_none() {

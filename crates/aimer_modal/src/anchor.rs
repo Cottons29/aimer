@@ -221,22 +221,11 @@ impl Drawable for RawAnchor {
         self.child.update(ctx);
     }
 
-    fn paint(&self, ctx: &BuildContext) {
-        self.child.paint(ctx);
-    }
-
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.track(ctx, self.child.computed_size(ctx));
         self.child.sync_paint_geometry(ctx);
     }
 
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
-    }
 }
 
 impl EventElement for RawAnchor {

@@ -35,10 +35,6 @@ impl Drawable for ZeroSizedBox {
         true
     }
 
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        true
-    }
 }
 
 impl VisitorElement for ZeroSizedBox {

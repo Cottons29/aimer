@@ -92,8 +92,15 @@ impl RawTextWidget {
         base * scale
     }
 
+    /// Whether the plain glyph recorder covers this text. Paragraph layout and
+    /// decorations use the prepared-fragment recorder instead, whose outsets
+    /// are part of the retained node bounds.
+    fn uses_plain_glyph_paint(&self) -> bool {
+        !self.uses_paragraph_layout() && self.text_style.text_decoration.line.is_none()
+    }
+
     fn local_v2_paint_data(&self, ctx: &BuildContext) -> Option<LocalV2TextPaint> {
-        if !self.is_paint_bounded() {
+        if !self.uses_plain_glyph_paint() {
             return None;
         }
 
@@ -208,8 +215,7 @@ impl RawTextWidget {
         let layout = self.with_paragraph(|paragraph| {
             paragraph
                 .supports_retained_v2_rich_text()
-                .then(|| paragraph.cached_for_paint(ctx))
-                .flatten()
+                .then(|| paragraph.layout_for_paint(ctx))
         })?;
         if !layout.size.width.is_finite()
             || !layout.size.height.is_finite()
@@ -454,25 +460,6 @@ impl Drawable for RawTextWidget {
             0.0,
         ])
     }
-
-
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        // Shadow commands stay on the direct path: their blur/offset payload is
-        // intentionally not part of the safe scroll-retention contract. The
-        // plain glyph/decorations path has no event geometry or asynchronous
-        // state of its own, and the retaining owner still retires it when its
-        // layout, scale, or other inputs change.
-        self.text_style.text_shadow.is_none()
-    }
-
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        // Decorations and paragraph effects use the prepared fragment painter
-        // so their outsets can be included in the retained node bounds.
-        !self.uses_paragraph_layout()
-            && self.text_style.text_decoration.line.is_none()
-    }
 }
 
 impl VisitorElement for RawTextWidget {
@@ -613,11 +600,41 @@ mod tests {
         assert!(widget.uses_paragraph_layout());
     }
 
+    /// Anything that rebuilds the tree advances the layout generation, which
+    /// retires the paragraph's cached layout. Painting has to lay the text out
+    /// again rather than decline: a declining element paints nothing, so an
+    /// underlined heading used to vanish on every step of a window resize and
+    /// come back when the drag stopped.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn shadowed_text_stays_on_the_dynamic_paint_path() {
+    fn an_underlined_heading_still_paints_after_the_layout_generation_advances() {
+        use aimer_attribute::{ResolvedSize, Vec2d};
+        use aimer_canvas::{FrameCanvas, InnerCanvas};
+        use aimer_style::{TextDecoration, TextDecorationLine};
+        use aimer_widget::base::{BuildContext, WindowHandle};
+
+        let inner = InnerCanvas::new();
+        let canvas = FrameCanvas::new(&inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let context = BuildContext::new(
+            canvas,
+            ResolvedSize {
+                width: 200.0,
+                height: 100.0,
+            },
+            1.0,
+            Vec2d::default(),
+            Vec2d::default(),
+            WindowHandle::headless(winit::dpi::PhysicalSize::new(200, 100), 1.0),
+            runtime.handle().clone(),
+        );
         let widget = RawTextWidget {
-            text: TextSource::Static("shadowed"),
-            text_style: TextStyle::default().text_shadow(TextShadow::default()),
+            text: TextSource::Static("Consistence Looking"),
+            text_style: TextStyle::default().text_decoration(
+                TextDecoration::new().line(TextDecorationLine::UNDERLINE),
+            ),
             text_align: TextAlign::TopLeft,
             line_height: LineHeight::Normal,
             text_indent: 0.0,
@@ -625,7 +642,14 @@ mod tests {
             _typeface: Cell::new(None),
         };
 
-        assert!(!widget.is_paint_stable());
+        let _ = widget.computed_size(&context);
+        assert!(widget.can_paint_local_v2(&context), "laid out, so it can paint");
+
+        aimer_widget::notify_element_tree_changed();
+        assert!(
+            widget.can_paint_local_v2(&context),
+            "a text whose cached layout was retired must lay out again, not decline"
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

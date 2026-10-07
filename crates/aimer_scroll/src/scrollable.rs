@@ -845,8 +845,6 @@ impl Widget for ScrollableFrame {
             },
             event_dispatcher: RefCell::new(aimer_widget::EventDispatcher::new()),
             layout_cache: Default::default(),
-            #[cfg(not(feature = "portable-guest"))]
-            paint_cache: Default::default(),
         }
         .boxed()
     }

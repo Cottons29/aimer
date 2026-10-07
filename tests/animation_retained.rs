@@ -36,11 +36,6 @@ fn render_staying_retained<W: Widget + 'static>(
         app.render_frame();
         let census = app.paint_source_census().expect("a mounted page has a root");
         assert!(
-            census.dropped_paint.is_empty(),
-            "{what}: frame {frame} dropped legacy paint: {:?}",
-            census.dropped_paint
-        );
-        assert!(
             census.drawn_unmapped.is_empty(),
             "{what}: frame {frame} drew an element the tree does not know: {census:?}"
         );

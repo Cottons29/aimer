@@ -223,17 +223,6 @@ fn intersection(left: DamageRect, right: DamageRect) -> Option<DamageRect> {
     ))
 }
 
-/// Returns a conservative footprint for callers that only need an optional
-/// rectangle. Invalid and empty bounds both become `None` for this API.
-#[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
-#[inline]
-pub(crate) fn paint_damage_rect(ctx: &BuildContext, size: ResolvedSize) -> Option<DamageRect> {
-    match transformed_bounds(ctx, size) {
-        PaintBounds::Unknown | PaintBounds::Known(None) => None,
-        PaintBounds::Known(Some(rectangle)) => Some(rectangle),
-    }
-}
-
 #[inline]
 fn union(left: DamageRect, right: DamageRect) -> DamageRect {
     let x = left.x.min(right.x);

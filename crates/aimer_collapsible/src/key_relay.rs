@@ -92,24 +92,10 @@ impl Drawable for RawKeyRelay {
     fn paint_local_v2(&self, _ctx: &BuildContext) {}
 
     #[inline]
-    fn paint(&self, ctx: &BuildContext) {
-        self.child.paint(ctx);
-    }
-
-    #[inline]
     fn sync_paint_geometry(&self, ctx: &BuildContext) {
         self.child.sync_paint_geometry(ctx);
     }
 
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        self.child.is_paint_stable()
-    }
-
-    #[inline]
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
-    }
 }
 
 impl LayoutElement for RawKeyRelay {
@@ -212,13 +198,6 @@ mod tests {
     impl Drawable for Child {
         fn update(&self, _ctx: &BuildContext) {}
 
-        fn is_paint_stable(&self) -> bool {
-            true
-        }
-
-        fn is_paint_bounded(&self) -> bool {
-            true
-        }
     }
 
     impl Rebuildable for Child {}
@@ -235,8 +214,6 @@ mod tests {
             aimer_widget::EventTreeRole::IndexedTarget
         );
         assert_eq!(relay.event_tree_bounds(), None);
-        assert!(relay.is_paint_stable());
-        assert!(relay.is_paint_bounded());
     }
 
     #[test]

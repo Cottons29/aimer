@@ -889,39 +889,6 @@ impl Drawable for RawTextField {
         self.caret_origin.set((ol + pad_left, ot + pad_top));
 
         ctx.canvas.save();
-        let radii = decoration
-            .border_radius
-            .resolve(box_width, box_height, scale);
-        let clip_radii = [
-            if radii[0] > 0.0 {
-                (radii[0] - pad_left.max(pad_top).min(radii[0])).max(0.0)
-            } else {
-                0.0
-            },
-            if radii[1] > 0.0 {
-                (radii[1] - pad_right.max(pad_top).min(radii[1])).max(0.0)
-            } else {
-                0.0
-            },
-            if radii[2] > 0.0 {
-                (radii[2] - pad_right.max(pad_bottom).min(radii[2])).max(0.0)
-            } else {
-                0.0
-            },
-            if radii[3] > 0.0 {
-                (radii[3] - pad_left.max(pad_bottom).min(radii[3])).max(0.0)
-            } else {
-                0.0
-            },
-        ];
-        ctx.canvas.set_clip_rounded(
-            (pad_left, pad_top).into(),
-            ResolvedSize {
-                width: (box_width - pad_left - pad_right).max(0.0),
-                height: (box_height - pad_top - pad_bottom).max(0.0),
-            },
-            clip_radii,
-        );
         ctx.canvas.translate((pad_left, pad_top).into());
 
         let content_height = (box_height - pad_top - pad_bottom).max(0.0);
@@ -1246,8 +1213,7 @@ impl Drawable for RawTextField {
             }
         }
 
-        ctx.canvas.clear_clip();
-        ctx.canvas.restore(); // clip + translate
+        ctx.canvas.restore(); // translate
         // The language belongs to this field alone, so the widgets drawn after
         // it are judged on their own characters again.
         ctx.canvas.set_text_language(None);

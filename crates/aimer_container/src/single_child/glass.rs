@@ -732,13 +732,6 @@ impl Drawable for RawGlass {
         shadow_outsets(self.material.normalized())
     }
 
-    #[inline]
-    fn is_paint_stable(&self) -> bool {
-        // The material samples the current framebuffer backdrop and its
-        // configuration can change during a rebuild. Retaining this subtree
-        // would freeze both the captured scene and the active blur radius.
-        false
-    }
 }
 
 impl EventElement for RawGlass {
@@ -855,26 +848,6 @@ pub(super) fn resolved_radii(radii: [f32; 4], size: ResolvedSize) -> [f32; 4] {
 mod tests {
     use super::*;
 
-    struct StableChild;
-
-    impl VisitorElement for StableChild {
-        fn debug_name(&self) -> &'static str {
-            "StableChild"
-        }
-    }
-
-    impl Drawable for StableChild {
-        fn update(&self, _ctx: &BuildContext) {}
-
-        fn is_paint_stable(&self) -> bool {
-            true
-        }
-    }
-
-    impl EventElement for StableChild {}
-    impl LayoutElement for StableChild {}
-    impl Rebuildable for StableChild {}
-
     #[test]
     fn material_values_are_finite_and_bounded() {
         let material = GlassMaterial::new()
@@ -912,16 +885,6 @@ mod tests {
 
         let invalid = GlassMaterial::new().blur_intensity(f32::NAN);
         assert_eq!(invalid.blur_intensity_value(), 16.0 / GlassMaterial::MAX_BLUR_RADIUS);
-    }
-
-    #[test]
-    fn glass_never_marks_a_backdrop_dependent_surface_as_paint_stable() {
-        let glass = RawGlass {
-            child: StableChild.boxed(),
-            material: GlassMaterial::new(),
-        };
-
-        assert!(!glass.is_paint_stable());
     }
 
     #[test]

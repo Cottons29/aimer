@@ -10,14 +10,13 @@ use std::sync::Arc;
 
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
-use aimer_cupid::canvas::CupidCanvas;
 use aimer_cupid::shape::{ShapeRenderRequest, build_scene};
 use aimer_shape::{
     FillStyle, PaintError, ShapeBounds, ShapeClip, ShapeFit, ShapeHitTest, ShapePath, ShapePathId,
     ShapeSize, ShapeTransform, StrokeStyle,
 };
 
-use crate::{Canvas, CanvasRendering, FrameCanvas};
+use crate::Canvas;
 
 /// A bounded, typed request to draw one validated shape.
 #[derive(Clone, Debug, PartialEq)]
@@ -252,71 +251,6 @@ pub enum ShapeDrawResult {
     Fallback(ShapeFallback),
 }
 
-/// An inherent canvas bridge for typed shapes.
-impl<'a> FrameCanvas<'a> {
-    /// Submits a typed shape for a target viewport in logical units.
-    ///
-    /// The native implementation reuses Cupid's retained SVG command path and
-    /// tessellation cache. Unsupported clipping or dashed strokes are skipped
-    /// with an explicit result; no platform drawing API is exposed.
-    pub fn draw_shape(&self, request: &DrawShape, viewport: ShapeSize) -> ShapeDrawResult {
-        if request.validate().is_err() || !viewport.is_valid() {
-            return request.safe_fallback();
-        }
-        let render_request = ShapeRenderRequest {
-            path: request.path(),
-            transform: request.transform,
-            fill: request.fill,
-            stroke: request.stroke.as_ref(),
-            clip: &request.clip,
-            opacity: request.opacity,
-            hit_test: request.hit_test,
-        };
-        let scene = match build_scene(&render_request, viewport) {
-            Ok(scene) => scene,
-            Err(aimer_cupid::shape::ShapeRenderError::UnsupportedClip) => {
-                return ShapeDrawResult::Fallback(ShapeFallback::Skip);
-            }
-            Err(aimer_cupid::shape::ShapeRenderError::UnsupportedStroke) => {
-                return ShapeDrawResult::Fallback(ShapeFallback::Skip);
-            }
-            Err(_) => return ShapeDrawResult::Fallback(ShapeFallback::Skip),
-        };
-
-        let clipped = matches!(request.clip, ShapeClip::Bounds);
-        if clipped {
-            let Some((clip_pos, clip_size)) =
-                transformed_bounds(request.path.bounds(), request.transform)
-            else {
-                return ShapeDrawResult::Fallback(ShapeFallback::Skip);
-            };
-            self.set_clip(
-                clip_pos,
-                clip_size,
-            );
-            self.get_inner_canvas().draw_svg(
-                scene,
-                0.0,
-                0.0,
-                viewport.width,
-                viewport.height,
-                Arc::from([]),
-            );
-            self.clear_clip();
-        } else {
-            self.get_inner_canvas().draw_svg(
-                scene,
-                0.0,
-                0.0,
-                viewport.width,
-                viewport.height,
-                Arc::from([]),
-            );
-        }
-        ShapeDrawResult::Submitted
-    }
-}
-
 /// An inherent canvas bridge for typed shapes recorded in a retained v2 list.
 impl Canvas {
     /// Records a typed shape as an SVG-backed local draw command.
@@ -405,18 +339,4 @@ fn transformed_bounds(
         Vec2d { x: min_x, y: min_y },
         ResolvedSize { width, height },
     ))
-}
-
-/// Keeps `CanvasRendering`'s concrete implementation discoverable in docs and
-/// provides a small compile-time seam for future non-Cupid backends.
-pub trait ShapeCanvasRendering: CanvasRendering {
-    /// Submits a typed request or chooses the backend's safe fallback.
-    fn draw_typed_shape(&self, request: &DrawShape, viewport: ShapeSize) -> ShapeDrawResult;
-}
-
-impl ShapeCanvasRendering for CupidCanvas {
-    fn draw_typed_shape(&self, request: &DrawShape, viewport: ShapeSize) -> ShapeDrawResult {
-        let canvas = FrameCanvas::new(self);
-        canvas.draw_shape(request, viewport)
-    }
 }

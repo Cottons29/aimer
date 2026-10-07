@@ -1363,7 +1363,7 @@ impl RawRichText {
         {
             return None;
         }
-        let layout = self.paragraph.cached_for_paint(ctx)?;
+        let layout = self.paragraph.layout_for_paint(ctx);
         if !layout.size.width.is_finite()
             || !layout.size.height.is_finite()
             || layout.size.width < 0.0

@@ -544,10 +544,6 @@ impl<E: Element> Drawable for RawGestureDetector<E> {
         self.cached_bounds.disagreement("GestureDetector")
     }
 
-    fn paint(&self, ctx: &BuildContext<'_>) {
-        self.child.paint(ctx);
-    }
-
     fn sync_paint_geometry(&self, ctx: &BuildContext<'_>) {
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         let child_size = self.child.computed_size(ctx);
@@ -556,13 +552,6 @@ impl<E: Element> Drawable for RawGestureDetector<E> {
         self.child.sync_paint_geometry(ctx);
     }
 
-    fn is_paint_stable(&self) -> bool {
-        !self.state.borrow().is_engaged() && self.child.is_paint_stable()
-    }
-
-    fn is_paint_bounded(&self) -> bool {
-        self.child.is_paint_bounded()
-    }
 }
 
 impl<E: Element + 'static> Rebuildable for RawGestureDetector<E> {
@@ -709,46 +698,6 @@ mod tests {
             state: RefCell::new(GestureState::default()),
             behavior,
         }
-    }
-
-    struct PaintStableElement;
-
-    impl VisitorElement for PaintStableElement {
-        fn debug_name(&self) -> &'static str {
-            "PaintStableElement"
-        }
-    }
-    impl EventElement for PaintStableElement {}
-    impl LayoutElement for PaintStableElement {}
-    impl Drawable for PaintStableElement {
-        fn update(&self, _ctx: &BuildContext<'_>) {}
-
-        fn is_paint_stable(&self) -> bool {
-            true
-        }
-    }
-    impl Rebuildable for PaintStableElement {}
-
-    fn paint_stable_detector() -> RawGestureDetector<PaintStableElement> {
-        let cached_bounds = InteractionBounds::new();
-        cached_bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
-        RawGestureDetector {
-            child: PaintStableElement,
-            cached_bounds,
-            window: WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0),
-            handlers: Rc::new(GestureHandlers::new()),
-            state: RefCell::new(GestureState::default()),
-            behavior: GestureDetectorBehavior::PassThrough,
-        }
-    }
-
-    #[test]
-    fn idle_gesture_detector_preserves_stable_child_paint_but_live_gestures_do_not() {
-        let mut detector = paint_stable_detector();
-        assert!(detector.is_paint_stable());
-
-        detector.state = RefCell::new(pressing(touch(5.0, 5.0, 1)));
-        assert!(!detector.is_paint_stable());
     }
 
     fn touch(x: f32, y: f32, id: u64) -> PointerInfo {
