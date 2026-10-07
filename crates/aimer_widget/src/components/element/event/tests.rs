@@ -10,6 +10,7 @@ use super::*;
 use crate::focus::FocusTrap;
 use crate::{FocusNode, Key};
 
+mod broadcast;
 mod core;
 mod dispatch;
 mod event_tree;

@@ -403,24 +403,33 @@ fn measure_event_dispatch(count: usize) {
     samples.print(&format!("{count} nodes: pointer dispatch (production)"));
 }
 
-fn measure_event_delivery(count: usize) {
+fn measure_event_delivery(count: usize, retained: bool) {
     let mut samples = Samples::default();
     let event = pointer_event();
     for _ in 0..ROUNDS {
         let (root, _) = traversal_tree(count, false);
+        let mut dispatcher = EventDispatcher::new();
+        let mut broadcast = || {
+            if retained {
+                dispatcher.broadcast(root.as_ref(), &event)
+            } else {
+                broadcast_event(root.as_ref(), &event)
+            }
+        };
         for _ in 0..WARMUP_OPERATIONS {
-            let _ = black_box(broadcast_event(root.as_ref(), &event));
+            let _ = black_box(broadcast());
         }
 
         let start = Instant::now();
         for _ in 0..MEASURED_OPERATIONS {
-            let _ = black_box(broadcast_event(root.as_ref(), &event));
+            let _ = black_box(broadcast());
         }
         samples.values.push(
             start.elapsed().as_secs_f64() * 1e6 / MEASURED_OPERATIONS as f64,
         );
     }
-    samples.print(&format!("{count} nodes: event delivery (broadcast)"));
+    let path = if retained { "cached broadcast" } else { "broadcast" };
+    samples.print(&format!("{count} nodes: event delivery ({path})"));
 }
 
 fn measure_focus(count: usize) {
@@ -483,7 +492,8 @@ fn main() {
     println!("\nstructural input phases");
     for count in TREE_SIZES {
         measure_hit_testing(count);
-        measure_event_delivery(count);
+        measure_event_delivery(count, false);
+        measure_event_delivery(count, true);
         measure_event_dispatch(count);
         measure_focus(count);
     }

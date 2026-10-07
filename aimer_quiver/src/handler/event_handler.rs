@@ -1,7 +1,7 @@
 use aimer_attribute::position::Vec2d;
 use aimer_events::element::{ElementEvent, KeyAction, Modifiers, NamedKey};
 use aimer_events::pointer::{FILE_DRAG_POINTER_ID, PointerButton, PointerInfo, PointerSource};
-use aimer_widget::{EventResult, PointerKey, Widget, broadcast_event};
+use aimer_widget::{EventResult, PointerKey, Widget};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{
     ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent,
@@ -301,10 +301,8 @@ impl WindowEventHandler {
                     // elements with an active drag (e.g. scrollable fling) receive
                     // the release event even when the finger lifts outside their
                     // bounds — the common case for a fast flick on touch screens.
-                    if matches!(&event, ElementEvent::PointerDown(_))
-                        && let Some(root) = app.active_root()
-                    {
-                        result = result.merge(broadcast_event(root.as_ref(), &event));
+                    if matches!(&event, ElementEvent::PointerDown(_)) {
+                        result = result.merge(app.broadcast_element_event(&event));
                     }
                 }
                 if Self::should_redraw(result, true) {
@@ -363,8 +361,8 @@ impl WindowEventHandler {
             let was_captured = app.event_dispatcher.is_captured(pointer);
             let event = ElementEvent::PointerExited(pointer.source, pointer.id);
             let mut result = app.dispatch_element_event(app.cursor_pos, &event);
-            if !was_captured && let Some(root) = app.active_root() {
-                result = result.merge(broadcast_event(root.as_ref(), &event));
+            if !was_captured {
+                result = result.merge(app.broadcast_element_event(&event));
             }
             if Self::should_redraw(result, true) {
                 app.request_full_redraw();
@@ -421,10 +419,8 @@ impl WindowEventHandler {
         if app.active_root().is_some() {
             let mut result = app.dispatch_element_event(c, &event);
             if !result.is_consumed() {
-                if matches!(&event, ElementEvent::PointerDown(_))
-                    && let Some(root) = app.active_root()
-                {
-                    result = result.merge(broadcast_event(root.as_ref(), &event));
+                if matches!(&event, ElementEvent::PointerDown(_)) {
+                    result = result.merge(app.broadcast_element_event(&event));
                 }
             }
             if Self::should_redraw(result, true) {
@@ -910,14 +906,12 @@ impl WindowEventHandler {
         let event = ElementEvent::HoveredFileMoved { paths, pos: at };
         let mut result = app.dispatch_element_event(at, &event);
 
-        if app.file_drag.note_answered(result.is_consumed())
-            && let Some(root) = app.active_root()
-        {
+        if app.file_drag.note_answered(result.is_consumed()) {
             let left = ElementEvent::DragLeave {
                 source: PointerSource::Mouse,
                 id: FILE_DRAG_POINTER_ID,
             };
-            result = result.merge(broadcast_event(root.as_ref(), &left));
+            result = result.merge(app.broadcast_element_event(&left));
         }
 
         if Self::should_redraw(result, true) {
@@ -952,10 +946,8 @@ impl WindowEventHandler {
         // is not necessarily the one the cursor rests on now. Everyone who
         // reacted to the drag has to hear that it is over, so this one is
         // broadcast rather than hit-tested.
-        if matches!(event, ElementEvent::HoveredFileCancelled)
-            && let Some(root) = app.active_root()
-        {
-            result = result.merge(broadcast_event(root.as_ref(), event));
+        if matches!(event, ElementEvent::HoveredFileCancelled) {
+            result = result.merge(app.broadcast_element_event(event));
         }
 
         if result.needs_redraw() {

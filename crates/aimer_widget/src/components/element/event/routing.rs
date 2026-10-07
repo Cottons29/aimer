@@ -893,46 +893,55 @@ pub(super) fn dispatch_event_inner<'a>(
 
 /// Broadcast an event to every element in the tree, regardless of hit-testing.
 /// Returns the combined effects produced by every element.
+/// Repeated callers can retain an [`EventDispatcher`] and use
+/// [`EventDispatcher::broadcast`] to reuse its indexes.
 pub fn broadcast_event(root: &dyn Element, event: &ElementEvent) -> EventResult {
-    let mut dispatcher = EventDispatcher::new();
-    dispatcher.synchronize_paths(root);
-    let mut result = EventResult::ignored();
-    for target in dispatcher.event_tree.roots().iter().rev().copied() {
-        result = result.merge(broadcast_indexed_target(
-            root,
-            &dispatcher.event_tree,
-            &dispatcher.path_indices,
-            &dispatcher.path_links,
-            target,
-            event,
-        ));
+    EventDispatcher::new().broadcast(root, event)
+}
+
+impl EventDispatcher {
+    /// Broadcasts an event to every event target, regardless of hit-testing.
+    ///
+    /// Reuses the retained event tree and direct element index while the root
+    /// and its subtree generation remain unchanged.
+    ///
+    /// Delivery visits children before their parent in reverse child order and
+    /// continues after consumption, combining every target's effects. Capture
+    /// and focus requests in the result are not applied by this operation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an event target lacks a retained identity in the structural
+    /// tree. [`Element::boxed`] supplies these identities.
+    pub fn broadcast(&mut self, root: &dyn Element, event: &ElementEvent) -> EventResult {
+        self.synchronize_paths_for_current_tree(root);
+        let mut result = EventResult::ignored();
+        for target in self.event_tree.roots().iter().rev().copied() {
+            result = result.merge(broadcast_indexed_target(root, self, target, event));
+        }
+        result
     }
-    result
 }
 
 fn broadcast_indexed_target(
     root: &dyn Element,
-    tree: &EventTree,
-    path_indices: &HashMap<ElementId, usize>,
-    path_links: &[ElementPath],
+    dispatcher: &EventDispatcher,
     target: EventTargetId,
     event: &ElementEvent,
 ) -> EventResult {
-    let Some(entry) = tree.get(target) else {
+    let Some(entry) = dispatcher.event_tree.get(target) else {
         return EventResult::ignored();
     };
     let mut result = EventResult::ignored();
     for child in entry.children().iter().rev().copied() {
         result = result.merge(broadcast_indexed_target(
             root,
-            tree,
-            path_indices,
-            path_links,
+            dispatcher,
             child,
             event,
         ));
     }
-    if let Some(element) = resolve_element_path(root, entry.element_id(), path_indices, path_links) {
+    if let Some(element) = dispatcher.resolve_indexed_element(root, entry.element_id()) {
         result.merge(element.on_event(event))
     } else {
         result

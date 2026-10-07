@@ -1075,6 +1075,20 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         pos: Vec2d,
         event: &aimer_events::element::ElementEvent,
     ) -> EventResult {
+        self.with_event_root(|dispatcher, root| dispatcher.dispatch(root, pos, event))
+    }
+
+    pub(crate) fn broadcast_element_event(
+        &mut self,
+        event: &aimer_events::element::ElementEvent,
+    ) -> EventResult {
+        self.with_event_root(|dispatcher, root| dispatcher.broadcast(root, event))
+    }
+
+    fn with_event_root(
+        &mut self,
+        dispatch: impl FnOnce(&mut EventDispatcher, &dyn Element) -> EventResult,
+    ) -> EventResult {
         let Self {
             event_dispatcher,
             widget_root,
@@ -1092,17 +1106,14 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let Some(root) = root else {
             return EventResult::ignored();
         };
-        event_dispatcher.dispatch(root.as_ref(), pos, event)
+        dispatch(event_dispatcher, root.as_ref())
     }
 
     pub(crate) fn cancel_element_events(&mut self) -> EventResult {
-        let Some(root) = self.active_root() else {
+        if self.active_root().is_none() {
             return EventResult::ignored();
-        };
-        let result = aimer_widget::broadcast_event(
-            root.as_ref(),
-            &aimer_events::element::ElementEvent::Cancel,
-        );
+        }
+        let result = self.broadcast_element_event(&aimer_events::element::ElementEvent::Cancel);
         self.event_dispatcher.clear_captures();
         result
     }

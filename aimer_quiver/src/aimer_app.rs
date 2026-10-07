@@ -1580,6 +1580,7 @@ mod tests {
 
     use super::*;
 
+    mod broadcast;
     mod retained_modal;
 
     static VIRTUALIZED_RENDER_TEST_LOCK: Mutex<()> = Mutex::new(());
