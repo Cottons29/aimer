@@ -11,6 +11,27 @@ impl Mat3 {
         }
     }
 
+    /// Whether this matrix is exactly the identity.
+    ///
+    /// Compares component-wise, so `-0.0` counts as zero and any `NaN` makes
+    /// the answer `false`.
+    #[inline]
+    pub fn is_identity(&self) -> bool {
+        // Spelled out: comparing the nested arrays goes through the generic
+        // slice-equality machinery, which is several calls per row in an
+        // unoptimized build and this runs for every node of every frame.
+        let [x, y, w] = &self.cols;
+        x[0] == 1.0
+            && x[1] == 0.0
+            && x[2] == 0.0
+            && y[0] == 0.0
+            && y[1] == 1.0
+            && y[2] == 0.0
+            && w[0] == 0.0
+            && w[1] == 0.0
+            && w[2] == 1.0
+    }
+
     pub const fn translate(tx: f32, ty: f32) -> Self {
         Self {
             cols: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [tx, ty, 1.0]],
@@ -219,5 +240,32 @@ mod tests {
         assert!(Mat3::scale(0.0, 2.0)
             .inverse_transform_point(1.0, 1.0)
             .is_none());
+    }
+
+    #[test]
+    fn identity_is_recognised_and_every_other_cell_breaks_it() {
+        assert!(Mat3::identity().is_identity());
+        assert!(Mat3::translate(0.0, 0.0).is_identity());
+        assert!(Mat3::scale(1.0, 1.0).is_identity());
+        for col in 0..3 {
+            for row in 0..3 {
+                let mut matrix = Mat3::identity();
+                matrix.cols[col][row] += 0.5;
+                assert!(!matrix.is_identity(), "cell [{col}][{row}] was ignored");
+            }
+        }
+        assert!(!Mat3::translate(1.0, 0.0).is_identity());
+        assert!(!Mat3::scale(2.0, 1.0).is_identity());
+    }
+
+    #[test]
+    fn identity_treats_negative_zero_as_zero_and_nan_as_different() {
+        let mut matrix = Mat3::identity();
+        matrix.cols[0][1] = -0.0;
+        matrix.cols[2][0] = -0.0;
+        assert!(matrix.is_identity());
+
+        matrix.cols[1][1] = f32::NAN;
+        assert!(!matrix.is_identity());
     }
 }

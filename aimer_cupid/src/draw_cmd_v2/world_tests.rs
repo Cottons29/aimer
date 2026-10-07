@@ -307,6 +307,88 @@ fn querying_a_whole_subtree_does_not_multiply_by_depth() {
     );
 }
 
+/// A scrollable's content node: its bounds cover the viewport clip, and it owns
+/// `rows` descendants that are all clipped to that viewport.
+fn viewport_with_rows(rows: usize, content_height: f32) -> (RenderTree, RenderNodeId) {
+    let tree = RenderTree::new();
+    let viewport = tree.add_root(Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap();
+    let content = tree
+        .add_child(viewport, Rect::new(0.0, 0.0, 100.0, content_height))
+        .unwrap();
+    for row in 0..rows {
+        tree.add_child(content, Rect::new(0.0, row as f32 * 10.0, 100.0, 10.0))
+            .unwrap();
+    }
+    tree.draw_cmd.borrow_mut().node_mut(content).unwrap().clip =
+        Some(Rect::new(0.0, 0.0, 100.0, 100.0));
+    (tree, content)
+}
+
+#[test]
+fn a_clip_that_the_node_covers_bounds_the_subtree_without_visiting_it() {
+    const ROWS: usize = 500;
+    let (tree, content) = viewport_with_rows(ROWS, 5000.0);
+    let inner = tree.draw_cmd.borrow();
+
+    reset_node_lookups();
+    let bounds = inner.visible_subtree_bounds(content);
+    let lookups = node_lookups();
+
+    assert_eq!(bounds, Some(Rect::new(0.0, 0.0, 100.0, 100.0)));
+    assert!(
+        lookups < ROWS / 10,
+        "visible_subtree_bounds took {lookups} lookups for {ROWS} clipped descendants"
+    );
+}
+
+#[test]
+fn a_clip_that_the_node_does_not_cover_still_measures_its_descendants() {
+    // The content is shorter than the viewport, so the clip alone would
+    // overstate the footprint and the descendants have to be measured.
+    let (tree, content) = viewport_with_rows(3, 30.0);
+    let inner = tree.draw_cmd.borrow();
+
+    assert_eq!(
+        inner.visible_subtree_bounds(content),
+        reference::visible_subtree_bounds(&inner, content)
+    );
+    assert_eq!(
+        inner.visible_subtree_bounds(content),
+        Some(Rect::new(0.0, 0.0, 100.0, 30.0))
+    );
+}
+
+#[test]
+fn the_covered_clip_shortcut_matches_the_reference_on_varied_trees() {
+    // Cover the clip of every clipped node so the shortcut is exercised on the
+    // transforms, nested clips and animation clips `varied_tree` produces.
+    for seed in [3, 11, 58, 777, 31_415] {
+        let (tree, ids) = varied_tree(seed, 80);
+        {
+            let mut inner = tree.draw_cmd.borrow_mut();
+            for id in &ids {
+                let node = inner.node_mut(*id).unwrap();
+                if let Some(clip) = node.clip {
+                    node.bounds = Rect::new(
+                        node.bounds.x,
+                        node.bounds.y,
+                        clip.x + clip.width + 200.0,
+                        clip.y + clip.height + 200.0,
+                    );
+                }
+            }
+        }
+        let inner = tree.draw_cmd.borrow();
+        for id in ids {
+            assert_eq!(
+                inner.visible_subtree_bounds(id),
+                reference::visible_subtree_bounds(&inner, id),
+                "visible_subtree_bounds, seed {seed}, {id:?}"
+            );
+        }
+    }
+}
+
 /// Callers cache a node's world rectangle against the tree's geometry revision,
 /// so every mutation that can move a node has to advance it, and a pure read
 /// must not.

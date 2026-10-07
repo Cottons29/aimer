@@ -1,7 +1,69 @@
 use super::*;
 
+/// Marks a node without a resolvable parent in [`Topology::parent`].
+const NO_PARENT: usize = usize::MAX;
+
+/// Node positions for every parent and child link, resolved once per topology.
+///
+/// A link is stored as an element identity, and turning it into a position in
+/// the node array costs a hash lookup. A scrolling frame plans every node of
+/// the tree while the structure stays the same, so those lookups were repeated
+/// several times per node per frame for answers that had not changed. This
+/// resolves them when [`DrawCommandList::topology_revision`] moves and lets
+/// the per-frame passes index plain slices.
+#[derive(Default)]
+struct Topology {
+    revision: Option<u64>,
+    /// Positions of the roots, in paint order.
+    roots: Vec<usize>,
+    /// Position of each node's parent, or [`NO_PARENT`].
+    parent: Vec<usize>,
+    /// `children[child_start[i]..child_start[i + 1]]` are node `i`'s children,
+    /// in paint order. One extra entry closes the last node's range.
+    child_start: Vec<usize>,
+    children: Vec<usize>,
+}
+
+impl Topology {
+    fn refresh(&mut self, tree: &DrawCommandList) {
+        if self.revision == Some(tree.topology_revision) && self.parent.len() == tree.nodes.len() {
+            return;
+        }
+        self.roots.clear();
+        self.roots.extend(
+            tree.roots
+                .iter()
+                .filter_map(|root| tree.indices.get(root).copied()),
+        );
+        self.parent.clear();
+        self.child_start.clear();
+        self.children.clear();
+        for node in &tree.nodes {
+            self.parent.push(
+                node.parent
+                    .and_then(|parent| tree.indices.get(&parent).copied())
+                    .unwrap_or(NO_PARENT),
+            );
+            self.child_start.push(self.children.len());
+            self.children.extend(
+                node.children
+                    .iter()
+                    .filter_map(|child| tree.indices.get(child).copied()),
+            );
+        }
+        self.child_start.push(self.children.len());
+        self.revision = Some(tree.topology_revision);
+    }
+
+    #[inline]
+    fn children_of(&self, index: usize) -> &[usize] {
+        &self.children[self.child_start[index]..self.child_start[index + 1]]
+    }
+}
+
 #[derive(Default)]
 pub(super) struct RenderWorkspace {
+    topology: Topology,
     states: Vec<NodeFrameState>,
     visit_stack: Vec<usize>,
     node_order: Vec<usize>,
@@ -77,25 +139,28 @@ enum RenderTraversal {
 
 impl RenderWorkspace {
     fn prepare(&mut self, tree: &DrawCommandList) {
+        self.topology.refresh(tree);
         self.states
             .resize_with(tree.nodes.len(), NodeFrameState::default);
         self.visit_stack.clear();
         self.node_order.clear();
 
-        for root in tree.roots.iter().rev() {
-            if let Some(index) = tree.indices.get(root).copied() {
-                self.visit_stack.push(index);
-            }
+        // Plain index loops: the adapter chains these replace cost several
+        // calls per element in an unoptimized build, for a body that is a push.
+        let roots = &self.topology.roots;
+        let mut next = roots.len();
+        while next > 0 {
+            next -= 1;
+            self.visit_stack.push(roots[next]);
         }
 
         while let Some(index) = self.visit_stack.pop() {
             let Some(node) = tree.nodes.get(index) else {
                 continue;
             };
-            let parent = node
-                .parent
-                .and_then(|parent| tree.indices.get(&parent))
-                .and_then(|parent_index| self.states.get(*parent_index))
+            let parent = self
+                .states
+                .get(self.topology.parent[index])
                 .map_or_else(ParentFrameState::default, |state| ParentFrameState {
                     origin: state.origin,
                     transform: state.transform,
@@ -106,19 +171,21 @@ impl RenderWorkspace {
                 parent.origin.0 + node.bounds.x,
                 parent.origin.1 + node.bounds.y,
             );
-            let to_origin = Mat3::translate(origin.0, origin.1);
-            let from_origin = Mat3::translate(-origin.0, -origin.1);
-            let transform = parent
-                .transform
-                .mul(&to_origin)
-                .mul(&node.presentation_transform)
-                .mul(&node.transform)
-                .mul(&from_origin);
-            let transform_before_animation = parent
-                .transform
-                .mul(&to_origin)
-                .mul(&node.presentation_transform)
-                .mul(&from_origin);
+            // A node without its own transforms leaves the parent's transform
+            // untouched: translating to the origin and back is the identity,
+            // so the four products that would rebuild it are skipped.
+            let moves_itself =
+                !node.presentation_transform.is_identity() || !node.transform.is_identity();
+            let transform = if moves_itself {
+                parent
+                    .transform
+                    .mul(&Mat3::translate(origin.0, origin.1))
+                    .mul(&node.presentation_transform)
+                    .mul(&node.transform)
+                    .mul(&Mat3::translate(-origin.0, -origin.1))
+            } else {
+                parent.transform
+            };
             let Some(bounds) = transform_rect(
                 transform,
                 Rect::new(origin.0, origin.1, node.bounds.width, node.bounds.height),
@@ -139,6 +206,17 @@ impl RenderWorkspace {
                 }
             }
             if let Some(local_clip) = node.animation_clip {
+                // An animation clip is placed before the animation's own
+                // transform, and only nodes that have one need this matrix.
+                let transform_before_animation = if node.presentation_transform.is_identity() {
+                    parent.transform
+                } else {
+                    parent
+                        .transform
+                        .mul(&Mat3::translate(origin.0, origin.1))
+                        .mul(&node.presentation_transform)
+                        .mul(&Mat3::translate(-origin.0, -origin.1))
+                };
                 clip = clip.intersect(transform_rect(
                     transform_before_animation,
                     local_clip.translated(origin.0, origin.1),
@@ -156,27 +234,18 @@ impl RenderWorkspace {
             };
             self.node_order.push(index);
 
-            for child in node.children.iter().rev() {
-                if let Some(child_index) = tree.indices.get(child).copied() {
-                    self.visit_stack.push(child_index);
-                }
+            let children = self.topology.children_of(index);
+            let mut next = children.len();
+            while next > 0 {
+                next -= 1;
+                self.visit_stack.push(children[next]);
             }
         }
 
         for index in self.node_order.iter().rev().copied() {
-            let Some(node) = tree.nodes.get(index) else {
-                continue;
-            };
             let child_bounds = self.states[index].subtree_bounds;
             let child_visible_bounds = self.states[index].visible_subtree_bounds;
-            let Some(parent_index) = node
-                .parent
-                .and_then(|parent| tree.indices.get(&parent))
-                .copied()
-            else {
-                continue;
-            };
-            let Some(parent_state) = self.states.get_mut(parent_index) else {
+            let Some(parent_state) = self.states.get_mut(self.topology.parent[index]) else {
                 continue;
             };
             union_bounds(&mut parent_state.subtree_bounds, child_bounds);
@@ -194,10 +263,11 @@ impl RenderWorkspace {
     ) -> Vec<RenderOp> {
         let mut output = Vec::new();
         self.render_stack.clear();
-        for root in tree.roots.iter().rev() {
-            if let Some(index) = tree.indices.get(root).copied() {
-                self.render_stack.push(RenderTraversal::Node(index));
-            }
+        let roots = &self.topology.roots;
+        let mut next = roots.len();
+        while next > 0 {
+            next -= 1;
+            self.render_stack.push(RenderTraversal::Node(roots[next]));
         }
 
         while let Some(item) = self.render_stack.pop() {
@@ -211,7 +281,7 @@ impl RenderWorkspace {
             let Some(node) = tree.nodes.get(index) else {
                 continue;
             };
-            let state = self.states[index];
+            let state = &self.states[index];
             let Some(bounds) = state.bounds else {
                 continue;
             };
@@ -270,10 +340,12 @@ impl RenderWorkspace {
                     .push(RenderTraversal::EndOpacityGroup(id));
             }
             // A node without a clip may have children that extend beyond its bounds.
-            for child in node.children.iter().rev() {
-                if let Some(child_index) = tree.indices.get(child).copied() {
-                    self.render_stack.push(RenderTraversal::Node(child_index));
-                }
+            let children = self.topology.children_of(index);
+            let mut next = children.len();
+            while next > 0 {
+                next -= 1;
+                self.render_stack
+                    .push(RenderTraversal::Node(children[next]));
             }
         }
 

@@ -7,6 +7,8 @@
 mod render_order;
 mod world;
 #[cfg(test)]
+mod render_order_tests;
+#[cfg(test)]
 mod world_tests;
 
 use std::cell::RefCell;
@@ -597,6 +599,12 @@ pub struct DrawCommandList {
     /// may advance without any rectangle changing (a paint source is set
     /// through the same accessor); that only costs a recomputation.
     geometry_revision: u64,
+    /// Advances whenever the parent/child structure can change: a node is
+    /// added or the node array is replaced by a structure sync. The paint-order
+    /// plan caches the resolved positions of parents and children against it,
+    /// so every edit to `nodes`, `indices`, `roots`, `parent` or `children`
+    /// must advance it. Geometry, clip and paint edits must not.
+    topology_revision: u64,
     render_workspace: RefCell<render_order::RenderWorkspace>,
 }
 
@@ -610,6 +618,7 @@ impl DrawCommandList {
             return Err(RenderTreeError::InvalidBounds);
         }
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.topology_revision = self.topology_revision.wrapping_add(1);
         let parent_index = match parent {
             Some(parent) => Some(
                 *self
@@ -971,6 +980,7 @@ impl RenderTree {
         }
 
         tree.geometry_revision = tree.geometry_revision.wrapping_add(1);
+        tree.topology_revision = tree.topology_revision.wrapping_add(1);
         tree.nodes = synchronized;
         tree.indices = tree
             .nodes

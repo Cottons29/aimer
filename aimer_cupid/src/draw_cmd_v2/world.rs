@@ -148,7 +148,24 @@ impl DrawCommandList {
     /// below it: the footprint that actually reaches pixels.
     pub(super) fn visible_subtree_bounds(&self, id: RenderNodeId) -> Option<Rect> {
         let node = self.node(id)?;
-        self.visible_subtree_bounds_from(node, &self.frame_below(node.parent)?)
+        let parent = self.frame_below(node.parent)?;
+
+        // Every descendant is clipped by the clip this node hands down, so the
+        // footprint can never exceed it. When the node's own visible bounds
+        // already fill that clip, the footprint is bracketed from both sides
+        // and equals the clip without visiting a single descendant. A
+        // scrollable's content node is exactly this case on every frame it
+        // moves: it is taller than the viewport it is clipped to, and its
+        // thousands of descendants would otherwise be walked to rediscover the
+        // viewport rectangle.
+        let world = node.world(&parent);
+        if let ClipState::Clipped(clip) = world.frame.clip
+            && let Some(bounds) = world.bounds
+            && bounds.intersection(clip) == Some(clip)
+        {
+            return Some(clip);
+        }
+        self.visible_subtree_bounds_from(node, &parent)
     }
 
     fn visible_subtree_bounds_from(&self, node: &RenderNode, parent: &WorldFrame) -> Option<Rect> {

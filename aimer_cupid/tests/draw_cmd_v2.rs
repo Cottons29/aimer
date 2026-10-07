@@ -412,6 +412,95 @@ fn structure_sync_that_resizes_a_node_marks_its_recorded_list_stale() {
     assert!(!dirty.contains(&root), "the unchanged root keeps its list");
 }
 
+/// A scrollable's content node: it moves under a fixed viewport clip, and its
+/// only descendant is a small leaf, so the tight footprint is far smaller than
+/// the viewport.
+fn viewport_content() -> (
+    RenderTree,
+    aimer_cupid::draw_cmd_v2::RenderNodeId,
+    aimer_cupid::draw_cmd_v2::RenderNodeId,
+) {
+    let tree = RenderTree::new();
+    let viewport = tree.add_root(Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap();
+    let content = tree
+        .add_child(viewport, Rect::new(0.0, 0.0, 100.0, 400.0))
+        .unwrap();
+    let leaf = tree
+        .add_child(content, Rect::new(0.0, 0.0, 10.0, 10.0))
+        .unwrap();
+    record_fill(&tree, leaf);
+    // The clip is local to the content's origin, so it compensates the offset
+    // and keeps the viewport fixed in the window.
+    tree.set_geometry(
+        content,
+        Rect::new(0.0, 0.0, 100.0, 400.0),
+        Some(Rect::new(0.0, 0.0, 100.0, 100.0)),
+    )
+    .unwrap();
+    tree.take_damage();
+    (tree, content, leaf)
+}
+
+fn union_of(rects: &[Rect]) -> Rect {
+    assert!(!rects.is_empty(), "damage was expected");
+    let left = rects.iter().map(|rect| rect.x).fold(f32::MAX, f32::min);
+    let top = rects.iter().map(|rect| rect.y).fold(f32::MAX, f32::min);
+    let right = rects
+        .iter()
+        .map(|rect| rect.x + rect.width)
+        .fold(f32::MIN, f32::max);
+    let bottom = rects
+        .iter()
+        .map(|rect| rect.y + rect.height)
+        .fold(f32::MIN, f32::max);
+    Rect::new(left, top, right - left, bottom - top)
+}
+
+#[test]
+fn moving_a_clipped_viewport_child_damages_the_whole_viewport_clip() {
+    let (tree, content, _leaf) = viewport_content();
+
+    tree.set_geometry(
+        content,
+        Rect::new(0.0, -50.0, 100.0, 400.0),
+        Some(Rect::new(0.0, 50.0, 100.0, 100.0)),
+    )
+    .unwrap();
+
+    // The clip bounds every descendant, so the damage is the clip footprint
+    // and does not have to be recovered by measuring the content subtree.
+    assert_eq!(union_of(&tree.take_damage()), Rect::new(0.0, 0.0, 100.0, 100.0));
+}
+
+#[test]
+fn moving_a_clipped_child_to_the_same_geometry_adds_no_damage() {
+    let (tree, content, _leaf) = viewport_content();
+
+    tree.set_geometry(
+        content,
+        Rect::new(0.0, 0.0, 100.0, 400.0),
+        Some(Rect::new(0.0, 0.0, 100.0, 100.0)),
+    )
+    .unwrap();
+
+    assert!(tree.take_damage().is_empty());
+}
+
+#[test]
+fn moving_an_unclipped_child_keeps_the_tight_subtree_damage() {
+    let tree = RenderTree::new();
+    let root = tree.add_root(Rect::new(0.0, 0.0, 100.0, 100.0)).unwrap();
+    let child = tree
+        .add_child(root, Rect::new(10.0, 10.0, 30.0, 30.0))
+        .unwrap();
+    tree.take_damage();
+
+    tree.set_geometry(child, Rect::new(50.0, 10.0, 30.0, 30.0), None)
+        .unwrap();
+
+    assert_eq!(union_of(&tree.take_damage()), Rect::new(10.0, 10.0, 70.0, 30.0));
+}
+
 fn record_fill(tree: &RenderTree, node: aimer_cupid::draw_cmd_v2::RenderNodeId) {
     tree.context(node)
         .unwrap()
