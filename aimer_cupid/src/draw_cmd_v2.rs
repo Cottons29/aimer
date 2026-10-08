@@ -372,6 +372,11 @@ pub enum DrawCommand {
 #[derive(Default)]
 pub struct DrawList {
     commands: Arc<[DrawCommand]>,
+    /// The textures `commands` draw directly, in command order, repeats kept.
+    ///
+    /// Found once, when the list is committed, because every frame that draws
+    /// the node needs them and the commands do not change in between.
+    image_textures: Arc<[TextureId]>,
     revision: u64,
     dirty: bool,
     /// Set whenever the list becomes out of date, and cleared once a recording
@@ -1559,6 +1564,7 @@ impl RenderTree {
         Ok(DrawListSnapshot {
             revision: draw_list.revision,
             commands: draw_list.commands.clone(),
+            image_textures: draw_list.image_textures.clone(),
         })
     }
 
@@ -1677,6 +1683,16 @@ impl DrawListWriter {
         };
         let revision = {
             let mut draw_list = self.draw_list.borrow_mut();
+            draw_list.image_textures = commands
+                .iter()
+                .filter_map(|command| match command {
+                    DrawCommand::DrawImage { texture_id, .. } => Some(*texture_id),
+                    DrawCommand::DrawImageWithResource { resource, .. } => {
+                        Some(resource.texture_id())
+                    }
+                    _ => None,
+                })
+                .collect();
             draw_list.commands = Arc::from(commands);
             draw_list.revision = draw_list
                 .revision
@@ -1803,6 +1819,7 @@ impl RenderItem {
         DrawListSnapshot {
             revision: draw_list.revision,
             commands: draw_list.commands.clone(),
+            image_textures: draw_list.image_textures.clone(),
         }
     }
 }
@@ -1814,6 +1831,8 @@ pub struct DrawListSnapshot {
     pub revision: u64,
     /// Commands in element-local coordinates.
     pub commands: Arc<[DrawCommand]>,
+    /// The textures `commands` draw directly, in command order with repeats.
+    pub image_textures: Arc<[TextureId]>,
 }
 
 /// Damage and ordered render operations for one v2 frame.

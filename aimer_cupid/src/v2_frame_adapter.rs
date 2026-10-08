@@ -152,15 +152,7 @@ impl FramePacket {
                             bounds,
                         ));
                     }
-                    direct_texture_ids.extend(snapshot.commands.iter().filter_map(|command| {
-                        match command {
-                            V2DrawCommand::DrawImage { texture_id, .. } => Some(*texture_id),
-                            V2DrawCommand::DrawImageWithResource { resource, .. } => {
-                                Some(resource.texture_id())
-                            }
-                            _ => None,
-                        }
-                    }));
+                    direct_texture_ids.extend_from_slice(&snapshot.image_textures);
                     operations.push(RetainedRenderPlan::local_v2_operation(
                         RetainedV2Item {
                             element: item.element,
@@ -1122,6 +1114,87 @@ mod tests {
 
         assert_eq!(pipeline_name, "test.pipeline");
         assert_eq!(data.downcast_ref::<Vec<u8>>().unwrap().as_slice(), payload.as_ref());
+    }
+
+    fn record_commands(
+        tree: &RenderTree,
+        node: crate::draw_cmd_v2::RenderNodeId,
+        commands: Vec<DrawCommand>,
+    ) {
+        tree.context(node)
+            .unwrap()
+            .begin_recording()
+            .unwrap()
+            .commit(commands)
+            .unwrap();
+    }
+
+    fn image(texture_id: u32) -> DrawCommand {
+        DrawCommand::DrawImage {
+            rect: Rect::new(0.0, 0.0, 8.0, 8.0),
+            texture_id,
+        }
+    }
+
+    fn fill(color: Color) -> DrawCommand {
+        DrawCommand::FillRect {
+            rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+            color,
+            border_radius: [0.0; 4],
+            border_width: [0.0; 4],
+            border_color: Color::transparent(),
+            outline_width: [0.0; 4],
+            outline_color: Color::transparent(),
+        }
+    }
+
+    fn packet_for(tree: &RenderTree) -> FramePacket {
+        FramePacket::from_v2_direct_with_frame(
+            RenderFrame {
+                damage: vec![Rect::new(0.0, 0.0, 64.0, 64.0)],
+                operations: tree.render_all(),
+            },
+            FrameRenderMetadata::new(1.0, 7, 1, 1, 1, DamageSet::new(64, 64)),
+            Frame::new(LegacyDrawList::new(), 64, 64),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn textures_drawn_directly_by_planned_items_are_referenced_by_the_frame() {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
+        let child = tree.add_child(root, Rect::new(0.0, 0.0, 32.0, 32.0)).unwrap();
+        record_commands(&tree, root, vec![image(5), image(5)]);
+        record_commands(&tree, child, vec![fill(Color::rgba8(1, 2, 3, 255)), image(9)]);
+
+        let packet = packet_for(&tree);
+
+        // Repeats collapse: the frame references a texture once.
+        assert_eq!(packet.frame().draw_list.referenced_texture_ids(), vec![5, 9]);
+    }
+
+    #[test]
+    fn a_planned_item_without_images_references_no_textures() {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
+        record_commands(&tree, root, vec![fill(Color::rgba8(1, 2, 3, 255))]);
+
+        assert!(packet_for(&tree).frame().draw_list.referenced_texture_ids().is_empty());
+    }
+
+    #[test]
+    fn re_recording_an_item_changes_which_textures_the_frame_references() {
+        let tree = RenderTree::new();
+        let root = tree.add_root(Rect::new(0.0, 0.0, 64.0, 64.0)).unwrap();
+        record_commands(&tree, root, vec![image(5), image(6)]);
+        assert_eq!(packet_for(&tree).frame().draw_list.referenced_texture_ids(), vec![5, 6]);
+
+        record_commands(&tree, root, vec![image(6), image(7)]);
+        assert_eq!(packet_for(&tree).frame().draw_list.referenced_texture_ids(), vec![6, 7]);
+
+        record_commands(&tree, root, vec![fill(Color::rgba8(9, 9, 9, 255))]);
+        assert!(packet_for(&tree).frame().draw_list.referenced_texture_ids().is_empty());
     }
 
     fn record_fill(tree: &RenderTree, node: crate::draw_cmd_v2::RenderNodeId, color: Color) {

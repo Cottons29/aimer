@@ -695,6 +695,119 @@ fn a_node_with_an_open_recorder_is_not_settled() {
     assert!(!tree.is_settled(node).unwrap());
 }
 
+fn image_command(texture_id: u32) -> DrawCommand {
+    DrawCommand::DrawImage {
+        rect: Rect::new(0.0, 0.0, 8.0, 8.0),
+        texture_id,
+    }
+}
+
+fn resource_image_command(texture_id: u32) -> DrawCommand {
+    let resource = aimer_cupid::draw_cmd_v2::ImageResource::rgba8(
+        texture_id,
+        1,
+        1,
+        1,
+        Arc::from(vec![255u8, 0, 0, 255]),
+    )
+    .expect("a 1x1 RGBA image");
+    DrawCommand::DrawImageWithResource {
+        rect: Rect::new(0.0, 0.0, 8.0, 8.0),
+        resource: Arc::new(resource),
+    }
+}
+
+fn record(tree: &RenderTree, node: aimer_cupid::draw_cmd_v2::RenderNodeId, commands: Vec<DrawCommand>) {
+    tree.context(node)
+        .unwrap()
+        .begin_recording()
+        .unwrap()
+        .commit(commands)
+        .unwrap();
+}
+
+#[test]
+fn a_snapshot_lists_the_textures_its_commands_draw_in_command_order() {
+    let tree = RenderTree::new();
+    let node = tree.add_root(Rect::new(0.0, 0.0, 40.0, 40.0)).unwrap();
+    assert!(tree.draw_list_snapshot(node).unwrap().image_textures.is_empty());
+
+    record(
+        &tree,
+        node,
+        vec![
+            fill_command(Rect::new(0.0, 0.0, 4.0, 4.0)),
+            image_command(7),
+            resource_image_command(3),
+            fill_command(Rect::new(1.0, 1.0, 4.0, 4.0)),
+            image_command(7),
+            resource_image_command(11),
+        ],
+    );
+
+    // Order and repeats are kept: they are the sequence the commands draw in.
+    assert_eq!(&*tree.draw_list_snapshot(node).unwrap().image_textures, &[7, 3, 7, 11]);
+}
+
+#[test]
+fn a_list_without_images_has_no_textures_and_re_recording_replaces_them() {
+    let tree = RenderTree::new();
+    let node = tree.add_root(Rect::new(0.0, 0.0, 40.0, 40.0)).unwrap();
+
+    record(&tree, node, vec![image_command(5)]);
+    assert_eq!(&*tree.draw_list_snapshot(node).unwrap().image_textures, &[5]);
+
+    record(&tree, node, vec![fill_command(Rect::new(0.0, 0.0, 4.0, 4.0))]);
+    assert!(tree.draw_list_snapshot(node).unwrap().image_textures.is_empty());
+
+    record(&tree, node, vec![resource_image_command(9)]);
+    assert_eq!(&*tree.draw_list_snapshot(node).unwrap().image_textures, &[9]);
+}
+
+#[test]
+fn a_rejected_recording_keeps_the_previous_textures() {
+    let tree = RenderTree::new();
+    let node = tree.add_root(Rect::new(0.0, 0.0, 40.0, 40.0)).unwrap();
+    record(&tree, node, vec![image_command(5)]);
+
+    // An unbalanced clip scope is refused, so the old list stays.
+    assert!(tree
+        .context(node)
+        .unwrap()
+        .begin_recording()
+        .unwrap()
+        .commit(vec![
+            image_command(6),
+            DrawCommand::PushClip {
+                rect: Rect::new(0.0, 0.0, 4.0, 4.0),
+                border_radius: [0.0; 4],
+            },
+        ])
+        .is_err());
+
+    assert_eq!(&*tree.draw_list_snapshot(node).unwrap().image_textures, &[5]);
+}
+
+#[test]
+fn a_planned_item_carries_its_listed_textures() {
+    let tree = RenderTree::new();
+    let root = tree.add_root(Rect::new(0.0, 0.0, 40.0, 40.0)).unwrap();
+    let child = tree.add_child(root, Rect::new(0.0, 0.0, 20.0, 20.0)).unwrap();
+    record(&tree, root, vec![image_command(1)]);
+    record(&tree, child, vec![image_command(2), resource_image_command(4)]);
+
+    let textures = tree
+        .render_all()
+        .into_iter()
+        .filter_map(|operation| match operation {
+            RenderOp::Draw(item) => Some((item.element, item.snapshot().image_textures.to_vec())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(textures, vec![(root, vec![1]), (child, vec![2, 4])]);
+}
+
 fn record_fill(tree: &RenderTree, node: aimer_cupid::draw_cmd_v2::RenderNodeId) {
     tree.context(node)
         .unwrap()

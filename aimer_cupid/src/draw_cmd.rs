@@ -1511,6 +1511,14 @@ impl DrawList {
     /// Reconciles texture retention after composition and keeps IDs referenced
     /// by element-local v2 lists alive even though they are not in this legacy
     /// command stream.
+    /// The textures this list currently holds a reference to.
+    #[cfg(test)]
+    pub(crate) fn referenced_texture_ids(&self) -> Vec<TextureId> {
+        let mut ids = self.referenced_textures.iter().copied().collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids
+    }
+
     pub(crate) fn sync_composed_texture_references_with_ids(
         &mut self,
         additional_texture_ids: impl IntoIterator<Item = TextureId>,

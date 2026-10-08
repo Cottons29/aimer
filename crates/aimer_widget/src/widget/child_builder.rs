@@ -7,6 +7,7 @@ use std::rc::Rc;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
+use aimer_events::window::request_animation_frame;
 use aimer_focus::FocusNode;
 
 use crate::base::BuildContext;
@@ -498,7 +499,18 @@ impl EventElement for RetainedChildElement {
             return EventResult::ignored();
         };
         let pos = context.position();
-        context.dispatch_child(child, pos, event)
+        let result = context.dispatch_child(child, pos, event);
+        if !result.needs_redraw() {
+            return result;
+        }
+        // A redraw that came back through the child belongs to the element
+        // that asked for it, and that element already marked its own retained
+        // paint stale. This placement shares the child's identity, so passing
+        // the flag on would also mark the whole child stale: a window-sized
+        // root would re-record and damage its full bounds on every scroll.
+        // The frame is still wanted, so schedule it here.
+        request_animation_frame();
+        result.without_redraw()
     }
 
     /// Offers the retained child's *own* children, not the child itself.
@@ -702,6 +714,7 @@ mod tests {
     use super::*;
 
     mod scroll_position;
+    mod forwarded_redraw;
     use crate::base::WindowHandle;
     use crate::components::element::broadcast_event;
     use crate::portable::{
