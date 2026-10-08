@@ -33,7 +33,8 @@ mod lazy_tests {
 
     use crate::flex::raw_flex::RawFlex;
     use crate::flex::test_support::{
-        CountingChild, ResizingChild, dummy_build_context, replace_a_generated_subtree,
+        CountingChild, ResizingChild, VolatileChild, dummy_build_context,
+        replace_a_generated_subtree,
     };
     use crate::flex::{Column, FlexDirection, OverflowBehavior};
 
@@ -596,6 +597,56 @@ mod lazy_tests {
 
         assert_eq!(column.computed_size(&ctx).height, 256.0 * CHILD_HEIGHT);
         assert_eq!(measured.get(), 0);
+    }
+
+    /// One child that cannot promise a stable size must not make every stable
+    /// sibling measure again when an unrelated subtree is replaced: only the
+    /// unstable child is asked, and a size that did not change leaves the
+    /// table in place.
+    #[test]
+    fn only_the_unstable_child_is_remeasured_after_unrelated_rebuild() {
+        let measured = Rc::new(Cell::new(0));
+        let drawn = Rc::new(Cell::new(0));
+        let volatile_measured = Rc::new(Cell::new(0));
+        let volatile_height = Rc::new(Cell::new(30.0));
+        let mut children = vec![VolatileChild::boxed_new(&volatile_height, &volatile_measured)];
+        children.extend(
+            (0..256).map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, &measured, &drawn)),
+        );
+        let column = RawFlex::new(FlexDirection::Column, children, "Column");
+        let ctx = dummy_build_context(200.0, VIEWPORT, Some((0.0, 0.0, 200.0, VIEWPORT)));
+        let total = 30.0 + 256.0 * CHILD_HEIGHT;
+
+        assert_eq!(column.computed_size(&ctx).height, total);
+        measured.set(0);
+        volatile_measured.set(0);
+        replace_a_generated_subtree(&ctx);
+
+        assert_eq!(column.computed_size(&ctx).height, total);
+        assert_eq!(measured.get(), 0, "stable children were measured again");
+        assert_eq!(volatile_measured.get(), 1, "the unstable child must be asked once");
+    }
+
+    /// The shortcut must not outlive the size it was checked against: when the
+    /// unstable child changes, the table is rebuilt and the siblings move.
+    #[test]
+    fn a_resized_unstable_child_rebuilds_the_table_after_unrelated_rebuild() {
+        let measured = Rc::new(Cell::new(0));
+        let drawn = Rc::new(Cell::new(0));
+        let volatile_measured = Rc::new(Cell::new(0));
+        let volatile_height = Rc::new(Cell::new(30.0));
+        let mut children = vec![VolatileChild::boxed_new(&volatile_height, &volatile_measured)];
+        children.extend(
+            (0..16).map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, &measured, &drawn)),
+        );
+        let column = RawFlex::new(FlexDirection::Column, children, "Column");
+        let ctx = dummy_build_context(200.0, VIEWPORT, Some((0.0, 0.0, 200.0, VIEWPORT)));
+        assert_eq!(column.computed_size(&ctx).height, 30.0 + 16.0 * CHILD_HEIGHT);
+
+        volatile_height.set(80.0);
+        replace_a_generated_subtree(&ctx);
+
+        assert_eq!(column.computed_size(&ctx).height, 80.0 + 16.0 * CHILD_HEIGHT);
     }
 
     /// Visible overflow is an explicit request to keep children outside the

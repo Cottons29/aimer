@@ -80,6 +80,22 @@ struct MeasuredChildren {
     child_metadata: Vec<(ElementId, u64)>,
     /// Whether every child seen during measurement was layout-stable.
     stable_children: bool,
+    /// What each child was when it was measured, or empty when a child was
+    /// missing.
+    stamps: Vec<ChildStamp>,
+}
+
+/// What a child was when a table measured it.
+///
+/// A later pass compares this against the child to decide whether the size
+/// recorded for it can be kept without asking it again.
+#[derive(Clone, Copy)]
+struct ChildStamp {
+    id: ElementId,
+    /// The child's subtree generation when it was measured.
+    generation: u64,
+    /// Whether the child promised its size survives an unrelated rebuild.
+    stable: bool,
 }
 
 /// Exact extents recorded for the children of a predicted table.
@@ -161,6 +177,9 @@ pub(crate) struct FlexLayout {
     /// Stable identity and last installed-tree generation of each direct child,
     /// when every child opted into generation-independent sizing.
     child_metadata: Vec<(ElementId, u64)>,
+    /// How each child looked when it was measured, for revalidating a measured
+    /// table child by child. Updated in place as children are asked again.
+    stamps: RefCell<Vec<ChildStamp>>,
     /// Whether every direct child opted into generation-independent sizing.
     stable_children: bool,
     /// Size of the container itself, gaps included.
@@ -239,6 +258,7 @@ impl FlexLayout {
 
         let mut layout = Self::from_sizes(measured.sizes, is_row, gap_main, has_flex);
         layout.child_metadata = measured.child_metadata;
+        layout.stamps = RefCell::new(measured.stamps);
         layout.stable_children = measured.stable_children && !layout.has_flex;
         layout
     }
@@ -258,6 +278,8 @@ impl FlexLayout {
         let len = children.len();
         let mut sizes: Vec<ResolvedSize> = Vec::with_capacity(len);
         let mut child_metadata = Vec::new();
+        let mut stamps = Vec::with_capacity(len);
+        let mut stamps_complete = true;
         let mut stable_children = true;
         // Allocated on first sight of a flex child; a plain list never pays for
         // it.
@@ -267,11 +289,20 @@ impl FlexLayout {
         for index in 0..len {
             let Some(child) = children.get(index) else {
                 stable_children = false;
+                stamps_complete = false;
                 child_metadata.clear();
                 sizes.push(ResolvedSize::default());
                 continue;
             };
-            if stable_children && child.is_layout_stable() {
+            let stable = child.is_layout_stable();
+            if stamps_complete {
+                stamps.push(ChildStamp {
+                    id: child.id(),
+                    generation: child.subtree_generation(),
+                    stable,
+                });
+            }
+            if stable_children && stable {
                 child_metadata.push((child.id(), child.subtree_generation()));
             } else if stable_children {
                 stable_children = false;
@@ -299,6 +330,7 @@ impl FlexLayout {
             sized_main,
             child_metadata,
             stable_children,
+            stamps: if stamps_complete { stamps } else { Vec::new() },
         }
     }
 
@@ -441,6 +473,7 @@ impl FlexLayout {
             stride: Some(stride),
             len,
             child_metadata: Vec::new(),
+            stamps: RefCell::new(Vec::new()),
             stable_children: false,
             total: sized(saturate_f32(main_total), cross, is_row),
             has_flex: false,
@@ -478,6 +511,7 @@ impl FlexLayout {
                 stride: Some(stride),
                 len,
                 child_metadata: Vec::new(),
+            stamps: RefCell::new(Vec::new()),
                 stable_children: false,
                 total: sized(saturate_f32(main_total), cross_max, is_row),
                 has_flex,
@@ -504,6 +538,7 @@ impl FlexLayout {
             stride: None,
             len,
             child_metadata: Vec::new(),
+            stamps: RefCell::new(Vec::new()),
             stable_children: false,
             total: sized(saturate_f32(main_total), cross_max, is_row),
             has_flex,
@@ -529,6 +564,67 @@ impl FlexLayout {
         self.stable_children
             && !self.has_flex
             && self.child_metadata.len() == self.len
+    }
+
+    /// Brings a measured table across a change of the element-tree generation
+    /// by asking only the children that cannot vouch for their own size.
+    ///
+    /// A child that is layout-stable, is the element the table measured, and
+    /// whose subtree was not replaced keeps the size recorded for it. Every
+    /// other child is measured again under the constraint [`FlexLayout::build`]
+    /// gave it. The table still describes the children exactly when each of
+    /// those answers agrees with what is recorded, and then nothing is rebuilt.
+    ///
+    /// Returns `false` when the table cannot be vouched for, in which case the
+    /// caller measures everything. A table with flex children is never
+    /// revalidated, because every share depends on what the others consumed.
+    pub(crate) fn revalidate_measured(
+        &self,
+        children: &dyn ChildrenSource,
+        ctx: &BuildContext,
+    ) -> bool {
+        let mut stamps = self.stamps.borrow_mut();
+        if self.has_flex || self.origin != Origin::Measured || stamps.len() != self.len {
+            return false;
+        }
+        if children.len() != self.len {
+            return false;
+        }
+
+        let is_row = self.is_row;
+        let max_cross = if is_row {
+            ctx.box_constraint.max_height
+        } else {
+            ctx.box_constraint.max_width
+        };
+        // Cloned on the first child that has to be asked, so a table whose
+        // children all vouch for themselves clones nothing.
+        let mut child_ctx: Option<BuildContext> = None;
+
+        for index in 0..self.len {
+            let Some(child) = children.get(index) else {
+                return false;
+            };
+            let stamp = &mut stamps[index];
+            if child.id() != stamp.id {
+                return false;
+            }
+            let stable = child.is_layout_stable();
+            let generation = child.subtree_generation();
+            if stamp.stable && stable && stamp.generation == generation {
+                continue;
+            }
+
+            let child_ctx = child_ctx.get_or_insert_with(|| ctx.clone());
+            set_main(&mut child_ctx.box_constraint, is_row, f32::MAX);
+            set_cross(&mut child_ctx.box_constraint, is_row, max_cross);
+            if child.computed_size(child_ctx) != self.size(index) {
+                return false;
+            }
+            stamp.stable = stable;
+            stamp.generation = generation;
+        }
+        true
     }
 
     /// Returns whether the stable direct-child metadata still describes
@@ -958,6 +1054,27 @@ impl FlexLayoutCache {
             || cached.generation == aimer_widget::element_tree_generation()
             || !cached.layout.describes_measured_children()
             || !cached.layout.can_reuse_stable_children()
+        {
+            return None;
+        }
+        Some(Rc::clone(&cached.layout))
+    }
+
+    /// Returns a measured table built under these inputs whose only stale part
+    /// is the element-tree generation, for revalidation child by child.
+    #[inline]
+    pub(crate) fn get_stale_measured(
+        &self,
+        constraint: BoxConstraint,
+        scale_bits: u32,
+    ) -> Option<Rc<FlexLayout>> {
+        let slot = unsafe { &*self.table.get() };
+        let cached = slot.as_ref()?;
+        if cached.constraint != constraint
+            || cached.scale_bits != scale_bits
+            || cached.layout_generation != aimer_widget::layout_invalidation_generation()
+            || cached.generation == aimer_widget::element_tree_generation()
+            || !cached.layout.describes_measured_children()
         {
             return None;
         }

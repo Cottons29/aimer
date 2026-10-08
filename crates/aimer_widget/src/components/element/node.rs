@@ -412,7 +412,6 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
         #[cfg(feature = "frame-stats")]
         crate::rebuild_stats::record_visit();
         let mut traversal = begin_rebuild_traversal(self.id.get());
-        let _path = RebuildPathGuard::push(self.id.get());
         let own_dirty = element_has_dirty_work(&self.element);
         let path_ready = DIRTY_PATHS_READY.with(Cell::get)
             && (REBUILD_TRAVERSAL_DEPTH.with(|depth| depth.get() > 1)
@@ -429,6 +428,10 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
             return;
         }
 
+        note_rebuild_descent();
+        // The path is only read below this point, so a pruned boundary, which
+        // is nearly all of them while an animator runs, never pays for it.
+        let _path = RebuildPathGuard::push(self.id.get());
         set_element_rebuild_path(&self.element);
         let _descend = RebuildDescendGuard::enter(own_dirty);
         let before = element_tree_generation();

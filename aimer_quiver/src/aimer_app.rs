@@ -1659,6 +1659,7 @@ mod tests {
     mod focus_click;
     mod loading_damage;
     mod animation_only;
+    mod builder_prepass;
     mod scoped_sync;
     mod focus_repaint;
     mod retained_switcher;

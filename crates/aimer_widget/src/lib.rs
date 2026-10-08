@@ -147,7 +147,7 @@ pub use crate::components::element::{
     VisibleWindow, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,
     retained_visible_window_of_current, set_scroll_only_frame, set_settled_offscreen_skip,
     animation_only_targets, is_animation_only_frame, run_animation_only_pass,
-    set_animation_only_frame, with_v2_animation_only_context, request_isolated_animation_frame, request_isolated_subtree_animation_frame, set_frame_rebuilt_roots, traversal_counts, keep_element_reachable, rebuild_keepalive_count, note_state_update_marked,
+    set_animation_only_frame, with_v2_animation_only_context, request_isolated_animation_frame, request_isolated_subtree_animation_frame, set_frame_rebuilt_roots, traversal_counts, keep_element_reachable, KeepReachable, preserving_dirty_paths, rebuild_replaced_subtree, rebuild_keepalive_count, rebuild_descent_count, note_state_update_marked,
     rebuild_state_mark_count,
     ScopedCursor, has_scoped_rebuilds_since, scoped_rebuild_cursor, scoped_rebuilds_since,
     unscoped_element_tree_generation,

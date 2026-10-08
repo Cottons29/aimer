@@ -540,6 +540,7 @@ impl Widget for AnimatedBuilder {
             builder: self.builder.clone(),
             last_value: Cell::new(curved_value),
             output_changed: Cell::new(false),
+            reachable: aimer_widget::KeepReachable::new(),
             window,
         }
         .boxed()
@@ -558,6 +559,9 @@ struct AnimatedBuilderElement {
     builder: Rc<AnimatedElementBuilder>,
     last_value: Cell<f32>,
     output_changed: Cell<bool>,
+    /// Keeps this element on the rebuild pass's dirty-path index while it
+    /// animates, so the pass prunes the rest of the tree.
+    reachable: aimer_widget::KeepReachable,
     window: WindowHandle,
 }
 
@@ -634,19 +638,25 @@ impl Rebuildable for AnimatedBuilderElement {
         if self.controller.is_animating() {
             // Nothing marks this element dirty while it animates, so without
             // this the rebuild pass would skip it and the animation would stop.
-            aimer_widget::keep_element_reachable();
+            self.reachable.hold();
+        } else {
+            self.reachable.release();
         }
         let output_changed = curved_value != self.last_value.get();
         if output_changed {
             let child = (self.builder)(curved_value, ctx);
             // Preserve state through the replacement, then publish the new
             // child before the retained render tree synchronizes its nodes.
-            carry_element_state(unsafe { &*self.child.get() }.as_ref(), child.as_ref(), ctx);
+            aimer_widget::preserving_dirty_paths(|| {
+                carry_element_state(unsafe { &*self.child.get() }.as_ref(), child.as_ref(), ctx)
+            });
             unsafe { *self.child.get() = child };
             self.last_value.set(curved_value);
             self.output_changed.set(true);
+            aimer_widget::rebuild_replaced_subtree(unsafe { &*self.child.get() }.as_ref(), ctx);
+        } else {
+            unsafe { &*self.child.get() }.rebuild_if_dirty(ctx);
         }
-        unsafe { &*self.child.get() }.rebuild_if_dirty(ctx);
     }
 }
 

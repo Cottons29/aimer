@@ -8,7 +8,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_cupid::damage_region::{DamageRect, DamageSet};
 use aimer_cupid::draw_cmd_v2::{RenderNodeId, RenderPaintSource, RenderTree};
-use aimer_cupid::utilities::Rect;
+use aimer_cupid::utilities::{IdBuildHasher, Rect};
 use aimer_events::element::{ElementEvent, KeyAction, NamedKey};
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
 use aimer_events::window::request_animation_frame;
@@ -45,6 +45,8 @@ mod animation_only;
 mod animation_only;
 mod compositor_applied;
 mod node;
+#[cfg(test)]
+mod keep_reachable_tests;
 #[cfg(test)]
 mod paint_invalidation_tests;
 #[cfg(test)]
@@ -114,14 +116,14 @@ thread_local! {
     /// Revisions are kept outside [`ElementNode`] so adding stable-layout
     /// tracking does not change the inline-erased element size. Only elements
     /// that opt into generation-independent sizing create entries here.
-    static STABLE_SUBTREE_GENERATIONS: RefCell<HashMap<ElementId, u64>> =
-        RefCell::new(HashMap::new());
+    static STABLE_SUBTREE_GENERATIONS: RefCell<HashMap<ElementId, u64, IdBuildHasher>> =
+        RefCell::new(HashMap::default());
 
     /// Number of dirty rebuild sources whose root-relative path crosses each
     /// retained element. Counts keep shared ancestors indexed until every
     /// dirty source below them has been rebuilt.
-    static DIRTY_SUBTREE_COUNTS: RefCell<HashMap<ElementId, usize>> =
-        RefCell::new(HashMap::new());
+    static DIRTY_SUBTREE_COUNTS: RefCell<HashMap<ElementId, usize, IdBuildHasher>> =
+        RefCell::new(HashMap::default());
 
     /// Event dispatchers use this UI-thread epoch to coalesce generation checks
     /// across all nested dispatchers until the next completed frame.
@@ -133,6 +135,10 @@ thread_local! {
     static DIRTY_INDEXED_ROOTS: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
     static DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL: Cell<bool> = const { Cell::new(false) };
     static REBUILD_TRAVERSAL_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static REBUILD_DESCENTS: Cell<u64> = const { Cell::new(0) };
+    /// Non-zero while a caller that rebases the paths of the subtree it
+    /// replaces is committing that replacement.
+    static PRESERVE_DIRTY_PATHS_DEPTH: Cell<usize> = const { Cell::new(0) };
     static REBUILD_PATH: RefCell<Vec<ElementId>> = const { RefCell::new(Vec::new()) };
     static REBUILD_FORCE_DESCEND_DEPTH: Cell<usize> = const { Cell::new(0) };
     static REBUILD_MARK_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -1105,6 +1111,145 @@ pub fn keep_element_reachable() {
     REBUILD_KEEPALIVE_COUNT.fetch_add(1, Ordering::Release);
 }
 
+/// Keeps one element reachable by the rebuild pass for as long as it holds.
+///
+/// [`keep_element_reachable`] makes the next pass descend to the caller by
+/// discarding the index of dirty paths, so every animating frame walks the whole
+/// tree to find one element. This registers the path to the element in that
+/// index instead: the pass prunes everything off the path and still reaches the
+/// element, and the index stays valid for every other consumer.
+///
+/// The holder owns its registration. Releasing it, or dropping it while it still
+/// holds, removes the path again, so an element that is dropped mid-animation
+/// cannot leave a path behind that keeps its ancestors descending.
+///
+/// Nothing is recorded as a paint invalidation: the holder's own rebuild reports
+/// what it changed, as with [`keep_element_reachable`].
+#[doc(hidden)]
+#[derive(Default)]
+pub struct KeepReachable {
+    /// The registered path, empty while nothing is held.
+    path: RefCell<Vec<ElementId>>,
+}
+
+impl KeepReachable {
+    /// Creates a holder that holds nothing.
+    #[inline]
+    pub const fn new() -> Self {
+        Self { path: RefCell::new(Vec::new()) }
+    }
+
+    /// Keeps the element being rebuilt reachable for the next pass.
+    ///
+    /// Call from `rebuild_if_dirty` on every frame the element still has work
+    /// to produce. The registration only changes when the element's path does.
+    /// Outside a rebuild pass there is no path to register, so this falls back
+    /// to [`keep_element_reachable`].
+    pub fn hold(&self) {
+        let registered = REBUILD_PATH.with(|current| {
+            let current = current.borrow();
+            if current.is_empty() {
+                return false;
+            }
+            let mut path = self.path.borrow_mut();
+            if *path != *current {
+                if !path.is_empty() {
+                    remove_dirty_path(&path);
+                }
+                path.clear();
+                path.extend_from_slice(&current);
+                add_dirty_path(&path);
+            }
+            true
+        });
+        if registered {
+            // Stateless ancestors skip their subtree while this is unchanged.
+            advance_tracked_rebuild_invalidation_generation();
+            REBUILD_KEEPALIVE_COUNT.fetch_add(1, Ordering::Release);
+        } else {
+            keep_element_reachable();
+        }
+    }
+
+    /// Stops keeping the element reachable.
+    pub fn release(&self) {
+        let mut path = self.path.borrow_mut();
+        if !path.is_empty() {
+            remove_dirty_path(&path);
+            path.clear();
+        }
+    }
+}
+
+impl Drop for KeepReachable {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// Runs `commit`, a reconciliation of a subtree that the caller then passes to
+/// [`rebuild_replaced_subtree`], without discarding the index of dirty paths.
+///
+/// A replacement normally cannot say which retained paths it left stale, so it
+/// discards the index and the next pass walks the whole tree to rebuild it. A
+/// caller that replaces the subtree below one element, and re-registers every
+/// path in that subtree afterwards, has already done what the walk would.
+///
+/// Anything outside the replaced subtree is untouched by a scoped
+/// reconciliation, so its paths stay valid.
+#[doc(hidden)]
+pub fn preserving_dirty_paths<R>(commit: impl FnOnce() -> R) -> R {
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PRESERVE_DIRTY_PATHS_DEPTH.with(|depth| depth.set(depth.get() - 1));
+        }
+    }
+    PRESERVE_DIRTY_PATHS_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    let _restore = Restore;
+    commit()
+}
+
+/// Runs the rebuild pass over a subtree that [`preserving_dirty_paths`] just
+/// replaced.
+///
+/// Call from the replaced subtree's owner, inside its `rebuild_if_dirty`. The
+/// pass descends the whole subtree once instead of pruning it. Nothing in a
+/// fresh subtree has been visited, so it cannot be told apart from one with
+/// work in it, and the descent is what registers the subtree: every element
+/// sets its dirty-source path from the pass's own path, replacing the one a
+/// carried state holder brought with it from wherever it used to be. An element
+/// in the subtree that keeps itself reachable, such as a nested animator, also
+/// gets to do so.
+///
+/// Falls back to discarding the index when there is no pass to root the paths
+/// in.
+#[doc(hidden)]
+pub fn rebuild_replaced_subtree(root: &dyn Element, ctx: &BuildContext) {
+    if REBUILD_PATH.with(|path| path.borrow().is_empty()) {
+        invalidate_dirty_paths();
+    }
+    REBUILD_FORCE_DESCEND_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    root.rebuild_if_dirty(ctx);
+    REBUILD_FORCE_DESCEND_DEPTH.with(|depth| depth.set(depth.get() - 1));
+}
+
+/// How many retained boundaries the rebuild walk entered and did not prune.
+///
+/// A boundary that returns early because its dirty path holds no work is not
+/// counted, so the difference across a frame is the size of the subtree the
+/// rebuild prepass really descended.
+#[doc(hidden)]
+#[inline]
+pub fn rebuild_descent_count() -> u64 {
+    REBUILD_DESCENTS.with(Cell::get)
+}
+
+#[inline]
+pub(crate) fn note_rebuild_descent() {
+    REBUILD_DESCENTS.with(|count| count.set(count.get() + 1));
+}
+
 /// How many times [`keep_element_reachable`] has advanced the rebuild
 /// generation.
 #[doc(hidden)]
@@ -1228,7 +1373,9 @@ fn advance_element_tree_generation_counter() {
         .lock()
         .expect("element-tree generation test lock must not be poisoned");
 
-    invalidate_dirty_paths();
+    if PRESERVE_DIRTY_PATHS_DEPTH.with(|depth| depth.get() == 0) {
+        invalidate_dirty_paths();
+    }
     ELEMENT_TREE_GENERATION
         .fetch_update(Ordering::Release, Ordering::Relaxed, |generation| {
             generation.checked_add(1)

@@ -574,6 +574,17 @@ impl RawFlex {
                 .set(ctx.box_constraint, scale_bits_of(ctx), Rc::clone(&layout));
             return layout;
         }
+        // Most of a list is usually untouched by the rebuild that advanced the
+        // generation, so ask only the children that cannot vouch for themselves.
+        if let Some(layout) = self
+            .layout
+            .get_stale_measured(ctx.box_constraint, scale_bits_of(ctx))
+            && layout.revalidate_measured(self.children.as_ref(), ctx)
+        {
+            self.layout
+                .set(ctx.box_constraint, scale_bits_of(ctx), Rc::clone(&layout));
+            return layout;
+        }
         self.measure_layout(ctx)
     }
 

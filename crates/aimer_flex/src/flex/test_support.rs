@@ -207,3 +207,48 @@ impl LayoutElement for ResizingChild {
         }
     }
 }
+
+/// A leaf element that is not layout-stable, standing in for a child whose size
+/// may change without the element being replaced, such as an animated builder's
+/// output.
+///
+/// It counts how often it is measured, so a test can tell it was asked.
+pub(crate) struct VolatileChild {
+    height: Rc<Cell<f32>>,
+    measured: Rc<Cell<usize>>,
+}
+
+impl VolatileChild {
+    /// Creates an erased child whose height follows `height`.
+    pub(crate) fn boxed_new(height: &Rc<Cell<f32>>, measured: &Rc<Cell<usize>>) -> AnyElement {
+        Self {
+            height: height.clone(),
+            measured: measured.clone(),
+        }
+        .boxed()
+    }
+}
+
+impl VisitorElement for VolatileChild {
+    fn debug_name(&self) -> &'static str {
+        "VolatileChild"
+    }
+}
+
+impl EventElement for VolatileChild {}
+
+impl Rebuildable for VolatileChild {}
+
+impl Drawable for VolatileChild {
+    fn update(&self, _ctx: &BuildContext) {}
+}
+
+impl LayoutElement for VolatileChild {
+    fn computed_size(&self, _ctx: &BuildContext) -> ResolvedSize {
+        self.measured.set(self.measured.get() + 1);
+        ResolvedSize {
+            width: 10.0,
+            height: self.height.get(),
+        }
+    }
+}
