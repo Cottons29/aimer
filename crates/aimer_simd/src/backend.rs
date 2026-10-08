@@ -24,3 +24,6 @@ mod x86_64_integer;
 
 #[cfg(test)]
 mod integer_tests;
+
+#[cfg(all(not(feature = "force-scalar"), target_endian = "little", any(target_arch = "aarch64", target_arch = "x86_64")))]
+pub(crate) mod rgba;

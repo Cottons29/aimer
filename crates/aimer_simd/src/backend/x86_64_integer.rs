@@ -11,6 +11,30 @@ use super::Sse2;
 use super::integer::{check_add_overflow, check_mul_overflow, check_sub_overflow};
 use crate::simd_traits::{Simd, SimdAdd, SimdCompare, SimdMul, SimdSelect, SimdSub};
 
+#[cfg(not(feature = "force-scalar"))]
+impl Sse2 {
+    #[inline(always)]
+    pub(crate) fn normalize_coverage_16<const SHIFT: i32>(counts: &mut [u8; 16]) {
+        // SAFETY: SSE2 is baseline. The array supplies sixteen readable and
+        // writable bytes at scalar alignment. Callers use SHIFT = 4 or 6;
+        // count * 255 + rounding is at most 65057, which fits in u16.
+        unsafe {
+            let values = _mm_loadu_si128(counts.as_ptr().cast());
+            let zero = _mm_setzero_si128();
+            let factor = _mm_set1_epi16(255);
+            let round = _mm_set1_epi16(1 << (SHIFT - 1));
+            let low = _mm_add_epi16(_mm_mullo_epi16(_mm_unpacklo_epi8(values, zero), factor), round);
+            let high = _mm_add_epi16(_mm_mullo_epi16(_mm_unpackhi_epi8(values, zero), factor), round);
+            let mask = _mm_set1_epi16(255);
+            // Mask after shifting so PACKUS preserves byte truncation even
+            // when a caller supplies a count greater than the sample count.
+            let result = _mm_packus_epi16(_mm_and_si128(_mm_srli_epi16::<SHIFT>(low), mask),
+                _mm_and_si128(_mm_srli_epi16::<SHIFT>(high), mask));
+            _mm_storeu_si128(counts.as_mut_ptr().cast(), result);
+        }
+    }
+}
+
 macro_rules! impl_unsigned {
     ($number:ty, $signed:ty, $lanes:expr, $splat:ident, $add:ident, $sub:ident, $gt:ident) => {
         impl Simd<$number, $lanes> for Sse2 {

@@ -1,2 +1,2 @@
 [profile.default]
-slow-timeout = "15m"
+slow-timeout = "5m"

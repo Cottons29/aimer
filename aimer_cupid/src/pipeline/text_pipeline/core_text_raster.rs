@@ -416,15 +416,7 @@ fn draw(context: &CGContext, font: &CTFont, glyph_id: u16, left: f32, bottom: f3
 /// back out keeps a glyph's edges from darkening when the shader multiplies by
 /// alpha again.
 fn un_premultiply(bitmap: &mut [u8]) {
-    for pixel in bitmap.chunks_exact_mut(4) {
-        let alpha = pixel[3];
-        if alpha == 0 || alpha == u8::MAX {
-            continue;
-        }
-        for channel in &mut pixel[..3] {
-            *channel = ((*channel as u16 * 255 + alpha as u16 / 2) / alpha as u16).min(255) as u8;
-        }
-    }
+    aimer_simd::kernels::unpremultiply_rgba8(bitmap);
 }
 
 /// Runs `f` with the platform font for `(path, collection_index, font_size,
@@ -862,6 +854,19 @@ mod tests {
         assert!(
             rasterize_glyph(&path, index, glyph_id, 0.0, NORMAL_TEXT_WEIGHT, false, 8.0).is_none()
         );
+    }
+
+    #[test]
+    fn un_premultiply_preserves_vector_boundaries_and_incomplete_pixels() {
+        let pixels = [17, 99, 231, 0, 64, 32, 16, 128,
+            1, 128, 255, 255, 255, 13, 7, 1];
+        let mut bitmap = pixels.repeat(5);
+        bitmap.extend_from_slice(&[11, 22, 33]);
+        un_premultiply(&mut bitmap);
+        let mut expected = [17, 99, 231, 0, 128, 64, 32, 128,
+            1, 128, 255, 255, 255, 255, 255, 1].repeat(5);
+        expected.extend_from_slice(&[11, 22, 33]);
+        assert_eq!(bitmap, expected);
     }
 
     #[test]

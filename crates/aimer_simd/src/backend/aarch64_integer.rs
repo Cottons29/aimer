@@ -6,9 +6,30 @@ use core::arch::aarch64::{
     vst1q_u8, vst1q_u16, vsubq_u8, vsubq_u16,
 };
 
+#[cfg(not(feature = "force-scalar"))]
+use core::arch::aarch64::vrshrn_n_u16;
+
 use super::Neon;
 use super::integer::{check_add_overflow, check_mul_overflow, check_sub_overflow};
 use crate::simd_traits::{Simd, SimdAdd, SimdCompare, SimdMul, SimdSelect, SimdSub};
+
+#[cfg(not(feature = "force-scalar"))]
+impl Neon {
+    #[inline(always)]
+    pub(crate) fn normalize_coverage_16<const SHIFT: i32>(counts: &mut [u8; 16]) {
+        // SAFETY: NEON is baseline. The array supplies sixteen readable and
+        // writable bytes at scalar alignment. Callers use SHIFT = 4 or 6;
+        // count * 255 + rounding is at most 65057, which fits in u16.
+        unsafe {
+            let values = vld1q_u8(counts.as_ptr());
+            let factor = core::arch::aarch64::vdup_n_u8(255);
+            let low = vmull_u8(vget_low_u8(values), factor);
+            let high = vmull_u8(vget_high_u8(values), factor);
+            let result = vcombine_u8(vrshrn_n_u16::<SHIFT>(low), vrshrn_n_u16::<SHIFT>(high));
+            vst1q_u8(counts.as_mut_ptr(), result);
+        }
+    }
+}
 
 macro_rules! impl_unsigned {
     ($number:ty, $lanes:expr, $vector:ty, $load:ident, $store:ident,

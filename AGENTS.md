@@ -3,11 +3,20 @@
 These instructions apply to the entire repository. A nested `AGENTS.md` takes precedence for files in its directory.
 
 
-## Explorer
+## Critical Considerations
 
-When exploring the projects, consider using subagent to work with these rules: 
+Aimer is a performance-sensitive GUI framework.
 
-- if you are ChatGPT: using chat-gpt-6-luna (high) for subagents
+- When a user makes a vague request, be sure to ask them to clarify it.
+- Optimize performance to the best possible level by any means necessary.
+- Treat per-frame rendering, layout, input, animation, and widget rebuild paths as hot unless evidence shows otherwise.
+- Avoid avoidable allocations, clones, repeated tree walks, blocking work, and unnecessary synchronization on hot paths.
+- Do not claim a change is faster without evidence. For non-obvious performance changes, add or run a benchmark,
+  profiler, allocation check, or equivalent measurement.
+- Do not trade correctness or maintainability for speculative micro-optimizations.
+- When changing GPU buffers, FFI, or platform code, validate sizes, alignments, lifetimes, and thread-affinity
+  assumptions.
+
 
 ## Priorities
 
@@ -74,6 +83,7 @@ Additional test rules:
 
 ## Rust and API Design
 
+- Do not expose third party crate to public API.
 - Use the latest stable Rust toolchain supported by the workspace.
 - Prefer clear ownership and borrowing over allocation. Apply zero-copy techniques when they simplify or measurably
   improve a hot path; do not introduce unsafe code or complex lifetimes without demonstrated benefit.
@@ -91,11 +101,105 @@ Additional test rules:
 - Keep source files at or below 2,000 lines (inline-unittest excluded). Split by responsibility before exceeding that
   limit.
   `gesture/drag.rs`; do not introduce `mod.rs` files.
+- Add comments for invariants and non-obvious decisions, not for code that is already self-explanatory.
+- Do not run `cargo fmt`. Preserve the surrounding formatting style in edited code.
 - Add documentation comments to new public APIs. Document purpose, important invariants, panics/errors, safety
   requirements, and a useful example when appropriate. Follow Rust standard-library style, but keep documentation
   proportional to the API.
-- Add comments for invariants and non-obvious decisions, not for code that is already self-explanatory.
-- Do not run `cargo fmt`. Preserve the surrounding formatting style in edited code.
+
+Example: 
+```rust
+
+/// Confines keyboard focus to its subtree while it traps.
+///
+/// A focus scope changes nothing about layout or painting: it wraps a region and
+/// declares that, while it is in the tree, only the focusable targets *inside*
+/// it may own the keyboard. `Tab` and `Shift-Tab` therefore cycle within the
+/// scope instead of walking out into the application behind it, and no element
+/// outside it can be given focus — which is exactly what a dialog rendered
+/// inline needs, and what distinguishes a mode from an ordinary panel.
+///
+/// Entering a scope remembers whatever owned focus outside it, and leaving the
+/// scope — dismissed, navigated away from, or simply rebuilt out of the tree —
+/// gives focus back to it if it is still there. Nothing has to be restored by
+/// hand.
+///
+/// Scopes nest: the innermost trapping scope is the one that confines focus, so
+/// a dialog inside a drawer traps within the dialog, and closing it hands the
+/// keyboard back to the drawer.
+///
+/// A scope that does not [trap](FocusScope::traps) is inert, which is what makes
+/// the flag worth having: a widget that is sometimes a mode — a panel that
+/// becomes modal on a small screen — keeps one build path and flips a `bool`.
+///
+/// Overlays presented through `aimer_modal` need no scope. Their content is not
+/// part of the tree they cover, so they confine focus with an
+/// [`aimer_focus::FocusTrap`] instead; the effect for the application underneath
+/// is the same.
+///
+/// # Examples
+///
+/// ```
+/// use aimer_widget::FocusScope;
+///
+/// struct Dialog;
+/// # impl aimer_widget::PortableWidget for Dialog {}
+/// # impl aimer_widget::Widget for Dialog {
+/// #     fn to_element(self, _ctx: &aimer_widget::base::BuildContext) -> aimer_widget::AnyElement {
+/// #         unreachable!("this example only builds the widget")
+/// #     }
+/// # }
+///
+/// // While this is in the tree, Tab cannot leave the dialog.
+/// let modal = FocusScope::new().child(Dialog);
+///
+/// // The same region, not confining anything.
+/// let inline = FocusScope::new().traps(false).child(Dialog);
+/// ```
+pub struct FocusScope<W = RequiredChild> {
+    child: W,
+    traps: bool,
+}
+
+impl FocusScope {
+    /// Creates a trapping scope builder.
+    ///
+    /// Finish the builder with [`FocusScope::child`] or
+    /// [`FocusScope::box_child`].
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            child: RequiredChild,
+            traps: true,
+        }
+    }
+
+    /// Sets whether the scope confines focus to its subtree.
+    ///
+    /// The default is `true`. A scope built with `false` behaves as if it were
+    /// not there.
+    #[inline]
+    pub fn traps(mut self, traps: bool) -> Self {
+        self.traps = traps;
+        self
+    }
+
+    /// Attaches the required child and completes this builder.
+    #[inline]
+    pub fn child<W: Widget>(self, child: W) -> FocusScope<W> {
+        FocusScope {
+            child,
+            traps: self.traps,
+        }
+    }
+
+    /// Attaches `child` and erases the resulting widget's concrete type.
+    #[inline]
+    pub fn box_child<W: Widget + 'static>(self, child: W) -> AnyWidget {
+        self.child(child).boxed()
+    }
+}
+```
 
 ## Widget Conventions
 
@@ -153,37 +257,19 @@ impl<W: Widget + 'static> Widget for MyWidget<W> {
 }
 ```
 
-## Performance
-
-Aimer is a performance-sensitive GUI framework.
-
-- Treat per-frame rendering, layout, input, animation, and widget rebuild paths as hot unless evidence shows otherwise.
-- Avoid avoidable allocations, clones, repeated tree walks, blocking work, and unnecessary synchronization on hot paths.
-- Do not claim a change is faster without evidence. For non-obvious performance changes, add or run a benchmark,
-  profiler, allocation check, or equivalent measurement.
-- Do not trade correctness or maintainability for speculative micro-optimizations.
-- When changing GPU buffers, FFI, or platform code, validate sizes, alignments, lifetimes, and thread-affinity
-  assumptions.
-
-## Visual Design
-
-When the user asks for an example UI without specifying a palette, prefer a monochrome black-and-white theme. An
-explicit user-supplied design or existing product style takes precedence.
-
 ## Validation Commands
 
-Run commands from the workspace root unless a nested guide says otherwise.
+Run commands from the workspace root unless a nested guide says otherwise. Prefer using `cargo-nextest` when available.
 
 ```bash
 # Focused test
-
-cargo test -p aimer_animation test_curve_linear
+cargo nextest run -p aimer_animation test_curve_linear
 
 # Crate tests
-cargo test -p aimer_animation
+cargo nextest run -p aimer_animation
 
 # Entire workspace (use when the change scope warrants it)
-cargo test --workspace
+cargo nextest run --workspace
 ```
 
 Before handing off:
