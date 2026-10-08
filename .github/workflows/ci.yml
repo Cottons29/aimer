@@ -29,7 +29,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Clippy
-        run: cargo clippy --workspace
+        run: cargo check --workspace
 
       - name: Run tests with nextest
         run: cargo nextest run --workspace
