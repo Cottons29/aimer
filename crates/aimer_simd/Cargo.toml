@@ -1,0 +1,12 @@
+[package]
+name = "aimer_simd"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+force-scalar = []
+
+[dependencies]
+
+[lints]
+workspace = true

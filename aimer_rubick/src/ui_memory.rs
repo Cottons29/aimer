@@ -86,7 +86,7 @@ pub struct UiAllocator {
 }
 
 thread_local! {
-    static ACTIVE_UI_ALLOCATOR: RefCell<Option<UiAllocator>> = const { RefCell::new(None) };
+    static ACTIVE_UI_MEMORY: Cell<*const UiMemoryInner> = const { Cell::new(std::ptr::null()) };
 }
 
 impl UiMemory {
@@ -148,9 +148,8 @@ impl UiAllocator {
     /// current thread.
     ///
     /// Scopes nest: when `f` returns or unwinds, the allocator that was active
-    /// before this call is restored. Allocations made by this scope retain a
-    /// clone of the allocator in their heap block, so they can be dropped after
-    /// the scope ends.
+    /// before this call is restored. Heap-backed Rubick values retain an
+    /// allocator handle and can be dropped after the scope ends.
     pub fn scope<R>(&self, f: impl FnOnce() -> R) -> R {
         let _scope = self.enter_scope();
         f()
@@ -175,16 +174,42 @@ impl UiAllocator {
     /// explicit [`UiAllocator::scope`] is running.
     #[inline]
     pub fn current() -> Option<Self> {
-        ACTIVE_UI_ALLOCATOR
-            .try_with(|allocator| allocator.borrow().clone())
+        let inner = Self::current_inner()?;
+        // SAFETY: The active scope owns a strong allocator handle while the
+        // thread-local pointer is set, so the Rc allocation is live here.
+        Some(unsafe { Self::clone_from_inner(inner) })
+    }
+
+    #[inline(always)]
+    fn current_inner() -> Option<NonNull<UiMemoryInner>> {
+        ACTIVE_UI_MEMORY
+            .try_with(|inner| NonNull::new(inner.get() as *mut UiMemoryInner))
             .ok()
             .flatten()
     }
 
     pub(crate) fn enter_scope(&self) -> UiAllocatorScope {
-        let previous = ACTIVE_UI_ALLOCATOR
-            .with(|allocator| allocator.replace(Some(self.clone())));
-        UiAllocatorScope { previous }
+        let active = self.clone();
+        let previous_inner =
+            ACTIVE_UI_MEMORY.with(|inner| inner.replace(Rc::as_ptr(&active.inner)));
+        UiAllocatorScope {
+            _active: active,
+            previous_inner,
+        }
+    }
+
+    /// Clones a heap handle from the scope's non-owning thread-local pointer.
+    ///
+    /// # Safety
+    ///
+    /// `inner` must point to an `Rc` allocation kept alive by the active scope.
+    #[inline(always)]
+    unsafe fn clone_from_inner(inner: NonNull<UiMemoryInner>) -> Self {
+        // SAFETY: The caller guarantees the active scope owns a strong reference.
+        unsafe { Rc::increment_strong_count(inner.as_ptr()) };
+        // SAFETY: The increment above provides this new Rc owner.
+        let inner = unsafe { Rc::from_raw(inner.as_ptr()) };
+        Self { inner }
     }
 
     /// Allocates storage for a Rubick block, using the per-heap size-class
@@ -243,14 +268,17 @@ impl UiAllocator {
 
 /// Restores the allocator scope that was active before a build started.
 pub(crate) struct UiAllocatorScope {
-    previous: Option<UiAllocator>,
+    // Keeps the heap alive while the thread-local pointer refers to it.
+    _active: UiAllocator,
+    // The parent scope owns this heap through its `_active` handle.
+    previous_inner: *const UiMemoryInner,
 }
 
 impl Drop for UiAllocatorScope {
     fn drop(&mut self) {
-        let previous = self.previous.take();
-        let _ = ACTIVE_UI_ALLOCATOR.try_with(|allocator| {
-            allocator.replace(previous);
+        let previous_inner = self.previous_inner;
+        let _ = ACTIVE_UI_MEMORY.try_with(|inner| {
+            inner.set(previous_inner);
         });
     }
 }
