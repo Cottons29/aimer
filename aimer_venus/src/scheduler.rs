@@ -1,7 +1,7 @@
 //! The UI-thread task engine: one slab of futures, one ready queue per frame
 //! phase.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -11,6 +11,40 @@ use std::task::Context;
 use std::time::Duration;
 
 use crate::budget::{self, FrameBudget};
+
+thread_local! {
+    /// How many task polls are in progress on this thread. A poll can start
+    /// another (a task that drains the microtask queue), so this counts depth.
+    static POLLING: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Whether a task is being polled on this thread right now.
+///
+/// Code that runs from a task, such as the state update a timer or a finished
+/// request makes, can ask this to learn that it was reached through the
+/// scheduler rather than through input or a direct call.
+#[inline]
+pub fn is_polling_task() -> bool {
+    POLLING.with(|depth| depth.get() > 0)
+}
+
+/// Marks a task poll as in progress until dropped.
+struct PollingGuard;
+
+impl PollingGuard {
+    #[inline]
+    fn enter() -> Self {
+        POLLING.with(|depth| depth.set(depth.get() + 1));
+        Self
+    }
+}
+
+impl Drop for PollingGuard {
+    #[inline]
+    fn drop(&mut self) {
+        POLLING.with(|depth| depth.set(depth.get() - 1));
+    }
+}
 use crate::poll_context::PollContext;
 use crate::task::slab::TaskSlab;
 use crate::task::waker::{Notifier, WakeQueue, waker_for};
@@ -389,6 +423,7 @@ impl LocalScheduler {
         // browser — clones to nothing at all.
         let host = self.poll_context.borrow().clone();
         let mut finished = false;
+        let _polling = PollingGuard::enter();
         {
             let mut poll_once = || finished = future.as_mut().poll(&mut context).is_ready();
             match host {

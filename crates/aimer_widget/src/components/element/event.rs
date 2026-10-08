@@ -352,6 +352,12 @@ impl Drop for EventHitDepthGuard {
 pub struct EventDispatcher {
     captures: HashMap<PointerKey, ElementId>,
     nested_captures: HashMap<(ElementId, PointerKey), ElementId>,
+    /// The focus target a forwarding element's private child view found for the
+    /// press being routed. [`Self::dispatch_nested`] can only hand an
+    /// [`EventResult`] back through [`EventDispatchContext::dispatch_child`], so
+    /// the candidate waits here until the forwarding element returns and its
+    /// caller merges it into the enclosing hit outcome.
+    nested_focus_owner: Option<FocusCandidate<ElementId>>,
     path_indices: HashMap<ElementId, usize>,
     path_links: Vec<ElementPath>,
     /// Preorder-aligned with `path_links`; stores direct pointers and child flags.
@@ -359,6 +365,19 @@ pub struct EventDispatcher {
     indexed_subtree_generation: u64,
     indexed_root: Option<ElementId>,
     paths_dirty: bool,
+    /// The unscoped tree generation and log position the index was last brought
+    /// up to date at, so a later change can be told apart as scoped.
+    indexed_unscoped: u64,
+    /// How many times the path index was rebuilt in full and patched in place.
+    index_work: (u64, u64),
+    /// Makes every path-index synchronization a full rebuild. Tests set it to
+    /// compare the patched index with a rebuilt one.
+    index_patching_disabled: bool,
+    /// The element-tree generation the index was last brought up to date at.
+    indexed_tree_generation: u64,
+    scoped_cursor: ScopedCursor,
+    /// Whether the event tree must be rebuilt because the path index was.
+    event_tree_stale: bool,
     generation_checked_frame: Option<u64>,
     hit_chain_cache: Option<CachedHitChain>,
     hit_chain_recorder: Option<HitChainRecorder>,
@@ -389,12 +408,19 @@ impl EventDispatcher {
         Self {
             captures: HashMap::new(),
             nested_captures: HashMap::new(),
+            nested_focus_owner: None,
             path_indices: HashMap::new(),
             path_links: Vec::new(),
             indexed_elements: Vec::new(),
             indexed_subtree_generation: u64::MAX,
             indexed_root: None,
             paths_dirty: true,
+            indexed_unscoped: u64::MAX,
+            index_work: (0, 0),
+            index_patching_disabled: false,
+            indexed_tree_generation: u64::MAX,
+            scoped_cursor: ScopedCursor::default(),
+            event_tree_stale: true,
             generation_checked_frame: None,
             hit_chain_cache: None,
             hit_chain_recorder: None,
@@ -411,6 +437,21 @@ impl EventDispatcher {
             event_hit_depth: Rc::new(Cell::new(0)),
             indexed_layout_generation: u64::MAX,
         }
+    }
+
+    /// How many times the path index was rebuilt in full, and how many times it
+    /// was patched in place after a subtree was replaced by one of the same
+    /// shape. For tests and diagnostics.
+    #[doc(hidden)]
+    pub fn path_index_work(&self) -> (u64, u64) {
+        self.index_work
+    }
+
+    /// Turns patching of the path index off or on. Off, every synchronization
+    /// that finds the tree changed rebuilds the index in full. For tests.
+    #[doc(hidden)]
+    pub fn set_index_patching(&mut self, enabled: bool) {
+        self.index_patching_disabled = !enabled;
     }
 
     #[inline]
@@ -804,7 +845,24 @@ impl EventDispatcher {
             }
         }
 
+        // The press landed on a focus target inside the forwarding element's
+        // child view. The first one found is the topmost, as in an ordinary walk.
+        if self.nested_focus_owner.is_none() {
+            self.nested_focus_owner = outcome.focus_owner;
+        }
+
         outcome.result.without_capture_request()
+    }
+
+    /// Adds the focus target a forwarding element's child view found to `slot`,
+    /// unless the enclosing walk already has a deeper one, and clears the
+    /// hand-off so it cannot reach a later element.
+    #[inline]
+    fn merge_nested_focus_owner(&mut self, slot: &mut Option<FocusCandidate<ElementId>>) {
+        let nested = self.nested_focus_owner.take();
+        if slot.is_none() {
+            *slot = nested;
+        }
     }
 
     fn dispatch_nested_captured(
@@ -888,6 +946,7 @@ impl EventDispatcher {
     /// Routes one event, leaving pointer-claim housekeeping to
     /// [`Self::dispatch`].
     fn route(&mut self, root: &dyn Element, pos: Vec2d, event: &ElementEvent) -> EventResult {
+        self.nested_focus_owner = None;
         let pointer = event_pointer_key(event);
         let routes_to_capture = matches!(
             event,
@@ -1093,7 +1152,7 @@ impl EventDispatcher {
         &mut self,
         root: &dyn Element,
     ) -> ElementInvalidationBatch {
-        self.synchronize_paths_for_current_tree(root);
+        self.synchronize_path_index_for_current_tree(root);
         let mut batch = crate::element_invalidation::take_pending();
         if batch.records().is_empty() {
             return batch;
@@ -1145,7 +1204,7 @@ impl EventDispatcher {
             return;
         }
 
-        self.synchronize_paths_for_current_tree(root);
+        self.synchronize_path_index_for_current_tree(root);
         let after_frame = current_element_invalidation_revisions();
         for invalidation in batch.records_mut() {
             invalidation.after_frame_revisions = Some(after_frame);
@@ -1199,12 +1258,36 @@ impl EventDispatcher {
     }
 
     fn synchronize_paths_for_current_tree(&mut self, root: &dyn Element) {
+        self.synchronize_path_index_for_current_tree(root);
+        self.synchronize_event_tree(root);
+    }
+
+    /// Like [`Self::synchronize_paths_for_current_tree`], for a caller that
+    /// only resolves elements by identity.
+    fn synchronize_path_index_for_current_tree(&mut self, root: &dyn Element) {
         if self.indexed_subtree_generation != root.subtree_generation()
             || self.indexed_root != root.element_id()
         {
             self.paths_dirty = true;
         }
-        self.synchronize_paths(root);
+        self.synchronize_path_index(root);
+    }
+
+    /// Finds the retained element `id` below `root`, bringing the path index up
+    /// to date first.
+    ///
+    /// A lookup is constant time once the index matches `root`; it fails, and
+    /// returns `None`, for an element that is not part of the structural tree.
+    #[doc(hidden)]
+    pub fn resolve_element<'a>(
+        &mut self,
+        root: &'a dyn Element,
+        id: ElementId,
+    ) -> Option<&'a dyn Element> {
+        // The tree may have been rebuilt since this frame's first look at it, so
+        // the subtree generation is compared again rather than trusted.
+        self.synchronize_path_index_for_current_tree(root);
+        self.resolve_indexed_element(root, id)
     }
 
     fn resolve_indexed_element<'a>(
@@ -1230,12 +1313,25 @@ impl EventDispatcher {
         (element.element_id() == Some(id)).then_some(element)
     }
 
+    /// Brings the id-to-element index and the event tree up to date.
+    ///
+    /// Event dispatch needs both. A caller that only has to find an element by
+    /// identity uses [`Self::synchronize_path_index`] and leaves the event tree
+    /// to the first event that needs it.
     fn synchronize_paths(&mut self, root: &dyn Element) {
+        self.synchronize_path_index(root);
+        self.synchronize_event_tree(root);
+    }
+
+    /// Brings the id-to-element index up to date.
+    ///
+    /// This is all that resolving an element by identity needs. It marks the
+    /// event tree stale whenever it rebuilds, so the tree, which costs as much
+    /// as the index again, is built only for an event that is dispatched.
+    fn synchronize_path_index(&mut self, root: &dyn Element) {
         let root_id = root.element_id();
         let root_address = root as *const dyn Element as *const ();
         let root_address_changed = self.indexed_root_address != Some(root_address);
-        let layout_generation = layout_invalidation_generation();
-        let event_layout_changed = self.indexed_layout_generation != layout_generation;
         let generation = match current_event_frame() {
             Some(frame) => {
                 if self.generation_checked_frame != Some(frame) {
@@ -1262,54 +1358,75 @@ impl EventDispatcher {
         if root_address_changed {
             self.paths_dirty = true;
         }
-
-        let rebuild_paths = self.paths_dirty;
-        if !rebuild_paths && !event_layout_changed {
+        if !self.paths_dirty {
             return;
         }
 
         let generation = generation.unwrap_or_else(|| root.subtree_generation());
 
+        self.invalidate_hit_chain();
+        self.hover_chains.clear();
+        if !root_address_changed && !self.index_patching_disabled && self.patch_path_index(root) {
+            self.index_work.1 += 1;
+            self.indexed_subtree_generation = generation;
+            self.paths_dirty = false;
+            self.event_tree_stale = true;
+            return;
+        }
+        let mut next_path_indices = HashMap::with_capacity(self.path_indices.len());
+        let mut next_path_links = Vec::with_capacity(self.path_links.len());
+        let mut next_indexed_elements = Vec::with_capacity(self.indexed_elements.len());
+        let mut next_focus_scope = None;
+        index_element_links(
+            root,
+            None,
+            0,
+            &mut next_path_links,
+            &mut next_path_indices,
+            &mut next_indexed_elements,
+            &mut next_focus_scope,
+        );
+        // Commit the new ID/path index only after the full structural walk
+        // succeeds. A partial walk never becomes a usable lookup table.
+        self.path_indices = next_path_indices;
+        self.path_links = next_path_links;
+        self.indexed_elements = next_indexed_elements;
+        self.focus_scope = next_focus_scope;
+        self.captures
+            .retain(|_, owner| self.path_indices.contains_key(owner));
+        let path_indices = &self.path_indices;
+        self.nested_captures.retain(|(boundary, _), owner| {
+            path_indices.contains_key(boundary) && path_indices.contains_key(owner)
+        });
+        self.focus
+            .retain_history(|owner| path_indices.contains_key(owner));
+        self.indexed_subtree_generation = generation;
+        self.indexed_root = root_id;
+        self.index_work.0 += 1;
+        self.indexed_root_address = Some(root_address);
+        self.indexed_unscoped = unscoped_element_tree_generation();
+        self.indexed_tree_generation = element_tree_generation();
+        self.scoped_cursor = scoped_rebuild_cursor();
+        self.paths_dirty = false;
+        self.event_tree_stale = true;
+    }
+
+    /// Brings the event tree up to date with the path index and the layout.
+    ///
+    /// Requires the path index to match `root`, which
+    /// [`Self::synchronize_path_index`] provides.
+    fn synchronize_event_tree(&mut self, root: &dyn Element) {
+        let layout_generation = layout_invalidation_generation();
+        let event_layout_changed = self.indexed_layout_generation != layout_generation;
+        if !self.event_tree_stale && !event_layout_changed {
+            return;
+        }
         if event_layout_changed {
             self.invalidate_hit_chain();
             self.hover_chains.clear();
         }
 
-        if self.paths_dirty {
-            self.invalidate_hit_chain();
-            self.hover_chains.clear();
-            let mut next_path_indices = HashMap::with_capacity(self.path_indices.len());
-            let mut next_path_links = Vec::with_capacity(self.path_links.len());
-            let mut next_indexed_elements = Vec::with_capacity(self.indexed_elements.len());
-            let mut next_focus_scope = None;
-            index_element_links(
-                root,
-                None,
-                0,
-                &mut next_path_links,
-                &mut next_path_indices,
-                &mut next_indexed_elements,
-                &mut next_focus_scope,
-            );
-            // Commit the new ID/path index only after the full structural walk
-            // succeeds. A partial walk never becomes a usable lookup table.
-            self.path_indices = next_path_indices;
-            self.path_links = next_path_links;
-            self.indexed_elements = next_indexed_elements;
-            self.focus_scope = next_focus_scope;
-            self.captures
-                .retain(|_, owner| self.path_indices.contains_key(owner));
-            let path_indices = &self.path_indices;
-            self.nested_captures.retain(|(boundary, _), owner| {
-                path_indices.contains_key(boundary) && path_indices.contains_key(owner)
-            });
-            self.focus
-                .retain_history(|owner| path_indices.contains_key(owner));
-            self.indexed_subtree_generation = generation;
-            self.indexed_root = root_id;
-            self.paths_dirty = false;
-        }
-        if rebuild_paths {
+        if self.event_tree_stale {
             self.event_tree = EventTree::new();
             self.event_target_by_element.clear();
             build_indexed_event_tree(
@@ -1320,8 +1437,8 @@ impl EventDispatcher {
                 &mut self.event_target_by_element,
                 &self.path_indices,
             );
-            self.indexed_root_address = Some(root_address);
-        } else if event_layout_changed && !self.event_tree.elements().is_empty() {
+            self.event_tree_stale = false;
+        } else if !self.event_tree.elements().is_empty() {
             for (element_id, target) in &self.event_target_by_element {
                 let bounds = self
                     .resolve_indexed_element(root, *element_id)
@@ -1329,9 +1446,7 @@ impl EventDispatcher {
                 self.event_tree.update_bounds(*target, bounds);
             }
         }
-        {
-            self.indexed_layout_generation = layout_generation;
-        }
+        self.indexed_layout_generation = layout_generation;
     }
 
     /// Resolves the focus owner for this frame, notifying both sides of a

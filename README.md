@@ -347,6 +347,14 @@ in `.cargo/config.toml`. Downstream builds that enable `web` must also pass
 
 ## Development & Verification
 
+In every debug application, press **F3** to show or hide the diagnostic overlay.
+It shows draw FPS, UI draw time, the UI memory pool's committed usage and limit,
+cursor position, window size, scale, and renderer type. Add `--features frame-stats`
+for build, encode, and present timings. Metric refreshes are throttled to four
+times per second as the application draws; window geometry updates immediately.
+Diagnostics do not keep an idle app rendering.
+The overlay and its shortcut are compiled out when debug assertions are disabled.
+
 When contributing to Aimer, follow the project guidelines:
 
 - **Correctness & Zero-Waste:** Prefer zero-copy ownership transfers over allocations on hot paths.

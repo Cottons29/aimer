@@ -1072,6 +1072,8 @@ mod tests {
     use super::*;
 
     mod scrolling;
+    mod focus;
+    mod animation_walks;
 
     #[test]
     fn showcase_has_unique_registered_examples() {

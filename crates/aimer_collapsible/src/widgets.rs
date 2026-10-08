@@ -155,6 +155,29 @@ impl AnimatedCollapseElement {
         }
     }
 
+    /// Schedules the next frame's layout after this frame sampled `progress`.
+    ///
+    /// The retained render tree re-reads bounds only when the layout
+    /// invalidation generation moves, and this body's extent follows the
+    /// controller rather than any rebuild. Without a bump here the body, its
+    /// clip, and every sibling placed after it keep the size of the last
+    /// synchronization until something else invalidates layout, so the
+    /// transition would jump instead of animate. A frame is also requested
+    /// after the sample that settles the animation: the tree was synchronized
+    /// from an earlier sample than the one that finished it.
+    ///
+    /// Returns whether the body's extent changed or is still changing.
+    fn advance_layout(&self, progress: f32) -> bool {
+        let bits = progress.to_bits();
+        let moved = matches!(self.last_progress.replace(Some(bits)), Some(last) if last != bits);
+        let active = self.controller.is_animating();
+        if moved || active {
+            self.child.invalidate_layout();
+            request_animation_frame();
+        }
+        moved || active
+    }
+
     fn update_bounds(&self, ctx: &BuildContext, size: ResolvedSize) {
         let scale = ctx.scale;
         if !scale.is_finite() || scale <= 0.0 {
@@ -197,12 +220,7 @@ impl Drawable for AnimatedCollapseElement {
         };
         self.update_bounds(ctx, size);
 
-        let progress_changed = self
-            .last_progress
-            .replace(Some(progress.to_bits()))
-            != Some(progress.to_bits());
-        let active = self.controller.is_animating();
-        if progress_changed || active {
+        if self.advance_layout(progress) {
             // The body's height changes the position of every following
             // sibling, so a complete repaint also clears the old footprint.
             aimer_widget::mark_paint_damage_full();
@@ -210,10 +228,6 @@ impl Drawable for AnimatedCollapseElement {
 
         if size.width > 0.0 && size.height > 0.0 {
             self.child.update(&self.child_context(ctx, natural));
-        }
-
-        if active {
-            request_animation_frame();
         }
     }
 
@@ -239,18 +253,16 @@ impl Drawable for AnimatedCollapseElement {
     }
 
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        let progress = animation_progress(self.controller.value());
+        let progress = self.progress();
         let natural = self.natural_size(ctx);
         let size = ResolvedSize {
             width: nonnegative_extent(natural.width),
             height: collapsed_height(natural.height, progress),
         };
         self.update_bounds(ctx, size);
+        self.advance_layout(progress);
         if size.width > 0.0 && size.height > 0.0 {
             self.child.update(&self.child_context(ctx, natural));
-        }
-        if self.controller.is_animating() {
-            request_animation_frame();
         }
     }
 

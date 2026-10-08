@@ -436,6 +436,11 @@ impl WindowEventHandler {
         use winit::event::ElementState;
         use winit::keyboard::{Key, NamedKey as WinitNamedKey};
 
+        #[cfg(debug_assertions)]
+        if app.handle_debug_key(&event.logical_key, event.state, event.repeat) {
+            return;
+        }
+
         let action = if event.repeat {
             KeyAction::Repeat
         } else {

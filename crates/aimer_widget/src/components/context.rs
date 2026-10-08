@@ -366,6 +366,51 @@ impl WindowHandle {
     }
 }
 
+/// An owned copy of a [`BuildContext`] taken by [`BuildContext::snapshot`].
+///
+/// It holds everything a context carries except the borrowed frame canvas, so
+/// it can outlive the frame it was taken in. [`Self::restore`] binds it to a
+/// later frame's canvas. A retained element that is revisited alone, without
+/// its parents, uses it to see the same constraints, scale, window and
+/// inherited state its parents gave it the last time the whole tree was walked.
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct BuildContextSnapshot {
+    parent_size: ResolvedSize,
+    scale: f32,
+    parent_pos: Vec2d,
+    cursor_pos: Vec2d,
+    box_constraint: BoxConstraint,
+    visible_rect: Option<(f32, f32, f32, f32)>,
+    window: WindowHandle,
+    async_handle: Handle,
+    inherited_states: InheritedStates,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+impl BuildContextSnapshot {
+    /// Rebuilds a context that draws into `canvas`.
+    ///
+    /// The restored context owns a private inherited-state map, so scoped
+    /// changes made while it is in use cannot reach any other context.
+    #[doc(hidden)]
+    pub fn restore<'a>(&self, canvas: FrameCanvas<'a>) -> BuildContext<'a> {
+        BuildContext {
+            parent_size: self.parent_size,
+            canvas,
+            scale: self.scale,
+            parent_pos: self.parent_pos,
+            cursor_pos: self.cursor_pos,
+            box_constraint: self.box_constraint,
+            visible_rect: self.visible_rect,
+            window: self.window.clone(),
+            async_handle: self.async_handle.clone(),
+            inherited_states: Rc::new(RefCell::new(self.inherited_states.clone())),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct BuildContext<'a> {
     pub parent_size: ResolvedSize,
@@ -663,6 +708,29 @@ impl<'a> BuildContext<'a> {
         inherited_states.insert(TypeId::of::<T>(), Rc::new(state));
         context.inherited_states = Rc::new(RefCell::new(inherited_states));
         context
+    }
+
+    /// Copies this context into a value that does not borrow the frame canvas.
+    ///
+    /// The inherited-state map is copied rather than shared: [`Self::with_state`]
+    /// installs and removes entries on the shared map as a traversal enters and
+    /// leaves a scope, so a handle to that map only describes the scope it was
+    /// taken in while that scope is still open. The stored values keep sharing
+    /// their own `Rc` state, so a provider handle still reaches live data.
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+    #[doc(hidden)]
+    pub fn snapshot(&self) -> BuildContextSnapshot {
+        BuildContextSnapshot {
+            parent_size: self.parent_size,
+            scale: self.scale,
+            parent_pos: self.parent_pos,
+            cursor_pos: self.cursor_pos,
+            box_constraint: self.box_constraint,
+            visible_rect: self.visible_rect,
+            window: self.window.clone(),
+            async_handle: self.async_handle.clone(),
+            inherited_states: self.inherited_states.borrow().clone(),
+        }
     }
 
     /// Provides the retained element context to `Canvas::of` for one local

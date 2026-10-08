@@ -601,7 +601,9 @@ impl Drawable for AnimatedBuilderElement {
         self.output_changed.set(false);
         unsafe { &*self.child.get() }.update(ctx);
         if self.controller.is_animating() {
-            self.window.request_redraw();
+            // Each frame replaces this element's own child and nothing else, so
+            // the next one may revisit just this subtree.
+            aimer_widget::request_isolated_subtree_animation_frame(ctx);
         }
     }
 }
@@ -629,6 +631,11 @@ impl EventElement for AnimatedBuilderElement {
 impl Rebuildable for AnimatedBuilderElement {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         let curved_value = self.controller.tick(AnimInstant::now());
+        if self.controller.is_animating() {
+            // Nothing marks this element dirty while it animates, so without
+            // this the rebuild pass would skip it and the animation would stop.
+            aimer_widget::keep_element_reachable();
+        }
         let output_changed = curved_value != self.last_value.get();
         if output_changed {
             let child = (self.builder)(curved_value, ctx);

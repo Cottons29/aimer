@@ -153,7 +153,10 @@ impl<E: Element + 'static> ElementNode<E> {
             && render_context
                 .as_ref()
                 .is_some_and(|scope| scope.take_prepared_root(self.id.get()));
-        if outermost && !prepared_root {
+        // An animation-only pass revisits elements after the frame's own rebuild
+        // prepass over the whole tree, so rebuilding again would tick every
+        // animator's clock a second time and rebuild what it just rebuilt.
+        if outermost && !prepared_root && !is_animation_only_pass() {
             // Native frame dispatch enters through `draw`; keep the retained-
             // tree rebuild prepass here so direct draw callers also benefit
             // from the precise dirty-subtree index. Child draws belong to the
@@ -161,6 +164,7 @@ impl<E: Element + 'static> ElementNode<E> {
             self.rebuild_if_dirty(ctx);
         }
         let _invalidation_owner = DrawInvalidationOwnerGuard::enter(self.id.get());
+        capture_rebuilt_root(self.id.get(), ctx);
 
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
         let retained_animation_candidate = render_context.as_ref().is_some_and(|scope| {
@@ -195,9 +199,20 @@ impl<E: Element + 'static> ElementNode<E> {
                                 self.resolve_local_v2_paint(ctx, scope, render_node)
                             })
                     {
-                        self.draw_v2_compatibility(ctx);
+                        // An animation-only pass revisits this element alone: its
+                        // subtree has not changed, so walking it would only repeat
+                        // work the last full frame already did.
+                        if !is_animation_only_pass() {
+                            self.draw_v2_compatibility(ctx);
+                        }
                         if frame.active {
-                            request_animation_frame();
+                            // Say that the animation is the only reason for the next
+                            // frame, so a frame loop may skip the rest of the tree.
+                            if register_animating_element(self.id.get(), ctx, false) {
+                                aimer_events::window::request_scoped_frame();
+                            } else {
+                                request_animation_frame();
+                            }
                         }
                         return;
                     }
@@ -243,8 +258,12 @@ impl<E: Element + 'static> ElementNode<E> {
                 // Keep the compatibility traversal for draw-time state and
                 // descendants. Direct retained presentation drops its paint
                 // commands in `draw_v2_compatibility`; legacy islands reopen
-                // recording for their own ranges.
-                self.draw_v2_compatibility(ctx);
+                // recording for their own ranges. An animation-only pass
+                // revisits an element that promised its work is its own, so
+                // its subtree has nothing to learn from the visit.
+                if !pass_skips_subtree(self.id.get()) {
+                    self.draw_v2_compatibility(ctx);
+                }
                 return;
             }
         }

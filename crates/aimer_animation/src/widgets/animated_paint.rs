@@ -6,7 +6,7 @@ use aimer_events::window::request_animation_frame;
 use aimer_widget::base::*;
 use aimer_widget::{
     AnyElement, Drawable, Element, EventElement, EventResult, LayoutElement, Rebuildable,
-    VisitorElement, Widget,
+    VisitorElement, Widget, request_isolated_animation_frame,
 };
 
 use crate::control::controller::AnimationController;
@@ -165,6 +165,12 @@ impl Drawable for AnimatedPaintElement {
 
     fn sync_local_v2_state(&self, ctx: &BuildContext) -> bool {
         let progress = self.controller.tick(AnimInstant::now());
+        if self.controller.is_animating() {
+            // Everything a frame of this animation changes is the child's
+            // presentation set below, so the next frame may revisit this
+            // element alone. The child is retained and never re-recorded.
+            request_isolated_animation_frame(ctx);
+        }
         if !progress.is_finite() {
             return false;
         }
@@ -184,11 +190,8 @@ impl Drawable for AnimatedPaintElement {
 
     #[inline]
     fn draw_local_v2_compatibility(&self, ctx: &BuildContext) {
-        let active = self.controller.is_animating();
+        // `sync_local_v2_state` has already asked for the next frame.
         self.child.update(ctx);
-        if active {
-            request_animation_frame();
-        }
     }
 }
 

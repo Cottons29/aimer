@@ -108,6 +108,12 @@ impl ElementInvalidationBatch {
         &self.records
     }
 
+    /// Returns whether no element reported a change since the last frame.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
     /// Returns whether an unknown, stale, or unbounded change requires full damage.
     #[inline]
     pub fn requires_full_fallback(&self) -> bool {

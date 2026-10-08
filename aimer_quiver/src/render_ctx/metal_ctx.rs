@@ -1,4 +1,4 @@
-#[cfg(all(not(target_arch = "wasm32"), target_os = "macos"))]
+#[cfg(all(not(target_arch = "wasm32"),any(target_os = "macos", target_os = "ios")))]
 pub mod render_ctx {
     use aimer_cupid::AntiAlias;
     use aimer_cupid::backend::GpuBackend;

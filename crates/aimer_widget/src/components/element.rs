@@ -37,6 +37,12 @@ use crate::pointer_claim;
 use crate::{AnyElement, Drawable, Key};
 
 mod event;
+mod scoped_rebuild;
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
+mod animation_only;
+#[cfg(any(target_arch = "wasm32", feature = "portable-guest"))]
+#[path = "animation_only_stub.rs"]
+mod animation_only;
 mod compositor_applied;
 mod node;
 #[cfg(test)]
@@ -45,10 +51,24 @@ mod paint_invalidation_tests;
 mod render_context_tests;
 mod retained_window;
 
+pub use animation_only::{
+    animation_only_targets, is_animation_only_frame, request_isolated_animation_frame,
+    request_isolated_subtree_animation_frame, run_animation_only_pass, set_frame_rebuilt_roots, set_animation_only_frame, traversal_counts,
+    with_v2_animation_only_context,
+};
+use animation_only::{
+    begin_full_traversal, capture_rebuilt_root, finish_full_traversal, is_animation_only_pass, pass_skips_subtree,
+    register_animating_element,
+};
 use compositor_applied::{
     compositor_animation_may_be_applied, forget_unmapped_compositor_animations,
     note_compositor_animation_applied, note_compositor_animation_cleared,
 };
+pub use scoped_rebuild::{
+    ScopedCursor, has_scoped_rebuilds_since, scoped_rebuild_cursor, scoped_rebuilds_since,
+    unscoped_element_tree_generation,
+};
+use scoped_rebuild::{note_scoped_rebuild, note_unscoped_tree_change};
 use node::ElementNode;
 pub use retained_window::{
     VisibleWindow, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,
@@ -64,6 +84,11 @@ static ELEMENT_TREE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static RETAINED_RENDER_STRUCTURE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static REBUILD_INVALIDATION_GENERATION: AtomicU64 = AtomicU64::new(0);
 static LAYOUT_INVALIDATION_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Advances of the rebuild generation that only kept an element reachable.
+static REBUILD_KEEPALIVE_COUNT: AtomicU64 = AtomicU64::new(0);
+/// Advances of the rebuild generation made by `set_state` marking an element
+/// dirty.
+static REBUILD_STATE_MARK_COUNT: AtomicU64 = AtomicU64::new(0);
 #[cfg(test)]
 static TEST_ELEMENT_TREE_GENERATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -209,6 +234,7 @@ pub fn with_v2_render_tree_context<R>(
     callback: impl FnOnce() -> R,
 ) -> R {
     forget_unmapped_compositor_animations(&element_nodes);
+    begin_full_traversal();
     V2_RENDER_CONTEXT_STACK.with(|stack| {
         stack.borrow_mut().push(V2RenderContext(Rc::new(V2RenderScope {
             tree,
@@ -217,7 +243,9 @@ pub fn with_v2_render_tree_context<R>(
         })));
     });
     let _guard = V2RenderContextGuard;
-    callback()
+    let result = callback();
+    finish_full_traversal();
+    result
 }
 
 pub(crate) fn current_v2_render_context() -> Option<V2RenderContext> {
@@ -1051,6 +1079,60 @@ pub fn keep_ticking_elements_reachable() {
     advance_rebuild_invalidation_generation();
 }
 
+/// Keeps the calling element reachable by the next rebuild pass, without
+/// repainting anything.
+///
+/// A rebuild pass visits only the elements marked dirty and the paths leading to
+/// them. An element that rebuilds its own child on its own clock, such as a
+/// running [`AnimatedBuilder`], is never marked, so the pass would skip it and
+/// the animation would stand still. Calling this from `rebuild_if_dirty` for as
+/// long as the element still has frames to produce makes the next pass descend
+/// to it again.
+///
+/// Unlike [`keep_ticking_elements_reachable`] this does not mark paint
+/// invalidations unknown or damage the whole target: the caller's own rebuild
+/// reports what it changed. Each call is counted, see
+/// [`rebuild_keepalive_count`], so a frame loop can tell a generation that moved
+/// only to keep an element reachable from one that moved because something
+/// changed.
+///
+/// [`AnimatedBuilder`]: https://docs.rs/aimer_animation
+#[doc(hidden)]
+#[inline]
+pub fn keep_element_reachable() {
+    invalidate_dirty_paths();
+    advance_tracked_rebuild_invalidation_generation();
+    REBUILD_KEEPALIVE_COUNT.fetch_add(1, Ordering::Release);
+}
+
+/// How many times [`keep_element_reachable`] has advanced the rebuild
+/// generation.
+#[doc(hidden)]
+#[inline]
+pub fn rebuild_keepalive_count() -> u64 {
+    REBUILD_KEEPALIVE_COUNT.load(Ordering::Acquire)
+}
+
+/// Records that a state update just marked an element dirty, advancing the
+/// rebuild generation.
+///
+/// The element rebuilds its own subtree, which the log of replaced subtrees
+/// describes, so a frame loop may treat the advance as explained, see
+/// [`rebuild_state_mark_count`]. A dependency-driven mark is not counted: it
+/// reaches every element that read the dependency.
+#[doc(hidden)]
+#[inline]
+pub fn note_state_update_marked() {
+    REBUILD_STATE_MARK_COUNT.fetch_add(1, Ordering::Release);
+}
+
+/// How many times a state update advanced the rebuild generation.
+#[doc(hidden)]
+#[inline]
+pub fn rebuild_state_mark_count() -> u64 {
+    REBUILD_STATE_MARK_COUNT.load(Ordering::Acquire)
+}
+
 /// Invalidates event paths and retained render nodes for a hosted child change.
 ///
 /// Unlike [`notify_element_tree_changed`], this does not invalidate layout or
@@ -1126,6 +1208,21 @@ pub(crate) fn with_rebuild_invalidation<R>(operation: impl FnOnce() -> R) -> R {
 }
 
 fn advance_element_tree_generation() {
+    advance_element_tree_generation_counter();
+    note_unscoped_tree_change();
+}
+
+/// Advances the tree generation for the replacement of the subtree at `root`.
+///
+/// Every consumer of [`element_tree_generation`] still sees the advance. A
+/// consumer that tracks [`unscoped_element_tree_generation`] sees only that a
+/// subtree was replaced, and which one.
+fn advance_element_tree_generation_scoped(root: Option<ElementId>) {
+    advance_element_tree_generation_counter();
+    note_scoped_rebuild(root);
+}
+
+fn advance_element_tree_generation_counter() {
     #[cfg(test)]
     let _generation_lock = TEST_ELEMENT_TREE_GENERATION_LOCK
         .lock()
@@ -1215,7 +1312,8 @@ pub(crate) fn reconcile_generated_tree(old: &dyn Element, new: &dyn Element) {
 
 pub(crate) fn complete_generated_tree_reconciliation(old: &dyn Element, new: &dyn Element) {
     clear_removed_focus(old, new);
-    advance_element_tree_generation();
+    // The replacement changes the subtree below `new` and nothing outside it.
+    advance_element_tree_generation_scoped(new.element_id());
     new.set_subtree_generation(element_tree_generation());
 }
 

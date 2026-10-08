@@ -11,7 +11,7 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
 #[cfg(not(aimer_portable_guest))]
-use aimer_events::window::request_animation_frame;
+use aimer_events::window::{request_animation_frame, request_scoped_frame};
 use aimer_utils::error;
 
 use crate::base::*;
@@ -603,7 +603,10 @@ impl<S: 'static> StateUpdater<S> {
                 // This coalesces multiple set_state calls into a single redraw request.
                 if inner.dirty_source.mark() {
                     #[cfg(not(aimer_portable_guest))]
-                    request_animation_frame()
+                    {
+                        crate::components::element::note_state_update_marked();
+                        request_state_frame();
+                    }
                 }
             }
             #[cfg(feature = "portable-guest")]
@@ -635,7 +638,10 @@ impl<S: 'static> StateUpdater<S> {
                 inner.tx.push(Box::new(mutation));
                 if inner.dirty_source.mark() {
                     #[cfg(not(aimer_portable_guest))]
-                    request_animation_frame();
+                    {
+                        crate::components::element::note_state_update_marked();
+                        request_state_frame();
+                    }
                 }
                 Some(())
             }
@@ -671,7 +677,10 @@ impl<S: 'static> StateUpdater<S> {
                     inner.tx.push(Box::new(mutation));
                     if inner.dirty_source.mark() {
                         #[cfg(not(aimer_portable_guest))]
-                        request_animation_frame();
+                        {
+                            crate::components::element::note_state_update_marked();
+                            request_state_frame();
+                        }
                     }
                 }
                 #[cfg(feature = "portable-guest")]
@@ -3563,5 +3572,22 @@ mod tests {
         });
 
         assert_eq!(state.config, "new");
+    }
+}
+
+/// Asks for the frame that applies a state update.
+///
+/// A state update made by a task (a timer firing, a request finishing) belongs
+/// to a frame that exists for nothing else, and it rebuilds exactly one
+/// subtree, so that frame may be scoped. Any other state update (from input
+/// handling, from the middle of a draw, from code that then goes on to change
+/// something else) has no such guarantee about what the rest of the frame must
+/// do, and keeps the ordinary full frame it always had.
+#[inline]
+fn request_state_frame() {
+    if aimer_venus::is_polling_task() {
+        request_scoped_frame();
+    } else {
+        request_animation_frame();
     }
 }

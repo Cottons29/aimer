@@ -9,6 +9,7 @@ pub mod event_handler;
 pub(crate) mod file_drag;
 pub mod scroll_classifier;
 pub mod scroll_utils;
+mod scoped_sync;
 pub(crate) mod user_events;
 /// Gesture segmentation for the phase-less browser wheel stream.
 ///
@@ -252,9 +253,41 @@ pub(crate) struct FramePreparation {
     layout_generation: u64,
 }
 
+/// The inputs, other than the render tree's own sync stamp, that a frame
+/// reads and that can change without the tree being rebuilt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AnimationBaseline {
+    /// The rebuild generation less the advances that only kept an animating
+    /// element reachable, which every frame of an animation makes.
+    rebuild_generation: u64,
+    texture_epoch: u64,
+    /// The pointer position, in bits. Elements such as scroll bars and mouse
+    /// regions read it while updating, so a pointer that moved needs the walk.
+    cursor_bits: (u32, u32),
+}
+
+impl AnimationBaseline {
+    fn new(rebuild_generation: u64, texture_epoch: u64, cursor: Vec2d) -> Self {
+        Self {
+            rebuild_generation,
+            texture_epoch,
+            cursor_bits: (cursor.x.to_bits(), cursor.y.to_bits()),
+        }
+    }
+}
+
+/// How often each kind of synchronization ran.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SyncCounts {
+    pub(crate) full: u64,
+    pub(crate) scoped: u64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RenderTreeSyncStamp {
-    element_generation: u64,
+    /// Advances of the tree generation that no single replaced subtree
+    /// describes; the replacements themselves are synchronized separately.
+    unscoped_element_generation: u64,
     render_structure_generation: u64,
     layout_generation: u64,
     target_size: (u32, u32),
@@ -292,6 +325,21 @@ pub(crate) struct WindowRenderTree {
     tree: RenderTree,
     element_nodes: Rc<ElementNodeMap>,
     synced: Option<RenderTreeSyncStamp>,
+    /// What the last synchronization produced, for the scoped one to compare
+    /// against. Dropped whenever the tree is not known to match it.
+    sync_cache: Option<scoped_sync::SyncCache>,
+    /// How far into the log of replaced subtrees this window has synchronized.
+    scoped_cursor: aimer_widget::ScopedCursor,
+    /// How far into the log of replaced subtrees the last walk or pass got. Unset
+    /// until the first frame, whose build is not a rebuild.
+    walk_cursor: Option<aimer_widget::ScopedCursor>,
+    /// Makes every synchronization a full one. Tests set it to compare the two.
+    pub(crate) scoped_sync_disabled: bool,
+    /// How many synchronizations took each path, for tests and diagnostics.
+    pub(crate) sync_counts: SyncCounts,
+    /// What the last frame was drawn from. A frame that finds any of it moved
+    /// cannot be animation-only.
+    animation_baseline: Option<AnimationBaseline>,
     /// Elements drawn in the last frame that still had no render node after its
     /// final sync (see [`census::PaintSourceCensus::drawn_unmapped`]).
     drawn_unmapped: Vec<census::CensusElement>,
@@ -332,6 +380,39 @@ impl WindowRenderTree {
         result
     }
 
+    fn sync_stamp(
+        root: Option<&AnyElement>,
+        target_size: (u32, u32),
+        scale: f32,
+    ) -> RenderTreeSyncStamp {
+        RenderTreeSyncStamp {
+            unscoped_element_generation: aimer_widget::unscoped_element_tree_generation(),
+            render_structure_generation: aimer_widget::retained_render_structure_generation(),
+            layout_generation: aimer_widget::layout_invalidation_generation(),
+            target_size,
+            scale_bits: scale.to_bits(),
+            root: root.map(Element::id),
+        }
+    }
+
+    /// Whether the last synchronization succeeded and nothing it depends on has
+    /// moved since, other than subtrees replaced by ones of the same shape.
+    ///
+    /// Those replacements are what the next synchronization is for, and it
+    /// handles them without collecting the whole tree. It may still decide it
+    /// cannot, so a caller that relies on this must check that the
+    /// synchronization it then runs stayed on the scoped path.
+    fn is_synchronized_apart_from_replacements(
+        &self,
+        root: &AnyElement,
+        target_size: (u32, u32),
+        scale: f32,
+    ) -> bool {
+        scale.is_finite()
+            && scale > 0.0
+            && self.synced == Some(Self::sync_stamp(Some(root), target_size, scale))
+    }
+
     fn sync_inner<'element, 'context>(
         &mut self,
         root: Option<&'element AnyElement>,
@@ -342,18 +423,30 @@ impl WindowRenderTree {
         if !scale.is_finite() || scale <= 0.0 {
             return Err(RenderTreeError::InvalidBounds);
         }
-        let root_id = root.map(Element::id);
-        let stamp = RenderTreeSyncStamp {
-            element_generation: aimer_widget::element_tree_generation(),
-            render_structure_generation: aimer_widget::retained_render_structure_generation(),
-            layout_generation: aimer_widget::layout_invalidation_generation(),
-            target_size,
-            scale_bits: scale.to_bits(),
-            root: root_id,
-        };
+        let stamp = Self::sync_stamp(root, target_size, scale);
         if self.synced == Some(stamp) {
-            return Ok(RenderTreeSyncResult::default());
+            if !aimer_widget::has_scoped_rebuilds_since(self.scoped_cursor) {
+                return Ok(RenderTreeSyncResult::default());
+            }
+            // Only replaced subtrees changed since the last synchronization,
+            // unless the log no longer reaches back that far.
+            let dirty = aimer_widget::scoped_rebuilds_since(self.scoped_cursor);
+            self.scoped_cursor = aimer_widget::scoped_rebuild_cursor();
+            if let (Some(root), Some(dirty)) = (root, dirty)
+                && self.sync_scoped(root, ctx, scale, &dirty)
+            {
+                self.sync_counts.scoped += 1;
+                return Ok(RenderTreeSyncResult {
+                    refreshed: true,
+                    ..RenderTreeSyncResult::default()
+                });
+            }
         }
+        // The full synchronization below sees every change, so replacements
+        // logged so far describe nothing it has not already seen.
+        self.scoped_cursor = aimer_widget::scoped_rebuild_cursor();
+        self.sync_cache = None;
+        self.sync_counts.full += 1;
 
         let mut specs = Vec::new();
         let mut element_ids = Vec::new();
@@ -389,6 +482,13 @@ impl WindowRenderTree {
         let render_ids = self
             .tree
             .sync_structure_with_clip_radii(&specs, &clips, &clip_radii)?;
+        self.sync_cache = Some(scoped_sync::SyncCache::new(
+            element_ids.clone(),
+            specs,
+            clips,
+            clip_radii,
+            render_ids.clone(),
+        ));
         self.element_nodes = Rc::new(
             element_ids
                 .into_iter()
@@ -513,34 +613,30 @@ fn render_rect_is_valid(rect: &RenderRect) -> bool {
         && rect.height >= 0.0
 }
 
-fn collect_render_tree_nodes<'element, 'context>(
-    element: &'element dyn Element,
-    parent_index: Option<usize>,
-    ctx: &BuildContext<'context>,
+/// Where one element sits in the render tree, before validity checks.
+struct NodeFrame {
+    position: Vec2d,
+    size: ResolvedSize,
+    /// In the parent's coordinate space, with paint outsets and the parent's
+    /// origin shift applied.
+    bounds: RenderRect,
+    clip: Option<RenderRect>,
+    /// How far this node's origin sits outside its layout box.
+    own_outset: (f32, f32),
+}
+
+/// Computes the geometry the render tree stores for `element`.
+///
+/// `geometry` is what the parent decided for this child, if it decided
+/// anything; `origin_shift` is how far the parent's node origin sits outside
+/// the parent's layout box.
+fn node_frame(
+    element: &dyn Element,
+    ctx: &BuildContext<'_>,
     scale: f32,
-    existing: &ElementNodeMap,
-    specs: &mut Vec<RenderNodeSpec>,
-    element_ids: &mut Vec<ElementId>,
-    clips: &mut Vec<Option<RenderRect>>,
-    clip_radii: &mut Vec<[f32; 4]>,
-    invalid_bounds: &mut Vec<census::CensusElement>,
-    new_elements: &mut Vec<(
-        usize,
-        &'element dyn Element,
-        BuildContext<'context>,
-        Vec<ElementId>,
-    )>,
-    interactive: &mut Vec<(usize, &'element dyn Element, ResolvedSize, (f32, f32))>,
     geometry: Option<(RenderRect, Option<RenderRect>)>,
-    geometry_clip_radius: [f32; 4],
-    // How far the parent's node origin sits outside its layout box, because
-    // its bounds grew outward to cover its paint. Children are positioned
-    // relative to the layout box, so they move back in by this much.
     origin_shift: (f32, f32),
-    element_path: &mut Vec<ElementId>,
-) {
-    let element_id = element.id();
-    element_path.push(element_id);
+) -> NodeFrame {
     let position = element.pos().unwrap_or_default();
     let size = element
         .retained_v2_bounds(ctx)
@@ -576,6 +672,124 @@ fn collect_render_tree_nodes<'element, 'context>(
             bounds.height + top + bottom,
         );
     }
+    NodeFrame {
+        position,
+        size,
+        bounds,
+        clip,
+        own_outset,
+    }
+}
+
+/// The context `element` hands down to children that it does not give a
+/// context of their own.
+fn child_base_context<'c>(
+    element: &dyn Element,
+    ctx: &BuildContext<'c>,
+    size: ResolvedSize,
+    position: Vec2d,
+) -> BuildContext<'c> {
+    let mut child_base_ctx = ctx.clone();
+    child_base_ctx.parent_size = size;
+    child_base_ctx.parent_pos = Vec2d {
+        x: ctx.parent_pos.x + position.x,
+        y: ctx.parent_pos.y + position.y,
+    };
+    // A transparent wrapper hands `draw`'s own context to its child. It adds
+    // nothing of its own, so its size is exactly what its only child measures
+    // under the constraint it received. Feeding that size back down as the
+    // child's constraint would shrink the child again at every wrapper level
+    // (a padded descendant measures smaller than the space it was given).
+    let mut retained_children = 0;
+    let mut only_child_size = None;
+    element.visit_retained_v2_children(&mut |_, child| {
+        retained_children += 1;
+        if retained_children == 1 {
+            only_child_size = Some(child.content_size(ctx));
+        }
+    });
+    let is_transparent = retained_children == 1
+        && only_child_size.is_some_and(|child| child == size);
+    if is_transparent {
+        child_base_ctx.box_constraint = ctx.box_constraint;
+        child_base_ctx.parent_size = ctx.parent_size;
+    } else {
+        child_base_ctx.box_constraint = BoxConstraint {
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: size.width,
+            max_height: size.height,
+        };
+    }
+    child_base_ctx
+}
+
+/// What a parent hands one retained child: its geometry override, the radius of
+/// the clip it supplies, and the context to lay the child out in.
+struct ChildInput<'c> {
+    geometry: Option<(RenderRect, Option<RenderRect>)>,
+    clip_radius: [f32; 4],
+    ctx: BuildContext<'c>,
+}
+
+fn child_input<'c>(
+    element: &dyn Element,
+    ctx: &BuildContext<'c>,
+    child_base_ctx: &BuildContext<'c>,
+    child: &dyn Element,
+    index: usize,
+) -> ChildInput<'c> {
+    let geometry = element.retained_v2_child_geometry_at(ctx, child, index);
+    let clip_radius = if geometry.is_some() {
+        element.retained_v2_child_clip_radius(ctx, child)
+    } else {
+        [0.0; 4]
+    };
+    let child_ctx = element
+        .retained_v2_child_context_at(ctx, child, index)
+        .unwrap_or_else(|| child_base_ctx.clone());
+    ChildInput {
+        geometry,
+        clip_radius,
+        ctx: child_ctx,
+    }
+}
+
+fn collect_render_tree_nodes<'element, 'context>(
+    element: &'element dyn Element,
+    parent_index: Option<usize>,
+    ctx: &BuildContext<'context>,
+    scale: f32,
+    existing: &ElementNodeMap,
+    specs: &mut Vec<RenderNodeSpec>,
+    element_ids: &mut Vec<ElementId>,
+    clips: &mut Vec<Option<RenderRect>>,
+    clip_radii: &mut Vec<[f32; 4]>,
+    invalid_bounds: &mut Vec<census::CensusElement>,
+    new_elements: &mut Vec<(
+        usize,
+        &'element dyn Element,
+        BuildContext<'context>,
+        Vec<ElementId>,
+    )>,
+    interactive: &mut Vec<(usize, &'element dyn Element, ResolvedSize, (f32, f32))>,
+    geometry: Option<(RenderRect, Option<RenderRect>)>,
+    geometry_clip_radius: [f32; 4],
+    // How far the parent's node origin sits outside its layout box, because
+    // its bounds grew outward to cover its paint. Children are positioned
+    // relative to the layout box, so they move back in by this much.
+    origin_shift: (f32, f32),
+    element_path: &mut Vec<ElementId>,
+) {
+    let element_id = element.id();
+    element_path.push(element_id);
+    let NodeFrame {
+        position,
+        size,
+        bounds,
+        clip,
+        own_outset,
+    } = node_frame(element, ctx, scale, geometry, origin_shift);
     // A node whose size or position is not a finite, non-negative rectangle
     // (for example a percentage of an unbounded axis) has nothing drawable.
     // Collapse it instead of failing the whole synchronization, which would put
@@ -631,51 +845,16 @@ fn collect_render_tree_nodes<'element, 'context>(
         [0.0; 4]
     });
 
-    let mut child_base_ctx = ctx.clone();
-    child_base_ctx.parent_size = size;
-    child_base_ctx.parent_pos = Vec2d {
-        x: ctx.parent_pos.x + position.x,
-        y: ctx.parent_pos.y + position.y,
-    };
-    // A transparent wrapper hands `draw`'s own context to its child. It adds
-    // nothing of its own, so its size is exactly what its only child measures
-    // under the constraint it received. Feeding that size back down as the
-    // child's constraint would shrink the child again at every wrapper level
-    // (a padded descendant measures smaller than the space it was given).
-    let mut retained_children = 0;
-    let mut only_child_size = None;
-    element.visit_retained_v2_children(&mut |_, child| {
-        retained_children += 1;
-        if retained_children == 1 {
-            only_child_size = Some(child.content_size(ctx));
-        }
-    });
-    let is_transparent = retained_children == 1
-        && only_child_size.is_some_and(|child| child == size);
-    if is_transparent {
-        child_base_ctx.box_constraint = ctx.box_constraint;
-        child_base_ctx.parent_size = ctx.parent_size;
-    } else {
-        child_base_ctx.box_constraint = BoxConstraint {
-            min_width: 0.0,
-            min_height: 0.0,
-            max_width: size.width,
-            max_height: size.height,
-        };
-    }
+    let child_base_ctx = child_base_context(element, ctx, size, position);
 
     let mut has_new_child = false;
     element.visit_retained_v2_children(&mut |index, child| {
         has_new_child |= !existing.contains_key(&child.id());
-        let child_geometry = element.retained_v2_child_geometry_at(ctx, child, index);
-        let child_clip_radius = if child_geometry.is_some() {
-            element.retained_v2_child_clip_radius(ctx, child)
-        } else {
-            [0.0; 4]
-        };
-        let child_ctx = element
-            .retained_v2_child_context_at(ctx, child, index)
-            .unwrap_or_else(|| child_base_ctx.clone());
+        let ChildInput {
+            geometry: child_geometry,
+            clip_radius: child_clip_radius,
+            ctx: child_ctx,
+        } = child_input(element, ctx, &child_base_ctx, child, index);
         collect_render_tree_nodes(
             child,
             Some(node_index),
@@ -766,6 +945,8 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub(crate) render_tree: WindowRenderTree,
     /// Per-application heap used by retained widget and element allocations.
     pub(crate) ui_memory: UiMemory,
+    #[cfg(debug_assertions)]
+    pub(crate) debug_overlay: crate::debug_overlay::DebugOverlay,
     pub widget_root: Option<AnyElement>,
     pub event_dispatcher: EventDispatcher,
     pub(crate) scroll_smoother: DualScroller,
@@ -808,6 +989,23 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
 }
 
 impl<W: Widget + 'static> AimerApplicationHandler<W> {
+    #[cfg(debug_assertions)]
+    pub(crate) fn handle_debug_key(
+        &mut self,
+        key: &winit::keyboard::Key,
+        state: winit::event::ElementState,
+        repeat: bool,
+    ) -> bool {
+        let modifiers = &self.current_modifiers;
+        let modified = modifiers.ctrl || modifiers.meta || modifiers.alt || modifiers.shift;
+        let visible_before = self.debug_overlay.is_visible();
+        let consumed = self.debug_overlay.handle_key(key, state, repeat, modified);
+        if visible_before != self.debug_overlay.is_visible() {
+            self.request_full_redraw();
+        }
+        consumed
+    }
+
     /// Counts the active root's render nodes by paint source, or `None` before a
     /// root is mounted. Tests use it to assert that a page paints without legacy
     /// islands and without elements the render tree cannot see.
@@ -1034,6 +1232,32 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         ));
     }
 
+    /// Tells the widget tree whether the frame about to be drawn exists only to
+    /// advance compositor animations.
+    ///
+    /// The mark is only the frame loop's half of the decision: drawing still
+    /// requires that no generation moved, that no element reported a change and
+    /// that the render tree is current, and otherwise walks the whole tree.
+    /// [`end_frame`](Self::end_frame) clears it again.
+    pub(crate) fn mark_animation_only_frame(
+        &self,
+        kind: FrameRequestKind,
+        preparation: &FramePreparation,
+        had_pending_resize: bool,
+    ) {
+        // Anything that arrived while the frame was being prepared — a scroll
+        // step, a task that updated state — leaves a reason behind, and each
+        // of them needs the whole tree.
+        let eligible = kind == FrameRequestKind::Scoped
+            && !had_pending_resize
+            && self.pending_widget.is_none()
+            // Requests made while the frame was prepared, by a task that
+            // updated state, are scoped too; anything else needs the whole tree.
+            && matches!(self.frame_request_reason.get(), None | Some(FrameRequestKind::Scoped))
+            && !preparation.scroll_result.needs_redraw();
+        aimer_widget::set_animation_only_frame(eligible);
+    }
+
     /// The bookkeeping every frame does once the tree has been drawn.
     ///
     /// Whatever the frame has left over is spent on background work — image
@@ -1044,6 +1268,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     /// timer.
     pub(crate) fn end_frame(&mut self) {
         aimer_widget::set_scroll_only_frame(false);
+        aimer_widget::set_animation_only_frame(false);
         let budget = self.venus.idle_budget();
         self.venus.run_idle(&budget);
         self.venus.end_frame();
@@ -1232,6 +1457,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 /// the tree sees in its [`BuildContext`], so a widget that asks for a repaint
 /// or changes the cursor reaches the same handle the event handlers do.
 pub(crate) struct FrameDrawer<'a, W: Widget + 'static> {
+    #[cfg(debug_assertions)]
+    debug_overlay: &'a mut crate::debug_overlay::DebugOverlay,
     widget_root: &'a mut Option<AnyElement>,
     pending_widget: &'a mut Option<W>,
     event_dispatcher: &'a mut EventDispatcher,
@@ -1261,7 +1488,14 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
         height: u32,
     ) -> (f32, DamageSet) {
         let allocator = self.ui_allocator.clone();
-        allocator.scope(|| self.draw_scoped(canvas, width, height))
+        #[cfg(debug_assertions)]
+        let debug_started = self.debug_overlay.is_visible().then(aimer_utils::AnimInstant::now);
+        let result = allocator.scope(|| self.draw_scoped(canvas, width, height));
+        #[cfg(debug_assertions)]
+        if let Some(started) = debug_started {
+            self.debug_overlay.record_draw(started);
+        }
+        result
     }
 
     fn draw_scoped(
@@ -1272,6 +1506,15 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
     ) -> (f32, DamageSet) {
         aimer_widget::begin_paint_frame(width, height);
         let rebuild_generation_before = aimer_widget::rebuild_invalidation_generation();
+        // The rebuild generation less the advances that only kept an animating
+        // element reachable, which what `rebuild_changed` below judges by, and
+        // less the advances that state updates made as well, which is what the
+        // scoped-frame baseline compares: those rebuild one subtree each, and the
+        // log of replaced subtrees says which.
+        let keepalive_net_rebuild_generation_before =
+            rebuild_generation_before.wrapping_sub(aimer_widget::rebuild_keepalive_count());
+        let net_rebuild_generation_before = keepalive_net_rebuild_generation_before
+            .wrapping_sub(aimer_widget::rebuild_state_mark_count());
         let layout_generation_before = aimer_widget::layout_invalidation_generation();
         let texture_epoch_before = canvas.texture_cache_epoch();
         let inner_canvas = canvas;
@@ -1351,10 +1594,79 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             aimer_modal::prepare_retained_render_tree(root.as_ref(), &build_ctx);
         }
 
+        // A frame requested only to advance compositor animations revisits the
+        // elements that animate instead of walking the tree. That is exact only
+        // while nothing else changed since the last frame, so every input to the
+        // last frame is compared: the rebuild generation and texture epoch, the
+        // pointer, the render tree's own sync stamp, and the elements that
+        // reported a change. Subtrees an animator replaced by ones of the same
+        // shape do not count as a change: the synchronization below handles
+        // them, and the check after it makes sure it did.
+        #[cfg(not(feature = "wasm-hot-reload"))]
+        let animation_only_eligible = match root {
+            Some(root) => {
+                aimer_widget::is_animation_only_frame()
+                    && self.window_render_tree.animation_baseline
+                        == Some(AnimationBaseline::new(
+                            net_rebuild_generation_before,
+                            texture_epoch_before,
+                            self.cursor_pos,
+                        ))
+                    && self.window_render_tree.is_synchronized_apart_from_replacements(
+                        root,
+                        (width, height),
+                        self.scale,
+                    )
+            }
+            None => false,
+        };
+        #[cfg(feature = "wasm-hot-reload")]
+        let animation_only_eligible = false;
+        let full_syncs_before = self.window_render_tree.sync_counts.full;
+
         let mut render_tree_sync_incomplete = self
             .window_render_tree
             .sync(root, &build_ctx, (width, height), self.scale)
             .is_err();
+        // The subtrees rebuilt since the last walk or pass. A frame that rebuilt
+        // some can still be scoped, but only if each can be revisited alone, and
+        // only if every element that reported a change is one of their owners.
+        let rebuilt = match self.window_render_tree.walk_cursor {
+            Some(cursor) => aimer_widget::scoped_rebuilds_since(cursor),
+            None => Some(Vec::new()),
+        };
+        self.window_render_tree.walk_cursor = Some(aimer_widget::scoped_rebuild_cursor());
+        let rebuilt_known = rebuilt.is_some();
+        let rebuilt_roots = rebuilt.unwrap_or_default();
+
+        #[cfg(not(feature = "wasm-hot-reload"))]
+        let animation_only_targets = match root {
+            Some(root)
+                if animation_only_eligible
+                    && rebuilt_known
+                    && !render_tree_sync_incomplete
+                    && self.window_render_tree.sync_counts.full == full_syncs_before
+                    && invalidations.records().iter().all(|record| {
+                        record.element_id.is_some_and(|owner| {
+                            rebuilt_roots.iter().any(|rebuilt| {
+                                self.event_dispatcher.is_ancestor_or_self(
+                                    root.as_ref(),
+                                    owner,
+                                    *rebuilt,
+                                )
+                            })
+                        })
+                    }) =>
+            {
+                aimer_widget::animation_only_targets(&rebuilt_roots, |id| {
+                    self.event_dispatcher.resolve_element(root.as_ref(), id)
+                })
+            }
+            _ => None,
+        };
+        #[cfg(feature = "wasm-hot-reload")]
+        let animation_only_targets: Option<Vec<(ElementId, &dyn Element)>> = None;
+
         // Stale entries from earlier work must not be mistaken for this frame's.
         let _ = aimer_widget::take_unmapped_draws();
         {
@@ -1368,12 +1680,20 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                     build_ctx.canvas.restore();
                 }
             };
-            aimer_widget::with_v2_render_tree_context(
-                tree,
-                element_nodes,
-                prepared_root,
-                draw_widget_tree,
-            );
+            aimer_widget::set_frame_rebuilt_roots(&rebuilt_roots);
+            if let Some(targets) = &animation_only_targets {
+                aimer_widget::with_v2_animation_only_context(tree, element_nodes, || {
+                    aimer_widget::run_animation_only_pass(targets, &build_ctx.canvas);
+                });
+            } else {
+                aimer_widget::with_v2_render_tree_context(
+                    tree,
+                    element_nodes,
+                    prepared_root,
+                    draw_widget_tree,
+                );
+            }
+            aimer_widget::set_frame_rebuilt_roots(&[]);
         }
 
         match self
@@ -1434,8 +1754,12 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             );
             damage.mark_full();
         }
-        let rebuild_changed =
-            rebuild_generation_before != aimer_widget::rebuild_invalidation_generation();
+        // An animating element advances the rebuild generation every frame only
+        // to stay reachable. What it changed is in the retained tree's damage, so
+        // that advance must not turn the frame into a full repaint.
+        let rebuild_changed = keepalive_net_rebuild_generation_before
+            != aimer_widget::rebuild_invalidation_generation()
+                .wrapping_sub(aimer_widget::rebuild_keepalive_count());
         let layout_or_texture_changed =
             layout_generation_before != aimer_widget::layout_invalidation_generation()
                 || texture_epoch_before != build_ctx.canvas.texture_cache_epoch();
@@ -1449,6 +1773,13 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
         }
 
         if self.scale.is_finite() && self.scale > 0.0 {
+            #[cfg(debug_assertions)]
+            if let Err(error) = self.debug_overlay.prepare(
+                &self.window_render_tree.tree, width, height, self.scale,
+                &self.ui_allocator, self.cursor_pos,
+            ) {
+                aimer_utils::error!("debug overlay recording failed: {error:?}");
+            }
             let mut render_damage = self.window_render_tree.tree.take_damage();
             if damage.is_full() {
                 render_damage.clear();
@@ -1544,6 +1875,13 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
                 work_stats,
             );
         }
+        self.window_render_tree.animation_baseline = Some(AnimationBaseline::new(
+            aimer_widget::rebuild_invalidation_generation()
+                .wrapping_sub(aimer_widget::rebuild_keepalive_count())
+                .wrapping_sub(aimer_widget::rebuild_state_mark_count()),
+            build_ctx.canvas.texture_cache_epoch(),
+            self.cursor_pos,
+        ));
         (self.scale, damage)
     }
 }
@@ -1765,6 +2103,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             pending_widget,
             event_dispatcher,
             render_tree,
+            #[cfg(debug_assertions)]
+            debug_overlay,
             #[cfg(feature = "wasm-hot-reload")]
             live_reload,
             #[cfg(not(target_arch = "wasm32"))]
@@ -1777,6 +2117,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         (
             render_ctx,
             FrameDrawer {
+                #[cfg(debug_assertions)]
+                debug_overlay,
                 widget_root,
                 pending_widget,
                 event_dispatcher,
@@ -1823,6 +2165,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             return;
         }
         self.mark_scroll_only_frame(kind, &preparation, had_pending_resize);
+        self.mark_animation_only_frame(kind, &preparation, had_pending_resize);
 
         let Some(window) = self.window.clone() else {
             return;

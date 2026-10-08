@@ -111,6 +111,9 @@ rustls-platform-verifier .workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+
 objc2-app-kit = { workspace = true, optional = true, features = [
     "std",
     "NSResponder",
@@ -137,6 +140,9 @@ web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "
 
 [dev-dependencies]
 aimer_assets.workspace = true
+aimer_collapsible.workspace = true
+aimer_svg.workspace = true
+aimer_text.workspace = true
 aimer_macro.workspace = true
 aimer_container.workspace = true
 aimer_flex.workspace = true

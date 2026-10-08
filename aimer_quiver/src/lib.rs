@@ -17,6 +17,8 @@ pub use aimer_anteros as wasm_runtime;
 
 mod ffi_utils;
 mod first_frame;
+#[cfg(debug_assertions)]
+mod debug_overlay;
 
 #[macro_use]
 pub mod aimer_app;

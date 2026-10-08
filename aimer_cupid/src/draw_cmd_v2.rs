@@ -579,6 +579,19 @@ pub enum RenderPaintSource {
     LocalV2,
 }
 
+/// New geometry for one existing node, for [`RenderTree::sync_geometry`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NodeGeometry {
+    /// The existing node to update.
+    pub node: RenderNodeId,
+    /// Element-local position and size in logical pixels.
+    pub bounds: Rect,
+    /// The node's own clip, if any.
+    pub clip: Option<Rect>,
+    /// Top-left, top-right, bottom-right and bottom-left radii of the clip.
+    pub clip_radius: [f32; 4],
+}
+
 /// One element's place in a synchronized retained render structure.
 ///
 /// `parent_index` refers to an earlier entry in the same slice. An existing
@@ -895,6 +908,51 @@ impl RenderTree {
             return Err(RenderTreeError::InvalidBounds);
         }
         self.sync_structure_inner(nodes, Some(clips), Some(radii))
+    }
+
+    /// Applies new bounds, clips and clip radii to existing nodes, leaving the
+    /// tree's structure alone.
+    ///
+    /// This is the part of [`Self::sync_structure_with_clip_radii`] that runs
+    /// when no node was added, removed or re-parented, for a caller that already
+    /// knows that and has descriptors for only some of the nodes. A node whose
+    /// geometry is unchanged costs one comparison and records no damage. Nothing
+    /// is applied if any descriptor is invalid or names an unknown node.
+    #[doc(hidden)]
+    pub fn sync_geometry(&self, updates: &[NodeGeometry]) -> Result<(), RenderTreeError> {
+        if updates.iter().any(|update| {
+            !update.bounds.is_valid()
+                || update.clip.is_some_and(|clip| !clip.is_valid())
+                || update
+                    .clip_radius
+                    .iter()
+                    .any(|radius| !radius.is_finite() || *radius < 0.0)
+        }) {
+            return Err(RenderTreeError::InvalidBounds);
+        }
+        let mut tree = self.draw_cmd.borrow_mut();
+        if let Some(missing) = updates.iter().find(|update| tree.node(update.node).is_none()) {
+            return Err(RenderTreeError::UnknownNode(missing.node));
+        }
+        for update in updates {
+            let node = tree.node(update.node).expect("presence checked above");
+            if node.bounds == update.bounds
+                && node.clip == update.clip
+                && node.clip_radius == update.clip_radius
+            {
+                continue;
+            }
+            let old_bounds = tree.visible_subtree_bounds(update.node);
+            let node = tree.node_mut(update.node).expect("presence checked above");
+            node.assign_bounds(update.bounds);
+            node.clip = update.clip;
+            node.clip_radius = update.clip_radius;
+            let new_bounds = tree.visible_subtree_bounds(update.node);
+            if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
+                tree.push_damage(damage);
+            }
+        }
+        Ok(())
     }
 
     fn sync_structure_inner(
@@ -1364,6 +1422,27 @@ impl RenderTree {
             tree.push_damage(bounds);
         }
         Ok(())
+    }
+
+    /// Returns the transform and opacity a parent last published for a node
+    /// with [`Self::set_presentation`], separate from any compositor animation.
+    #[doc(hidden)]
+    pub fn presentation(&self, element: RenderNodeId) -> Result<(Mat3, f32), RenderTreeError> {
+        let tree = self.draw_cmd.borrow();
+        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        Ok((node.presentation_transform, node.presentation_opacity))
+    }
+
+    /// Returns the transform and opacity the compositor currently applies to a
+    /// node, as last set by [`Self::set_compositor_animation`].
+    ///
+    /// A node that was never animated reports the identity transform and full
+    /// opacity.
+    #[doc(hidden)]
+    pub fn compositor_animation(&self, element: RenderNodeId) -> Result<(Mat3, f32), RenderTreeError> {
+        let tree = self.draw_cmd.borrow();
+        let node = tree.node(element).ok_or(RenderTreeError::UnknownNode(element))?;
+        Ok((node.transform, node.opacity))
     }
 
     /// Updates an animation transform, opacity, and pre-transform clip as one

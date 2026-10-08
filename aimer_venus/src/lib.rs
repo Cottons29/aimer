@@ -17,7 +17,7 @@ pub use crate::budget::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::offload::{OffloadPool, Offloaded};
 pub use crate::poll_context::PollContext;
-pub use crate::scheduler::LocalScheduler;
+pub use crate::scheduler::{LocalScheduler, is_polling_task};
 pub use crate::task::{Notifier, Phase, ScopeId, TaskId, TaskScope};
 pub use crate::venus::{Venus, spawn_local};
 pub use crate::yielding::{YieldNow, yield_if_over_budget, yield_now};
@@ -122,6 +122,25 @@ mod runtime_spec {
     use std::time::Duration;
 
     use crate::{FrameBudget, Venus, yield_now};
+
+    /// Code that runs inside a task can tell, and code that runs outside one
+    /// can tell that too. A state update uses this to decide how much of the
+    /// next frame it may leave alone.
+    #[test]
+    fn a_task_can_tell_it_is_being_polled() {
+        let venus = Venus::new();
+        let seen = Rc::new(Cell::new(None));
+
+        assert!(!crate::is_polling_task(), "nothing is polling before a task runs");
+        let observed = seen.clone();
+        venus.spawn(async move {
+            observed.set(Some(crate::is_polling_task()));
+        });
+        venus.run_microtasks();
+
+        assert_eq!(seen.get(), Some(true), "the task saw that it was being polled");
+        assert!(!crate::is_polling_task(), "and it is over once the poll returns");
+    }
 
     /// The bound the whole design exists to delete: a task captures an `Rc` — a
     /// `StateUpdater`, a controller — and still runs.

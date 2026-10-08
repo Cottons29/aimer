@@ -159,6 +159,199 @@ pub(super) fn index_element_links(
     indexed_elements[link_index].has_structural_children = has_structural_children;
 }
 
+/// Verifies that a replaced subtree has the shape the path index recorded, and
+/// collects the element pointers that replace the stale ones.
+///
+/// The walk visits the new subtree in the preorder the index was built in, so a
+/// subtree of the same shape lands on the same positions. Each element must have
+/// the same identity, parent link, child position and child presence as the one
+/// it replaces, and none may trap focus: a focus scope is tracked across the
+/// whole tree, not per subtree.
+struct SubtreeCheck<'a> {
+    /// The position the next visited element must occupy.
+    next: usize,
+    path_indices: &'a HashMap<ElementId, usize>,
+    links: &'a [ElementPath],
+    indexed: &'a [IndexedElement],
+    pointers: Vec<*const (dyn Element + 'static)>,
+}
+
+impl SubtreeCheck<'_> {
+    fn visit(&mut self, element: &dyn Element, parent: Option<usize>, child_index: u32) -> bool {
+        let position = self.next;
+        self.next += 1;
+        let Some(link) = self.links.get(position) else {
+            return false;
+        };
+        if link.parent != parent || link.child_index != child_index || element.traps_focus() {
+            return false;
+        }
+        if let Some(id) = element.element_id()
+            && self.path_indices.get(&id) != Some(&position)
+        {
+            return false;
+        }
+        self.pointers.push(retained_element_pointer(element));
+
+        let mut matched = true;
+        let mut has_structural_children = false;
+        let mut next_child = 0u32;
+        element.structural_children(&mut |child| {
+            if !matched {
+                return;
+            }
+            has_structural_children = true;
+            let index = next_child;
+            next_child += 1;
+            matched = self.visit(child, Some(position), index);
+        });
+        matched && self.indexed[position].has_structural_children == has_structural_children
+    }
+}
+
+/// The exclusive end of the preorder range of the subtree at `start`.
+///
+/// A later element belongs to the subtree exactly when its parent does, and
+/// preorder keeps the subtree contiguous.
+fn subtree_end(links: &[ElementPath], start: usize) -> usize {
+    let mut end = start + 1;
+    while end < links.len() && links[end].parent.is_some_and(|parent| parent >= start) {
+        end += 1;
+    }
+    end
+}
+
+impl EventDispatcher {
+    /// Whether `descendant` is `ancestor` or lies below it in the structural
+    /// tree below `root`. Both must be known to the index; an element it does
+    /// not know is related to nothing.
+    #[doc(hidden)]
+    pub fn is_ancestor_or_self(
+        &mut self,
+        root: &dyn Element,
+        ancestor: ElementId,
+        descendant: ElementId,
+    ) -> bool {
+        self.synchronize_path_index_for_current_tree(root);
+        let (Some(&ancestor), Some(&mut_descendant)) =
+            (self.path_indices.get(&ancestor), self.path_indices.get(&descendant))
+        else {
+            return false;
+        };
+        let mut position = Some(mut_descendant);
+        while let Some(current) = position {
+            if current == ancestor {
+                return true;
+            }
+            position = self.path_links.get(current).and_then(|link| link.parent);
+        }
+        false
+    }
+
+    /// Brings the path index up to date after subtrees were replaced by ones of
+    /// the same shape, without rebuilding it.
+    ///
+    /// A replacement installs new element instances at the same identities, so
+    /// the only thing that went stale is the pointer stored for each element of
+    /// the replaced subtree. Returns `true` when every pointer was refreshed.
+    /// Returns `false` without changing the index when the tree changed in any
+    /// way the log of replacements does not fully describe, or a replaced
+    /// subtree is not shaped exactly as before; the caller rebuilds the index.
+    pub(super) fn patch_path_index(&mut self, root: &dyn Element) -> bool {
+        if self.indexed_root != root.element_id()
+            || unscoped_element_tree_generation() != self.indexed_unscoped
+        {
+            return false;
+        }
+        let Some(replaced) = scoped_rebuilds_since(self.scoped_cursor) else {
+            return false;
+        };
+        // The log must account for every change. A generation that moved with
+        // nothing logged, or that moved by more than the replacements logged,
+        // is a change nobody described.
+        if replaced.is_empty()
+            || self.indexed_tree_generation.checked_add(replaced.len() as u64)
+                != Some(element_tree_generation())
+        {
+            return false;
+        }
+
+        // A replacement whose root the index does not know is either inside
+        // another replaced subtree, which is verified in full below, or in a
+        // private child view that the index never covered. Anything else would
+        // have advanced the unscoped generation, which was checked above.
+        let mut starts = SmallVec::<[usize; 4]>::new();
+        starts.extend(replaced.iter().filter_map(|id| self.path_indices.get(id).copied()));
+        if starts.is_empty() {
+            return false;
+        }
+        starts.sort_unstable();
+        starts.dedup();
+        // A replacement inside another replaced subtree is covered by it.
+        let mut outermost = SmallVec::<[(usize, usize); 4]>::new();
+        for start in starts {
+            if outermost.last().is_none_or(|&(_, end)| start >= end) {
+                outermost.push((start, subtree_end(&self.path_links, start)));
+            }
+        }
+
+        let focus_scope = self
+            .focus_scope
+            .and_then(|scope| self.path_indices.get(&scope).copied());
+        let mut patches = SmallVec::<[(usize, Vec<*const (dyn Element + 'static)>); 4]>::new();
+        for &(start, end) in &outermost {
+            if focus_scope.is_some_and(|scope| (start..end).contains(&scope)) {
+                return false;
+            }
+            let link = self.path_links[start];
+            let element: &dyn Element = match link.parent {
+                None => root,
+                Some(parent) => {
+                    // SAFETY: `parent` lies outside every replaced subtree, so
+                    // it was not replaced since the index recorded it. Every
+                    // replacement since then is in the log read above, and a
+                    // replacement inside another is dropped as covered. The
+                    // pointer was valid when recorded and nothing has moved or
+                    // dropped the element since, so it is valid now.
+                    let parent: &dyn Element = unsafe { &*self.indexed_elements[parent].element };
+                    let mut found = None;
+                    let mut index = 0u32;
+                    parent.structural_children(&mut |child| {
+                        if index == link.child_index {
+                            found = Some(child);
+                        }
+                        index += 1;
+                    });
+                    match found {
+                        Some(element) => element,
+                        None => return false,
+                    }
+                }
+            };
+            let mut check = SubtreeCheck {
+                next: start,
+                path_indices: &self.path_indices,
+                links: &self.path_links,
+                indexed: &self.indexed_elements,
+                pointers: Vec::with_capacity(end - start),
+            };
+            if !check.visit(element, link.parent, link.child_index) || check.next != end {
+                return false;
+            }
+            patches.push((start, check.pointers));
+        }
+
+        for (start, pointers) in patches {
+            for (offset, pointer) in pointers.into_iter().enumerate() {
+                self.indexed_elements[start + offset].element = pointer;
+            }
+        }
+        self.scoped_cursor = scoped_rebuild_cursor();
+        self.indexed_tree_generation = element_tree_generation();
+        true
+    }
+}
+
 pub(super) fn resolve_element_path<'a>(
     root: &'a dyn Element,
     owner: ElementId,
@@ -484,6 +677,7 @@ fn dispatch_indexed_event_children(
         outcome.capture_owner = root.element_id();
     }
     outcome.result = outcome.result.merge(child_result);
+    dispatcher.merge_nested_focus_owner(&mut outcome.focus_owner);
     if outcome.focus_owner.is_none() {
         outcome.focus_owner = focus_candidate_at(root, pos);
     }
@@ -615,6 +809,7 @@ fn dispatch_indexed_target_inner(
             outcome.capture_owner = Some(id);
         }
         outcome.result = outcome.result.merge(own_result);
+        dispatcher.merge_nested_focus_owner(&mut outcome.focus_owner);
         if outcome.focus_owner.is_none() {
             outcome.focus_owner = focus_candidate_at(element, pos);
         }
@@ -699,6 +894,7 @@ pub(super) fn dispatch_cached_hit_chain_inner(
         let mut context = EventDispatchContext::new(dispatcher, path_root, root.element_id(), pos);
         root.on_event_with_context(event, &mut context)
     };
+    dispatcher.merge_nested_focus_owner(&mut focus_owner);
     if focus_owner.is_none() {
         focus_owner = focus_candidate_at(root, pos);
     }
@@ -829,6 +1025,7 @@ fn dispatch_routed_event_inner<'tree>(
         let mut context = EventDispatchContext::new(dispatcher, path_root, root.element_id(), pos);
         root.on_event_with_context(event, &mut context)
     };
+    dispatcher.merge_nested_focus_owner(&mut focus_owner);
     if focus_owner.is_none() {
         focus_owner = focus_candidate_at(root, pos);
     }

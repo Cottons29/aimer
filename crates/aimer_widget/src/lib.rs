@@ -146,6 +146,11 @@ pub use crate::components::context::InheritedStates;
 pub use crate::components::element::{
     VisibleWindow, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,
     retained_visible_window_of_current, set_scroll_only_frame, set_settled_offscreen_skip,
+    animation_only_targets, is_animation_only_frame, run_animation_only_pass,
+    set_animation_only_frame, with_v2_animation_only_context, request_isolated_animation_frame, request_isolated_subtree_animation_frame, set_frame_rebuilt_roots, traversal_counts, keep_element_reachable, rebuild_keepalive_count, note_state_update_marked,
+    rebuild_state_mark_count,
+    ScopedCursor, has_scoped_rebuilds_since, scoped_rebuild_cursor, scoped_rebuilds_since,
+    unscoped_element_tree_generation,
 };
 #[cfg(feature = "frame-stats")]
 pub use crate::components::element::{
@@ -264,7 +269,8 @@ mod tests {
     use crate::{
         AnyElement, Drawable, Element, EventElement, LayoutElement, Rebuildable,
         ReconciliationMatchKind, VisitorElement, element_tree_generation,
-        plan_element_reconciliation,
+        plan_element_reconciliation, scoped_rebuild_cursor, scoped_rebuilds_since,
+        unscoped_element_tree_generation,
     };
 
     #[test]
@@ -300,6 +306,32 @@ mod tests {
             ]
         );
         plan.validate().unwrap();
+    }
+
+    #[test]
+    fn a_reconciliation_commit_reports_the_replaced_subtree_and_nothing_wider() {
+        let old = Branch::new([StateLeaf::unkeyed(1).boxed()]);
+        let new = Branch::new([StateLeaf::unkeyed(0).boxed()]);
+        let root = old.id();
+        let cursor = scoped_rebuild_cursor();
+        let unscoped = unscoped_element_tree_generation();
+        let generation = element_tree_generation();
+
+        plan_element_reconciliation(old.as_ref(), new.as_ref())
+            .commit(&context())
+            .unwrap();
+
+        assert!(element_tree_generation() > generation, "other consumers still see the advance");
+        assert_eq!(
+            unscoped_element_tree_generation(),
+            unscoped,
+            "a replaced subtree is not an unscoped change"
+        );
+        assert_eq!(
+            scoped_rebuilds_since(cursor),
+            Some(vec![root]),
+            "the new root carries the old identity"
+        );
     }
 
     #[test]

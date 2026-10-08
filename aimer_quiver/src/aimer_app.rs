@@ -83,17 +83,24 @@ pub(crate) enum FrameRequestKind {
     /// Nothing but scrolling wants it, but the motion is advanced by drawing,
     /// so it is never dropped.
     ScrollPhysics,
+    /// Only elements that can be revisited alone want this frame: a compositor
+    /// animation advancing, or a state update rebuilding one subtree. Such a
+    /// frame may skip the rest of the tree. It merges with every other reason
+    /// into a full frame.
+    Scoped,
     Full,
 }
 
 impl FrameRequestKind {
     pub(crate) fn merge(self, other: Self) -> Self {
-        if matches!(self, Self::Full) || matches!(other, Self::Full) {
-            Self::Full
-        } else if matches!(self, Self::ScrollPhysics) || matches!(other, Self::ScrollPhysics) {
-            Self::ScrollPhysics
-        } else {
-            Self::ScrollOnly
+        match (self, other) {
+            (Self::Full, _) | (_, Self::Full) => Self::Full,
+            (Self::Scoped, Self::Scoped) => Self::Scoped,
+            // Scrolling moves content and an animation moves a node: a frame
+            // that must do both cannot take either shortcut.
+            (Self::Scoped, _) | (_, Self::Scoped) => Self::Full,
+            (Self::ScrollPhysics, _) | (_, Self::ScrollPhysics) => Self::ScrollPhysics,
+            _ => Self::ScrollOnly,
         }
     }
 
@@ -107,6 +114,7 @@ impl FrameRequestKind {
             Self::ScrollOnly => 1,
             Self::Full => 2,
             Self::ScrollPhysics => 3,
+            Self::Scoped => 4,
         }
     }
 
@@ -115,6 +123,7 @@ impl FrameRequestKind {
             1 => Some(Self::ScrollOnly),
             2 => Some(Self::Full),
             3 => Some(Self::ScrollPhysics),
+            4 => Some(Self::Scoped),
             _ => None,
         }
     }
@@ -145,6 +154,9 @@ fn current_frame_request_kind() -> FrameRequestKind {
     // far from anything that could open a `request_scroll_frame` scope here.
     if aimer_events::window::is_scroll_frame_request() {
         return FrameRequestKind::ScrollPhysics;
+    }
+    if aimer_events::window::is_scoped_frame_request() {
+        return FrameRequestKind::Scoped;
     }
     CURRENT_FRAME_REQUEST_KIND.with(Cell::get)
 }
@@ -216,6 +228,7 @@ pub(crate) fn promote_pending_scroll_frame_request() {
     for scroll_driven in [
         FrameRequestKind::ScrollOnly,
         FrameRequestKind::ScrollPhysics,
+        FrameRequestKind::Scoped,
     ] {
         let _ = FRAME_READY_PENDING.compare_exchange(
             scroll_driven.encode(),
@@ -795,6 +808,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 macos_windowing: Default::default(),
                 render_ctx: AimerRenderContext::new(antialiasing),
                 ui_memory: UiMemory::new(ui_memory_limit),
+                #[cfg(debug_assertions)]
+                debug_overlay: Default::default(),
                 window_attr: WindowAttr::new(),
                 render_tree: WindowRenderTree::default(),
                 #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
@@ -901,6 +916,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
         if !skip_draw {
             self.app
                 .mark_scroll_only_frame(kind, &preparation, had_pending_resize);
+            self.app
+                .mark_animation_only_frame(kind, &preparation, had_pending_resize);
             let build = crate::frame_stats::PhaseTimer::start();
             let canvas = aimer_canvas::FrameCanvas::new(&self.canvas);
             canvas.begin_frame();
@@ -934,6 +951,24 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     #[doc(hidden)]
     pub fn paint_source_census(&self) -> Option<crate::handler::census::PaintSourceCensus> {
         self.app.paint_source_census()
+    }
+
+    /// Turns the incremental render-tree synchronization and path-index patching
+    /// on or off together. Off, every change that touches the tree is handled by
+    /// rebuilding the whole structure, as it was before they existed. For
+    /// benchmarks and for comparing the two.
+    #[doc(hidden)]
+    pub fn set_incremental_sync(&mut self, enabled: bool) {
+        self.app.render_tree.scoped_sync_disabled = !enabled;
+        self.app.event_dispatcher.set_index_patching(enabled);
+    }
+
+    /// How many render-tree synchronizations took each path so far, as
+    /// `(full, scoped)`. A scoped one re-collected only a replaced subtree.
+    #[doc(hidden)]
+    pub fn sync_counts(&self) -> (u64, u64) {
+        let counts = self.app.render_tree.sync_counts;
+        (counts.full, counts.scoped)
     }
 
     /// Compares each element's cached interaction rectangle with its render
@@ -1471,7 +1506,11 @@ fn start_event_loop(
     let previous_venus = Venus::uninstall();
     let venus = Venus::new();
     venus.install();
-    venus.set_notifier(request_frame_ready);
+    // A task that became ready asks for a frame without saying what it will do.
+    // What it does asks for its own frames while the frame is prepared, so the
+    // wake itself is neutral: a state update it makes keeps the frame scoped,
+    // and anything else it requests turns the frame into a full one.
+    venus.set_notifier(|| with_frame_request_kind(FrameRequestKind::Scoped, request_frame_ready));
 
     #[cfg(feature = "wasm-hot-reload")]
     let live_reload = live_reload.map(|launch| {
@@ -1510,6 +1549,8 @@ fn start_event_loop(
             macos_windowing: Default::default(),
             render_ctx: AimerRenderContext::new(antialiasing),
             ui_memory: UiMemory::new(ui_memory_limit),
+            #[cfg(debug_assertions)]
+            debug_overlay: Default::default(),
             window_attr,
             render_tree: WindowRenderTree::default(),
             #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
@@ -1614,12 +1655,20 @@ mod tests {
 
     mod broadcast;
     mod retained_button;
+    mod collapsible_animation;
+    mod focus_click;
+    mod loading_damage;
+    mod animation_only;
+    mod scoped_sync;
+    mod focus_repaint;
     mod retained_switcher;
     mod retained_modal;
     mod compositor_reset;
     mod scroll_frame_kind;
     mod scroll_one_step;
     mod settled_skip;
+    #[cfg(debug_assertions)]
+    mod debug_overlay;
 
     static VIRTUALIZED_RENDER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
