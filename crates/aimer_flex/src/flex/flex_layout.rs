@@ -180,6 +180,15 @@ pub(crate) struct FlexLayout {
     /// How each child looked when it was measured, for revalidating a measured
     /// table child by child. Updated in place as children are asked again.
     stamps: RefCell<Vec<ChildStamp>>,
+    /// Indices of the children that did not opt into generation-independent
+    /// sizing, which can change size without being replaced.
+    unstable: Vec<usize>,
+    /// Where the log of stable-generation changes stood when the stamps were
+    /// last known to be current.
+    log_cursor: Cell<u64>,
+    /// Position of each stable child by identity, built when a revalidation
+    /// first has a changed identity to place.
+    stable_positions: RefCell<Option<HashMap<ElementId, usize>>>,
     /// Whether every direct child opted into generation-independent sizing.
     stable_children: bool,
     /// Size of the container itself, gaps included.
@@ -217,6 +226,9 @@ impl FlexLayout {
         gap_main: f32,
     ) -> Self {
         let len = children.len();
+        // Taken before any child is looked at, so a change made while measuring
+        // is seen by the next revalidation rather than lost.
+        let log_cursor = aimer_widget::stable_generation_cursor();
         let is_row = !matches!(direction, FlexDirection::Column);
         let (max_main, max_cross) = if is_row {
             (ctx.box_constraint.max_width, ctx.box_constraint.max_height)
@@ -258,6 +270,14 @@ impl FlexLayout {
 
         let mut layout = Self::from_sizes(measured.sizes, is_row, gap_main, has_flex);
         layout.child_metadata = measured.child_metadata;
+        layout.unstable = measured
+            .stamps
+            .iter()
+            .enumerate()
+            .filter(|(_, stamp)| !stamp.stable)
+            .map(|(index, _)| index)
+            .collect();
+        layout.log_cursor = Cell::new(log_cursor);
         layout.stamps = RefCell::new(measured.stamps);
         layout.stable_children = measured.stable_children && !layout.has_flex;
         layout
@@ -474,6 +494,9 @@ impl FlexLayout {
             len,
             child_metadata: Vec::new(),
             stamps: RefCell::new(Vec::new()),
+            unstable: Vec::new(),
+            log_cursor: Cell::new(0),
+            stable_positions: RefCell::new(None),
             stable_children: false,
             total: sized(saturate_f32(main_total), cross, is_row),
             has_flex: false,
@@ -512,6 +535,9 @@ impl FlexLayout {
                 len,
                 child_metadata: Vec::new(),
             stamps: RefCell::new(Vec::new()),
+            unstable: Vec::new(),
+            log_cursor: Cell::new(0),
+            stable_positions: RefCell::new(None),
                 stable_children: false,
                 total: sized(saturate_f32(main_total), cross_max, is_row),
                 has_flex,
@@ -539,6 +565,9 @@ impl FlexLayout {
             len,
             child_metadata: Vec::new(),
             stamps: RefCell::new(Vec::new()),
+            unstable: Vec::new(),
+            log_cursor: Cell::new(0),
+            stable_positions: RefCell::new(None),
             stable_children: false,
             total: sized(saturate_f32(main_total), cross_max, is_row),
             has_flex,
@@ -590,6 +619,34 @@ impl FlexLayout {
         if children.len() != self.len {
             return false;
         }
+        let cursor = aimer_widget::stable_generation_cursor();
+
+        // The log says which stable children had their generation set since the
+        // stamps were current. Every other stable child is as it was, so only
+        // those and the children that cannot vouch for themselves are asked.
+        let mut changed: Vec<usize> = Vec::new();
+        let mut positions = self.stable_positions.borrow_mut();
+        let positions = positions.get_or_insert_with(|| {
+            stamps
+                .iter()
+                .enumerate()
+                .filter(|(_, stamp)| stamp.stable)
+                .map(|(index, stamp)| (stamp.id, index))
+                .collect()
+        });
+        let logged = aimer_widget::stable_generations_since(self.log_cursor.get(), &mut |id| {
+            if let Some(&index) = positions.get(&id) {
+                changed.push(index);
+            }
+        });
+        let indices: Vec<usize> = if logged {
+            changed.extend_from_slice(&self.unstable);
+            changed.sort_unstable();
+            changed.dedup();
+            changed
+        } else {
+            (0..self.len).collect()
+        };
 
         let is_row = self.is_row;
         let max_cross = if is_row {
@@ -601,7 +658,7 @@ impl FlexLayout {
         // children all vouch for themselves clones nothing.
         let mut child_ctx: Option<BuildContext> = None;
 
-        for index in 0..self.len {
+        for index in indices {
             let Some(child) = children.get(index) else {
                 return false;
             };
@@ -624,6 +681,7 @@ impl FlexLayout {
             stamp.stable = stable;
             stamp.generation = generation;
         }
+        self.log_cursor.set(cursor);
         true
     }
 

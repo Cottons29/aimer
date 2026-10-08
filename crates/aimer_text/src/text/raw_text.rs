@@ -576,7 +576,7 @@ mod tests {
     use crate::text_source::TextSource;
 
     use super::{
-        RawTextAuxCache, RawTextWidget, horizontal_alignment_offset, vertical_alignment_baseline,
+        RawTextWidget, horizontal_alignment_offset, vertical_alignment_baseline,
     };
 
     #[test]
@@ -654,7 +654,7 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn plain_text_decoration_cache_reuses_measured_lines() {
+    fn decorated_text_reuses_its_prepared_layout_and_lines() {
         use aimer_attribute::{ResolvedSize, Vec2d};
         use aimer_canvas::{FrameCanvas, InnerCanvas};
         use aimer_style::{TextDecoration, TextDecorationLine};
@@ -689,30 +689,20 @@ mod tests {
             _typeface: Cell::new(None),
         };
 
-        widget.update(&context);
-        let first = widget.cache.with_extra(|slot: &mut Option<RawTextAuxCache>| {
-            slot.as_ref()
-                .and_then(|auxiliary| auxiliary.plain_decorations.as_ref())
-                .map(|cache| (cache.lines.as_ptr(), cache.lines.len()))
-        });
+        let first = widget.local_v2_paragraph_paint_data(&context).unwrap().layout;
         #[cfg(debug_assertions)]
         let first_stats = inner.text_cache_stats();
 
-        widget.update(&context);
-        let second = widget.cache.with_extra(|slot: &mut Option<RawTextAuxCache>| {
-            slot.as_ref()
-                .and_then(|auxiliary| auxiliary.plain_decorations.as_ref())
-                .map(|cache| (cache.lines.as_ptr(), cache.lines.len()))
-        });
+        let second = widget.local_v2_paragraph_paint_data(&context).unwrap().layout;
         #[cfg(debug_assertions)]
         let second_stats = inner.text_cache_stats();
 
-        assert_eq!(first.map(|(_, length)| length), Some(2));
-        assert_eq!(first, second);
+        assert_eq!(first.line_heights.len(), 2);
+        assert_eq!(first.decorations.len(), 2);
+        assert!(std::rc::Rc::ptr_eq(&first, &second));
         #[cfg(debug_assertions)]
         {
-            assert_eq!(second_stats.0, first_stats.0 + 1);
-            assert_eq!(second_stats.1, first_stats.1);
+            assert_eq!(second_stats, first_stats, "reusing prepared geometry measures nothing");
         }
     }
 

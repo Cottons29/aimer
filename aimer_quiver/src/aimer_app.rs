@@ -822,6 +822,7 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
                 web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
                 pending_widget: Some(widget),
                 cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
+                touch_pointer: false,
                 pressed_button: None,
                 current_modifiers: Default::default(),
                 ime_composing: false,
@@ -1563,6 +1564,7 @@ fn start_event_loop(
             web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase::new(),
             pending_widget: Some(widget),
             cursor_pos: crate::handler::event_handler::CURSOR_OUTSIDE_POSITION,
+                touch_pointer: false,
             pressed_button: None,
             current_modifiers: Default::default(),
             ime_composing: false,
@@ -1661,6 +1663,7 @@ mod tests {
     mod animation_only;
     mod builder_prepass;
     mod scoped_sync;
+    mod touch_scroll;
     mod focus_repaint;
     mod retained_switcher;
     mod retained_modal;
@@ -2345,9 +2348,10 @@ mod tests {
         FramePacket::with_render_plan(frame, metadata, None, Some(plan))
     }
 
+    // Clean rows remain in the retained scene even when a frame's plan omits
+    // them because they do not intersect its damage.
     fn visible_horizontal_rows<W: Widget + 'static>(
         app: &HeadlessAimerApp<W>,
-        plan: &RetainedRenderPlan,
         viewport: (f32, f32),
     ) -> Vec<RenderNodeId> {
         let root = app.app.widget_root.as_ref().unwrap();
@@ -2362,7 +2366,7 @@ mod tests {
                 && bounds.y < viewport.1
                 && bounds.y + bounds.height > 0.0
             {
-                assert!(plan.local_v2_revision(render_node).is_some());
+                assert!(app.app.render_tree().draw_list_revision(render_node).unwrap() > 0);
                 visible_rows.push(render_node);
             }
             element.visit_children(&mut |child| pending.push(child));
@@ -2677,12 +2681,10 @@ mod tests {
             .render_plan()
             .is_some_and(|plan| plan.is_complete()));
         let (_, indexed_packet) = direct_headless_frame_packet(&mut app);
-        assert!(indexed_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(indexed_packet.metadata().damage().is_empty());
+        assert!(!indexed_packet.render_plan().unwrap().is_complete());
         let visible_rows = visible_horizontal_rows(
             &app,
-            indexed_packet.render_plan().unwrap(),
             (100.0, 80.0),
         );
         assert_eq!(visible_rows.len(), 5);
@@ -2697,10 +2699,9 @@ mod tests {
             app.app.render_tree().element_bounds(target_row).unwrap(),
             Rect::new(40.0, 0.0, 20.0, 80.0)
         );
-        let before_plan = indexed_packet.render_plan().unwrap();
         let revisions = visible_rows
             .iter()
-            .map(|row| (*row, before_plan.local_v2_revision(*row).unwrap()))
+            .map(|row| (*row, app.app.render_tree().draw_list_revision(*row).unwrap()))
             .collect::<HashMap<_, _>>();
         let paints_before_update = paints.get();
 
@@ -2710,9 +2711,7 @@ mod tests {
             .expect("the visible row has its own state updater")
             .set_state(|state| state.color = Color::WHITE);
         let (_, updated_packet) = direct_headless_frame_packet(&mut app);
-        assert!(updated_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(!updated_packet.render_plan().unwrap().is_complete());
         assert_eq!(paints.get(), paints_before_update + 1);
 
         let damage = updated_packet.metadata().damage();
@@ -2727,21 +2726,25 @@ mod tests {
 
         let updated_rows = visible_horizontal_rows(
             &app,
-            updated_packet.render_plan().unwrap(),
             (100.0, 80.0),
         );
         assert_eq!(updated_rows, visible_rows);
         let updated_plan = updated_packet.render_plan().unwrap();
         for row in updated_rows {
             let expected_revision = revisions[&row] + u64::from(row == target_row);
-            assert_eq!(updated_plan.local_v2_revision(row), Some(expected_revision));
+            assert_eq!(app.app.render_tree().draw_list_revision(row).unwrap(), expected_revision);
+            assert_eq!(
+                updated_plan.local_v2_revision(row),
+                (row == target_row).then_some(expected_revision),
+                "only the changed row is submitted for partial damage"
+            );
         }
 
         let old_bounds = app.app.render_tree().element_bounds(target_row).unwrap();
         assert_eq!(old_bounds, Rect::new(40.0, 0.0, 20.0, 80.0));
         let height_revisions = visible_rows
             .iter()
-            .map(|row| (*row, updated_plan.local_v2_revision(*row).unwrap()))
+            .map(|row| (*row, app.app.render_tree().draw_list_revision(*row).unwrap()))
             .collect::<HashMap<_, _>>();
         let paints_before_height_update = paints.get();
         row_updaters
@@ -2752,9 +2755,7 @@ mod tests {
         let rebuild_before_height_frame = aimer_widget::rebuild_invalidation_generation();
         let layout_before_height_frame = aimer_widget::layout_invalidation_generation();
         let (_, height_packet) = direct_headless_frame_packet(&mut app);
-        assert!(height_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(!height_packet.render_plan().unwrap().is_complete());
         assert_eq!(paints.get(), paints_before_height_update + 1);
 
         let height_damage = height_packet.metadata().damage();
@@ -2788,7 +2789,6 @@ mod tests {
 
         let height_rows = visible_horizontal_rows(
             &app,
-            height_packet.render_plan().unwrap(),
             (100.0, 80.0),
         );
         assert_eq!(height_rows, visible_rows);
@@ -2799,13 +2799,18 @@ mod tests {
         let height_plan = height_packet.render_plan().unwrap();
         for row in height_rows {
             let expected_revision = height_revisions[&row] + u64::from(row == target_row);
-            assert_eq!(height_plan.local_v2_revision(row), Some(expected_revision));
+            assert_eq!(app.app.render_tree().draw_list_revision(row).unwrap(), expected_revision);
+            assert_eq!(
+                height_plan.local_v2_revision(row),
+                (row == target_row).then_some(expected_revision),
+                "only the changed row is submitted for partial damage"
+            );
         }
 
         let shrunk_bounds = app.app.render_tree().element_bounds(target_row).unwrap();
         let grow_revisions = visible_rows
             .iter()
-            .map(|row| (*row, height_plan.local_v2_revision(*row).unwrap()))
+            .map(|row| (*row, app.app.render_tree().draw_list_revision(*row).unwrap()))
             .collect::<HashMap<_, _>>();
         let paints_before_grow = paints.get();
         row_updaters
@@ -2816,9 +2821,7 @@ mod tests {
         let rebuild_before_grow_frame = aimer_widget::rebuild_invalidation_generation();
         let layout_before_grow_frame = aimer_widget::layout_invalidation_generation();
         let (_, grow_packet) = direct_headless_frame_packet(&mut app);
-        assert!(grow_packet
-            .render_plan()
-            .is_some_and(|plan| plan.is_complete()));
+        assert!(!grow_packet.render_plan().unwrap().is_complete());
         assert_eq!(paints.get(), paints_before_grow + 1);
 
         let grow_damage = grow_packet.metadata().damage();
@@ -2852,7 +2855,6 @@ mod tests {
 
         let grow_rows = visible_horizontal_rows(
             &app,
-            grow_packet.render_plan().unwrap(),
             (100.0, 80.0),
         );
         assert_eq!(grow_rows, visible_rows);
@@ -2863,7 +2865,12 @@ mod tests {
         let grow_plan = grow_packet.render_plan().unwrap();
         for row in grow_rows {
             let expected_revision = grow_revisions[&row] + u64::from(row == target_row);
-            assert_eq!(grow_plan.local_v2_revision(row), Some(expected_revision));
+            assert_eq!(app.app.render_tree().draw_list_revision(row).unwrap(), expected_revision);
+            assert_eq!(
+                grow_plan.local_v2_revision(row),
+                (row == target_row).then_some(expected_revision),
+                "only the changed row is submitted for partial damage"
+            );
         }
     }
 
@@ -3442,7 +3449,7 @@ mod tests {
         let layout_before_frame = aimer_widget::layout_invalidation_generation();
         let (scale, packet) = direct_headless_frame_packet(&mut app);
         assert_eq!(scale, 1.0);
-        assert!(packet.render_plan().is_some_and(|plan| plan.is_complete()));
+        assert!(!packet.render_plan().unwrap().is_complete());
         let damage = packet.metadata().damage();
         assert_eq!(damage.target_size(), (300, 200));
         assert!(!damage.regions().is_empty());
@@ -3483,7 +3490,7 @@ mod tests {
         let plan = packet
             .render_plan()
             .expect("the submitted packet includes its retained plan");
-        assert!(plan.is_complete());
+        assert!(!plan.is_complete());
         for node in visible_row_nodes {
             assert_eq!(
                 plan.local_v2_revision(node),
@@ -3708,7 +3715,6 @@ mod tests {
             .is_some_and(|plan| plan.is_complete()));
         let indexed_rows = visible_horizontal_rows(
             &row_app,
-            indexed_row_packet.render_plan().unwrap(),
             (100.0, 80.0),
         );
         assert_eq!(indexed_rows.len(), 5);
@@ -3778,7 +3784,6 @@ mod tests {
         }
         let updated_rows = visible_horizontal_rows(
             &row_app,
-            row_update_packet.render_plan().unwrap(),
             (100.0, 80.0),
         );
         assert_eq!(updated_rows, indexed_rows);
@@ -3860,7 +3865,6 @@ mod tests {
 
         let height_rows = visible_horizontal_rows(
             &row_app,
-            height_packet.render_plan().unwrap(),
             (100.0, 80.0),
         );
         assert_eq!(height_rows, indexed_rows);
@@ -3950,7 +3954,6 @@ mod tests {
 
         let grow_rows = visible_horizontal_rows(
             &row_app,
-            grow_packet.render_plan().unwrap(),
             (100.0, 80.0),
         );
         assert_eq!(grow_rows, indexed_rows);
@@ -4910,7 +4913,6 @@ mod tests {
         assert_eq!(horizontal_controller.offset().x, 400.0);
         let middle_rows = visible_horizontal_rows(
             &horizontal_app,
-            middle_packet.render_plan().unwrap(),
             (180.0, 120.0),
         );
         assert_eq!(middle_rows.len(), 9);
@@ -4988,7 +4990,6 @@ mod tests {
         );
         let middle_shrink_rows = visible_horizontal_rows(
             &horizontal_app,
-            middle_shrink_packet.render_plan().unwrap(),
             (180.0, 120.0),
         );
         assert_eq!(middle_shrink_rows.len(), 9);

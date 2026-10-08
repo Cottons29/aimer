@@ -252,3 +252,80 @@ impl LayoutElement for VolatileChild {
         }
     }
 }
+
+/// A leaf that keeps itself reachable by the rebuild pass the way a running
+/// animator does, and counts how often the pass rebuilt it.
+pub(crate) struct KeptChild {
+    reachable: aimer_widget::KeepReachable,
+    rebuilt: Rc<Cell<usize>>,
+}
+
+impl KeptChild {
+    /// Creates an erased child that adds to `rebuilt` on every rebuild.
+    pub(crate) fn boxed_new(rebuilt: &Rc<Cell<usize>>) -> AnyElement {
+        Self {
+            reachable: aimer_widget::KeepReachable::new(),
+            rebuilt: rebuilt.clone(),
+        }
+        .boxed()
+    }
+}
+
+impl VisitorElement for KeptChild {
+    fn debug_name(&self) -> &'static str {
+        "KeptChild"
+    }
+}
+
+impl EventElement for KeptChild {}
+
+impl Rebuildable for KeptChild {
+    fn rebuild_if_dirty(&self, _ctx: &BuildContext) {
+        self.rebuilt.set(self.rebuilt.get() + 1);
+        self.reachable.hold();
+    }
+}
+
+impl Drawable for KeptChild {
+    fn update(&self, _ctx: &BuildContext) {}
+}
+
+impl LayoutElement for KeptChild {}
+
+/// Eager children that count how often the container asks for one by position.
+///
+/// A pass that decides most children need no attention should not even look at
+/// them, which this makes observable.
+pub(crate) struct CountingSource {
+    inner: crate::flex::children_source::EagerChildren,
+    asked: Rc<Cell<usize>>,
+}
+
+impl CountingSource {
+    /// Wraps `children`, adding one to `asked` for every `get`.
+    pub(crate) fn new(children: Vec<AnyElement>, asked: &Rc<Cell<usize>>) -> Self {
+        Self {
+            inner: crate::flex::children_source::EagerChildren(children),
+            asked: asked.clone(),
+        }
+    }
+}
+
+impl crate::flex::children_source::ChildrenSource for CountingSource {
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn get(&self, index: usize) -> Option<&dyn Element> {
+        self.asked.set(self.asked.get() + 1);
+        self.inner.get(index)
+    }
+
+    fn visit<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+        self.inner.visit(visitor);
+    }
+
+    fn live_start(&self) -> Option<usize> {
+        self.inner.live_start()
+    }
+}

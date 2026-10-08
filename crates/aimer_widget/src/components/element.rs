@@ -119,11 +119,25 @@ thread_local! {
     static STABLE_SUBTREE_GENERATIONS: RefCell<HashMap<ElementId, u64, IdBuildHasher>> =
         RefCell::new(HashMap::default());
 
+    /// Which elements had their stable generation set, in order, so a container
+    /// can learn which of its children changed without asking each of them.
+    static STABLE_GENERATION_LOG: RefCell<StableGenerationLog> =
+        const { RefCell::new(StableGenerationLog { first: 0, ids: Vec::new() }) };
+
     /// Number of dirty rebuild sources whose root-relative path crosses each
     /// retained element. Counts keep shared ancestors indexed until every
     /// dirty source below them has been rebuilt.
     static DIRTY_SUBTREE_COUNTS: RefCell<HashMap<ElementId, usize, IdBuildHasher>> =
         RefCell::new(HashMap::default());
+
+    /// For each element, the children that dirty paths run through, so a
+    /// container can reach them without entering its other children.
+    static DIRTY_EDGES: RefCell<HashMap<ElementId, SmallVec<[DirtyEdge; 2]>, IdBuildHasher>> =
+        RefCell::new(HashMap::default());
+
+    /// Advances whenever a dirty path is added, so a pass that rebuilt a
+    /// snapshot of the edges can tell that the index grew underneath it.
+    static DIRTY_EDGE_VERSION: Cell<u64> = const { Cell::new(0) };
 
     /// Event dispatchers use this UI-thread epoch to coalesce generation checks
     /// across all nested dispatchers until the next completed frame.
@@ -136,6 +150,7 @@ thread_local! {
     static DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL: Cell<bool> = const { Cell::new(false) };
     static REBUILD_TRAVERSAL_DEPTH: Cell<usize> = const { Cell::new(0) };
     static REBUILD_DESCENTS: Cell<u64> = const { Cell::new(0) };
+    static REBUILD_VISITS: Cell<u64> = const { Cell::new(0) };
     /// Non-zero while a caller that rebases the paths of the subtree it
     /// replaces is committing that replacement.
     static PRESERVE_DIRTY_PATHS_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -803,6 +818,14 @@ impl Drop for DirtySource {
     }
 }
 
+/// One child a dirty path runs through, and how many paths do.
+struct DirtyEdge {
+    child: ElementId,
+    paths: usize,
+    /// Where the parent last found the child, so the next lookup is one probe.
+    hint: Cell<usize>,
+}
+
 fn add_dirty_path(path: &[ElementId]) {
     DIRTY_SUBTREE_COUNTS.with(|counts| {
         let mut counts = counts.borrow_mut();
@@ -810,6 +833,17 @@ fn add_dirty_path(path: &[ElementId]) {
             *counts.entry(*id).or_default() += 1;
         }
     });
+    DIRTY_EDGES.with(|edges| {
+        let mut edges = edges.borrow_mut();
+        for pair in path.windows(2) {
+            let siblings = edges.entry(pair[0]).or_default();
+            match siblings.iter_mut().find(|edge| edge.child == pair[1]) {
+                Some(edge) => edge.paths += 1,
+                None => siblings.push(DirtyEdge { child: pair[1], paths: 1, hint: Cell::new(0) }),
+            }
+        }
+    });
+    DIRTY_EDGE_VERSION.with(|version| version.set(version.get() + 1));
 }
 
 fn remove_dirty_path(path: &[ElementId]) {
@@ -822,6 +856,23 @@ fn remove_dirty_path(path: &[ElementId]) {
             *count -= 1;
             if *count == 0 {
                 counts.remove(id);
+            }
+        }
+    });
+    DIRTY_EDGES.with(|edges| {
+        let mut edges = edges.borrow_mut();
+        for pair in path.windows(2) {
+            let Some(siblings) = edges.get_mut(&pair[0]) else {
+                continue;
+            };
+            if let Some(position) = siblings.iter().position(|edge| edge.child == pair[1]) {
+                siblings[position].paths -= 1;
+                if siblings[position].paths == 0 {
+                    siblings.swap_remove(position);
+                }
+            }
+            if siblings.is_empty() {
+                edges.remove(&pair[0]);
             }
         }
     });
@@ -1243,6 +1294,143 @@ pub fn rebuild_replaced_subtree(root: &dyn Element, ctx: &BuildContext) {
 #[inline]
 pub fn rebuild_descent_count() -> u64 {
     REBUILD_DESCENTS.with(Cell::get)
+}
+
+/// Rebuilds the children of the element being rebuilt that dirty paths run
+/// through, and only those.
+///
+/// For [`Rebuildable::rebuild_indexed_children`]. `child_at` is the
+/// container's own positional access to its children. Returns `false`, having
+/// rebuilt whatever it reached, when the pass cannot rely on the edges: a child
+/// is not where the container can find it, nothing leads below this element, or
+/// the index grew or was discarded while the children rebuilt. The caller then
+/// visits every child, which is always correct because each child decides for
+/// itself whether it has work.
+#[doc(hidden)]
+pub fn rebuild_dirty_children<'a>(
+    len: usize,
+    child_at: impl Fn(usize) -> Option<&'a dyn Element>,
+    ctx: &BuildContext,
+) -> bool {
+    let Some(parent) = REBUILD_PATH.with(|path| path.borrow().last().copied()) else {
+        return false;
+    };
+    let wanted: SmallVec<[(ElementId, usize); 4]> = DIRTY_EDGES.with(|edges| {
+        edges.borrow().get(&parent).map_or_else(SmallVec::new, |siblings| {
+            siblings.iter().map(|edge| (edge.child, edge.hint.get())).collect()
+        })
+    });
+    if wanted.is_empty() {
+        return false;
+    }
+
+    let mut found: SmallVec<[(usize, &'a dyn Element); 4]> = SmallVec::new();
+    for (id, hint) in wanted {
+        let mut located = child_at(hint).filter(|child| child.id() == id).map(|child| (hint, child));
+        if located.is_none() {
+            located = (0..len).find_map(|index| {
+                child_at(index).filter(|child| child.id() == id).map(|child| (index, child))
+            });
+        }
+        let Some((index, child)) = located else {
+            return false;
+        };
+        if index != hint {
+            DIRTY_EDGES.with(|edges| {
+                if let Some(edge) = edges
+                    .borrow()
+                    .get(&parent)
+                    .and_then(|siblings| siblings.iter().find(|edge| edge.child == id))
+                {
+                    edge.hint.set(index);
+                }
+            });
+        }
+        found.push((index, child));
+    }
+    // The order a full visit would have used.
+    found.sort_unstable_by_key(|(index, _)| *index);
+    found.dedup_by_key(|(index, _)| *index);
+
+    let version = DIRTY_EDGE_VERSION.with(Cell::get);
+    for (_, child) in found {
+        child.rebuild_if_dirty(ctx);
+    }
+    // A child that marked a sibling dirty, or a path that was registered or
+    // discarded, may have work the snapshot did not know about.
+    DIRTY_EDGE_VERSION.with(Cell::get) == version && DIRTY_PATHS_READY.with(Cell::get)
+}
+
+/// How many stable-generation changes the log remembers. A reader that falls
+/// further behind finds its cursor gone and must check every child.
+const MAX_LOGGED_STABLE_GENERATIONS: usize = 1024;
+
+struct StableGenerationLog {
+    /// Sequence number of `ids[0]`.
+    first: u64,
+    ids: Vec<ElementId>,
+}
+
+/// Returns the current end of the log of stable-generation changes.
+///
+/// Take it before looking at any child, then hand it to
+/// [`stable_generations_since`] on the next pass.
+#[doc(hidden)]
+#[inline]
+pub fn stable_generation_cursor() -> u64 {
+    STABLE_GENERATION_LOG.with(|log| {
+        let log = log.borrow();
+        log.first + log.ids.len() as u64
+    })
+}
+
+/// Calls `visit` with every element whose stable generation changed since
+/// `cursor`, and returns `true`; returns `false`, visiting nothing, when the
+/// log no longer reaches back that far.
+///
+/// An element that opts into generation-independent sizing changes size only
+/// when it is replaced, and replacing it sets its generation. A container that
+/// last checked its children at `cursor` therefore need only look at the
+/// elements reported here, plus the children that did not opt in.
+#[doc(hidden)]
+pub fn stable_generations_since(cursor: u64, visit: &mut dyn FnMut(ElementId)) -> bool {
+    STABLE_GENERATION_LOG.with(|log| {
+        let log = log.borrow();
+        let Some(skip) = cursor.checked_sub(log.first) else {
+            return false;
+        };
+        for id in log.ids.iter().skip(skip as usize) {
+            visit(*id);
+        }
+        true
+    })
+}
+
+fn note_stable_generation_change(id: ElementId) {
+    STABLE_GENERATION_LOG.with(|log| {
+        let mut log = log.borrow_mut();
+        log.ids.push(id);
+        if log.ids.len() > MAX_LOGGED_STABLE_GENERATIONS {
+            let dropped = log.ids.len() / 2;
+            log.ids.drain(..dropped);
+            log.first += dropped as u64;
+        }
+    });
+}
+
+/// How many retained boundaries the rebuild walk entered, pruned or not.
+///
+/// Together with [`rebuild_descent_count`] this separates the cost of
+/// deciding to skip a subtree from the cost of walking it.
+#[doc(hidden)]
+#[inline]
+pub fn rebuild_visit_count() -> u64 {
+    REBUILD_VISITS.with(Cell::get)
+}
+
+#[inline]
+pub(crate) fn note_rebuild_visit() {
+    REBUILD_VISITS.with(|count| count.set(count.get() + 1));
 }
 
 #[inline]

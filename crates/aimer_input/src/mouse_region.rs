@@ -548,16 +548,16 @@ mod tests {
     }
 
     #[test]
-    fn mouse_region_is_an_indexed_target_while_keeping_its_private_child_view() {
+    fn mouse_region_is_an_indexed_boundary_with_a_routed_child() {
         let events = Rc::new(Cell::new(0));
         let region = capturing_region(events);
 
-        assert_eq!(region.event_tree_role(), aimer_widget::EventTreeRole::IndexedTarget);
+        assert_eq!(region.event_tree_role(), aimer_widget::EventTreeRole::IndexedHitTestBoundary);
         assert_eq!(region.event_tree_bounds(), None);
 
         let mut event_children = 0;
         region.event_children(&mut |_| event_children += 1);
-        assert_eq!(event_children, 0);
+        assert_eq!(event_children, 1);
     }
 
     #[test]
@@ -588,16 +588,19 @@ mod tests {
             cursor: None,
             current_state: Rc::new(Cell::new(PointerState::Outside)),
             cached_bounds: bounds,
-            child: ResultElement,
+            child: ResultElement.boxed(),
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
-        };
+        }.boxed();
 
-        let result = region.on_event(&ElementEvent::PointerDown(PointerInfo::new(
+        let event = ElementEvent::PointerDown(PointerInfo::new(
             aimer_attribute::position::Vec2d { x: 10.0, y: 10.0 },
             PointerSource::Mouse,
             7,
             PointerButton::Primary,
-        )));
+        ));
+        let result = EventDispatcher::new().dispatch(
+            region.as_ref(), event.get_pointer_pos().unwrap(), &event,
+        );
 
         assert!(result.is_consumed());
         assert!(result.needs_redraw());
@@ -618,16 +621,19 @@ mod tests {
             cursor: None,
             current_state: Rc::new(Cell::new(PointerState::Inside)),
             cached_bounds: bounds,
-            child: ResultElement,
+            child: ResultElement.boxed(),
             window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
-        };
+        }.boxed();
 
-        let result = region.on_event(&ElementEvent::PointerMove(PointerInfo::new(
+        let event = ElementEvent::PointerMove(PointerInfo::new(
             aimer_attribute::position::Vec2d { x: 10.0, y: 10.0 },
             PointerSource::Mouse,
             7,
             PointerButton::Primary,
-        )));
+        ));
+        let result = EventDispatcher::new().dispatch(
+            region.as_ref(), event.get_pointer_pos().unwrap(), &event,
+        );
 
         assert!(result.is_consumed());
         assert!(!result.needs_redraw(), "a hover claim is not a repaint");

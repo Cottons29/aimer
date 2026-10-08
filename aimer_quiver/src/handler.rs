@@ -957,6 +957,14 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub(crate) web_scroll_phase: crate::handler::web_scroll_phase::WebScrollPhase,
     pub pending_widget: Option<W>,
     pub cursor_pos: Vec2d,
+    /// Whether the last pointer input came from a finger.
+    ///
+    /// A touch has to move [`Self::cursor_pos`], so the wheel and trackpad
+    /// frames that arrive while a finger is down are routed to what is under
+    /// it. It must not make anything *hovered*: a finger is not a cursor, it
+    /// does not rest on what it last touched, and nothing tells the application
+    /// when it leaves. Hover is read from [`Self::hover_pos`] instead.
+    pub(crate) touch_pointer: bool,
     /// The mouse button currently held, if any.
     ///
     /// The platform reports a button only when it changes state, but a move or a
@@ -1272,8 +1280,8 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let budget = self.venus.idle_budget();
         self.venus.run_idle(&budget);
         self.venus.end_frame();
-        CALLED.print();
-        CALLED.reset();
+        // CALLED.print();
+        // CALLED.reset();
         // The next platform-input interval is a new event frame. This shared
         // epoch also reaches dispatchers nested inside scrollables and regions.
         begin_event_frame();
@@ -2090,12 +2098,24 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     /// the drawer alone and paints into its own canvas, so the tree is built,
     /// laid out, and drawn by identical code whichever way the frame was asked
     /// for.
+
+    /// Where the pointer is for the purpose of hover: nowhere, while a finger
+    /// is what last touched the window.
+    #[inline]
+    pub(crate) fn hover_pos(&self) -> Vec2d {
+        if self.touch_pointer {
+            crate::handler::event_handler::CURSOR_OUTSIDE_POSITION
+        } else {
+            self.cursor_pos
+        }
+    }
+
     pub(crate) fn split_for_frame(
         &mut self,
         window: WindowHandle,
     ) -> (&mut AimerRenderContext, FrameDrawer<'_, W>) {
         let scale = self.window_scale as f32;
-        let cursor_pos = self.cursor_pos;
+        let cursor_pos = self.hover_pos();
         let ui_allocator = self.ui_memory.allocator();
         let Self {
             render_ctx,

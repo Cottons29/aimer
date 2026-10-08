@@ -1079,7 +1079,7 @@ mod tests {
     fn rendered_code_block_exposes_its_language_and_source_text() {
         let resolver: ImageResolver = Rc::new(default_image_resolver);
         let document = Document::parse("```rust\nfn main() {}\n```").unwrap();
-        let (ctx, canvas) = layout_context_with_canvas(320.0, 200.0);
+        let (ctx, _canvas) = layout_context_with_canvas(320.0, 200.0);
         let element = render_document(
             &document,
             &MarkdownTheme::default(),
@@ -1091,13 +1091,12 @@ mod tests {
         .to_element(&ctx);
         element.layout(&ctx);
         element.update(&ctx);
-        let text = canvas
-            .draw_list()
-            .commands()
-            .iter()
+        let mut commands = Vec::new();
+        recorded_commands(element.as_ref(), &ctx, &mut commands);
+        let text = commands.iter()
             .flat_map(|command| match command {
-                DrawCommand::DrawText { text, .. } => vec![text.as_ref()],
-                DrawCommand::DrawRichText { spans, .. } => {
+                aimer_cupid::draw_cmd_v2::DrawCommand::DrawText { text, .. } => vec![text.as_ref()],
+                aimer_cupid::draw_cmd_v2::DrawCommand::DrawRichText { spans, .. } => {
                     spans.iter().map(|span| span.text.as_ref()).collect()
                 }
                 _ => Vec::new(),
@@ -1105,7 +1104,6 @@ mod tests {
             .collect::<String>();
 
         assert!(text.contains("rust"));
-        eprintln!("{}", text);
         assert!(text.contains("fn main() {}"));
     }
 

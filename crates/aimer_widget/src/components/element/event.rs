@@ -1126,23 +1126,40 @@ impl EventDispatcher {
     /// wins gesture arbitration after a descendant initially captured.
     pub fn cancel_pointer(&mut self, root: &dyn Element, pointer: PointerKey) -> EventResult {
         self.synchronize_paths(root);
-        let Some(owner) = self.captures.remove(&pointer) else {
-            return EventResult::ignored();
-        };
-        let Some(target) = self.resolve_indexed_element(root, owner) else {
-            return EventResult::ignored();
-        };
-        if target.element_id() != Some(owner) {
-            return EventResult::ignored();
-        }
-        if event_callback_enabled(target) {
+        let mut result = EventResult::ignored();
+
+        // The pointer's owner, when a descendant asked this dispatcher to
+        // capture it. A forwarding boundary below it relays the cancellation to
+        // whatever it holds in its own child view.
+        if let Some(owner) = self.captures.remove(&pointer)
+            && let Some(target) = self.resolve_indexed_element(root, owner)
+            && target.element_id() == Some(owner)
+            && event_callback_enabled(target)
+        {
             let mut context = EventDispatchContext::new(self, root, Some(owner), Vec2d::default());
-            target
+            result = target
                 .on_event_with_context(&ElementEvent::Cancel, &mut context)
-                .without_capture_request()
-        } else {
-            EventResult::ignored()
+                .without_capture_request();
         }
+
+        // A capture made inside a forwarding element's child view is recorded
+        // only in the nested table, and the dispatcher that owns that view has no
+        // capture of its own to look up. Without this a descendant that took the
+        // pointer, such as a button inside a list, never learned that a scroll
+        // took it back, and stayed in the state the press had put it in.
+        let nested: HashSet<ElementId> = self
+            .nested_captures
+            .iter()
+            .filter_map(|((_, captured), owner)| (*captured == pointer).then_some(*owner))
+            .collect();
+        for owner in nested {
+            if let Some(outcome) = self.dispatch_nested_captured(root, owner, &ElementEvent::Cancel) {
+                result = result.merge(outcome.result.without_capture_request());
+            }
+        }
+        self.nested_captures
+            .retain(|(_, captured), _| *captured != pointer);
+        result
     }
 
     /// Drains pending element mutations and resolves their pre-frame owners

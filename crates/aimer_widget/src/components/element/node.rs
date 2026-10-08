@@ -411,6 +411,7 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
         #[cfg(feature = "frame-stats")]
         crate::rebuild_stats::record_visit();
+        note_rebuild_visit();
         let mut traversal = begin_rebuild_traversal(self.id.get());
         let own_dirty = element_has_dirty_work(&self.element);
         let path_ready = DIRTY_PATHS_READY.with(Cell::get)
@@ -435,7 +436,13 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
         set_element_rebuild_path(&self.element);
         let _descend = RebuildDescendGuard::enter(own_dirty);
         let before = element_tree_generation();
-        self.element.rebuild_if_dirty(ctx);
+        // With the index ready and no work of its own, this element is on a
+        // path only because something below it is: let a container that can
+        // reach its children by position rebuild just those.
+        let indexed = path_ready && !forced_descend && !own_dirty;
+        if !(indexed && self.element.rebuild_indexed_children(ctx)) {
+            self.element.rebuild_if_dirty(ctx);
+        }
         let after = element_tree_generation();
         if after != before {
             self.set_subtree_generation(after);
@@ -512,9 +519,12 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
 
     fn set_subtree_generation(&self, generation: u64) {
         if self.element.is_layout_stable() {
-            STABLE_SUBTREE_GENERATIONS.with(|generations| {
-                generations.borrow_mut().insert(self.id.get(), generation);
-            });
+            let id = self.id.get();
+            let previous = STABLE_SUBTREE_GENERATIONS
+                .with(|generations| generations.borrow_mut().insert(id, generation));
+            if previous != Some(generation) {
+                note_stable_generation_change(id);
+            }
         }
     }
 }

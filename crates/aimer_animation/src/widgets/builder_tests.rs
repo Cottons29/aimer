@@ -49,25 +49,17 @@ fn context() -> BuildContext<'static> {
     context
 }
 
-macro_rules! draw_frame {
-    ($element:expr, $context:expr) => {{
-        aimer_widget::begin_paint_frame(FRAME_WIDTH, FRAME_HEIGHT);
-        $element.update($context);
-        aimer_widget::take_paint_frame_damage(FRAME_WIDTH, FRAME_HEIGHT)
-    }};
-}
-
-struct StableLeaf;
+struct StableLeaf(f32);
 
 impl Widget for StableLeaf {
     fn to_element(self, _context: &BuildContext) -> AnyElement {
-        StableElement.boxed()
+        StableElement(self.0).boxed()
     }
 }
 
 impl aimer_widget::PortableWidget for StableLeaf {}
 
-struct StableElement;
+struct StableElement(f32);
 
 impl Drawable for StableElement {
     fn update(&self, _context: &BuildContext) {}
@@ -79,7 +71,7 @@ impl EventElement for StableElement {}
 impl LayoutElement for StableElement {
     fn computed_size(&self, _context: &BuildContext) -> ResolvedSize {
         ResolvedSize {
-            width: 10.0,
+            width: self.0,
             height: 10.0,
         }
     }
@@ -142,7 +134,7 @@ fn animated_exposes_its_child_to_the_retained_render_tree() {
     let element = Animated::new(
         controller,
         AnimationEffect::Rotate { from: 0.0, to: 1.0 },
-        StableLeaf,
+        StableLeaf(10.0),
     )
     .to_element(&context);
 
@@ -158,18 +150,44 @@ fn animated_exposes_its_child_to_the_retained_render_tree() {
 }
 
 #[test]
-fn animated_builder_output_changes_force_full_damage() {
+fn animated_builder_updates_its_child_while_preserving_retained_identity() {
     let controller = AnimationController::with_millis(1000, Curve::Linear);
     controller.set_value(0.0);
+    controller.forward_from_first_tick();
     let context = context();
-    let element = AnimatedBuilder::new(controller.clone(), |_value| StableLeaf)
+    let values = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let built_values = values.clone();
+    let element = AnimatedBuilder::new(controller.clone(), move |value| {
+        built_values.borrow_mut().push(value);
+        StableLeaf(10.0 + value * 10.0)
+    })
         .to_element(&context);
 
-    let _ = draw_frame!(element.as_ref(), &context);
-    controller.set_value(0.5);
-    let damage = draw_frame!(element.as_ref(), &context);
+    element.update(&context);
+    let mut original_child = None;
+    element.visit_children(&mut |child| original_child = child.element_id());
+    assert!(original_child.is_some());
+    assert_eq!(element.computed_size(&context).width, 10.0);
 
-    assert!(damage.is_full());
+    controller.set_value(0.5);
+    // Reset the deferred clock so this frame samples exactly the supplied
+    // value, while playback keeps the builder on the dirty-path index.
+    controller.forward_from_first_tick();
+    element.update(&context);
+
+    let mut rebuilt_child = None;
+    element.visit_retained_v2_children(&mut |_, child| rebuilt_child = child.element_id());
+    assert!(rebuilt_child.is_some());
+    assert_eq!(original_child, rebuilt_child, "reconciliation keeps the child's identity");
+    assert_eq!(element.computed_size(&context).width, 15.0);
+    assert_eq!(*values.borrow(), [0.0, 0.5]);
+
+    controller.forward_from_first_tick();
+    element.update(&context);
+    let mut unchanged_child = None;
+    element.visit_retained_v2_children(&mut |_, child| unchanged_child = child.element_id());
+    assert_eq!(unchanged_child, rebuilt_child);
+    assert_eq!(*values.borrow(), [0.0, 0.5], "a stable value reuses its child");
 }
 
 #[test]

@@ -1822,26 +1822,25 @@ mod tests {
             );
         }
 
-        /// Control: the very same gesture over content that owns no gesture of its own
-        /// scrolls, so the test above proves a claim was respected rather than that
-        /// dragging never scrolls.
+        /// A finger can scroll plain content, while mouse drags stay available
+        /// for selection and other desktop gestures.
         #[test]
-        fn the_same_drag_over_plain_content_still_scrolls() {
+        fn a_finger_drag_over_plain_content_still_scrolls() {
             let controller = ScrollController::new();
             let mut app = AimerApp::start_headless(plain_page(&controller));
             app.render_frame();
             app.render_frame();
             assert!(controller.max_extent().y > 0.0);
 
-            drag_up(&mut app, 40.0, PRESS_Y, RELEASE_Y);
+            touch_drag_up(&mut app, 40.0, PRESS_Y, RELEASE_Y);
 
             assert!(
                 controller.offset().y > 0.0,
-                "a drag over nothing selectable is a scroll"
+                "a finger drag over nothing selectable is a scroll"
             );
         }
 
-        /// A gesture that is over releases its claim, so the next drag scrolls even
+        /// A gesture that is over releases its claim, so the next finger drag scrolls even
         /// though the previous one selected. Without this the first selection would
         /// deadlock the view forever.
         #[test]
@@ -1853,10 +1852,14 @@ mod tests {
 
             drag_up(&mut app, 40.0, PRESS_Y, RELEASE_Y);
             assert_eq!(controller.offset().y, 0.0);
+            assert!(
+                !is_pointer_claimed(PointerKey::new(PointerSource::Mouse, 0)),
+                "ending selection releases the mouse claim"
+            );
 
             // The second gesture starts on the background to the right of the text,
             // where nothing selectable lives.
-            drag_up(&mut app, 900.0, PRESS_Y, RELEASE_Y);
+            touch_drag_up(&mut app, 900.0, PRESS_Y, RELEASE_Y);
 
             assert!(
                 controller.offset().y > 0.0,

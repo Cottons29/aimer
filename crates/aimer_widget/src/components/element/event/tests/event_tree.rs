@@ -78,7 +78,7 @@ impl Drawable for TreeElement {
 impl Rebuildable for TreeElement {}
 
 struct EffectTreeElement {
-    children: Vec<EffectTreeElement>,
+    children: Vec<AnyElement>,
     result: EventResult,
 }
 
@@ -95,7 +95,7 @@ impl EventElement for EffectTreeElement {
 
     fn event_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         for child in &self.children {
-            visitor(child);
+            visitor(child.as_ref());
         }
     }
 }
@@ -112,11 +112,11 @@ fn dispatch_preserves_non_consuming_child_effects() {
         children: vec![EffectTreeElement {
             children: Vec::new(),
             result: EventResult::redraw(),
-        }],
+        }.boxed()],
         result: EventResult::ignored(),
-    };
+    }.boxed();
 
-    let result = dispatch_event(&element, Vec2d { x: 5.0, y: 5.0 }, &ElementEvent::Cancel);
+    let result = dispatch_event(element.as_ref(), Vec2d { x: 5.0, y: 5.0 }, &ElementEvent::Cancel);
 
     assert!(!result.is_consumed());
     assert!(result.needs_redraw());

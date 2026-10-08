@@ -279,6 +279,7 @@ impl WindowEventHandler {
         // the shared event position at the latest contact so those scroll
         // frames hit the viewport instead of the outside-window sentinel.
         app.cursor_pos = pos;
+        app.touch_pointer = true;
         // info!("Location: {pos:?}" );
         let touch_id = item.id;
         // All touch events are passed through with their finger ID.
@@ -323,6 +324,7 @@ impl WindowEventHandler {
             return;
         }
         app.cursor_pos = new_pos;
+        app.touch_pointer = false;
         // Aiming at another target ends the scroll intent. A browser never
         // reports the lift, so a real pointer move is the only evidence that
         // the next wheel event belongs to a new gesture.

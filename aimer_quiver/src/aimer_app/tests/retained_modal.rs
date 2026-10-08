@@ -632,7 +632,7 @@ fn context_menu_hover_invalidates_only_the_old_and_new_row_nodes() {
     let rows_node = app.app.render_node_for_element(rows_id).unwrap();
     let row_ids = retained_element_ids_named(&app, "ContextMenuRow");
     assert_eq!(row_ids.len(), 3, "each menu item owns a retained row element");
-    let tree = app.app.render_tree();
+    let tree = app.app.render_tree().clone();
     let panel_revision = initial_plan.local_v2_revision(panel_node).unwrap();
     let rows_revision = initial_plan.local_v2_revision(rows_node);
     assert!(
@@ -671,12 +671,19 @@ fn context_menu_hover_invalidates_only_the_old_and_new_row_nodes() {
         let layout_before_frame = aimer_widget::layout_invalidation_generation();
         let (_, hover_packet) = direct_headless_frame_packet(&mut app);
         let hover_plan = hover_packet.render_plan().unwrap();
-        assert_eq!(hover_plan.local_v2_revision(panel_node), Some(panel_revision));
+        assert_eq!(tree.draw_list_revision(panel_node).unwrap(), panel_revision);
+        assert_eq!(hover_plan.local_v2_revision(panel_node), Some(panel_revision),
+            "the unchanged panel background is composited beneath row damage");
         assert_eq!(hover_plan.local_v2_revision(rows_node), rows_revision);
         for (index, (row_node, _, revision)) in row_nodes.iter().enumerate() {
-            let actual = hover_plan.local_v2_revision(*row_node).unwrap();
+            let actual = tree.draw_list_revision(*row_node).unwrap();
             let expected = *revision + u64::from(index == row_index || index + 1 == row_index);
             assert_eq!(actual, expected, "only old/new row {index} is re-recorded");
+            assert_eq!(
+                hover_plan.local_v2_revision(*row_node),
+                (index == row_index || index + 1 == row_index).then_some(expected),
+                "only old/new row {index} is submitted"
+            );
         }
 
         let damage = hover_packet.metadata().damage();
@@ -701,7 +708,7 @@ fn context_menu_hover_invalidates_only_the_old_and_new_row_nodes() {
         }
 
         for row in &mut row_nodes {
-            row.2 = hover_plan.local_v2_revision(row.0).unwrap();
+            row.2 = tree.draw_list_revision(row.0).unwrap();
         }
         let _ = app.window.take_redraw_request();
     }

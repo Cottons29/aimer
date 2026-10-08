@@ -10,7 +10,8 @@ use aimer_range::{RangeSlider, RangeThumb, Slider, SliderThumb, SliderTrail};
 use aimer_style::{LayoutSpacing, Spacing};
 use aimer_widget::base::{BuildContext, Vec2d, WindowHandle};
 use aimer_widget::{
-    Drawable, ErrorWidget, EventDispatcher, LayoutElement, State, StatefulWidget, Widget,
+    Drawable, ErrorWidget, EventDispatcher, LayoutElement, Rebuildable, State, StatefulElement,
+    StatefulWidget, Widget,
 };
 
 #[test]
@@ -53,7 +54,9 @@ async fn range_controls_keep_composable_visual_slots_in_the_element_tree() {
 
     let mut slot_names = Vec::new();
     slider.visit_children(&mut |surface| {
-        surface.visit_children(&mut |slot| slot_names.push(slot.debug_name()));
+        surface.visit_children(&mut |slot| {
+            slot.visit_children(&mut |visual| slot_names.push(visual.debug_name()));
+        });
     });
     assert_eq!(
         slot_names,
@@ -72,7 +75,9 @@ async fn range_controls_keep_composable_visual_slots_in_the_element_tree() {
 
     let mut range_slot_names = Vec::new();
     range_slider.visit_children(&mut |surface| {
-        surface.visit_children(&mut |slot| range_slot_names.push(slot.debug_name()));
+        surface.visit_children(&mut |slot| {
+            slot.visit_children(&mut |visual| range_slot_names.push(visual.debug_name()));
+        });
     });
     assert_eq!(
         range_slot_names,
@@ -96,20 +101,24 @@ async fn slider_materializes_default_trail_and_thumb_widgets() {
 
     let mut slot_names = Vec::new();
     element.visit_children(&mut |surface| {
-        surface.visit_children(&mut |slot| slot_names.push(slot.debug_name()));
+        surface.visit_children(&mut |slot| {
+            slot.visit_children(&mut |visual| slot_names.push(visual.debug_name()));
+        });
     });
 
-    assert_eq!(slot_names, ["SliderTrail", "SliderThumb"]);
+    assert_eq!(slot_names, ["SliderTrack", "SliderTrail", "SliderThumb"]);
 
     let range_element = RangeSlider::<f64>::new().to_element(&ctx);
     range_element.layout(&ctx);
     let mut range_slot_names = Vec::new();
     range_element.visit_children(&mut |surface| {
-        surface.visit_children(&mut |slot| range_slot_names.push(slot.debug_name()));
+        surface.visit_children(&mut |slot| {
+            slot.visit_children(&mut |visual| range_slot_names.push(visual.debug_name()));
+        });
     });
     assert_eq!(
         range_slot_names,
-        ["SliderTrail", "SliderThumb", "SliderThumb"]
+        ["SliderTrack", "SliderTrail", "SliderThumb", "SliderThumb"]
     );
 }
 
@@ -273,13 +282,15 @@ async fn range_slider_widget_dispatches_the_nearest_thumb_and_keyboard_increment
 #[tokio::test]
 async fn slider_state_retains_runtime_press_while_adopting_a_controlled_value() {
     let ctx = context();
-    let mut state = Slider::new()
-        .range(0.0..100.0)
-        .step(10.0)
-        .value(20.0)
-        .width(200.0)
-        .create_state();
-    let element = state.build(&ctx).to_element(&ctx);
+    let (element, updater) = StatefulElement::new(
+        Slider::new()
+            .range(0.0..100.0)
+            .step(10.0)
+            .value(20.0)
+            .width(200.0),
+        &ctx,
+    );
+    let element = element.boxed();
     element.layout(&ctx);
     element.update(&ctx);
 
@@ -288,37 +299,40 @@ async fn slider_state_retains_runtime_press_while_adopting_a_controlled_value() 
     assert!(dispatcher
         .dispatch(element.as_ref(), pointer.pos, &ElementEvent::PointerDown(pointer))
         .is_consumed());
-    assert!(state.is_pressed());
-    assert!(state.is_focused());
+    assert!(updater.read_state().is_pressed());
+    assert!(updater.read_state().is_focused());
 
     let moved = pointer.at(Vec2d { x: 100.0, y: 20.0 });
     assert!(dispatcher
         .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerMove(moved))
         .is_consumed());
-    assert_eq!(state.current_value(), 50.0);
+    assert_eq!(updater.read_state().current_value(), 50.0);
 
-    state.adopt_config_from(
+    updater.set_state(|state| state.adopt_config_from(
         Slider::new()
             .range(0.0..100.0)
             .step(10.0)
             .value(80.0)
             .width(200.0)
             .create_state(),
-    );
-    assert_eq!(state.current_value(), 80.0);
-    assert!(state.is_pressed());
+    ));
+    element.rebuild_if_dirty(&ctx);
+    assert_eq!(updater.read_state().current_value(), 80.0);
+    assert!(updater.read_state().is_pressed());
 }
 
 #[tokio::test]
 async fn range_slider_state_retains_the_selected_thumb_while_adopting_values() {
     let ctx = context();
-    let mut state = RangeSlider::new()
-        .range(0.0..100.0)
-        .step(10.0)
-        .values(20.0..70.0)
-        .width(200.0)
-        .create_state();
-    let element = state.build(&ctx).to_element(&ctx);
+    let (element, updater) = StatefulElement::new(
+        RangeSlider::new()
+            .range(0.0..100.0)
+            .step(10.0)
+            .values(20.0..70.0)
+            .width(200.0),
+        &ctx,
+    );
+    let element = element.boxed();
     element.layout(&ctx);
     element.update(&ctx);
 
@@ -327,25 +341,26 @@ async fn range_slider_state_retains_the_selected_thumb_while_adopting_values() {
     assert!(dispatcher
         .dispatch(element.as_ref(), pointer.pos, &ElementEvent::PointerDown(pointer))
         .is_consumed());
-    assert_eq!(state.active_thumb(), Some(RangeThumb::Lower));
+    assert_eq!(updater.read_state().active_thumb(), Some(RangeThumb::Lower));
 
     let moved = pointer.at(Vec2d { x: 100.0, y: 20.0 });
     assert!(dispatcher
         .dispatch(element.as_ref(), moved.pos, &ElementEvent::PointerMove(moved))
         .is_consumed());
-    assert_eq!(state.current_values(), 50.0..70.0);
+    assert_eq!(updater.read_state().current_values(), 50.0..70.0);
 
-    state.adopt_config_from(
+    updater.set_state(|state| state.adopt_config_from(
         RangeSlider::new()
             .range(0.0..100.0)
             .step(10.0)
             .values(30.0..80.0)
             .width(200.0)
             .create_state(),
-    );
-    assert_eq!(state.current_values(), 30.0..80.0);
-    assert_eq!(state.active_thumb(), Some(RangeThumb::Lower));
-    assert!(state.is_pressed());
+    ));
+    element.rebuild_if_dirty(&ctx);
+    assert_eq!(updater.read_state().current_values(), 30.0..80.0);
+    assert_eq!(updater.read_state().active_thumb(), Some(RangeThumb::Lower));
+    assert!(updater.read_state().is_pressed());
 }
 
 #[tokio::test]

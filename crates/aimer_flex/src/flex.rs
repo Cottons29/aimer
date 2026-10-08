@@ -33,7 +33,7 @@ mod lazy_tests {
 
     use crate::flex::raw_flex::RawFlex;
     use crate::flex::test_support::{
-        CountingChild, ResizingChild, VolatileChild, dummy_build_context,
+        CountingChild, CountingSource, KeptChild, ResizingChild, VolatileChild, dummy_build_context,
         replace_a_generated_subtree,
     };
     use crate::flex::{Column, FlexDirection, OverflowBehavior};
@@ -647,6 +647,126 @@ mod lazy_tests {
         replace_a_generated_subtree(&ctx);
 
         assert_eq!(column.computed_size(&ctx).height, 80.0 + 16.0 * CHILD_HEIGHT);
+    }
+
+    /// Once the index of dirty paths is ready, the rebuild pass reaches the
+    /// children it leads to by position: every one of them, and none of the
+    /// rest, however long the list.
+    #[test]
+    fn the_rebuild_pass_enters_only_the_children_dirty_paths_lead_to() {
+        let measured = Rc::new(Cell::new(0));
+        let drawn = Rc::new(Cell::new(0));
+        let first_rebuilt = Rc::new(Cell::new(0));
+        let second_rebuilt = Rc::new(Cell::new(0));
+        let mut children = vec![KeptChild::boxed_new(&first_rebuilt)];
+        children.extend(
+            (0..256).map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, &measured, &drawn)),
+        );
+        children.push(KeptChild::boxed_new(&second_rebuilt));
+        let root = RawFlex::new(FlexDirection::Column, children, "Column").boxed();
+        let ctx = dummy_build_context(200.0, VIEWPORT, None);
+
+        // The first pass walks everything and registers the kept children.
+        root.rebuild_if_dirty(&ctx);
+        assert_eq!((first_rebuilt.get(), second_rebuilt.get()), (1, 1));
+
+        let entered = aimer_widget::rebuild_visit_count();
+        root.rebuild_if_dirty(&ctx);
+        let entered = aimer_widget::rebuild_visit_count() - entered;
+
+        assert_eq!(
+            (first_rebuilt.get(), second_rebuilt.get()),
+            (2, 2),
+            "both kept children must be rebuilt again"
+        );
+        assert!(entered <= 3, "the pass entered {entered} boundaries for 2 kept children");
+    }
+
+    /// Which children changed is recorded as it happens, so revalidating a
+    /// long list after an unrelated rebuild must not look at every child: only
+    /// the ones that cannot vouch for themselves are asked.
+    #[test]
+    fn revalidation_does_not_look_at_children_that_did_not_change() {
+        let measured = Rc::new(Cell::new(0));
+        let drawn = Rc::new(Cell::new(0));
+        let volatile_measured = Rc::new(Cell::new(0));
+        let volatile_height = Rc::new(Cell::new(30.0));
+        let asked = Rc::new(Cell::new(0));
+        let mut children = vec![VolatileChild::boxed_new(&volatile_height, &volatile_measured)];
+        children.extend(
+            (0..256).map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, &measured, &drawn)),
+        );
+        let mut column = RawFlex::new(FlexDirection::Column, Vec::new(), "Column");
+        column.children = Box::new(CountingSource::new(children, &asked));
+        let ctx = dummy_build_context(200.0, VIEWPORT, Some((0.0, 0.0, 200.0, VIEWPORT)));
+        let total = 30.0 + 256.0 * CHILD_HEIGHT;
+        assert_eq!(column.computed_size(&ctx).height, total);
+
+        replace_a_generated_subtree(&ctx);
+        asked.set(0);
+        assert_eq!(column.computed_size(&ctx).height, total);
+
+        assert!(asked.get() <= 4, "{} of 257 children were looked at", asked.get());
+        assert_eq!(measured.get(), 256, "stable children are only measured by the first pass");
+    }
+
+    /// A stable child whose subtree was replaced has to be asked again, even
+    /// though nothing else about the list changed.
+    #[test]
+    fn a_stable_child_with_a_new_generation_is_remeasured() {
+        let measured = Rc::new(Cell::new(0));
+        let drawn = Rc::new(Cell::new(0));
+        let volatile_measured = Rc::new(Cell::new(0));
+        let volatile_height = Rc::new(Cell::new(30.0));
+        let asked = Rc::new(Cell::new(0));
+        let mut children = vec![VolatileChild::boxed_new(&volatile_height, &volatile_measured)];
+        children.extend(
+            (0..64).map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, &measured, &drawn)),
+        );
+        let mut column = RawFlex::new(FlexDirection::Column, Vec::new(), "Column");
+        column.children = Box::new(CountingSource::new(children, &asked));
+        let ctx = dummy_build_context(200.0, VIEWPORT, Some((0.0, 0.0, 200.0, VIEWPORT)));
+        column.computed_size(&ctx);
+        measured.set(0);
+
+        replace_a_generated_subtree(&ctx);
+        let replaced = column.children.get(10).expect("the child exists");
+        replaced.set_subtree_generation(aimer_widget::element_tree_generation());
+        column.computed_size(&ctx);
+
+        assert_eq!(measured.get(), 1, "only the child with a new generation is asked again");
+    }
+
+    /// The log of changes is bounded. A container that fell behind it cannot
+    /// know which children changed, so it must check all of them.
+    #[test]
+    fn a_log_that_overflowed_makes_revalidation_check_every_child() {
+        let measured = Rc::new(Cell::new(0));
+        let drawn = Rc::new(Cell::new(0));
+        let volatile_measured = Rc::new(Cell::new(0));
+        let volatile_height = Rc::new(Cell::new(30.0));
+        let asked = Rc::new(Cell::new(0));
+        let mut children = vec![VolatileChild::boxed_new(&volatile_height, &volatile_measured)];
+        children.extend(
+            (0..64).map(|_| CountingChild::boxed_new(200.0, CHILD_HEIGHT, &measured, &drawn)),
+        );
+        let mut column = RawFlex::new(FlexDirection::Column, Vec::new(), "Column");
+        column.children = Box::new(CountingSource::new(children, &asked));
+        let ctx = dummy_build_context(200.0, VIEWPORT, Some((0.0, 0.0, 200.0, VIEWPORT)));
+        column.computed_size(&ctx);
+        measured.set(0);
+
+        replace_a_generated_subtree(&ctx);
+        let first = column.children.get(10).expect("the child exists");
+        let second = column.children.get(20).expect("the child exists");
+        second.set_subtree_generation(1_000_000);
+        // Far more changes than the log keeps; the earlier ones are forgotten.
+        for generation in 0..5_000u64 {
+            first.set_subtree_generation(generation + 10);
+        }
+        column.computed_size(&ctx);
+
+        assert_eq!(measured.get(), 2, "both changed children must be found without the log");
     }
 
     /// Visible overflow is an explicit request to keep children outside the

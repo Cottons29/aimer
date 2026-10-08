@@ -9,6 +9,25 @@ pub trait Rebuildable: VisitorElement {
         });
     }
 
+    /// Rebuilds only the children the dirty-path index leads to, without
+    /// entering the rest.
+    ///
+    /// Called instead of [`rebuild_if_dirty`](Rebuildable::rebuild_if_dirty) when
+    /// the pass has already established that this element has no work of its
+    /// own and that the index describes the tree. A pruned child costs little
+    /// to enter, but entering every child of a long list to find that out is
+    /// work proportional to the list. A container that can reach a child by
+    /// position implements this with `rebuild_dirty_children`.
+    ///
+    /// Returns `false` when the children could not be resolved, in which case
+    /// the caller visits all of them as usual. The default does exactly that.
+    #[doc(hidden)]
+    #[inline]
+    #[allow(unused_variables)]
+    fn rebuild_indexed_children(&self, ctx: &BuildContext) -> bool {
+        false
+    }
+
     fn option_any(&self) -> Option<&dyn std::any::Any> {
         None
     }

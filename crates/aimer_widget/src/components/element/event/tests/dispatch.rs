@@ -64,6 +64,10 @@ impl VisitorElement for HitChainCacheLeaf {
 }
 
 impl EventElement for HitChainCacheLeaf {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
     fn on_event(&self, event: &ElementEvent) -> EventResult {
         if matches!(event, ElementEvent::PointerMove(_)) {
             self.events.set(self.events.get() + 1);
@@ -89,6 +93,7 @@ impl Drawable for HitChainCacheLeaf {
 impl Rebuildable for HitChainCacheLeaf {}
 
 struct HitChainCacheRoot {
+    role: EventTreeRole,
     child: AnyElement,
     hit_tests: Rc<Cell<usize>>,
 }
@@ -104,6 +109,10 @@ impl VisitorElement for HitChainCacheRoot {
 }
 
 impl EventElement for HitChainCacheRoot {
+    fn event_tree_role(&self) -> EventTreeRole {
+        self.role
+    }
+
     fn hit_test_children_at<'a>(
         &'a self,
         pos: Vec2d,
@@ -145,6 +154,10 @@ impl VisitorElement for HitChainCacheForwarder {
 }
 
 impl EventElement for HitChainCacheForwarder {
+    fn event_tree_role(&self) -> EventTreeRole {
+        EventTreeRole::IndexedTarget
+    }
+
     fn event_children<'a>(&'a self, _visitor: &mut dyn FnMut(&'a dyn Element)) {}
 
     fn on_event_with_context(
@@ -318,6 +331,7 @@ fn uncaptured_pointer_moves_reuse_the_last_hit_chain() {
     let hit_tests = Rc::new(Cell::new(0));
     let leaf_events = Rc::new(Cell::new(0));
     let root = HitChainCacheRoot {
+        role: EventTreeRole::IndexedTarget,
         child: HitChainCacheLeaf {
             bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
             events: leaf_events.clone(),
@@ -401,6 +415,7 @@ fn cached_hit_chain_falls_back_when_the_pointer_leaves_the_chain() {
     let hit_tests = Rc::new(Cell::new(0));
     let leaf_events = Rc::new(Cell::new(0));
     let root = HitChainCacheRoot {
+        role: EventTreeRole::IndexedHitTestBoundary,
         child: HitChainCacheLeaf {
             bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
             events: leaf_events.clone(),
@@ -447,6 +462,7 @@ fn cached_hit_chain_is_invalidated_by_a_subtree_generation_change() {
     let hit_tests = Rc::new(Cell::new(0));
     let leaf_events = Rc::new(Cell::new(0));
     let root = HitChainCacheRoot {
+        role: EventTreeRole::IndexedHitTestBoundary,
         child: HitChainCacheLeaf {
             bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
             events: leaf_events.clone(),
@@ -483,6 +499,7 @@ fn consuming_pointer_moves_are_not_cached() {
     let hit_tests = Rc::new(Cell::new(0));
     let leaf_events = Rc::new(Cell::new(0));
     let root = HitChainCacheRoot {
+        role: EventTreeRole::IndexedHitTestBoundary,
         child: HitChainCacheLeaf {
             bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
             events: leaf_events.clone(),
@@ -525,6 +542,7 @@ fn cached_hit_chain_replays_a_forwarding_boundary_once() {
     let forwarder_events = Rc::new(Cell::new(0));
     let leaf_events = Rc::new(Cell::new(0));
     let root = HitChainCacheRoot {
+        role: EventTreeRole::IndexedTarget,
         child: HitChainCacheForwarder {
             child: HitChainCacheLeaf {
                 bounds: (Vec2d::default(), Vec2d { x: 10.0, y: 10.0 }),
@@ -552,6 +570,7 @@ fn cached_hit_chain_replays_a_forwarding_boundary_once() {
         )),
     );
     let first_hit_tests = hit_tests.get();
+    assert!(dispatcher.hit_chain_cache.is_some(), "the fixed indexed route is cacheable");
 
     let _ = dispatcher.dispatch(
         root.as_ref(),

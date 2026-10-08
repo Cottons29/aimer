@@ -1361,6 +1361,18 @@ impl Rebuildable for RawFlex {
         Some(self)
     }
 
+    /// Reaches only the children a dirty path runs through, by position.
+    ///
+    /// A list of hundreds of rows with one animating row would otherwise enter
+    /// every row on every frame just to prune it.
+    fn rebuild_indexed_children(&self, ctx: &BuildContext) -> bool {
+        aimer_widget::rebuild_dirty_children(
+            self.children.len(),
+            |index| self.children.get(index),
+            ctx,
+        )
+    }
+
     /// Takes over the rows and the measured table of the container being
     /// replaced.
     ///

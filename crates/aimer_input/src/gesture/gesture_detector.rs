@@ -686,18 +686,18 @@ mod tests {
     fn recording_detector(
         behavior: GestureDetectorBehavior,
         events: Rc<std::cell::Cell<usize>>,
-    ) -> RawGestureDetector<RecordingElement> {
+    ) -> AnyElement {
         let cached_bounds = InteractionBounds::new();
         cached_bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
 
         RawGestureDetector {
-            child: RecordingElement { events },
+            child: RecordingElement { events }.boxed(),
             cached_bounds,
             window: WindowHandle::headless(winit::dpi::PhysicalSize::new(100, 100), 1.0),
             handlers: Rc::new(GestureHandlers::new()),
             state: RefCell::new(GestureState::default()),
             behavior,
-        }
+        }.boxed()
     }
 
     fn touch(x: f32, y: f32, id: u64) -> PointerInfo {
@@ -763,12 +763,12 @@ mod tests {
         let pointer = touch(5.0, 5.0, 7);
 
         let pointer_result = dispatch_event(
-            &detector,
+            detector.as_ref(),
             pointer.pos,
             &ElementEvent::PointerDown(pointer),
         );
-        let _ = dispatch_focused_event(&detector, &ElementEvent::FocusGained);
-        let _ = broadcast_event(&detector, &ElementEvent::FocusGained);
+        let _ = dispatch_focused_event(detector.as_ref(), &ElementEvent::FocusGained);
+        let _ = broadcast_event(detector.as_ref(), &ElementEvent::FocusGained);
 
         assert!(pointer_result.is_consumed());
         assert_eq!(events.get(), 0);
@@ -808,7 +808,7 @@ mod tests {
         let pointer = touch(5.0, 5.0, 7);
 
         let result = dispatch_event(
-            &detector,
+            detector.as_ref(),
             pointer.pos,
             &ElementEvent::PointerDown(pointer),
         );

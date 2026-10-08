@@ -883,7 +883,11 @@ mod tests {
         }
     }
 
-    impl EventElement for StubChild {}
+    impl EventElement for StubChild {
+        fn event_tree_role(&self) -> aimer_widget::EventTreeRole {
+            aimer_widget::EventTreeRole::Transparent
+        }
+    }
     impl LayoutElement for StubChild {}
     impl Rebuildable for StubChild {}
     impl Drawable for StubChild {
@@ -1041,7 +1045,7 @@ mod tests {
     /// Routes a mouse move through the framework's own hit testing, which offers
     /// an element only the events landing in the region it reports — the gate a
     /// direct `on_event` call steps over.
-    fn dispatch_move(element: &RawResizable<StubChild>, x: f32, y: f32) -> EventResult {
+    fn dispatch_move(element: &dyn Element, x: f32, y: f32) -> EventResult {
         let pos = Vec2d { x, y };
         dispatch_event(element, pos, &ElementEvent::PointerMove(mouse_at(x, y)))
     }
@@ -1283,14 +1287,14 @@ mod tests {
         let recorded = zones.clone();
         let element = resizable_zoned(Callback::from(move |zone: Direction| {
             recorded.borrow_mut().push(zone)
-        }));
+        })).boxed();
 
         let cursors = Rc::new(RefCell::new(Vec::new()));
         let seen = cursors.clone();
         let previous = set_thread_cursor_handler(move |cursor| seen.borrow_mut().push(cursor));
 
-        let _ = dispatch_move(&element, 198.0, 50.0);
-        let _ = dispatch_move(&element, 260.0, 50.0);
+        let _ = dispatch_move(element.as_ref(), 198.0, 50.0);
+        let _ = dispatch_move(element.as_ref(), 260.0, 50.0);
 
         restore_thread_cursor_handler(previous);
 
@@ -1308,16 +1312,16 @@ mod tests {
     // belong to whatever is there.
     #[test]
     fn the_box_reports_its_region_again_once_the_pointer_is_gone() {
-        let element = resizable(Callback::default());
+        let element = resizable(Callback::default()).boxed();
         assert!(element.pos_start_end().is_some());
 
-        let _ = dispatch_move(&element, 198.0, 50.0);
+        let _ = dispatch_move(element.as_ref(), 198.0, 50.0);
         assert!(
             element.pos_start_end().is_none(),
             "a hovered handle must hear the move that takes the pointer away"
         );
 
-        let _ = dispatch_move(&element, 260.0, 50.0);
+        let _ = dispatch_move(element.as_ref(), 260.0, 50.0);
         assert!(element.pos_start_end().is_some());
     }
 

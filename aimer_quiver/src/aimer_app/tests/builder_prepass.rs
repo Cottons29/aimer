@@ -61,9 +61,9 @@ fn next_frame<W: Widget + 'static>(app: &mut HeadlessAimerApp<W>) {
     app.last_frame_result.take().expect("a frame was drawn");
 }
 
-/// How many boundaries each of `FRAMES` animating frames descended, and how
-/// many times the builder ran across them.
-fn descents_per_frame() -> (Vec<u64>, usize) {
+/// How many boundaries each of `FRAMES` animating frames descended and how
+/// many it entered at all, and how many times the builder ran across them.
+fn descents_per_frame() -> (Vec<u64>, Vec<u64>, usize) {
     let calls = Rc::new(Cell::new(0usize));
     let mut app = start(calls.clone());
     // Let the first animating frames settle: the first walk after a rebuild
@@ -73,18 +73,21 @@ fn descents_per_frame() -> (Vec<u64>, usize) {
     }
     let before_calls = calls.get();
     let mut descents = Vec::new();
+    let mut visits = Vec::new();
     for _ in 0..FRAMES {
-        let before = aimer_widget::rebuild_descent_count();
+        let (descended, entered) =
+            (aimer_widget::rebuild_descent_count(), aimer_widget::rebuild_visit_count());
         next_frame(&mut app);
-        descents.push(aimer_widget::rebuild_descent_count() - before);
+        descents.push(aimer_widget::rebuild_descent_count() - descended);
+        visits.push(aimer_widget::rebuild_visit_count() - entered);
     }
-    (descents, calls.get() - before_calls)
+    (descents, visits, calls.get() - before_calls)
 }
 
 #[test]
 fn an_animating_builder_descends_only_its_own_path_in_the_rebuild_prepass() {
     let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let (descents, runs) = descents_per_frame();
+    let (descents, visits, runs) = descents_per_frame();
 
     assert!(runs >= FRAMES - 5, "the builder ran only {runs} times in {FRAMES} animating frames");
     // The path to the builder is the window root, the page container, the
@@ -97,6 +100,23 @@ fn an_animating_builder_descends_only_its_own_path_in_the_rebuild_prepass() {
         worst <= 12,
         "an animating frame descended {worst} boundaries, per frame: {descents:?}; \
          the rows alone hold {whole_rows}"
+    );
+}
+
+/// Pruning a boundary is cheap, but entering every one of a long list's
+/// children to find that out is still work proportional to the list. The pass
+/// should reach only the children that lead to the builder.
+#[test]
+fn an_animating_builder_does_not_enter_its_clean_siblings() {
+    let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (_, visits, _) = descents_per_frame();
+
+    let worst = visits.iter().copied().max().unwrap_or(0);
+    assert!(
+        worst <= 12,
+        "an animating frame entered {worst} boundaries, per frame: {visits:?}; \
+         the page holds {ROWS} rows, \
+         and the bound does not depend on how many"
     );
 }
 
@@ -212,8 +232,65 @@ mod moved_state {
 
     impl aimer_widget::PortableWidget for Tagged {}
 
+    fn find_element<'a>(element: &'a dyn Element, name: &str) -> Option<&'a dyn Element> {
+        if element.debug_name() == name {
+            return Some(element);
+        }
+        let mut found = None;
+        element.visit_children(&mut |child| {
+            if found.is_none() {
+                found = find_element(child, name);
+            }
+        });
+        found
+    }
+
     fn spacer() -> aimer_widget::AnyWidget {
         SizedBox::new().width(Dimension::Px(40.0)).height(Dimension::Px(20.0)).boxed()
+    }
+
+    /// The pass reaches a long list's children through the dirty paths, so a
+    /// child that is dirty for its own reasons has to be among them: a state
+    /// change next to an animating builder rebuilds in the same frame, and the
+    /// builder keeps going.
+    #[test]
+    fn a_dirty_sibling_is_rebuilt_while_a_builder_animates_beside_it() {
+        let _serial = VIRTUALIZED_RENDER_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let tagged = Tagged { builds: Rc::new(Cell::new(0)), updater: Rc::default() };
+        let builds = tagged.builds.clone();
+        let calls = Rc::new(Cell::new(0usize));
+        let animated = {
+            let calls = calls.clone();
+            AnimatedBuilder::new(looping(), move |progress| {
+                calls.set(calls.get() + 1);
+                SizedBox::new()
+                    .width(Dimension::Px(48.0))
+                    .height(Dimension::Px(48.0))
+                    .color(Color::Rgb((progress * 255.0) as u8, 0, 0))
+            })
+        };
+        let mut rows = vec![animated.boxed(), tagged.boxed()];
+        rows.extend((0..ROWS).map(|_| deep_row()));
+        let page = aimer_container::Container::new().color(Color::WHITE).child(Column::new().children(rows));
+        let mut app = AimerApp::start_headless_with(page, HeadlessOptions {
+            size: PhysicalSize::new(200, 800), scale_factor: 1.0,
+        });
+        app.pump_frames(4);
+        for _ in 0..4 {
+            next_frame(&mut app);
+        }
+
+        let (builds_before, calls_before) = (builds.get(), calls.get());
+        // Marking the element directly keeps the index of dirty paths, which a
+        // state update would discard, so the pass reaches it through the edges.
+        let root = app.app.widget_root.as_ref().expect("the tree is mounted");
+        find_element(root.as_ref(), "Tagged").expect("the sibling is mounted").mark_needs_rebuild();
+        for _ in 0..4 {
+            next_frame(&mut app);
+        }
+
+        assert!(builds.get() > builds_before, "the dirty sibling was skipped");
+        assert!(calls.get() >= calls_before + 3, "the builder stopped animating");
     }
 
     /// A keyed stateful element carries its dirty source, and with it the path
