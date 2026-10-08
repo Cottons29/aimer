@@ -8,7 +8,12 @@ use crate::simd_traits::{
     Simd, SimdAdd, SimdCompare, SimdDiv, SimdMul, SimdSelect, SimdSub,
 };
 
-/// x86_64 SSE2 backend for four-lane f32 operations.
+/// x86_64 SSE2 backend for four f32, sixteen u8, or eight u16 lanes.
+///
+/// Integer arithmetic follows Rust's overflow-check setting: overflow panics
+/// when checks are enabled, and wraps when they are disabled.
+/// Unsigned lanes support addition, subtraction, multiplication, comparison,
+/// and selection; integer division is not implemented.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sse2;
 

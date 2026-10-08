@@ -3,6 +3,10 @@ use core::fmt;
 use crate::number::Number;
 use crate::simd_traits::{Simd, SimdAdd};
 
+mod unsigned;
+
+pub use unsigned::{add_u8, add_u16};
+
 #[cfg(any(
     feature = "force-scalar",
     not(any(target_arch = "aarch64", target_arch = "x86_64"))
