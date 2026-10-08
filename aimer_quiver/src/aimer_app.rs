@@ -76,7 +76,13 @@ pub static EVENT_PROXY: OnceLock<EventLoopProxy<AimerNativePlatformEvent>> = Onc
 /// The reason a pending frame was scheduled, kept private to the event loop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FrameRequestKind {
+    /// Scroll input arrived and nothing else wants the frame. When the input
+    /// smoother has nothing left to deliver the frame can be dropped.
     ScrollOnly,
+    /// The scroll engine asked for the frame that continues its own motion.
+    /// Nothing but scrolling wants it, but the motion is advanced by drawing,
+    /// so it is never dropped.
+    ScrollPhysics,
     Full,
 }
 
@@ -84,15 +90,23 @@ impl FrameRequestKind {
     pub(crate) fn merge(self, other: Self) -> Self {
         if matches!(self, Self::Full) || matches!(other, Self::Full) {
             Self::Full
+        } else if matches!(self, Self::ScrollPhysics) || matches!(other, Self::ScrollPhysics) {
+            Self::ScrollPhysics
         } else {
             Self::ScrollOnly
         }
+    }
+
+    /// Whether scrolling is the only reason for the frame.
+    pub(crate) const fn is_scroll_driven(self) -> bool {
+        matches!(self, Self::ScrollOnly | Self::ScrollPhysics)
     }
 
     const fn encode(self) -> u8 {
         match self {
             Self::ScrollOnly => 1,
             Self::Full => 2,
+            Self::ScrollPhysics => 3,
         }
     }
 
@@ -100,6 +114,7 @@ impl FrameRequestKind {
         match value {
             1 => Some(Self::ScrollOnly),
             2 => Some(Self::Full),
+            3 => Some(Self::ScrollPhysics),
             _ => None,
         }
     }
@@ -126,6 +141,11 @@ pub(crate) fn with_frame_request_kind<T>(kind: FrameRequestKind, request: impl F
 }
 
 fn current_frame_request_kind() -> FrameRequestKind {
+    // Scroll physics asks for its continuation frames from inside the draw,
+    // far from anything that could open a `request_scroll_frame` scope here.
+    if aimer_events::window::is_scroll_frame_request() {
+        return FrameRequestKind::ScrollPhysics;
+    }
     CURRENT_FRAME_REQUEST_KIND.with(Cell::get)
 }
 
@@ -193,7 +213,17 @@ fn complete_frame_ready_request(pending: &AtomicU8) -> FrameRequestKind {
 }
 
 pub(crate) fn promote_pending_scroll_frame_request() {
-    let _ = FRAME_READY_PENDING.compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire);
+    for scroll_driven in [
+        FrameRequestKind::ScrollOnly,
+        FrameRequestKind::ScrollPhysics,
+    ] {
+        let _ = FRAME_READY_PENDING.compare_exchange(
+            scroll_driven.encode(),
+            FrameRequestKind::Full.encode(),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -869,6 +899,8 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
             .app
             .should_skip_scroll_frame(kind, &preparation, had_pending_resize);
         if !skip_draw {
+            self.app
+                .mark_scroll_only_frame(kind, &preparation, had_pending_resize);
             let build = crate::frame_stats::PhaseTimer::start();
             let canvas = aimer_canvas::FrameCanvas::new(&self.canvas);
             canvas.begin_frame();
@@ -1584,6 +1616,10 @@ mod tests {
     mod retained_button;
     mod retained_switcher;
     mod retained_modal;
+    mod compositor_reset;
+    mod scroll_frame_kind;
+    mod scroll_one_step;
+    mod settled_skip;
 
     static VIRTUALIZED_RENDER_TEST_LOCK: Mutex<()> = Mutex::new(());
 

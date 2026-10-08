@@ -1,7 +1,10 @@
 use super::*;
 
-/// Marks a node without a resolvable parent in [`Topology::parent`].
-const NO_PARENT: usize = usize::MAX;
+/// Marks a root in [`Topology::parent`].
+pub(super) const NO_PARENT: usize = usize::MAX;
+
+/// Marks a node whose parent identity names no node in [`Topology::parent`].
+pub(super) const ORPHAN_PARENT: usize = usize::MAX - 1;
 
 /// Node positions for every parent and child link, resolved once per topology.
 ///
@@ -10,14 +13,16 @@ const NO_PARENT: usize = usize::MAX;
 /// the tree while the structure stays the same, so those lookups were repeated
 /// several times per node per frame for answers that had not changed. This
 /// resolves them when [`DrawCommandList::topology_revision`] moves and lets
-/// the per-frame passes index plain slices.
+/// the per-frame passes, and every question about a node's ancestors, index
+/// plain slices.
 #[derive(Default)]
-struct Topology {
+pub(super) struct Topology {
     revision: Option<u64>,
     /// Positions of the roots, in paint order.
-    roots: Vec<usize>,
-    /// Position of each node's parent, or [`NO_PARENT`].
-    parent: Vec<usize>,
+    pub(super) roots: Vec<usize>,
+    /// Position of each node's parent, [`NO_PARENT`] for a root or
+    /// [`ORPHAN_PARENT`] when the parent is missing.
+    pub(super) parent: Vec<usize>,
     /// `children[child_start[i]..child_start[i + 1]]` are node `i`'s children,
     /// in paint order. One extra entry closes the last node's range.
     child_start: Vec<usize>,
@@ -25,8 +30,14 @@ struct Topology {
 }
 
 impl Topology {
+    /// Whether this was resolved against the tree's current structure.
+    #[inline]
+    fn is_current(&self, tree: &DrawCommandList) -> bool {
+        self.revision == Some(tree.topology_revision) && self.parent.len() == tree.nodes.len()
+    }
+
     fn refresh(&mut self, tree: &DrawCommandList) {
-        if self.revision == Some(tree.topology_revision) && self.parent.len() == tree.nodes.len() {
+        if self.is_current(tree) {
             return;
         }
         self.roots.clear();
@@ -39,11 +50,10 @@ impl Topology {
         self.child_start.clear();
         self.children.clear();
         for node in &tree.nodes {
-            self.parent.push(
-                node.parent
-                    .and_then(|parent| tree.indices.get(&parent).copied())
-                    .unwrap_or(NO_PARENT),
-            );
+            self.parent.push(match node.parent {
+                None => NO_PARENT,
+                Some(parent) => tree.indices.get(&parent).copied().unwrap_or(ORPHAN_PARENT),
+            });
             self.child_start.push(self.children.len());
             self.children.extend(
                 node.children
@@ -56,14 +66,35 @@ impl Topology {
     }
 
     #[inline]
-    fn children_of(&self, index: usize) -> &[usize] {
+    pub(super) fn children_of(&self, index: usize) -> &[usize] {
         &self.children[self.child_start[index]..self.child_start[index + 1]]
+    }
+}
+
+impl DrawCommandList {
+    /// The parent and child positions of the current structure, resolved
+    /// again only when the structure has changed since they were last read.
+    pub(super) fn topology(&self) -> std::cell::Ref<'_, Topology> {
+        // A shared look first: a caller that already holds the topology must
+        // be able to ask again without needing it exclusively.
+        if !self.topology.borrow().is_current(self) {
+            self.topology.borrow_mut().refresh(self);
+        }
+        self.topology.borrow()
     }
 }
 
 #[derive(Default)]
 pub(super) struct RenderWorkspace {
-    topology: Topology,
+    /// The structure and geometry revisions, and node count, that `states`
+    /// were derived for. A plan made while they still hold has nothing to
+    /// derive: paint, opacity and the recorded lists are read from the nodes
+    /// directly, and none of them feed the states.
+    prepared_for: Option<(u64, u64, usize)>,
+    /// How many operations the previous plan held: a tree that is drawn every
+    /// frame plans about the same amount each time, so the next output is
+    /// sized for it instead of growing by doubling and copying.
+    output_hint: usize,
     states: Vec<NodeFrameState>,
     visit_stack: Vec<usize>,
     node_order: Vec<usize>,
@@ -77,7 +108,6 @@ struct NodeFrameState {
     bounds: Option<Rect>,
     clip: ClipState,
     clip_radius: [f32; 4],
-    subtree_bounds: Option<Rect>,
     visible_subtree_bounds: Option<Rect>,
 }
 
@@ -89,30 +119,20 @@ impl Default for NodeFrameState {
             bounds: None,
             clip: ClipState::Unclipped,
             clip_radius: [0.0; 4],
-            subtree_bounds: None,
             visible_subtree_bounds: None,
         }
     }
 }
 
-#[derive(Clone, Copy)]
-struct ParentFrameState {
-    origin: (f32, f32),
-    transform: Mat3,
-    clip: ClipState,
-    clip_radius: [f32; 4],
-}
-
-impl Default for ParentFrameState {
-    fn default() -> Self {
-        Self {
-            origin: (0.0, 0.0),
-            transform: Mat3::identity(),
-            clip: ClipState::Unclipped,
-            clip_radius: [0.0; 4],
-        }
-    }
-}
+/// What a root inherits: nothing offset, transformed or clipped.
+const ROOT_STATE: NodeFrameState = NodeFrameState {
+    origin: (0.0, 0.0),
+    transform: Mat3::identity(),
+    bounds: None,
+    clip: ClipState::Unclipped,
+    clip_radius: [0.0; 4],
+    visible_subtree_bounds: None,
+};
 
 /// Maps a clip's local corner radii into world space.
 ///
@@ -138,8 +158,24 @@ enum RenderTraversal {
 }
 
 impl RenderWorkspace {
+    /// Drops the geometry kept from the last plan, so the next one derives it.
+    #[cfg(test)]
+    fn forget_geometry(&mut self) {
+        self.prepared_for = None;
+    }
+
     fn prepare(&mut self, tree: &DrawCommandList) {
-        self.topology.refresh(tree);
+        let revisions = (
+            tree.geometry_revision,
+            tree.topology_revision,
+            tree.nodes.len(),
+        );
+        if self.prepared_for == Some(revisions) {
+            return;
+        }
+        #[cfg(test)]
+        PLAN_GEOMETRY_RUNS.with(|count| count.set(count.get() + 1));
+        let topology = tree.topology();
         self.states
             .resize_with(tree.nodes.len(), NodeFrameState::default);
         self.visit_stack.clear();
@@ -147,7 +183,7 @@ impl RenderWorkspace {
 
         // Plain index loops: the adapter chains these replace cost several
         // calls per element in an unoptimized build, for a body that is a push.
-        let roots = &self.topology.roots;
+        let roots = &topology.roots;
         let mut next = roots.len();
         while next > 0 {
             next -= 1;
@@ -158,15 +194,12 @@ impl RenderWorkspace {
             let Some(node) = tree.nodes.get(index) else {
                 continue;
             };
+            // Read in place: copying a parent's frame out only to read three
+            // fields of it costs more than the reads.
             let parent = self
                 .states
-                .get(self.topology.parent[index])
-                .map_or_else(ParentFrameState::default, |state| ParentFrameState {
-                    origin: state.origin,
-                    transform: state.transform,
-                    clip: state.clip,
-                    clip_radius: state.clip_radius,
-                });
+                .get(topology.parent[index])
+                .unwrap_or(&ROOT_STATE);
             let origin = (
                 parent.origin.0 + node.bounds.x,
                 parent.origin.1 + node.bounds.y,
@@ -229,12 +262,11 @@ impl RenderWorkspace {
                 bounds: Some(bounds),
                 clip,
                 clip_radius,
-                subtree_bounds: Some(bounds),
                 visible_subtree_bounds: clip.intersect_bounds(bounds),
             };
             self.node_order.push(index);
 
-            let children = self.topology.children_of(index);
+            let children = topology.children_of(index);
             let mut next = children.len();
             while next > 0 {
                 next -= 1;
@@ -242,18 +274,20 @@ impl RenderWorkspace {
             }
         }
 
-        for index in self.node_order.iter().rev().copied() {
-            let child_bounds = self.states[index].subtree_bounds;
+        let mut next = self.node_order.len();
+        while next > 0 {
+            next -= 1;
+            let index = self.node_order[next];
             let child_visible_bounds = self.states[index].visible_subtree_bounds;
-            let Some(parent_state) = self.states.get_mut(self.topology.parent[index]) else {
+            let Some(parent_state) = self.states.get_mut(topology.parent[index]) else {
                 continue;
             };
-            union_bounds(&mut parent_state.subtree_bounds, child_bounds);
             union_bounds(
                 &mut parent_state.visible_subtree_bounds,
                 child_visible_bounds,
             );
         }
+        self.prepared_for = Some(revisions);
     }
 
     fn collect(
@@ -261,9 +295,10 @@ impl RenderWorkspace {
         tree: &DrawCommandList,
         damage: Option<&[Rect]>,
     ) -> Vec<RenderOp> {
-        let mut output = Vec::new();
+        let topology = tree.topology();
+        let mut output = Vec::with_capacity(self.output_hint);
         self.render_stack.clear();
-        let roots = &self.topology.roots;
+        let roots = &topology.roots;
         let mut next = roots.len();
         while next > 0 {
             next -= 1;
@@ -340,7 +375,7 @@ impl RenderWorkspace {
                     .push(RenderTraversal::EndOpacityGroup(id));
             }
             // A node without a clip may have children that extend beyond its bounds.
-            let children = self.topology.children_of(index);
+            let children = topology.children_of(index);
             let mut next = children.len();
             while next > 0 {
                 next -= 1;
@@ -349,6 +384,7 @@ impl RenderWorkspace {
             }
         }
 
+        self.output_hint = output.len();
         output
     }
 }
@@ -381,6 +417,13 @@ impl RenderTree {
         let mut workspace = tree.render_workspace.borrow_mut();
         workspace.prepare(&tree);
         workspace.collect(&tree, None)
+    }
+
+    /// Plans every node after forgetting the geometry kept from earlier plans.
+    #[cfg(test)]
+    pub(super) fn render_all_from_scratch(&self) -> Vec<RenderOp> {
+        self.draw_cmd.borrow().render_workspace.borrow_mut().forget_geometry();
+        self.render_all()
     }
 
     /// Takes pending damage and creates its parent-first composition plan.

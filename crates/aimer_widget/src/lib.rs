@@ -140,6 +140,13 @@ pub use crate::components::element::{
     take_declined_paint_elements, take_paint_frame_damage,
     take_unmapped_draws, update_v2_render_node_geometry, with_v2_render_tree_context,
 };
+#[doc(hidden)]
+pub use crate::components::context::InheritedStates;
+#[doc(hidden)]
+pub use crate::components::element::{
+    VisibleWindow, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,
+    retained_visible_window_of_current, set_scroll_only_frame, set_settled_offscreen_skip,
+};
 #[cfg(feature = "frame-stats")]
 pub use crate::components::element::{
     reset_draw_traversal_count, reset_routed_event_visit_count, take_draw_traversal_count,

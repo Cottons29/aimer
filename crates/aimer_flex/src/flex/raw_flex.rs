@@ -1100,6 +1100,15 @@ impl Drawable for RawFlex {
         // GPU anti-aliasing blends the gap with the parent background (white).
         let scale = ctx.scale.max(1.0);
 
+        // A frame requested by scrolling alone cannot have changed any child
+        // that was already recorded, so the ones the cache window prepared
+        // beyond the screen are left until they reach it. Everything else, and
+        // every other kind of frame, visits exactly as before.
+        let on_screen = if aimer_widget::may_skip_settled_offscreen() {
+            aimer_widget::retained_visible_window_of_current(ctx.scale)
+        } else {
+            None
+        };
         order.visit(range.clone(), |index| {
             let Some(child) = self.children.get(index) else {
                 return;
@@ -1126,6 +1135,12 @@ impl Drawable for RawFlex {
             // The index range only bounds the main axis, so a child can still
             // sit outside the viewport across it.
             if !ctx.is_rect_visible(offset_x, offset_y, c_w, c_h) {
+                return;
+            }
+            if let Some(window) = &on_screen
+                && !window.intersects(offset_x, offset_y, c_w, c_h)
+                && aimer_widget::retained_element_settled(child.id())
+            {
                 return;
             }
 

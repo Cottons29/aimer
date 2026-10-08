@@ -1,8 +1,10 @@
 pub mod color;
+pub mod id_hasher;
 pub mod mat3;
 pub mod rgba8;
 
 pub use color::*;
+pub use id_hasher::{IdBuildHasher, IdHasher};
 pub use mat3::*;
 pub use rgba8::Rgba8;
 

@@ -37,9 +37,23 @@ use crate::pointer_claim;
 use crate::{AnyElement, Drawable, Key};
 
 mod event;
+mod compositor_applied;
 mod node;
+#[cfg(test)]
+mod paint_invalidation_tests;
+#[cfg(test)]
+mod render_context_tests;
+mod retained_window;
 
+use compositor_applied::{
+    compositor_animation_may_be_applied, forget_unmapped_compositor_animations,
+    note_compositor_animation_applied, note_compositor_animation_cleared,
+};
 use node::ElementNode;
+pub use retained_window::{
+    VisibleWindow, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,
+    retained_visible_window_of_current, set_scroll_only_frame, set_settled_offscreen_skip,
+};
 pub use event::{
     ElementPath, EventDispatchContext, EventDispatcher, broadcast_event, dispatch_event,
     dispatch_focused_event,
@@ -137,14 +151,30 @@ thread_local! {
 /// especially in unoptimized builds.
 pub type ElementNodeMap = HashMap<ElementId, RenderNodeId>;
 
+/// The retained render tree a traversal paints into, and how elements map to
+/// its nodes.
+///
+/// Every element's `update` takes a copy of this, so a copy is one counted
+/// reference to shared data, not one per field.
 #[derive(Clone)]
-pub(crate) struct V2RenderContext {
+pub(crate) struct V2RenderContext(Rc<V2RenderScope>);
+
+pub(crate) struct V2RenderScope {
     pub(crate) tree: RenderTree,
     element_nodes: Rc<ElementNodeMap>,
-    prepared_root: Rc<Cell<Option<ElementId>>>,
+    prepared_root: Cell<Option<ElementId>>,
 }
 
-impl V2RenderContext {
+impl std::ops::Deref for V2RenderContext {
+    type Target = V2RenderScope;
+
+    #[inline]
+    fn deref(&self) -> &V2RenderScope {
+        &self.0
+    }
+}
+
+impl V2RenderScope {
     #[inline]
     pub(crate) fn node_for_element(&self, element: ElementId) -> Option<RenderNodeId> {
         self.element_nodes.get(&element).copied()
@@ -178,12 +208,13 @@ pub fn with_v2_render_tree_context<R>(
     prepared_root: Option<ElementId>,
     callback: impl FnOnce() -> R,
 ) -> R {
+    forget_unmapped_compositor_animations(&element_nodes);
     V2_RENDER_CONTEXT_STACK.with(|stack| {
-        stack.borrow_mut().push(V2RenderContext {
+        stack.borrow_mut().push(V2RenderContext(Rc::new(V2RenderScope {
             tree,
             element_nodes,
-            prepared_root: Rc::new(Cell::new(prepared_root)),
-        });
+            prepared_root: Cell::new(prepared_root),
+        })));
     });
     let _guard = V2RenderContextGuard;
     callback()
@@ -196,7 +227,8 @@ pub(crate) fn current_v2_render_context() -> Option<V2RenderContext> {
 /// Returns whether the current draw is using the window's retained v2 tree.
 #[doc(hidden)]
 pub fn has_active_v2_render_tree() -> bool {
-    current_v2_render_context().is_some()
+    // Asked once per element per frame: looking is enough, copying is not.
+    V2_RENDER_CONTEXT_STACK.with(|stack| !stack.borrow().is_empty())
 }
 
 /// Returns whether retained v2 paint is the current presentation source, which
@@ -428,7 +460,10 @@ fn mark_paint_invalidations_unknown() {
 #[doc(hidden)]
 pub fn local_paint_element_was_invalidated(element: ElementId) -> bool {
     sync_paint_invalidation_epoch();
-    PAINT_INVALIDATED_LOCAL_ELEMENTS.with(|elements| elements.borrow().contains(&element))
+    PAINT_INVALIDATED_LOCAL_ELEMENTS.with(|elements| {
+        let elements = elements.borrow();
+        !elements.is_empty() && elements.contains(&element)
+    })
 }
 
 /// Marks one reconciled element's retained paint as stale in this invalidation epoch.
@@ -449,7 +484,12 @@ pub(crate) fn mark_event_paint_invalidated(element: ElementId) {
 
 #[inline]
 pub(crate) fn take_event_paint_invalidated(element: ElementId) -> bool {
-    EVENT_PAINT_INVALIDATIONS.with(|invalidations| invalidations.borrow_mut().remove(&element))
+    EVENT_PAINT_INVALIDATIONS.with(|invalidations| {
+        let mut invalidations = invalidations.borrow_mut();
+        // Asked of every element every frame, and almost always empty: hashing
+        // the element only to find that out is the whole cost.
+        !invalidations.is_empty() && invalidations.remove(&element)
+    })
 }
 
 /// Resets the draw traversal counter for the next measured frame.
@@ -902,7 +942,7 @@ pub trait Element: VisitorElement + EventElement + LayoutElement + Rebuildable +
             ElementNode {
                 id: Cell::new(ElementId::next()),
                 element: self,
-            },
+                },
             allocator,
         )
     }

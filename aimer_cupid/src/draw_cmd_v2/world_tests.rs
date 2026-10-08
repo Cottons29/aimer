@@ -133,10 +133,10 @@ mod reference {
 }
 
 /// A deterministic pseudo-random number source, so failures reproduce.
-struct Lcg(u64);
+pub(super) struct Lcg(pub(super) u64);
 
 impl Lcg {
-    fn next(&mut self) -> u64 {
+    pub(super) fn next(&mut self) -> u64 {
         self.0 = self
             .0
             .wrapping_mul(6364136223846793005)
@@ -144,16 +144,16 @@ impl Lcg {
         self.0 >> 33
     }
 
-    fn range(&mut self, low: f32, high: f32) -> f32 {
+    pub(super) fn range(&mut self, low: f32, high: f32) -> f32 {
         low + (self.next() % 10_000) as f32 / 10_000.0 * (high - low)
     }
 
-    fn chance(&mut self, percent: u64) -> bool {
+    pub(super) fn chance(&mut self, percent: u64) -> bool {
         self.next() % 100 < percent
     }
 }
 
-fn random_transform(rng: &mut Lcg) -> Mat3 {
+pub(super) fn random_transform(rng: &mut Lcg) -> Mat3 {
     match rng.next() % 3 {
         0 => Mat3::identity(),
         1 => Mat3::translate(rng.range(-20.0, 20.0), rng.range(-20.0, 20.0)),
@@ -162,7 +162,7 @@ fn random_transform(rng: &mut Lcg) -> Mat3 {
     }
 }
 
-fn random_clip(rng: &mut Lcg) -> Rect {
+pub(super) fn random_clip(rng: &mut Lcg) -> Rect {
     Rect::new(
         rng.range(-10.0, 20.0),
         rng.range(-10.0, 20.0),
@@ -173,7 +173,7 @@ fn random_clip(rng: &mut Lcg) -> Rect {
 
 /// A varied tree: nested nodes with offsets, transforms, presentation
 /// transforms, clips and animation clips.
-fn varied_tree(seed: u64, nodes: usize) -> (RenderTree, Vec<RenderNodeId>) {
+pub(super) fn varied_tree(seed: u64, nodes: usize) -> (RenderTree, Vec<RenderNodeId>) {
     let tree = RenderTree::new();
     let mut rng = Lcg(seed);
     let root = tree.add_root(Rect::new(0.0, 0.0, 400.0, 300.0)).unwrap();
@@ -239,6 +239,93 @@ fn world_queries_match_the_original_definitions_exactly() {
     }
 }
 
+/// A tree like a real interface: almost no node carries a transform, a share
+/// of them clip, and a few animate. The identity shortcut takes every node
+/// that has no transform, so this is the shape that exercises it hardest.
+pub(super) fn untransformed_tree(seed: u64, nodes: usize) -> (RenderTree, Vec<RenderNodeId>) {
+    let tree = RenderTree::new();
+    let mut rng = Lcg(seed);
+    let root = tree.add_root(Rect::new(0.0, 0.0, 600.0, 400.0)).unwrap();
+    let mut ids = vec![root];
+    for _ in 1..nodes {
+        // Deep nesting: bias toward the most recently added nodes.
+        let recent = ids.len().saturating_sub(6);
+        let parent = ids[recent + (rng.next() as usize) % (ids.len() - recent)];
+        let bounds = Rect::new(
+            rng.range(-20.0, 90.0),
+            rng.range(-20.0, 90.0),
+            rng.range(1.0, 200.0),
+            rng.range(1.0, 200.0),
+        );
+        ids.push(tree.add_child(parent, bounds).unwrap());
+    }
+    {
+        let mut inner = tree.draw_cmd.borrow_mut();
+        for id in &ids {
+            let node = inner.node_mut(*id).unwrap();
+            if rng.chance(4) {
+                node.transform = random_transform(&mut rng);
+            }
+            if rng.chance(3) {
+                node.presentation_transform = random_transform(&mut rng);
+            }
+            if rng.chance(30) {
+                node.clip = Some(random_clip(&mut rng));
+            }
+            if rng.chance(8) {
+                node.animation_clip = Some(random_clip(&mut rng));
+            }
+        }
+    }
+    (tree, ids)
+}
+
+#[test]
+fn world_queries_match_the_definitions_on_mostly_untransformed_trees() {
+    for seed in [2, 13, 77, 1234, 424_242] {
+        let (tree, ids) = untransformed_tree(seed, 120);
+        let inner = tree.draw_cmd.borrow();
+        for id in ids {
+            assert_eq!(
+                inner.world_bounds(id),
+                reference::world_bounds(&inner, id),
+                "world_bounds, seed {seed}, {id:?}"
+            );
+            assert_eq!(
+                inner.visible_node_bounds(id),
+                reference::visible_node_bounds(&inner, id),
+                "visible_node_bounds, seed {seed}, {id:?}"
+            );
+            assert_eq!(
+                inner.subtree_bounds(id),
+                reference::subtree_bounds(&inner, id),
+                "subtree_bounds, seed {seed}, {id:?}"
+            );
+            assert_eq!(
+                inner.visible_subtree_bounds(id),
+                reference::visible_subtree_bounds(&inner, id),
+                "visible_subtree_bounds, seed {seed}, {id:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_untransformed_chain_keeps_the_exact_translation_of_its_origin() {
+    // Translating to a node's origin and back must leave the inherited
+    // transform exactly as it was, however far from zero the origin is.
+    let tree = RenderTree::new();
+    let mut id = tree.add_root(Rect::new(0.1, 0.3, 50.0, 50.0)).unwrap();
+    for level in 0..40 {
+        id = tree
+            .add_child(id, Rect::new(777.7 + level as f32 * 0.37, 1234.1, 50.0, 50.0))
+            .unwrap();
+    }
+    let inner = tree.draw_cmd.borrow();
+    assert_eq!(inner.world_bounds(id), reference::world_bounds(&inner, id));
+    assert_eq!(inner.visible_node_bounds(id), reference::visible_node_bounds(&inner, id));
+}
+
 /// A single chain `depth` deep, each node nested in the previous one.
 fn chain(depth: usize) -> (RenderTree, RenderNodeId) {
     let tree = RenderTree::new();
@@ -287,6 +374,213 @@ fn a_visibility_query_costs_time_proportional_to_depth() {
         let _ = tree.world_bounds(leaf);
     });
     assert!(lookups <= budget, "world_bounds took {lookups} lookups (budget {budget})");
+}
+
+#[test]
+fn a_query_resolves_its_ancestors_without_looking_each_one_up() {
+    // The ancestors of a node are found from the structure the tree already
+    // keeps, so the cost of a lookup does not grow with depth.
+    const DEPTH: usize = 150;
+    const BUDGET: usize = 8;
+
+    for (what, lookups) in [
+        ("world_bounds", lookups_for(DEPTH, |tree, leaf| { let _ = tree.world_bounds(leaf); })),
+        ("visible_node_bounds", lookups_for(DEPTH, |tree, leaf| { let _ = tree.visible_node_bounds(leaf); })),
+        ("local_visible_region", lookups_for(DEPTH, |tree, leaf| { let _ = tree.local_visible_region(leaf); })),
+        ("visible_subtree_bounds", lookups_for(DEPTH, |tree, leaf| { let _ = tree.visible_subtree_bounds(leaf); })),
+    ] {
+        assert!(lookups <= BUDGET, "{what} took {lookups} node lookups for a chain {DEPTH} deep");
+    }
+}
+
+/// Compares every node of `ids` against the original definitions.
+fn assert_matches_reference(tree: &RenderTree, ids: &[RenderNodeId], context: &str) {
+    let inner = tree.draw_cmd.borrow();
+    for id in ids {
+        assert_eq!(
+            inner.world_bounds(*id),
+            reference::world_bounds(&inner, *id),
+            "world_bounds {id:?} {context}"
+        );
+        assert_eq!(
+            inner.visible_node_bounds(*id),
+            reference::visible_node_bounds(&inner, *id),
+            "visible_node_bounds {id:?} {context}"
+        );
+        assert_eq!(
+            inner.subtree_bounds(*id),
+            reference::subtree_bounds(&inner, *id),
+            "subtree_bounds {id:?} {context}"
+        );
+        assert_eq!(
+            inner.visible_subtree_bounds(*id),
+            reference::visible_subtree_bounds(&inner, *id),
+            "visible_subtree_bounds {id:?} {context}"
+        );
+    }
+}
+
+#[test]
+fn every_edit_is_seen_by_the_next_query_even_with_warm_results() {
+    for seed in [5, 31, 202, 9_001] {
+        let (tree, ids) = untransformed_tree(seed, 60);
+        let mut rng = Lcg(seed ^ 0xabcd);
+        // Everything is asked once first, so any result kept from before an
+        // edit is there to be wrongly served after it.
+        assert_matches_reference(&tree, &ids, "initially");
+
+        for step in 0..40 {
+            let id = ids[(rng.next() as usize) % ids.len()];
+            let what = match rng.next() % 6 {
+                0 => {
+                    let bounds = Rect::new(
+                        rng.range(-30.0, 60.0),
+                        rng.range(-30.0, 60.0),
+                        rng.range(1.0, 150.0),
+                        rng.range(1.0, 150.0),
+                    );
+                    let _ = tree.set_bounds(id, bounds);
+                    "set_bounds"
+                }
+                1 => {
+                    let _ = tree.set_transform(id, random_transform(&mut rng));
+                    "set_transform"
+                }
+                2 => {
+                    let clip = rng.chance(70).then(|| random_clip(&mut rng));
+                    let _ = tree.set_clip(id, clip);
+                    "set_clip"
+                }
+                3 => {
+                    let bounds = Rect::new(
+                        rng.range(-30.0, 60.0),
+                        rng.range(-30.0, 60.0),
+                        rng.range(1.0, 150.0),
+                        rng.range(1.0, 150.0),
+                    );
+                    let clip = rng.chance(50).then(|| random_clip(&mut rng));
+                    let _ = tree.set_geometry(id, bounds, clip);
+                    "set_geometry"
+                }
+                4 => {
+                    let clip = rng.chance(50).then(|| random_clip(&mut rng));
+                    let _ = tree.set_compositor_animation(
+                        id,
+                        random_transform(&mut rng),
+                        1.0,
+                        clip,
+                    );
+                    "set_compositor_animation"
+                }
+                _ => {
+                    let _ = tree.set_presentation(id, random_transform(&mut rng), 1.0);
+                    "set_presentation"
+                }
+            };
+            assert_matches_reference(&tree, &ids, &format!("seed {seed} step {step} after {what}"));
+        }
+    }
+}
+
+#[test]
+fn growing_and_restructuring_the_tree_is_seen_by_warm_results() {
+    let (tree, mut ids) = untransformed_tree(77, 30);
+    assert_matches_reference(&tree, &ids, "initially");
+
+    let added = tree.add_child(ids[3], Rect::new(4.0, 5.0, 30.0, 30.0)).unwrap();
+    ids.push(added);
+    assert_matches_reference(&tree, &ids, "after add_child");
+
+    let added = tree.add_root(Rect::new(9.0, 9.0, 50.0, 50.0)).unwrap();
+    ids.push(added);
+    assert_matches_reference(&tree, &ids, "after add_root");
+}
+
+#[test]
+fn a_frame_is_derived_once_however_many_queries_share_it() {
+    // A chain makes every node an ancestor of the next. Asking about each node
+    // used to re-derive all of its ancestors, which is quadratic in depth.
+    const DEPTH: usize = 300;
+    let (tree, leaf) = chain(DEPTH);
+    let inner = tree.draw_cmd.borrow();
+    let ids = inner.nodes.iter().map(|node| node.id).collect::<Vec<_>>();
+
+    reset_node_lookups();
+    for id in ids.iter().rev() {
+        let _ = inner.world_bounds(*id);
+    }
+    let _ = inner.visible_node_bounds(leaf);
+    let _ = inner.local_visible_region(leaf);
+    let derived = frame_derivations();
+
+    assert!(
+        derived <= 3 * DEPTH,
+        "{derived} frames were derived for {} nodes",
+        DEPTH + 1
+    );
+}
+
+#[test]
+fn an_edit_makes_the_next_query_derive_its_frames_again() {
+    const DEPTH: usize = 40;
+    let (tree, leaf) = chain(DEPTH);
+    {
+        let inner = tree.draw_cmd.borrow();
+        let _ = inner.world_bounds(leaf);
+        reset_node_lookups();
+        let _ = inner.world_bounds(leaf);
+        assert!(frame_derivations() <= 2, "a repeated query re-derived its ancestors");
+    }
+
+    let root = tree.draw_cmd.borrow().roots[0];
+    tree.set_bounds(root, Rect::new(3.0, 3.0, 500.0, 500.0)).unwrap();
+
+    let inner = tree.draw_cmd.borrow();
+    reset_node_lookups();
+    let moved = inner.world_bounds(leaf);
+    assert!(frame_derivations() >= DEPTH, "the edit did not invalidate the cached frames");
+    assert_eq!(moved, reference::world_bounds(&inner, leaf));
+}
+
+#[test]
+fn queries_follow_the_structure_after_it_changes() {
+    let tree = RenderTree::new();
+    let root = tree.add_root(Rect::new(0.0, 0.0, 300.0, 300.0)).unwrap();
+    let left = tree.add_child(root, Rect::new(10.0, 10.0, 100.0, 100.0)).unwrap();
+    let right = tree.add_child(root, Rect::new(150.0, 20.0, 100.0, 100.0)).unwrap();
+    let leaf = tree.add_child(left, Rect::new(5.0, 5.0, 20.0, 20.0)).unwrap();
+    let before = tree.draw_cmd.borrow().world_bounds(leaf).unwrap();
+    assert_eq!((before.x, before.y), (15.0, 15.0));
+
+    // Moving the leaf under the other branch must change its world position,
+    // even though the tree answered a query about it a moment ago.
+    tree.sync_structure(&[
+        RenderNodeSpec::new(Some(root), None, Rect::new(0.0, 0.0, 300.0, 300.0)),
+        RenderNodeSpec::new(Some(left), Some(0), Rect::new(10.0, 10.0, 100.0, 100.0)),
+        RenderNodeSpec::new(Some(right), Some(0), Rect::new(150.0, 20.0, 100.0, 100.0)),
+        RenderNodeSpec::new(Some(leaf), Some(2), Rect::new(5.0, 5.0, 20.0, 20.0)),
+    ])
+    .unwrap();
+
+    let inner = tree.draw_cmd.borrow();
+    let after = inner.world_bounds(leaf).unwrap();
+    assert_eq!((after.x, after.y), (155.0, 25.0));
+    assert_eq!(inner.world_bounds(leaf), reference::world_bounds(&inner, leaf));
+}
+
+#[test]
+fn a_node_added_after_a_query_is_found_by_the_next_one() {
+    let tree = RenderTree::new();
+    let root = tree.add_root(Rect::new(5.0, 6.0, 100.0, 100.0)).unwrap();
+    let _ = tree.draw_cmd.borrow().world_bounds(root);
+
+    let child = tree.add_child(root, Rect::new(10.0, 20.0, 30.0, 40.0)).unwrap();
+    let grandchild = tree.add_child(child, Rect::new(1.0, 2.0, 3.0, 4.0)).unwrap();
+
+    let inner = tree.draw_cmd.borrow();
+    let bounds = inner.world_bounds(grandchild).unwrap();
+    assert_eq!((bounds.x, bounds.y), (16.0, 28.0));
+    assert_eq!(inner.world_bounds(grandchild), reference::world_bounds(&inner, grandchild));
 }
 
 #[test]

@@ -960,9 +960,11 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         #[cfg(not(target_arch = "wasm32"))]
         let gesture_open = false;
         if self.scroll_smoother.is_active() || gesture_open {
+            // Whatever distance is still owed rides the next frame. This frame's
+            // share was delivered above, once: the smoother covers a whole
+            // frame in one step, so delivering again would walk the widget tree
+            // a second time for nothing.
             crate::aimer_app::request_scroll_frame(|| self.request_animation_frame());
-            let _ = self.dispatch_smoothed_scroll();
-            // self.request_animation_frame();
             need_redraw = true;
         }
 
@@ -988,14 +990,48 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         preparation: &FramePreparation,
         had_pending_resize: bool,
     ) -> bool {
+        // Only a frame requested by scroll input can be dropped. One the scroll
+        // engine requested for its own motion is advanced by drawing it.
         kind == FrameRequestKind::ScrollOnly
             && !preparation.scroll_result.needs_redraw()
+            && self.frame_is_driven_by_scroll_alone(kind, preparation, had_pending_resize)
+    }
+
+    /// Whether this frame exists only because content scrolled.
+    ///
+    /// A widget animation, a state change, a rebuild, a resize or a new root
+    /// each merges the frame request into a full one or moves one of the
+    /// generations checked here. A frame that passes has nothing to update
+    /// except what the scroll offset moves.
+    fn frame_is_driven_by_scroll_alone(
+        &self,
+        kind: FrameRequestKind,
+        preparation: &FramePreparation,
+        had_pending_resize: bool,
+    ) -> bool {
+        kind.is_scroll_driven()
             && !had_pending_resize
             && self.pending_widget.is_none()
             && self.frame_request_reason.get() != Some(FrameRequestKind::Full)
             && aimer_widget::rebuild_invalidation_generation()
             == preparation.rebuild_generation
             && aimer_widget::layout_invalidation_generation() == preparation.layout_generation
+    }
+
+    /// Tells the widget tree whether the frame about to be drawn was requested
+    /// by scrolling alone, so a container may leave prepared off-screen
+    /// children alone. [`end_frame`](Self::end_frame) clears it again.
+    pub(crate) fn mark_scroll_only_frame(
+        &self,
+        kind: FrameRequestKind,
+        preparation: &FramePreparation,
+        had_pending_resize: bool,
+    ) {
+        aimer_widget::set_scroll_only_frame(self.frame_is_driven_by_scroll_alone(
+            kind,
+            preparation,
+            had_pending_resize,
+        ));
     }
 
     /// The bookkeeping every frame does once the tree has been drawn.
@@ -1007,6 +1043,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
     /// that continues it, which is what keeps a sliced task moving without a
     /// timer.
     pub(crate) fn end_frame(&mut self) {
+        aimer_widget::set_scroll_only_frame(false);
         let budget = self.venus.idle_budget();
         self.venus.run_idle(&budget);
         self.venus.end_frame();
@@ -1785,6 +1822,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             self.end_frame();
             return;
         }
+        self.mark_scroll_only_frame(kind, &preparation, had_pending_resize);
 
         let Some(window) = self.window.clone() else {
             return;

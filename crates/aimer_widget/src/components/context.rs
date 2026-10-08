@@ -18,6 +18,10 @@ use winit::window::Window;
 
 use crate::components::element::DirtySource;
 
+mod type_id_hasher;
+
+pub use type_id_hasher::{InheritedStates, TypeIdHasher};
+
 /// A canvas available to native builds and deliberately unavailable to
 /// portable widget-description builds.
 ///
@@ -379,7 +383,7 @@ pub struct BuildContext<'a> {
     pub async_handle: Handle,
     #[cfg(all(not(target_arch = "wasm32"), feature = "portable-guest"))]
     pub async_handle: BuildAsyncHandle,
-    pub inherited_states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
+    pub inherited_states: Rc<RefCell<InheritedStates>>,
 }
 
 impl<'a> CanvasContext for BuildContext<'a> {
@@ -445,7 +449,7 @@ struct CurrentBuildConsumer(Rc<BuildConsumer>);
 struct CurrentLocalV2PaintContext(CurrentBuildContext);
 
 struct StateScopeGuard {
-    states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
+    states: Rc<RefCell<InheritedStates>>,
     type_id: TypeId,
     previous: Option<Rc<dyn Any>>,
 }
@@ -499,7 +503,7 @@ impl<'a> BuildContext<'a> {
             async_handle,
             #[cfg(all(not(target_arch = "wasm32"), feature = "portable-guest"))]
             async_handle: BuildAsyncHandle::native(async_handle),
-            inherited_states: Rc::new(RefCell::new(HashMap::new())),
+            inherited_states: Rc::new(RefCell::new(InheritedStates::default())),
         }
     }
 
@@ -570,7 +574,7 @@ impl<'a> BuildContext<'a> {
     #[cfg(feature = "portable-guest")]
     #[inline]
     pub fn portable() -> BuildContext<'static> {
-        Self::portable_with_inherited_states(Rc::new(RefCell::new(HashMap::new())))
+        Self::portable_with_inherited_states(Rc::new(RefCell::new(InheritedStates::default())))
     }
 
     /// Creates a portable build context backed by an existing inherited-state
@@ -584,7 +588,7 @@ impl<'a> BuildContext<'a> {
     #[cfg(feature = "portable-guest")]
     #[inline]
     pub fn portable_with_inherited_states(
-        inherited_states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
+        inherited_states: Rc<RefCell<InheritedStates>>,
     ) -> BuildContext<'static> {
         Self::portable_with_window(inherited_states, WindowHandle::portable())
     }
@@ -593,7 +597,7 @@ impl<'a> BuildContext<'a> {
     #[cfg(feature = "portable-guest")]
     #[inline]
     pub(crate) fn portable_with_window(
-        inherited_states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
+        inherited_states: Rc<RefCell<InheritedStates>>,
         window: WindowHandle,
     ) -> BuildContext<'static> {
         BuildContext {

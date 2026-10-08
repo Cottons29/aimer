@@ -8,18 +8,29 @@ pub(super) struct ElementNode<E> {
 impl<E: Element + 'static> ElementNode<E> {
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "portable-guest")))]
     fn clear_retained_compositor_animation(&self, render_context: Option<&V2RenderContext>) {
+        // Almost no element ever has an animation to clear, so the question is
+        // answered from a set that is empty unless something is animating.
+        if !compositor_animation_may_be_applied(self.id.get()) {
+            return;
+        }
         let Some(scope) = render_context else {
             return;
         };
         let Some(render_node) = scope.node_for_element(self.id.get()) else {
             return;
         };
-        let _ = scope.tree.set_compositor_animation(
-            render_node,
-            aimer_cupid::utilities::Mat3::identity(),
-            1.0,
-            None,
-        );
+        if scope
+            .tree
+            .set_compositor_animation(
+                render_node,
+                aimer_cupid::utilities::Mat3::identity(),
+                1.0,
+                None,
+            )
+            .is_ok()
+        {
+            note_compositor_animation_cleared(self.id.get());
+        }
     }
 
     #[inline]
@@ -67,6 +78,9 @@ impl<E: Element + 'static> ElementNode<E> {
         ctx.with_local_v2_paint_context(build_context, |ctx| {
             self.element.paint_local_v2(ctx)
         });
+        // An element that paints nothing, a layout container for one, never
+        // commits a list. The tree still has to learn that its paint is current.
+        let _ = render_context.tree.mark_recording_attempted(render_node);
         render_context
             .tree
             .set_paint_source(render_node, RenderPaintSource::LocalV2)
@@ -157,6 +171,9 @@ impl<E: Element + 'static> ElementNode<E> {
         if retained_animation_candidate {
             match self.element.compositor_animation(ctx) {
                 CompositorAnimationDecision::Compositor(frame) => {
+                    // Whatever happens next, the render node may now hold this
+                    // animation, so a later frame without one has to clear it.
+                    note_compositor_animation_applied(self.id.get());
                     if frame.valid
                         && self.element.can_paint_local_v2(ctx)
                         && let Some(scope) = render_context.as_ref()

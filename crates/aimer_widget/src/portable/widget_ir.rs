@@ -1311,12 +1311,12 @@ pub struct PortableBuildContext {
     frame_requested: bool,
     animation_states: BTreeMap<StableSlotId, Box<dyn Any>>,
     animation_slots: BTreeSet<StableSlotId>,
-    inherited_states: Rc<RefCell<std::collections::HashMap<TypeId, Rc<dyn Any>>>>,
+    inherited_states: Rc<RefCell<crate::components::context::InheritedStates>>,
     portable_window: crate::base::WindowHandle,
 }
 
 struct PortableStateScopeGuard {
-    states: Rc<RefCell<std::collections::HashMap<TypeId, Rc<dyn Any>>>>,
+    states: Rc<RefCell<crate::components::context::InheritedStates>>,
     type_id: TypeId,
     previous: Option<Rc<dyn Any>>,
 }
@@ -1382,7 +1382,7 @@ impl PortableBuildContext {
             frame_requested: false,
             animation_states: BTreeMap::new(),
             animation_slots: BTreeSet::new(),
-            inherited_states: Rc::new(RefCell::new(std::collections::HashMap::new())),
+            inherited_states: Rc::new(RefCell::new(crate::components::context::InheritedStates::default())),
             portable_window: crate::base::WindowHandle::portable(),
         })
     }

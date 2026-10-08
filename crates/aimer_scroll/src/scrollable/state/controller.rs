@@ -71,7 +71,10 @@ impl ScrollState {
     /// use the same platform-safe scheduling path.
     #[inline]
     pub(crate) fn request_animation_frame(&self) {
-        aimer_events::window::request_animation_frame();
+        // The only thing this frame has to do is apply the next scroll step, so
+        // it says so: the frame loop may then leave alone what the offset does
+        // not move.
+        aimer_events::window::request_scroll_frame();
     }
 }
 

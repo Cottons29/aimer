@@ -374,6 +374,12 @@ pub struct DrawList {
     commands: Arc<[DrawCommand]>,
     revision: u64,
     dirty: bool,
+    /// Set whenever the list becomes out of date, and cleared once a recording
+    /// attempt has finished since: by a commit, or by the owner reporting that
+    /// it painted nothing. Unlike `dirty`, an element that never commits (a
+    /// layout container) can clear it, so it says whether the list is *known
+    /// current*, not whether a commit is still outstanding.
+    stale: bool,
     recording: bool,
 }
 
@@ -406,7 +412,9 @@ impl RenderNode {
     /// list, because it is expressed relative to the node's own origin.
     fn assign_bounds(&mut self, bounds: Rect) {
         if self.bounds.width != bounds.width || self.bounds.height != bounds.height {
-            self.draw_list.borrow_mut().dirty = true;
+            let mut list = self.draw_list.borrow_mut();
+            list.dirty = true;
+            list.stale = true;
         }
         self.bounds = bounds;
     }
@@ -430,6 +438,23 @@ struct RenderNode {
 }
 
 fn transform_rect(transform: Mat3, rect: Rect) -> Option<Rect> {
+    // Almost every node of an interface is placed without a transform, and
+    // mapping a rectangle through the identity hands back its own corners
+    // exactly. Skipping the four point transforms and their checks is the
+    // difference between one comparison and a few dozen calls per node.
+    if transform.is_identity() {
+        let (left, top) = (rect.x, rect.y);
+        let (right, bottom) = (rect.x + rect.width, rect.y + rect.height);
+        if !(left.is_finite() && top.is_finite() && right.is_finite() && bottom.is_finite()) {
+            return None;
+        }
+        let (min_x, max_x) = (left.min(right), left.max(right));
+        let (min_y, max_y) = (top.min(bottom), top.max(bottom));
+        let bounds = Rect::new(min_x, min_y, max_x - min_x, max_y - min_y);
+        return bounds.is_valid().then_some(bounds);
+    }
+    #[cfg(test)]
+    GENERAL_RECT_TRANSFORMS.with(|count| count.set(count.get() + 1));
     let corners = [
         transform.transform_point(rect.x, rect.y),
         transform.transform_point(rect.x + rect.width, rect.y),
@@ -501,6 +526,19 @@ impl ClipState {
             }
         }
     }
+}
+
+/// Where the content of a render node can reach pixels, in the node's own
+/// local logical coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LocalVisibleRegion {
+    /// No clip limits the node, or its placement is not a plain translation,
+    /// so nothing may be assumed to be out of sight.
+    Unbounded,
+    /// The node and everything below it are clipped away entirely.
+    Nothing,
+    /// Only this rectangle can be seen.
+    Within(Rect),
 }
 
 /// Errors reported while constructing or recording the retained tree.
@@ -575,9 +613,49 @@ thread_local! {
     static NODE_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+// Counts how many node frames are derived from their parents, so tests can
+// bound the work world-space queries repeat. Compiled out of every non-test
+// build.
+#[cfg(test)]
+thread_local! {
+    static FRAME_DERIVATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+// Counts rectangles mapped through a transform that is not the identity, so
+// tests can show the common untransformed case never takes that path.
+#[cfg(test)]
+thread_local! {
+    static GENERAL_RECT_TRANSFORMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+// Counts how often a plan derives the geometry of every node, so tests can
+// show it is reused while nothing that affects geometry has changed.
+#[cfg(test)]
+thread_local! {
+    static PLAN_GEOMETRY_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn plan_geometry_runs() -> usize {
+    PLAN_GEOMETRY_RUNS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn general_rect_transforms() -> usize {
+    GENERAL_RECT_TRANSFORMS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn frame_derivations() -> usize {
+    FRAME_DERIVATIONS.with(std::cell::Cell::get)
+}
+
 #[cfg(test)]
 fn reset_node_lookups() {
     NODE_LOOKUPS.with(|count| count.set(0));
+    FRAME_DERIVATIONS.with(|count| count.set(0));
+    GENERAL_RECT_TRANSFORMS.with(|count| count.set(0));
+    PLAN_GEOMETRY_RUNS.with(|count| count.set(0));
 }
 
 #[cfg(test)]
@@ -589,7 +667,7 @@ fn node_lookups() -> usize {
 #[derive(Default)]
 pub struct DrawCommandList {
     nodes: Vec<RenderNode>,
-    indices: HashMap<RenderNodeId, usize>,
+    indices: HashMap<RenderNodeId, usize, crate::utilities::IdBuildHasher>,
     roots: Vec<RenderNodeId>,
     next_id: u64,
     pending_damage: Vec<Rect>,
@@ -605,6 +683,14 @@ pub struct DrawCommandList {
     /// so every edit to `nodes`, `indices`, `roots`, `parent` or `children`
     /// must advance it. Geometry, clip and paint edits must not.
     topology_revision: u64,
+    /// Positions of every parent and child, resolved lazily against
+    /// `topology_revision`; read through [`DrawCommandList::topology`].
+    topology: RefCell<render_order::Topology>,
+    /// The frame each node hands its children, as of the `geometry_revision`
+    /// stored beside it. A slot from an earlier revision is ignored, so no edit
+    /// has to clear anything: every way a node's geometry can change advances
+    /// the revision. See [`DrawCommandList::frame_at`].
+    world_frames: RefCell<Vec<Option<(u64, world::WorldFrame)>>>,
     render_workspace: RefCell<render_order::RenderWorkspace>,
 }
 
@@ -652,6 +738,7 @@ impl DrawCommandList {
             paint_source: RenderPaintSource::Unresolved,
             draw_list: Shared::new(RefCell::new(DrawList {
                 dirty: true,
+                stale: true,
                 ..DrawList::default()
             })),
         });
@@ -677,6 +764,18 @@ impl DrawCommandList {
     fn node_mut(&mut self, id: RenderNodeId) -> Option<&mut RenderNode> {
         let index = *self.indices.get(&id)?;
         self.geometry_revision = self.geometry_revision.wrapping_add(1);
+        self.nodes.get_mut(index)
+    }
+
+    /// Hands out a node for an edit that cannot change any node's geometry:
+    /// its paint source, its opacity, or the state of its local command list.
+    ///
+    /// Unlike [`Self::node_mut`] this leaves `geometry_revision` alone, so the
+    /// frames and plans derived from geometry stay valid across the repaints,
+    /// hovers and fades that make up most frames. An edit that touches bounds,
+    /// clips, transforms or the structure must use `node_mut`.
+    fn node_mut_paint(&mut self, id: RenderNodeId) -> Option<&mut RenderNode> {
+        let index = *self.indices.get(&id)?;
         self.nodes.get_mut(index)
     }
 
@@ -965,6 +1064,7 @@ impl RenderTree {
                     paint_source: RenderPaintSource::Unresolved,
                     draw_list: Shared::new(RefCell::new(DrawList {
                         dirty: true,
+                stale: true,
                         ..DrawList::default()
                     })),
                 }
@@ -1047,7 +1147,7 @@ impl RenderTree {
         }
         let bounds = tree.visible_subtree_bounds(element);
         let node = tree
-            .node_mut(element)
+            .node_mut_paint(element)
             .ok_or(RenderTreeError::UnknownNode(element))?;
         if node.draw_list.borrow().recording {
             return Err(RenderTreeError::RecorderAlreadyOpen(element));
@@ -1252,7 +1352,7 @@ impl RenderTree {
         }
         let bounds = tree.visible_subtree_bounds(element);
         let node = tree
-            .node_mut(element)
+            .node_mut_paint(element)
             .ok_or(RenderTreeError::UnknownNode(element))?;
         node.opacity = opacity;
         if let Some(bounds) = bounds {
@@ -1328,9 +1428,13 @@ impl RenderTree {
         }
         let bounds = tree.visible_node_bounds(element);
         let node = tree
-            .node_mut(element)
+            .node_mut_paint(element)
             .ok_or(RenderTreeError::UnknownNode(element))?;
-        node.draw_list.borrow_mut().dirty = true;
+        {
+            let mut list = node.draw_list.borrow_mut();
+            list.dirty = true;
+            list.stale = true;
+        }
         if let Some(bounds) = bounds {
             tree.push_damage(bounds);
         }
@@ -1376,6 +1480,60 @@ impl RenderTree {
             .borrow()
             .world_bounds(element)
             .ok_or(RenderTreeError::UnknownNode(element))
+    }
+
+    /// Returns where anything drawn by an element or its descendants can reach
+    /// pixels, in the element's own local logical coordinates.
+    ///
+    /// It is the clip the element hands down, so it does not depend on the
+    /// element's own bounds: children that overflow a parent are still
+    /// covered. See [`LocalVisibleRegion`] for the three possible answers.
+    pub fn local_visible_region(
+        &self,
+        element: RenderNodeId,
+    ) -> Result<LocalVisibleRegion, RenderTreeError> {
+        self.draw_cmd
+            .borrow()
+            .local_visible_region(element)
+            .ok_or(RenderTreeError::UnknownNode(element))
+    }
+
+    /// Reports whether an element's retained paint is known to be up to date:
+    /// it paints through a local v2 list that a recording attempt has finished
+    /// on since the list last went stale, and no recorder is open on it.
+    ///
+    /// That holds for an element whose commands were committed and for one that
+    /// painted nothing and reported it with
+    /// [`mark_recording_attempted`](Self::mark_recording_attempted). A settled
+    /// element has nothing new to record, so skipping its traversal while it
+    /// is off screen loses no paint.
+    pub fn is_settled(&self, element: RenderNodeId) -> Result<bool, RenderTreeError> {
+        let tree = self.draw_cmd.borrow();
+        let node = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        let list = node.draw_list.borrow();
+        Ok(node.paint_source == RenderPaintSource::LocalV2 && !list.stale && !list.recording)
+    }
+
+    /// Reports that an element's paint callback has run for the current state
+    /// of its list, whether or not it committed anything.
+    ///
+    /// A layout container paints nothing and never commits, so its list keeps
+    /// asking to be recorded. Marking the attempt tells the tree the list is
+    /// still current; [`needs_recording`](Self::needs_recording) is left alone,
+    /// so the element is asked again exactly as often as before. A node with
+    /// an open recorder is left unsettled.
+    pub fn mark_recording_attempted(&self, element: RenderNodeId) -> Result<(), RenderTreeError> {
+        let tree = self.draw_cmd.borrow();
+        let node = tree
+            .node(element)
+            .ok_or(RenderTreeError::UnknownNode(element))?;
+        let mut list = node.draw_list.borrow_mut();
+        if !list.recording {
+            list.stale = false;
+        }
+        Ok(())
     }
 
     /// Returns an element's direct parent, or `None` when it is a root.
@@ -1525,6 +1683,7 @@ impl DrawListWriter {
                 .checked_add(1)
                 .expect("draw-list revisions exhausted");
             draw_list.dirty = false;
+            draw_list.stale = false;
             draw_list.recording = false;
             draw_list.revision
         };
@@ -1588,6 +1747,7 @@ impl Drop for DrawListWriter {
         let mut draw_list = self.draw_list.borrow_mut();
         draw_list.recording = false;
         draw_list.dirty = true;
+        draw_list.stale = true;
     }
 }
 

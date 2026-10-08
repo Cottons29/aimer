@@ -1,10 +1,9 @@
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use aimer_widget::base::BuildContext;
-use aimer_widget::{AnyElement, AnyWidget, Widget};
+use aimer_widget::{AnyElement, AnyWidget, InheritedStates, Widget};
 
 /// Type-erased builder for the active child route rendered inside an
 /// [`Outlet`].
@@ -20,7 +19,7 @@ pub type OutletChildBuilder = Rc<dyn Fn(&BuildContext) -> AnyWidget>;
 /// context composition boundary rather than another provider store.
 #[derive(Clone)]
 pub(crate) struct RouteChildContext {
-    states: HashMap<TypeId, Rc<dyn Any>>,
+    states: InheritedStates,
 }
 
 impl RouteChildContext {
@@ -55,7 +54,7 @@ impl RouteChildContext {
 }
 
 struct RouteChildContextGuard {
-    states: Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>,
+    states: Rc<RefCell<InheritedStates>>,
     previous: Vec<TypeId>,
 }
 

@@ -45,6 +45,30 @@ thread_local! {
         const { RefCell::new(None) };
     static THREAD_REDRAW_OBSERVER: RefCell<Option<Rc<dyn Fn()>>> =
         const { RefCell::new(None) };
+    /// Set while a frame request that scrolling alone caused is being made.
+    static SCROLL_FRAME_REQUEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Requests the next frame on behalf of scrolling.
+///
+/// Identical to [`request_animation_frame`], except that the request says why
+/// it was made. A frame that exists only because scroll physics has more
+/// distance to cover has nothing to update except what the offset moves, and a
+/// frame loop that can tell it apart from a widget's request may do less work
+/// for it. Anything else that wants a frame asks with
+/// [`request_animation_frame`] and keeps the frame a full one.
+#[doc(hidden)]
+pub fn request_scroll_frame() {
+    let previous = SCROLL_FRAME_REQUEST.with(|flag| flag.replace(true));
+    request_animation_frame();
+    SCROLL_FRAME_REQUEST.with(|flag| flag.set(previous));
+}
+
+/// Whether the frame request being made right now was made by
+/// [`request_scroll_frame`]. Meant for the requester that records the reason.
+#[doc(hidden)]
+pub fn is_scroll_frame_request() -> bool {
+    SCROLL_FRAME_REQUEST.with(std::cell::Cell::get)
 }
 
 /// Installs an internal observer for direct redraw requests on this thread.
@@ -207,5 +231,56 @@ fn request_animation_frame_inner() {
     }
     if let Some(window) = GLOBAL_WINDOW.get() {
         window.request_redraw();
+    }
+}
+
+#[cfg(all(test, not(aimer_portable_guest)))]
+mod scroll_request_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::*;
+
+    /// Runs `request` with a requester that records whether each request it
+    /// received was a scroll request.
+    fn observed(request: impl FnOnce()) -> Vec<bool> {
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let previous = set_thread_redraw_requester({
+            let seen = seen.clone();
+            move || seen.borrow_mut().push(is_scroll_frame_request())
+        });
+        request();
+        restore_thread_redraw_requester(previous);
+        seen.take()
+    }
+
+    #[test]
+    fn a_scroll_request_says_it_is_one_and_an_ordinary_request_does_not() {
+        assert_eq!(observed(request_scroll_frame), [true]);
+        assert_eq!(observed(request_animation_frame), [false]);
+        assert!(!is_scroll_frame_request());
+    }
+
+    #[test]
+    fn the_mark_does_not_outlive_the_request() {
+        let seen = observed(|| {
+            request_scroll_frame();
+            request_animation_frame();
+            request_scroll_frame();
+        });
+        assert_eq!(seen, [true, false, true]);
+        assert!(!is_scroll_frame_request());
+    }
+
+    #[test]
+    fn nested_scroll_requests_restore_the_outer_mark() {
+        let seen = observed(|| {
+            let previous = SCROLL_FRAME_REQUEST.with(|flag| flag.replace(true));
+            request_scroll_frame();
+            assert!(is_scroll_frame_request());
+            SCROLL_FRAME_REQUEST.with(|flag| flag.set(previous));
+        });
+        assert_eq!(seen, [true]);
+        assert!(!is_scroll_frame_request());
     }
 }
