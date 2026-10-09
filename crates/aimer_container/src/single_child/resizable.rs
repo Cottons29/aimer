@@ -543,6 +543,8 @@ impl<E: Element> RawResizable<E> {
             return false;
         }
         self.size.set(clamped);
+        // The row this sits in measured it at the old width and cached that.
+        aimer_widget::notify_layout_changed();
         self.on_resize.call(clamped);
         true
     }

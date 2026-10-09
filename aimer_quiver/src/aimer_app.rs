@@ -1677,6 +1677,7 @@ mod tests {
     mod collapsed_chevron;
     mod skeleton_ticks;
     mod glass_bar_cost;
+    mod resize_live;
     #[cfg(all(feature = "wgpu", target_os = "macos"))]
     mod bypass_target;
     mod focus_repaint;

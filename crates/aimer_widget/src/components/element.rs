@@ -1566,6 +1566,20 @@ pub fn layout_invalidation_generation() -> u64 {
     LAYOUT_INVALIDATION_GENERATION.load(Ordering::Acquire)
 }
 
+/// Tells every layout cache that some element's size changed without the
+/// element being replaced.
+///
+/// A container that sizes itself — a panel being dragged wider, a body that
+/// opens — cannot be noticed by the parents that measured it: they cache what
+/// they measured under the layout generation, and nothing else changes. Call this
+/// from the code that changes the size. It retires cached measurements without
+/// touching the element tree, so it is cheap enough for every frame of a drag.
+#[doc(hidden)]
+#[inline]
+pub fn notify_layout_changed() {
+    advance_layout_invalidation_generation();
+}
+
 /// Advances the layout invalidation generation.
 #[inline]
 pub(crate) fn advance_layout_invalidation_generation() {
