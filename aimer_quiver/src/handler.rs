@@ -36,8 +36,8 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_cupid::damage_region::DamageSet;
 use aimer_cupid::draw_cmd_v2::{
-    Rect as RenderRect, RenderFrame, RenderNodeId, RenderNodeSpec, RenderPaintSource, RenderTree,
-    RenderTreeError,
+    DrawCommand as V2DrawCommand, Rect as RenderRect, RenderFrame, RenderNodeId, RenderNodeSpec,
+    RenderOp, RenderPaintSource, RenderTree, RenderTreeError,
 };
 use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
 use aimer_venus::Venus;
@@ -340,6 +340,11 @@ pub(crate) struct WindowRenderTree {
     /// What the last frame was drawn from. A frame that finds any of it moved
     /// cannot be animation-only.
     animation_baseline: Option<AnimationBaseline>,
+    /// Whether the last frame held a draw the renderer cannot take through its
+    /// persistent target, such as a glass panel. The renderer draws such a frame
+    /// from scratch from its render plan, and leaves the target stale, so the
+    /// frame after it needs the whole tree as well.
+    drew_custom_pipeline: bool,
     /// Elements drawn in the last frame that still had no render node after its
     /// final sync (see [`census::PaintSourceCensus::drawn_unmapped`]).
     drawn_unmapped: Vec<census::CensusElement>,
@@ -1822,10 +1827,37 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             // direct plan only needs the nodes that can affect this frame's
             // dirty regions. Culling before adaptation avoids snapshotting and
             // lowering every clean local list on every frame.
-            let render_operations = self
+            let mut render_operations = self
                 .window_render_tree
                 .tree
                 .render_order(&render_damage);
+            // The renderer draws a frame that holds a custom-pipeline draw from
+            // scratch, from the operations in front of it, and leaves its
+            // persistent target stale. A plan culled to a small damage holds
+            // only the nodes that changed, so drawing it from scratch leaves the
+            // rest of the window blank, and the frame after it finds the target
+            // showing an older page. Such a frame, and the one that follows it,
+            // are built from the whole visible tree.
+            let full_target = RenderRect::new(
+                0.0,
+                0.0,
+                width as f32 / self.scale,
+                height as f32 / self.scale,
+            );
+            let covers_target = render_damage.as_slice() == [full_target];
+            if !covers_target
+                && (self.window_render_tree.drew_custom_pipeline
+                    || operations_use_custom_pipeline(&render_operations))
+            {
+                render_damage.clear();
+                render_damage.push(full_target);
+                render_operations = self
+                    .window_render_tree
+                    .tree
+                    .render_order(&render_damage);
+            }
+            self.window_render_tree.drew_custom_pipeline =
+                operations_use_custom_pipeline(&render_operations);
             let render_frame = RenderFrame {
                 operations: render_operations,
                 damage: render_damage,
@@ -1892,6 +1924,19 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
         ));
         (self.scale, damage)
     }
+}
+
+/// Whether any of `operations` records a custom-pipeline draw, which the
+/// renderer cannot composite through its persistent target.
+fn operations_use_custom_pipeline(operations: &[RenderOp]) -> bool {
+    operations.iter().any(|operation| match operation {
+        RenderOp::Draw(item) => item
+            .snapshot()
+            .commands
+            .iter()
+            .any(|command| matches!(command, V2DrawCommand::DrawCustom { .. })),
+        RenderOp::BeginOpacityGroup { .. } | RenderOp::EndOpacityGroup { .. } => false,
+    })
 }
 
 /// Runs every hook the application registered, once, in registration order,

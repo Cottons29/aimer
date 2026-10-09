@@ -19,6 +19,8 @@ pub enum MaterialKind {
     Glass = 0,
     /// A translucent surface with bounded dynamic fields.
     Liquid = 1,
+    /// Filters the captured backdrop without glass styling or refraction.
+    BackdropFilter = 2,
 }
 
 /// Reduced-motion policy carried by a material packet.

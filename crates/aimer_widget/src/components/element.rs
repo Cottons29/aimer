@@ -46,9 +46,9 @@ mod animation_only;
 mod compositor_applied;
 mod node;
 #[cfg(test)]
-mod keep_reachable_tests;
-#[cfg(test)]
 mod paint_invalidation_tests;
+#[cfg(test)]
+mod keep_reachable_tests;
 #[cfg(test)]
 mod render_context_tests;
 mod retained_window;
@@ -59,8 +59,8 @@ pub use animation_only::{
     with_v2_animation_only_context,
 };
 use animation_only::{
-    begin_full_traversal, capture_rebuilt_root, finish_full_traversal, is_animation_only_pass, pass_skips_subtree,
-    register_animating_element,
+    begin_full_traversal, capture_rebuilt_root, enter_subtree_walk, finish_full_traversal, is_animation_only_pass,
+    pass_skips_subtree, register_animating_element,
 };
 use compositor_applied::{
     compositor_animation_may_be_applied, forget_unmapped_compositor_animations,
@@ -84,6 +84,9 @@ pub use event::{
 static NEXT_ELEMENT_ID: AtomicU64 = AtomicU64::new(1);
 static ELEMENT_TREE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static RETAINED_RENDER_STRUCTURE_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Local paint invalidations kept for elements that have not been drawn yet.
+const MAX_PENDING_LOCAL_PAINT_INVALIDATIONS: usize = 1 << 16;
+
 static REBUILD_INVALIDATION_GENERATION: AtomicU64 = AtomicU64::new(0);
 static LAYOUT_INVALIDATION_GENERATION: AtomicU64 = AtomicU64::new(0);
 /// Advances of the rebuild generation that only kept an element reachable.
@@ -149,8 +152,11 @@ thread_local! {
     static DIRTY_INDEXED_ROOTS: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
     static DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL: Cell<bool> = const { Cell::new(false) };
     static REBUILD_TRAVERSAL_DEPTH: Cell<usize> = const { Cell::new(0) };
+    /// The root of the outermost rebuild traversal in progress, if any.
+    static REBUILD_TRAVERSAL_ROOT: Cell<Option<ElementId>> = const { Cell::new(None) };
     static REBUILD_DESCENTS: Cell<u64> = const { Cell::new(0) };
     static REBUILD_VISITS: Cell<u64> = const { Cell::new(0) };
+    static STRUCTURAL_SEARCHES: Cell<u64> = const { Cell::new(0) };
     /// Non-zero while a caller that rebases the paths of the subtree it
     /// replaces is committing that replacement.
     static PRESERVE_DIRTY_PATHS_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -162,7 +168,6 @@ thread_local! {
     /// Paint invalidation metadata is retained for the current pair of
     /// rebuild/tree generations so a retained scroll tile can distinguish a
     /// local dirty element from an unrelated branch's rebuild.
-    static PAINT_INVALIDATION_EPOCH: Cell<Option<(u64, u64)>> = const { Cell::new(None) };
     static PAINT_INVALIDATED_LOCAL_ELEMENTS: RefCell<HashSet<ElementId>> = RefCell::new(HashSet::new());
     /// Visual event changes invalidate one element's retained list for the
     /// next collection, then are consumed without dirtying later frames.
@@ -406,28 +411,7 @@ fn current_event_frame() -> Option<u64> {
     EVENT_FRAME_EPOCH.with(Cell::get)
 }
 
-fn sync_paint_invalidation_epoch() {
-    let epoch = (
-        REBUILD_INVALIDATION_GENERATION.load(Ordering::Acquire),
-        ELEMENT_TREE_GENERATION.load(Ordering::Acquire),
-    );
-    let changed = PAINT_INVALIDATION_EPOCH.with(|current| {
-        let previous = current.get();
-        if previous.map(|previous| previous.0) == Some(epoch.0) {
-            current.set(Some(epoch));
-            false
-        } else {
-            current.set(Some(epoch));
-            true
-        }
-    });
-    if changed {
-        PAINT_INVALIDATED_LOCAL_ELEMENTS.with(|elements| elements.borrow_mut().clear());
-    }
-}
-
 fn record_local_paint_invalidation_path(path: &[ElementId]) {
-    sync_paint_invalidation_epoch();
     if let Some(element) = path.last().copied() {
         PAINT_INVALIDATED_LOCAL_ELEMENTS.with(|elements| {
             elements.borrow_mut().insert(element);
@@ -501,26 +485,37 @@ fn element_invalidation_bounds(element: &dyn Element) -> Option<ElementInvalidat
 }
 
 fn mark_paint_invalidations_unknown() {
-    sync_paint_invalidation_epoch();
     queue_element_invalidation(None, ElementChangeKind::Unknown);
 }
 
-/// Returns whether this element's own local retained paint was invalidated.
+/// Returns whether this element's own local retained paint was invalidated
+/// since it last asked, and forgets the invalidation.
+///
+/// An invalidation lives until the element's paint is resolved, not until the
+/// next rebuild. A rebuild pass reconciles many elements before any of them is
+/// drawn, and each rebuild that marks a descendant advances the rebuild
+/// generation; forgetting on that advance left only the last-reconciled
+/// element's invalidation standing, so every other rebuilt element kept
+/// painting its previous content.
 #[doc(hidden)]
-pub fn local_paint_element_was_invalidated(element: ElementId) -> bool {
-    sync_paint_invalidation_epoch();
+pub fn take_local_paint_invalidated(element: ElementId) -> bool {
     PAINT_INVALIDATED_LOCAL_ELEMENTS.with(|elements| {
-        let elements = elements.borrow();
-        !elements.is_empty() && elements.contains(&element)
+        let mut elements = elements.borrow_mut();
+        !elements.is_empty() && elements.remove(&element)
     })
 }
 
-/// Marks one reconciled element's retained paint as stale in this invalidation epoch.
+/// Marks one reconciled element's retained paint as stale until it is resolved.
 #[doc(hidden)]
 pub(crate) fn mark_paint_element_invalidated(element: ElementId) {
-    sync_paint_invalidation_epoch();
     PAINT_INVALIDATED_LOCAL_ELEMENTS.with(|elements| {
-        elements.borrow_mut().insert(element);
+        let mut elements = elements.borrow_mut();
+        // An element that is removed before it is drawn never asks, so the set
+        // is bounded rather than trusted to drain.
+        if elements.len() >= MAX_PENDING_LOCAL_PAINT_INVALIDATIONS {
+            elements.clear();
+        }
+        elements.insert(element);
     });
 }
 
@@ -758,6 +753,18 @@ impl DirtySource {
         if old_path.as_deref() == Some(path) {
             return;
         }
+        // A subtree walked on its own — an animation rebuilding the child it
+        // replaced every frame — starts below the root, so the path it sees is
+        // the tail of the one the root's walk registered, not a new place for the
+        // element. Replacing the path with the tail, and discarding the index
+        // because the roots differ, made two walks of the same element undo each
+        // other every frame: the pass then descended the whole page each time.
+        if old_path
+            .as_deref()
+            .is_some_and(|old| old.len() > path.len() && old.ends_with(path))
+        {
+            return;
+        }
 
         let old_root = old_path.as_deref().and_then(|path| path.first()).copied();
         let new_root = path.first().copied();
@@ -882,6 +889,18 @@ fn dirty_path_contains(id: ElementId) -> bool {
     DIRTY_SUBTREE_COUNTS.with(|counts| counts.borrow().contains_key(&id))
 }
 
+/// Whether the dirty-path index is currently usable, for tests.
+#[cfg(test)]
+pub(crate) fn dirty_paths_are_ready() -> bool {
+    DIRTY_PATHS_READY.with(Cell::get)
+}
+
+/// Marks the dirty-path index usable, for tests.
+#[cfg(test)]
+pub(crate) fn mark_dirty_paths_ready() {
+    DIRTY_PATHS_READY.with(|ready| ready.set(true));
+}
+
 pub(crate) fn invalidate_dirty_paths() {
     DIRTY_PATHS_READY.with(|ready| ready.set(false));
     DIRTY_INDEXED_ROOTS.with(|roots| roots.borrow_mut().clear());
@@ -899,6 +918,9 @@ struct RebuildTraversalGuard {
 impl Drop for RebuildTraversalGuard {
     fn drop(&mut self) {
         REBUILD_TRAVERSAL_DEPTH.with(|depth| depth.set(depth.get() - 1));
+        if self.outermost {
+            REBUILD_TRAVERSAL_ROOT.with(|root| root.set(None));
+        }
         if self.outermost
             && self.complete
             && !DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL.with(Cell::get)
@@ -916,6 +938,7 @@ fn begin_rebuild_traversal(root: ElementId) -> RebuildTraversalGuard {
         let outermost = depth.get() == 0;
         if outermost {
             DIRTY_PATHS_INVALIDATED_DURING_TRAVERSAL.with(|invalidated| invalidated.set(false));
+            REBUILD_TRAVERSAL_ROOT.with(|current| current.set(Some(root)));
         }
         depth.set(depth.get() + 1);
         outermost
@@ -925,6 +948,22 @@ fn begin_rebuild_traversal(root: ElementId) -> RebuildTraversalGuard {
         complete: false,
         root,
     }
+}
+
+/// Whether the dirty-path index was built from the root of the traversal in
+/// progress, and so describes everything that traversal could prune.
+///
+/// The index is shared, but a clean traversal of a subtree — a scrollable
+/// rebuilding its content while it draws — only indexes that subtree. Taking it
+/// as ready for every root let such a walk undo the invalidation another
+/// element had just asked for, and the pass from the real root then pruned
+/// branches that had never been indexed.
+#[inline]
+pub(crate) fn dirty_paths_cover_current_traversal() -> bool {
+    DIRTY_PATHS_READY.with(Cell::get)
+        && REBUILD_TRAVERSAL_ROOT.with(Cell::get).is_some_and(|root| {
+            DIRTY_INDEXED_ROOTS.with(|roots| roots.borrow().contains(&root))
+        })
 }
 
 struct RebuildPathGuard;
@@ -1203,7 +1242,20 @@ impl KeepReachable {
                 return false;
             }
             let mut path = self.path.borrow_mut();
-            if *path != *current {
+            // A path is relative to the traversal that produced it. A subtree
+            // walked on its own — a stateful element rebuilding itself — starts
+            // below the root, so the path it sees is the tail of the one the
+            // root's walk registered, not a new place for the element. Replacing
+            // the full path with the tail would leave the root's ancestors off
+            // the index, and every later pass would prune at them and never
+            // reach the holder again.
+            let is_tail_of_registered = path.len() > current.len() && path.ends_with(&current);
+            if *path != *current && !is_tail_of_registered {
+                // The index cannot answer a walk from a different root, so the
+                // next pass has to be a full one.
+                if path.first().is_some_and(|old_root| Some(old_root) != current.first()) {
+                    invalidate_dirty_paths();
+                }
                 if !path.is_empty() {
                     remove_dirty_path(&path);
                 }
@@ -1220,6 +1272,16 @@ impl KeepReachable {
         } else {
             keep_element_reachable();
         }
+    }
+
+    /// Whether a rebuild pass has registered a path for this holder.
+    ///
+    /// A holder that was never visited by a pass — a row a lazily built list
+    /// materialized while drawing, say — has none, and nothing will visit it
+    /// until something asks the next pass to look.
+    #[inline]
+    pub fn is_registered(&self) -> bool {
+        !self.path.borrow().is_empty()
     }
 
     /// Stops keeping the element reachable.
@@ -1426,6 +1488,23 @@ fn note_stable_generation_change(id: ElementId) {
 #[inline]
 pub fn rebuild_visit_count() -> u64 {
     REBUILD_VISITS.with(Cell::get)
+}
+
+/// How many times the whole retained tree was searched for an element the index
+/// could not find.
+///
+/// A frame should need at most a search or two however many elements changed;
+/// one per changed element makes a change that touches the whole tree, such as a
+/// theme switch, cost the square of its size.
+#[doc(hidden)]
+#[inline]
+pub fn structural_search_count() -> u64 {
+    STRUCTURAL_SEARCHES.with(Cell::get)
+}
+
+#[inline]
+pub(crate) fn note_structural_search() {
+    STRUCTURAL_SEARCHES.with(|count| count.set(count.get() + 1));
 }
 
 #[inline]

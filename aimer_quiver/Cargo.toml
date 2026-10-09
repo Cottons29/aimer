@@ -143,6 +143,7 @@ aimer_assets.workspace = true
 aimer_collapsible.workspace = true
 aimer_svg.workspace = true
 aimer_text.workspace = true
+aimer_space.workspace = true
 aimer_macro.workspace = true
 aimer_container.workspace = true
 aimer_flex.workspace = true

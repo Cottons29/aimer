@@ -339,6 +339,15 @@ impl WindowEventHandler {
                 app.pressed_button.unwrap_or_default(),
             ));
             let result = app.dispatch_element_event(app.cursor_pos, &event);
+            aimer_utils::pointer_trace!(
+                "move ({:.1}, {:.1}) consumed={} redraw={} captured_pointers={} held_button={:?}",
+                app.cursor_pos.x,
+                app.cursor_pos.y,
+                result.is_consumed(),
+                result.needs_redraw(),
+                app.event_dispatcher.capture_count(),
+                app.pressed_button,
+            );
             if let Some(window) = &app.window {
                 if !result.is_consumed() {
                     window.set_cursor(CursorIcon::Default);

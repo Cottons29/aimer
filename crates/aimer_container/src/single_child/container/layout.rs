@@ -274,8 +274,23 @@ impl<T: Element> LayoutElement for RawContainer<T> {
         self.child.invalidate_layout();
     }
 
+    /// The box the container answers pointer events in: its own, and any further
+    /// reach its child reports.
+    ///
+    /// The dispatcher offers a pointer event only to elements whose bounds
+    /// contain it, so a container that reported its box alone made everything
+    /// its child reaches outside that box unreachable: the outer half of a
+    /// resize handle at the edge of a panel, for instance, which the child
+    /// extends past the border on purpose. A child inside the box adds nothing.
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bounds.pos_start_end()
+        let (start, end) = self.bounds.pos_start_end()?;
+        let Some((child_start, child_end)) = self.child.pos_start_end() else {
+            return Some((start, end));
+        };
+        Some((
+            Vec2d { x: start.x.min(child_start.x), y: start.y.min(child_start.y) },
+            Vec2d { x: end.x.max(child_end.x), y: end.y.max(child_end.y) },
+        ))
     }
 }
 

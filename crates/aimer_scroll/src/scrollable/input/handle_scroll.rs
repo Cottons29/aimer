@@ -191,6 +191,20 @@ impl<E: Element> EventElement for RawScrollableContainer<E> {
 
         let inside = self.bounds.is_inside(cursor.x, cursor.y);
         if !child_route_allowed(inside, active_drag, child_captured) {
+            // The pointer is still over this element as far as the enclosing
+            // tree is concerned, but no longer over the content: a panel's grab
+            // band over the scrollable's edge is the usual case. Nothing
+            // further reaches the child dispatcher, so whatever it was
+            // hovering has to be told here, or it stays lit until the pointer
+            // happens to come back.
+            if let ElementEvent::PointerMove(info) = event {
+                let pointer = PointerKey::new(info.source, info.id);
+                if self.event_dispatcher.borrow().is_hovering(pointer) {
+                    let exit = ElementEvent::PointerExited(info.source, info.id);
+                    return dispatch_child_event(self, child_dispatch_position(&exit, cursor), &exit)
+                        .without_capture_request();
+                }
+            }
             return EventResult::ignored();
         }
 

@@ -24,7 +24,7 @@
 //! Vertex streams are placed at the top of the buffer table and counted
 //! downward, which keeps them clear of the argument range for any group count
 //! the renderer uses today (at most two) and any binding count per group (at
-//! most three).
+//! most four).
 
 /// Bind groups the index rule can address without overlap.
 ///
@@ -35,8 +35,8 @@ pub(crate) const MAX_BIND_GROUPS: u32 = 4;
 
 /// Binding slots reserved per group.
 ///
-/// Sized from the real inventory: text and material each bind three entries in
-/// one group, so four is the tightest power of two that fits.
+/// Sized from the real inventory: material binds four entries in one group,
+/// so four is the tightest power of two that fits.
 pub(crate) const BIND_SLOTS_PER_GROUP: u32 = 4;
 
 /// Highest argument index Metal accepts for a buffer, texture, or sampler.
@@ -118,8 +118,8 @@ mod tests {
         ("image", 1, &[0, 1]),
         // text_pipeline.rs: one group holding uniform, atlas and sampler.
         ("text", 0, &[0, 1, 2]),
-        // material/render.rs: same shape as text, with a dynamic offset.
-        ("material", 0, &[0, 1, 2]),
+        // material/render.rs: dynamic uniform, capture, sampler and blur texture.
+        ("material", 0, &[0, 1, 2, 3]),
         // frame_composite.rs: one texture only.
         ("frame_composite", 0, &[0]),
         // svg_pipeline.rs builds a pipeline layout with no bind groups.

@@ -18,6 +18,7 @@ struct MaterialUniform {
 
 ConstantBuffer<MaterialUniform> material : register(b0, space0);
 Texture2D<float4> backdrop : register(t1, space0);
+Texture2D<float4> horizontal_blur : register(t3, space0);
 SamplerState backdrop_sampler : register(s2, space0);
 
 struct MaterialVaryings {
@@ -89,7 +90,7 @@ float liquid_shape_distance(float2 uv) {
 
 float surface_alpha(float2 uv) {
     float distance;
-    if (material.effect.x > 0.5) {
+    if (material.effect.x > 0.5 && material.effect.x < 1.5) {
         distance = liquid_shape_distance(uv);
     } else {
         float2 size = max(material.bounds.zw, float2(1.0, 1.0));
@@ -134,25 +135,60 @@ float3 linear_rgb_to_srgb(float3 color) {
                   linear_to_srgb(color.b));
 }
 
-float3 sample_backdrop(float2 pixel) {
+float4 sample_backdrop(float2 pixel) {
     float2 valid_size = max(material.backdrop_rect.zw, float2(1.0, 1.0));
-    float2 local_pixel = clamp(pixel - material.backdrop_rect.xy,
+    float center_offset = material.effect.x > 1.5 ? 0.5 : 0.0;
+    float2 local_pixel = clamp(pixel - material.backdrop_rect.xy - float2(center_offset, center_offset),
                                float2(0.0, 0.0), valid_size - 1.0);
     uint width;
     uint height;
     backdrop.GetDimensions(width, height);
     float2 dimensions = float2(width, height);
     return backdrop.Sample(backdrop_sampler,
-                          (local_pixel + 0.5) / max(dimensions, float2(1.0, 1.0))).rgb;
+                          (local_pixel + 0.5) / max(dimensions, float2(1.0, 1.0)));
 }
 
-float3 frosted_backdrop(float2 pixel) {
+float4 sample_gaussian_source(float2 pixel) {
+    float2 size = max(material.backdrop_rect.zw, float2(1.0, 1.0));
+    float2 local = clamp(pixel - material.backdrop_rect.xy - 0.5, 0.0, size - 1.0);
+    uint width, height;
+    backdrop.GetDimensions(width, height);
+    float2 uv = (local + 0.5) / float2(width, height);
+    if (material.effect.x > 2.5) return backdrop.SampleLevel(backdrop_sampler, uv, 0.0);
+    return horizontal_blur.SampleLevel(backdrop_sampler, uv, 0.0);
+}
+
+float4 gaussian_backdrop(float2 pixel) {
+    float2 axis = material.effect.x > 2.5 ? float2(1.0, 0.0) : float2(0.0, 1.0);
+    int support = int(ceil(material.detail.z));
+    float4 total = sample_gaussian_source(pixel);
+    float normalization = 1.0;
+    float previous = 1.0;
+    float ratio = material.liquid2.z;
+    for (int tap = 1; tap <= support; tap += 2) {
+        float first = previous * ratio;
+        ratio *= material.liquid2.w;
+        float second = tap + 1 <= support ? first * ratio : 0.0;
+        float weight = first + second;
+        float2 offset = axis * (float(tap) + second / max(weight, 0.00000001));
+        total += (sample_gaussian_source(pixel + offset) + sample_gaussian_source(pixel - offset)) * weight;
+        normalization += 2.0 * weight;
+        previous = second;
+        ratio *= material.liquid2.w;
+    }
+    return total / normalization;
+}
+
+float4 frosted_backdrop(float2 pixel) {
     float radius = material.detail.z;
-    float3 total = sample_backdrop(pixel);
+    float4 total = sample_backdrop(pixel);
     if (radius > 0.0) {
-        float reed = sin(pixel.x * 0.115) + sin(pixel.x * 0.037 + pixel.y * 0.021);
-        float ripple = cos(pixel.y * 0.083 + reed * 0.7);
-        float2 center = pixel + float2(reed * radius * 0.075, ripple * radius * 0.035);
+        float2 center = pixel;
+        if (material.effect.x < 1.5) {
+            float reed = sin(pixel.x * 0.115) + sin(pixel.x * 0.037 + pixel.y * 0.021);
+            float ripple = cos(pixel.y * 0.083 + reed * 0.7);
+            center = pixel + float2(reed * radius * 0.075, ripple * radius * 0.035);
+        }
         float axis = radius * 0.42;
         float diagonal = radius * 0.24;
         total = sample_backdrop(center) * 0.20;
@@ -262,15 +298,15 @@ float3 liquid_chromatic_sample(float2 pixel, float3 normal, float eta,
     float3 sample = float3(0.0, 0.0, 0.0);
     if (aberration <= 0.0) {
         float2 offset = liquid_bevel_refract_offset(normal, eta, depth);
-        sample = backdrop_to_material_rgb(sample_backdrop(pixel + offset));
+        sample = backdrop_to_material_rgb(sample_backdrop(pixel + offset).rgb);
     } else {
         float spread = aberration * 0.05;
         float2 red_offset = liquid_bevel_refract_offset(normal, eta * (1.0 - spread), depth);
         float2 green_offset = liquid_bevel_refract_offset(normal, eta, depth);
         float2 blue_offset = liquid_bevel_refract_offset(normal, eta * (1.0 + spread), depth);
-        float red = backdrop_to_material_rgb(sample_backdrop(pixel + red_offset)).r;
-        float green = backdrop_to_material_rgb(sample_backdrop(pixel + green_offset)).g;
-        float blue = backdrop_to_material_rgb(sample_backdrop(pixel + blue_offset)).b;
+        float red = backdrop_to_material_rgb(sample_backdrop(pixel + red_offset).rgb).r;
+        float green = backdrop_to_material_rgb(sample_backdrop(pixel + green_offset).rgb).g;
+        float blue = backdrop_to_material_rgb(sample_backdrop(pixel + blue_offset).rgb).b;
         sample = float3(red, green, blue);
     }
     return sample;
@@ -344,9 +380,34 @@ float material_alpha(float2 uv) {
 }
 
 float4 fs_main(MaterialVaryings input) : SV_Target0 {
-    float3 softened = backdrop_to_material_rgb(frosted_backdrop(input.pixel_pos));
+    if (material.effect.x > 1.5 && material.viewport.w < 0.5) {
+        discard;
+    }
+    if (material.effect.x > 2.5) return gaussian_backdrop(input.pixel_pos);
+    float4 filtered;
+    if (material.effect.x > 1.5) {
+        filtered = material.detail.z > 0.0 ? gaussian_backdrop(input.pixel_pos) : sample_backdrop(input.pixel_pos);
+    } else {
+        filtered = frosted_backdrop(input.pixel_pos);
+    }
+    if (material.effect.x > 1.5) {
+        float3 color = backdrop_to_material_rgb(filtered.rgb / max(filtered.a, 0.00001));
+        float3 rgb = adjust_backdrop(color);
+        float3 converted = material.viewport.z > 0.5 ? srgb_rgb_to_linear(rgb) : rgb;
+        float mask = surface_alpha(input.uv) * clip_alpha(input.pixel_pos);
+        float weight = clamp(material.effect.y * mask, 0.0, 1.0);
+        if (weight <= 0.0) {
+            discard;
+        }
+        float4 result = float4(converted * filtered.a, filtered.a);
+        if (weight < 1.0) {
+            result = lerp(sample_backdrop(input.pixel_pos), result, weight);
+        }
+        return result;
+    }
+    float3 softened = backdrop_to_material_rgb(filtered.rgb);
     float3 material_backdrop = softened;
-    if (material.effect.x > 0.5) {
+    if (material.effect.x > 0.5 && material.effect.x < 1.5) {
         float2 size = max(material.bounds.zw, float2(1.0, 1.0));
         float edge_distance = liquid_shape_distance(input.uv);
         float bevel_radius = max(material.liquid2.y, 1.0);

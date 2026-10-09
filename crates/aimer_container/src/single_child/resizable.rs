@@ -473,8 +473,10 @@ impl<E: Element> RawResizable<E> {
     /// the child's.
     #[inline]
     fn handle_at(&self, point: Vec2d) -> Option<ResizeHandle> {
-        let bounds = self.bounds.get_bounds()?;
-        ResizeHandle::hit_band(bounds, point, self.band, self.direction)
+        let bounds = self.bounds.get_bounds();
+        let handle = bounds.and_then(|bounds| ResizeHandle::hit_band(bounds, point, self.band, self.direction));
+        aimer_utils::pointer_trace!("resizable handle_at ({:.1}, {:.1}) bounds {:?} -> {:?}", point.x, point.y, bounds, handle);
+        handle
     }
 
     /// Shows the cursor `handle` asks for, and restores the platform default
@@ -527,6 +529,7 @@ impl<E: Element> RawResizable<E> {
         if self.hovered.get() == handle {
             return;
         }
+        aimer_utils::pointer_trace!("resize zone {:?} -> {:?}", self.hovered.get(), handle);
         self.hovered.set(handle);
         self.on_resize_zone
             .call(handle.map_or(Direction::NONE, ResizeHandle::direction));
@@ -704,6 +707,7 @@ impl<E: Element> EventElement for RawResizable<E> {
                     .with_pointer_release(PointerKey::new(info.source, info.id))
             }
             ElementEvent::PointerExited(PointerSource::Mouse, _) => {
+                aimer_utils::pointer_trace!("resizable received an exit, zone {:?}", self.hovered.get());
                 let _ = self.show_cursor(None);
                 EventResult::ignored()
             }

@@ -240,7 +240,9 @@ async fn margin_keeps_outline_and_border_inside_the_decorated_box() {
     });
     let (fill, border_width, outline_width) =
         fill.expect("the decorated container should record one fill rectangle");
-    assert_eq!((fill.x, fill.y), (30.0, 30.0), "the box starts after the margin");
+    // The list is relative to the node, which starts at the outline's outer edge
+    // (6 px outside the box), so the box lies margin plus outline inside it.
+    assert_eq!((fill.x, fill.y), (36.0, 36.0), "the box starts after the margin and the outline's reach");
     assert_eq!((fill.width, fill.height), (140.0, 100.0));
     assert_eq!(border_width, [4.0; 4]);
     assert_eq!(outline_width, [6.0; 4]);

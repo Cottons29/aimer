@@ -33,6 +33,13 @@ pub(crate) fn pass_skips_subtree(_element: ElementId) -> bool {
     false
 }
 
+pub(crate) struct SubtreeWalk;
+
+#[inline]
+pub(crate) fn enter_subtree_walk(_element: ElementId) -> Option<SubtreeWalk> {
+    None
+}
+
 pub(crate) fn begin_full_traversal() {}
 
 #[doc(hidden)]

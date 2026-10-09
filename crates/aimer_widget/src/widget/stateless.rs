@@ -652,7 +652,7 @@ mod tests {
     }
 
     #[test]
-    fn independent_subtree_walk_falls_back_to_the_full_root() {
+    fn independent_subtree_walk_does_not_hide_a_dirty_sibling_from_the_root() {
         let clean_rebuilds = Rc::new(Cell::new(0));
         let dirty_rebuilds = Rc::new(Cell::new(0));
         let root = SiblingBranch {
@@ -699,8 +699,14 @@ mod tests {
         });
         root.rebuild_if_dirty(&context);
 
-        assert_eq!(clean_rebuilds.get(), 1);
-        assert_eq!(dirty_rebuilds.get(), 1);
+        // The walk that began below the root saw only the tail of the path the
+        // root's walk had registered, which says nothing against it. The index
+        // still leads to the dirty sibling, so the root's pass finds it without
+        // entering the clean one. It used to discard the index and walk
+        // everything, which made two walks of one element undo each other on
+        // every frame of an animation.
+        assert_eq!(dirty_rebuilds.get(), 1, "the dirty sibling must still be rebuilt");
+        assert_eq!(clean_rebuilds.get(), 0, "the clean sibling is not entered");
     }
 
     #[test]

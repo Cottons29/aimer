@@ -325,6 +325,93 @@ fn moving_between_siblings_exits_the_previous_hover_target() {
     assert!(!second_hovered.get());
 }
 
+/// A row that lives on while the element above it is replaced still owes its
+/// exit. The dispatcher of a scrollable is rooted at the scrollable's child, and
+/// that child is replaced whenever its content rebuilds; the rows inside are
+/// carried over by identity, hover state included.
+#[test]
+fn a_hover_target_that_outlives_its_replaced_root_is_still_exited() {
+    let hovered = Rc::new(Cell::new(false));
+    let build_root = |hovered: &Rc<Cell<bool>>| {
+        HoverProbeRoot {
+            bounds: (Vec2d::default(), Vec2d { x: 100.0, y: 100.0 }),
+            children: vec![
+                HoverProbe {
+                    bounds: (Vec2d::default(), Vec2d { x: 40.0, y: 40.0 }),
+                    hovered: hovered.clone(),
+                }
+                .boxed(),
+            ],
+        }
+        .boxed()
+    };
+    let mut dispatcher = EventDispatcher::new();
+    let move_pointer = |dispatcher: &mut EventDispatcher, root: &AnyElement, pos: Vec2d| {
+        let _ = dispatcher.dispatch(
+            root.as_ref(),
+            pos,
+            &ElementEvent::PointerMove(PointerInfo::mouse(pos, PointerButton::Primary)),
+        );
+    };
+
+    let old_root = build_root(&hovered);
+    move_pointer(&mut dispatcher, &old_root, Vec2d { x: 20.0, y: 20.0 });
+    assert!(hovered.get());
+
+    // The same row under a root that is a new element: the identities of the
+    // row carry over, the identity of the root does not.
+    let new_root = build_root(&hovered);
+    let mut old_row = None;
+    old_root.visit_children(&mut |child| old_row = child.element_id());
+    let mut new_row_set = false;
+    new_root.visit_children(&mut |child| {
+        if let Some(id) = old_row {
+            child.set_element_id(id);
+            new_row_set = true;
+        }
+    });
+    assert!(new_row_set);
+    assert_ne!(old_root.element_id(), new_root.element_id());
+
+    move_pointer(&mut dispatcher, &new_root, Vec2d { x: 80.0, y: 80.0 });
+    assert!(!hovered.get(), "the row kept its hover after the pointer left it");
+}
+
+/// An explicit exit ends the pointer's hover wherever the pointer is when it
+/// is sent. A container that stops offering moves to a nested dispatcher —
+/// because the pointer left the content for something drawn over its edge —
+/// says so with one, from a position that is nowhere near what was hovered.
+#[test]
+fn an_explicit_exit_releases_the_hover_whatever_its_position() {
+    let hovered = Rc::new(Cell::new(false));
+    let root = HoverProbeRoot {
+        bounds: (Vec2d::default(), Vec2d { x: 100.0, y: 100.0 }),
+        children: vec![
+            HoverProbe {
+                bounds: (Vec2d::default(), Vec2d { x: 40.0, y: 40.0 }),
+                hovered: hovered.clone(),
+            }
+            .boxed(),
+        ],
+    }
+    .boxed();
+    let mut dispatcher = EventDispatcher::new();
+    let on_probe = Vec2d { x: 20.0, y: 20.0 };
+    let _ = dispatcher.dispatch(
+        root.as_ref(),
+        on_probe,
+        &ElementEvent::PointerMove(PointerInfo::mouse(on_probe, PointerButton::Primary)),
+    );
+    assert!(hovered.get());
+    assert!(dispatcher.is_hovering(PointerKey::new(PointerSource::Mouse, 0)));
+
+    let away = Vec2d { x: 90.0, y: 90.0 };
+    let _ = dispatcher.dispatch(root.as_ref(), away, &ElementEvent::PointerExited(PointerSource::Mouse, 0));
+
+    assert!(!hovered.get(), "the probe stayed hovered after an explicit exit");
+    assert!(!dispatcher.is_hovering(PointerKey::new(PointerSource::Mouse, 0)));
+}
+
 #[cfg(feature = "frame-stats")]
 #[test]
 fn uncaptured_pointer_moves_reuse_the_last_hit_chain() {

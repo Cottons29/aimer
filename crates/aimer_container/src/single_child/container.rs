@@ -525,11 +525,17 @@ impl<T: Element> Drawable for RawContainer<T> {
 
         let canvas = aimer_canvas::Canvas::of(ctx);
         let (margin_left, margin_top, _, _) = self.margin(ctx);
+        // The render node starts where its paint starts, which is the shadow's or
+        // outline's outer corner and not the layout box. The list is recorded
+        // relative to the node, so the decorated box sits that far inside it;
+        // otherwise a shadowed panel is drawn up and to the left of where it was
+        // laid out, under children that are in the right place.
+        let [outset_left, outset_top, _, _] = self.retained_v2_paint_outsets(ctx).unwrap_or([0.0; 4]);
         self.decoration().record_local_v2(
             &canvas,
             Vec2d {
-                x: margin_left / ctx.scale,
-                y: margin_top / ctx.scale,
+                x: margin_left / ctx.scale + outset_left,
+                y: margin_top / ctx.scale + outset_top,
             },
             render_extent(size.width, ctx.scale),
             render_extent(size.height, ctx.scale),
@@ -563,11 +569,29 @@ impl<T: Element> Drawable for RawContainer<T> {
 
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
         let size = self.local_v2_paint_size(ctx)?;
-        Some(self.decoration().local_v2_paint_outsets(
+        let mut outsets = self.decoration().local_v2_paint_outsets(
             render_extent(size.width, ctx.scale),
             render_extent(size.height, ctx.scale),
             ctx.scale,
-        ))
+        );
+
+        // The render node is as large as the container's content, but the
+        // decoration is painted over the whole box: padding, border and the
+        // margin it is offset by included. Damage comes from the node, so
+        // without this a repaint stopped short of the box's right and bottom
+        // edges and left the old border color there. The left and top are
+        // already covered, since the node starts at the layout box.
+        let (margin_left, margin_top, _, _) = self.margin(ctx);
+        let content = self.content_size(ctx);
+        let overshoot_right = (margin_left + size.width - content.width).max(0.0) / ctx.scale;
+        let overshoot_bottom = (margin_top + size.height - content.height).max(0.0) / ctx.scale;
+        if overshoot_right.is_finite() {
+            outsets[2] += overshoot_right;
+        }
+        if overshoot_bottom.is_finite() {
+            outsets[3] += overshoot_bottom;
+        }
+        Some(outsets)
     }
 
     fn retained_v2_child_context<'a>(

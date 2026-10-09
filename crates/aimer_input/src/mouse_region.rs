@@ -221,6 +221,7 @@ impl<E: Element> RawMouseRegion<E> {
                 if let Some(icon) = self.cursor {
                     self.window.set_cursor(icon);
                 }
+                aimer_utils::pointer_trace!("region enter, bounds {:?}", self.cached_bounds.get_bounds());
                 Self::execute_void_callback(&self.on_hover_enter);
                 self.current_state.set(PointerState::Inside);
                 request_animation_frame()
@@ -229,6 +230,7 @@ impl<E: Element> RawMouseRegion<E> {
             if self.cursor.is_some() {
                 self.window.set_cursor(winit::window::CursorIcon::Default);
             }
+            aimer_utils::pointer_trace!("region exit, bounds {:?}", self.cached_bounds.get_bounds());
             Self::execute_void_callback(&self.on_hover_exit);
             self.current_state.set(PointerState::Outside);
             request_animation_frame()
@@ -324,6 +326,31 @@ impl<E: Element + 'static> Rebuildable for RawMouseRegion<E> {
     #[inline]
     fn option_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
+    }
+
+    /// Keeps knowing whether the cursor is already inside.
+    ///
+    /// A region is usually built by a widget whose `build` runs again whenever
+    /// its state changes, and a hover callback that changes that state, to fade
+    /// a bar in or light a row, rebuilds it. A replacement that began as
+    /// "outside" would find the cursor inside on its first frame, announce an
+    /// enter the cursor made long before, and have its callback change the state
+    /// again: the widget would rebuild every frame for as long as the cursor
+    /// rested on it, and replace the elements under the cursor so that a press
+    /// could never be released on the one it began on.
+    ///
+    /// The shared cell a caller passes to [`MouseRegion::current_state`] is
+    /// already the same cell on both sides and is left alone.
+    fn adopt_runtime_state_from(&self, old: &dyn Element) {
+        let Some(old) = old
+            .option_any()
+            .and_then(|value| value.downcast_ref::<Self>())
+        else {
+            return;
+        };
+        if !Rc::ptr_eq(&self.current_state, &old.current_state) {
+            self.current_state.set(old.current_state.get());
+        }
     }
 }
 

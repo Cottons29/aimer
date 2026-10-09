@@ -1,6 +1,7 @@
 pub mod aspecratio;
 pub mod container;
 pub mod custom_shape;
+pub mod decoration_box;
 pub mod glass;
 pub mod liquid;
 pub mod opacity;

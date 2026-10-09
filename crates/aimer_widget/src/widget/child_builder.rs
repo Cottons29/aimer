@@ -959,6 +959,36 @@ mod tests {
         assert_eq!(builds.get(), 1);
     }
 
+    /// A widget whose element has nothing below it and no rebuild source.
+    struct LeafWidget;
+
+    impl Widget for LeafWidget {
+        fn to_element(self, _ctx: &BuildContext) -> AnyElement {
+            Counter { events: Rc::new(Cell::new(0)) }.boxed()
+        }
+    }
+
+    impl crate::portable::PortableWidget for LeafWidget {}
+
+    #[tokio::test]
+    async fn placing_a_leaf_child_again_leaves_the_dirty_path_index_alone() {
+        // An animation rebuilds its subtree on every frame, and every rebuild
+        // places each retained child again. Marking a leaf — nothing under it,
+        // no source of rebuilds — for rebuild cannot change anything, but it used
+        // to throw the index away, so the pass that followed walked the whole page.
+        let child = ChildBuilder::from_widget(LeafWidget);
+        let ctx = context();
+        drop(child.build(&ctx));
+        crate::components::element::mark_dirty_paths_ready();
+
+        drop(child.build(&ctx));
+
+        assert!(
+            crate::components::element::dirty_paths_are_ready(),
+            "a second placement of a leaf discarded the index of dirty paths"
+        );
+    }
+
     #[tokio::test]
     async fn a_clone_places_the_same_child() {
         let builds = Rc::new(Cell::new(0));

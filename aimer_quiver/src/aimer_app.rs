@@ -1657,6 +1657,7 @@ mod tests {
 
     mod broadcast;
     mod retained_button;
+    mod decoration_box;
     mod collapsible_animation;
     mod focus_click;
     mod loading_damage;
@@ -1664,6 +1665,20 @@ mod tests {
     mod builder_prepass;
     mod scoped_sync;
     mod touch_scroll;
+    mod hover_border_damage;
+    mod hover_bar_click;
+    mod theme_switch;
+    mod implicit_animation_plays;
+    mod floating_menu_settles;
+    mod resize_grab_area;
+    mod custom_theme_switch;
+    mod skeleton_to_rows;
+    mod rows_in_resizable;
+    mod collapsed_chevron;
+    mod skeleton_ticks;
+    mod glass_bar_cost;
+    #[cfg(all(feature = "wgpu", target_os = "macos"))]
+    mod bypass_target;
     mod focus_repaint;
     mod retained_switcher;
     mod retained_modal;

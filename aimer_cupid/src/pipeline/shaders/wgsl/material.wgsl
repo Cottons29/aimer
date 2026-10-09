@@ -3,7 +3,7 @@ struct MaterialUniform {
     tint: vec4<f32>,
     border_color: vec4<f32>,
     shadow: vec4<f32>,
-    // x: material kind (0 = Glass, 1 = Liquid)
+    // x: material kind (0 = Glass, 1 = Liquid, 2 = filter, 3 = horizontal blur)
     // y: opacity, z: animation phase, w: distortion strength
     effect: vec4<f32>,
     // x: saturation, y: brightness, z: contrast, w: edge lighting
@@ -20,7 +20,7 @@ struct MaterialUniform {
     backdrop_rect: vec4<f32>,
     // x: blob amount, y: blob seed, z: magnification, w: tip pull
     liquid: vec4<f32>,
-    // x: chromatic aberration, y: bevel radius, z/w: reserved
+    // x: chromatic aberration, y: bevel radius, z/w: Gaussian recurrence
     liquid2: vec4<f32>,
 };
 
@@ -32,6 +32,9 @@ var backdrop: texture_2d<f32>;
 
 @group(0) @binding(2)
 var backdrop_sampler: sampler;
+
+@group(0) @binding(3)
+var horizontal_blur: texture_2d<f32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -124,7 +127,7 @@ fn liquid_shape_distance(uv: vec2<f32>) -> f32 {
 
 fn surface_alpha(uv: vec2<f32>) -> f32 {
     var distance: f32;
-    if material.effect.x > 0.5 {
+    if material.effect.x > 0.5 && material.effect.x < 1.5 {
         distance = liquid_shape_distance(uv);
     } else {
         let size = max(material.bounds.zw, vec2<f32>(1.0, 1.0));
@@ -176,10 +179,13 @@ fn linear_rgb_to_srgb(color: vec3<f32>) -> vec3<f32> {
     );
 }
 
-fn sample_backdrop(pixel: vec2<f32>) -> vec3<f32> {
+fn sample_backdrop(pixel: vec2<f32>) -> vec4<f32> {
     let valid_size = max(material.backdrop_rect.zw, vec2<f32>(1.0, 1.0));
+    // Filter coordinates already denote fragment centers. Avoid introducing a
+    // half-texel shift that would soften sharp edges even when blur is zero.
+    let center_offset = select(0.0, 0.5, material.effect.x > 1.5);
     let local_pixel = clamp(
-        pixel - material.backdrop_rect.xy,
+        pixel - material.backdrop_rect.xy - vec2<f32>(center_offset),
         vec2<f32>(0.0, 0.0),
         valid_size - vec2<f32>(1.0, 1.0),
     );
@@ -188,10 +194,44 @@ fn sample_backdrop(pixel: vec2<f32>) -> vec3<f32> {
         backdrop,
         backdrop_sampler,
         (local_pixel + vec2<f32>(0.5, 0.5)) / max(texture_size, vec2<f32>(1.0, 1.0)),
-    ).rgb;
+    );
 }
 
-fn frosted_backdrop(pixel: vec2<f32>) -> vec3<f32> {
+// Adjacent Gaussian taps share a bilinear read. Unlike a sparse kernel,
+// every texel in the support contributes, so thin features cannot ghost.
+fn gaussian_sample(pixel: vec2<f32>) -> vec4<f32> {
+    let size = max(material.backdrop_rect.zw, vec2<f32>(1.0));
+    let local = clamp(pixel - material.backdrop_rect.xy - vec2<f32>(0.5), vec2<f32>(0.0), size - vec2<f32>(1.0));
+    let uv = (local + vec2<f32>(0.5)) / vec2<f32>(textureDimensions(backdrop));
+    if material.effect.x > 2.5 {
+        return textureSampleLevel(backdrop, backdrop_sampler, uv, 0.0);
+    }
+    return textureSampleLevel(horizontal_blur, backdrop_sampler, uv, 0.0);
+}
+
+fn gaussian_backdrop(pixel: vec2<f32>) -> vec4<f32> {
+    let axis = select(vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), material.effect.x > 2.5);
+    let support = i32(ceil(material.detail.z));
+    var total = gaussian_sample(pixel);
+    var normalization = 1.0;
+    var previous = 1.0;
+    var ratio = material.liquid2.z;
+    for (var tap = 1; tap <= support; tap += 2) {
+        let first = previous * ratio;
+        ratio *= material.liquid2.w;
+        var second = 0.0;
+        if tap + 1 <= support { second = first * ratio; }
+        let weight = first + second;
+        let offset = axis * (f32(tap) + second / max(weight, 0.00000001));
+        total += (gaussian_sample(pixel + offset) + gaussian_sample(pixel - offset)) * weight;
+        normalization += 2.0 * weight;
+        previous = second;
+        ratio *= material.liquid2.w;
+    }
+    return total / normalization;
+}
+
+fn frosted_backdrop(pixel: vec2<f32>) -> vec4<f32> {
     // Nine texture reads replace the old 17-tap cross. A small reeded offset
     // makes silhouettes visibly refract like patterned architectural glass,
     // while the symmetric taps provide stable diffusion without a second blur
@@ -200,9 +240,12 @@ fn frosted_backdrop(pixel: vec2<f32>) -> vec3<f32> {
     if radius <= 0.0 {
         return sample_backdrop(pixel);
     }
-    let reed = sin(pixel.x * 0.115) + sin(pixel.x * 0.037 + pixel.y * 0.021);
-    let ripple = cos(pixel.y * 0.083 + reed * 0.7);
-    let center = pixel + vec2<f32>(reed * radius * 0.075, ripple * radius * 0.035);
+    var center = pixel;
+    if material.effect.x < 1.5 {
+        let reed = sin(pixel.x * 0.115) + sin(pixel.x * 0.037 + pixel.y * 0.021);
+        let ripple = cos(pixel.y * 0.083 + reed * 0.7);
+        center = pixel + vec2<f32>(reed * radius * 0.075, ripple * radius * 0.035);
+    }
     let axis = radius * 0.42;
     let diagonal = radius * 0.24;
     var total = sample_backdrop(center) * 0.20;
@@ -360,15 +403,15 @@ fn liquid_bevel_refract_offset(normal: vec3<f32>, eta: f32, depth: f32) -> vec2<
 fn liquid_chromatic_sample(pixel: vec2<f32>, normal: vec3<f32>, eta: f32, depth: f32, aberration: f32) -> vec3<f32> {
     if aberration <= 0.0 {
         let offset = liquid_bevel_refract_offset(normal, eta, depth);
-        return backdrop_to_material_rgb(sample_backdrop(pixel + offset));
+        return backdrop_to_material_rgb(sample_backdrop(pixel + offset).rgb);
     }
     let spread = aberration * 0.05;
     let red_offset = liquid_bevel_refract_offset(normal, eta * (1.0 - spread), depth);
     let green_offset = liquid_bevel_refract_offset(normal, eta, depth);
     let blue_offset = liquid_bevel_refract_offset(normal, eta * (1.0 + spread), depth);
-    let red = backdrop_to_material_rgb(sample_backdrop(pixel + red_offset)).r;
-    let green = backdrop_to_material_rgb(sample_backdrop(pixel + green_offset)).g;
-    let blue = backdrop_to_material_rgb(sample_backdrop(pixel + blue_offset)).b;
+    let red = backdrop_to_material_rgb(sample_backdrop(pixel + red_offset).rgb).r;
+    let green = backdrop_to_material_rgb(sample_backdrop(pixel + green_offset).rgb).g;
+    let blue = backdrop_to_material_rgb(sample_backdrop(pixel + blue_offset).rgb).b;
     return vec3<f32>(red, green, blue);
 }
 
@@ -473,9 +516,36 @@ fn material_alpha(uv: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let softened = backdrop_to_material_rgb(frosted_backdrop(input.pixel_pos));
+    if material.effect.x > 1.5 && material.viewport.w < 0.5 {
+        discard;
+    }
+    if material.effect.x > 2.5 { return gaussian_backdrop(input.pixel_pos); }
+    var filtered: vec4<f32>;
+    if material.effect.x > 1.5 {
+        if material.detail.z > 0.0 { filtered = gaussian_backdrop(input.pixel_pos); }
+        else { filtered = sample_backdrop(input.pixel_pos); }
+    } else {
+        filtered = frosted_backdrop(input.pixel_pos);
+    }
+    if material.effect.x > 1.5 {
+        // Filter straight colors, then restore the captured premultiplied alpha.
+        let color = backdrop_to_material_rgb(filtered.rgb / max(filtered.a, 0.00001));
+        let rgb = adjust_backdrop(color);
+        let converted = select(rgb, srgb_rgb_to_linear(rgb), material.viewport.z > 0.5);
+        let mask = surface_alpha(input.uv) * clip_alpha(input.pixel_pos);
+        let weight = clamp(material.effect.y * mask, 0.0, 1.0);
+        if weight <= 0.0 {
+            discard;
+        }
+        var result = vec4<f32>(converted * filtered.a, filtered.a);
+        if weight < 1.0 {
+            result = mix(sample_backdrop(input.pixel_pos), result, weight);
+        }
+        return result;
+    }
+    let softened = backdrop_to_material_rgb(filtered.rgb);
     var material_backdrop = softened;
-    if material.effect.x > 0.5 {
+    if material.effect.x > 0.5 && material.effect.x < 1.5 {
         let size = max(material.bounds.zw, vec2<f32>(1.0, 1.0));
         let edge_distance = liquid_shape_distance(input.uv);
         let bevel_radius = max(material.liquid2.y, 1.0);

@@ -328,6 +328,7 @@ impl<T: Animatable + Clone + PartialEq + 'static> Widget for ImplicitAnimatedFra
             builder: self.builder.clone(),
             controller: self.controller.clone(),
             tween: self.tween.clone(),
+            reachable: aimer_widget::KeepReachable::new(),
         }
         .boxed()
     }
@@ -345,6 +346,11 @@ struct ImplicitAnimatedElement<T: Animatable + Clone + PartialEq + 'static> {
     builder: Rc<ImplicitElementBuilder<T>>,
     controller: AnimationController,
     tween: Rc<LocalCell<Option<Tween<T>>>>,
+    /// Keeps this element on the rebuild pass's dirty-path index while it
+    /// animates. Nothing marks it dirty, so a pass that has indexed the tree
+    /// would otherwise skip it and leave the animation where its first frame
+    /// put it.
+    reachable: aimer_widget::KeepReachable,
 }
 
 unsafe impl<T: Animatable + Clone + PartialEq + 'static> Send for ImplicitAnimatedElement<T> {}
@@ -381,13 +387,17 @@ impl<T: Animatable + Clone + PartialEq + 'static> ImplicitAnimatedElement<T> {
         if changed {
             self.current.with_mut(|current| *current = value.clone());
             let new_child = (self.builder)(&value, ctx);
-            carry_element_state(unsafe { &*self.child.get() }.as_ref(), new_child.as_ref(), ctx);
+            aimer_widget::preserving_dirty_paths(|| {
+                carry_element_state(unsafe { &*self.child.get() }.as_ref(), new_child.as_ref(), ctx)
+            });
             unsafe { *self.child.get() = new_child };
         }
 
         if self.controller.is_animating() {
+            self.reachable.hold();
             request_next_frame();
         } else {
+            self.reachable.release();
             self.current
                 .with_mut(|current| *current = self.target.clone());
         }
@@ -435,8 +445,12 @@ impl<T: Animatable + Clone + PartialEq + 'static> EventElement for ImplicitAnima
 
 impl<T: Animatable + Clone + PartialEq + 'static> Rebuildable for ImplicitAnimatedElement<T> {
     fn rebuild_if_dirty(&self, ctx: &BuildContext) {
-        self.advance(ctx);
-        unsafe { &*self.child.get() }.rebuild_if_dirty(ctx);
+        if self.advance(ctx) {
+            // A fresh subtree nothing has visited yet, which also registers it.
+            aimer_widget::rebuild_replaced_subtree(unsafe { &*self.child.get() }.as_ref(), ctx);
+        } else {
+            unsafe { &*self.child.get() }.rebuild_if_dirty(ctx);
+        }
     }
 }
 
@@ -735,6 +749,7 @@ mod tests {
             builder: Rc::new(|_, _| TestElement.boxed()),
             controller,
             tween: Rc::new(LocalCell::new(Some(Tween::new(0.0, 1.0)))),
+            reachable: aimer_widget::KeepReachable::new(),
         };
 
         element.rebuild_if_dirty(&ctx);
@@ -780,6 +795,7 @@ mod tests {
             builder,
             controller,
             tween: Rc::new(LocalCell::new(Some(Tween::new(0.0, 1.0)))),
+            reachable: aimer_widget::KeepReachable::new(),
         };
 
         // A frame whose interpolated value changed rebuilds the child (ids 1,
