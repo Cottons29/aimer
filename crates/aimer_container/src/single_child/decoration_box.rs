@@ -2,6 +2,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 mod backdrop_filter;
+mod magnification;
+pub use magnification::{Magnification, MagnificationStyle};
 pub use backdrop_filter::BackdropFilter;
 
 use aimer_attribute::{ResolvedSize, Size, Vec2d};
@@ -381,3 +383,6 @@ impl<D: Decoration> LayoutElement for RawDecorationBox<D> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod magnification_tests;

@@ -6,6 +6,7 @@ mod scrolling;
 mod focus;
 mod animation_walks;
 mod backdrop_filter;
+mod magnification;
 
 #[test]
 fn showcase_has_unique_registered_examples() {

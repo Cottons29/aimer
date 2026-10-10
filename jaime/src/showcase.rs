@@ -25,6 +25,7 @@ use crate::focus_node_example::FocusNodeExample;
 use crate::form_example::form_example;
 use crate::glass_liquid_example::glass_liquid_example;
 use crate::backdrop_filter_example::backdrop_filter_example;
+use crate::magnification_example::magnification_example;
 use crate::http_request_button::http_request_button_example;
 use crate::i18n_example::i18n_example;
 use crate::justify_content_example::justify_content_example;
@@ -385,6 +386,7 @@ fn build_example(example: ExampleId, app_theme: ThemeData) -> AnyWidget {
         ExampleId::AssetsMedia => assets_media_example().boxed(),
         ExampleId::GlassLiquid => glass_liquid_example().boxed(),
         ExampleId::BackdropFilter => backdrop_filter_example().boxed(),
+        ExampleId::Magnification => magnification_example().boxed(),
         ExampleId::Storage => storage_example().boxed(),
         ExampleId::CustomShape => custom_shape_example().boxed(),
         ExampleId::AnimatedLayout => animated_layout_example().boxed(),

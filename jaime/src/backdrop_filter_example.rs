@@ -53,8 +53,9 @@ pub fn backdrop_filter_example() -> impl Widget {
     }
 
     let foreground = DecorationBox::new()
-        .decoration(BackdropFilter::new().blur_radius(20.0)
-            .saturation(0.65).brightness(1.05).contrast(0.9))
+        .decoration(BackdropFilter::new().blur_radius(10.0)
+            .saturation(0.65).brightness(1.05).contrast(0.9)
+        )
         .child(
             Container::new().width(320).height(208)
                 .padding(LayoutSpacing::all(Spacing::Px(24)))

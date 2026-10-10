@@ -69,7 +69,8 @@ impl<B: GpuBackend> BackdropBlur<B> {
             uniform.bounds = [0.0, 0.0, region.width as f32, region.height as f32];
             uniform.backdrop_rect[0] = 0.0;
             uniform.backdrop_rect[1] = 0.0;
-            uniform.effect[0] = 3.0;
+            // Negative kind is private to the horizontal pass, never a wire material.
+            uniform.effect[0] = -1.0;
             let start = index * stride;
             self.upload[start..start + size_of::<MaterialUniform>()].copy_from_slice(bytemuck::bytes_of(&uniform));
         }

@@ -1,5 +1,19 @@
 use super::*;
 
+#[test]
+fn magnification_style_packet_v2_is_accepted() {
+    let mut bytes = packet(MaterialRequest::new(MaterialKind::Magnification, [3.0, 4.0, 80.0, 40.0]));
+    bytes.truncate(244);
+    bytes[4] = 2;
+    bytes.extend_from_slice(&43u32.to_le_bytes());
+    bytes.extend_from_slice(&0.6f32.to_le_bytes());
+    let decoded = MaterialRequest::decode(&bytes).expect("version 2 carries magnification styles and bulge strength");
+    assert_eq!(decoded.bounds, [3.0, 4.0, 80.0, 40.0]);
+    assert_eq!(decoded.magnification_style, MagnificationStyle::UNIFORM | MagnificationStyle::BULGE
+        | MagnificationStyle::HORIZONTAL | MagnificationStyle::LEFT);
+    assert_eq!(decoded.bulge_strength, 0.6);
+}
+
 fn packet(request: MaterialRequest) -> Vec<u8> {
     let request = request.normalized();
     let mut bytes = Vec::with_capacity(MATERIAL_PACKET_LEN);
@@ -49,7 +63,33 @@ fn packet(request: MaterialRequest) -> Vec<u8> {
             bytes.extend_from_slice(&value.to_bits().to_le_bytes());
         }
     }
+    bytes.extend_from_slice(&request.magnification_style.bits().to_le_bytes());
+    bytes.extend_from_slice(&request.bulge_strength.to_le_bytes());
     bytes
+}
+
+#[test]
+fn magnification_style_packets_preserve_legacy_and_reject_unknown_bits() {
+    for kind in [MaterialKind::Magnification, MaterialKind::Glass, MaterialKind::Liquid, MaterialKind::BackdropFilter] {
+        let request = MaterialRequest::new(kind, [1.0, 2.0, 80.0, 40.0]);
+        let mut bytes = packet(request);
+        assert_eq!(bytes.len(), 252);
+        bytes.truncate(244);
+        bytes[4] = 1;
+        assert_eq!(MaterialRequest::decode(&bytes), Ok(request));
+        bytes[4] = 2;
+        assert!(matches!(MaterialRequest::decode(&bytes), Err(MaterialDecodeError::InvalidLength { expected: 252, .. })));
+    }
+    let mut bytes = packet(MaterialRequest::new(MaterialKind::Magnification, [0.0, 0.0, 80.0, 40.0]));
+    bytes[244..248].copy_from_slice(&(1u32 << 9).to_le_bytes());
+    assert_eq!(MaterialRequest::decode(&bytes), Err(MaterialDecodeError::InvalidMagnificationStyle));
+    bytes[244..248].copy_from_slice(&MagnificationStyle::ALL.bits().to_le_bytes());
+    for (value, expected) in [(f32::NAN, 0.25), (f32::INFINITY, 0.25), (-1.0, 0.0), (2.0, 1.0)] {
+        bytes[248..252].copy_from_slice(&value.to_le_bytes());
+        assert_eq!(MaterialRequest::decode(&bytes).unwrap().bulge_strength, expected);
+    }
+    bytes[13] = 1;
+    assert_eq!(MaterialRequest::decode(&bytes), Err(MaterialDecodeError::NonZeroReserved));
 }
 
 #[test]

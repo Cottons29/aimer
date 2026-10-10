@@ -2,6 +2,8 @@
 
 #[path = "backdrop_filter/fixtures.rs"]
 mod fixtures;
+#[path = "backdrop_filter/wide.rs"]
+mod wide;
 use fixtures::*;
 
 use aimer::canvas::Canvas as RetainedCanvas;
@@ -171,12 +173,20 @@ fn backdrop_filter_budget_fallback_leaves_the_backdrop_unchanged() {
     let mut renderer = Renderer::new(&backend, FORMAT);
     let (tree, node) = backdrop_tree();
     let canvas = RetainedCanvas::of(&tree.context(node).unwrap());
-    // Quality 2 admits this request's stage plan, but the screen capture exceeds
-    // the 2,048-pixel texture budget. Exercise the shader's unavailable-capture path.
+    // The bounds fit the pixel budget exactly, but the blur margin adds
+    // one row of capture and exceeds that budget. Exercise the shader's
+    // unavailable-capture path without relying on the former 2,048-width cap.
     BackdropFilter::new().brightness(0.0).paint(&canvas, Vec2d { x: -(FILTER_X as f32), y: 0.0 },
-        ResolvedSize { width: 4_096.0, height: 64.0 }, 1.0);
+        ResolvedSize { width: 4_096.0, height: 1_024.0 }, 1.0);
     canvas.finish();
-    let pixels = render_packet_and_read(&device, &queue, &backend, &mut renderer, &packet_from_tree(&tree, 1.0));
+    let packet = FramePacket::from_v2_direct(
+        aimer::cupid::draw_cmd_v2::RenderFrame {
+            damage: vec![Rect::new(0.0, 0.0, 4096.0, 1025.0)], operations: tree.render_all(),
+        },
+        aimer::cupid::frame::FrameRenderMetadata::new(1.0, 0, 0, 0, 0,
+            aimer::cupid::damage_region::DamageSet::new(4096, 1025)),
+    ).unwrap();
+    let pixels = render_packet_and_read_sized(&device, &queue, &backend, &mut renderer, &packet, 4096, 1025);
     assert_eq!(pixel(&pixels, FILTER_X + 8, 32), [0, 0, 0, 255]);
     assert_eq!(pixel(&pixels, FILTER_X + 48, 32), [255, 255, 255, 255]);
 }
@@ -197,18 +207,33 @@ fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
 }
 
 
+#[test]
+fn backdrop_filter_wide_ipad_toolbar() {
+    let (device, queue) = gpu().expect("GPU for iPad-width backdrop validation");
+    let backend = WgpuBackend::new(device.clone(), queue.clone());
+    for aa in [aimer::cupid::AntiAlias::Analytic, aimer::cupid::AntiAlias::Msaa4x] {
+        let mut renderer = Renderer::with_antialiasing(&backend, FORMAT, aa);
+        wide::wide_toolbar_blurs_and_refreshes(|packet| render_packet_and_read_sized(
+            &device, &queue, &backend, &mut renderer, packet, wide::WIDTH, wide::HEIGHT));
+    }
+}
+
 fn render_packet_and_read(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    backend: &WgpuBackend,
-    renderer: &mut Renderer,
-    packet: &FramePacket,
+    device: &wgpu::Device, queue: &wgpu::Queue, backend: &WgpuBackend,
+    renderer: &mut Renderer, packet: &FramePacket,
+) -> Vec<u8> {
+    render_packet_and_read_sized(device, queue, backend, renderer, packet, FRAME_WIDTH, FRAME_HEIGHT)
+}
+
+fn render_packet_and_read_sized(
+    device: &wgpu::Device, queue: &wgpu::Queue, backend: &WgpuBackend,
+    renderer: &mut Renderer, packet: &FramePacket, width: u32, height: u32,
 ) -> Vec<u8> {
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("backdrop filter regression target"),
         size: wgpu::Extent3d {
-            width: FRAME_WIDTH,
-            height: FRAME_HEIGHT,
+            width,
+            height,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -223,7 +248,7 @@ fn render_packet_and_read(
 
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("backdrop filter regression readback"),
-        size: (FRAME_WIDTH * FRAME_HEIGHT * 4) as u64,
+        size: (width * height * 4) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -239,13 +264,13 @@ fn render_packet_and_read(
             buffer: &readback,
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(FRAME_WIDTH * 4),
-                rows_per_image: Some(FRAME_HEIGHT),
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
             },
         },
         wgpu::Extent3d {
-            width: FRAME_WIDTH,
-            height: FRAME_HEIGHT,
+            width,
+            height,
             depth_or_array_layers: 1,
         },
     );

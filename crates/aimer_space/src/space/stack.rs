@@ -117,7 +117,7 @@ impl Stack {
     }
 }
 
-impl Widget for Stack {
+impl<W: Widget+ 'static> Widget for Stack<W> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let children = self.children.into_iter().map(|c| c.to_element(ctx)).collect();
         RawStackElement {

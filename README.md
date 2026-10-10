@@ -1,4 +1,4 @@
-f# Aimer
+# Aimer
 
 <div align="center">
 

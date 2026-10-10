@@ -2,6 +2,8 @@
 
 #[path = "backdrop_filter/fixtures.rs"]
 mod fixtures;
+#[path = "backdrop_filter/wide.rs"]
+mod wide;
 use fixtures::*;
 use aimer::BackdropFilter;
 use aimer::cupid::backend::*;
@@ -38,17 +40,32 @@ fn backdrop_filter_native_metal_blends_thin_features_into_a_smooth_gaussian() {
     }
 }
 
+#[test]
+fn backdrop_filter_wide_ipad_toolbar() {
+    let backend = MetalBackend::new().expect("Metal GPU for iPad-width backdrop validation");
+    for aa in [aimer::cupid::AntiAlias::Analytic, aimer::cupid::AntiAlias::Msaa4x] {
+        let mut renderer = RendererImpl::<MetalBackend>::with_antialiasing(&backend, MetalBackend::rgba8_unorm_format(), aa);
+        wide::wide_toolbar_blurs_and_refreshes(|packet| render_packet_and_read_sized(
+            &backend, &mut renderer, packet, wide::WIDTH, wide::HEIGHT));
+    }
+}
+
 fn render_packet_and_read(backend: &MetalBackend, renderer: &mut RendererImpl<MetalBackend>, packet: &FramePacket) -> Vec<u8> {
+    render_packet_and_read_sized(backend, renderer, packet, FRAME_WIDTH, FRAME_HEIGHT)
+}
+
+fn render_packet_and_read_sized(backend: &MetalBackend, renderer: &mut RendererImpl<MetalBackend>, packet: &FramePacket,
+    width: u32, height: u32) -> Vec<u8> {
     let format = MetalBackend::rgba8_unorm_format();
     let target = backend.create_texture(&TextureDescriptor {
         label: Some("native backdrop filter target".to_string()),
-        size: (FRAME_WIDTH, FRAME_HEIGHT, 1), mip_level_count: 1, sample_count: 1,
+        size: (width, height, 1), mip_level_count: 1, sample_count: 1,
         dimension: TextureDimension::D2, format,
         usage: vec![TextureUsage::RenderAttachment, TextureUsage::CopySrc],
     });
     let view = backend.create_texture_view(&target, "native backdrop filter view");
     renderer.render_packet(backend, &view, packet, false);
-    let bytes = u64::from(FRAME_WIDTH) * u64::from(FRAME_HEIGHT) * 4;
+    let bytes = u64::from(width) * u64::from(height) * 4;
     let readback = backend.create_buffer(&BufferDescriptor {
         label: Some("native backdrop filter readback".to_string()), size: bytes,
         usage: vec![BufferUsage::CopyDst, BufferUsage::MapRead],
@@ -58,9 +75,9 @@ fn render_packet_and_read(backend: &MetalBackend, renderer: &mut RendererImpl<Me
         &TexelCopyTextureInfo { texture: &target, mip_level: 0, origin: Origin3d::ZERO, aspect: TextureAspect::All },
         &TexelCopyBufferInfo {
             buffer: &readback,
-            layout: TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(FRAME_WIDTH * 4), rows_per_image: Some(FRAME_HEIGHT) },
+            layout: TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(width * 4), rows_per_image: Some(height) },
         },
-        Extent3d { width: FRAME_WIDTH, height: FRAME_HEIGHT, depth_or_array_layers: 1 },
+        Extent3d { width: width, height: height, depth_or_array_layers: 1 },
     );
     backend.submit(encoder);
     backend.read_buffer(&readback, bytes)

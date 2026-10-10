@@ -497,7 +497,7 @@ vec4 sample_backdrop(vec2 pixel_1) {
     vec4 _e3 = _group_0_binding_0_fs.backdrop_rect;
     vec2 valid_size = max(_e3.zw, vec2(1.0, 1.0));
     vec4 _e11 = _group_0_binding_0_fs.backdrop_rect;
-    float center_offset = _group_0_binding_0_fs.effect.x > 1.5 ? 0.5 : 0.0;
+    float center_offset = (_group_0_binding_0_fs.effect.x > 1.5 || _group_0_binding_0_fs.effect.x < -0.5) ? 0.5 : 0.0;
     vec2 local_pixel = clamp((pixel_1 - _e11.xy - vec2(center_offset)), vec2(0.0, 0.0), (valid_size - vec2(1.0, 1.0)));
     vec2 texture_size = vec2(uvec2(textureSize(_group_0_binding_1_fs, 0).xy));
     vec4 _e36 = texture(_group_0_binding_1_fs, vec2(((local_pixel + vec2(0.5, 0.5)) / max(texture_size, vec2(1.0, 1.0)))));
@@ -508,12 +508,12 @@ vec4 gaussian_sample(vec2 pixel) {
     vec2 size = max(_group_0_binding_0_fs.backdrop_rect.zw, vec2(1.0));
     vec2 local = clamp(pixel - _group_0_binding_0_fs.backdrop_rect.xy - vec2(0.5), vec2(0.0), size - vec2(1.0));
     vec2 uv = (local + vec2(0.5)) / vec2(textureSize(_group_0_binding_1_fs, 0));
-    if (_group_0_binding_0_fs.effect.x > 2.5) return textureLod(_group_0_binding_1_fs, uv, 0.0);
+    if (_group_0_binding_0_fs.effect.x < -0.5) return textureLod(_group_0_binding_1_fs, uv, 0.0);
     return textureLod(_group_0_binding_3_fs, uv, 0.0);
 }
 
 vec4 gaussian_backdrop(vec2 pixel) {
-    vec2 axis = _group_0_binding_0_fs.effect.x > 2.5 ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+    vec2 axis = _group_0_binding_0_fs.effect.x < -0.5 ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
     int support = int(ceil(_group_0_binding_0_fs.detail.z));
     vec4 total = gaussian_sample(pixel);
     float normalization = 1.0;
@@ -795,15 +795,54 @@ float material_alpha(vec2 uv_9) {
     return clamp(((base_alpha + ((_e45 * _e56) * 0.15)) + ((_e46 * _e64) * 0.15)), 0.0, 1.0);
 }
 
+// Rounded-rectangle normal in device pixels, independent of aspect ratio.
+vec3 lens_bevel_normal(vec2 point, vec2 half_size, vec4 radii, float distance, float bevel_width) {
+    float radius = min(selected_radius(point, radii), min(half_size.x, half_size.y));
+    vec2 q = abs(point) - half_size + radius;
+    vec2 outer = max(q, vec2(0.0));
+    vec2 outward = q.x > q.y ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+    if (dot(outer, outer) > 0.0) outward = normalize(outer);
+    outward *= sign(point);
+    float slope = liquid_bevel_slope(max(-distance, 0.0), bevel_width);
+    return normalize(vec3(outward * slope, 1.0));
+}
+
 void main() {
     VertexOutput input_ = VertexOutput(gl_FragCoord, _vs2fs_location0, _vs2fs_location1);
     vec3 material_backdrop = vec3(0.0);
     if (_group_0_binding_0_fs.effect.x > 1.5 && _group_0_binding_0_fs.viewport.w < 0.5) {
         discard;
     }
-    if (_group_0_binding_0_fs.effect.x > 2.5) {
+    if (_group_0_binding_0_fs.effect.x < -0.5) {
         _fs2p_location0 = gaussian_backdrop(input_.pixel_pos);
         return;
+    }
+    if (_group_0_binding_0_fs.effect.x > 2.5) {
+        vec2 center = _group_0_binding_0_fs.bounds.xy + _group_0_binding_0_fs.bounds.zw * 0.5;
+        float distance = sdf_rounded_rect(input_.pixel_pos - center, _group_0_binding_0_fs.bounds.zw * 0.5, _group_0_binding_0_fs.radii);
+        float depth = _group_0_binding_0_fs.liquid2_.y;
+        float bevel_width = _group_0_binding_0_fs.liquid2_.z;
+        vec2 offset = vec2(0.0);
+        if (bevel_width > 0.0 && -distance < bevel_width) {
+            vec3 normal = lens_bevel_normal(input_.pixel_pos - center, _group_0_binding_0_fs.bounds.zw * 0.5, _group_0_binding_0_fs.radii, distance, bevel_width);
+            offset = liquid_bevel_refract_offset(normal, 2.0 / 3.0, depth);
+        }
+        vec2 origin = _group_0_binding_0_fs.liquid.xy;
+        vec2 axes = _group_0_binding_0_fs.effect.zw;
+        float bulge = 1.0;
+        if (_group_0_binding_0_fs.liquid.w > 0.0) {
+            vec2 extent = max(max(origin - _group_0_binding_0_fs.bounds.xy, _group_0_binding_0_fs.bounds.xy + _group_0_binding_0_fs.bounds.zw - origin), vec2(0.001, 0.001));
+            vec2 normalized = (input_.pixel_pos - origin) / extent * axes;
+            float falloff = max(0.0, 1.0 - dot(normalized, normalized));
+            bulge += _group_0_binding_0_fs.liquid.w * falloff * falloff;
+        }
+        vec2 warped = origin + (input_.pixel_pos - origin + offset) / (_group_0_binding_0_fs.liquid.z * bulge);
+        vec2 sample_pixel = mix(input_.pixel_pos, warped, axes);
+        float mask = clamp(_group_0_binding_0_fs.effect.y * sdf_alpha(distance) * clip_alpha(input_.pixel_pos), 0.0, 1.0);
+        if (mask <= 0.0) discard;
+        vec4 enlarged = sample_backdrop(sample_pixel);
+        if (mask >= 1.0) { _fs2p_location0 = enlarged; return; }
+        _fs2p_location0 = mix(sample_backdrop(input_.pixel_pos), enlarged, mask); return;
     }
     vec4 filtered;
     if (_group_0_binding_0_fs.effect.x > 1.5) {

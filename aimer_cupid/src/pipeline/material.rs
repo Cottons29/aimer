@@ -1,14 +1,16 @@
 mod render;
+mod magnification_style;
 
 pub use render::MaterialPipeline;
+pub use magnification_style::MagnificationStyle;
 
 /// Reserved custom-pipeline name for W14 material requests.
 pub const MATERIAL_PIPELINE_NAME: &str = "aimer.material";
 
 /// The packet version shared by the canvas bridge and Cupid.
-pub const MATERIAL_PACKET_VERSION: u8 = 1;
+pub const MATERIAL_PACKET_VERSION: u8 = 2;
 /// The exact size of one encoded material request.
-pub const MATERIAL_PACKET_LEN: usize = 244;
+pub const MATERIAL_PACKET_LEN: usize = 252;
 /// Maximum intermediate texture dimension used by one surface.
 pub const MAX_INTERMEDIATE_DIMENSION: u32 = 2_048;
 /// Maximum intermediate RGBA pixels used by one surface.
@@ -25,6 +27,8 @@ pub enum MaterialKind {
     Liquid = 1,
     /// Filters the captured backdrop without glass styling or refraction.
     BackdropFilter = 2,
+    /// Magnifies the captured backdrop with optional rounded-edge refraction.
+    Magnification = 3,
 }
 
 impl MaterialKind {
@@ -34,6 +38,7 @@ impl MaterialKind {
             0 => Some(Self::Glass),
             1 => Some(Self::Liquid),
             2 => Some(Self::BackdropFilter),
+            3 => Some(Self::Magnification),
             _ => None,
         }
     }
@@ -127,15 +132,19 @@ pub struct MaterialRequest {
     pub blob_amount: f32,
     /// Liquid deterministic silhouette variation seed, in `0.0..=1.0`.
     pub blob_seed: f32,
-    /// Liquid backdrop lens/bulge magnification.
+    /// Liquid bulge strength (`0..=1`), or Magnification zoom factor (`1..=8`).
     pub magnification: f32,
     /// Liquid teardrop-tip taper strength.
     pub tip_pull: f32,
     /// Liquid chromatic-aberration strength at the refracting edge.
     pub chromatic_aberration: f32,
-    /// Liquid fake 3D bevel radius in logical pixels, used to build the
-    /// rounded-edge surface normal that drives physically-styled refraction.
+    /// Liquid bevel radius or Magnification lens thickness, in logical pixels.
+    /// Builds the rounded-edge normal that drives refraction.
     pub bevel_radius: f32,
+    /// Composable Magnification effects, axes, and anchors.
+    pub magnification_style: MagnificationStyle,
+    /// Additional Magnification bulge strength in `0..=1`.
+    pub bulge_strength: f32,
     /// Sampling quality in `1..=4`.
     pub quality: u8,
     /// Reduced-motion policy.
@@ -172,10 +181,12 @@ impl MaterialRequest {
             interaction: 0.0,
             blob_amount: 0.0,
             blob_seed: 0.5,
-            magnification: 0.45,
+            magnification: if kind == MaterialKind::Magnification { 1.5 } else { 0.45 },
             tip_pull: 0.0,
             chromatic_aberration: 0.3,
-            bevel_radius: 28.0,
+            bevel_radius: if kind == MaterialKind::Magnification { 16.0 } else { 28.0 },
+            magnification_style: if kind == MaterialKind::Magnification { MagnificationStyle::DEFAULT } else { MagnificationStyle::NONE },
+            bulge_strength: if kind == MaterialKind::Magnification { 0.25 } else { 0.0 },
             quality: 2,
             motion_policy: MaterialMotionPolicy::Full,
         }
@@ -231,6 +242,8 @@ impl MaterialRequest {
                 bytes.extend_from_slice(&value.to_bits().to_le_bytes());
             }
         }
+        bytes.extend_from_slice(&request.magnification_style.bits().to_le_bytes());
+        bytes.extend_from_slice(&request.bulge_strength.to_le_bytes());
         debug_assert_eq!(bytes.len(), MATERIAL_PACKET_LEN);
         bytes
     }
@@ -264,10 +277,19 @@ impl MaterialRequest {
         self.interaction = normalize(self.interaction, 0.0, 0.0, 1.0);
         self.blob_amount = normalize(self.blob_amount, 0.0, 0.0, 1.0);
         self.blob_seed = normalize(self.blob_seed, 0.5, 0.0, 1.0);
-        self.magnification = normalize(self.magnification, 0.45, 0.0, 1.0);
+        self.magnification = if self.kind == MaterialKind::Magnification {
+            normalize(self.magnification, 1.5, 1.0, 8.0)
+        } else { normalize(self.magnification, 0.45, 0.0, 1.0) };
         self.tip_pull = normalize(self.tip_pull, 0.0, 0.0, 1.0);
         self.chromatic_aberration = normalize(self.chromatic_aberration, 0.3, 0.0, 1.0);
-        self.bevel_radius = normalize(self.bevel_radius, 28.0, 0.0, 512.0);
+        self.bevel_radius = normalize(self.bevel_radius,
+            if self.kind == MaterialKind::Magnification { 16.0 } else { 28.0 }, 0.0, 512.0);
+        if self.kind == MaterialKind::Magnification {
+            self.bulge_strength = normalize(self.bulge_strength, 0.25, 0.0, 1.0);
+        } else {
+            self.magnification_style = MagnificationStyle::NONE;
+            self.bulge_strength = 0.0;
+        }
         self.quality = self.quality.clamp(1, 4);
         if self.motion_policy == MaterialMotionPolicy::Reduced {
             self.distortion_strength = 0.0;
@@ -276,9 +298,9 @@ impl MaterialRequest {
         self
     }
 
-    /// Decodes the fixed packet emitted by `aimer_canvas`.
+    /// Decodes current and legacy version-1 packets emitted by `aimer_canvas`.
     pub fn decode(bytes: &[u8]) -> Result<Self, MaterialDecodeError> {
-        if bytes.len() != MATERIAL_PACKET_LEN {
+        if bytes.len() < 5 {
             return Err(MaterialDecodeError::InvalidLength {
                 expected: MATERIAL_PACKET_LEN,
                 actual: bytes.len(),
@@ -288,8 +310,14 @@ impl MaterialRequest {
         if reader.bytes::<4>()? != b"AIMR" {
             return Err(MaterialDecodeError::InvalidMagic);
         }
-        if reader.u8()? != MATERIAL_PACKET_VERSION {
-            return Err(MaterialDecodeError::UnsupportedVersion);
+        let version = reader.u8()?;
+        let expected = match version {
+            1 => 244,
+            MATERIAL_PACKET_VERSION => MATERIAL_PACKET_LEN,
+            _ => return Err(MaterialDecodeError::UnsupportedVersion),
+        };
+        if bytes.len() != expected {
+            return Err(MaterialDecodeError::InvalidLength { expected, actual: bytes.len() });
         }
         let kind = MaterialKind::from_wire(reader.u8()?)
             .ok_or(MaterialDecodeError::UnsupportedKind)?;
@@ -334,7 +362,15 @@ impl MaterialRequest {
         let tip_pull = reader.f32()?;
         let chromatic_aberration = reader.f32()?;
         let bevel_radius = reader.f32()?;
-        debug_assert_eq!(reader.position(), MATERIAL_PACKET_LEN);
+        let (magnification_style, bulge_strength) = if version == 1 {
+            if kind == MaterialKind::Magnification { (MagnificationStyle::DEFAULT, 0.25) }
+            else { (MagnificationStyle::NONE, 0.0) }
+        } else {
+            let style = MagnificationStyle::from_bits(reader.u32()?)
+                .ok_or(MaterialDecodeError::InvalidMagnificationStyle)?;
+            (style, reader.f32()?)
+        };
+        debug_assert_eq!(reader.position(), expected);
 
         Ok(Self {
             kind,
@@ -369,6 +405,8 @@ impl MaterialRequest {
             tip_pull,
             chromatic_aberration,
             bevel_radius,
+            magnification_style,
+            bulge_strength,
             quality,
             motion_policy,
         }
@@ -420,6 +458,8 @@ pub enum MaterialDecodeError {
     NonZeroReserved,
     /// Clip presence was neither zero nor one.
     InvalidClipFlag,
+    /// Magnification flags contained an unknown bit.
+    InvalidMagnificationStyle,
 }
 
 /// The stable draw values used by the translucent fallback.
@@ -534,7 +574,11 @@ pub struct MaterialStagePlan {
 /// Selects a bounded GPU/fallback plan for a request.
 pub fn plan_material(request: MaterialRequest, capabilities: MaterialCapabilities) -> MaterialStagePlan {
     let request = request.normalized();
-    if request.bounds[2] <= 0.0 || request.bounds[3] <= 0.0 {
+    let inert_lens = request.kind == MaterialKind::Magnification
+        && !(request.magnification_style.contains(MagnificationStyle::UNIFORM) && request.magnification != 1.0
+            || request.magnification_style.contains(MagnificationStyle::BULGE) && request.bulge_strength > 0.0
+            || request.magnification_style.contains(MagnificationStyle::REFRACTION) && request.bevel_radius > 0.0);
+    if request.bounds[2] <= 0.0 || request.bounds[3] <= 0.0 || inert_lens {
         return MaterialStagePlan {
             path: MaterialRenderPath::Skip,
             fallback_reason: None,
@@ -582,23 +626,29 @@ pub fn plan_material(request: MaterialRequest, capabilities: MaterialCapabilitie
     }
 }
 
-/// Computes a downsampled, bounded intermediate allocation.
+/// Computes a bounded intermediate allocation.
+/// BackdropFilter and Magnification use full-resolution textures and the
+/// supplied hardware dimension limit. Glass and Liquid retain the
+/// downsampled 2,048-pixel limit.
 pub fn bounded_intermediate_extent(
     request: MaterialRequest,
     capabilities: MaterialCapabilities,
 ) -> Option<IntermediateExtent> {
     let request = request.normalized();
-    let max_dimension = capabilities
-        .max_surface_dimension
-        .min(MAX_INTERMEDIATE_DIMENSION);
+    let full_resolution = matches!(request.kind, MaterialKind::BackdropFilter | MaterialKind::Magnification);
+    let max_dimension = if full_resolution {
+        capabilities.max_surface_dimension
+    } else {
+        capabilities.max_surface_dimension.min(MAX_INTERMEDIATE_DIMENSION)
+    };
     if max_dimension == 0 {
         return None;
     }
-    let downsample = match request.quality {
+    let downsample = if full_resolution { 1.0 } else { match request.quality {
         1 => 4.0,
         2 => 2.0,
         _ => 1.0,
-    };
+    } };
     let width = (request.bounds[2] / downsample).ceil().max(1.0);
     let height = (request.bounds[3] / downsample).ceil().max(1.0);
     if !width.is_finite()

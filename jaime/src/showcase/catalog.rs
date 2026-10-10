@@ -23,6 +23,7 @@ pub(super) enum ExampleId {
     AssetsMedia,
     GlassLiquid,
     BackdropFilter,
+    Magnification,
     Storage,
     CustomShape,
     AnimatedLayout,
@@ -82,6 +83,7 @@ pub(super) const EXAMPLES: &[ExampleId] = &[
     ExampleId::AssetsMedia,
     ExampleId::GlassLiquid,
     ExampleId::BackdropFilter,
+    ExampleId::Magnification,
     ExampleId::Storage,
     ExampleId::CustomShape,
     ExampleId::AnimatedLayout,
@@ -197,6 +199,7 @@ pub(super) const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
             ExampleId::AssetsMedia,
             ExampleId::GlassLiquid,
             ExampleId::BackdropFilter,
+            ExampleId::Magnification,
             ExampleId::CustomShape,
             ExampleId::SystemTheme,
             ExampleId::AnimatedTheme,
@@ -243,6 +246,7 @@ impl ExampleId {
             Self::AssetsMedia => "Assets and media",
             Self::GlassLiquid => "Glass/Liquid",
             Self::BackdropFilter => "Backdrop filter",
+            Self::Magnification => "Magnification",
             Self::Storage => "Durable storage",
             Self::CustomShape => "Custom shapes",
             Self::AnimatedLayout => "Animated layout",
@@ -304,6 +308,7 @@ impl ExampleId {
             Self::AssetsMedia => "◎",
             Self::GlassLiquid => "◌",
             Self::BackdropFilter => "▧",
+            Self::Magnification => "⊕",
             Self::Storage => "▣",
             Self::AnimatedLayout => "↗",
             Self::TextProperties
@@ -358,6 +363,7 @@ impl ExampleId {
             Self::AssetsMedia => "assets-media",
             Self::GlassLiquid => "glass-liquid",
             Self::BackdropFilter => "backdrop-filter",
+            Self::Magnification => "magnification",
             Self::Storage => "storage",
             Self::CustomShape => "custom-shape",
             Self::AnimatedLayout => "animated-layout",
@@ -452,6 +458,9 @@ impl ExampleId {
             }
             Self::BackdropFilter => {
                 "Blur and adjust background text through a box while keeping its foreground text sharp."
+            }
+            Self::Magnification => {
+                "Zoom background text through a rounded lens with adjustable glass thickness and sharp foreground text."
             }
             Self::Storage => {
                 "Exercise namespaced preferences through the deterministic memory storage adapter."

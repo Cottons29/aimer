@@ -3,7 +3,7 @@ struct MaterialUniform {
     tint: vec4<f32>,
     border_color: vec4<f32>,
     shadow: vec4<f32>,
-    // x: material kind (0 = Glass, 1 = Liquid, 2 = filter, 3 = horizontal blur)
+    // x: material kind (0 = Glass, 1 = Liquid, 2 = filter, 3 = lens, -1 = horizontal blur)
     // y: opacity, z: animation phase, w: distortion strength
     effect: vec4<f32>,
     // x: saturation, y: brightness, z: contrast, w: edge lighting
@@ -20,7 +20,8 @@ struct MaterialUniform {
     backdrop_rect: vec4<f32>,
     // x: blob amount, y: blob seed, z: magnification, w: tip pull
     liquid: vec4<f32>,
-    // x: chromatic aberration, y: bevel radius, z/w: Gaussian recurrence
+    // x: chromatic aberration, y: bevel radius/depth, z/w: Gaussian recurrence
+    // Magnification uses z for the corner-bounded bevel width.
     liquid2: vec4<f32>,
 };
 
@@ -183,7 +184,7 @@ fn sample_backdrop(pixel: vec2<f32>) -> vec4<f32> {
     let valid_size = max(material.backdrop_rect.zw, vec2<f32>(1.0, 1.0));
     // Filter coordinates already denote fragment centers. Avoid introducing a
     // half-texel shift that would soften sharp edges even when blur is zero.
-    let center_offset = select(0.0, 0.5, material.effect.x > 1.5);
+    let center_offset = select(0.0, 0.5, material.effect.x > 1.5 || material.effect.x < -0.5);
     let local_pixel = clamp(
         pixel - material.backdrop_rect.xy - vec2<f32>(center_offset),
         vec2<f32>(0.0, 0.0),
@@ -203,14 +204,14 @@ fn gaussian_sample(pixel: vec2<f32>) -> vec4<f32> {
     let size = max(material.backdrop_rect.zw, vec2<f32>(1.0));
     let local = clamp(pixel - material.backdrop_rect.xy - vec2<f32>(0.5), vec2<f32>(0.0), size - vec2<f32>(1.0));
     let uv = (local + vec2<f32>(0.5)) / vec2<f32>(textureDimensions(backdrop));
-    if material.effect.x > 2.5 {
+    if material.effect.x < -0.5 {
         return textureSampleLevel(backdrop, backdrop_sampler, uv, 0.0);
     }
     return textureSampleLevel(horizontal_blur, backdrop_sampler, uv, 0.0);
 }
 
 fn gaussian_backdrop(pixel: vec2<f32>) -> vec4<f32> {
-    let axis = select(vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), material.effect.x > 2.5);
+    let axis = select(vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), material.effect.x < -0.5);
     let support = i32(ceil(material.detail.z));
     var total = gaussian_sample(pixel);
     var normalization = 1.0;
@@ -514,12 +515,52 @@ fn material_alpha(uv: vec2<f32>) -> f32 {
     );
 }
 
+// Differentiate the rounded rectangle in device pixels. UV-space gradients
+// skew corner refraction when the lens width and height differ.
+fn lens_bevel_normal(point: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>, distance: f32, bevel_width: f32) -> vec3<f32> {
+    let radius = min(selected_radius(point, radii), min(half_size.x, half_size.y));
+    let q = abs(point) - half_size + vec2<f32>(radius);
+    let outer = max(q, vec2<f32>(0.0));
+    var outward = select(vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), q.x > q.y);
+    if dot(outer, outer) > 0.0 { outward = normalize(outer); }
+    outward *= sign(point);
+    let slope = liquid_bevel_slope(max(-distance, 0.0), bevel_width);
+    return normalize(vec3<f32>(outward * slope, 1.0));
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if material.effect.x > 1.5 && material.viewport.w < 0.5 {
         discard;
     }
-    if material.effect.x > 2.5 { return gaussian_backdrop(input.pixel_pos); }
+    if material.effect.x < -0.5 { return gaussian_backdrop(input.pixel_pos); }
+    if material.effect.x > 2.5 {
+        let center = material.bounds.xy + material.bounds.zw * 0.5;
+        let distance = sdf_rounded_rect(input.pixel_pos - center, material.bounds.zw * 0.5, material.radii);
+        let depth = material.liquid2.y;
+        let bevel_width = material.liquid2.z;
+        var offset = vec2<f32>(0.0);
+        if bevel_width > 0.0 && -distance < bevel_width {
+            let normal = lens_bevel_normal(input.pixel_pos - center, material.bounds.zw * 0.5, material.radii, distance, bevel_width);
+            offset = liquid_bevel_refract_offset(normal, 2.0 / 3.0, depth);
+        }
+        let origin = material.liquid.xy;
+        let axes = material.effect.zw;
+        var bulge = 1.0;
+        if material.liquid.w > 0.0 {
+            let extent = max(max(origin - material.bounds.xy, material.bounds.xy + material.bounds.zw - origin), vec2<f32>(0.001));
+            let normalized = (input.pixel_pos - origin) / extent * axes;
+            let falloff = max(0.0, 1.0 - dot(normalized, normalized));
+            bulge += material.liquid.w * falloff * falloff;
+        }
+        let warped = origin + (input.pixel_pos - origin + offset) / (material.liquid.z * bulge);
+        let sample_pixel = mix(input.pixel_pos, warped, axes);
+        let mask = clamp(material.effect.y * sdf_alpha(distance) * clip_alpha(input.pixel_pos), 0.0, 1.0);
+        if mask <= 0.0 { discard; }
+        let enlarged = sample_backdrop(sample_pixel);
+        if mask >= 1.0 { return enlarged; }
+        return mix(sample_backdrop(input.pixel_pos), enlarged, mask);
+    }
     var filtered: vec4<f32>;
     if material.effect.x > 1.5 {
         if material.detail.z > 0.0 { filtered = gaussian_backdrop(input.pixel_pos); }

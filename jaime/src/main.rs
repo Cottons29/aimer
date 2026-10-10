@@ -23,6 +23,7 @@ mod focus_node_example;
 mod form_example;
 mod glass_liquid_example;
 mod backdrop_filter_example;
+mod magnification_example;
 mod http_request_button;
 mod i18n_example;
 mod justify_content_example;

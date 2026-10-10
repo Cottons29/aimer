@@ -5,7 +5,7 @@ pub use single_child::container::Container;
 #[doc(hidden)]
 pub use single_child::container::RetainedBoxDecoration;
 pub use single_child::custom_shape::CustomShape;
-pub use single_child::decoration_box::{BackdropFilter, Decoration, DecorationBox};
+pub use single_child::decoration_box::{BackdropFilter, Decoration, DecorationBox, Magnification, MagnificationStyle};
 pub use single_child::glass::{Glass, GlassMaterial, MaterialMotionPolicy};
 pub use single_child::liquid::{Liquid, LiquidMaterial};
 pub use single_child::opacity::Opacity;

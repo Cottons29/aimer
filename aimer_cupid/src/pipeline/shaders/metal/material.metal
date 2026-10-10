@@ -144,7 +144,7 @@ static float4 sample_backdrop(constant MaterialUniform& material,
                               sampler backdrop_sampler,
                               float2 pixel) {
     float2 valid_size = max(material.backdrop_rect.zw, float2(1.0));
-    float center_offset = material.effect.x > 1.5 ? 0.5 : 0.0;
+    float center_offset = (material.effect.x > 1.5 || material.effect.x < -0.5) ? 0.5 : 0.0;
     float2 local_pixel = clamp(pixel - material.backdrop_rect.xy - float2(center_offset),
                                float2(0.0), valid_size - float2(1.0));
     float2 texture_size = float2(float(backdrop.get_width()),
@@ -154,7 +154,7 @@ static float4 sample_backdrop(constant MaterialUniform& material,
 }
 
 static float4 gaussian_backdrop(constant MaterialUniform& material, texture2d<float> source, sampler backdrop_sampler, float2 pixel) {
-    float2 axis = material.effect.x > 2.5 ? float2(1.0, 0.0) : float2(0.0, 1.0);
+    float2 axis = material.effect.x < -0.5 ? float2(1.0, 0.0) : float2(0.0, 1.0);
     int support = int(ceil(material.detail.z));
     float4 total = sample_backdrop(material, source, backdrop_sampler, pixel);
     float normalization = 1.0;
@@ -402,6 +402,18 @@ static float material_alpha(constant MaterialUniform& material, float2 uv) {
                  + sheen * material.detail.x * 0.15, 0.0, 1.0);
 }
 
+// Rounded-rectangle normal in device pixels, independent of aspect ratio.
+static float3 lens_bevel_normal(float2 point, float2 half_size, float4 radii, float distance, float bevel_width) {
+    float radius = min(selected_radius(point, radii), min(half_size.x, half_size.y));
+    float2 q = abs(point) - half_size + radius;
+    float2 outer = max(q, float2(0.0));
+    float2 outward = q.x > q.y ? float2(1.0, 0.0) : float2(0.0, 1.0);
+    if (dot(outer, outer) > 0.0) outward = normalize(outer);
+    outward *= sign(point);
+    float slope = liquid_bevel_slope(max(-distance, 0.0), bevel_width);
+    return normalize(float3(outward * slope, 1.0));
+}
+
 fragment float4 fs_main(MaterialVaryings varyings [[stage_in]],
                         constant MaterialUniform& material [[buffer(0)]],
                         texture2d<float> backdrop [[texture(1)]],
@@ -410,7 +422,34 @@ fragment float4 fs_main(MaterialVaryings varyings [[stage_in]],
     if (material.effect.x > 1.5 && material.viewport.w < 0.5) {
         discard_fragment();
     }
-    if (material.effect.x > 2.5) return gaussian_backdrop(material, backdrop, backdrop_sampler, varyings.pixel_pos);
+    if (material.effect.x < -0.5) return gaussian_backdrop(material, backdrop, backdrop_sampler, varyings.pixel_pos);
+    if (material.effect.x > 2.5) {
+        float2 center = material.bounds.xy + material.bounds.zw * 0.5;
+        float distance = sdf_rounded_rect(varyings.pixel_pos - center, material.bounds.zw * 0.5, material.radii);
+        float depth = material.liquid2.y;
+        float bevel_width = material.liquid2.z;
+        float2 offset = float2(0.0);
+        if (bevel_width > 0.0 && -distance < bevel_width) {
+            float3 normal = lens_bevel_normal(varyings.pixel_pos - center, material.bounds.zw * 0.5, material.radii, distance, bevel_width);
+            offset = liquid_bevel_refract_offset(normal, 2.0 / 3.0, depth);
+        }
+        float2 origin = material.liquid.xy;
+        float2 axes = material.effect.zw;
+        float bulge = 1.0;
+        if (material.liquid.w > 0.0) {
+            float2 extent = max(max(origin - material.bounds.xy, material.bounds.xy + material.bounds.zw - origin), float2(0.001, 0.001));
+            float2 normalized = (varyings.pixel_pos - origin) / extent * axes;
+            float falloff = max(0.0, 1.0 - dot(normalized, normalized));
+            bulge += material.liquid.w * falloff * falloff;
+        }
+        float2 warped = origin + (varyings.pixel_pos - origin + offset) / (material.liquid.z * bulge);
+        float2 sample_pixel = mix(varyings.pixel_pos, warped, axes);
+        float mask = clamp(material.effect.y * sdf_alpha(distance) * clip_alpha(material, varyings.pixel_pos), 0.0, 1.0);
+        if (mask <= 0.0) discard_fragment();
+        float4 enlarged = sample_backdrop(material, backdrop, backdrop_sampler, sample_pixel);
+        if (mask >= 1.0) { return enlarged; }
+        return mix(sample_backdrop(material, backdrop, backdrop_sampler, varyings.pixel_pos), enlarged, mask);
+    }
     float4 filtered;
     if (material.effect.x > 1.5) {
         filtered = material.detail.z > 0.0 ? gaussian_backdrop(material, horizontal_blur, backdrop_sampler, varyings.pixel_pos) : sample_backdrop(material, backdrop, backdrop_sampler, varyings.pixel_pos);

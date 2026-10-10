@@ -1,5 +1,6 @@
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
+pub use aimer_cupid::material::MagnificationStyle;
 
 use crate::canvas::FrameCanvas;
 
@@ -21,6 +22,8 @@ pub enum MaterialKind {
     Liquid = 1,
     /// Filters the captured backdrop without glass styling or refraction.
     BackdropFilter = 2,
+    /// Magnifies the captured backdrop with optional rounded-edge refraction.
+    Magnification = 3,
 }
 
 /// Reduced-motion policy carried by a material packet.
@@ -113,15 +116,19 @@ pub struct MaterialDrawRequest {
     pub blob_amount: f32,
     /// Liquid deterministic silhouette variation seed, in `0.0..=1.0`.
     pub blob_seed: f32,
-    /// Liquid backdrop lens/bulge magnification.
+    /// Liquid bulge strength (`0..=1`), or Magnification zoom factor (`1..=8`).
     pub magnification: f32,
     /// Liquid teardrop-tip taper strength.
     pub tip_pull: f32,
     /// Liquid chromatic-aberration strength at the refracting edge.
     pub chromatic_aberration: f32,
-    /// Liquid fake 3D bevel radius in logical pixels, used to build the
-    /// rounded-edge surface normal that drives physically-styled refraction.
+    /// Liquid bevel radius or Magnification lens thickness, in logical pixels.
+    /// Builds the rounded-edge normal that drives refraction.
     pub bevel_radius: f32,
+    /// Composable Magnification effects, axes, and anchors.
+    pub magnification_style: MagnificationStyle,
+    /// Additional Magnification bulge strength in `0..=1`.
+    pub bulge_strength: f32,
     /// Sampling quality in `1..=4`.
     pub quality: u8,
     /// Motion policy for dynamic fields.
@@ -130,9 +137,9 @@ pub struct MaterialDrawRequest {
 
 impl MaterialDrawRequest {
     /// Packet schema version.
-    pub const VERSION: u8 = 1;
+    pub const VERSION: u8 = 2;
     /// Exact byte length of [`Self::encode`].
-    pub const PACKET_LEN: usize = 244;
+    pub const PACKET_LEN: usize = 252;
     /// Maximum blur accepted by the bridge.
     pub const MAX_BLUR_RADIUS: f32 = 96.0;
     /// Maximum shadow blur accepted by the bridge.
@@ -173,10 +180,12 @@ impl MaterialDrawRequest {
             interaction: 0.0,
             blob_amount: 0.0,
             blob_seed: 0.5,
-            magnification: 0.45,
+            magnification: if kind == MaterialKind::Magnification { 1.5 } else { 0.45 },
             tip_pull: 0.0,
             chromatic_aberration: 0.3,
-            bevel_radius: 28.0,
+            bevel_radius: if kind == MaterialKind::Magnification { 16.0 } else { 28.0 },
+            magnification_style: if kind == MaterialKind::Magnification { MagnificationStyle::DEFAULT } else { MagnificationStyle::NONE },
+            bulge_strength: if kind == MaterialKind::Magnification { 0.25 } else { 0.0 },
             quality: 2,
             motion_policy: MaterialMotionPolicy::Full,
         }
@@ -228,10 +237,19 @@ impl MaterialDrawRequest {
         self.interaction = normalize(self.interaction, 0.0, 0.0, 1.0);
         self.blob_amount = normalize(self.blob_amount, 0.0, 0.0, 1.0);
         self.blob_seed = normalize(self.blob_seed, 0.5, 0.0, 1.0);
-        self.magnification = normalize(self.magnification, 0.45, 0.0, 1.0);
+        self.magnification = if self.kind == MaterialKind::Magnification {
+            normalize(self.magnification, 1.5, 1.0, 8.0)
+        } else { normalize(self.magnification, 0.45, 0.0, 1.0) };
         self.tip_pull = normalize(self.tip_pull, 0.0, 0.0, 1.0);
         self.chromatic_aberration = normalize(self.chromatic_aberration, 0.3, 0.0, 1.0);
-        self.bevel_radius = normalize(self.bevel_radius, 28.0, 0.0, 512.0);
+        self.bevel_radius = normalize(self.bevel_radius,
+            if self.kind == MaterialKind::Magnification { 16.0 } else { 28.0 }, 0.0, 512.0);
+        if self.kind == MaterialKind::Magnification {
+            self.bulge_strength = normalize(self.bulge_strength, 0.25, 0.0, 1.0);
+        } else {
+            self.magnification_style = MagnificationStyle::NONE;
+            self.bulge_strength = 0.0;
+        }
         self.quality = self.quality.clamp(1, 4);
         if self.motion_policy == MaterialMotionPolicy::Reduced {
             self.distortion_strength = 0.0;
@@ -286,6 +304,8 @@ impl MaterialDrawRequest {
         push_f32(&mut bytes, request.tip_pull);
         push_f32(&mut bytes, request.chromatic_aberration);
         push_f32(&mut bytes, request.bevel_radius);
+        bytes.extend_from_slice(&request.magnification_style.bits().to_le_bytes());
+        push_f32(&mut bytes, request.bulge_strength);
         debug_assert_eq!(bytes.len(), Self::PACKET_LEN);
         bytes
     }
