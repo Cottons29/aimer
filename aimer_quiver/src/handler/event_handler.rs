@@ -121,13 +121,13 @@ impl WindowEventHandler {
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 Self::update_scale_factor(&mut app.window_scale, scale_factor);
-                #[cfg(all(target_os = "macos", feature = "native", not(feature = "wgpu")))]
+                #[cfg(all(any(target_os = "macos", target_os = "ios"), feature = "native", not(feature = "wgpu")))]
                 if app.render_ctx.is_ready()
                     && let Some(window) = app.native_window()
                 {
                     // Keep CAMetalLayer's contents scale current even when the
                     // physical drawable size did not change with the display.
-                    app.render_ctx.resize(window.inner_size());
+                    app.render_ctx.resize(aimer_widget::base::WindowHandle::native(window).inner_size());
                 }
                 app.sync_headless_metrics(None);
                 if let Some(root) = app.active_root() {
@@ -759,19 +759,6 @@ impl WindowEventHandler {
         }
     }
 
-    #[cfg(any(test, target_os = "ios"))]
-    fn oriented_screen_size(
-        resize_size: PhysicalSize<u32>,
-        screen_size: (f64, f64),
-    ) -> PhysicalSize<u32> {
-        let (width, height) = screen_size;
-        if resize_size.width < resize_size.height {
-            PhysicalSize::new(width as u32, height as u32)
-        } else {
-            PhysicalSize::new(height as u32, width as u32)
-        }
-    }
-
     fn handle_resize<W: Widget + 'static>(
         size: PhysicalSize<u32>,
         app: &mut AimerApplicationHandler<W>,
@@ -781,31 +768,6 @@ impl WindowEventHandler {
         if let Some(window) = app.native_window() {
             app.macos_windowing.window_layout_changed(window);
         }
-
-        #[cfg(target_os = "ios")]
-        aimer_utils::debug!("iOS handle_resize raw size: {size:?}");
-        #[cfg(target_os = "ios")]
-        let size = {
-            use aimer_attribute::ResolvedSize;
-            match crate::ios_screen::get_screen_resolution_pixels() {
-                Some((width, height)) => {
-                    app.native_window_size = Some(ResolvedSize {
-                        width: width as f32,
-                        height: height as f32,
-                    });
-                    Self::oriented_screen_size(size, (width, height))
-                }
-                None => {
-                    if app.window.is_none() {
-                        return;
-                    }
-                    app.window.as_ref().unwrap().inner_size()
-                }
-            }
-        };
-
-        #[cfg(target_os = "ios")]
-        aimer_utils::debug!("iOS handle_resize modified size: {size:?}");
 
         #[cfg(target_os = "android")]
         let size = {
@@ -822,7 +784,9 @@ impl WindowEventHandler {
             }
         };
 
-        // debug!("Window resized to {:?}", size);
+        // On iOS winit already supplies the current window bounds in physical
+        // pixels. Replacing these with UIScreen.nativeBounds breaks Split View
+        // and freely resized iPad windows, including their backdrop sampling.
 
         Self::apply_resize(size, app);
 
@@ -849,6 +813,10 @@ impl WindowEventHandler {
         app: &mut AimerApplicationHandler<W>,
     ) {
         app.pending_resize = Some(size);
+        app.native_window_size = Some(aimer_attribute::ResolvedSize {
+            width: size.width as f32,
+            height: size.height as f32,
+        });
         // A platform window has already grown to `size` by the time it reports
         // the resize, so anything that reads the window while the event is
         // handled — a breakpoint, a media query — sees the new one. A headless
@@ -973,80 +941,5 @@ impl WindowEventHandler {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ios_screen_size_follows_resize_orientation() {
-        let screen_size = (1179.0, 2556.0);
-
-        assert_eq!(
-            WindowEventHandler::oriented_screen_size(PhysicalSize::new(390, 844), screen_size),
-            PhysicalSize::new(1179, 2556),
-        );
-        assert_eq!(
-            WindowEventHandler::oriented_screen_size(PhysicalSize::new(844, 390), screen_size),
-            PhysicalSize::new(2556, 1179),
-        );
-    }
-
-    #[test]
-    fn scale_factor_change_updates_window_scale() {
-        let mut window_scale = 1.0;
-
-        WindowEventHandler::update_scale_factor(&mut window_scale, 2.0);
-
-        assert_eq!(window_scale, 2.0);
-    }
-
-    #[test]
-    fn event_result_redraws_for_legacy_handling_or_explicit_request() {
-        assert!(WindowEventHandler::should_redraw(
-            aimer_widget::EventResult::ignored(),
-            true,
-        ));
-        assert!(WindowEventHandler::should_redraw(
-            aimer_widget::EventResult::redraw(),
-            false,
-        ));
-        assert!(!WindowEventHandler::should_redraw(
-            aimer_widget::EventResult::ignored(),
-            false,
-        ));
-    }
-
-    #[test]
-    fn precise_wheel_delta_preserves_logical_distance() {
-        let (delta, kind) = WindowEventHandler::normalize_wheel_delta(
-            MouseScrollDelta::PixelDelta(PhysicalPosition::new(24.0, -16.0)),
-            2.0,
-        );
-
-        assert_eq!(delta.x, 18.0);
-        assert_eq!(delta.y, -12.0);
-        assert_eq!(kind, aimer_events::element::ScrollDeltaKind::Pixel);
-    }
-
-    #[test]
-    fn line_wheel_delta_uses_stable_logical_step() {
-        let (delta, kind) =
-            WindowEventHandler::normalize_wheel_delta(MouseScrollDelta::LineDelta(1.0, -2.0), 2.0);
-
-        assert_eq!(delta.x, 20.0);
-        assert_eq!(delta.y, -40.0);
-        assert_eq!(kind, aimer_events::element::ScrollDeltaKind::Line);
-    }
-
-    #[test]
-    fn precise_wheel_delta_uses_safe_scale_fallback() {
-        for scale in [0.0, f64::NAN, f64::INFINITY] {
-            let (delta, _) = WindowEventHandler::normalize_wheel_delta(
-                MouseScrollDelta::PixelDelta(PhysicalPosition::new(12.0, -8.0)),
-                scale,
-            );
-
-            assert_eq!(delta.x, 12.0 * WindowEventHandler::SCROLL_MULTIPLIER);
-            assert_eq!(delta.y, -8.0 * WindowEventHandler::SCROLL_MULTIPLIER);
-        }
-    }
-}
+#[path = "event_handler/tests.rs"]
+mod tests;

@@ -42,9 +42,7 @@ pub use aimer_cupid::AntiAlias;
 pub use first_frame::{FIRST_FRAME_RENDERED_EVENT, set_first_frame_rendered_callback};
 #[cfg(target_os = "ios")]
 mod ios_screen {
-    pub use crate::ffi_utils::ios_screen::{
-        attach_window_to_active_scene, get_screen_resolution_pixels,
-    };
+    pub use crate::ffi_utils::ios_screen::attach_window_to_active_scene;
 }
 
 mod adapter_detail;

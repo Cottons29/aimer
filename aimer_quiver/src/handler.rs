@@ -980,6 +980,7 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub current_modifiers: aimer_events::element::Modifiers,
     pub ime_composing: bool,
     pub window_scale: f64,
+    /// Last observed window size in physical pixels, independent of screen resolution.
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
     pub(crate) startup_hooks: Vec<StartupHook>,
@@ -1962,14 +1963,6 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
             debug!("Set ControlFlow::Poll for Android");
         }
 
-        #[cfg(target_os = "ios")]
-        if let Some((width, height)) = crate::ios_screen::get_screen_resolution_pixels() {
-            self.native_window_size = Some(ResolvedSize {
-                width: width as f32,
-                height: height as f32,
-            })
-        };
-
         let window_attributes = {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
@@ -1981,14 +1974,8 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
             }
             #[cfg(target_os = "ios")]
             {
-                match crate::ios_screen::get_screen_resolution_pixels() {
-                    Some((w, h)) => {
-                        // println!("IOS TARGET Window Size : {w}x{h}");
-                        let phy_size = PhysicalSize::new(w as u32, h as u32);
-                        WindowAttributes::default().with_inner_size(phy_size)
-                    }
-                    None => WindowAttributes::default(),
-                }
+                // UIKit owns the scene's resizable bounds, not UIScreen.
+                WindowAttributes::default()
             }
         };
         let window_attributes = self.macos_windowing.apply_attributes(window_attributes);
@@ -2049,7 +2036,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         crate::system_safe_area::start_observing(window);
 
         #[allow(unused_mut)]
-        let mut size = window.inner_size();
+        let mut size = WindowHandle::native(window).inner_size();
 
         #[cfg(target_os = "android")]
         {
@@ -2058,27 +2045,6 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
                     let width = native_window.width() as u32;
                     let height = native_window.height() as u32;
                     size = winit::dpi::PhysicalSize::new(width, height);
-                }
-            }
-        }
-
-        #[cfg(target_os = "ios")]
-        {
-            let full = window.outer_size();
-            if full.width != 0 && full.height != 0 {
-                size = PhysicalSize::new(full.width, full.height);
-            }
-            if size.width == 0 || size.height == 0 {
-                let fallback = self
-                    .native_window_size
-                    .map(|s| PhysicalSize::new(s.width as u32, s.height as u32))
-                    .or_else(|| {
-                        crate::ios_screen::get_screen_resolution_pixels()
-                            .map(|(w, h)| PhysicalSize::new(w as u32, h as u32))
-                    });
-                if let Some(fallback) = fallback {
-                    println!("iOS zero window size, using native screen resolution: {fallback:?}");
-                    size = fallback;
                 }
             }
         }
@@ -2093,6 +2059,10 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         // On Android the surface may be (re-)created with the correct size now.
         // Schedule a resize so the GPU surface matches the actual window dimensions.
         self.pending_resize = Some(size);
+        self.native_window_size = Some(ResolvedSize {
+            width: size.width as f32,
+            height: size.height as f32,
+        });
         #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
         if self.show_window_after_first_frame {
             // Render inline while the window is hidden so its first visible
