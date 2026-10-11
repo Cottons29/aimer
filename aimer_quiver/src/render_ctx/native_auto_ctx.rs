@@ -1,6 +1,7 @@
 use aimer_cupid::AntiAlias;
 use aimer_cupid::damage_region::DamageSet;
-use aimer_cupid::frame::FramePacket;
+use aimer_cupid::frame::{Frame, FramePacket};
+use aimer_cupid::canvas::CupidCanvas;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
@@ -101,6 +102,58 @@ impl NativeAutoApi {
             Some(ActiveBackend::Vulkan(api)) => api.render_frame_packet(draw_fn),
             Some(ActiveBackend::OpenGl(api)) => api.render_frame_packet(draw_fn),
             None => PresentOutcome::Dropped,
+        }
+    }
+
+    /// Records and presents a full-damage frame using the selected backend.
+    pub fn render_frame(&mut self, draw: impl FnOnce(&CupidCanvas, u32, u32)) -> PresentOutcome {
+        self.render_frame_packet(|canvas, width, height| {
+            draw(canvas, width, height);
+            (1.0, DamageSet::full(width, height))
+        })
+    }
+
+    /// Records a full-damage frame without presenting it.
+    pub fn build_frame(&mut self, draw: impl FnOnce(&CupidCanvas, u32, u32)) -> Option<Frame> {
+        self.build_frame_packet(|canvas, width, height| {
+            draw(canvas, width, height);
+            (1.0, DamageSet::full(width, height))
+        }).map(FramePacket::into_frame)
+    }
+
+    /// Records a damage-carrying packet without presenting it.
+    pub fn build_frame_packet(&mut self,
+        draw: impl FnOnce(&CupidCanvas, u32, u32) -> (f32, DamageSet)) -> Option<FramePacket>
+    {
+        match &mut self.active {
+            Some(ActiveBackend::Vulkan(api)) => api.build_frame_packet(draw),
+            Some(ActiveBackend::OpenGl(api)) => api.build_frame_packet(draw),
+            None => None,
+        }
+    }
+
+    /// Presents a full-damage frame using the selected backend.
+    pub fn present(&mut self, frame: Frame) -> PresentOutcome {
+        match &mut self.active {
+            Some(ActiveBackend::Vulkan(api)) => api.present(frame),
+            Some(ActiveBackend::OpenGl(api)) => api.present(frame),
+            None => PresentOutcome::Dropped,
+        }
+    }
+
+    pub(crate) fn worker_max_dimension(&self) -> u32 {
+        match &self.active {
+            Some(ActiveBackend::Vulkan(api)) => api.worker_max_dimension(),
+            Some(ActiveBackend::OpenGl(api)) => api.worker_max_dimension(),
+            None => u32::MAX,
+        }
+    }
+
+    pub(crate) fn present_worker_packet(&mut self, packet: &FramePacket) -> bool {
+        match &mut self.active {
+            Some(ActiveBackend::Vulkan(api)) => api.present_worker_packet(packet),
+            Some(ActiveBackend::OpenGl(api)) => api.present_worker_packet(packet),
+            None => false,
         }
     }
 

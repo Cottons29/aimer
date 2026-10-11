@@ -39,6 +39,7 @@ use super::{
 };
 
 mod damage_clear;
+mod frame_recovery;
 use damage_clear::DamageClearTextureGeneric;
 
 const RETAINED_LAYER_CACHE_BUDGET_BYTES: u64 = 64 * 1024 * 1024;

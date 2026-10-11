@@ -72,6 +72,7 @@ use crate::backend::{
 pub mod binding;
 mod presentation;
 pub use presentation::{MetalSurface, MetalSurfaceFrame};
+pub use presentation::threaded::{MetalDrawableSource, ScheduledMetalDrawable};
 use presentation::MetalQueueState;
 
 // objc2-metal emits the `Metal` framework link itself, but documents that the

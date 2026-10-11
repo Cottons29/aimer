@@ -48,13 +48,13 @@ impl WindowEventHandler {
         }
         match event {
             WindowEvent::CloseRequested => {
-                // #[cfg(target_os = "macos")]
-                // {
-                //     use winit::platform::macos::ActiveEventLoopExtMacOS;
-                //     event_loop.hide_application();
-                // }
-                // #[cfg(not(target_os = "macos"))]
-                event_loop.exit()
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    app.render_ctx.close();
+                    if app.render_ctx.is_stopped() { event_loop.exit(); }
+                }
+                #[cfg(target_arch = "wasm32")]
+                event_loop.exit();
             }
 
             WindowEvent::RedrawRequested => app.render(event_loop),

@@ -183,7 +183,8 @@ pub use crate::frame_work_stats::{
 };
 #[doc(hidden)]
 pub use crate::hover_reconciliation::{
-    mouse_region_hover_reconciliation_deferred, request_mouse_region_hover_reconciliation,
+    mouse_region_hover_reconciliation_deferred, pointer_capture_active,
+    request_mouse_region_hover_reconciliation, set_pointer_capture_active,
     with_deferred_mouse_region_hover_reconciliation,
 };
 #[doc(hidden)]

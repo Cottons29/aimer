@@ -3,6 +3,9 @@ use std::sync::Arc;
 mod generic_renderer;
 pub use generic_renderer::{Renderer, RendererImpl, RendererMemoryStats};
 
+#[cfg(all(test, feature = "native", not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
+mod unpresented_tests;
+
 use crate::pipeline::material::{MaterialClip, MaterialRequest};
 use crate::rect_pipeline::RectInstance;
 use crate::svg::{SvgNodeStyleOverride, SvgScene};

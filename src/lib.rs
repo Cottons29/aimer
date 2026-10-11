@@ -82,7 +82,7 @@ pub use aimer_quiver as quiver;
 pub use aimer_quiver::frame_stats;
 #[cfg(not(aimer_portable_guest))]
 pub use aimer_quiver::{
-    self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions, WindowAttr,
+    self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions, RenderMode, WindowAttr,
     set_first_frame_rendered_callback,
 };
 

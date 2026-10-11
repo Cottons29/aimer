@@ -1,24 +1,27 @@
 //! Where a frame's time actually goes.
 //!
-//! A frame is three distinct pieces of work, and only the first one belongs to
-//! the UI thread:
+//! A frame is three distinct pieces of work. In threaded mode, recording stays
+//! on the UI thread, encoding moves to the worker, and presentation follows the
+//! platform's thread-affinity rules:
 //!
 //! | Phase                     | Work                                            |
 //! |---------------------------|-------------------------------------------------|
 //! | [`FramePhase::Build`]     | build + layout + paint — the widget walk        |
-//! | [`FramePhase::Encode`]    | acquire the surface texture and encode draw calls |
+//! | [`FramePhase::Encode`]    | encode draw calls and submit GPU commands      |
 //! | [`FramePhase::Present`]   | hand the swap chain image to the compositor     |
 //!
-//! On native Metal, `cpu_frame` spans the start of frame preparation through
-//! command-buffer submission, before drawable presentation. `gpu_frame` spans
+//! On native Metal, `cpu_frame` spans the start of command recording through
+//! command-buffer submission (and scheduling when offloaded), before drawable presentation. `gpu_frame` spans
 //! the earliest GPU start through the latest GPU completion among the command
 //! buffers submitted for that frame. GPU measurements arrive asynchronously
 //! from Metal completion handlers. Their p95 values are upper bounds from
 //! 0.5 ms histogram buckets.
 //!
-//! Moving encode and present to a raster thread (the `raster-thread` feature)
-//! buys nothing unless they are a meaningful share of the frame, and it costs an
-//! extra frame of latency. This module is the measurement that decides it.
+//! Native apps default to a bounded render worker. [`pipeline_timing`] separates
+//! UI recording/submission, queue delay, and drawable acquisition; these are
+//! independent windows because worker and GPU samples arrive asynchronously.
+//! `cpu_frame` includes queue delay when offloaded, through backend submission
+//! (and producer scheduling on Metal), before UI drawable presentation.
 //!
 //! Runtime instrumentation is inactive unless the `frame-stats` feature is
 //! enabled; without it, [`PhaseTimer::start`] reads no clock and
@@ -40,6 +43,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+mod pipeline;
+pub use pipeline::{PipelineTiming, pipeline_timing};
 
 /// One of the three phases a frame passes through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +53,7 @@ pub enum FramePhase {
     ///
     /// [`DrawList`]: aimer_cupid::draw_cmd::DrawList
     Build,
-    /// Acquiring the surface texture and encoding the recorded draw list.
+    /// Encoding the recorded draw list and submitting GPU work.
     Encode,
     /// Presenting the encoded image.
     Present,
@@ -58,7 +63,7 @@ pub enum FramePhase {
 ///
 /// A phase is sampled once per frame that reached it, so `samples` differs
 /// between phases when frames are dropped: a frame whose surface texture could
-/// not be acquired is built and partially encoded, but never presented.
+/// not be acquired is built, but never encoded or presented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PhaseSamples {
     /// How many frames contributed to this phase.
@@ -99,7 +104,7 @@ impl PhaseSamples {
 pub struct FrameBreakdown {
     /// Build, layout and paint — the part that stays on the UI thread.
     pub build: PhaseSamples,
-    /// Surface acquisition and command encoding.
+    /// Command encoding and submission; acquisition is in [`PipelineTiming`].
     pub encode: PhaseSamples,
     /// Presentation of the encoded image.
     pub present: PhaseSamples,
@@ -109,6 +114,7 @@ pub struct FrameBreakdown {
 #[cfg(feature = "frame-stats")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct FrameTimingStats {
+    pub pipeline: PipelineTiming,
     pub cpu_frame: PhaseSamples,
     pub cpu_frame_p95: Duration,
     pub cpu_frame_p95_saturated: bool,
@@ -302,9 +308,8 @@ impl FrameBreakdown {
 
     /// The share of an average frame spent downstream of the widget walk.
     ///
-    /// This is the number the `raster-thread` feature is judged by: it is the
-    /// fraction of the frame that moving encode and present off the UI thread
-    /// could hide. Returns `0.0` before anything has been sampled.
+    /// This covers the three recorded phases; separate acquisition and queue
+    /// timings are not included. Returns `0.0` before anything has been sampled.
     ///
     /// # Examples
     ///
@@ -384,6 +389,7 @@ impl FrameAccumulator {
         let (cpu_frame_p95, cpu_frame_p95_saturated) = self.cpu_frame.p95_bucket();
         let (gpu_frame_p95, gpu_frame_p95_saturated) = self.gpu_frame.p95_bucket();
         FrameTimingStats {
+            pipeline: pipeline_timing(),
             cpu_frame: self.cpu_frame.snapshot(),
             cpu_frame_p95,
             cpu_frame_p95_saturated,
@@ -391,6 +397,16 @@ impl FrameAccumulator {
             gpu_frame_p95,
             gpu_frame_p95_saturated,
         }
+    }
+
+    #[cfg(feature = "frame-stats")]
+    fn take(&self) -> (FrameBreakdown, FrameTimingStats) {
+        let (cpu_frame, (cpu_frame_p95, cpu_frame_p95_saturated)) = self.cpu_frame.take();
+        let (gpu_frame, (gpu_frame_p95, gpu_frame_p95_saturated)) = self.gpu_frame.take();
+        (FrameBreakdown { build: self.build.take().0, encode: self.encode.take().0,
+            present: self.present.take().0 },
+         FrameTimingStats { pipeline: pipeline::take(), cpu_frame, cpu_frame_p95,
+            cpu_frame_p95_saturated, gpu_frame, gpu_frame_p95, gpu_frame_p95_saturated })
     }
 
     fn reset(&self) {
@@ -480,6 +496,30 @@ impl AtomicPhase {
             ),
             true,
         )
+    }
+
+    fn take(&self) -> (PhaseSamples, (Duration, bool)) {
+        // Each counter is drained with a swap, so a concurrent worker sample
+        // belongs to this or the following window rather than being erased.
+        let samples = PhaseSamples { samples: self.samples.swap(0, Ordering::Relaxed),
+            total: Duration::from_nanos(self.nanos.swap(0, Ordering::Relaxed)) };
+        #[cfg(feature = "frame-stats")]
+        let percentile = {
+            let buckets = std::array::from_fn::<_, PERCENTILE_BUCKET_COUNT, _>(|i|
+                self.percentile_buckets[i].swap(0, Ordering::Relaxed));
+            let count: u64 = buckets.iter().sum();
+            let rank = count.saturating_mul(95).saturating_add(99) / 100;
+            let mut cumulative = 0;
+            let index = buckets.iter().position(|count| { cumulative += count; cumulative >= rank });
+            if count == 0 { (Duration::ZERO, false) } else {
+                let index = index.unwrap_or(PERCENTILE_BUCKET_COUNT - 1);
+                (Duration::from_nanos((index as u64 + 1) * PERCENTILE_BUCKET_WIDTH_NANOS),
+                    index + 1 == PERCENTILE_BUCKET_COUNT)
+            }
+        };
+        #[cfg(not(feature = "frame-stats"))]
+        let percentile = (Duration::ZERO, false);
+        (samples, percentile)
     }
 
     fn reset(&self) {
@@ -824,9 +864,7 @@ pub(crate) fn take_debug_report() -> Option<(FrameBreakdown, FrameContentStats, 
         return None;
     }
     FRAME_CONTENT_STATS.reset();
-    let breakdown = FRAME_STATS.snapshot();
-    let timing = FRAME_STATS.timing_snapshot();
-    FRAME_STATS.reset();
+    let (breakdown, timing) = FRAME_STATS.take();
     Some((breakdown, content, timing))
 }
 
@@ -867,6 +905,22 @@ impl PhaseTimer {
     pub fn finish(self, phase: FramePhase) {
         #[cfg(feature = "frame-stats")]
         FRAME_STATS.record(phase, self.started.elapsed());
+        #[cfg(not(feature = "frame-stats"))]
+        let _ = phase;
+    }
+
+    /// Records UI occupancy through recording and nonblocking submission.
+    #[inline]
+    pub(crate) fn finish_ui_frame(self) { self.finish_pipeline(pipeline::Phase::Ui); }
+    /// Records time waiting for a worker to start the submitted frame.
+    #[inline]
+    pub(crate) fn finish_queue(self) { self.finish_pipeline(pipeline::Phase::Queue); }
+    /// Records drawable acquisition separately from command encoding.
+    #[inline]
+    pub(crate) fn finish_acquire(self) { self.finish_pipeline(pipeline::Phase::Acquire); }
+    fn finish_pipeline(self, phase: pipeline::Phase) {
+        #[cfg(feature = "frame-stats")]
+        pipeline::record(phase, self.started.elapsed());
         #[cfg(not(feature = "frame-stats"))]
         let _ = phase;
     }
@@ -977,32 +1031,19 @@ mod tests {
 
     #[test]
     fn samples_from_several_threads_are_all_counted() {
-        static SHARED: FrameAccumulator = FrameAccumulator {
-            build: AtomicPhase {
-                samples: AtomicU64::new(0),
-                nanos: AtomicU64::new(0),
-            },
-            encode: AtomicPhase {
-                samples: AtomicU64::new(0),
-                nanos: AtomicU64::new(0),
-            },
-            present: AtomicPhase {
-                samples: AtomicU64::new(0),
-                nanos: AtomicU64::new(0),
-            },
-        };
+        let shared = FrameAccumulator::default();
 
         std::thread::scope(|scope| {
             for _ in 0..4 {
                 scope.spawn(|| {
                     for _ in 0..100 {
-                        SHARED.record(FramePhase::Encode, Duration::from_nanos(10));
+                        shared.record(FramePhase::Encode, Duration::from_nanos(10));
                     }
                 });
             }
         });
 
-        let encode = SHARED.snapshot().encode;
+        let encode = shared.snapshot().encode;
         assert_eq!(encode.samples, 400);
         assert_eq!(encode.total, Duration::from_nanos(4000));
     }
@@ -1108,3 +1149,7 @@ mod tests {
         assert_eq!(stats.average_retained_layers(), 1.5);
     }
 }
+
+#[cfg(test)]
+#[path = "frame_stats/drain_tests.rs"]
+mod drain_tests;

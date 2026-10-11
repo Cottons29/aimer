@@ -12,6 +12,8 @@ pub mod scroll_utils;
 mod scoped_sync;
 pub(crate) mod user_events;
 mod native_input;
+#[cfg(not(target_arch = "wasm32"))]
+mod render_worker;
 #[cfg(any(target_os = "ios", test))]
 mod uikit_frame;
 /// Gesture segmentation for the phase-less browser wheel stream.
@@ -1313,7 +1315,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 .and_then(|window| window.current_monitor().or_else(|| window.primary_monitor()))
                 .and_then(|monitor| monitor.refresh_rate_millihertz());
             aimer_utils::debug!(
-                "[frame-stats] frames={} build={:.2}ms encode={:.2}ms present={:.2}ms cpu-frame-samples={} cpu-frame={:.2}ms cpu-frame-p95<={:.2}ms cpu-frame-p95-saturated={} gpu-frame-samples={} gpu-frame={:.2}ms gpu-frame-p95<={:.2}ms gpu-frame-p95-saturated={} target={}x{}px scale={:.3} refresh-millihz={:?} nodes/frame={:.1} commands/frame={:.1} retained-layers/frame={:.1} text/frame={:.1} image-draws/frame={:.1} image-uploads/frame={:.1} text-cache-hit/frame={:.1} text-cache-miss/frame={:.1} rebuild-visits/frame={:.1} rebuild-pruned/frame={:.1} stateful-checks/frame={:.1} stateless-checks/frame={:.1} stateful-builds/frame={:.1} stateless-builds/frame={:.1} layout/frame={:.1} hit-test/frame={:.1} paint/frame={:.1} root-draw/frame={:.1} scroll-events/frame={:.1} scroll-steps/frame={:.1} smoothing-steps/frame={:.1} state-updates/frame={:.1} invalidations-queued/frame={:.1} invalidations-coalesced/frame={:.1} element-index-lookups/frame={:.1} stale-element-ids/frame={:.1} scroll-offset-updates/frame={:.1} redraw-requests/frame={:.1} frame-ready-accepted={} frame-ready-coalesced={} display-ticks={}",
+                "[frame-stats] frames={} build={:.2}ms encode={:.2}ms present={:.2}ms cpu-frame-samples={} cpu-frame={:.2}ms cpu-frame-p95<={:.2}ms cpu-frame-p95-saturated={} gpu-frame-samples={} gpu-frame={:.2}ms gpu-frame-p95<={:.2}ms gpu-frame-p95-saturated={} ui={:.2}ms ui-p95<={:.2}ms queue={:.2}ms acquire={:.2}ms target={}x{}px scale={:.3} refresh-millihz={:?} nodes/frame={:.1} commands/frame={:.1} retained-layers/frame={:.1} text/frame={:.1} image-draws/frame={:.1} image-uploads/frame={:.1} text-cache-hit/frame={:.1} text-cache-miss/frame={:.1} rebuild-visits/frame={:.1} rebuild-pruned/frame={:.1} stateful-checks/frame={:.1} stateless-checks/frame={:.1} stateful-builds/frame={:.1} stateless-builds/frame={:.1} layout/frame={:.1} hit-test/frame={:.1} paint/frame={:.1} root-draw/frame={:.1} scroll-events/frame={:.1} scroll-steps/frame={:.1} smoothing-steps/frame={:.1} state-updates/frame={:.1} invalidations-queued/frame={:.1} invalidations-coalesced/frame={:.1} element-index-lookups/frame={:.1} stale-element-ids/frame={:.1} scroll-offset-updates/frame={:.1} redraw-requests/frame={:.1} frame-ready-accepted={} frame-ready-coalesced={} display-ticks={}",
                 content.frames,
                 breakdown.build.average().as_secs_f64() * 1_000.0,
                 breakdown.encode.average().as_secs_f64() * 1_000.0,
@@ -1326,6 +1328,10 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 timing.gpu_frame.average().as_secs_f64() * 1_000.0,
                 timing.gpu_frame_p95.as_secs_f64() * 1_000.0,
                 timing.gpu_frame_p95_saturated,
+                timing.pipeline.ui.average().as_secs_f64() * 1_000.0,
+                timing.pipeline.ui_p95.as_secs_f64() * 1_000.0,
+                timing.pipeline.queue.average().as_secs_f64() * 1_000.0,
+                timing.pipeline.acquire.average().as_secs_f64() * 1_000.0,
                 target_size.width,
                 target_size.height,
                 scale_factor,
@@ -1405,7 +1411,11 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let Some(root) = root else {
             return EventResult::ignored();
         };
-        dispatch(event_dispatcher, root.as_ref())
+        let result = dispatch(event_dispatcher, root.as_ref());
+        // Captures only change inside a dispatch, so this is the one place that
+        // keeps the paint-time hover check informed.
+        aimer_widget::set_pointer_capture_active(event_dispatcher.has_capture());
+        result
     }
 
     pub(crate) fn cancel_element_events(&mut self) -> EventResult {
@@ -1414,6 +1424,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         }
         let result = self.broadcast_element_event(&aimer_events::element::ElementEvent::Cancel);
         self.event_dispatcher.clear_captures();
+        aimer_widget::set_pointer_capture_active(false);
         result
     }
 
@@ -2068,8 +2079,8 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         });
         #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
         if self.show_window_after_first_frame {
-            // Render inline while the window is hidden so its first visible
-            // frame already contains the application UI.
+            // Start rendering while hidden; worker completion reveals the
+            // window only after its first application frame is presented.
             self.render(event_loop);
         } else {
             self.request_full_redraw();
@@ -2079,11 +2090,26 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AimerNativePlatformEvent) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if matches!(event, AimerNativePlatformEvent::RenderWorkerReady) {
+            self.deliver_render_completions(_event_loop);
+            return;
+        }
         // debug!("User event {:?}", event);
         #[cfg(target_os = "ios")]
         handle_user_event(self, event, |app, _kind| app.render(_event_loop));
         #[cfg(not(target_os = "ios"))]
         handle_user_event(self, event, crate::handler::user_events::request_window_redraw);
+    }
+
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.render_ctx.suspend();
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.render_ctx.suspend();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -2184,6 +2210,13 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         WindowEventHandler::refresh_uikit_viewport(self);
         #[cfg(target_arch = "wasm32")]
         self.note_frame_request(crate::aimer_app::frame_ready_delivered());
+        let had_pending_resize = self.pending_resize.is_some();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.deliver_render_completions(event_loop);
+            // Admission precedes animation/layout and damage consumption.
+            if !self.admit_render_frame() { return; }
+        }
         let kind = self.take_frame_request_reason();
         let preparation = self.begin_frame();
 
@@ -2197,7 +2230,6 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             }
         }
 
-        let had_pending_resize = self.pending_resize.is_some();
         #[allow(clippy::collapsible_if)]
         if self.render_ctx.is_ready() {
             if let Some(size) = self.pending_resize.take() {
@@ -2232,9 +2264,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 self.show_window_after_first_frame = false;
             }
         }
-        // A deferred frame is still in flight on the raster thread: it reports
-        // the first-frame notification and any retry itself, from `on_present`,
-        // because the outcome is not known until a frame later.
+        // Worker completions dispatch this same notification on the UI thread.
         crate::first_frame::notify_first_frame_presented(outcome.is_presented());
         if outcome.needs_retry() {
             crate::render_ctx::note_frame_not_presented();

@@ -22,10 +22,9 @@ fn first_frame_callback_queue() -> &'static ArrayQueue<FirstFrameCallback> {
 ///
 /// # Threading
 ///
-/// The callback runs on whichever thread presented the first frame. That is the
-/// UI thread by default, but the raster thread when the `raster-thread` feature
-/// is enabled — hence the `Send` bound. Do not touch platform UI objects from it
-/// directly; hop to the main thread first.
+/// The application dispatches the callback on the UI/event-loop thread, including
+/// when GPU rendering runs on a worker. The `Send` bound allows registration
+/// from another thread.
 pub fn set_first_frame_rendered_callback(callback: impl FnOnce() + Send + 'static) {
     let queue = first_frame_callback_queue();
     let mut callback = Box::new(callback) as FirstFrameCallback;
@@ -60,14 +59,9 @@ fn dispatch_browser_event() {
     }
 }
 
-/// Fires the first-frame notification exactly once, from whichever thread
-/// observes the first successful presentation.
-///
-/// Presentation is not necessarily synchronous: with a raster thread the
-/// outcome of a frame arrives on that thread, one frame after it was submitted.
-/// The notifier is therefore shared state guarded by an atomic rather than a
-/// `bool` field on the UI-thread handler, so both the inline path and the raster
-/// thread's `on_present` callback can drive it without racing.
+/// Fires the first-frame notification exactly once. Application handlers
+/// deliver inline outcomes and worker completions on the UI thread. The atomic
+/// claim also makes this notifier safe for concurrent registrations and tests.
 #[derive(Debug, Default)]
 pub(crate) struct FirstFrameNotifier {
     notified: AtomicBool,

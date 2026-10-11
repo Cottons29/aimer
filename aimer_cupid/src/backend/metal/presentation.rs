@@ -5,6 +5,8 @@ use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 
 use super::{MetalBackend, MetalTexture, MetalTextureView, PendingUpload};
 
+pub(super) mod threaded;
+
 #[derive(Default)]
 pub(super) struct MetalQueueState {
     pub(super) uploads: Vec<PendingUpload>,

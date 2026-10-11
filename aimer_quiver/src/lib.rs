@@ -19,6 +19,8 @@ mod ffi_utils;
 #[cfg(any(target_os = "ios", test))]
 mod ios_input;
 mod first_frame;
+mod render_mode;
+pub use render_mode::RenderMode;
 #[cfg(debug_assertions)]
 mod debug_overlay;
 

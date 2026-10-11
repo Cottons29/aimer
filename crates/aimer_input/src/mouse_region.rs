@@ -236,6 +236,30 @@ impl<E: Element> RawMouseRegion<E> {
             request_animation_frame()
         }
     }
+
+    /// Reconciles hover with the last-known cursor while painting.
+    ///
+    /// A region the cursor is over must not *start* hovering while a pointer
+    /// capture is active. The pointer belongs to the capturing element then —
+    /// a resize handle being dragged across a list, say — and the moves that
+    /// carry it away from this region go to that element, not here. Nothing would
+    /// ever end the hover, and the region stayed lit for good. Leaving a hover
+    /// already begun is still reconciled, and the region enters on the first
+    /// pointer move after the capture ends.
+    #[inline]
+    fn sync_hover_from_paint(&self, cursor: Vec2d) {
+        if aimer_widget::mouse_region_hover_reconciliation_deferred() {
+            return;
+        }
+        let inside = self.cached_bounds.is_inside(cursor.x, cursor.y);
+        if inside
+            && aimer_widget::pointer_capture_active()
+            && matches!(self.current_state.get(), PointerState::Outside)
+        {
+            return;
+        }
+        self.sync_hover(inside);
+    }
 }
 
 impl<E: Element> RawMouseRegion<E> {
@@ -422,10 +446,7 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
         let (abs_x, abs_y) = ctx.canvas.get_transform_translation();
         self.cached_bounds
             .save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
-        let cursor = ctx.cursor_pos;
-        if !aimer_widget::mouse_region_hover_reconciliation_deferred() {
-            self.sync_hover(self.cached_bounds.is_inside(cursor.x, cursor.y));
-        }
+        self.sync_hover_from_paint(ctx.cursor_pos);
         self.child.update(ctx);
     }
 
@@ -461,10 +482,7 @@ impl<E: Element> Drawable for RawMouseRegion<E> {
         self.cached_bounds
             .save(ctx.scale, abs_x, abs_y, child_size.width, child_size.height);
 
-        let cursor = ctx.cursor_pos;
-        if !aimer_widget::mouse_region_hover_reconciliation_deferred() {
-            self.sync_hover(self.cached_bounds.is_inside(cursor.x, cursor.y));
-        }
+        self.sync_hover_from_paint(ctx.cursor_pos);
         self.child.sync_paint_geometry(ctx);
     }
 
@@ -585,6 +603,50 @@ mod tests {
         let mut event_children = 0;
         region.event_children(&mut |_| event_children += 1);
         assert_eq!(event_children, 1);
+    }
+
+    fn region_over(current_state: Rc<Cell<PointerState>>) -> RawMouseRegion<TestElement> {
+        let region = RawMouseRegion {
+            on_hover_enter: VoidCallback::default(),
+            on_hover_exit: VoidCallback::default(),
+            cursor: None,
+            current_state,
+            cached_bounds: InteractionBounds::new(),
+            child: TestElement,
+            window: WindowHandle::headless(PhysicalSize::new(100, 100), 1.0),
+        };
+        region.cached_bounds.save(1.0, 0.0, 0.0, 50.0, 50.0);
+        region
+    }
+
+    // A drag owns the pointer, so a list the dragged handle sweeps across must
+    // not start hovering: the moves that leave it never reach it.
+    #[test]
+    fn painting_under_a_captured_pointer_does_not_start_a_hover() {
+        let state = Rc::new(Cell::new(PointerState::Outside));
+        let region = region_over(state.clone());
+        aimer_widget::set_pointer_capture_active(true);
+
+        region.sync_hover_from_paint(Vec2d { x: 10.0, y: 10.0 });
+        assert!(matches!(state.get(), PointerState::Outside));
+
+        aimer_widget::set_pointer_capture_active(false);
+        region.sync_hover_from_paint(Vec2d { x: 10.0, y: 10.0 });
+        assert!(matches!(state.get(), PointerState::Inside));
+    }
+
+    #[test]
+    fn painting_under_a_captured_pointer_still_ends_a_hover() {
+        let state = Rc::new(Cell::new(PointerState::Inside));
+        let region = region_over(state.clone());
+        aimer_widget::set_pointer_capture_active(true);
+
+        region.sync_hover_from_paint(Vec2d { x: 10.0, y: 10.0 });
+        assert!(matches!(state.get(), PointerState::Inside), "the region that owns the press stays hovered");
+
+        region.sync_hover_from_paint(Vec2d { x: 400.0, y: 400.0 });
+        aimer_widget::set_pointer_capture_active(false);
+        assert!(matches!(state.get(), PointerState::Outside));
     }
 
     #[test]

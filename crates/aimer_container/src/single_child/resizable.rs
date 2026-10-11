@@ -30,6 +30,10 @@ pub use handle::ResizeHandle;
 /// for.
 const DEFAULT_HANDLE_THICKNESS: f32 = 6.0;
 
+/// The reach, in logical pixels, of the region reported while a handle is
+/// hovered: further than any window, yet small enough to stay exact in `f32`.
+const WHOLE_SURFACE: f32 = 1.0e7;
+
 /// A single-child box the user resizes by dragging its edges or corners.
 ///
 /// The widget owns its size: [`Resizable::width`] and [`Resizable::height`] give
@@ -763,13 +767,23 @@ impl<E: Element> LayoutElement for RawResizable<E> {
     /// A hovered handle owns two pieces of shared state — the window cursor and
     /// the zone reported to the application — and the move that lets go of it is
     /// the very move that lands *outside* this region, which the element would
-    /// never be offered. Reporting no region hands it that one move, after which
-    /// the hover is gone and the box is a box again: the exception lasts exactly
-    /// as long as the state that needs it, and the extra work is one hit test on
-    /// a move the element then ignores.
+    /// never be offered. Reporting the whole surface hands it that one move,
+    /// after which the hover is gone and the box is a box again: the exception
+    /// lasts exactly as long as the state that needs it, and the extra work is
+    /// one hit test on a move the element then ignores.
+    ///
+    /// The surface is an explicit, very large rectangle rather than "no region".
+    /// A wrapper that widens its own bounds by what its child reports — a
+    /// decorated `Container` around a sidebar, say — can only widen them by a
+    /// rectangle: no answer reads as "nothing to add", so the wrapper fell back to
+    /// its own box and dropped the press that followed the hover at the outer half
+    /// of the band, which is why the handle only worked on the border itself.
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
         if self.hovered.get().is_some() {
-            return None;
+            return Some((
+                Vec2d { x: -WHOLE_SURFACE, y: -WHOLE_SURFACE },
+                Vec2d { x: WHOLE_SURFACE, y: WHOLE_SURFACE },
+            ));
         }
         let bounds = self.band.grow(self.bounds.get_bounds()?);
         Some((
@@ -1322,8 +1336,9 @@ mod tests {
         assert!(element.pos_start_end().is_some());
 
         let _ = dispatch_move(element.as_ref(), 198.0, 50.0);
+        let (start, end) = element.pos_start_end().expect("a hovered handle reports a region");
         assert!(
-            element.pos_start_end().is_none(),
+            start.x < -1.0e6 && start.y < -1.0e6 && end.x > 1.0e6 && end.y > 1.0e6,
             "a hovered handle must hear the move that takes the pointer away"
         );
 

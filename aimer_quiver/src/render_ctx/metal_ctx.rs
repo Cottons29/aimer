@@ -318,6 +318,11 @@ pub mod render_ctx {
             cpu_frame: Option<PhaseTimer>,
         ) -> PresentOutcome {
             let presented = self.present_inner(&packet, cpu_frame);
+            if !presented {
+                if let (Some(backend), Some(renderer)) = (&self.backend, &mut self.renderer) {
+                    renderer.discard_frame(backend, &packet);
+                }
+            }
             if let Some(canvas) = &self.canvas {
                 canvas.recycle_draw_list(packet.into_frame().into_draw_list());
             }
@@ -345,7 +350,10 @@ pub mod render_ctx {
                 };
                 update
             };
-            let Some(drawable) = surface.next_drawable() else {
+            let acquire = PhaseTimer::start();
+            let acquired = surface.next_drawable();
+            acquire.finish_acquire();
+            let Some(drawable) = acquired else {
                 return false;
             };
             let (width, height) = drawable.size();
@@ -392,6 +400,28 @@ pub mod render_ctx {
             drop(_surface_update);
             present.finish(FramePhase::Present);
             true
+        }
+    }
+
+    impl Drop for MetalApi {
+        fn drop(&mut self) {
+            let Some(surface) = &self.surface else { return };
+            #[cfg(target_os = "macos")]
+            {
+                let Some(window) = self.window else { return };
+                let Ok(handle) = window.window_handle() else { return };
+                let RawWindowHandle::AppKit(handle) = handle.as_raw() else { return };
+                // SAFETY: the inline context owns the layer on its UI thread;
+                // winit keeps the view alive for the retained window's lifetime.
+                let view = unsafe { &*handle.ns_view.as_ptr().cast::<NSView>() };
+                let owned: &objc2_quartz_core::CALayer = surface.layer();
+                if view.layer().is_some_and(|layer| std::ptr::eq(&*layer, owned)) {
+                    view.setLayer(None);
+                    view.setWantsLayer(false);
+                }
+            }
+            #[cfg(target_os = "ios")]
+            surface.layer().removeFromSuperlayer();
         }
     }
 

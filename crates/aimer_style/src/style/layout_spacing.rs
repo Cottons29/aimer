@@ -1,3 +1,8 @@
+
+
+pub type Padding = LayoutSpacing;
+pub type Margin = LayoutSpacing;
+
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayoutSpacing {
     pub top: Spacing,

@@ -2,9 +2,9 @@
 //! screen.
 //!
 //! The UI thread owns the widget tree and produces an immutable
-//! [`Frame`](aimer_cupid::frame::Frame); this module owns everything downstream
-//! of that — encoding the draw list and presenting the surface — on a separate
-//! thread, so the UI thread is never blocked waiting for vsync.
+//! [`Frame`](aimer_cupid::frame::Frame). A worker encodes the draw list and
+//! acquires its surface without blocking UI admission. Native Metal returns a
+//! scheduled drawable for presentation in a main-thread Core Animation transaction.
 //!
 //! There is deliberately no event thread. Event handling in Aimer *is* tree
 //! mutation, and on macOS, iOS and Android the OS event loop must own the main
@@ -20,6 +20,13 @@ use std::thread::JoinHandle;
 use aimer_cupid::draw_cmd::DrawList;
 use aimer_cupid::frame::{Frame, FramePacket};
 use winit::dpi::PhysicalSize;
+
+mod worker;
+pub use worker::{CompletedFrame, FrameWorker, WorkerEvent, WorkerPresenter};
+
+#[cfg(test)]
+#[path = "raster/worker_tests.rs"]
+mod worker_tests;
 
 /// The GPU-facing half of a frame's lifetime, as the raster thread sees it.
 ///

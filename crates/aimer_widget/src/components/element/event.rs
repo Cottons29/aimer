@@ -1147,6 +1147,17 @@ impl EventDispatcher {
         self.captures.len()
     }
 
+    /// Returns whether any pointer is captured, by an element of this tree or by
+    /// one inside a forwarding boundary's private view.
+    ///
+    /// [`capture_count`](Self::capture_count) sees only the former, which is not
+    /// enough to know that a drag is in progress: a press on an element behind a
+    /// stateful or animated wrapper is recorded in the nested table.
+    #[inline]
+    pub fn has_capture(&self) -> bool {
+        !self.captures.is_empty() || !self.nested_captures.is_empty()
+    }
+
     /// Returns whether `pointer` currently has a live capture entry.
     #[inline]
     pub fn is_captured(&self, pointer: PointerKey) -> bool {

@@ -73,14 +73,6 @@ mod vulkan_ctx;
 #[cfg(all(feature = "native", not(feature = "wgpu"), any(target_os = "linux", target_os = "android")))]
 pub use vulkan_ctx::render_ctx::VulkanApi;
 
-#[cfg(all(feature = "native", not(feature = "wgpu"), feature = "raster-thread", any(target_os = "macos", target_os = "ios")))]
-compile_error!("aimer_quiver's Metal renderer does not support `raster-thread` yet");
-#[cfg(all(feature = "native", not(feature = "wgpu"), feature = "raster-thread", target_os = "windows"))]
-compile_error!("aimer_quiver's DirectX renderer does not support `raster-thread`");
-#[cfg(all(feature = "native", not(feature = "wgpu"), feature = "raster-thread", any(target_os = "linux", target_os = "android")))]
-compile_error!("aimer_quiver's OpenGL renderer does not support `raster-thread`");
-#[cfg(all(feature = "wgpu", feature = "raster-thread", not(target_arch = "wasm32")))]
-compile_error!("the WGPU renderer's custom pipeline trait is not `Send`, so it cannot use `raster-thread`");
 #[cfg(all(target_arch = "wasm32", not(feature = "wgpu"), not(feature = "web")))]
 compile_error!("enable the `web` or `wgpu` feature for wasm rendering");
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "wgpu"), not(feature = "native")))]
@@ -95,15 +87,15 @@ compile_error!("enable the `native` or `wgpu` feature for native rendering");
 compile_error!("no default renderer is available for this target");
 
 #[cfg(all(feature = "wgpu", not(target_arch = "wasm32")))]
-pub type AimerRenderContext = WgpuApi;
+pub(super) type InlineRenderContext = WgpuApi;
 #[cfg(all(feature = "wgpu", target_arch = "wasm32"))]
 pub type AimerRenderContext = H5CanvasApi;
 #[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "macos", target_os = "ios")))]
-pub type AimerRenderContext = MetalApi;
+pub(super) type InlineRenderContext = MetalApi;
 #[cfg(all(not(feature = "wgpu"), feature = "native", target_os = "windows"))]
-pub type AimerRenderContext = Dx12Api;
+pub(super) type InlineRenderContext = Dx12Api;
 #[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "linux", target_os = "android")))]
-pub type AimerRenderContext = NativeAutoApi;
+pub(super) type InlineRenderContext = NativeAutoApi;
 #[cfg(all(not(feature = "wgpu"), feature = "web", target_arch = "wasm32"))]
 pub type AimerRenderContext = H5CanvasApi;
 
@@ -136,8 +128,8 @@ pub enum PresentOutcome {
     /// blank.
     Dropped,
     /// The frame was handed to the raster thread. Its outcome is reported later
-    /// through the `on_present` callback, which is where a retry or a
-    /// first-frame notification has to come from.
+    /// through UI-thread completion delivery, which handles retries and
+    /// first-frame notification.
     Deferred,
 }
 
@@ -257,3 +249,21 @@ mod tests {
         assert!(outcome.is_deferred());
     }
 }
+
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod native_ctx;
+#[cfg(not(target_arch = "wasm32"))]
+pub use native_ctx::{NativeRenderContext as AimerRenderContext, CompletionStatus};
+#[cfg(all(not(feature = "wgpu"), feature = "native", any(target_os = "macos", target_os = "ios")))]
+mod metal_worker;
+
+pub(crate) fn configured_context(antialiasing: aimer_cupid::AntiAlias, mode: crate::RenderMode) -> AimerRenderContext {
+    #[cfg(not(target_arch = "wasm32"))]
+    { AimerRenderContext::new(antialiasing).with_render_mode(mode) }
+    #[cfg(target_arch = "wasm32")]
+    { let _ = mode; AimerRenderContext::new(antialiasing) }
+}
+
+#[cfg(target_os = "windows")]
+mod windows_shutdown;

@@ -88,6 +88,8 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
             app.note_frame_request(kind);
             on_frame_ready(app, kind);
         }
+        // Windowed native handlers deliver completions before this shared path.
+        AimerNativePlatformEvent::RenderWorkerReady => {}
         AimerNativePlatformEvent::HotReloadCallbackReady => {
             crate::aimer_app::callback_ready_delivered();
             app.request_full_redraw();
