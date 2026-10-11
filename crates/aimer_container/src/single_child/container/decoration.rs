@@ -35,11 +35,20 @@ impl RetainedDecorationState {
     }
 }
 
-impl<E: Element> RawContainer<E> {
+impl<E: Element, D: Decoration> RawContainer<E, D> {
     #[inline]
-    pub(super) fn decoration(&self) -> &BoxDecoration {
-        self.decoration_source.as_ref()
-            .map_or(&self.box_decoration, |state| state.source.decoration())
+    pub(super) fn decoration(&self) -> ActiveDecoration<'_, D> {
+        match &self.decoration_source {
+            Some(state) => ActiveDecoration::Retained(state.source.decoration()),
+            None => ActiveDecoration::Direct(&self.box_decoration),
+        }
+    }
+
+    #[inline]
+    pub(super) fn decoration_insets(&self, width: f32, height: f32, scale: f32) -> [f32; 4] {
+        self.decoration().content_insets(
+            ResolvedSize { width: width / scale, height: height / scale }, scale,
+        ).map(|inset| finite_nonnegative(inset) * scale)
     }
 
     #[inline]
@@ -63,6 +72,80 @@ impl<E: Element> RawContainer<E> {
             if state.layout_revision.replace(revision) != revision {
                 self.cache.invalidate();
             }
+        }
+    }
+}
+
+pub(super) enum ActiveDecoration<'a, D> {
+    Direct(&'a D),
+    Retained(&'a BoxDecoration),
+}
+
+impl<D: Decoration> Decoration for ActiveDecoration<'_, D> {
+    #[inline]
+    fn paint(&self, canvas: &aimer_canvas::Canvas, origin: Vec2d, size: ResolvedSize, scale: f32) {
+        match self {
+            Self::Direct(decoration) => decoration.paint(canvas, origin, size, scale),
+            Self::Retained(decoration) => decoration.paint(canvas, origin, size, scale),
+        }
+    }
+
+    #[inline]
+    fn paint_with_background(
+        &self, canvas: &aimer_canvas::Canvas, origin: Vec2d, size: ResolvedSize,
+        scale: f32, background: Option<Color>,
+    ) {
+        match self {
+            Self::Direct(decoration) => decoration.paint_with_background(canvas, origin, size, scale, background),
+            Self::Retained(decoration) => decoration.paint_with_background(canvas, origin, size, scale, background),
+        }
+    }
+
+    #[inline]
+    fn paint_outsets(&self, size: ResolvedSize, scale: f32) -> [f32; 4] {
+        match self {
+            Self::Direct(decoration) => decoration.paint_outsets(size, scale),
+            Self::Retained(decoration) => decoration.paint_outsets(size, scale),
+        }
+    }
+
+    #[inline]
+    fn content_insets(&self, size: ResolvedSize, scale: f32) -> [f32; 4] {
+        match self {
+            Self::Direct(decoration) => decoration.content_insets(size, scale),
+            Self::Retained(decoration) => decoration.content_insets(size, scale),
+        }
+    }
+
+    #[inline]
+    fn child_clip_radius(&self, size: ResolvedSize, scale: f32) -> Option<[f32; 4]> {
+        match self {
+            Self::Direct(decoration) => decoration.child_clip_radius(size, scale),
+            Self::Retained(decoration) => decoration.child_clip_radius(size, scale),
+        }
+    }
+
+    #[inline]
+    fn background_color(&self) -> Option<Color> {
+        match self {
+            Self::Direct(decoration) => decoration.background_color(),
+            Self::Retained(decoration) => decoration.background_color(),
+        }
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Direct(decoration) => decoration.is_empty(),
+            Self::Retained(decoration) => decoration.is_empty(),
+        }
+    }
+
+    #[inline]
+    fn revision(&self) -> u64 {
+        match self {
+            Self::Direct(decoration) => decoration.revision(),
+            Self::Retained(decoration) => decoration.revision(),
         }
     }
 }

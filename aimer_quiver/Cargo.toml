@@ -141,6 +141,7 @@ web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "
 [dev-dependencies]
 aimer_assets.workspace = true
 aimer_collapsible.workspace = true
+aimer_decoration.workspace = true
 aimer_svg.workspace = true
 aimer_text.workspace = true
 aimer_space.workspace = true

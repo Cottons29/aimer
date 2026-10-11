@@ -1,6 +1,6 @@
 use super::*;
 
-impl<T: Element> RawContainer<T> {
+impl<T: Element, D: Decoration> RawContainer<T, D> {
     pub(super) fn render(&self, ctx: &BuildContext) {
         ctx.canvas.save();
 
@@ -61,23 +61,10 @@ impl<T: Element> RawContainer<T> {
         let _p_right = self.padding.right.value(box_width, scale);
         let _p_bottom = self.padding.bottom.value(box_height, scale);
 
-        let border = self.decoration().border;
-        let radii = self
-            .decoration()
-            .border_radius
-            .resolve(box_width, box_height, scale);
-
-        let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
-            match dim {
-                Dimension::Px(w) => w * scale,
-                Dimension::Percent(p) => parent_val * (p / 100.0),
-                Dimension::Auto => 0.0,
-            }
-        };
-        let b_left = get_stroke(border.left.stroke, box_width).max(0.0);
-        let b_right = get_stroke(border.right.stroke, box_width).max(0.0);
-        let b_top = get_stroke(border.top.stroke, box_height).max(0.0);
-        let b_bottom = get_stroke(border.bottom.stroke, box_height).max(0.0);
+        let [b_left, b_top, b_right, b_bottom] = self.decoration_insets(box_width, box_height, scale);
+        let clips_child = self.decoration().child_clip_radius(
+            ResolvedSize { width: box_width / scale, height: box_height / scale }, scale,
+        ).is_some();
 
         // Draw decoration (background, border, outline)
 
@@ -86,13 +73,6 @@ impl<T: Element> RawContainer<T> {
         let clip_y = b_top;
         let clip_w = (box_width - b_right - clip_x).max(0.0);
         let clip_h = (box_height - b_bottom - clip_y).max(0.0);
-
-        let inner_radii = [
-            (radii[0] - b_top.max(b_left)).max(0.0),     // top-left
-            (radii[1] - b_top.max(b_right)).max(0.0),    // top-right
-            (radii[2] - b_bottom.max(b_right)).max(0.0), // bottom-right
-            (radii[3] - b_bottom.max(b_left)).max(0.0),  /* bottom-left */
-        ];
 
         ctx.canvas.translate(Vec2d {
             x: p_left + b_left,
@@ -125,7 +105,7 @@ impl<T: Element> RawContainer<T> {
         // the child's nominal content bounds. That keeps unknown child bounds
         // conservative while still skipping the whole subtree when the clip
         // itself is outside the ancestor viewport.
-        if ctx.is_rect_visible(
+        if !clips_child || ctx.is_rect_visible(
             m_left + clip_x,
             m_top + clip_y,
             clip_w,

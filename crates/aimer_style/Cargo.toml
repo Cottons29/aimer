@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-portable-guest = ["aimer_widget/portable-guest", "aimer_provider/portable-guest"]
+portable-guest = ["aimer_decoration/portable-guest", "aimer_widget/portable-guest", "aimer_provider/portable-guest"]
 
 [dependencies]
+aimer_decoration.workspace = true
 aimer_animation.workspace = true
 aimer_events.workspace = true
 aimer_macro.workspace = true
