@@ -41,6 +41,12 @@ static APP_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone)]
 pub enum AimerNativePlatformEvent {
+    /// Pointer or hardware-key input from a platform bridge, in logical window
+    /// coordinates. Text commits continue through the IME/text-editing path.
+    NativeInput {
+        event: aimer_events::element::ElementEvent,
+        modifiers: aimer_events::element::Modifiers,
+    },
     ForceBackspace,
     InsertText(String),
     /// Provisional text a soft keyboard is still composing.
@@ -355,7 +361,7 @@ unsafe extern "C" {
 /// Called from Swift on every display-link vsync.
 ///
 /// If a frame was requested since the last tick, forward a `FrameReady` through
-/// the event loop (which routes to `request_redraw()`). If nothing is pending,
+/// the event loop, which renders directly on iOS. If nothing is pending,
 /// pause the display link so the app does not render while idle. Mirrors the
 /// `EVENT_PROXY` guard used by the other `trigger_rust_*` entry points.
 #[cfg(target_os = "ios")]
@@ -1039,7 +1045,9 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     /// Delivers an Aimer user event through the same path as the native event
     /// loop.
     pub fn send_user_event(&mut self, event: AimerNativePlatformEvent) {
-        crate::handler::user_events::handle_user_event(&mut self.app, event);
+        crate::handler::user_events::handle_user_event(
+            &mut self.app, event, crate::handler::user_events::request_window_redraw,
+        );
     }
 
     /// Returns whether an input method currently holds an open composition.
@@ -1679,6 +1687,7 @@ mod tests {
     mod glass_bar_cost;
     mod resize_live;
     mod window_resize;
+    mod ios_input;
     #[cfg(all(feature = "wgpu", target_os = "macos"))]
     mod bypass_target;
     mod focus_repaint;

@@ -2,6 +2,15 @@
 //! the Rust window and renderer exist. Keep the example's bundle resizable.
 
 #[test]
+fn ios_bundle_distinguishes_mouse_clicks_from_finger_touches_on_older_ios() {
+    let info = include_str!("../jaime/builds/ios/Jaime/Info.plist");
+    let value = info.split_once("<key>UIApplicationSupportsIndirectInputEvents</key>")
+        .expect("iOS 14–16 require an explicit opt-in for indirect pointer touches").1;
+    assert!(value.trim_start().starts_with("<true/>"),
+        "the native mouse bridge needs UITouchTypeIndirectPointer");
+}
+
+#[test]
 fn ios_bundle_allows_continuous_ipad_resizing() {
     let info = include_str!("../jaime/builds/ios/Jaime/Info.plist");
     let project = include_str!("../jaime/builds/ios/Jaime.xcodeproj/project.pbxproj");

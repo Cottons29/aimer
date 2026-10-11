@@ -11,6 +11,9 @@ pub mod scroll_classifier;
 pub mod scroll_utils;
 mod scoped_sync;
 pub(crate) mod user_events;
+mod native_input;
+#[cfg(any(target_os = "ios", test))]
+mod uikit_frame;
 /// Gesture segmentation for the phase-less browser wheel stream.
 ///
 /// Compiled for the web target only; the `test` predicate keeps the logic
@@ -2077,7 +2080,10 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AimerNativePlatformEvent) {
         // debug!("User event {:?}", event);
-        handle_user_event(self, event);
+        #[cfg(target_os = "ios")]
+        handle_user_event(self, event, |app, _kind| app.render(_event_loop));
+        #[cfg(not(target_os = "ios"))]
+        handle_user_event(self, event, crate::handler::user_events::request_window_redraw);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -2172,6 +2178,10 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
     #[allow(unused)]
     pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
+        // UIKit can lay out the view before winit delivers its queued Resized
+        // event. Refresh before rebuilding or measuring the tree for this frame.
+        #[cfg(target_os = "ios")]
+        WindowEventHandler::refresh_uikit_viewport(self);
         #[cfg(target_arch = "wasm32")]
         self.note_frame_request(crate::aimer_app::frame_ready_delivered());
         let kind = self.take_frame_request_reason();
@@ -2233,6 +2243,11 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             // instead of staying blank.  Critical on web (async GPU init)
             // and iOS (late surface availability).
             self.note_frame_request(FrameRequestKind::Full);
+            // UIKit coalesces setNeedsDisplay during drawRect. A dropped
+            // resize frame needs a later display tick, after this draw returns.
+            #[cfg(target_os = "ios")]
+            aimer_events::window::request_animation_frame();
+            #[cfg(not(target_os = "ios"))]
             if let Some(window) = &self.window {
                 window.request_redraw();
             }

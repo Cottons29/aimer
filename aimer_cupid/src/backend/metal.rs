@@ -40,12 +40,13 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
-use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
+#[cfg(test)]
+use objc2_quartz_core::CAMetalLayer;
 use objc2_metal::{
     MTLBlendFactor, MTLBlendOperation, MTLBlitCommandEncoder, MTLBlitOption, MTLBuffer,
     MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLColorWriteMask, MTLCompareFunction,
     MTLCompileOptions, MTLCreateSystemDefaultDevice,
-    MTLClearColor, MTLDevice, MTLDrawable, MTLLanguageVersion, MTLLibrary, MTLLoadAction,
+    MTLClearColor, MTLDevice, MTLLanguageVersion, MTLLibrary, MTLLoadAction,
     MTLFunction,
     MTLIndexType, MTLOrigin, MTLPixelFormat, MTLPrimitiveType, MTLRenderCommandEncoder,
     MTLRenderPassColorAttachmentDescriptor, MTLRenderPassDescriptor,
@@ -69,6 +70,9 @@ use crate::backend::{
 };
 
 pub mod binding;
+mod presentation;
+pub use presentation::{MetalSurface, MetalSurfaceFrame};
+use presentation::MetalQueueState;
 
 // objc2-metal emits the `Metal` framework link itself, but documents that the
 // symbols `MTLCreateSystemDefaultDevice` resolves through live in
@@ -89,7 +93,7 @@ const MSL_LANGUAGE_VERSION: MTLLanguageVersion = MTLLanguageVersion::Version2_1;
 pub struct MetalBackend {
     device: Retained<ProtocolObject<dyn MTLDevice>>,
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
-    pending_uploads: Mutex<Vec<PendingUpload>>,
+    queue_state: Mutex<MetalQueueState>,
     #[cfg(feature = "frame-stats")]
     active_gpu_frame: Mutex<Option<Arc<GpuFrameCapture>>>,
 }
@@ -206,110 +210,6 @@ enum PendingUpload {
     },
 }
 
-/// A configured `CAMetalLayer` connected to a [`MetalBackend`].
-pub struct MetalSurface {
-    layer: Retained<CAMetalLayer>,
-    format: MTLPixelFormat,
-}
-
-/// One drawable acquired from a [`MetalSurface`].
-///
-/// Keep the frame alive until after rendering, then call [`Self::present`].
-pub struct MetalSurfaceFrame {
-    drawable: Retained<ProtocolObject<dyn CAMetalDrawable>>,
-    texture: MetalTexture,
-    view: MetalTextureView,
-    presents_with_transaction: bool,
-}
-
-impl MetalSurface {
-    /// Connects an existing layer to `backend` and selects its pixel format.
-    ///
-    /// Framebuffer-only mode is disabled because custom pipelines may copy the
-    /// presented texture to capture backdrop pixels. Presentation is scheduled
-    /// on a command buffer, so Core Animation transaction synchronization is
-    /// disabled on the layer.
-    pub fn new(
-        backend: &MetalBackend,
-        layer: Retained<CAMetalLayer>,
-        format: MTLPixelFormat,
-    ) -> Self {
-        layer.setDevice(Some(&backend.device));
-        layer.setPixelFormat(format);
-        layer.setFramebufferOnly(false);
-        layer.setPresentsWithTransaction(false);
-        Self { layer, format }
-    }
-
-    /// Returns the layer's configured pixel format.
-    #[inline]
-    pub fn format(&self) -> MTLPixelFormat {
-        self.format
-    }
-
-    /// Borrows the native layer for platform-specific configuration.
-    #[inline]
-    pub fn layer(&self) -> &CAMetalLayer {
-        &self.layer
-    }
-
-    /// Acquires the next drawable, returning `None` when the layer is not ready.
-    pub fn next_drawable(&self) -> Option<MetalSurfaceFrame> {
-        let drawable = self.layer.nextDrawable()?;
-        let texture = MetalTexture(drawable.texture());
-        let view = MetalTextureView(texture.0.clone());
-        Some(MetalSurfaceFrame {
-            drawable,
-            texture,
-            view,
-            presents_with_transaction: self.layer.presentsWithTransaction(),
-        })
-    }
-}
-
-impl MetalSurfaceFrame {
-    /// Returns the drawable texture dimensions in pixels.
-    #[inline]
-    pub fn size(&self) -> (u32, u32) {
-        (self.texture.0.width() as u32, self.texture.0.height() as u32)
-    }
-
-    /// Borrows the backend texture for source-texture rendering and copies.
-    #[inline]
-    pub fn texture(&self) -> &MetalTexture {
-        &self.texture
-    }
-
-    /// Borrows the render-target view for `RendererImpl::render`.
-    #[inline]
-    pub fn view(&self) -> &MetalTextureView {
-        &self.view
-    }
-
-    /// Presents after earlier submissions to `backend`'s command queue, such
-    /// as the command buffer submitted by `RendererImpl::render`. Transactional
-    /// layers require the presentation command buffer to be scheduled before
-    /// calling `present()` directly; ordinary layers use `presentDrawable`.
-    pub fn present(self, backend: &MetalBackend) {
-        let command_buffer = backend
-            .queue
-            .commandBuffer()
-            .expect("the command queue to hand out a presentation command buffer");
-        let metal_drawable: &ProtocolObject<dyn CAMetalDrawable> = &self.drawable;
-        let drawable = <ProtocolObject<dyn CAMetalDrawable> as AsRef<
-            ProtocolObject<dyn MTLDrawable>,
-        >>::as_ref(metal_drawable);
-        if self.presents_with_transaction {
-            command_buffer.commit();
-            command_buffer.waitUntilScheduled();
-            drawable.present();
-        } else {
-            command_buffer.presentDrawable(drawable);
-            command_buffer.commit();
-        }
-    }
-}
-
 impl MetalBackend {
     /// Creates a backend over the default system Metal device.
     ///
@@ -323,7 +223,7 @@ impl MetalBackend {
         Some(Self {
             device,
             queue,
-            pending_uploads: Mutex::new(Vec::new()),
+            queue_state: Mutex::new(MetalQueueState::default()),
             #[cfg(feature = "frame-stats")]
             active_gpu_frame: Mutex::new(None),
         })
@@ -1015,12 +915,12 @@ impl GpuBackend for MetalBackend {
             "write of {} bytes at offset {start} overruns a {length} byte Metal buffer",
             data.len()
         );
-        let mut pending_uploads = self
-            .pending_uploads
+        let mut queue_state = self
+            .queue_state
             .lock()
             .expect("Metal upload queue mutex is not poisoned");
         let source = self.staging_buffer(data, "Metal buffer upload");
-        pending_uploads.push(PendingUpload::Buffer {
+        queue_state.uploads.push(PendingUpload::Buffer {
             source,
             destination: buffer.clone(),
             destination_offset: offset,
@@ -1107,12 +1007,12 @@ impl GpuBackend for MetalBackend {
             }
         }
 
-        let mut pending_uploads = self
-            .pending_uploads
+        let mut queue_state = self
+            .queue_state
             .lock()
             .expect("Metal upload queue mutex is not poisoned");
         let source = self.staging_buffer(&packed, "Metal texture upload");
-        pending_uploads.push(PendingUpload::Texture {
+        queue_state.uploads.push(PendingUpload::Texture {
             source,
             destination: desc.texture.clone(),
             mip_level: desc.mip_level,
@@ -1137,13 +1037,13 @@ impl GpuBackend for MetalBackend {
             command_buffer,
             blit: None,
         };
-        let mut pending_uploads = self
-            .pending_uploads
+        let mut queue_state = self
+            .queue_state
             .lock()
             .expect("Metal upload queue mutex is not poisoned");
-        if !pending_uploads.is_empty() {
+        if !queue_state.uploads.is_empty() {
             let blit = encoder.blit_encoder();
-            Self::encode_pending_uploads(blit, &mut pending_uploads);
+            Self::encode_pending_uploads(blit, &mut queue_state.uploads);
         }
         encoder
     }
@@ -1260,17 +1160,17 @@ impl GpuBackend for MetalBackend {
         // committing an empty buffer and waiting for it returns only after
         // everything already submitted has finished. That keeps this correct
         // without the backend having to remember its last submission.
-        let mut pending_uploads = self
-            .pending_uploads
+        let mut queue_state = self
+            .queue_state
             .lock()
             .expect("Metal upload queue mutex is not poisoned");
-        self.commit_pending_uploads(&mut pending_uploads);
+        self.commit_pending_uploads(&mut queue_state.uploads);
         let fence = self
             .queue
             .commandBuffer()
             .expect("the command queue to hand out a fence command buffer");
         fence.commit();
-        drop(pending_uploads);
+        drop(queue_state);
         fence.waitUntilCompleted();
 
         let length = buffer.0.length();
@@ -1293,11 +1193,11 @@ impl GpuBackend for MetalBackend {
         // A render pass derived from this encoder was dropped before the borrow
         // ended, so its encoder is already closed. The blit encoder is the one
         // this type owns directly.
-        let mut pending_uploads = self
-            .pending_uploads
+        let mut queue_state = self
+            .queue_state
             .lock()
             .expect("Metal upload queue mutex is not poisoned");
-        self.commit_pending_uploads(&mut pending_uploads);
+        self.commit_pending_uploads(&mut queue_state.uploads);
         let mut encoder = encoder;
         encoder.end_blit();
         #[cfg(feature = "frame-stats")]
@@ -1329,6 +1229,9 @@ impl GpuBackend for MetalBackend {
             }
         }
         encoder.command_buffer.commit();
+        // Reuse the existing queue lock and transfer ownership: no extra lock,
+        // allocation or retain is needed to remember this frame's GPU producer.
+        queue_state.last_submission = Some(encoder.command_buffer);
     }
 
     fn limits(&self) -> GpuLimits {

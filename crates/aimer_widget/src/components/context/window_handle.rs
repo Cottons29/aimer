@@ -3,6 +3,9 @@ use std::sync::Arc;
 
 use winit::window::Window;
 
+#[cfg(any(target_os = "ios", test))]
+mod uikit;
+
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct HeadlessWindowState {
@@ -107,15 +110,16 @@ impl WindowHandle {
 
     /// Returns the drawable client area in physical pixels.
     ///
-    /// On iOS this includes safe areas, which widgets handle separately. Winit
-    /// 0.30's `inner_size()` subtracts them; its `outer_size()` reports the
-    /// current UIWindow bounds, including in a resized iPad window.
+    /// On iOS this uses the UIView's local bounds and content scale, including
+    /// safe areas, which widgets handle separately. Winit 0.30 projects its
+    /// sizes into screen coordinates; those include window transforms during
+    /// live resize and do not describe the drawable's pixel dimensions.
     pub fn inner_size(&self) -> winit::dpi::PhysicalSize<u32> {
         match self {
             #[cfg(all(not(aimer_portable_guest), not(target_os = "ios")))]
             Self::Native(window) => window.inner_size(),
             #[cfg(all(not(aimer_portable_guest), target_os = "ios"))]
-            Self::Native(window) => window.outer_size(),
+            Self::Native(window) => uikit::inner_size(window),
             #[cfg(aimer_portable_guest)]
             Self::Native(_) => Default::default(),
             Self::Headless(state) => winit::dpi::PhysicalSize::new(

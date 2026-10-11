@@ -42,6 +42,10 @@ impl WindowEventHandler {
         event: WindowEvent,
     ) {
         // debug!("======> Event: {event:?}");
+        #[cfg(target_os = "ios")]
+        if Self::defer_uikit_frame_event(app, &event) {
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => {
                 // #[cfg(target_os = "macos")]
@@ -55,6 +59,7 @@ impl WindowEventHandler {
 
             WindowEvent::RedrawRequested => app.render(event_loop),
 
+            #[cfg(not(target_os = "ios"))]
             WindowEvent::Resized(size) => Self::handle_resize(size, app, event_loop),
 
             other => Self::handle_common_event(app, other),
@@ -313,14 +318,14 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_cursor_move<W: Widget + 'static>(
+    pub(super) fn handle_cursor_move<W: Widget + 'static>(
         position: PhysicalPosition<f64>,
         app: &mut AimerApplicationHandler<W>,
     ) {
         let new_pos = Self::logical_cursor(position, app);
         let dx = (new_pos.x - app.cursor_pos.x).abs();
         let dy = (new_pos.y - app.cursor_pos.y).abs();
-        if dx < 1.0 && dy < 1.0 {
+        if dx < 1.0 && dy < 1.0 && !app.touch_pointer {
             return;
         }
         app.cursor_pos = new_pos;
@@ -365,7 +370,7 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_cursor_left<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>) {
+    pub(super) fn handle_cursor_left<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>) {
         app.cursor_pos = CURSOR_OUTSIDE_POSITION;
         if app.active_root().is_some() {
             let pointer = PointerKey::new(PointerSource::Mouse, 0);
@@ -406,7 +411,7 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_mouse_input<W: Widget + 'static>(
+    pub(super) fn handle_mouse_input<W: Widget + 'static>(
         state: ElementState,
         button: MouseButton,
         app: &mut AimerApplicationHandler<W>,
@@ -759,10 +764,11 @@ impl WindowEventHandler {
         }
     }
 
+    #[cfg(not(target_os = "ios"))]
     fn handle_resize<W: Widget + 'static>(
         size: PhysicalSize<u32>,
         app: &mut AimerApplicationHandler<W>,
-        event_loop: &ActiveEventLoop,
+        _event_loop: &ActiveEventLoop,
     ) {
         #[cfg(target_os = "macos")]
         if let Some(window) = app.native_window() {
@@ -784,19 +790,11 @@ impl WindowEventHandler {
             }
         };
 
-        // On iOS winit already supplies the current window bounds in physical
-        // pixels. Replacing these with UIScreen.nativeBounds breaks Split View
-        // and freely resized iPad windows, including their backdrop sampling.
-
         Self::apply_resize(size, app);
 
-        // Render a frame immediately during the resize event so the
-        // compositor has fresh content before it can stretch the old
-        // drawable.  Without this synchronous render the compositor
-        // (WindowServer on macOS) stretches the previous frame to the
-        // new window size — visible as directional stretching when
-        // dragging the right or bottom window edge.
-        app.render(event_loop);
+        // Desktop compositors need the new drawable before this callback
+        // returns to avoid stretching the previous frame to the new bounds.
+        app.render(_event_loop);
     }
 
     /// Prepares the tree for a window that is now `size`.
@@ -808,7 +806,7 @@ impl WindowEventHandler {
     /// instead re-runs every `build` in the application for a window that got
     /// one pixel wider, which on a page of any size is the difference between a
     /// drag that tracks the cursor and one that crawls.
-    fn apply_resize<W: Widget + 'static>(
+    pub(super) fn apply_resize<W: Widget + 'static>(
         size: PhysicalSize<u32>,
         app: &mut AimerApplicationHandler<W>,
     ) {

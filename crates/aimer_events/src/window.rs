@@ -212,7 +212,7 @@ where
 /// display (up to 120 Hz on ProMotion). Requesting a frame simply raises the
 /// [`FRAME_REQUESTED`] flag and unpauses the link; the next vsync tick then
 /// delivers a `FrameReady` (see `aimer_ios_frame_tick` in `aimer_quiver`) that
-/// routes to `request_redraw()` outside the coalescing window. The link pauses
+/// renders directly on iOS, avoiding a second UIKit draw callback. The link pauses
 /// itself once a tick observes no pending request, so the app stays idle when
 /// nothing is animating.
 #[cfg(aimer_portable_guest)]

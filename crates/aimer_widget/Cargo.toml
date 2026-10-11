@@ -36,6 +36,10 @@ objc.workspace = true
 tokio = {workspace = true, features = ["rt-multi-thread", "macros"]}
 colored.workspace = true
 
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2.workspace = true
+objc2-ui-kit = { workspace = true, features = ["UIView"] }
+
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "freebsd", target_os = "openbsd", target_os = "illumos"))'.dependencies]
 linkme.workspace = true
 

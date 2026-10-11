@@ -122,7 +122,9 @@ objc2-app-kit = { workspace = true, optional = true, features = [
 ] }
 objc2-core-foundation = { workspace = true, optional = true }
 objc2-metal = { workspace = true, optional = true }
-objc2-quartz-core = { workspace = true, optional = true }
+# CATransaction suppresses implicit Metal sublayer animations; enabled on macOS
+# too so the UIKit layer configuration can be regression-tested on the host.
+objc2-quartz-core = { workspace = true, optional = true, features = ["CATransaction"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2-ui-kit = { workspace = true, optional = true, features = ["std", "UIView"] }

@@ -456,6 +456,68 @@ fn profile_sidebar_hover_frames() {
     );
 }
 
+/// Drags the window edge back and forth, one `Resized` event per step, the way
+/// an iPad Stage Manager or desktop edge drag delivers them.
+///
+/// Each event renders its frame immediately, so the time of
+/// `send_window_event(Resized)` is the cost the drag pays per step; the frame
+/// that follows it (`render_frame`) is the redundant repaint a platform asks
+/// for after the resize. Run with `RESIZE_FRAMES=<n>` to lengthen the run so a
+/// sampler can attach. It prints timings only; it asserts nothing.
+#[test]
+#[ignore = "profiling harness: prints timings and asserts nothing"]
+fn profile_resize_frames() {
+    use std::time::Instant;
+
+    use aimer::HeadlessOptions;
+    use aimer::quiver::winit::dpi::PhysicalSize;
+    use aimer::quiver::winit::event::WindowEvent;
+
+    let mut app = AimerApp::start_headless_with(
+        theme::provide(ExampleShowcase::new().boxed()),
+        HeadlessOptions {
+            size: PhysicalSize::new(2253, 1628),
+            scale_factor: 2.0,
+        },
+    );
+    app.pump_frames(8);
+
+    let frames: usize = std::env::var("RESIZE_FRAMES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(400);
+    let mut resize_us = Vec::with_capacity(frames);
+    let mut follow_up_us = Vec::with_capacity(frames);
+    let requests = |app: &aimer::HeadlessAimerApp<_>| app.frame_request_stats().accepted;
+    let requests_before = requests(&app);
+    for step in 0..frames {
+        // A triangle wave between 1630 and 2250 physical px wide, ~60 px a step.
+        let phase = (step * 60) % 1240;
+        let width = 1630 + if phase < 620 { phase } else { 1240 - phase } as u32;
+        let height = 1200 + (width - 1630) / 2;
+        let start = Instant::now();
+        app.send_window_event(WindowEvent::Resized(PhysicalSize::new(width, height)));
+        resize_us.push(start.elapsed().as_secs_f64() * 1e6);
+        let start = Instant::now();
+        app.render_frame();
+        follow_up_us.push(start.elapsed().as_secs_f64() * 1e6);
+    }
+    eprintln!(
+        "=== redraw requests per resize step: {:.2}",
+        (requests(&app) - requests_before) as f64 / frames as f64
+    );
+    for (label, times) in [("resize", &mut resize_us), ("follow-up", &mut follow_up_us)] {
+        times.sort_by(f64::total_cmp);
+        eprintln!(
+            "=== {label} frame: p50={:.0} us  p95={:.0} us  max={:.0} us  ({} frames)",
+            times[times.len() / 2],
+            times[(times.len() as f64 * 0.95) as usize - 1],
+            times[times.len() - 1],
+            times.len(),
+        );
+    }
+}
+
 #[test]
 #[ignore = "profiling harness: 30,000 frames (minutes in debug), prints timings and asserts nothing"]
 fn profile_sidebar_scroll_frames() {

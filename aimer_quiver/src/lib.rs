@@ -16,6 +16,8 @@ pub use aimer_reload_server as reload_server;
 pub use aimer_anteros as wasm_runtime;
 
 mod ffi_utils;
+#[cfg(any(target_os = "ios", test))]
+mod ios_input;
 mod first_frame;
 #[cfg(debug_assertions)]
 mod debug_overlay;

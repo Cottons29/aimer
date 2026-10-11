@@ -9,6 +9,8 @@ mod world;
 #[cfg(test)]
 mod render_order_tests;
 #[cfg(test)]
+mod sync_damage_tests;
+#[cfg(test)]
 mod world_tests;
 
 use std::cell::RefCell;
@@ -824,6 +826,29 @@ impl DrawCommandList {
         }
     }
 
+    /// Runs `apply`, which edits the geometry of nodes at or inside `tops`, and
+    /// damages the footprint of each of those subtrees from before and after.
+    ///
+    /// A subtree's footprint contains every descendant, so `tops` must be the
+    /// changed nodes that have no changed ancestor: walking the subtree of
+    /// every changed node instead visits each node once per ancestor, which
+    /// made a window resize cost the sum of all subtree sizes twice per node.
+    fn damage_subtrees_around<R>(
+        &mut self,
+        tops: &[RenderNodeId],
+        apply: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let before: Vec<Option<Rect>> =
+            tops.iter().map(|id| self.subtree_damage_bounds(*id)).collect();
+        let result = apply(self);
+        for (id, old_bounds) in tops.iter().zip(before) {
+            let new_bounds = self.subtree_damage_bounds(*id);
+            if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
+                self.push_damage(damage);
+            }
+        }
+        result
+    }
 }
 
 /// A shareable handle to the retained v2 render tree.
@@ -934,24 +959,41 @@ impl RenderTree {
         if let Some(missing) = updates.iter().find(|update| tree.node(update.node).is_none()) {
             return Err(RenderTreeError::UnknownNode(missing.node));
         }
-        for update in updates {
-            let node = tree.node(update.node).expect("presence checked above");
-            if node.bounds == update.bounds
-                && node.clip == update.clip
-                && node.clip_radius == update.clip_radius
-            {
-                continue;
+        let changed: HashSet<RenderNodeId> = updates
+            .iter()
+            .filter(|update| {
+                let node = tree.node(update.node).expect("presence checked above");
+                node.bounds != update.bounds
+                    || node.clip != update.clip
+                    || node.clip_radius != update.clip_radius
+            })
+            .map(|update| update.node)
+            .collect();
+        let tops: Vec<RenderNodeId> = changed
+            .iter()
+            .copied()
+            .filter(|id| {
+                let mut ancestor = tree.node(*id).and_then(|node| node.parent);
+                while let Some(parent) = ancestor {
+                    if changed.contains(&parent) {
+                        return false;
+                    }
+                    ancestor = tree.node(parent).and_then(|node| node.parent);
+                }
+                true
+            })
+            .collect();
+        tree.damage_subtrees_around(&tops, |tree| {
+            for update in updates {
+                if !changed.contains(&update.node) {
+                    continue;
+                }
+                let node = tree.node_mut(update.node).expect("presence checked above");
+                node.assign_bounds(update.bounds);
+                node.clip = update.clip;
+                node.clip_radius = update.clip_radius;
             }
-            let old_bounds = tree.visible_subtree_bounds(update.node);
-            let node = tree.node_mut(update.node).expect("presence checked above");
-            node.assign_bounds(update.bounds);
-            node.clip = update.clip;
-            node.clip_radius = update.clip_radius;
-            let new_bounds = tree.visible_subtree_bounds(update.node);
-            if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
-                tree.push_damage(damage);
-            }
-        }
+        });
         Ok(())
     }
 
@@ -1020,35 +1062,40 @@ impl RenderTree {
             });
 
         if !structure_changed {
+            // `covered[index]` is set for a changed node and everything below
+            // one, so the first changed node on each path is the only one whose
+            // subtree footprint has to be damaged.
+            let mut covered = vec![false; nodes.len()];
+            let mut changed = Vec::new();
+            let mut tops = Vec::new();
             for (index, spec) in nodes.iter().enumerate() {
                 let id = ids[index];
-                if tree.node(id).is_none() {
-                    return Err(RenderTreeError::UnknownNode(id));
-                }
+                let node = tree.node(id).ok_or(RenderTreeError::UnknownNode(id))?;
                 let clip_changed = clip_updates.is_some_and(|clips| {
-                    tree.node(id).is_some_and(|node| {
-                        node.clip != clips[index] || node.clip_radius != radius_at(index)
-                    })
+                    node.clip != clips[index] || node.clip_radius != radius_at(index)
                 });
-                if tree.node(id).is_some_and(|node| node.bounds == spec.bounds)
-                    && !clip_changed
-                {
-                    continue;
-                }
-                let old_bounds = tree.visible_subtree_bounds(id);
-                let node = tree
-                    .node_mut(id)
-                    .ok_or(RenderTreeError::UnknownNode(id))?;
-                node.assign_bounds(spec.bounds);
-                if let Some(clips) = clip_updates {
-                    node.clip = clips[index];
-                    node.clip_radius = radius_at(index);
-                }
-                let new_bounds = tree.visible_subtree_bounds(id);
-                if let Some(damage) = old_bounds.into_iter().chain(new_bounds).reduce(Rect::union) {
-                    tree.push_damage(damage);
+                let is_changed = node.bounds != spec.bounds || clip_changed;
+                let under_changed = spec.parent_index.is_some_and(|parent| covered[parent]);
+                covered[index] = under_changed || is_changed;
+                if is_changed {
+                    changed.push(index);
+                    if !under_changed {
+                        tops.push(id);
+                    }
                 }
             }
+            tree.damage_subtrees_around(&tops, |tree| {
+                for index in changed {
+                    let Some(node) = tree.node_mut(ids[index]) else {
+                        continue;
+                    };
+                    node.assign_bounds(nodes[index].bounds);
+                    if let Some(clips) = clip_updates {
+                        node.clip = clips[index];
+                        node.clip_radius = radius_at(index);
+                    }
+                }
+            });
             return Ok(ids);
         }
 
