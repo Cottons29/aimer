@@ -11,6 +11,7 @@ default = ["native", "web"]
 # backend is compiled and selected; Linux/Android also compile OpenGL fallback.
 native = [
     "aimer_cupid/native",
+    "dep:objc2",
     "dep:objc2-app-kit",
     "dep:objc2-core-foundation",
     "dep:objc2-metal",
@@ -19,15 +20,11 @@ native = [
     "dep:windows",
 ]
 # Present native frames through Cupid's WGPU surface renderer.
-wgpu = ["dep:wgpu", "aimer_cupid/wgpu", "aimer_cupid/apple-core-text"]
+wgpu = ["dep:windows", "dep:wgpu", "aimer_cupid/wgpu", "aimer_cupid/apple-core-text"]
 # Enables the browser API bindings; target cfgs select WebGPU then WebGL2 fallback.
 web = ["aimer_cupid/web"]
-# Encode and present frames on a dedicated raster thread instead of inline on
-# the UI thread. Off by default: it caps latency at one extra frame and moves
-# the presentation outcome — and with it the first-frame notification — off the
-# UI thread. Turn it on only once `frame_stats` shows encode + present are a
-# meaningful share of the frame. Ignored on wasm32, which has no thread the
-# WebGPU objects could move to.
+# Compatibility alias. Native rendering is threaded by default; select
+# RenderMode::Inline at runtime to keep GPU work on the UI thread.
 raster-thread = []
 # Measure build / encode / present per frame. When this is off, all builds
 # compile the timing and content instrumentation out.
@@ -120,15 +117,18 @@ objc2-app-kit = { workspace = true, optional = true, features = [
     "NSView",
     "objc2-quartz-core",
 ] }
+objc2 = { workspace = true, optional = true }
 objc2-core-foundation = { workspace = true, optional = true }
 objc2-metal = { workspace = true, optional = true }
-objc2-quartz-core = { workspace = true, optional = true }
+# CATransaction suppresses implicit Metal sublayer animations; enabled on macOS
+# too so the UIKit layer configuration can be regression-tested on the host.
+objc2-quartz-core = { workspace = true, optional = true, features = ["CATransaction"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2-ui-kit = { workspace = true, optional = true, features = ["std", "UIView"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { workspace = true, optional = true }
+windows = { workspace = true, optional = true, features = ["Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
@@ -141,8 +141,10 @@ web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "
 [dev-dependencies]
 aimer_assets.workspace = true
 aimer_collapsible.workspace = true
+aimer_decoration.workspace = true
 aimer_svg.workspace = true
 aimer_text.workspace = true
+aimer_space.workspace = true
 aimer_macro.workspace = true
 aimer_container.workspace = true
 aimer_flex.workspace = true

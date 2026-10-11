@@ -70,6 +70,9 @@ thread_local! {
     /// refresh it.
     static HAS_STALE_ROOTS: Cell<bool> = const { Cell::new(false) };
     static NEXT_SERIAL: Cell<u64> = const { Cell::new(0) };
+    /// How many revisited elements whose subtree is being walked enclose the
+    /// element being drawn.
+    static SUBTREE_WALKS: Cell<u32> = const { Cell::new(0) };
 }
 
 fn next_serial() -> u64 {
@@ -303,10 +306,46 @@ fn request_isolated(ctx: &BuildContext, walk_subtree: bool) {
     }
 }
 
+/// Marks the subtree of the element being drawn as walked, for as long as the
+/// guard lives.
+pub(crate) struct SubtreeWalk;
+
+impl Drop for SubtreeWalk {
+    fn drop(&mut self) {
+        SUBTREE_WALKS.with(|walks| walks.set(walks.get() - 1));
+    }
+}
+
+/// Starts walking the subtree of `element` if an animation-only pass revisits
+/// it as an element that replaced its subtree.
+///
+/// Everything below such an element is new or changed, however deep, so each
+/// descendant has to be drawn too; asking every one of them whether the pass may
+/// skip it, as if it had been revisited alone, stopped the walk one level below
+/// the element and left whatever was deeper showing its previous frame.
+#[inline]
+pub(crate) fn enter_subtree_walk(element: ElementId) -> Option<SubtreeWalk> {
+    if !is_animation_only_pass() {
+        return None;
+    }
+    let walks = is_rebuilt_root(element)
+        || REGISTRY.with(|registry| {
+            registry
+                .borrow()
+                .get(&element)
+                .is_some_and(|registration| registration.walk_subtree)
+        });
+    walks.then(|| {
+        SUBTREE_WALKS.with(|walks| walks.set(walks.get() + 1));
+        SubtreeWalk
+    })
+}
+
 /// Whether an animation-only pass may leave `element`'s subtree alone.
 #[inline]
 pub(crate) fn pass_skips_subtree(element: ElementId) -> bool {
     is_animation_only_pass()
+        && SUBTREE_WALKS.with(Cell::get) == 0
         && !is_rebuilt_root(element)
         && REGISTRY.with(|registry| {
             registry

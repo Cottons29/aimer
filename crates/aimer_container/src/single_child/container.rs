@@ -4,7 +4,8 @@ use aimer_attribute::dimension::Dimension;
 use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::{ResolvedSize, Size};
 use aimer_events::element::ElementEvent;
-use aimer_macro::{PortableWidget, Rebuildable};
+use aimer_macro::Rebuildable;
+use aimer_decoration::{BoxDecoration, Decoration};
 pub use aimer_style::*;
 use aimer_widget::InteractionBounds;
 use aimer_widget::base::*;
@@ -30,28 +31,20 @@ use aimer_widget::portable::{
 /// and decoration borders inset the child. All spacing and pixel dimensions are
 /// logical units that are scaled by the build context.
 ///
+/// [`Container::decoration`] accepts any [`Decoration`] without boxing it.
+/// The default [`BoxDecoration`] supplies border insets and rounded child
+/// clipping. Custom decorations choose their own insets and optional clip.
+///
 /// Attach a child with [`Container::child`] to retain its concrete type, or
 /// with [`Container::box_child`] when branches need a shared erased type.
-#[derive(PortableWidget)]
-#[portable_widget(
-    id = "aimer_container::single_child::Container",
-    validate = validate_portable_container
-)]
-pub struct Container<T = RequiredChild> {
-    #[portable_optional]
+pub struct Container<T = RequiredChild, D: Decoration + 'static = BoxDecoration> {
     pub(crate) width: Dimension,
-    #[portable_optional]
     pub(crate) height: Dimension,
-    #[portable_optional]
     pub padding: LayoutSpacing,
-    #[portable_optional]
     pub margin: LayoutSpacing,
-    #[portable_optional]
-    pub box_decoration: BoxDecoration,
-    #[portable_skip]
+    pub box_decoration: D,
     decoration_source: Option<Rc<dyn RetainedBoxDecoration>>,
     pub color: Option<Color>,
-    #[portable_child]
     pub child: T,
 }
 
@@ -79,7 +72,9 @@ impl Container {
             child: RequiredChild,
         }
     }
+}
 
+impl<D: Decoration + 'static> Container<RequiredChild, D> {
     /// Sets the outer width before margin is added.
     ///
     /// The default is [`Dimension::Auto`]. Pixel dimensions use logical pixels,
@@ -127,10 +122,38 @@ impl Container {
     /// The default decoration is empty. Its border width is included when
     /// deriving the child's inset and clipping radius.
     #[inline]
-    pub fn box_decoration(mut self, box_decoration: BoxDecoration) -> Self {
-        self.box_decoration = box_decoration;
-        self.decoration_source = None;
-        self
+    pub fn box_decoration(self, box_decoration: BoxDecoration) -> Container {
+        self.decoration(box_decoration)
+    }
+
+    /// Replaces the decoration while retaining its concrete type.
+    ///
+    /// The decoration paints over the box inside the margin, including padding.
+    /// Its content insets reduce child layout; its optional clip confines child
+    /// painting. Custom decorations do not support portable lowering.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use aimer_container::{Container, ZeroSizedBox};
+    /// use aimer_decoration::BackdropFilter;
+    ///
+    /// let panel = Container::new().width(240).height(80)
+    ///     .decoration(BackdropFilter::new().blur_radius(16.0))
+    ///     .child(ZeroSizedBox);
+    /// ```
+    #[inline]
+    pub fn decoration<E: Decoration + 'static>(self, decoration: E) -> Container<RequiredChild, E> {
+        Container {
+            width: self.width,
+            height: self.height,
+            padding: self.padding,
+            margin: self.margin,
+            box_decoration: decoration,
+            decoration_source: None,
+            color: self.color,
+            child: self.child,
+        }
     }
 
     /// Supplies decoration for retained native interaction state.
@@ -140,9 +163,10 @@ impl Container {
     /// not support portable lowering.
     #[doc(hidden)]
     #[inline]
-    pub fn retained_box_decoration(mut self, source: Rc<dyn RetainedBoxDecoration>) -> Self {
-        self.decoration_source = Some(source);
-        self
+    pub fn retained_box_decoration(self, source: Rc<dyn RetainedBoxDecoration>) -> Container {
+        let mut container = self.decoration(BoxDecoration::default());
+        container.decoration_source = Some(source);
+        container
     }
 
     /// Sets a solid background color.
@@ -161,7 +185,7 @@ impl Container {
     /// concrete type is preserved. Use [`Container::box_child`] when different
     /// branches need one erased return type.
     #[inline]
-    pub fn child<W: Widget>(self, child: W) -> Container<W> {
+    pub fn child<W: Widget>(self, child: W) -> Container<W, D> {
         Container {
             width: self.width,
             height: self.height,
@@ -185,56 +209,27 @@ impl Container {
     }
 }
 
-impl<W: Widget> Widget for Container<W> {
+impl<W: Widget, D: Decoration + 'static> Widget for Container<W, D> {
     fn to_element(self, ctx: &BuildContext) -> AnyElement {
         let child = self.child.to_element(ctx);
-        let box_decoration = self.box_decoration;
-        if let Some(color) = self.color
-            && box_decoration.background_color.get().is_none()
-        {
-            box_decoration.update_color(color);
-        }
         RawContainer {
             width: self.width,
             height: self.height,
             child,
             padding: self.padding,
             margin: self.margin,
-            box_decoration,
+            box_decoration: self.box_decoration,
             decoration_source: self.decoration_source.map(decoration::RetainedDecorationState::new),
             cache: LayoutCache::new(),
-            debug_name: "Container",
+            raw: false,
             bounds: InteractionBounds::new(),
-            local_v2_background_color: std::cell::Cell::new(None),
+            paint_state: std::cell::Cell::new(ContainerPaintState::new(self.color)),
         }
         .boxed()
     }
 }
 
-#[cfg(feature = "portable-guest")]
-fn validate_portable_container<W: Widget>(
-    container: &Container<W>,
-    ctx: &PortableBuildContext,
-    source: SourceFingerprint,
-) -> Result<(), PortableBuildError> {
-    if container.decoration_source.is_some() {
-        return Err(ctx.unsupported_widget("Container.retained_box_decoration", source));
-    }
-    for (dimension, property) in [
-        (container.width, "Container.width"),
-        (container.height, "Container.height"),
-    ] {
-        let valid = match dimension {
-            Dimension::Auto => true,
-            Dimension::Px(value) => value.is_finite() && value >= 0.0,
-            Dimension::Percent(_) => false,
-        };
-        if !valid {
-            return Err(ctx.unsupported_widget(property, source));
-        }
-    }
-    Ok(())
-}
+mod portable;
 
 /// #### Low level container element.
 ///
@@ -242,18 +237,47 @@ fn validate_portable_container<W: Widget>(
 ///
 /// - **SizedBox**: fixed size container or placeholder
 #[derive(Default, Rebuildable)]
-pub struct RawContainer<T: Element> {
+pub struct RawContainer<T: Element, D: Decoration = BoxDecoration> {
     pub padding: LayoutSpacing,
     pub margin: LayoutSpacing,
     pub width: Dimension,
     pub height: Dimension,
-    pub box_decoration: BoxDecoration,
+    pub box_decoration: D,
     decoration_source: Option<Box<decoration::RetainedDecorationState>>,
     pub child: T,
     pub cache: LayoutCache,
-    pub debug_name: &'static str,
+    raw: bool,
     pub bounds: InteractionBounds,
-    local_v2_background_color: std::cell::Cell<Option<Option<(u8, u8, u8, u8)>>>,
+    paint_state: std::cell::Cell<ContainerPaintState>,
+}
+
+// Keep the fallback color and recording flag beside the revision. Separate
+// Option<Color> and Option<u64> fields spill the ordinary element beyond the
+// pool's 512-byte allocation class once its identity and provenance headers
+// are included. The two fixed debug names likewise need only a boolean.
+#[derive(Clone, Copy, Default)]
+struct ContainerPaintState {
+    revision: u64,
+    color: Color,
+    has_color: bool,
+    recorded: bool,
+}
+
+impl ContainerPaintState {
+    #[inline]
+    fn new(color: Option<Color>) -> Self {
+        Self {
+            revision: 0,
+            color: color.unwrap_or(Color::Transparent),
+            has_color: color.is_some(),
+            recorded: false,
+        }
+    }
+
+    #[inline]
+    fn background(self) -> Option<Color> {
+        self.has_color.then_some(self.color)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -266,9 +290,10 @@ struct LocalV2ContainerGeometry {
     /// bottom-right, bottom-left): the outer radii shrunk by the border, as
     /// the live path computes them.
     clip_radii: [f32; 4],
+    clips_child: bool,
 }
 
-impl<E: Element> RawContainer<E> {
+impl<E: Element, D: Decoration> RawContainer<E, D> {
     /// Returns whether this container only forwards layout and a rectangular
     /// clip. Such a wrapper can expose the child's paint islands without
     /// recording its own decoration or translating an inset.
@@ -279,7 +304,8 @@ impl<E: Element> RawContainer<E> {
             && self.height == Dimension::Auto
             && self.padding == LayoutSpacing::default()
             && self.margin == LayoutSpacing::default()
-            && self.decoration() == &BoxDecoration::default()
+            && self.paint_state.get().background().is_none()
+            && self.decoration().is_empty()
     }
 
     /// A container is *opaque* when it paints a background — either an explicit
@@ -287,7 +313,7 @@ impl<E: Element> RawContainer<E> {
     /// visually covers whatever sits behind it in a `Stack`, so it must also
     /// occlude it for hit-testing (Flutter's `HitTestBehavior::opaque`).
     fn is_opaque(&self) -> bool {
-        self.decoration().background_color.get().is_some()
+        self.decoration().background_color().or(self.paint_state.get().background()).is_some()
     }
 
     fn local_v2_paint_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
@@ -327,39 +353,10 @@ impl<E: Element> RawContainer<E> {
             return None;
         }
 
-        // Rounded corners are supported: the box decoration records its own
-        // radii, and `retained_v2_child_clip_radius` rounds the child's clip.
-        if self
-            .decoration()
-            .border_radius
-            .resolve(width, height, scale)
-            .into_iter()
-            .any(|radius| !radius.is_finite() || radius < 0.0)
-        {
-            return None;
-        }
-
         Some(ResolvedSize {
             width: width.max(0.0),
             height: height.max(0.0),
         })
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn new(child: E) -> Self {
-        Self {
-            margin: LayoutSpacing::default(),
-            padding: LayoutSpacing::default(),
-            width: Dimension::Auto,
-            height: Dimension::Auto,
-            box_decoration: BoxDecoration::default(),
-            decoration_source: None,
-            child,
-            cache: LayoutCache::default(),
-            debug_name: "RawContainer",
-            bounds: InteractionBounds::new(),
-            local_v2_background_color: std::cell::Cell::new(None),
-        }
     }
 
     fn margin(&self, ctx: &BuildContext) -> (f32, f32, f32, f32) {
@@ -385,11 +382,7 @@ impl<E: Element> RawContainer<E> {
         let padding_top = self.padding.top.value(height, scale);
         let padding_right = self.padding.right.value(width, scale);
         let padding_bottom = self.padding.bottom.value(height, scale);
-        let border = self.decoration().border;
-        let border_left = border_stroke(border.left.stroke, width, scale);
-        let border_right = border_stroke(border.right.stroke, width, scale);
-        let border_top = border_stroke(border.top.stroke, height, scale);
-        let border_bottom = border_stroke(border.bottom.stroke, height, scale);
+        let [border_left, border_top, border_right, border_bottom] = self.decoration_insets(width, height, scale);
         let clip_size = ResolvedSize {
             width: (width - border_left - border_right).max(0.0),
             height: (height - border_top - border_bottom).max(0.0),
@@ -402,16 +395,10 @@ impl<E: Element> RawContainer<E> {
             width: (clip_size.width - padding_left - padding_right).max(0.0),
             height: (clip_size.height - padding_top - padding_bottom).max(0.0),
         };
-        let radii = self
-            .decoration()
-            .border_radius
-            .resolve(width, height, scale);
-        let clip_radii = [
-            (radii[0] - border_top.max(border_left)).max(0.0),
-            (radii[1] - border_top.max(border_right)).max(0.0),
-            (radii[2] - border_bottom.max(border_right)).max(0.0),
-            (radii[3] - border_bottom.max(border_left)).max(0.0),
-        ];
+        let clip = self.decoration().child_clip_radius(
+            ResolvedSize { width: width / scale, height: height / scale }, scale,
+        );
+        let clip_radii = clip.unwrap_or([0.0; 4]).map(|radius| finite_nonnegative(radius) * scale);
         Some(LocalV2ContainerGeometry {
             clip_origin: Vec2d {
                 x: margin_left + border_left,
@@ -421,6 +408,7 @@ impl<E: Element> RawContainer<E> {
             child_origin,
             content_size,
             clip_radii,
+            clips_child: clip.is_some(),
         })
     }
 
@@ -443,13 +431,8 @@ impl<E: Element> RawContainer<E> {
 }
 
 #[inline]
-fn border_stroke(dimension: Dimension, parent: f32, scale: f32) -> f32 {
-    match dimension {
-        Dimension::Px(width) => width * scale,
-        Dimension::Percent(percent) => parent * (percent / 100.0),
-        Dimension::Auto => 0.0,
-    }
-    .max(0.0)
+fn finite_nonnegative(value: f32) -> f32 {
+    if value.is_finite() { value.max(0.0) } else { 0.0 }
 }
 
 /// Clamps a device-pixel extent to what the render tree can carry.
@@ -482,7 +465,7 @@ fn intersect_retained_clip(
 
 mod painting;
 
-impl<T: Element> Drawable for RawContainer<T> {
+impl<T: Element, D: Decoration> Drawable for RawContainer<T, D> {
     /// Hit-tested over the box that is drawn: the computed size less the
     /// margins, which start `retained_v2_interaction_offset` in from the node.
     fn retained_v2_interaction_size(&self, ctx: &BuildContext) -> Option<ResolvedSize> {
@@ -525,35 +508,37 @@ impl<T: Element> Drawable for RawContainer<T> {
 
         let canvas = aimer_canvas::Canvas::of(ctx);
         let (margin_left, margin_top, _, _) = self.margin(ctx);
-        self.decoration().record_local_v2(
+        // The render node starts where its paint starts, which is the shadow's or
+        // outline's outer corner and not the layout box. The list is recorded
+        // relative to the node, so the decorated box sits that far inside it;
+        // otherwise a shadowed panel is drawn up and to the left of where it was
+        // laid out, under children that are in the right place.
+        let [outset_left, outset_top, _, _] = self.retained_v2_paint_outsets(ctx).unwrap_or([0.0; 4]);
+        self.decoration().paint_with_background(
             &canvas,
             Vec2d {
-                x: margin_left / ctx.scale,
-                y: margin_top / ctx.scale,
+                x: margin_left / ctx.scale + outset_left,
+                y: margin_top / ctx.scale + outset_top,
             },
-            render_extent(size.width, ctx.scale),
-            render_extent(size.height, ctx.scale),
+            ResolvedSize {
+                width: render_extent(size.width, ctx.scale) / ctx.scale,
+                height: render_extent(size.height, ctx.scale) / ctx.scale,
+            },
             ctx.scale,
+            self.paint_state.get().background(),
         );
         canvas.finish();
         self.mark_decoration_recorded();
-        self.local_v2_background_color.set(Some(
-            self.decoration()
-                .background_color
-                .get()
-                .map(|color| color.to_rgba()),
-        ));
+        let mut state = self.paint_state.get();
+        state.revision = self.decoration().revision();
+        state.recorded = true;
+        self.paint_state.set(state);
     }
 
     fn local_v2_paint_needs_recording(&self, _ctx: &BuildContext) -> bool {
-        self.retained_decoration_needs_recording()
-            || self.local_v2_background_color.get()
-            != Some(
-                self.decoration()
-                    .background_color
-                    .get()
-                    .map(|color| color.to_rgba()),
-            )
+        let state = self.paint_state.get();
+        !state.recorded || self.retained_decoration_needs_recording()
+            || state.revision != self.decoration().revision()
     }
 
     fn retained_clip(&self, ctx: &BuildContext) -> Option<aimer_cupid::draw_cmd_v2::Rect> {
@@ -563,11 +548,31 @@ impl<T: Element> Drawable for RawContainer<T> {
 
     fn retained_v2_paint_outsets(&self, ctx: &BuildContext) -> Option<[f32; 4]> {
         let size = self.local_v2_paint_size(ctx)?;
-        Some(self.decoration().local_v2_paint_outsets(
-            render_extent(size.width, ctx.scale),
-            render_extent(size.height, ctx.scale),
+        let mut outsets = self.decoration().paint_outsets(
+            ResolvedSize {
+                width: render_extent(size.width, ctx.scale) / ctx.scale,
+                height: render_extent(size.height, ctx.scale) / ctx.scale,
+            },
             ctx.scale,
-        ))
+        ).map(finite_nonnegative);
+
+        // The render node is as large as the container's content, but the
+        // decoration is painted over the whole box: padding, border and the
+        // margin it is offset by included. Damage comes from the node, so
+        // without this a repaint stopped short of the box's right and bottom
+        // edges and left the old border color there. The left and top are
+        // already covered, since the node starts at the layout box.
+        let (margin_left, margin_top, _, _) = self.margin(ctx);
+        let content = self.content_size(ctx);
+        let overshoot_right = (margin_left + size.width - content.width).max(0.0) / ctx.scale;
+        let overshoot_bottom = (margin_top + size.height - content.height).max(0.0) / ctx.scale;
+        if overshoot_right.is_finite() {
+            outsets[2] += overshoot_right;
+        }
+        if overshoot_bottom.is_finite() {
+            outsets[3] += overshoot_bottom;
+        }
+        Some(outsets)
     }
 
     fn retained_v2_child_context<'a>(
@@ -623,11 +628,13 @@ impl<T: Element> Drawable for RawContainer<T> {
             render_extent(geometry.clip_size.width, scale) / scale,
             render_extent(geometry.clip_size.height, scale) / scale,
         );
-        let clip = child
-            .retained_clip(&child_ctx)
-            .map(|child_clip| intersect_retained_clip(clip, child_clip))
-            .unwrap_or(clip);
-        Some((bounds, Some(clip)))
+        let clip = geometry.clips_child.then_some(clip);
+        let clip = match (clip, child
+            .retained_clip(&child_ctx)) {
+            (Some(clip), Some(child_clip)) => Some(intersect_retained_clip(clip, child_clip)),
+            (clip, child_clip) => clip.or(child_clip),
+        };
+        Some((bounds, clip))
     }
 
     #[inline]
@@ -667,28 +674,11 @@ impl<T: Element> Drawable for RawContainer<T> {
 
         let padding_left = self.padding.left.value(box_width, scale);
         let padding_top = self.padding.top.value(box_height, scale);
-        let border = self.decoration().border;
-        let get_stroke = |dimension: Dimension, parent: f32| -> f32 {
-            match dimension {
-                Dimension::Px(width) => width * scale,
-                Dimension::Percent(percent) => parent * (percent / 100.0),
-                Dimension::Auto => 0.0,
-            }
-        };
-        let border_left = get_stroke(border.left.stroke, box_width).max(0.0);
-        let border_top = get_stroke(border.top.stroke, box_height).max(0.0);
-        let content_width = (box_width
-            - padding_left
-            - border_left
-            - self.padding.right.value(box_width, scale)
-            - get_stroke(border.right.stroke, box_width).max(0.0))
-            .max(0.0);
-        let content_height = (box_height
-            - padding_top
-            - border_top
-            - self.padding.bottom.value(box_height, scale)
-            - get_stroke(border.bottom.stroke, box_height).max(0.0))
-            .max(0.0);
+        let [border_left, border_top, border_right, border_bottom] = self.decoration_insets(box_width, box_height, scale);
+        let content_width = (box_width - padding_left - border_left
+            - self.padding.right.value(box_width, scale) - border_right).max(0.0);
+        let content_height = (box_height - padding_top - border_top
+            - self.padding.bottom.value(box_height, scale) - border_bottom).max(0.0);
         let inset_x = m_left + padding_left + border_left;
         let inset_y = m_top + padding_top + border_top;
 
@@ -714,17 +704,17 @@ impl<T: Element> Drawable for RawContainer<T> {
 
 }
 
-impl<T: Element> VisitorElement for RawContainer<T> {
+impl<T: Element, D: Decoration> VisitorElement for RawContainer<T, D> {
     fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
         visitor(&self.child);
     }
 
     fn debug_name(&self) -> &'static str {
-        self.debug_name
+        if self.raw { "RawContainer" } else { "Container" }
     }
 }
 
-impl<T: Element> EventElement for RawContainer<T> {
+impl<T: Element, D: Decoration> EventElement for RawContainer<T, D> {
     fn event_tree_role(&self) -> EventTreeRole {
         // A dynamic background must keep its routing role when it becomes transparent.
         if self.decoration_source.is_some() || self.is_opaque() {
@@ -765,3 +755,23 @@ mod layout;
 
 #[cfg(test)]
 mod tests;
+
+impl<E: Element> RawContainer<E> {
+    #[allow(dead_code)]
+    pub(crate) fn new(child: E) -> Self {
+        Self {
+            margin: LayoutSpacing::default(),
+            padding: LayoutSpacing::default(),
+            width: Dimension::Auto,
+            height: Dimension::Auto,
+            box_decoration: BoxDecoration::default(),
+            decoration_source: None,
+            child,
+            cache: LayoutCache::default(),
+            raw: true,
+            bounds: InteractionBounds::new(),
+            paint_state: std::cell::Cell::new(ContainerPaintState::new(None)),
+        }
+    }
+
+}

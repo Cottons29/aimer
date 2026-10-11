@@ -22,6 +22,8 @@ mod floating;
 mod focus_node_example;
 mod form_example;
 mod glass_liquid_example;
+mod backdrop_filter_example;
+mod magnification_example;
 mod http_request_button;
 mod i18n_example;
 mod justify_content_example;
@@ -68,6 +70,7 @@ use aimer::share::{ShareRef, Shared};
 #[aimer::main]
 fn main() {
     AimerApp::new()
+        .render_mode(render_mode_from_args())
         .setup(|| {
             MacosWindowing::new()
                 .titlebar_transparent(true)
@@ -369,4 +372,22 @@ fn moew(){
         draw_list: Shared<DrawList>
     }
 
+}
+
+/// Select the native profiler path without rebuilding the application.
+fn render_mode_from_args() -> aimer::RenderMode {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut args = std::env::args().skip(1);
+        while let Some(arg) = args.next() {
+            if arg == "--render-mode" {
+                return match args.next().as_deref() {
+                    Some("inline") => aimer::RenderMode::Inline,
+                    Some("threaded") => aimer::RenderMode::Threaded,
+                    _ => panic!("--render-mode requires inline or threaded"),
+                };
+            }
+        }
+    }
+    aimer::RenderMode::default()
 }

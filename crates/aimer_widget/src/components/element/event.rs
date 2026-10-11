@@ -574,12 +574,41 @@ impl EventDispatcher {
         current: HoverHitChain,
         mut outcome: RoutedEventResult,
     ) -> RoutedEventResult {
-        let previous = previous.filter(|previous| {
-            previous.pointer == pointer
-                && previous.generation == current.generation
-                && previous.root == current.root
-        });
+        // The chain of the last move is still the right list of what the pointer
+        // was over when the tree has changed since: every element in it is looked
+        // up again by identity below, an element that has gone is skipped, and one
+        // that was replaced under the same identity is still owed its exit.
+        // Dropping the chain whenever the tree changed, which any hover-driven
+        // rebuild or running animation does between two moves, lost the exit of an
+        // element that is not offered the move that leaves it, and left it hovered.
+        if aimer_utils::pointer_trace_enabled() {
+            aimer_utils::pointer_trace!(
+                "hover dispatcher {:p} root {:?}, previous root {:?} (same pointer: {})",
+                self as *const Self,
+                current.root,
+                previous.as_ref().map(|previous| previous.root),
+                previous.as_ref().is_some_and(|previous| previous.pointer == pointer)
+            );
+        }
+        // The root is not compared: a scrollable's dispatcher is rooted at its
+        // child, which is replaced whenever the content rebuilds, while the rows
+        // inside live on by identity and keep whatever hover they had. A chain
+        // from a root that is unrelated simply resolves to nothing below.
+        let previous = previous.filter(|previous| previous.pointer == pointer);
         let exit = ElementEvent::PointerExited(pointer.source, pointer.id);
+        if aimer_utils::pointer_trace_enabled() {
+            match &previous {
+                Some(previous) => aimer_utils::pointer_trace!(
+                    "hover chain: previous {} elements, current {}",
+                    previous.elements.len(),
+                    current.elements.len()
+                ),
+                None => aimer_utils::pointer_trace!(
+                    "hover chain: previous chain dropped (tree changed or none), current {} elements",
+                    current.elements.len()
+                ),
+            }
+        }
         if let Some(previous) = previous {
             let current_mark = self.mark_hover_membership(&current.elements);
             for previous_element in previous.elements.iter().rev() {
@@ -591,6 +620,7 @@ impl EventDispatcher {
                     continue;
                 };
                 if event_callback_enabled(element) {
+                    aimer_utils::pointer_trace!("exit sent to {}", element.debug_name());
                     outcome.result = outcome.result.merge(element.on_event(&exit));
                 }
             }
@@ -762,8 +792,21 @@ impl EventDispatcher {
                 pointer_claim::release_pointer(PointerKey::new(pointer.source, pointer.id));
             }
             ElementEvent::PointerExited(source, id) => {
-                self.hover_chains
-                    .remove(&PointerKey::new(*source, *id));
+                // The exit was routed like any other event, by position, which
+                // reaches only what is under wherever the pointer happens to be
+                // reported. What it was hovering is somewhere else, and forgetting
+                // that without saying so would leave it lit for good.
+                if let Some(chain) = self.hover_chains.remove(&PointerKey::new(*source, *id)) {
+                    for element_id in chain.elements.iter().rev() {
+                        let Some(element) = self.resolve_owner(root, *element_id) else {
+                            continue;
+                        };
+                        if event_callback_enabled(element) {
+                            aimer_utils::pointer_trace!("explicit exit sent to {}", element.debug_name());
+                            let _ = element.on_event(event);
+                        }
+                    }
+                }
             }
             ElementEvent::Cancel => {
                 pointer_claim::release_all_pointers();
@@ -1104,10 +1147,32 @@ impl EventDispatcher {
         self.captures.len()
     }
 
+    /// Returns whether any pointer is captured, by an element of this tree or by
+    /// one inside a forwarding boundary's private view.
+    ///
+    /// [`capture_count`](Self::capture_count) sees only the former, which is not
+    /// enough to know that a drag is in progress: a press on an element behind a
+    /// stateful or animated wrapper is recorded in the nested table.
+    #[inline]
+    pub fn has_capture(&self) -> bool {
+        !self.captures.is_empty() || !self.nested_captures.is_empty()
+    }
+
     /// Returns whether `pointer` currently has a live capture entry.
     #[inline]
     pub fn is_captured(&self, pointer: PointerKey) -> bool {
         self.captures.contains_key(&pointer)
+    }
+
+    /// Returns whether `pointer` is hovering something in the tree last
+    /// dispatched to, and so is owed an exit when it leaves.
+    ///
+    /// A container that stops offering moves to its own dispatcher — because
+    /// the pointer left the part of it that shows content — uses this to tell
+    /// whether the dispatcher still holds a hover it must release.
+    #[inline]
+    pub fn is_hovering(&self, pointer: PointerKey) -> bool {
+        self.hover_chains.contains_key(&pointer)
     }
 
     /// Clears all capture entries without delivering cancellation.
@@ -1162,6 +1227,46 @@ impl EventDispatcher {
         result
     }
 
+    /// Finds the element behind each queued invalidation, in record order.
+    ///
+    /// Most come straight from the path index. The ones it does not know, which
+    /// are elements added since it was built and elements that have gone, are
+    /// found together by one walk of the tree. Walking it once for each of them
+    /// made a change that touches every element, a theme switch for instance,
+    /// cost the square of the size of the tree.
+    fn resolve_invalidation_owners<'a>(
+        &mut self,
+        root: &'a dyn Element,
+        batch: &ElementInvalidationBatch,
+    ) -> Vec<Option<&'a dyn Element>> {
+        let records = batch.records();
+        let mut resolved = Vec::with_capacity(records.len());
+        let mut missing = HashSet::new();
+        for invalidation in records {
+            let Some(id) = invalidation.element_id.filter(|_| !invalidation.stale_id) else {
+                resolved.push(None);
+                continue;
+            };
+            crate::frame_work_stats::record_element_index_lookup();
+            let element = self.resolve_indexed_element(root, id);
+            if element.is_none() {
+                missing.insert(id);
+            }
+            resolved.push(element);
+        }
+        if !missing.is_empty() {
+            let found = find_structural_elements(root, &missing);
+            for (invalidation, slot) in records.iter().zip(resolved.iter_mut()) {
+                if slot.is_none()
+                    && let Some(id) = invalidation.element_id
+                {
+                    *slot = found.get(&id).copied();
+                }
+            }
+        }
+        resolved
+    }
+
     /// Drains pending element mutations and resolves their pre-frame owners
     /// through the generation-checked structural index.
     #[doc(hidden)]
@@ -1176,7 +1281,8 @@ impl EventDispatcher {
         }
 
         let before_frame = current_element_invalidation_revisions();
-        for invalidation in batch.records_mut() {
+        let resolved = self.resolve_invalidation_owners(root, &batch);
+        for (invalidation, element) in batch.records_mut().iter_mut().zip(resolved) {
             invalidation.before_frame_revisions = Some(before_frame);
             if invalidation.queued_during_frame && invalidation.damage_hint.is_none() {
                 // A draw-time mutation without a tracked damage footprint has
@@ -1184,15 +1290,11 @@ impl EventDispatcher {
                 invalidation.requires_full_fallback = true;
             }
 
-            let Some(id) = invalidation.element_id else {
+            if invalidation.element_id.is_none() {
                 invalidation.requires_full_fallback = true;
                 continue;
-            };
-            crate::frame_work_stats::record_element_index_lookup();
-            match self
-                .resolve_indexed_element(root, id)
-                .or_else(|| find_structural_element(root, id))
-            {
+            }
+            match element {
                 Some(element) => {
                     invalidation.old_bounds = element_invalidation_bounds(element);
                     if invalidation.old_bounds.is_none() && invalidation.damage_hint.is_none() {
@@ -1223,19 +1325,16 @@ impl EventDispatcher {
 
         self.synchronize_path_index_for_current_tree(root);
         let after_frame = current_element_invalidation_revisions();
-        for invalidation in batch.records_mut() {
+        let resolved = self.resolve_invalidation_owners(root, batch);
+        for (invalidation, element) in batch.records_mut().iter_mut().zip(resolved) {
             invalidation.after_frame_revisions = Some(after_frame);
             if invalidation.stale_id {
                 continue;
             }
-            let Some(id) = invalidation.element_id else {
+            if invalidation.element_id.is_none() {
                 continue;
-            };
-            crate::frame_work_stats::record_element_index_lookup();
-            match self
-                .resolve_indexed_element(root, id)
-                .or_else(|| find_structural_element(root, id))
-            {
+            }
+            match element {
                 Some(element) => {
                     invalidation.new_bounds = element_invalidation_bounds(element);
                     if invalidation.new_bounds.is_none() && invalidation.damage_hint.is_none() {
@@ -1381,8 +1480,12 @@ impl EventDispatcher {
 
         let generation = generation.unwrap_or_else(|| root.subtree_generation());
 
+        // The cached hit chain holds element addresses and goes. The hover chains
+        // hold identities, are resolved against the new tree when the pointer next
+        // moves, and are what tells an element the pointer has left it, so a tree
+        // change must not take them: an element that is not offered the move that
+        // leaves it would stay hovered.
         self.invalidate_hit_chain();
-        self.hover_chains.clear();
         if !root_address_changed && !self.index_patching_disabled && self.patch_path_index(root) {
             self.index_work.1 += 1;
             self.indexed_subtree_generation = generation;
@@ -1440,7 +1543,6 @@ impl EventDispatcher {
         }
         if event_layout_changed {
             self.invalidate_hit_chain();
-            self.hover_chains.clear();
         }
 
         if self.event_tree_stale {
@@ -1677,15 +1779,27 @@ impl EventDispatcher {
 /// Resolves a newly exposed virtualized child when the event path index still
 /// describes the previous live window. This scan is only used to bound queued
 /// invalidations whose IDs have not entered that index yet.
-fn find_structural_element<'a>(root: &'a dyn Element, id: ElementId) -> Option<&'a dyn Element> {
+/// Finds every element of `wanted` in one walk of the tree, stopping as soon as
+/// all of them are found.
+fn find_structural_elements<'a>(
+    root: &'a dyn Element,
+    wanted: &HashSet<ElementId>,
+) -> HashMap<ElementId, &'a dyn Element> {
+    note_structural_search();
+    let mut found = HashMap::with_capacity(wanted.len());
     let mut pending = vec![root];
     while let Some(element) = pending.pop() {
-        if element.element_id() == Some(id) {
-            return Some(element);
+        if let Some(id) = element.element_id()
+            && wanted.contains(&id)
+        {
+            found.insert(id, element);
+            if found.len() == wanted.len() {
+                break;
+            }
         }
         element.structural_children(&mut |child| pending.push(child));
     }
-    None
+    found
 }
 
 mod routing;

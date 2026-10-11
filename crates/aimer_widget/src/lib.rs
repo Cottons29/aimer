@@ -133,7 +133,7 @@ pub use crate::components::drawable::{
 pub use crate::components::element::{
     Element, ElementId, ElementNodeMap, ElementPath, EventDispatchContext, EventDispatcher,
     begin_event_frame, begin_paint_frame, element_tree_generation,
-    has_active_v2_render_presentation, has_active_v2_render_tree, keep_ticking_elements_reachable, layout_invalidation_generation,
+    has_active_v2_render_presentation, has_active_v2_render_tree, keep_ticking_elements_reachable, layout_invalidation_generation, notify_layout_changed,
     mark_paint_damage, mark_paint_damage_full, notify_element_tree_changed,
     notify_hosted_element_tree_changed, notify_retained_render_structure_changed,
     rebuild_invalidation_generation, retained_render_structure_generation, set_rebuild_source_path,
@@ -147,7 +147,7 @@ pub use crate::components::element::{
     VisibleWindow, may_skip_settled_offscreen, retained_element_settled, retained_visible_window,
     retained_visible_window_of_current, set_scroll_only_frame, set_settled_offscreen_skip,
     animation_only_targets, is_animation_only_frame, run_animation_only_pass,
-    set_animation_only_frame, with_v2_animation_only_context, request_isolated_animation_frame, request_isolated_subtree_animation_frame, set_frame_rebuilt_roots, traversal_counts, keep_element_reachable, KeepReachable, preserving_dirty_paths, rebuild_replaced_subtree, rebuild_keepalive_count, rebuild_descent_count, rebuild_visit_count, rebuild_dirty_children, stable_generation_cursor, stable_generations_since, note_state_update_marked,
+    set_animation_only_frame, with_v2_animation_only_context, request_isolated_animation_frame, request_isolated_subtree_animation_frame, set_frame_rebuilt_roots, traversal_counts, keep_element_reachable, KeepReachable, preserving_dirty_paths, rebuild_replaced_subtree, rebuild_keepalive_count, rebuild_descent_count, rebuild_visit_count, rebuild_dirty_children, structural_search_count, stable_generation_cursor, stable_generations_since, note_state_update_marked,
     rebuild_state_mark_count,
     ScopedCursor, has_scoped_rebuilds_since, scoped_rebuild_cursor, scoped_rebuilds_since,
     unscoped_element_tree_generation,
@@ -183,7 +183,8 @@ pub use crate::frame_work_stats::{
 };
 #[doc(hidden)]
 pub use crate::hover_reconciliation::{
-    mouse_region_hover_reconciliation_deferred, request_mouse_region_hover_reconciliation,
+    mouse_region_hover_reconciliation_deferred, pointer_capture_active,
+    request_mouse_region_hover_reconciliation, set_pointer_capture_active,
     with_deferred_mouse_region_hover_reconciliation,
 };
 #[doc(hidden)]
@@ -306,6 +307,48 @@ mod tests {
             ]
         );
         plan.validate().unwrap();
+    }
+
+    /// A wrapper that keeps its only child as its first field, as `Expanded`
+    /// does. The child then sits at the same address as the wrapper itself,
+    /// which a pair of addresses cannot tell apart from the wrapper's own pair.
+    #[repr(C)]
+    struct FirstFieldWrapper {
+        child: AnyElement,
+    }
+
+    impl VisitorElement for FirstFieldWrapper {
+        fn visit_children<'a>(&'a self, visitor: &mut dyn FnMut(&'a dyn Element)) {
+            visitor(&self.child);
+        }
+
+        fn debug_name(&self) -> &'static str {
+            "FirstFieldWrapper"
+        }
+    }
+
+    impl EventElement for FirstFieldWrapper {}
+    impl LayoutElement for FirstFieldWrapper {}
+    impl Drawable for FirstFieldWrapper {
+        fn update(&self, _ctx: &BuildContext) {}
+    }
+    impl Rebuildable for FirstFieldWrapper {}
+
+    #[test]
+    fn a_child_stored_at_its_wrappers_address_is_still_matched() {
+        let old = FirstFieldWrapper { child: StateLeaf::unkeyed(1).boxed() }.boxed();
+        let new = FirstFieldWrapper { child: StateLeaf::unkeyed(0).boxed() }.boxed();
+        let old_child = child_ids(old.as_ref());
+
+        let plan = plan_element_reconciliation(old.as_ref(), new.as_ref());
+        assert_eq!(
+            plan.matches().len(),
+            2,
+            "the wrapper and the child inside it must both be matched"
+        );
+        plan.apply_identities();
+
+        assert_eq!(child_ids(new.as_ref()), old_child, "the child keeps its identity");
     }
 
     #[test]

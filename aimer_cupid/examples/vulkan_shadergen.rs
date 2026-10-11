@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 // Regenerate checked-in Vulkan shader modules with:
 // `cargo run -p aimer_cupid --example vulkan_shadergen`
+// Pass a shader name (for example `-- material`) to regenerate only that module.
 
 const SHADERS: &[(&str, &str)] = &[
     ("rect", include_str!("../src/pipeline/shaders/wgsl/rect.wgsl")),
@@ -50,10 +51,17 @@ const SHADERS: &[(&str, &str)] = &[
 ];
 
 fn main() {
+    let selected = std::env::args().nth(1);
+    if let Some(name) = selected.as_deref() {
+        assert!(SHADERS.iter().any(|(shader, _)| *shader == name), "unknown shader: {name}");
+    }
     let output = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/pipeline/shaders/wgsl/vulkan");
+        .join("src/pipeline/shaders/vulkan");
     std::fs::create_dir_all(&output).expect("create Vulkan shader output directory");
     for (name, source) in SHADERS {
+        if selected.as_deref().is_some_and(|selected| selected != *name) {
+            continue;
+        }
         let bytes = compile_spirv(source).unwrap_or_else(|error| panic!("compile {name}.wgsl: {error}"));
         std::fs::write(output.join(format!("{name}.spv")), bytes)
             .unwrap_or_else(|error| panic!("write {name}.spv: {error}"));
@@ -98,16 +106,16 @@ mod tests {
 
     fn checked_in_shader(name: &str) -> &'static [u8] {
         match name {
-            "rect" => include_bytes!("../src/pipeline/shaders/wgsl/vulkan/rect.spv"),
-            "image" => include_bytes!("../src/pipeline/shaders/wgsl/vulkan/image.spv"),
-            "image.android" => include_bytes!("../src/pipeline/shaders/wgsl/vulkan/image.android.spv"),
-            "text" => include_bytes!("../src/pipeline/shaders/wgsl/vulkan/text.spv"),
-            "text_color" => include_bytes!("../src/pipeline/shaders/wgsl/vulkan/text_color.spv"),
-            "text_decoration" => include_bytes!("../src/pipeline/shaders/wgsl/vulkan/text_decoration.spv"),
-            "svg" => include_bytes!("../src/pipeline/shaders/wgsl/vulkan/svg.spv"),
-            "svg.android" => include_bytes!("../src/pipeline/shaders/wgsl/vulkan/svg.android.spv"),
-            "frame_composite" => include_bytes!("../src/pipeline/shaders/wgsl/vulkan/frame_composite.spv"),
-            "material" => include_bytes!("../src/pipeline/shaders/wgsl/vulkan/material.spv"),
+            "rect" => include_bytes!("../src/pipeline/shaders/vulkan/rect.spv"),
+            "image" => include_bytes!("../src/pipeline/shaders/vulkan/image.spv"),
+            "image.android" => include_bytes!("../src/pipeline/shaders/vulkan/image.android.spv"),
+            "text" => include_bytes!("../src/pipeline/shaders/vulkan/text.spv"),
+            "text_color" => include_bytes!("../src/pipeline/shaders/vulkan/text_color.spv"),
+            "text_decoration" => include_bytes!("../src/pipeline/shaders/vulkan/text_decoration.spv"),
+            "svg" => include_bytes!("../src/pipeline/shaders/vulkan/svg.spv"),
+            "svg.android" => include_bytes!("../src/pipeline/shaders/vulkan/svg.android.spv"),
+            "frame_composite" => include_bytes!("../src/pipeline/shaders/vulkan/frame_composite.spv"),
+            "material" => include_bytes!("../src/pipeline/shaders/vulkan/material.spv"),
             _ => panic!("unlisted Vulkan shader {name}"),
         }
     }

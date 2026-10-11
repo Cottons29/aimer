@@ -42,19 +42,24 @@ impl WindowEventHandler {
         event: WindowEvent,
     ) {
         // debug!("======> Event: {event:?}");
+        #[cfg(target_os = "ios")]
+        if Self::defer_uikit_frame_event(app, &event) {
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => {
-                // #[cfg(target_os = "macos")]
-                // {
-                //     use winit::platform::macos::ActiveEventLoopExtMacOS;
-                //     event_loop.hide_application();
-                // }
-                // #[cfg(not(target_os = "macos"))]
-                event_loop.exit()
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    app.render_ctx.close();
+                    if app.render_ctx.is_stopped() { event_loop.exit(); }
+                }
+                #[cfg(target_arch = "wasm32")]
+                event_loop.exit();
             }
 
             WindowEvent::RedrawRequested => app.render(event_loop),
 
+            #[cfg(not(target_os = "ios"))]
             WindowEvent::Resized(size) => Self::handle_resize(size, app, event_loop),
 
             other => Self::handle_common_event(app, other),
@@ -121,13 +126,13 @@ impl WindowEventHandler {
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 Self::update_scale_factor(&mut app.window_scale, scale_factor);
-                #[cfg(all(target_os = "macos", feature = "native", not(feature = "wgpu")))]
+                #[cfg(all(any(target_os = "macos", target_os = "ios"), feature = "native", not(feature = "wgpu")))]
                 if app.render_ctx.is_ready()
                     && let Some(window) = app.native_window()
                 {
                     // Keep CAMetalLayer's contents scale current even when the
                     // physical drawable size did not change with the display.
-                    app.render_ctx.resize(window.inner_size());
+                    app.render_ctx.resize(aimer_widget::base::WindowHandle::native(window).inner_size());
                 }
                 app.sync_headless_metrics(None);
                 if let Some(root) = app.active_root() {
@@ -313,14 +318,14 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_cursor_move<W: Widget + 'static>(
+    pub(super) fn handle_cursor_move<W: Widget + 'static>(
         position: PhysicalPosition<f64>,
         app: &mut AimerApplicationHandler<W>,
     ) {
         let new_pos = Self::logical_cursor(position, app);
         let dx = (new_pos.x - app.cursor_pos.x).abs();
         let dy = (new_pos.y - app.cursor_pos.y).abs();
-        if dx < 1.0 && dy < 1.0 {
+        if dx < 1.0 && dy < 1.0 && !app.touch_pointer {
             return;
         }
         app.cursor_pos = new_pos;
@@ -339,6 +344,15 @@ impl WindowEventHandler {
                 app.pressed_button.unwrap_or_default(),
             ));
             let result = app.dispatch_element_event(app.cursor_pos, &event);
+            aimer_utils::pointer_trace!(
+                "move ({:.1}, {:.1}) consumed={} redraw={} captured_pointers={} held_button={:?}",
+                app.cursor_pos.x,
+                app.cursor_pos.y,
+                result.is_consumed(),
+                result.needs_redraw(),
+                app.event_dispatcher.capture_count(),
+                app.pressed_button,
+            );
             if let Some(window) = &app.window {
                 if !result.is_consumed() {
                     window.set_cursor(CursorIcon::Default);
@@ -356,7 +370,7 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_cursor_left<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>) {
+    pub(super) fn handle_cursor_left<W: Widget + 'static>(app: &mut AimerApplicationHandler<W>) {
         app.cursor_pos = CURSOR_OUTSIDE_POSITION;
         if app.active_root().is_some() {
             let pointer = PointerKey::new(PointerSource::Mouse, 0);
@@ -397,7 +411,7 @@ impl WindowEventHandler {
         }
     }
 
-    fn handle_mouse_input<W: Widget + 'static>(
+    pub(super) fn handle_mouse_input<W: Widget + 'static>(
         state: ElementState,
         button: MouseButton,
         app: &mut AimerApplicationHandler<W>,
@@ -750,53 +764,16 @@ impl WindowEventHandler {
         }
     }
 
-    #[cfg(any(test, target_os = "ios"))]
-    fn oriented_screen_size(
-        resize_size: PhysicalSize<u32>,
-        screen_size: (f64, f64),
-    ) -> PhysicalSize<u32> {
-        let (width, height) = screen_size;
-        if resize_size.width < resize_size.height {
-            PhysicalSize::new(width as u32, height as u32)
-        } else {
-            PhysicalSize::new(height as u32, width as u32)
-        }
-    }
-
+    #[cfg(not(target_os = "ios"))]
     fn handle_resize<W: Widget + 'static>(
         size: PhysicalSize<u32>,
         app: &mut AimerApplicationHandler<W>,
-        event_loop: &ActiveEventLoop,
+        _event_loop: &ActiveEventLoop,
     ) {
         #[cfg(target_os = "macos")]
         if let Some(window) = app.native_window() {
             app.macos_windowing.window_layout_changed(window);
         }
-
-        #[cfg(target_os = "ios")]
-        aimer_utils::debug!("iOS handle_resize raw size: {size:?}");
-        #[cfg(target_os = "ios")]
-        let size = {
-            use aimer_attribute::ResolvedSize;
-            match crate::ios_screen::get_screen_resolution_pixels() {
-                Some((width, height)) => {
-                    app.native_window_size = Some(ResolvedSize {
-                        width: width as f32,
-                        height: height as f32,
-                    });
-                    Self::oriented_screen_size(size, (width, height))
-                }
-                None => {
-                    if app.window.is_none() {
-                        return;
-                    }
-                    app.window.as_ref().unwrap().inner_size()
-                }
-            }
-        };
-
-        #[cfg(target_os = "ios")]
-        aimer_utils::debug!("iOS handle_resize modified size: {size:?}");
 
         #[cfg(target_os = "android")]
         let size = {
@@ -813,17 +790,11 @@ impl WindowEventHandler {
             }
         };
 
-        // debug!("Window resized to {:?}", size);
-
         Self::apply_resize(size, app);
 
-        // Render a frame immediately during the resize event so the
-        // compositor has fresh content before it can stretch the old
-        // drawable.  Without this synchronous render the compositor
-        // (WindowServer on macOS) stretches the previous frame to the
-        // new window size — visible as directional stretching when
-        // dragging the right or bottom window edge.
-        app.render(event_loop);
+        // Desktop compositors need the new drawable before this callback
+        // returns to avoid stretching the previous frame to the new bounds.
+        app.render(_event_loop);
     }
 
     /// Prepares the tree for a window that is now `size`.
@@ -835,11 +806,15 @@ impl WindowEventHandler {
     /// instead re-runs every `build` in the application for a window that got
     /// one pixel wider, which on a page of any size is the difference between a
     /// drag that tracks the cursor and one that crawls.
-    fn apply_resize<W: Widget + 'static>(
+    pub(super) fn apply_resize<W: Widget + 'static>(
         size: PhysicalSize<u32>,
         app: &mut AimerApplicationHandler<W>,
     ) {
         app.pending_resize = Some(size);
+        app.native_window_size = Some(aimer_attribute::ResolvedSize {
+            width: size.width as f32,
+            height: size.height as f32,
+        });
         // A platform window has already grown to `size` by the time it reports
         // the resize, so anything that reads the window while the event is
         // handled — a breakpoint, a media query — sees the new one. A headless
@@ -964,80 +939,5 @@ impl WindowEventHandler {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ios_screen_size_follows_resize_orientation() {
-        let screen_size = (1179.0, 2556.0);
-
-        assert_eq!(
-            WindowEventHandler::oriented_screen_size(PhysicalSize::new(390, 844), screen_size),
-            PhysicalSize::new(1179, 2556),
-        );
-        assert_eq!(
-            WindowEventHandler::oriented_screen_size(PhysicalSize::new(844, 390), screen_size),
-            PhysicalSize::new(2556, 1179),
-        );
-    }
-
-    #[test]
-    fn scale_factor_change_updates_window_scale() {
-        let mut window_scale = 1.0;
-
-        WindowEventHandler::update_scale_factor(&mut window_scale, 2.0);
-
-        assert_eq!(window_scale, 2.0);
-    }
-
-    #[test]
-    fn event_result_redraws_for_legacy_handling_or_explicit_request() {
-        assert!(WindowEventHandler::should_redraw(
-            aimer_widget::EventResult::ignored(),
-            true,
-        ));
-        assert!(WindowEventHandler::should_redraw(
-            aimer_widget::EventResult::redraw(),
-            false,
-        ));
-        assert!(!WindowEventHandler::should_redraw(
-            aimer_widget::EventResult::ignored(),
-            false,
-        ));
-    }
-
-    #[test]
-    fn precise_wheel_delta_preserves_logical_distance() {
-        let (delta, kind) = WindowEventHandler::normalize_wheel_delta(
-            MouseScrollDelta::PixelDelta(PhysicalPosition::new(24.0, -16.0)),
-            2.0,
-        );
-
-        assert_eq!(delta.x, 18.0);
-        assert_eq!(delta.y, -12.0);
-        assert_eq!(kind, aimer_events::element::ScrollDeltaKind::Pixel);
-    }
-
-    #[test]
-    fn line_wheel_delta_uses_stable_logical_step() {
-        let (delta, kind) =
-            WindowEventHandler::normalize_wheel_delta(MouseScrollDelta::LineDelta(1.0, -2.0), 2.0);
-
-        assert_eq!(delta.x, 20.0);
-        assert_eq!(delta.y, -40.0);
-        assert_eq!(kind, aimer_events::element::ScrollDeltaKind::Line);
-    }
-
-    #[test]
-    fn precise_wheel_delta_uses_safe_scale_fallback() {
-        for scale in [0.0, f64::NAN, f64::INFINITY] {
-            let (delta, _) = WindowEventHandler::normalize_wheel_delta(
-                MouseScrollDelta::PixelDelta(PhysicalPosition::new(12.0, -8.0)),
-                scale,
-            );
-
-            assert_eq!(delta.x, 12.0 * WindowEventHandler::SCROLL_MULTIPLIER);
-            assert_eq!(delta.y, -8.0 * WindowEventHandler::SCROLL_MULTIPLIER);
-        }
-    }
-}
+#[path = "event_handler/tests.rs"]
+mod tests;

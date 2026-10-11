@@ -634,6 +634,20 @@ fn dispatch_indexed_event_children(
             }
         }
     }
+    // The boundary registers the root of its private view as a branch under the
+    // root's own identity. A root that is not an event target itself, such as a
+    // stateful or animated wrapper around the content, has no indexed entry to
+    // take the fast path above, and its children are not the registered
+    // branches: without this the press is dropped and nothing inside the
+    // region can be clicked.
+    if let Some(range) = root
+        .element_id()
+        .and_then(|id| tree.boundary_branch_range(boundary, id))
+    {
+        for candidate in tree.hit_test_range(range, pos.x, pos.y) {
+            dispatcher.event_hit_frames[frame_index].mark_hit_path(tree, candidate, epoch);
+        }
+    }
 
     let mut outcome = RoutedEventResult {
         result: EventResult::ignored(),

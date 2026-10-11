@@ -11,6 +11,11 @@ pub mod scroll_classifier;
 pub mod scroll_utils;
 mod scoped_sync;
 pub(crate) mod user_events;
+mod native_input;
+#[cfg(not(target_arch = "wasm32"))]
+mod render_worker;
+#[cfg(any(target_os = "ios", test))]
+mod uikit_frame;
 /// Gesture segmentation for the phase-less browser wheel stream.
 ///
 /// Compiled for the web target only; the `test` predicate keeps the logic
@@ -36,8 +41,8 @@ use aimer_attribute::position::Vec2d;
 use aimer_attribute::size::ResolvedSize;
 use aimer_cupid::damage_region::DamageSet;
 use aimer_cupid::draw_cmd_v2::{
-    Rect as RenderRect, RenderFrame, RenderNodeId, RenderNodeSpec, RenderPaintSource, RenderTree,
-    RenderTreeError,
+    DrawCommand as V2DrawCommand, Rect as RenderRect, RenderFrame, RenderNodeId, RenderNodeSpec,
+    RenderOp, RenderPaintSource, RenderTree, RenderTreeError,
 };
 use aimer_cupid::frame::{Frame, FramePacket, FrameRenderMetadata};
 use aimer_venus::Venus;
@@ -340,6 +345,11 @@ pub(crate) struct WindowRenderTree {
     /// What the last frame was drawn from. A frame that finds any of it moved
     /// cannot be animation-only.
     animation_baseline: Option<AnimationBaseline>,
+    /// Whether the last frame held a draw the renderer cannot take through its
+    /// persistent target, such as a glass panel. The renderer draws such a frame
+    /// from scratch from its render plan, and leaves the target stale, so the
+    /// frame after it needs the whole tree as well.
+    drew_custom_pipeline: bool,
     /// Elements drawn in the last frame that still had no render node after its
     /// final sync (see [`census::PaintSourceCensus::drawn_unmapped`]).
     drawn_unmapped: Vec<census::CensusElement>,
@@ -975,6 +985,7 @@ pub struct AimerApplicationHandler<W: Widget + 'static> {
     pub current_modifiers: aimer_events::element::Modifiers,
     pub ime_composing: bool,
     pub window_scale: f64,
+    /// Last observed window size in physical pixels, independent of screen resolution.
     pub native_window_size: Option<ResolvedSize>,
     pub pending_resize: Option<PhysicalSize<u32>>,
     pub(crate) startup_hooks: Vec<StartupHook>,
@@ -1304,7 +1315,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 .and_then(|window| window.current_monitor().or_else(|| window.primary_monitor()))
                 .and_then(|monitor| monitor.refresh_rate_millihertz());
             aimer_utils::debug!(
-                "[frame-stats] frames={} build={:.2}ms encode={:.2}ms present={:.2}ms cpu-frame-samples={} cpu-frame={:.2}ms cpu-frame-p95<={:.2}ms cpu-frame-p95-saturated={} gpu-frame-samples={} gpu-frame={:.2}ms gpu-frame-p95<={:.2}ms gpu-frame-p95-saturated={} target={}x{}px scale={:.3} refresh-millihz={:?} nodes/frame={:.1} commands/frame={:.1} retained-layers/frame={:.1} text/frame={:.1} image-draws/frame={:.1} image-uploads/frame={:.1} text-cache-hit/frame={:.1} text-cache-miss/frame={:.1} rebuild-visits/frame={:.1} rebuild-pruned/frame={:.1} stateful-checks/frame={:.1} stateless-checks/frame={:.1} stateful-builds/frame={:.1} stateless-builds/frame={:.1} layout/frame={:.1} hit-test/frame={:.1} paint/frame={:.1} root-draw/frame={:.1} scroll-events/frame={:.1} scroll-steps/frame={:.1} smoothing-steps/frame={:.1} state-updates/frame={:.1} invalidations-queued/frame={:.1} invalidations-coalesced/frame={:.1} element-index-lookups/frame={:.1} stale-element-ids/frame={:.1} scroll-offset-updates/frame={:.1} redraw-requests/frame={:.1} frame-ready-accepted={} frame-ready-coalesced={} display-ticks={}",
+                "[frame-stats] frames={} build={:.2}ms encode={:.2}ms present={:.2}ms cpu-frame-samples={} cpu-frame={:.2}ms cpu-frame-p95<={:.2}ms cpu-frame-p95-saturated={} gpu-frame-samples={} gpu-frame={:.2}ms gpu-frame-p95<={:.2}ms gpu-frame-p95-saturated={} ui={:.2}ms ui-p95<={:.2}ms queue={:.2}ms acquire={:.2}ms target={}x{}px scale={:.3} refresh-millihz={:?} nodes/frame={:.1} commands/frame={:.1} retained-layers/frame={:.1} text/frame={:.1} image-draws/frame={:.1} image-uploads/frame={:.1} text-cache-hit/frame={:.1} text-cache-miss/frame={:.1} rebuild-visits/frame={:.1} rebuild-pruned/frame={:.1} stateful-checks/frame={:.1} stateless-checks/frame={:.1} stateful-builds/frame={:.1} stateless-builds/frame={:.1} layout/frame={:.1} hit-test/frame={:.1} paint/frame={:.1} root-draw/frame={:.1} scroll-events/frame={:.1} scroll-steps/frame={:.1} smoothing-steps/frame={:.1} state-updates/frame={:.1} invalidations-queued/frame={:.1} invalidations-coalesced/frame={:.1} element-index-lookups/frame={:.1} stale-element-ids/frame={:.1} scroll-offset-updates/frame={:.1} redraw-requests/frame={:.1} frame-ready-accepted={} frame-ready-coalesced={} display-ticks={}",
                 content.frames,
                 breakdown.build.average().as_secs_f64() * 1_000.0,
                 breakdown.encode.average().as_secs_f64() * 1_000.0,
@@ -1317,6 +1328,10 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 timing.gpu_frame.average().as_secs_f64() * 1_000.0,
                 timing.gpu_frame_p95.as_secs_f64() * 1_000.0,
                 timing.gpu_frame_p95_saturated,
+                timing.pipeline.ui.average().as_secs_f64() * 1_000.0,
+                timing.pipeline.ui_p95.as_secs_f64() * 1_000.0,
+                timing.pipeline.queue.average().as_secs_f64() * 1_000.0,
+                timing.pipeline.acquire.average().as_secs_f64() * 1_000.0,
                 target_size.width,
                 target_size.height,
                 scale_factor,
@@ -1396,7 +1411,11 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         let Some(root) = root else {
             return EventResult::ignored();
         };
-        dispatch(event_dispatcher, root.as_ref())
+        let result = dispatch(event_dispatcher, root.as_ref());
+        // Captures only change inside a dispatch, so this is the one place that
+        // keeps the paint-time hover check informed.
+        aimer_widget::set_pointer_capture_active(event_dispatcher.has_capture());
+        result
     }
 
     pub(crate) fn cancel_element_events(&mut self) -> EventResult {
@@ -1405,6 +1424,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
         }
         let result = self.broadcast_element_event(&aimer_events::element::ElementEvent::Cancel);
         self.event_dispatcher.clear_captures();
+        aimer_widget::set_pointer_capture_active(false);
         result
     }
 
@@ -1822,10 +1842,37 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
             // direct plan only needs the nodes that can affect this frame's
             // dirty regions. Culling before adaptation avoids snapshotting and
             // lowering every clean local list on every frame.
-            let render_operations = self
+            let mut render_operations = self
                 .window_render_tree
                 .tree
                 .render_order(&render_damage);
+            // The renderer draws a frame that holds a custom-pipeline draw from
+            // scratch, from the operations in front of it, and leaves its
+            // persistent target stale. A plan culled to a small damage holds
+            // only the nodes that changed, so drawing it from scratch leaves the
+            // rest of the window blank, and the frame after it finds the target
+            // showing an older page. Such a frame, and the one that follows it,
+            // are built from the whole visible tree.
+            let full_target = RenderRect::new(
+                0.0,
+                0.0,
+                width as f32 / self.scale,
+                height as f32 / self.scale,
+            );
+            let covers_target = render_damage.as_slice() == [full_target];
+            if !covers_target
+                && (self.window_render_tree.drew_custom_pipeline
+                    || operations_use_custom_pipeline(&render_operations))
+            {
+                render_damage.clear();
+                render_damage.push(full_target);
+                render_operations = self
+                    .window_render_tree
+                    .tree
+                    .render_order(&render_damage);
+            }
+            self.window_render_tree.drew_custom_pipeline =
+                operations_use_custom_pipeline(&render_operations);
             let render_frame = RenderFrame {
                 operations: render_operations,
                 damage: render_damage,
@@ -1894,6 +1941,19 @@ impl<'a, W: Widget + 'static> FrameDrawer<'a, W> {
     }
 }
 
+/// Whether any of `operations` records a custom-pipeline draw, which the
+/// renderer cannot composite through its persistent target.
+fn operations_use_custom_pipeline(operations: &[RenderOp]) -> bool {
+    operations.iter().any(|operation| match operation {
+        RenderOp::Draw(item) => item
+            .snapshot()
+            .commands
+            .iter()
+            .any(|command| matches!(command, V2DrawCommand::DrawCustom { .. })),
+        RenderOp::BeginOpacityGroup { .. } | RenderOp::EndOpacityGroup { .. } => false,
+    })
+}
+
 /// Runs every hook the application registered, once, in registration order,
 /// and keeps whatever they return alive for the rest of the run.
 pub(crate) fn run_startup_hooks(
@@ -1917,14 +1977,6 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
             debug!("Set ControlFlow::Poll for Android");
         }
 
-        #[cfg(target_os = "ios")]
-        if let Some((width, height)) = crate::ios_screen::get_screen_resolution_pixels() {
-            self.native_window_size = Some(ResolvedSize {
-                width: width as f32,
-                height: height as f32,
-            })
-        };
-
         let window_attributes = {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
@@ -1936,14 +1988,8 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
             }
             #[cfg(target_os = "ios")]
             {
-                match crate::ios_screen::get_screen_resolution_pixels() {
-                    Some((w, h)) => {
-                        // println!("IOS TARGET Window Size : {w}x{h}");
-                        let phy_size = PhysicalSize::new(w as u32, h as u32);
-                        WindowAttributes::default().with_inner_size(phy_size)
-                    }
-                    None => WindowAttributes::default(),
-                }
+                // UIKit owns the scene's resizable bounds, not UIScreen.
+                WindowAttributes::default()
             }
         };
         let window_attributes = self.macos_windowing.apply_attributes(window_attributes);
@@ -2004,7 +2050,7 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         crate::system_safe_area::start_observing(window);
 
         #[allow(unused_mut)]
-        let mut size = window.inner_size();
+        let mut size = WindowHandle::native(window).inner_size();
 
         #[cfg(target_os = "android")]
         {
@@ -2013,27 +2059,6 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
                     let width = native_window.width() as u32;
                     let height = native_window.height() as u32;
                     size = winit::dpi::PhysicalSize::new(width, height);
-                }
-            }
-        }
-
-        #[cfg(target_os = "ios")]
-        {
-            let full = window.outer_size();
-            if full.width != 0 && full.height != 0 {
-                size = PhysicalSize::new(full.width, full.height);
-            }
-            if size.width == 0 || size.height == 0 {
-                let fallback = self
-                    .native_window_size
-                    .map(|s| PhysicalSize::new(s.width as u32, s.height as u32))
-                    .or_else(|| {
-                        crate::ios_screen::get_screen_resolution_pixels()
-                            .map(|(w, h)| PhysicalSize::new(w as u32, h as u32))
-                    });
-                if let Some(fallback) = fallback {
-                    println!("iOS zero window size, using native screen resolution: {fallback:?}");
-                    size = fallback;
                 }
             }
         }
@@ -2048,10 +2073,14 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
         // On Android the surface may be (re-)created with the correct size now.
         // Schedule a resize so the GPU surface matches the actual window dimensions.
         self.pending_resize = Some(size);
+        self.native_window_size = Some(ResolvedSize {
+            width: size.width as f32,
+            height: size.height as f32,
+        });
         #[cfg(all(target_os = "windows", feature = "native", not(feature = "wgpu")))]
         if self.show_window_after_first_frame {
-            // Render inline while the window is hidden so its first visible
-            // frame already contains the application UI.
+            // Start rendering while hidden; worker completion reveals the
+            // window only after its first application frame is presented.
             self.render(event_loop);
         } else {
             self.request_full_redraw();
@@ -2061,8 +2090,26 @@ impl<W: Widget + 'static> ApplicationHandler<AimerNativePlatformEvent> for Aimer
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AimerNativePlatformEvent) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if matches!(event, AimerNativePlatformEvent::RenderWorkerReady) {
+            self.deliver_render_completions(_event_loop);
+            return;
+        }
         // debug!("User event {:?}", event);
-        handle_user_event(self, event);
+        #[cfg(target_os = "ios")]
+        handle_user_event(self, event, |app, _kind| app.render(_event_loop));
+        #[cfg(not(target_os = "ios"))]
+        handle_user_event(self, event, crate::handler::user_events::request_window_redraw);
+    }
+
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.render_ctx.suspend();
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.render_ctx.suspend();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -2157,8 +2204,19 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
 
     #[allow(unused)]
     pub(crate) fn render(&mut self, event_loop: &ActiveEventLoop) {
+        // UIKit can lay out the view before winit delivers its queued Resized
+        // event. Refresh before rebuilding or measuring the tree for this frame.
+        #[cfg(target_os = "ios")]
+        WindowEventHandler::refresh_uikit_viewport(self);
         #[cfg(target_arch = "wasm32")]
         self.note_frame_request(crate::aimer_app::frame_ready_delivered());
+        let had_pending_resize = self.pending_resize.is_some();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.deliver_render_completions(event_loop);
+            // Admission precedes animation/layout and damage consumption.
+            if !self.admit_render_frame() { return; }
+        }
         let kind = self.take_frame_request_reason();
         let preparation = self.begin_frame();
 
@@ -2172,7 +2230,6 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             }
         }
 
-        let had_pending_resize = self.pending_resize.is_some();
         #[allow(clippy::collapsible_if)]
         if self.render_ctx.is_ready() {
             if let Some(size) = self.pending_resize.take() {
@@ -2207,9 +2264,7 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
                 self.show_window_after_first_frame = false;
             }
         }
-        // A deferred frame is still in flight on the raster thread: it reports
-        // the first-frame notification and any retry itself, from `on_present`,
-        // because the outcome is not known until a frame later.
+        // Worker completions dispatch this same notification on the UI thread.
         crate::first_frame::notify_first_frame_presented(outcome.is_presented());
         if outcome.needs_retry() {
             crate::render_ctx::note_frame_not_presented();
@@ -2218,6 +2273,11 @@ impl<W: Widget + 'static> AimerApplicationHandler<W> {
             // instead of staying blank.  Critical on web (async GPU init)
             // and iOS (late surface availability).
             self.note_frame_request(FrameRequestKind::Full);
+            // UIKit coalesces setNeedsDisplay during drawRect. A dropped
+            // resize frame needs a later display tick, after this draw returns.
+            #[cfg(target_os = "ios")]
+            aimer_events::window::request_animation_frame();
+            #[cfg(not(target_os = "ios"))]
             if let Some(window) = &self.window {
                 window.request_redraw();
             }

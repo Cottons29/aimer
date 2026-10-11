@@ -108,7 +108,7 @@ impl<E: Element + 'static> ElementNode<E> {
         }
         if source == RenderPaintSource::LocalV2
             && (super::take_event_paint_invalidated(self.id.get())
-                || local_paint_element_was_invalidated(self.id.get())
+                || take_local_paint_invalidated(self.id.get())
                 || self.element.local_v2_paint_needs_recording(ctx))
         {
             let _ = scope.tree.invalidate_paint(render_node);
@@ -261,6 +261,7 @@ impl<E: Element + 'static> ElementNode<E> {
                 // recording for their own ranges. An animation-only pass
                 // revisits an element that promised its work is its own, so
                 // its subtree has nothing to learn from the visit.
+                let _walk = enter_subtree_walk(self.id.get());
                 if !pass_skips_subtree(self.id.get()) {
                     self.draw_v2_compatibility(ctx);
                 }
@@ -414,9 +415,7 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
         note_rebuild_visit();
         let mut traversal = begin_rebuild_traversal(self.id.get());
         let own_dirty = element_has_dirty_work(&self.element);
-        let path_ready = DIRTY_PATHS_READY.with(Cell::get)
-            && (REBUILD_TRAVERSAL_DEPTH.with(|depth| depth.get() > 1)
-                || DIRTY_INDEXED_ROOTS.with(|roots| roots.borrow().contains(&self.id.get())));
+        let path_ready = dirty_paths_cover_current_traversal();
         let forced_descend = REBUILD_FORCE_DESCEND_DEPTH.with(|depth| depth.get() > 0);
         if path_ready
             && !forced_descend
@@ -487,7 +486,13 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
         // The erased owner is the boundary used by the retained tree. Keep one
         // invalidation generation for the complete recursive mark, including
         // custom containers that implement their own forwarding method.
-        let unknown = outermost && !has_rebuild_source;
+        // An element with nothing under it and no source of rebuilds of its own
+        // has no work a mark could reach, so it cannot make the index skip any.
+        // Marking such leaves is what every retained child does each time its
+        // parent places it again, which an animation does every frame; treating
+        // each as an unknown producer discarded the index and sent the next pass
+        // through the whole page.
+        let unknown = outermost && !has_rebuild_source && has_children(&self.element);
         with_rebuild_invalidation(|| {
             if unknown {
                 // A custom rebuild producer has no path to publish. Preserve
@@ -527,6 +532,13 @@ impl<E: Element + 'static> Rebuildable for ElementNode<E> {
             }
         }
     }
+}
+
+#[inline]
+fn has_children(element: &dyn Element) -> bool {
+    let mut any = false;
+    element.visit_children(&mut |_| any = true);
+    any
 }
 
 fn element_has_rebuild_source(element: &dyn Element) -> bool {

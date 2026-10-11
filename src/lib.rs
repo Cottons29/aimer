@@ -5,6 +5,7 @@ pub use aimer_canvas as canvas;
 pub use aimer_collapsible as collapsible;
 pub use aimer_cupid as cupid;
 pub use aimer_data_view as data_view;
+pub use aimer_decoration as decoration;
 pub use aimer_feedback as feedback;
 pub use aimer_form as form;
 pub use aimer_i18n as i18n;
@@ -28,6 +29,7 @@ pub use aimer_attribute::position::Vec2d;
 pub use aimer_attribute::size::{ResolvedSize, Size};
 pub use aimer_color::prelude::*;
 pub use aimer_container::*;
+pub use aimer_decoration::*;
 pub use aimer_collapsible::{CollapsibleList, ListBody, ListHeader};
 pub use aimer_ctxmenu::{
     ContextMenu, ContextMenuDismiss, ContextMenuItem, ContextMenuRows, ContextMenuShape,
@@ -82,7 +84,7 @@ pub use aimer_quiver as quiver;
 pub use aimer_quiver::frame_stats;
 #[cfg(not(aimer_portable_guest))]
 pub use aimer_quiver::{
-    self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions, WindowAttr,
+    self, AimerApp, FIRST_FRAME_RENDERED_EVENT, HeadlessAimerApp, HeadlessOptions, RenderMode, WindowAttr,
     set_first_frame_rendered_callback,
 };
 

@@ -283,6 +283,41 @@ impl DrawCommandList {
         self.visible_subtree_bounds_from(node, &parent)
     }
 
+    /// The footprint to damage when `id` or anything inside it changes: the
+    /// union of the visible bounds of the node and every descendant.
+    ///
+    /// Unlike [`Self::visible_subtree_bounds`], a node whose own bounds are not
+    /// finite still contributes its descendants instead of hiding them, so the
+    /// result never covers less than the footprints of the nodes below it.
+    pub(super) fn subtree_damage_bounds(&self, id: RenderNodeId) -> Option<Rect> {
+        let node = self.node(id)?;
+        let parent = self.frame_below(node.parent)?;
+        let world = node.world(&parent);
+        if let ClipState::Clipped(clip) = world.frame.clip
+            && let Some(bounds) = world.bounds
+            && bounds.intersection(clip) == Some(clip)
+        {
+            return Some(clip);
+        }
+        self.subtree_damage_bounds_from(node, &parent)
+    }
+
+    fn subtree_damage_bounds_from(&self, node: &RenderNode, parent: &WorldFrame) -> Option<Rect> {
+        let world = node.world(parent);
+        let mut bounds = world
+            .bounds
+            .and_then(|bounds| world.frame.clip.intersect_bounds(bounds));
+        for child in node.children.iter().copied() {
+            let Some(child) = self.node(child) else {
+                continue;
+            };
+            if let Some(child_bounds) = self.subtree_damage_bounds_from(child, &world.frame) {
+                bounds = Some(bounds.map_or(child_bounds, |bounds| bounds.union(child_bounds)));
+            }
+        }
+        bounds
+    }
+
     fn visible_subtree_bounds_from(&self, node: &RenderNode, parent: &WorldFrame) -> Option<Rect> {
         let world = node.world(parent);
         let mut bounds = world.frame.clip.intersect_bounds(world.bounds?);

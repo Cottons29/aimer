@@ -75,11 +75,11 @@ impl<'a> ReconciliationPlan<'a> {
             if !identities_are_compatible(element_match.old, element_match.new) {
                 return Err(ReconciliationPlanError::IncompatibleMatch { index });
             }
-            let old_pointer = data_pointer(element_match.old);
+            let old_pointer = object_pointer(element_match.old);
             if !old_nodes.insert(old_pointer) {
                 return Err(ReconciliationPlanError::DuplicateOldNode { index });
             }
-            let new_pointer = data_pointer(element_match.new);
+            let new_pointer = object_pointer(element_match.new);
             if !new_nodes.insert(new_pointer) {
                 return Err(ReconciliationPlanError::DuplicateCandidateNode { index });
             }
@@ -217,9 +217,9 @@ fn collect_matches<'a>(
     new: &'a dyn Element,
     kind: ReconciliationMatchKind,
     matches: &mut Vec<ReconciliationMatch<'a>>,
-    visited_pairs: &mut HashSet<(*const (), *const ())>,
+    visited_pairs: &mut HashSet<(*const (dyn Element + 'a), *const (dyn Element + 'a))>,
 ) {
-    if !visited_pairs.insert((data_pointer(old), data_pointer(new))) {
+    if !visited_pairs.insert((object_pointer(old), object_pointer(new))) {
         return;
     }
     matches.push(ReconciliationMatch { old, new, kind });
@@ -299,7 +299,15 @@ impl KeyedCandidates {
     }
 }
 
+/// Identifies an element by its whole object pointer: address and type metadata.
+///
+/// The address alone is not enough. An element that keeps its only child as its
+/// first field — `Expanded` is one — has the same address as that child, so a
+/// pair of addresses for the wrapper is also the pair for what is inside it, and
+/// the child's own pair was dropped as already visited. Nothing below such an
+/// element was matched, so none of it kept its identity across a rebuild. The
+/// metadata tells a wrapper from the child that begins where it does.
 #[inline]
-fn data_pointer(element: &dyn Element) -> *const () {
-    element as *const dyn Element as *const ()
+fn object_pointer<'a>(element: &'a dyn Element) -> *const (dyn Element + 'a) {
+    element as *const (dyn Element + 'a)
 }

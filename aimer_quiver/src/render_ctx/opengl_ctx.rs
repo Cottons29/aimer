@@ -2,6 +2,7 @@ pub mod render_ctx {
     use std::sync::Arc;
 
     use aimer_cupid::AntiAlias;
+    use aimer_cupid::backend::GpuBackend;
     use aimer_cupid::backend::opengl::{OpenGlBackend, OpenGlSurface};
     use aimer_cupid::canvas::CupidCanvas;
     use aimer_cupid::damage_region::DamageSet;
@@ -15,8 +16,8 @@ pub mod render_ctx {
 
     /// Quiver's inline OpenGL renderer for Windows/Linux and GLES 3 on Android.
     ///
-    /// OpenGL contexts are current on the window thread; this adapter therefore
-    /// does not move presentation to Quiver's optional raster thread.
+    /// The context stays on its initializing thread for its entire lifetime.
+    /// Threaded applications construct this adapter inside their render worker.
     pub struct OpenGlApi {
         backend: Option<OpenGlBackend>,
         surface: Option<OpenGlSurface>,
@@ -199,11 +200,25 @@ pub mod render_ctx {
 
         /// Presents a frame packet and returns its draw-list storage to the canvas.
         pub fn present_packet(&mut self, packet: FramePacket) -> PresentOutcome {
-            let presented = self.present_inner(&packet);
+            let presented = self.present_worker_packet(&packet);
             if let Some(canvas) = &self.canvas {
                 canvas.recycle_draw_list(packet.into_frame().into_draw_list());
             }
             PresentOutcome::from_presented(presented)
+        }
+
+        pub(crate) fn worker_max_dimension(&self) -> u32 {
+            self.backend.as_ref().map_or(u32::MAX, |backend| backend.limits().max_texture_dimension_2d)
+        }
+
+        pub(crate) fn present_worker_packet(&mut self, packet: &FramePacket) -> bool {
+            let presented = self.present_inner(packet);
+            if !presented {
+                if let (Some(backend), Some(renderer)) = (&self.backend, &mut self.renderer) {
+                    renderer.discard_frame(backend, packet);
+                }
+            }
+            presented
         }
 
         fn present_inner(&mut self, packet: &FramePacket) -> bool {
@@ -216,7 +231,10 @@ pub mod render_ctx {
             };
             let frame = packet.frame();
             let is_srgb = surface.is_srgb();
-            let drawable = match surface.try_acquire() {
+            let acquire = PhaseTimer::start();
+            let acquired = surface.try_acquire();
+            acquire.finish_acquire();
+            let drawable = match acquired {
                 Ok(Some(drawable)) => drawable,
                 Ok(None) => return false,
                 Err(error) => panic!("acquire OpenGL drawable: {error}"),

@@ -1714,4 +1714,75 @@ mod tests {
         assert_eq!(events.get(), 2, "the child must hear the release it is owed");
         assert_eq!(up.capture_request(), CaptureRequest::Release(pointer));
     }
+
+    /// A child that is lit while the pointer is over it.
+    struct HoverChild {
+        hovered: Rc<Cell<bool>>,
+    }
+
+    impl VisitorElement for HoverChild {
+        fn debug_name(&self) -> &'static str {
+            "HoverChild"
+        }
+    }
+
+    impl EventElement for HoverChild {
+        fn on_event(&self, event: &ElementEvent) -> EventResult {
+            match event {
+                ElementEvent::PointerMove(_) => self.hovered.set(true),
+                ElementEvent::PointerExited(..) => self.hovered.set(false),
+                _ => {}
+            }
+            EventResult::ignored()
+        }
+    }
+
+    impl LayoutElement for HoverChild {
+        fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
+            Some((Vec2d::default(), Vec2d { x: 100.0, y: 100.0 }))
+        }
+    }
+
+    impl Drawable for HoverChild {
+        fn update(&self, _ctx: &BuildContext) {}
+    }
+
+    impl Rebuildable for HoverChild {}
+
+    /// A panel can draw a grab band over the scrollable's edge, so the pointer
+    /// keeps being reported to the scrollable after it has left the viewport.
+    /// The scrollable stops offering those moves to its content, and has to say
+    /// that the pointer is gone, or the content it was hovering stays lit.
+    #[test]
+    fn a_move_outside_the_viewport_releases_the_hover_inside_it() {
+        let hovered = Rc::new(Cell::new(false));
+        let bounds = InteractionBounds::new();
+        bounds.save(1.0, 0.0, 0.0, 100.0, 100.0);
+        let scrollable = RawScrollableContainer {
+            child: HoverChild { hovered: hovered.clone() }.boxed(),
+            ctrl: Rc::new(ScrollState::for_test_at(Vec2d::default())),
+            vertical_scroll_bar: None,
+            horizontal_scroll_bar: None,
+            viewport_w: 100.0,
+            viewport_h: 100.0,
+            vertical_bar_width: 0.0,
+            horizontal_bar_height: 0.0,
+            bounds,
+            event_dispatcher: RefCell::new(EventDispatcher::new()),
+            layout_cache: Default::default(),
+        };
+        let pointer = |x: f32, y: f32| {
+            PointerInfo::mouse(Vec2d { x, y }, PointerButton::Primary)
+        };
+
+        let _ = scrollable.on_event(&ElementEvent::PointerMove(pointer(50.0, 50.0)));
+        assert!(hovered.get(), "the pointer over the content must hover it");
+
+        let _ = scrollable.on_event(&ElementEvent::PointerMove(pointer(104.0, 50.0)));
+        assert!(!hovered.get(), "the content stayed hovered after the pointer left the viewport");
+
+        // Further moves outside have nothing left to release.
+        let _ = scrollable.on_event(&ElementEvent::PointerMove(pointer(110.0, 50.0)));
+        assert!(!hovered.get());
+    }
 }

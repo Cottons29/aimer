@@ -1,6 +1,6 @@
 use super::*;
 
-impl<T: Element> LayoutElement for RawContainer<T> {
+impl<T: Element, D: Decoration> LayoutElement for RawContainer<T, D> {
     fn event_tree_bounds(&self) -> Option<(Vec2d, Vec2d)> {
         // These bounds follow paint transforms such as scroll offsets, which
         // can change without a layout-generation update. Keep this target
@@ -63,17 +63,7 @@ impl<T: Element> LayoutElement for RawContainer<T> {
             let p_top = self.padding.top.value(capped_h, scale);
             let p_bottom = self.padding.bottom.value(capped_h, scale);
 
-            let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
-                match dim {
-                    Dimension::Px(w) => w * scale,
-                    Dimension::Percent(p) => parent_val * (p / 100.0),
-                    Dimension::Auto => 0.0,
-                }
-            };
-            let bl = get_stroke(self.decoration().border.left.stroke, capped_w).max(0.0);
-            let br = get_stroke(self.decoration().border.right.stroke, capped_w).max(0.0);
-            let bt = get_stroke(self.decoration().border.top.stroke, capped_h).max(0.0);
-            let bb = get_stroke(self.decoration().border.bottom.stroke, capped_h).max(0.0);
+            let [bl, bt, br, bb] = self.decoration_insets(capped_w, capped_h, scale);
 
             let mut child_ctx = ctx.clone();
             child_ctx.box_constraint.max_width = if width_unbounded {
@@ -155,20 +145,7 @@ impl<T: Element> LayoutElement for RawContainer<T> {
         let p_top = self.padding.top.value(capped_h, scale);
         let p_bottom = self.padding.bottom.value(capped_h, scale);
 
-        let get_stroke = |dim: Dimension, parent_val: f32| -> f32 {
-            match dim {
-                Dimension::Px(w) => w * scale,
-                Dimension::Percent(p) => parent_val * (p / 100.0),
-                Dimension::Auto => 0.0,
-            }
-        };
-
-        let border = self.decoration().border;
-
-        let b_left = get_stroke(border.left.stroke, capped_w).max(0.0);
-        let b_right = get_stroke(border.right.stroke, capped_w).max(0.0);
-        let b_top = get_stroke(border.top.stroke, capped_h).max(0.0);
-        let b_bottom = get_stroke(border.bottom.stroke, capped_h).max(0.0);
+        let [b_left, b_top, b_right, b_bottom] = self.decoration_insets(capped_w, capped_h, scale);
 
         let result = if width_unbounded || height_unbounded {
             let mut child_ctx = ctx.clone();
@@ -235,18 +212,9 @@ impl<T: Element> LayoutElement for RawContainer<T> {
             p_h += v as f32;
         }
 
-        if let Dimension::Px(v) = self.decoration().border.left.stroke {
-            b_w += v;
-        }
-        if let Dimension::Px(v) = self.decoration().border.right.stroke {
-            b_w += v;
-        }
-        if let Dimension::Px(v) = self.decoration().border.top.stroke {
-            b_h += v;
-        }
-        if let Dimension::Px(v) = self.decoration().border.bottom.stroke {
-            b_h += v;
-        }
+        let [left, top, right, bottom] = self.decoration_insets(0.0, 0.0, 1.0);
+        b_w += left + right;
+        b_h += top + bottom;
 
         if let Dimension::Px(w) = self.width {
             size.width = Dimension::Px(w + m_w);
@@ -274,8 +242,23 @@ impl<T: Element> LayoutElement for RawContainer<T> {
         self.child.invalidate_layout();
     }
 
+    /// The box the container answers pointer events in: its own, and any further
+    /// reach its child reports.
+    ///
+    /// The dispatcher offers a pointer event only to elements whose bounds
+    /// contain it, so a container that reported its box alone made everything
+    /// its child reaches outside that box unreachable: the outer half of a
+    /// resize handle at the edge of a panel, for instance, which the child
+    /// extends past the border on purpose. A child inside the box adds nothing.
     fn pos_start_end(&self) -> Option<(Vec2d, Vec2d)> {
-        self.bounds.pos_start_end()
+        let (start, end) = self.bounds.pos_start_end()?;
+        let Some((child_start, child_end)) = self.child.pos_start_end() else {
+            return Some((start, end));
+        };
+        Some((
+            Vec2d { x: start.x.min(child_start.x), y: start.y.min(child_start.y) },
+            Vec2d { x: end.x.max(child_end.x), y: end.y.max(child_end.y) },
+        ))
     }
 }
 

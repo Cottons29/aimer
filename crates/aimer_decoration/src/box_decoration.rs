@@ -6,10 +6,16 @@ use std::cell::Cell;
 use aimer_attribute::position::Vec2d;
 use aimer_color::prelude::Color;
 
-use crate::style::border::{BoxBorder, BoxOutline};
-use crate::style::box_decoration::border_radius::BorderRadius;
-use crate::style::box_decoration::box_shadow::BoxShadow;
+use crate::border::{BoxBorder, BoxOutline};
+use crate::box_decoration::border_radius::BorderRadius;
+use crate::box_decoration::box_shadow::BoxShadow;
 
+/// A box background with borders, outlines, rounded corners, and shadows.
+///
+/// Containers apply its border widths as child insets and clip children to the
+/// inner rounded box. [`crate::DecorationBox`] uses only its painting behavior.
+/// Background color can change through [`BoxDecoration::update_color`]; other
+/// geometry changes require rebuilding the owning widget.
 #[derive(Default, Clone, PartialEq, Debug)]
 pub struct BoxDecoration {
     pub border: BoxBorder,
@@ -82,6 +88,18 @@ impl BoxDecoration {
         box_height: f32,
         scale: f32,
     ) {
+        self.record_local_v2_with_background(canvas, position, box_width, box_height, scale, None);
+    }
+
+    pub(crate) fn record_local_v2_with_background(
+        &self,
+        canvas: &aimer_canvas::Canvas,
+        position: Vec2d,
+        box_width: f32,
+        box_height: f32,
+        scale: f32,
+        background: Option<Color>,
+    ) {
         if !scale.is_finite() || scale <= 0.0 {
             return;
         }
@@ -115,7 +133,7 @@ impl BoxDecoration {
             canvas.fill_rect_styled(
                 rect,
                 self.background_color
-                    .get()
+                    .get().or(background)
                     .unwrap_or(Color::Transparent)
                     .into(),
                 radii,
@@ -129,7 +147,7 @@ impl BoxDecoration {
                     .effective_color(box_width, box_height, scale)
                     .into(),
             );
-        } else if let Some(color) = self.background_color.get() {
+        } else if let Some(color) = self.background_color.get().or(background) {
             canvas.fill_rect_styled(
                 rect,
                 color.into(),
@@ -212,7 +230,7 @@ impl BoxDecoration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::border::BorderSlice;
+    use crate::border::BorderSlice;
 
     /// A decoration is copied into every element that carries one, so its width
     /// is a per-node cost on every build. Eight of its bytes-per-color slots

@@ -11,12 +11,18 @@ use crate::handler::event_handler::WindowEventHandler;
 /// The soft keyboard on iOS and Android, and the display link that drives
 /// frames on iOS, all report through here rather than as window events. A
 /// headless application drives the very same path, which is how a test can
-/// inject text the way a platform keyboard does.
+/// inject text the way a platform keyboard does. `on_frame_ready` delivers the
+/// frame through the platform's drawing entry point: iOS renders on the display
+/// tick itself instead of deferring it through another UIKit draw callback.
 pub(crate) fn handle_user_event<W: Widget + 'static>(
     app: &mut AimerApplicationHandler<W>,
     event: AimerNativePlatformEvent,
+    on_frame_ready: impl FnOnce(&mut AimerApplicationHandler<W>, crate::aimer_app::FrameRequestKind),
 ) {
     match event {
+        AimerNativePlatformEvent::NativeInput { event, modifiers } => {
+            WindowEventHandler::handle_native_input(app, event, modifiers);
+        }
         AimerNativePlatformEvent::ForceBackspace => {
             if app.active_root().is_some() {
                 let ev = ElementEvent::KeyInput {
@@ -80,13 +86,22 @@ pub(crate) fn handle_user_event<W: Widget + 'static>(
         AimerNativePlatformEvent::FrameReady => {
             let kind = crate::aimer_app::frame_ready_delivered();
             app.note_frame_request(kind);
-            if let Some(window) = &app.window {
-                crate::aimer_app::with_frame_request_kind(kind, || window.request_redraw());
-            }
+            on_frame_ready(app, kind);
         }
+        // Windowed native handlers deliver completions before this shared path.
+        AimerNativePlatformEvent::RenderWorkerReady => {}
         AimerNativePlatformEvent::HotReloadCallbackReady => {
             crate::aimer_app::callback_ready_delivered();
             app.request_full_redraw();
         }
+    }
+}
+
+pub(crate) fn request_window_redraw<W: Widget + 'static>(
+    app: &mut AimerApplicationHandler<W>,
+    kind: crate::aimer_app::FrameRequestKind,
+) {
+    if let Some(window) = &app.window {
+        crate::aimer_app::with_frame_request_kind(kind, || window.request_redraw());
     }
 }

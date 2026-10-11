@@ -12,5 +12,6 @@ pub use canvas::{
 pub use canvas::TextInteractionLayout;
 pub use material::{
     record_material, MaterialClip, MaterialDrawRequest, MaterialKind, MaterialMotionPolicy,
+    MagnificationStyle,
 };
 pub use shape::{DrawShape, ShapeDrawError, ShapeDrawResult, ShapeFallback};

@@ -3,6 +3,30 @@ use std::cell::Cell;
 thread_local! {
     static DEFERRED_HOVER_RECONCILIATION_DEPTH: Cell<usize> = const { Cell::new(0) };
     static HOVER_RECONCILIATION_PENDING: Cell<bool> = const { Cell::new(false) };
+    static POINTER_CAPTURE_ACTIVE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Records whether some element holds a pointer capture, as of the last event
+/// the application delivered.
+///
+/// The application keeps this current after every dispatch; widgets read it
+/// through [`pointer_capture_active`].
+#[doc(hidden)]
+#[inline]
+pub fn set_pointer_capture_active(active: bool) {
+    POINTER_CAPTURE_ACTIVE.with(|flag| flag.set(active));
+}
+
+/// Reports whether a drag or press currently owns the pointer.
+///
+/// While it does, the pointer belongs to the capturing element, so a region
+/// that merely finds the cursor over it while painting must not start hovering:
+/// nothing would end that hover, because the moves that leave it go to the
+/// capturing element and not to the region.
+#[doc(hidden)]
+#[inline]
+pub fn pointer_capture_active() -> bool {
+    POINTER_CAPTURE_ACTIVE.with(Cell::get)
 }
 
 /// Reports whether a scrolling container is collecting hover work for one

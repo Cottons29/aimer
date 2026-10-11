@@ -20,6 +20,7 @@ aimer_widget.workspace = true
 aimer_wasm_guest = { workspace = true, optional = true }
 aimer_color.workspace = true
 aimer_container.workspace = true
+aimer_decoration.workspace = true
 aimer_flex.workspace = true
 aimer_focus.workspace = true
 aimer_grid.workspace = true
@@ -105,8 +106,7 @@ bundled-fonts = [
 ]
 # Benchmark control: compare the release flex path with its scalar kernel.
 force-scalar = ["aimer_flex/force-scalar"]
-# Present frames from a dedicated raster thread. Off by default — see the
-# feature notes in `aimer_quiver/Cargo.toml`.
+# Compatibility alias; native apps default to RenderMode::Threaded.
 raster-thread = ["aimer_quiver/raster-thread"]
 
 # Collect the per-frame build / encode / present breakdown.
@@ -121,6 +121,7 @@ portable-guest = [
     "aimer_provider/portable-guest",
     "aimer_style/portable-guest",
     "aimer_container/portable-guest",
+    "aimer_decoration/portable-guest",
     "aimer_flex/portable-guest",
     "aimer_grid/portable-guest",
     "aimer_scroll/portable-guest",
@@ -203,7 +204,7 @@ members = [
     "crates/aimer_media",
     "crates/aimer_storage",
     "crates/aimer_shape",
-    "crates/aimer_collapsible", "crates/aimer_simd",
+    "crates/aimer_collapsible", "crates/aimer_simd", "crates/aimer_decoration",
 ]
 
 [workspace.dependencies]
@@ -220,6 +221,7 @@ aimer_canvas = { path = "crates/aimer_canvas" }
 aimer_animation = { path = "crates/aimer_animation" }
 aimer_input = { path = "crates/aimer_input" }
 aimer_container = { path = "crates/aimer_container" }
+aimer_decoration = { path = "crates/aimer_decoration" }
 aimer_flex = { path = "crates/aimer_flex" }
 aimer_grid = { path = "crates/aimer_grid" }
 aimer_scroll = { path = "crates/aimer_scroll" }

@@ -605,6 +605,12 @@ impl Drawable for AnimatedBuilderElement {
         self.output_changed.set(false);
         unsafe { &*self.child.get() }.update(ctx);
         if self.controller.is_animating() {
+            if !self.reachable.is_registered() {
+                // Created while drawing, so no rebuild pass has visited it yet and
+                // none would: the index it is pruned by was built without it. Ask
+                // for a pass that looks everywhere; that one registers its path.
+                self.reachable.hold();
+            }
             // Each frame replaces this element's own child and nothing else, so
             // the next one may revisit just this subtree.
             aimer_widget::request_isolated_subtree_animation_frame(ctx);

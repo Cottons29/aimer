@@ -41,6 +41,12 @@ static APP_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone)]
 pub enum AimerNativePlatformEvent {
+    /// Pointer or hardware-key input from a platform bridge, in logical window
+    /// coordinates. Text commits continue through the IME/text-editing path.
+    NativeInput {
+        event: aimer_events::element::ElementEvent,
+        modifiers: aimer_events::element::Modifiers,
+    },
     ForceBackspace,
     InsertText(String),
     /// Provisional text a soft keyboard is still composing.
@@ -61,6 +67,8 @@ pub enum AimerNativePlatformEvent {
     },
     TextEditingDelta(TextEditingDelta),
     FrameReady,
+    /// A bounded render completion or initialization result is ready for the UI.
+    RenderWorkerReady,
     /// A live-reload native callback is waiting at the host safe point.
     ///
     /// This has its own coalescing slot so an animation frame already waiting
@@ -355,7 +363,7 @@ unsafe extern "C" {
 /// Called from Swift on every display-link vsync.
 ///
 /// If a frame was requested since the last tick, forward a `FrameReady` through
-/// the event loop (which routes to `request_redraw()`). If nothing is pending,
+/// the event loop, which renders directly on iOS. If nothing is pending,
 /// pause the display link so the app does not render while idle. Mirrors the
 /// `EVENT_PROXY` guard used by the other `trigger_rust_*` entry points.
 #[cfg(target_os = "ios")]
@@ -649,6 +657,7 @@ pub extern "system" fn Java_com_aimer_AimerActivity_nativeBackspace<'caller>(
 pub struct AimerApp<W = ()> {
     child: W,
     antialiasing: AntiAlias,
+    render_mode: crate::RenderMode,
     ui_memory_limit: usize,
     startup_hooks: Vec<StartupHook>,
     window_attr: WindowAttr,
@@ -1039,7 +1048,9 @@ impl<W: Widget + 'static> HeadlessAimerApp<W> {
     /// Delivers an Aimer user event through the same path as the native event
     /// loop.
     pub fn send_user_event(&mut self, event: AimerNativePlatformEvent) {
-        crate::handler::user_events::handle_user_event(&mut self.app, event);
+        crate::handler::user_events::handle_user_event(
+            &mut self.app, event, crate::handler::user_events::request_window_redraw,
+        );
     }
 
     /// Returns whether an input method currently holds an open composition.
@@ -1244,6 +1255,7 @@ impl AimerApp {
         Self {
             child: (),
             antialiasing: AntiAlias::default(),
+            render_mode: crate::RenderMode::default(),
             ui_memory_limit: usize::MAX,
             startup_hooks: Vec::new(),
             window_attr: WindowAttr::new(),
@@ -1256,6 +1268,16 @@ impl AimerApp {
     #[inline]
     pub fn with_antialiasing(mut self, antialiasing: AntiAlias) -> Self {
         self.antialiasing = antialiasing;
+        self
+    }
+
+    /// Selects native rendering ownership. The default is [`crate::RenderMode::Threaded`].
+    ///
+    /// Inline mode is useful when comparing profiles or debugging a renderer.
+    /// Browser and headless rendering remain inline regardless of this setting.
+    #[inline]
+    pub fn render_mode(mut self, mode: crate::RenderMode) -> Self {
+        self.render_mode = mode;
         self
     }
 
@@ -1326,6 +1348,7 @@ impl AimerApp {
         AimerApp {
             child,
             antialiasing: self.antialiasing,
+            render_mode: self.render_mode,
             ui_memory_limit: self.ui_memory_limit,
             startup_hooks: self.startup_hooks,
             window_attr: self.window_attr,
@@ -1378,6 +1401,12 @@ impl Default for AimerApp {
     }
 }
 
+impl<W> AimerApp<W> {
+    /// Returns the selected mode; browser and headless drivers always execute inline.
+    #[inline]
+    pub fn configured_render_mode(&self) -> crate::RenderMode { self.render_mode }
+}
+
 impl<W: Widget + 'static> AimerApp<W> {
     /// Returns the configured antialiasing strategy.
     #[inline]
@@ -1391,6 +1420,7 @@ impl<W: Widget + 'static> AimerApp<W> {
             ModalHost::new().child(self.child),
             native_startup_hooks(self.startup_hooks),
             self.antialiasing,
+            self.render_mode,
             self.window_attr,
             self.ui_memory_limit,
             #[cfg(feature = "wasm-hot-reload")]
@@ -1406,6 +1436,7 @@ impl<W: Widget + 'static> AimerApp<W> {
             ModalHost::new().child(self.child),
             native_startup_hooks(self.startup_hooks),
             self.antialiasing,
+            self.render_mode,
             self.window_attr,
             self.ui_memory_limit,
             #[cfg(feature = "wasm-hot-reload")]
@@ -1437,6 +1468,7 @@ fn start_event_loop(
     widget: impl Widget + 'static,
     startup_hooks: Vec<StartupHook>,
     antialiasing: AntiAlias,
+    render_mode: crate::RenderMode,
     window_attr: WindowAttr,
     ui_memory_limit: usize,
     #[cfg(feature = "wasm-hot-reload")] live_reload: Option<LiveReloadLaunch>,
@@ -1548,7 +1580,7 @@ fn start_event_loop(
         let mut app = AimerApplicationHandler {
             window: None,
             macos_windowing: Default::default(),
-            render_ctx: AimerRenderContext::new(antialiasing),
+            render_ctx: crate::render_ctx::configured_context(antialiasing, render_mode),
             ui_memory: UiMemory::new(ui_memory_limit),
             #[cfg(debug_assertions)]
             debug_overlay: Default::default(),
@@ -1655,8 +1687,11 @@ mod tests {
 
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
+    mod render_worker;
     mod broadcast;
     mod retained_button;
+    mod decoration_box;
     mod collapsible_animation;
     mod focus_click;
     mod loading_damage;
@@ -1664,6 +1699,24 @@ mod tests {
     mod builder_prepass;
     mod scoped_sync;
     mod touch_scroll;
+    mod hover_border_damage;
+    mod hover_bar_click;
+    mod theme_switch;
+    mod implicit_animation_plays;
+    mod floating_menu_settles;
+    mod resize_grab_area;
+    mod custom_theme_switch;
+    mod skeleton_to_rows;
+    mod rows_in_resizable;
+    mod collapsed_chevron;
+    mod skeleton_ticks;
+    mod glass_bar_cost;
+    mod resize_live;
+    mod resize_sidebar;
+    mod window_resize;
+    mod ios_input;
+    #[cfg(all(feature = "wgpu", target_os = "macos"))]
+    mod bypass_target;
     mod focus_repaint;
     mod retained_switcher;
     mod retained_modal;

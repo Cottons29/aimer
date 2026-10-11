@@ -13,8 +13,8 @@ pub mod render_ctx {
 
     use crate::frame_stats::{FramePhase, PhaseTimer};
     use crate::raster::FramePresenter;
-    #[cfg(feature = "raster-thread")]
-    use crate::raster::RasterThread;
+    use crate::raster::{FrameWorker, WorkerPresenter};
+    use crate::render_ctx::native_ctx::{BackendOutput, wake_event_loop};
     use crate::render_ctx::PresentOutcome;
 
     /// The UI thread's copy of the surface dimensions.
@@ -79,12 +79,8 @@ pub mod render_ctx {
     }
 
     /// Everything downstream of the widget walk: the GPU context and the
-    /// renderer.
-    ///
-    /// Bundled into one owner because the two only ever move together — either
-    /// they stay on the UI thread, or the raster thread takes both. Implementing
-    /// [`FramePresenter`] is what makes the second option possible; the type is
-    /// `Send` for the same reason.
+    /// renderer. This owner is constructed on whichever thread uses it;
+    /// custom pipelines do not need to implement `Send`.
     struct GpuPresenter {
         gpu: GpuContext<'static>,
         backend: WgpuBackend,
@@ -125,8 +121,7 @@ pub mod render_ctx {
             frame: &Frame,
             packet: Option<&FramePacket>,
         ) -> bool {
-            let encode = PhaseTimer::start();
-
+            let acquire = PhaseTimer::start();
             let surface = match self.gpu.begin_frame() {
                 wgpu::CurrentSurfaceTexture::Success(texture)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
@@ -135,6 +130,8 @@ pub mod render_ctx {
                 _ => return false,
             };
 
+            acquire.finish_acquire();
+            let encode = PhaseTimer::start();
             let view = surface.texture.create_view(&Default::default());
 
             if self
@@ -198,44 +195,33 @@ pub mod render_ctx {
         }
     }
 
-    /// Who encodes and presents a recorded frame.
-    ///
-    /// Which variant exists is a compile-time decision: the `raster-thread`
-    /// feature replaces inline presentation wholesale, because the two differ in
-    /// observable behaviour — a deferred frame reports its outcome a frame later
-    /// — and carrying both paths in one build would buy nothing.
-    enum Presentation {
-        /// The UI thread does it itself, inside [`WgpuApi::present`].
-        #[cfg(not(feature = "raster-thread"))]
-        Inline(GpuPresenter),
-        /// The raster thread does it; [`WgpuApi::present`] only queues the frame.
-        #[cfg(feature = "raster-thread")]
-        Offloaded(RasterThread),
+    // Surface creation stays on the UI thread; pipeline construction and all
+    // subsequent surface use stay with the worker, without requiring Renderer: Send.
+    pub(in crate::render_ctx) fn start_worker(window: &'static Window, size: PhysicalSize<u32>, antialiasing: AntiAlias)
+        -> FrameWorker<BackendOutput>
+    {
+        let gpu = GpuContext::initialize(window, size);
+        // WGPU presents on the worker, outside UI Core Animation transactions.
+        FrameWorker::spawn(move || {
+            let backend = gpu.backend();
+            let renderer = Renderer::with_antialiasing(&backend, gpu.format, antialiasing);
+            Ok(GpuPresenter { gpu, backend, renderer })
+        }, wake_event_loop)
     }
 
-    /// Report the outcome of a frame the raster thread presented.
-    ///
-    /// This runs on the raster thread, which is why it may only touch shared,
-    /// thread-safe state:
-    ///
-    /// * the first-frame notification, whose outcome is no longer available as a
-    ///   return value on the UI thread;
-    /// * the redraw request, which goes through the event loop proxy and the
-    ///   existing `FrameReady` coalescing — so a dropped frame is retried instead
-    ///   of leaving the window blank.
-    ///
-    /// No AppKit, UIKit or `winit` window call belongs here.
-    #[cfg(feature = "raster-thread")]
-    fn report_presented(presented: bool) {
-        crate::first_frame::notify_first_frame_presented(presented);
-        if !presented {
-            crate::render_ctx::note_frame_not_presented();
-            aimer_events::window::request_animation_frame();
+    impl WorkerPresenter for GpuPresenter {
+        type Output = BackendOutput;
+        fn resize(&mut self, size: PhysicalSize<u32>) { FramePresenter::resize(self, size); }
+        fn max_texture_dimension(&self) -> u32 { self.gpu.max_texture_dimension() }
+        fn render(&mut self, packet: &FramePacket) -> BackendOutput {
+            let presented = FramePresenter::present_packet(self, packet);
+            if !presented { self.renderer.discard_frame(&self.backend, packet); }
+            BackendOutput::Presented(presented)
         }
     }
 
     pub struct WgpuApi {
-        presentation: Option<Presentation>,
+        presentation: Option<GpuPresenter>,
         canvas: Option<CupidCanvas>,
         surface_size: SurfaceSize,
         antialiasing: AntiAlias,
@@ -277,17 +263,10 @@ pub mod render_ctx {
         /// Whether frames are handed to the raster thread instead of being
         /// presented inline.
         ///
-        /// False unless the crate was built with the `raster-thread` feature.
+        /// This explicit adapter is inline; the application context selects runtime offloading.
         #[inline]
         pub fn is_offloaded(&self) -> bool {
-            #[cfg(feature = "raster-thread")]
-            {
-                matches!(self.presentation, Some(Presentation::Offloaded(_)))
-            }
-            #[cfg(not(feature = "raster-thread"))]
-            {
-                false
-            }
+            false
         }
 
         /// Create the GPU context, the renderer and the canvas.
@@ -319,15 +298,7 @@ pub mod render_ctx {
                 presenter.gpu.max_texture_dimension(),
             );
 
-            #[cfg(feature = "raster-thread")]
-            let presentation = Presentation::Offloaded(RasterThread::spawn(
-                presenter,
-                report_presented as fn(bool),
-            ));
-            #[cfg(not(feature = "raster-thread"))]
-            let presentation = Presentation::Inline(presenter);
-
-            self.presentation = Some(presentation);
+            self.presentation = Some(presenter);
             self.canvas = Some(canvas);
         }
 
@@ -337,16 +308,8 @@ pub mod render_ctx {
             }
             self.resource_generation = self.resource_generation.wrapping_add(1);
 
-            match &mut self.presentation {
-                #[cfg(not(feature = "raster-thread"))]
-                Some(Presentation::Inline(presenter)) => presenter.resize(size),
-                #[cfg(feature = "raster-thread")]
-                Some(Presentation::Offloaded(raster)) => {
-                    // Queued on the frame channel so it cannot overtake a frame
-                    // that was built for the previous size.
-                    raster.resize(size);
-                }
-                None => {}
+            if let Some(presenter) = &mut self.presentation {
+                FramePresenter::resize(presenter, size);
             }
         }
 
@@ -408,16 +371,6 @@ pub mod render_ctx {
             }
             let canvas = self.canvas.as_ref()?;
 
-            // Take back the buffer of an already presented frame before the
-            // canvas needs one, so the steady state stays allocation-free even
-            // when the raster thread owns the frame for a while.
-            #[cfg(feature = "raster-thread")]
-            if let Some(Presentation::Offloaded(raster)) = &self.presentation
-                && let Some(draw_list) = raster.take_recycled()
-            {
-                canvas.recycle_draw_list(draw_list);
-            }
-
             let width = self.surface_size.width();
             let height = self.surface_size.height();
 
@@ -458,16 +411,9 @@ pub mod render_ctx {
             ))
         }
 
-        /// Put a recorded frame on screen, or hand it to the raster thread.
-        ///
-        /// Inline, the answer is immediate: [`PresentOutcome::Dropped`] means the
-        /// surface texture could not be acquired and the caller should request
-        /// another redraw. With the raster thread the answer is
-        /// [`PresentOutcome::Deferred`] — the frame is queued, and its real
-        /// outcome reaches `report_presented` on the raster thread instead.
-        ///
-        /// The frame's buffer is handed back to the canvas either way, so a
-        /// dropped frame does not cost an allocation on the next one.
+        /// Presents a recorded frame inline and recycles its command buffer.
+        /// A dropped frame requires a redraw; the application context provides
+        /// the worker-backed path when runtime threading is selected.
         pub fn present(&mut self, frame: Frame) -> PresentOutcome {
             let metadata = FrameRenderMetadata::new(
                 1.0,
@@ -480,31 +426,15 @@ pub mod render_ctx {
             self.present_packet(FramePacket::new(frame, metadata))
         }
 
-        /// Put a metadata-carrying frame packet on screen, or hand it to the
-        /// raster thread.
+        /// Presents a metadata-carrying frame packet inline.
         pub fn present_packet(&mut self, packet: FramePacket) -> PresentOutcome {
-            match &mut self.presentation {
-                #[cfg(not(feature = "raster-thread"))]
-                Some(Presentation::Inline(presenter)) => {
-                    let presented = presenter.present_packet(&packet);
-                    if let Some(canvas) = &self.canvas {
-                        canvas.recycle_draw_list(packet.into_frame().into_draw_list());
-                    }
-                    PresentOutcome::from_presented(presented)
-                }
-                #[cfg(feature = "raster-thread")]
-                Some(Presentation::Offloaded(raster)) => {
-                    // Blocks while a frame is still queued: that backpressure is
-                    // what caps latency at one frame. The buffer comes back over
-                    // the recycle channel, not here.
-                    if raster.submit_packet(packet) {
-                        PresentOutcome::Deferred
-                    } else {
-                        PresentOutcome::Dropped
-                    }
-                }
-                None => PresentOutcome::Dropped,
+            let Some(presenter) = &mut self.presentation else { return PresentOutcome::Dropped };
+            let presented = FramePresenter::present_packet(presenter, &packet);
+            if !presented { presenter.renderer.discard_frame(&presenter.backend, &packet); }
+            if let Some(canvas) = &self.canvas {
+                canvas.recycle_draw_list(packet.into_frame().into_draw_list());
             }
+            PresentOutcome::from_presented(presented)
         }
     }
 
@@ -512,13 +442,10 @@ pub mod render_ctx {
     mod tests {
         use super::*;
 
-        /// The raster thread can only take the presenter if it is `Send`; a
-        /// non-`Send` field would otherwise fail far away, inside `spawn`.
-        #[cfg(feature = "raster-thread")]
         #[test]
-        fn the_presenter_can_move_to_the_raster_thread() {
+        fn the_surface_owner_can_cross_to_the_factory() {
             const fn assert_send<T: Send>() {}
-            assert_send::<GpuPresenter>();
+            assert_send::<GpuContext<'static>>();
         }
 
         #[test]

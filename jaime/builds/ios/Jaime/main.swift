@@ -125,10 +125,12 @@ final class FrameDriver {
     }
 
     func pause() {
+        guard !HardwareInputForwarder.shared.hasScrollMomentum else { return }
         displayLink?.isPaused = true
     }
 
     @objc private func tick() {
+        HardwareInputForwarder.shared.advanceScrollMomentum(at: displayLink?.timestamp ?? CACurrentMediaTime())
         aimer_ios_frame_tick()
     }
 }
@@ -148,6 +150,26 @@ func aimer_ios_pause_frames() {
 }
 
 final class KeyboardForwardingTextView: UITextView, UITextViewDelegate {
+    override var keyCommands: [UIKeyCommand]? { HardwareInputForwarder.editingCommands }
+    @objc func editingShortcut(_ command: UIKeyCommand) { HardwareInputForwarder.shortcut(command) }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = HardwareInputForwarder.shared.forward(presses, action: 0, textInput: true, composing: markedTextRange != nil)
+        if !rest.isEmpty { super.pressesBegan(rest, with: event) }
+    }
+    override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = HardwareInputForwarder.shared.forward(presses, action: 2, textInput: true, composing: markedTextRange != nil)
+        if !rest.isEmpty { super.pressesChanged(rest, with: event) }
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = HardwareInputForwarder.shared.forward(presses, action: 1, textInput: true, composing: markedTextRange != nil)
+        if !rest.isEmpty { super.pressesEnded(rest, with: event) }
+    }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = HardwareInputForwarder.shared.forward(presses, action: 1, textInput: true, composing: markedTextRange != nil)
+        if !rest.isEmpty { super.pressesCancelled(rest, with: event) }
+    }
+
     override var canBecomeFirstResponder: Bool { true }
 
     private var sessionId: UInt64 = 0
@@ -450,6 +472,307 @@ private struct RustTextState {
     let inputKind: Int32
 }
 
+// UIKit supplies indirect-pointer and physical-key events that winit 0.30
+// does not forward. Every callback below runs on the UIKit main thread.
+@_silgen_name("aimer_ios_pointer_event")
+func aimer_ios_pointer_event(_ kind: UInt32, _ x: Double, _ y: Double, _ button: UInt32, _ flags: UInt64)
+@_silgen_name("aimer_ios_scroll_event")
+func aimer_ios_scroll_event(_ x: Double, _ y: Double, _ phase: UInt32, _ flags: UInt64)
+@_silgen_name("aimer_ios_key_event")
+func aimer_ios_key_event(_ usage: UInt32, _ action: UInt32, _ flags: UInt64, _ ptr: UnsafePointer<UInt8>?, _ len: Int)
+
+// UIKit pan gestures report release velocity but do not own scroll-view
+// deceleration. Keep that extra distance in the iOS host, driven by its vsync.
+struct HardwareScrollMomentum {
+    private(set) var isActive = false
+    private var velocity = CGPoint.zero
+    private var lastTime: CFTimeInterval = 0
+    // Use UIKit's normal per-millisecond velocity retention.
+    private static let decayRate = -log(Double(UIScrollView.DecelerationRate.normal.rawValue)) * 1000
+
+    mutating func start(velocity: CGPoint, at time: CFTimeInterval) -> Bool {
+        stop()
+        let speed = hypot(velocity.x, velocity.y)
+        guard time.isFinite, speed.isFinite, speed >= 80 else { return false }
+        // Project the release by 1.5x for a fuller glide, bounding the raw
+        // input at 4000 points/s before applying that gain.
+        let scale = min(1.5, 6000 / speed)
+        self.velocity = CGPoint(x: velocity.x * scale, y: velocity.y * scale)
+        lastTime = time
+        isActive = true
+        return true
+    }
+
+    mutating func step(at time: CFTimeInterval) -> CGPoint? {
+        guard isActive, time.isFinite, time > lastTime else { return nil }
+        let elapsed = time - lastTime
+        lastTime = time
+        let decay = exp(-Self.decayRate * elapsed)
+        let distance = (1 - decay) / Self.decayRate
+        let delta = CGPoint(x: velocity.x * distance, y: velocity.y * distance)
+        velocity = CGPoint(x: velocity.x * decay, y: velocity.y * decay)
+        if hypot(velocity.x, velocity.y) < 5 { stop() }
+        return delta
+    }
+
+    mutating func stop() { isActive = false; velocity = .zero }
+}
+
+final class HardwareInputForwarder {
+    static let shared = HardwareInputForwarder()
+    private(set) var view: HardwareInputView?
+    private var heldKeys: [UIKeyboardHIDUsage: UIKey] = [:]
+    private var backgroundObserver: NSObjectProtocol?
+    private var recognizers: [UIGestureRecognizer] = []
+
+    func install(on window: UIWindow) {
+        if view?.window === window { return }
+        for recognizer in recognizers { recognizer.view?.removeGestureRecognizer(recognizer) }
+        recognizers.removeAll(keepingCapacity: true)
+        releaseKeys()
+        view?.cancelPointer()
+        view?.removeFromSuperview()
+        let v = HardwareInputView(frame: window.bounds)
+        v.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        v.backgroundColor = .clear
+        window.addSubview(v)
+        view = v
+
+        let hover = UIHoverGestureRecognizer(target: v, action: #selector(HardwareInputView.hover(_:)))
+        hover.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+        hover.cancelsTouchesInView = false
+        hover.delegate = v
+        window.addGestureRecognizer(hover)
+        let scroll = UIPanGestureRecognizer(target: v, action: #selector(HardwareInputView.scroll(_:)))
+        scroll.allowedScrollTypesMask = .all
+        scroll.allowedTouchTypes = [] // Never consume finger drags or mouse-button drags.
+        scroll.cancelsTouchesInView = false
+        scroll.delegate = v
+        window.addGestureRecognizer(scroll)
+        recognizers = [hover, scroll]
+        if backgroundObserver == nil {
+            backgroundObserver = NotificationCenter.default.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.releaseKeys()
+                self?.view?.cancelPointer()
+            }
+        }
+        _ = v.becomeFirstResponder() // No UIKeyInput conformance: no software keyboard.
+    }
+
+    var hasScrollMomentum: Bool { view?.hasScrollMomentum == true }
+    func advanceScrollMomentum(at time: CFTimeInterval) { view?.advanceScrollMomentum(at: time) }
+    func resume() { _ = view?.becomeFirstResponder() }
+
+    private func send(_ key: UIKey, action: UInt32, flags: UIKeyModifierFlags? = nil) {
+        let utf8 = Array(key.charactersIgnoringModifiers.utf8)
+        utf8.withUnsafeBufferPointer {
+            aimer_ios_key_event(UInt32(key.keyCode.rawValue), action,
+                UInt64((flags ?? key.modifierFlags).rawValue), $0.baseAddress, $0.count)
+        }
+    }
+
+    func releaseKeys() {
+        for key in heldKeys.values { send(key, action: 1, flags: []) }
+        heldKeys.removeAll(keepingCapacity: true)
+    }
+
+    // Return only presses that UIKit must still interpret as text/IME input.
+    // Raw key events never insert text in Rust; UITextView remains authoritative
+    // for composed characters, dead keys, emoji, and native editing deltas.
+    func forward(_ presses: Set<UIPress>, action: UInt32, textInput: Bool, composing: Bool = false) -> Set<UIPress> {
+        var unhandled = Set<UIPress>()
+        for press in presses {
+            guard let key = press.key else { unhandled.insert(press); continue }
+            let shortcut = !key.modifierFlags.intersection([.control, .command]).isEmpty
+            if composing && !shortcut {
+                if action == 1 { heldKeys.removeValue(forKey: key.keyCode) }
+                unhandled.insert(press)
+                continue
+            }
+            let usage = key.keyCode.rawValue
+            let editingKey = (40...43).contains(usage) || (73...82).contains(usage) || usage == 88
+            let functionKey = (58...69).contains(usage)
+            let consumed = !textInput || shortcut || editingKey || functionKey
+            let reportedAction: UInt32
+            if action == 1 {
+                heldKeys.removeValue(forKey: key.keyCode)
+                reportedAction = 1
+            } else {
+                reportedAction = heldKeys.updateValue(key, forKey: key.keyCode) == nil ? 0 : 2
+            }
+            send(key, action: reportedAction)
+            if !consumed { unhandled.insert(press) }
+        }
+        return unhandled
+    }
+
+    static let editingCommands: [UIKeyCommand] = {
+        var commands = [UIKeyCommand]()
+        for (input, flags) in [("a", UIKeyModifierFlags.command), ("c", .command), ("v", .command),
+            ("x", .command), ("z", .command), ("y", .command), ("z", [.command, .shift])] {
+            let command = UIKeyCommand(input: input, modifierFlags: flags, action: #selector(HardwareInputView.editingShortcut(_:)))
+            if #available(iOS 15.0, *) { command.wantsPriorityOverSystemBehavior = true }
+            commands.append(command)
+        }
+        return commands
+    }()
+
+    static func shortcut(_ command: UIKeyCommand) {
+        guard let input = command.input, let ascii = input.utf8.first, ascii >= 97, ascii <= 122 else { return }
+        let utf8 = Array(input.utf8)
+        utf8.withUnsafeBufferPointer {
+            let usage = UInt32(ascii - 97 + 4)
+            aimer_ios_key_event(usage, 0, UInt64(command.modifierFlags.rawValue), $0.baseAddress, $0.count)
+            aimer_ios_key_event(usage, 1, UInt64(command.modifierFlags.rawValue), $0.baseAddress, $0.count)
+        }
+    }
+}
+
+final class HardwareInputView: UIView, UIGestureRecognizerDelegate {
+    private var buttons: UInt = 0
+    private var pointer = CGPoint.zero
+    private var scrollMomentum = HardwareScrollMomentum()
+    private var momentumFlags: UInt64 = 0
+    private var lastScrollMovementAt: CFTimeInterval?
+    var hasScrollMomentum: Bool { scrollMomentum.isActive }
+    override var canBecomeFirstResponder: Bool { true }
+    override var keyCommands: [UIKeyCommand]? { HardwareInputForwarder.editingCommands }
+
+    // Finger/Pencil touches pass through to winit. Mouse contacts stop here so
+    // one click cannot become both a mouse event and a synthetic finger tap.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard self.point(inside: point, with: event) else { return nil }
+        if event?.allTouches?.contains(where: { $0.phase == .began }) == true { stopScrollMomentum() }
+        guard event?.allTouches?.contains(where: { $0.type == .indirectPointer }) == true else { return nil }
+        return self
+    }
+
+    @objc func hover(_ recognizer: UIHoverGestureRecognizer) {
+        let p = recognizer.location(in: window)
+        pointer = p
+        let exited = recognizer.state == .ended || recognizer.state == .cancelled
+        aimer_ios_pointer_event(exited ? 1 : 0, p.x, p.y, 0, UInt64(recognizer.modifierFlags.rawValue))
+    }
+
+    @objc func scroll(_ recognizer: UIPanGestureRecognizer) {
+        forwardScroll(recognizer, at: CACurrentMediaTime())
+    }
+
+    func forwardScroll(_ recognizer: UIPanGestureRecognizer, at time: CFTimeInterval) {
+        let phase: UInt32
+        switch recognizer.state {
+        case .began: phase = 0
+        case .changed: phase = 1
+        case .ended: phase = 2
+        case .cancelled, .failed: phase = 3
+        default: return
+        }
+        if phase == 0 || phase == 3 { stopScrollMomentum() }
+        // A scroll pan's location moves with its translation even though the
+        // trackpad pointer is stationary. Hit test at the actual hover position.
+        aimer_ios_pointer_event(0, pointer.x, pointer.y, 0, UInt64(recognizer.modifierFlags.rawValue))
+        let translation = recognizer.translation(in: window)
+        recognizer.setTranslation(.zero, in: window)
+        // UIKit rotates scroll vectors into the window's orientation. Wheel
+        // and trackpad axes describe the control surface, so restore those
+        // axes before dispatching to the horizontal/vertical scroll engine.
+        // Convert a vector (two endpoints) so window position adds no delta.
+        let delta = deviceScrollVector(translation)
+        let flags = UInt64(recognizer.modifierFlags.rawValue)
+        if phase < 2 && (delta.x != 0 || delta.y != 0) { lastScrollMovementAt = time }
+        aimer_ios_scroll_event(delta.x, delta.y, phase, flags)
+        // A pan may retain its last velocity while the user holds still.
+        let releasedWhileMoving = lastScrollMovementAt.map { time >= $0 && time - $0 <= 0.1 } == true
+        if phase == 2 && releasedWhileMoving && scrollMomentum.start(
+            velocity: deviceScrollVector(recognizer.velocity(in: window)), at: time
+        ) {
+            momentumFlags = flags
+            // Match macOS's release-then-momentum start. The shared contact
+            // tracker recognizes this immediate second start as inertial input.
+            aimer_ios_scroll_event(0, 0, 0, flags)
+            FrameDriver.shared.requestFrame()
+        }
+        if phase >= 2 { lastScrollMovementAt = nil }
+    }
+
+    private func deviceScrollVector(_ vector: CGPoint) -> CGPoint {
+        guard let window else { return vector }
+        let fixed = window.screen.fixedCoordinateSpace
+        let origin = fixed.convert(CGPoint.zero, from: window)
+        let endpoint = fixed.convert(vector, from: window)
+        return CGPoint(x: endpoint.x - origin.x, y: endpoint.y - origin.y)
+    }
+
+    func advanceScrollMomentum(at time: CFTimeInterval) {
+        guard let delta = scrollMomentum.step(at: time) else { return }
+        aimer_ios_scroll_event(delta.x, delta.y, scrollMomentum.isActive ? 1 : 2, momentumFlags)
+    }
+
+    private func stopScrollMomentum() {
+        lastScrollMovementAt = nil
+        guard scrollMomentum.isActive else { return }
+        scrollMomentum.stop()
+        aimer_ios_scroll_event(0, 0, 3, momentumFlags)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+
+    private func updateButtons(_ next: UInt, flags: UInt64) {
+        let changed = buttons ^ next
+        buttons = next
+        for bit in 0..<UInt.bitWidth where changed & (UInt(1) << bit) != 0 {
+            let down = next & (UInt(1) << bit) != 0
+            aimer_ios_pointer_event(down ? 2 : 3, pointer.x, pointer.y, UInt32(bit), flags)
+        }
+    }
+
+    private func mouseTouches(_ touches: Set<UITouch>, event: UIEvent?, ending: Bool = false) {
+        guard let touch = touches.first(where: { $0.type == .indirectPointer }) else { return }
+        pointer = touch.location(in: window)
+        let flags = UInt64(event?.modifierFlags.rawValue ?? 0)
+        aimer_ios_pointer_event(0, pointer.x, pointer.y, 0, flags)
+        var next = UInt(bitPattern: event?.buttonMask.rawValue ?? 0)
+        if ending && event?.allTouches?.contains(where: {
+            $0.type == .indirectPointer && $0.phase != .ended && $0.phase != .cancelled
+        }) != true { next = 0 }
+        updateButtons(next, flags: flags)
+    }
+
+    func cancelPointer() {
+        stopScrollMomentum()
+        if buttons != 0 {
+            buttons = 0
+            aimer_ios_pointer_event(4, pointer.x, pointer.y, 0, 0)
+        }
+        aimer_ios_pointer_event(1, pointer.x, pointer.y, 0, 0)
+    }
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) { mouseTouches(touches, event: event) }
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) { mouseTouches(touches, event: event) }
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { mouseTouches(touches, event: event, ending: true) }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { cancelPointer() }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = HardwareInputForwarder.shared.forward(presses, action: 0, textInput: false)
+        if !rest.isEmpty { super.pressesBegan(rest, with: event) }
+    }
+    override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = HardwareInputForwarder.shared.forward(presses, action: 2, textInput: false)
+        if !rest.isEmpty { super.pressesChanged(rest, with: event) }
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = HardwareInputForwarder.shared.forward(presses, action: 1, textInput: false)
+        if !rest.isEmpty { super.pressesEnded(rest, with: event) }
+    }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = HardwareInputForwarder.shared.forward(presses, action: 1, textInput: false)
+        if !rest.isEmpty { super.pressesCancelled(rest, with: event) }
+    }
+    @objc func editingShortcut(_ command: UIKeyCommand) { HardwareInputForwarder.shortcut(command) }
+}
+
 final class KeyboardForwarder {
     static let shared = KeyboardForwarder()
     private(set) var inputView: KeyboardForwardingTextView?
@@ -480,7 +803,9 @@ final class KeyboardForwarder {
 
     func dismissKeyboard() {
         guard let v = inputView else { return }
+        HardwareInputForwarder.shared.releaseKeys()
         v.resignFirstResponder()
+        HardwareInputForwarder.shared.resume()
     }
 
     func showKeyboard() {
@@ -527,9 +852,9 @@ final class KeyboardForwarder {
     private func ensureFirstResponder() {
         if inputView == nil {
             installIfPossible()
-            return
         }
         guard let v = inputView else { return }
+        if !v.isFirstResponder { HardwareInputForwarder.shared.releaseKeys() }
         _ = v.becomeFirstResponder()
     }
 
@@ -600,6 +925,7 @@ final class KeyboardForwarder {
         window.addSubview(v)
         window.bringSubviewToFront(v)
         inputView = v
+        HardwareInputForwarder.shared.install(on: window)
         applyPendingTextState()
     }
 
@@ -651,7 +977,8 @@ final class KeyboardForwarder {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.ensureFirstResponder()
+                self?.installIfPossible()
+                if self?.inputView?.isFirstResponder != true { HardwareInputForwarder.shared.resume() }
             })
 
             // Switching keyboards mid-editing changes the language the next

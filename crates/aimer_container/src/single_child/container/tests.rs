@@ -8,6 +8,29 @@ use crate::SizedBox;
 use aimer_widget::base::WindowHandle;
 use aimer_widget::{Drawable, EventElement, LayoutElement, Rebuildable, VisitorElement};
 
+#[tokio::test]
+async fn container_accepts_a_backdrop_decoration_without_changing_layout() {
+    use aimer_decoration::BackdropFilter;
+    use aimer_cupid::material::{MaterialKind, MaterialRequest};
+
+    let ctx = context();
+    let element = Container::new().width(80).height(40)
+        .decoration(BackdropFilter::new().blur_radius(12.0))
+        .padding(LayoutSpacing::all(3))
+        .child(SizedBox::new()).to_element(&ctx);
+    assert_eq!(element.computed_size(&ctx), ResolvedSize { width: 80.0, height: 40.0 });
+    assert_eq!(element.content_size(&ctx), ResolvedSize { width: 74.0, height: 34.0 });
+    let commands = record_local_v2(&element, &ctx);
+    let [aimer_cupid::draw_cmd_v2::DrawCommand::DrawCustom { data, .. }] = commands.as_ref() else {
+        panic!("the container must record one backdrop filter");
+    };
+    let request = MaterialRequest::decode(data).unwrap();
+    assert_eq!(request.kind, MaterialKind::BackdropFilter);
+    assert_eq!(request.bounds, [0.0, 0.0, 80.0, 40.0]);
+    assert_eq!(request.blur_radius, 12.0);
+    assert_eq!(element.event_tree_role(), aimer_widget::EventTreeRole::Transparent);
+}
+
 struct DrawProbe {
     draws: Rc<Cell<usize>>,
 }
@@ -240,7 +263,9 @@ async fn margin_keeps_outline_and_border_inside_the_decorated_box() {
     });
     let (fill, border_width, outline_width) =
         fill.expect("the decorated container should record one fill rectangle");
-    assert_eq!((fill.x, fill.y), (30.0, 30.0), "the box starts after the margin");
+    // The list is relative to the node, which starts at the outline's outer edge
+    // (6 px outside the box), so the box lies margin plus outline inside it.
+    assert_eq!((fill.x, fill.y), (36.0, 36.0), "the box starts after the margin and the outline's reach");
     assert_eq!((fill.width, fill.height), (140.0, 100.0));
     assert_eq!(border_width, [4.0; 4]);
     assert_eq!(outline_width, [6.0; 4]);
@@ -535,10 +560,125 @@ async fn converting_a_decorated_container_adds_no_allocation() {
 #[test]
 fn a_container_element_fits_a_pooled_block() {
     eprintln!("Container Size : {}", size_of::<Container>());
+    eprintln!("Container element size: {}", size_of::<RawContainer<AnyElement>>());
 
     assert!(
         size_of::<RawContainer<AnyElement>>() <= 512,
         "a container element grew past the largest pooled class: {} bytes",
         size_of::<RawContainer<AnyElement>>()
     );
+}
+
+struct CustomDecoration {
+    insets: [f32; 4],
+    clip: Option<[f32; 4]>,
+    revision: Rc<Cell<u64>>,
+}
+
+impl Decoration for CustomDecoration {
+    fn paint(&self, canvas: &aimer_canvas::Canvas, origin: Vec2d, size: ResolvedSize, _scale: f32) {
+        let color = if self.revision.get() == 0 { Color::RED } else { Color::BLUE };
+        canvas.fill_color_rect(origin, size, color);
+    }
+
+    fn content_insets(&self, _size: ResolvedSize, _scale: f32) -> [f32; 4] {
+        self.insets
+    }
+
+    fn child_clip_radius(&self, _size: ResolvedSize, _scale: f32) -> Option<[f32; 4]> {
+        self.clip
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision.get()
+    }
+}
+
+#[tokio::test]
+async fn custom_decoration_geometry_is_applied_in_logical_pixels_through_trait_objects() {
+    use aimer_cupid::draw_cmd_v2::Rect;
+    let (mut ctx, _) = recording_context();
+    ctx.scale = 2.0;
+    let decoration: Rc<dyn Decoration> = Rc::new(CustomDecoration {
+        insets: [2.0, 4.0, 6.0, 8.0], clip: Some([5.0, 6.0, 7.0, 8.0]),
+        revision: Rc::new(Cell::new(0)),
+    });
+    let element = Container::new().decoration(decoration).width(80).height(40)
+        .margin(LayoutSpacing::all(5)).padding(LayoutSpacing::all(3))
+        .child(SizedBox::new().width(24).height(12)).to_element(&ctx);
+    assert_eq!(element.computed_size(&ctx), ResolvedSize { width: 180.0, height: 100.0 });
+    assert_eq!(element.content_size(&ctx), ResolvedSize { width: 132.0, height: 44.0 });
+    element.visit_children(&mut |child| {
+        assert_eq!(element.retained_v2_child_clip_radius(&ctx, child), [5.0, 6.0, 7.0, 8.0]);
+        let (bounds, clip) = element.retained_v2_child_geometry(&ctx, child).unwrap();
+        assert_eq!(bounds, Rect::new(10.0, 12.0, 24.0, 12.0));
+        assert_eq!(clip, Some(Rect::new(-3.0, -3.0, 72.0, 28.0)));
+    });
+}
+
+#[tokio::test]
+async fn custom_decoration_revisions_refresh_paint_and_invalid_insets_are_sanitized() {
+    let (ctx, _) = recording_context();
+    let revision = Rc::new(Cell::new(0));
+    let decoration: Box<dyn Decoration> = Box::new(CustomDecoration {
+        insets: [f32::NAN, -1.0, f32::INFINITY, 3.0], clip: None,
+        revision: revision.clone(),
+    });
+    let element = Container::new().decoration(decoration).width(80).height(40)
+        .child(SizedBox::new()).to_element(&ctx);
+    assert_eq!(element.content_size(&ctx), ResolvedSize { width: 80.0, height: 37.0 });
+    element.visit_children(&mut |child| {
+        assert_eq!(element.retained_v2_child_geometry(&ctx, child).unwrap().1, None);
+    });
+    record_local_v2(&element, &ctx);
+    assert!(!element.local_v2_paint_needs_recording(&ctx));
+    for next in [1, 1 << 32, u64::MAX, 0] {
+        revision.set(next);
+        assert!(element.local_v2_paint_needs_recording(&ctx));
+        let commands = record_local_v2(&element, &ctx);
+        let expected = if next == 0 { (255, 0) } else { (0, 255) };
+        assert!(matches!(commands.as_ref(), [aimer_cupid::draw_cmd_v2::DrawCommand::FillRect { color, .. }]
+            if (color.r, color.b) == expected));
+        assert!(!element.local_v2_paint_needs_recording(&ctx));
+    }
+}
+
+#[tokio::test]
+async fn decoration_method_preserves_box_borders_clipping_and_fallback_color() {
+    let (mut ctx, _) = recording_context();
+    ctx.scale = 2.0;
+    let element = Container::new().width(80).height(40).color(Color::BLUE)
+        .decoration(BoxDecoration::new().border_radius(12)
+            .border(BoxBorder::all(BorderSlice::new().style(BorderStyle::Solid).stroke(4))))
+        .child(SizedBox::new()).to_element(&ctx);
+    assert_eq!(element.content_size(&ctx), ResolvedSize { width: 144.0, height: 64.0 });
+    element.visit_children(&mut |child| {
+        assert_eq!(element.retained_v2_child_clip_radius(&ctx, child), [8.0; 4]);
+    });
+    let commands = record_local_v2(&element, &ctx);
+    assert!(matches!(commands.as_ref(), [aimer_cupid::draw_cmd_v2::DrawCommand::FillRect {
+        color, border_radius, border_width, ..
+    }] if color.b == 255 && color.a == 255 && *border_radius == [12.0; 4] && *border_width == [4.0; 4]));
+    assert_eq!(element.event_tree_role(), EventTreeRole::IndexedTarget);
+}
+
+#[tokio::test]
+async fn generic_decoration_conversion_and_retained_checks_allocate_nothing_after_warmup() {
+    use aimer_decoration::Magnification;
+    let (ctx, _) = recording_context();
+    for _ in 0..4 {
+        drop(Container::new().decoration(Magnification::new()).width(80).height(40)
+            .child(SizedBox::new()).to_element(&ctx));
+    }
+    let before = allocations();
+    let element = Container::new().decoration(Magnification::new()).width(80).height(40)
+        .child(SizedBox::new()).to_element(&ctx);
+    let building = allocations() - before;
+    assert_eq!(building, 0, "concrete decorations must remain in pooled element storage");
+    record_local_v2(&element, &ctx);
+    let before = allocations();
+    let unchanged = (0..1_024).all(|_| !element.local_v2_paint_needs_recording(&ctx));
+    let checking = allocations() - before;
+    assert!(unchanged);
+    assert_eq!(checking, 0);
 }

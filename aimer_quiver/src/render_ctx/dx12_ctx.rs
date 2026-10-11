@@ -252,7 +252,7 @@ pub mod render_ctx {
 
         /// Presents a frame packet and recycles its draw-list storage.
         pub fn present_packet(&mut self, packet: FramePacket) -> PresentOutcome {
-            let presented = self.present_inner(&packet);
+            let presented = self.present_worker_packet(&packet);
             if let Some(canvas) = &self.canvas {
                 canvas.recycle_draw_list(packet.into_frame().into_draw_list());
             }
@@ -281,6 +281,20 @@ pub mod render_ctx {
             self.present_packet(FramePacket::new(frame, metadata))
         }
 
+        pub(crate) fn worker_max_dimension(&self) -> u32 {
+            self.backend.as_ref().map_or(u32::MAX, |backend| backend.limits().max_texture_dimension_2d)
+        }
+
+        pub(crate) fn present_worker_packet(&mut self, packet: &FramePacket) -> bool {
+            let presented = self.present_inner(packet);
+            if !presented {
+                if let (Some(backend), Some(renderer)) = (&self.backend, &mut self.renderer) {
+                    renderer.discard_frame(backend, packet);
+                }
+            }
+            presented
+        }
+
         fn present_inner(&mut self, packet: &FramePacket) -> bool {
             let (Some(backend), Some(surface), Some(renderer)) = (
                 self.backend.as_ref(),
@@ -290,7 +304,9 @@ pub mod render_ctx {
             let frame = packet.frame();
             let startup_timing = self.startup_started.is_some();
             let acquire_started = startup_timing.then(Instant::now);
+            let acquire = PhaseTimer::start();
             let acquired = surface.try_acquire(backend);
+            acquire.finish_acquire();
             if let Some(acquire_started) = acquire_started {
                 info!(
                     "DX12 first-frame stage: swap-chain back-buffer acquisition {:.2} ms",

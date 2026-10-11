@@ -3,9 +3,11 @@ use std::{any::Any, mem::size_of};
 use bytemuck::{Pod, Zeroable};
 
 use super::{
-    MaterialKind, MaterialRequest, MaterialRenderPath, MAX_INTERMEDIATE_DIMENSION,
+    MagnificationStyle, MaterialKind, MaterialRequest, MaterialRenderPath, MAX_INTERMEDIATE_DIMENSION,
     MAX_INTERMEDIATE_PIXELS, MATERIAL_PIPELINE_NAME, plan_material,
 };
+
+mod blur;
 
 const INITIAL_REQUEST_CAPACITY: usize = 16;
 const MAX_REQUESTS_PER_FRAME: usize = 512;
@@ -17,6 +19,7 @@ struct MaterialUniform {
     tint: [f32; 4],
     border_color: [f32; 4],
     shadow: [f32; 4],
+    // Magnification uses z/w for its allowed displacement axes.
     effect: [f32; 4],
     light: [f32; 4],
     detail: [f32; 4],
@@ -26,8 +29,10 @@ struct MaterialUniform {
     viewport: [f32; 4],
     backdrop_rect: [f32; 4],
     // x: blob amount, y: blob seed, z: magnification, w: tip pull
+    // Magnification: x/y physical anchor, z uniform zoom, w bulge strength.
     liquid: [f32; 4],
-    // x: chromatic aberration, y: bevel radius, z/w: reserved
+    // x: chromatic aberration, y: bevel radius/depth, z/w: Gaussian recurrence
+    // Magnification reuses z for its corner-bounded bevel width.
     liquid2: [f32; 4],
 }
 
@@ -62,12 +67,12 @@ impl MaterialUniform {
                 request.shadow_color[2],
                 request.shadow_color[3],
             ],
-            effect: [
-                request.kind as u8 as f32,
-                request.opacity,
-                request.effective_phase(),
-                request.distortion_strength,
-            ],
+            effect: {
+                let [z, w] = if request.kind == MaterialKind::Magnification {
+                    request.magnification_style.axes()
+                } else { [request.effective_phase(), request.distortion_strength] };
+                [request.kind as u8 as f32, request.opacity, z, w]
+            },
             light: [
                 request.saturation,
                 request.brightness,
@@ -77,7 +82,7 @@ impl MaterialUniform {
             detail: [
                 request.specular_highlight,
                 request.interaction,
-                request.blur_radius,
+                blur_radius_pixels(&request),
                 request.border_width,
             ],
             radii: request.corner_radii,
@@ -99,13 +104,26 @@ impl MaterialUniform {
                     region.height as f32,
                 ]
             }),
-            liquid: [
-                request.blob_amount,
-                request.blob_seed,
-                request.magnification,
-                request.tip_pull,
-            ],
-            liquid2: [request.chromatic_aberration, request.bevel_radius, 0.0, 0.0],
+            liquid: if request.kind == MaterialKind::Magnification {
+                let style = request.magnification_style;
+                let anchor = style.anchor();
+                [request.bounds[0] + request.bounds[2] * anchor[0],
+                    request.bounds[1] + request.bounds[3] * anchor[1],
+                    if style.contains(MagnificationStyle::UNIFORM) { request.magnification } else { 1.0 },
+                    if style.contains(MagnificationStyle::BULGE) { request.bulge_strength } else { 0.0 }]
+            } else { [request.blob_amount, request.blob_seed, request.magnification, request.tip_pull] },
+            liquid2: {
+                if request.kind == MaterialKind::Magnification {
+                    let depth = lens_thickness_pixels(&request);
+                    [request.chromatic_aberration, depth, lens_bevel_width_pixels(&request, depth), 0.0]
+                } else {
+                    let sigma = (blur_radius_pixels(&request) / 3.0).max(0.001);
+                    let ratio = if request.kind == MaterialKind::BackdropFilter {
+                        (-0.5 / (sigma * sigma)).exp()
+                    } else { 0.0 };
+                    [request.chromatic_aberration, request.bevel_radius, ratio, ratio * ratio]
+                }
+            },
         }
     }
 }
@@ -117,8 +135,18 @@ impl MaterialUniform {
 /// or Liquid refraction. This works for both analytic and multisampled
 /// rendering. An unsupported or over-budget request keeps a small neutral
 /// texture bound and retains the analytic surface treatment.
+/// Plain backdrop filters reuse a horizontal Gaussian intermediate, then blur
+/// vertically in the replacement pass. They leave the target unchanged
+/// when capture is unavailable.
+/// Magnification samples the capture directly with configurable zoom, bulge,
+/// and bounded rounded-edge refraction, without a Gaussian intermediate.
 pub struct MaterialPipeline<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
     pipeline: B::RenderPipeline,
+    // A filtered capture already contains the backdrop's alpha and must replace it.
+    filter_pipeline: Option<B::RenderPipeline>,
+    blur: Option<blur::BackdropBlur<B>>,
+    antialiasing: crate::AntiAlias,
+    has_filter: bool,
     bind_group_layout: B::BindGroupLayout,
     bind_group: B::BindGroup,
     uniform_buffer: B::Buffer,
@@ -131,6 +159,7 @@ pub struct MaterialPipeline<B: crate::backend::GpuBackend = crate::backend::Defa
     backdrop_height: u32,
     backdrop_format: B::TextureFormat,
     backdrop_available: bool,
+    max_capture_dimension: u32,
     requests: Vec<MaterialRequest>,
     backdrop_regions: Vec<Option<BackdropRegion>>,
     upload: Vec<u8>,
@@ -151,11 +180,6 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
     ) -> Self {
         use crate::backend::*;
 
-        let shader = backend.create_shader_module(
-            backend.builtin_shader_source(BuiltinShader::Material),
-            "material shader",
-        );
-
         let bind_group_layout = backend.create_bind_group_layout(&[
             BindGroupLayoutEntry {
                 binding: 0,
@@ -169,6 +193,16 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
             },
             BindGroupLayoutEntry {
                 binding: 1,
+                visibility: vec![ShaderStage::Fragment],
+                ty: BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: TextureViewDimension::D2,
+                    sample_type: TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 3,
                 visibility: vec![ShaderStage::Fragment],
                 ty: BindingType::Texture {
                     multisampled: false,
@@ -221,33 +255,17 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
             uniform_stride,
             &backdrop_view,
             &backdrop_sampler,
+            &backdrop_view,
         );
 
-        let pipeline_layout = backend.create_pipeline_layout(&[&bind_group_layout]);
-        let pipeline = backend.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("material pipeline".to_string()),
-            layout: Some(&pipeline_layout),
-            vertex: VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[],
-            },
-            fragment: Some(FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(ColorTargetState {
-                    format,
-                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: ColorWriteMask::ALL,
-                })],
-            }),
-            primitive: PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: crate::pipeline::multisample_state(antialiasing),
-        });
+        let pipeline = create_material_pipeline(backend, &bind_group_layout, format, antialiasing, false);
 
         Self {
             pipeline,
+            filter_pipeline: None,
+            blur: None,
+            antialiasing,
+            has_filter: false,
             bind_group_layout,
             bind_group,
             uniform_buffer,
@@ -260,6 +278,7 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
             backdrop_height: 1,
             backdrop_format: B::rgba8_unorm_format(),
             backdrop_available: false,
+            max_capture_dimension: backend.limits().max_texture_dimension_2d,
             requests: Vec::with_capacity(INITIAL_REQUEST_CAPACITY),
             backdrop_regions: Vec::with_capacity(INITIAL_REQUEST_CAPACITY),
             upload: Vec::new(),
@@ -310,6 +329,7 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
             self.uniform_stride,
             &view,
             &self.backdrop_sampler,
+            self.blur.as_ref().map_or(&view, |blur| &blur.view),
         );
         self.backdrop_texture = texture;
         self._backdrop_view = view;
@@ -340,6 +360,7 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
             self.uniform_stride,
             &self._backdrop_view,
             &self.backdrop_sampler,
+            self.blur.as_ref().map_or(&self._backdrop_view, |blur| &blur.view),
         );
     }
 
@@ -352,26 +373,23 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
         if self.requests.is_empty() {
             return;
         }
+        if self.has_filter && self.filter_pipeline.is_none() {
+            self.filter_pipeline = Some(create_material_pipeline(
+                ctx.backend, &self.bind_group_layout, ctx.format, self.antialiasing, true,
+            ));
+        }
+        let mut capture_extent = [1, 1];
         self.backdrop_regions
             .extend(self.requests.iter().copied().map(|request| {
                 ctx.source_texture
-                    .and_then(|_| backdrop_region(request, ctx.width, ctx.height))
+                    .and_then(|_| backdrop_region(request, ctx.width, ctx.height, self.max_capture_dimension))
+                    .and_then(|region| include_backdrop_region(region, &mut capture_extent, self.max_capture_dimension))
             }));
         self.backdrop_available = self.backdrop_regions.iter().any(Option::is_some);
-        let backdrop_width = self
-            .backdrop_regions
-            .iter()
-            .flatten()
-            .map(|region| region.width)
-            .max()
-            .unwrap_or(1);
-        let backdrop_height = self
-            .backdrop_regions
-            .iter()
-            .flatten()
-            .map(|region| region.height)
-            .max()
-            .unwrap_or(1);
+        let [backdrop_width, backdrop_height] = capture_extent;
+        let capture_changed = self.backdrop_width != backdrop_width || self.backdrop_height != backdrop_height
+            || self.backdrop_format != ctx.format;
+        let uniform_changed = self.requests.len() > self.uniform_capacity;
         self.ensure_backdrop_texture_generic(
             ctx.backend,
             ctx.format,
@@ -380,6 +398,18 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
             self.backdrop_available,
         );
         self.ensure_uniform_capacity_generic(ctx.backend, self.requests.len());
+        let needs_blur = self.requests.iter().zip(&self.backdrop_regions).any(|(request, region)|
+            request.kind == MaterialKind::BackdropFilter && request.blur_radius > 0.0 && region.is_some());
+        if needs_blur {
+            let new_blur = self.blur.is_none();
+            let mut blur = self.blur.take().unwrap_or_else(|| blur::BackdropBlur::new(self, ctx.backend));
+            let texture_changed = blur.prepare(self, ctx.backend, capture_changed);
+            if new_blur || texture_changed || capture_changed || uniform_changed {
+                self.bind_group = create_bind_group(ctx.backend, &self.bind_group_layout, &self.uniform_buffer,
+                    self.uniform_stride, &self._backdrop_view, &self.backdrop_sampler, &blur.view);
+            }
+            self.blur = Some(blur);
+        }
 
         let stride = self.uniform_stride as usize;
         self.upload
@@ -468,6 +498,12 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
                 depth_or_array_layers: 1,
             },
         );
+        if let Some(index) = command_index {
+            let request = self.requests[index];
+            if request.kind == MaterialKind::BackdropFilter && request.blur_radius > 0.0 {
+                if let Some(blur) = &self.blur { blur.encode(index, backend, encoder); }
+            }
+        }
     }
 
     fn request_from_payload_generic(data: &(dyn Any + Send)) -> Option<MaterialRequest> {
@@ -490,7 +526,13 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
         let Some(index) = command_index.filter(|index| *index < self.requests.len()) else {
             return;
         };
-        pass.set_pipeline(&self.pipeline);
+        let pipeline = if replaces_backdrop(self.requests[index].kind) {
+            let Some(pipeline) = &self.filter_pipeline else { return };
+            pipeline
+        } else {
+            &self.pipeline
+        };
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(
             0,
             &self.bind_group,
@@ -512,6 +554,7 @@ impl<B: crate::backend::GpuBackend> crate::custom_pipeline::CustomPipelineGeneri
     }
 
     fn begin_frame(&mut self) {
+        self.has_filter = false;
         self.requests.clear();
         self.backdrop_regions.clear();
         self.upload.clear();
@@ -519,12 +562,17 @@ impl<B: crate::backend::GpuBackend> crate::custom_pipeline::CustomPipelineGeneri
 
     fn prepare_command(&mut self, data: &(dyn Any + Send)) -> Option<usize> {
         let request = Self::request_from_payload_generic(data)?;
-        if plan_material(request, Default::default()).path != MaterialRenderPath::Gpu
+        let mut capabilities = super::MaterialCapabilities::default();
+        if replaces_backdrop(request.kind) {
+            capabilities.max_surface_dimension = self.max_capture_dimension;
+        }
+        if plan_material(request, capabilities).path != MaterialRenderPath::Gpu
             || self.requests.len() >= MAX_REQUESTS_PER_FRAME
         {
             return None;
         }
         let index = self.requests.len();
+        self.has_filter |= replaces_backdrop(request.kind);
         self.requests.push(request);
         Some(index)
     }
@@ -570,26 +618,116 @@ impl<B: crate::backend::GpuBackend> crate::custom_pipeline::CustomPipelineGeneri
     }
 }
 
-fn backdrop_fits_budget(width: u32, height: u32) -> bool {
+fn create_material_pipeline<B: crate::backend::GpuBackend>(
+    backend: &B,
+    bind_group_layout: &B::BindGroupLayout,
+    format: B::TextureFormat,
+    antialiasing: crate::AntiAlias,
+    replace_backdrop: bool,
+) -> B::RenderPipeline {
+    use crate::backend::*;
+    let shader = backend.create_shader_module(
+        backend.builtin_shader_source(BuiltinShader::Material), "material shader",
+    );
+    let pipeline_layout = backend.create_pipeline_layout(&[bind_group_layout]);
+    backend.create_render_pipeline(&RenderPipelineDescriptor {
+        label: Some(if replace_backdrop { "backdrop filter pipeline" } else { "material pipeline" }.to_string()),
+        layout: Some(&pipeline_layout),
+        vertex: VertexState {
+            module: &shader,
+            entry_point: "vs_main",
+            buffers: &[],
+        },
+        fragment: Some(FragmentState {
+            module: &shader,
+            entry_point: "fs_main",
+            targets: &[Some(ColorTargetState {
+                format,
+                blend: if replace_backdrop { None } else { Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING) },
+                write_mask: ColorWriteMask::ALL,
+            })],
+        }),
+        primitive: PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: crate::pipeline::multisample_state(antialiasing),
+    })
+}
+
+fn backdrop_fits_budget(width: u32, height: u32, max_dimension: u32) -> bool {
     width > 0
         && height > 0
-        && width <= MAX_INTERMEDIATE_DIMENSION
-        && height <= MAX_INTERMEDIATE_DIMENSION
+        && width <= max_dimension
+        && height <= max_dimension
         && u64::from(width)
             .checked_mul(u64::from(height))
             .is_some_and(|pixels| pixels <= MAX_INTERMEDIATE_PIXELS)
+}
+
+fn include_backdrop_region(region: BackdropRegion, extent: &mut [u32; 2], max_dimension: u32) -> Option<BackdropRegion> {
+    let width = extent[0].max(region.width);
+    let height = extent[1].max(region.height);
+    // Ordered captures share one texture. Individually valid wide and tall
+    // regions must not combine into an allocation beyond the pixel budget.
+    if !backdrop_fits_budget(width, height, max_dimension) { return None; }
+    *extent = [width, height];
+    Some(region)
+}
+
+#[inline]
+fn replaces_backdrop(kind: MaterialKind) -> bool {
+    matches!(kind, MaterialKind::BackdropFilter | MaterialKind::Magnification)
+}
+
+#[inline]
+fn lens_thickness_pixels(request: &MaterialRequest) -> f32 {
+    if !request.magnification_style.contains(MagnificationStyle::REFRACTION) { return 0.0; }
+    // Keep thickness logical through bridge normalization so display scaling
+    // cannot clamp it back to 512 device pixels before the geometry limit.
+    let m = &request.transform;
+    let scale_x = (m[0] * m[0] + m[1] * m[1]).sqrt();
+    let scale_y = (m[3] * m[3] + m[4] * m[4]).sqrt();
+    (request.bevel_radius * (scale_x + scale_y) * 0.5)
+        .min(request.bounds[2].min(request.bounds[3]) * 0.5)
+}
+
+#[inline]
+fn lens_bevel_width_pixels(request: &MaterialRequest, depth: f32) -> f32 {
+    // An inset beyond a rounded corner's radius crosses the SDF's medial
+    // axis, where the nearest-edge normal jumps. Flatten the bevel before
+    // that axis while retaining optical depth for Snell displacement.
+    // Zero radii describe deliberately sharp corners and impose no limit.
+    request.corner_radii.iter().copied().filter(|radius| *radius > 0.0)
+        .fold(depth, f32::min)
+}
+
+#[inline]
+fn blur_radius_pixels(request: &MaterialRequest) -> f32 {
+    if request.kind != MaterialKind::BackdropFilter {
+        return request.blur_radius;
+    }
+    // Bounds are resolved to device pixels, but the filter radius remains
+    // logical so normalization cannot cap a scaled radius back to 96 pixels.
+    let m = &request.transform;
+    let scale_x = (m[0] * m[0] + m[1] * m[1]).sqrt();
+    let scale_y = (m[3] * m[3] + m[4] * m[4]).sqrt();
+    request.blur_radius * (scale_x + scale_y) * 0.5
 }
 
 fn backdrop_region(
     request: MaterialRequest,
     viewport_width: u32,
     viewport_height: u32,
+    max_dimension: u32,
 ) -> Option<BackdropRegion> {
     if viewport_width == 0 || viewport_height == 0 {
         return None;
     }
     let request = request.normalized();
-    let blur_expansion = request.blur_radius.ceil().max(1.0);
+    if request.kind == MaterialKind::BackdropFilter
+        && blur_radius_pixels(&request) > MAX_INTERMEDIATE_DIMENSION as f32 {
+        return None;
+    }
+    let blur_expansion = blur_radius_pixels(&request).ceil().max(1.0);
     // Keep the ripple term in sync with the summed amplitudes in
     // `liquid_warp`: x = 0.006 + 0.004, y = 0.0055 + 0.0035. The bevel term
     // covers `liquid_bevel_refract_offset`, whose displacement is bounded by
@@ -598,7 +736,10 @@ fn backdrop_region(
     // generous on purpose so refracted samples never clamp against the
     // capture edge, and an unreasonably large combination simply falls back
     // through the existing intermediate-budget check below.
-    let (expansion_x, expansion_y) = if request.kind == MaterialKind::Liquid {
+    let (expansion_x, expansion_y) = if request.kind == MaterialKind::Magnification {
+        let margin = (2.0 * lens_thickness_pixels(&request)).ceil() + 1.0;
+        (margin, margin)
+    } else if request.kind == MaterialKind::Liquid {
         let ripple_x = (request.bounds[2] * 0.010 * request.distortion_strength).ceil();
         let ripple_y = (request.bounds[3] * 0.009 * request.distortion_strength).ceil();
         let bevel_expansion =
@@ -624,7 +765,11 @@ fn backdrop_region(
         .clamp(0.0, viewport_height as f32) as u32;
     let width = right.saturating_sub(left);
     let height = bottom.saturating_sub(top);
-    backdrop_fits_budget(width, height).then_some(BackdropRegion {
+    // Replacement effects use full-resolution captures. Wide, shallow bars
+    // can exceed 2,048 device pixels while staying within the pixel budget.
+    let max_dimension = if replaces_backdrop(request.kind) { max_dimension }
+        else { max_dimension.min(MAX_INTERMEDIATE_DIMENSION) };
+    backdrop_fits_budget(width, height, max_dimension).then_some(BackdropRegion {
         x: left,
         y: top,
         width,
@@ -661,6 +806,7 @@ fn create_bind_group<B: crate::backend::GpuBackend>(
     uniform_stride: u64,
     backdrop_view: &B::TextureView,
     backdrop_sampler: &B::Sampler,
+    horizontal_blur_view: &B::TextureView,
 ) -> B::BindGroup
 where
     B: crate::backend::GpuBackend,
@@ -678,6 +824,10 @@ where
                 resource: BindingResource::TextureView(backdrop_view),
             },
             BindGroupEntry {
+                binding: 3,
+                resource: BindingResource::TextureView(horizontal_blur_view),
+            },
+            BindGroupEntry {
                 binding: 2,
                 resource: BindingResource::Sampler(backdrop_sampler),
             },
@@ -692,22 +842,32 @@ mod tests {
 
     #[test]
     fn uniform_layout_fits_one_aligned_dynamic_slot() {
+        assert_eq!(size_of::<MaterialUniform>(), 224);
         assert!(size_of::<MaterialUniform>() <= 256);
         assert_eq!(size_of::<MaterialUniform>() % 16, 0);
     }
 
     #[test]
+    fn gaussian_support_is_bounded_even_at_extreme_device_scales() {
+        let mut request = MaterialRequest::new(MaterialKind::BackdropFilter, [0.0, 0.0, 64.0, 64.0]);
+        request.blur_radius = 96.0;
+        request.transform[0] = 24.0;
+        request.transform[4] = 24.0;
+        assert!(backdrop_region(request, 64, 64, 2_048).is_none());
+    }
+
+    #[test]
     fn backdrop_capture_obeys_the_frame_budget() {
-        assert!(backdrop_fits_budget(1_024, 1_024));
-        assert!(backdrop_fits_budget(2_048, 2_048));
-        assert!(!backdrop_fits_budget(2_048, 2_049));
-        assert!(!backdrop_fits_budget(2_049, 1));
+        assert!(backdrop_fits_budget(1_024, 1_024, 2_048));
+        assert!(backdrop_fits_budget(2_048, 2_048, 2_048));
+        assert!(!backdrop_fits_budget(2_048, 2_049, 2_048));
+        assert!(!backdrop_fits_budget(2_049, 1, 2_048));
     }
 
     #[test]
     fn backdrop_capture_is_local_to_the_material_on_a_large_viewport() {
         let request = MaterialRequest::new(MaterialKind::Glass, [32.0, 16.0, 64.0, 32.0]);
-        let region = backdrop_region(request, 4_096, 2_160).expect("local capture region");
+        let region = backdrop_region(request, 4_096, 2_160, 2_048).expect("local capture region");
 
         assert_eq!((region.x, region.y), (16, 0));
         assert_eq!((region.width, region.height), (96, 64));
@@ -721,7 +881,7 @@ mod tests {
         request.distortion_strength = 1.0;
         request.magnification = 0.5;
         request.bevel_radius = 40.0;
-        let region = backdrop_region(request, 2_000, 2_000).expect("liquid capture region");
+        let region = backdrop_region(request, 2_000, 2_000, 2_048).expect("liquid capture region");
 
         // The bevel term (`40 * 1.5 * 2.5 = 150`) dominates the ripple term
         // (`1_000 * 0.010 = 10`), so the captured region grows to cover the
@@ -730,3 +890,9 @@ mod tests {
         assert_eq!((region.width, region.height), (1_250, 1_250));
     }
 }
+
+#[cfg(test)]
+mod magnification_tests;
+
+#[cfg(test)]
+mod backdrop_tests;

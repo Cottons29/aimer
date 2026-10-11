@@ -1,6 +1,6 @@
 use aimer_attribute::Dimension;
 
-use crate::style::border::resolve_dim;
+use crate::border::resolve_dim;
 
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct BorderRadius {
