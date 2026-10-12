@@ -170,13 +170,32 @@ impl<T: Send + 'static> FrameWorker<T> {
             }
             Err(TryRecvError::Disconnected) => return None,
         };
+        Some(self.accept(event))
+    }
+
+    /// Delivers the next event, waiting up to `timeout` for one to arrive.
+    ///
+    /// Only for a UI thread that must show a frame in the turn that asked for
+    /// it, such as a live window resize; everything else should use
+    /// [`Self::poll`]. The same delivery rules apply: finish the completion's
+    /// presentation before submitting again.
+    pub fn wait(&mut self, timeout: std::time::Duration) -> Option<WorkerEvent<T>> {
+        let event = self.events.recv_timeout(timeout).ok()?;
+        Some(self.accept(event))
+    }
+
+    /// Frames submitted whose completion has not been delivered yet.
+    #[inline]
+    pub fn outstanding(&self) -> usize { self.outstanding }
+
+    fn accept(&mut self, event: WorkerEvent<T>) -> WorkerEvent<T> {
         match &event {
             WorkerEvent::Ready { .. } => self.ready = true,
             WorkerEvent::Completed(_) => self.outstanding -= 1,
             WorkerEvent::Failed(_) => self.ready = false,
             WorkerEvent::Stopped => { self.ready = false; self.stopped = true; }
         }
-        Some(event)
+        event
     }
 
     /// Cancels queued frames and wakes a parked worker. Does not wait for GPU work.

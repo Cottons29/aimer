@@ -149,3 +149,27 @@ async fn magnification_reuses_its_recording_without_allocating() {
     assert_eq!(tree.draw_list_revision(root).unwrap(), revision);
     assert_eq!(checking, 0, "unchanged lens traversal must reuse the encoded request");
 }
+
+#[tokio::test]
+async fn light_edge_reuses_its_recording_without_allocating() {
+    let inner = InnerCanvas::new();
+    let ctx = BuildContext::new(
+        FrameCanvas::new(&inner),
+        ResolvedSize { width: 200.0, height: 160.0 },
+        1.0, Vec2d::default(), Vec2d::default(),
+        WindowHandle::headless(Default::default(), 1.0),
+        tokio::runtime::Handle::current(),
+    );
+    let element = DecorationBox::new().decoration(aimer_decoration::LightEdge::new().corner_radius(4.0))
+        .child(SizedBox::new().width(24.0).height(12.0)).to_element(&ctx);
+    let tree = aimer_cupid::draw_cmd_v2::RenderTree::new();
+    let root = tree.add_root(aimer_cupid::draw_cmd_v2::Rect::new(0.0, 0.0, 24.0, 12.0)).unwrap();
+    ctx.with_local_v2_paint_context(tree.context(root).unwrap(), |ctx| element.paint_local_v2(ctx));
+    let revision = tree.draw_list_revision(root).unwrap();
+    let before = ALLOCATIONS.with(Cell::get);
+    let unchanged = (0..1_024).all(|_| !element.local_v2_paint_needs_recording(&ctx));
+    let checking = ALLOCATIONS.with(Cell::get) - before;
+    assert!(unchanged);
+    assert_eq!(tree.draw_list_revision(root).unwrap(), revision);
+    assert_eq!(checking, 0, "unchanged light-edge traversal must reuse the encoded request");
+}

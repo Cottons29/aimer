@@ -80,10 +80,7 @@ impl MetalHost {
         let _transaction = Transaction::new();
         #[cfg(target_os = "macos")]
         self.surface.layer().setContentsScale(scale);
-        #[cfg(target_os = "ios")]
-        // Keep the displayed image at its old pixel scale until a matching
-        // replacement is ready, rather than stretching it during rotation.
-        self.surface.layer().setContentsGravity(unsafe { objc2_quartz_core::kCAGravityTopLeft });
+        keep_previous_image_unscaled(self.surface.layer());
         self.surface.layer().setDrawableSize(CGSize::new(f64::from(size.width), f64::from(size.height)));
     }
 
@@ -182,5 +179,47 @@ impl WorkerPresenter for MetalPresenter {
             self.backend.end_gpu_frame_timing();
             BackendOutput::Metal(drawable.schedule_transactional_presentation(&self.backend))
         })
+    }
+}
+
+/// Keeps the last presented image at its own pixel scale while the layer is resized.
+///
+/// AppKit and UIKit resize the layer immediately, but the worker presents a
+/// replacement drawable of the new size only afterwards. With the default
+/// `resize` gravity the compositor stretches the old image across the new
+/// bounds in between, which is visible as content scaling during a live resize.
+///
+/// The image is pinned to the *on-screen* top-left corner, the origin the UI
+/// lays out from. AppKit's layer is not flipped, so there the constant for that
+/// corner is `kCAGravityBottomLeft`: `kCAGravityTopLeft` pinned the image to the
+/// bottom edge, which pushed it down (or cut off its top) while the height
+/// changed, as seen in a live-resize screen recording.
+fn keep_previous_image_unscaled(layer: &CAMetalLayer) {
+    // SAFETY: QuartzCore exports these immutable gravity constants.
+    #[cfg(target_os = "macos")]
+    layer.setContentsGravity(unsafe { objc2_quartz_core::kCAGravityBottomLeft });
+    #[cfg(not(target_os = "macos"))]
+    layer.setContentsGravity(unsafe { objc2_quartz_core::kCAGravityTopLeft });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resize_does_not_stretch_the_previous_image() {
+        let layer = CAMetalLayer::new();
+        // SAFETY: QuartzCore exports these immutable gravity constants.
+        let (top_left_on_screen, wrong_edge) = unsafe {
+            if cfg!(target_os = "macos") {
+                (objc2_quartz_core::kCAGravityBottomLeft, objc2_quartz_core::kCAGravityTopLeft)
+            } else {
+                (objc2_quartz_core::kCAGravityTopLeft, objc2_quartz_core::kCAGravityBottomLeft)
+            }
+        };
+        assert_ne!(&*layer.contentsGravity(), top_left_on_screen);
+        keep_previous_image_unscaled(&layer);
+        assert_eq!(&*layer.contentsGravity(), top_left_on_screen);
+        assert_ne!(&*layer.contentsGravity(), wrong_edge);
     }
 }

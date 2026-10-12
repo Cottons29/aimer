@@ -11,6 +11,6 @@ pub use box_decoration::BoxDecoration;
 pub use box_decoration::border_radius::BorderRadius;
 pub use box_decoration::box_shadow::{BoxShadow, ShadowSide};
 
-pub use decoration_box::{BackdropFilter, DecorationBox, Magnification, MagnificationStyle};
+pub use decoration_box::{BackdropFilter, DecorationBox, LightEdge, Magnification, MagnificationStyle};
 
 pub use decoration::Decoration;

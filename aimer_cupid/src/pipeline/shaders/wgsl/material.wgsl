@@ -528,8 +528,30 @@ fn lens_bevel_normal(point: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>, d
     return normalize(vec3<f32>(outward * slope, 1.0));
 }
 
+// Analytic inward rim: shape normals are measured in device pixels so a
+// wide pane catches the same light as a square pane. No backdrop is sampled.
+fn light_edge(pixel: vec2<f32>) -> vec4<f32> {
+    let half_size = material.bounds.zw * 0.5;
+    let point = pixel - material.bounds.xy - half_size;
+    let radius = min(selected_radius(point, material.radii), min(half_size.x, half_size.y));
+    let q = abs(point) - half_size + vec2<f32>(radius);
+    let outer = max(q, vec2<f32>(0.0));
+    var outward = select(vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), q.x > q.y);
+    if dot(outer, outer) > 0.0 { outward = normalize(outer); }
+    outward *= sign(point);
+    let distance = length(outer) + min(max(q.x, q.y), 0.0) - radius;
+    let coverage = max(sdf_alpha(distance) - sdf_alpha(distance + material.detail.w), 0.0);
+    let facing = pow(max(dot(outward, material.effect.zw), 0.0), 2.4);
+    let alpha = clamp(coverage * facing * material.detail.x * material.border_color.a
+        * material.effect.y * clip_alpha(pixel), 0.0, 1.0);
+    let rgb = material.border_color.rgb;
+    let converted = select(rgb, srgb_rgb_to_linear(rgb), material.viewport.z > 0.5);
+    return vec4<f32>(converted * alpha, alpha);
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    if material.effect.x > 3.5 { return light_edge(input.pixel_pos); }
     if material.effect.x > 1.5 && material.viewport.w < 0.5 {
         discard;
     }

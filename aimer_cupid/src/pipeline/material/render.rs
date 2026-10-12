@@ -9,6 +9,9 @@ use super::{
 
 mod blur;
 
+#[cfg(test)]
+mod light_edge_tests;
+
 const INITIAL_REQUEST_CAPACITY: usize = 16;
 const MAX_REQUESTS_PER_FRAME: usize = 512;
 
@@ -19,7 +22,7 @@ struct MaterialUniform {
     tint: [f32; 4],
     border_color: [f32; 4],
     shadow: [f32; 4],
-    // Magnification uses z/w for its allowed displacement axes.
+    // Magnification uses z/w for axes; LightEdge uses them for light direction.
     effect: [f32; 4],
     light: [f32; 4],
     detail: [f32; 4],
@@ -70,6 +73,9 @@ impl MaterialUniform {
             effect: {
                 let [z, w] = if request.kind == MaterialKind::Magnification {
                     request.magnification_style.axes()
+                } else if request.kind == MaterialKind::LightEdge {
+                    let (sin, cos) = request.light_angle.to_radians().sin_cos();
+                    [cos, sin]
                 } else { [request.effective_phase(), request.distortion_strength] };
                 [request.kind as u8 as f32, request.opacity, z, w]
             },
@@ -83,9 +89,16 @@ impl MaterialUniform {
                 request.specular_highlight,
                 request.interaction,
                 blur_radius_pixels(&request),
-                request.border_width,
+                if request.kind == MaterialKind::LightEdge {
+                    (request.border_width * request_scale(&request))
+                        .min(request.bounds[2].min(request.bounds[3]) * 0.5)
+                } else { request.border_width },
             ],
-            radii: request.corner_radii,
+            radii: if request.kind == MaterialKind::LightEdge {
+                let scale = request_scale(&request);
+                request.corner_radii.map(|radius| (radius * scale)
+                    .min(request.bounds[2].min(request.bounds[3]) * 0.5))
+            } else { request.corner_radii },
             clip_rect,
             clip_radii,
             // `w` tells the shader whether the bound texture contains the
@@ -140,6 +153,7 @@ impl MaterialUniform {
 /// when capture is unavailable.
 /// Magnification samples the capture directly with configurable zoom, bulge,
 /// and bounded rounded-edge refraction, without a Gaussian intermediate.
+/// LightEdge draws an analytic inward highlight without capturing the backdrop.
 pub struct MaterialPipeline<B: crate::backend::GpuBackend = crate::backend::DefaultGpuBackend> {
     pipeline: B::RenderPipeline,
     // A filtered capture already contains the backdrop's alpha and must replace it.
@@ -430,7 +444,7 @@ impl<B: crate::backend::GpuBackend> MaterialPipeline<B> {
         ctx.backend
             .write_buffer(&self.uniform_buffer, 0, &self.upload);
 
-        if !self.backdrop_available {
+        if !self.backdrop_available && self.requests.iter().any(|request| request.kind != MaterialKind::LightEdge) {
             ctx.backend.write_texture(
                 &crate::backend::WriteTextureDescriptor {
                     texture: &self.backdrop_texture,
@@ -713,13 +727,19 @@ fn blur_radius_pixels(request: &MaterialRequest) -> f32 {
     request.blur_radius * (scale_x + scale_y) * 0.5
 }
 
+#[inline]
+fn request_scale(request: &MaterialRequest) -> f32 {
+    let m = &request.transform;
+    ((m[0] * m[0] + m[1] * m[1]).sqrt() + (m[3] * m[3] + m[4] * m[4]).sqrt()) * 0.5
+}
+
 fn backdrop_region(
     request: MaterialRequest,
     viewport_width: u32,
     viewport_height: u32,
     max_dimension: u32,
 ) -> Option<BackdropRegion> {
-    if viewport_width == 0 || viewport_height == 0 {
+    if request.kind == MaterialKind::LightEdge || viewport_width == 0 || viewport_height == 0 {
         return None;
     }
     let request = request.normalized();

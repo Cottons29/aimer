@@ -24,6 +24,8 @@ pub enum MaterialKind {
     BackdropFilter = 2,
     /// Magnifies the captured backdrop with optional rounded-edge refraction.
     Magnification = 3,
+    /// A directional analytic highlight with no backdrop sampling.
+    LightEdge = 4,
 }
 
 /// Reduced-motion policy carried by a material packet.
@@ -129,6 +131,8 @@ pub struct MaterialDrawRequest {
     pub magnification_style: MagnificationStyle,
     /// Additional Magnification bulge strength in `0..=1`.
     pub bulge_strength: f32,
+    /// LightEdge light direction in degrees clockwise from screen-right.
+    pub light_angle: f32,
     /// Sampling quality in `1..=4`.
     pub quality: u8,
     /// Motion policy for dynamic fields.
@@ -137,9 +141,9 @@ pub struct MaterialDrawRequest {
 
 impl MaterialDrawRequest {
     /// Packet schema version.
-    pub const VERSION: u8 = 2;
+    pub const VERSION: u8 = 3;
     /// Exact byte length of [`Self::encode`].
-    pub const PACKET_LEN: usize = 252;
+    pub const PACKET_LEN: usize = 256;
     /// Maximum blur accepted by the bridge.
     pub const MAX_BLUR_RADIUS: f32 = 96.0;
     /// Maximum shadow blur accepted by the bridge.
@@ -186,6 +190,7 @@ impl MaterialDrawRequest {
             bevel_radius: if kind == MaterialKind::Magnification { 16.0 } else { 28.0 },
             magnification_style: if kind == MaterialKind::Magnification { MagnificationStyle::DEFAULT } else { MagnificationStyle::NONE },
             bulge_strength: if kind == MaterialKind::Magnification { 0.25 } else { 0.0 },
+            light_angle: 225.0,
             quality: 2,
             motion_policy: MaterialMotionPolicy::Full,
         }
@@ -250,6 +255,7 @@ impl MaterialDrawRequest {
             self.magnification_style = MagnificationStyle::NONE;
             self.bulge_strength = 0.0;
         }
+        self.light_angle = if self.light_angle.is_finite() { self.light_angle.rem_euclid(360.0) } else { 225.0 };
         self.quality = self.quality.clamp(1, 4);
         if self.motion_policy == MaterialMotionPolicy::Reduced {
             self.distortion_strength = 0.0;
@@ -306,6 +312,7 @@ impl MaterialDrawRequest {
         push_f32(&mut bytes, request.bevel_radius);
         bytes.extend_from_slice(&request.magnification_style.bits().to_le_bytes());
         push_f32(&mut bytes, request.bulge_strength);
+        push_f32(&mut bytes, request.light_angle);
         debug_assert_eq!(bytes.len(), Self::PACKET_LEN);
         bytes
     }
@@ -394,6 +401,26 @@ fn push_f32s<const N: usize>(bytes: &mut Vec<u8>, values: &[f32; N]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn light_edge_packet_carries_normalized_angle_and_controls() {
+        let mut request = MaterialDrawRequest::new(MaterialKind::LightEdge, [1.0, 2.0, 80.0, 40.0]);
+        request.light_angle = -135.0;
+        request.border_color = [0.25, 0.5, 1.0, 0.5];
+        request.border_width = 4.0;
+        request.specular_highlight = 0.75;
+        let encoded = request.encode();
+        assert_eq!(encoded.len(), 256);
+        assert_eq!(encoded[4], 3);
+        let decoded = aimer_cupid::material::MaterialRequest::decode(&encoded).unwrap();
+        assert_eq!(decoded.kind, aimer_cupid::material::MaterialKind::LightEdge);
+        assert_eq!(decoded.light_angle, 225.0);
+        assert_eq!(decoded.border_color, [0.25, 0.5, 1.0, 0.5]);
+        assert_eq!(decoded.border_width, 4.0);
+        assert_eq!(decoded.specular_highlight, 0.75);
+        request.light_angle = f32::NAN;
+        assert_eq!(request.normalized().light_angle, 225.0);
+    }
 
     #[test]
     fn request_normalization_removes_non_finite_and_out_of_range_values() {

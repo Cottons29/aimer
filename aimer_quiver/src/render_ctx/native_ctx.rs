@@ -20,6 +20,9 @@ pub(crate) enum BackendOutput {
     Metal(aimer_cupid::backend::metal::ScheduledMetalDrawable),
 }
 
+/// Longest a resize waits for its frame; a worker slower than this finishes it asynchronously.
+const RESIZE_PRESENT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// Outcomes delivered by the native renderer on its UI owner thread.
 #[derive(Default)]
 pub struct CompletionStatus {
@@ -49,6 +52,13 @@ pub struct NativeRenderContext {
     waiting: bool,
     closing: bool,
     suspended: bool,
+    /// Whether a frame that changes the surface size is presented before the
+    /// call that submitted it returns. See [`Self::settle_resized_frame`].
+    sync_resize: bool,
+    /// Size of the last frame handed to the worker.
+    submitted_size: PhysicalSize<u32>,
+    /// Outcomes already consumed while settling a resized frame, reported by the next poll.
+    carried: CompletionStatus,
     #[cfg(all(not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
     host: Option<MetalHost>,
 }
@@ -63,6 +73,7 @@ impl NativeRenderContext {
         Self { mode: RenderMode::Threaded, antialiasing, inline: None, worker: None,
             canvas: None, size: PhysicalSize::new(0, 0), max_dimension: u32::MAX,
             generation: 1, ready: false, waiting: false, closing: false, suspended: false,
+            sync_resize: false, submitted_size: PhysicalSize::new(0, 0), carried: CompletionStatus::default(),
             #[cfg(all(not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
             host: None,
         }
@@ -123,6 +134,10 @@ impl NativeRenderContext {
         {
             let (host, seed, max_dimension) = MetalHost::new(window, size, self.antialiasing);
             self.host = Some(host);
+            // AppKit commits the window's new geometry at the end of the resize
+            // turn, so the frame for it has to be presented in that turn. UIKit
+            // already gates its geometry on a matching drawable.
+            self.sync_resize = cfg!(target_os = "macos");
             self.max_dimension = max_dimension;
             self.worker = Some(start_metal(seed));
         }
@@ -181,8 +196,10 @@ impl NativeRenderContext {
         let ui = PhaseTimer::start();
         let cpu = PhaseTimer::start();
         let Some(packet) = self.build_frame_packet(draw) else { return PresentOutcome::Dropped };
+        let resized = self.take_resize();
         self.worker.as_mut().unwrap().try_submit_tagged(packet, cpu, self.generation)
             .unwrap_or_else(|_| panic!("admitted frame lost capacity"));
+        if resized { self.settle_resized_frame(); }
         ui.finish_ui_frame();
         PresentOutcome::Deferred
     }
@@ -227,8 +244,44 @@ impl NativeRenderContext {
         if !self.can_begin_frame() { return Err(packet); }
         #[cfg(all(not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
         if let Some(host) = &mut self.host { host.prepare(self.size); }
-        self.worker.as_mut().unwrap().try_submit_tagged(packet, PhaseTimer::start(), self.generation)
-            .map(|()| PresentOutcome::Deferred)
+        let resized = self.take_resize();
+        let submitted = self.worker.as_mut().unwrap().try_submit_tagged(packet, PhaseTimer::start(), self.generation)
+            .map(|()| PresentOutcome::Deferred);
+        if resized && submitted.is_ok() { self.settle_resized_frame(); }
+        submitted
+    }
+
+    /// Whether the frame about to be submitted changes the surface size, remembering it.
+    fn take_resize(&mut self) -> bool {
+        let resized = self.sync_resize && self.submitted_size != self.size;
+        self.submitted_size = self.size;
+        resized
+    }
+
+    /// Presents a frame that changed the surface size before returning.
+    ///
+    /// The window's own geometry change is committed by the platform at the end
+    /// of the turn that delivered the resize. A frame presented in a *later*
+    /// turn therefore leaves the newly exposed area empty for as long as the
+    /// worker takes, which a live resize shows as a blank strip trailing the
+    /// pointer. Waiting here, in that same turn, lets the new size and its
+    /// content reach the screen together, as inline rendering always did. Only
+    /// frames that change the size pay for this; ordinary frames stay
+    /// pipelined, and a worker that does not answer within
+    /// [`RESIZE_PRESENT_TIMEOUT`] is left to finish asynchronously.
+    fn settle_resized_frame(&mut self) {
+        let deadline = std::time::Instant::now() + RESIZE_PRESENT_TIMEOUT;
+        let mut status = std::mem::take(&mut self.carried);
+        let mut consumed = false;
+        while self.worker.as_ref().is_some_and(|worker| worker.outstanding() > 0) {
+            let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else { break };
+            let Some(event) = self.worker.as_mut().and_then(|worker| worker.wait(remaining)) else { break };
+            self.apply_event(event, &mut status);
+            consumed = true;
+        }
+        self.carried = status;
+        // The event loop is not told about completions this call consumed.
+        if consumed { wake_event_loop(); }
     }
 
     /// Presents a manually recorded packet after admission.
@@ -253,36 +306,41 @@ impl NativeRenderContext {
     /// must poll to observe initialization and release frame capacity.
     /// Panics if the worker reports a fatal initialization or rendering error.
     pub fn poll_completions(&mut self) -> CompletionStatus {
-        let mut status = CompletionStatus::default();
+        let mut status = std::mem::take(&mut self.carried);
         while let Some(event) = self.worker.as_mut().and_then(FrameWorker::poll) {
-            match event {
-                WorkerEvent::Ready { max_texture_dimension } => {
-                    self.max_dimension = max_texture_dimension;
-                    self.size = self.clamp(self.size);
-                    self.ready = true;
-                }
-                WorkerEvent::Completed(frame) => {
-                    let presented = match frame.output {
-                        BackendOutput::Presented(presented) => presented && !self.suspended && !self.closing,
-                        #[cfg(all(not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
-                        BackendOutput::Metal(drawable) => {
-                            !self.suspended && !self.closing && frame.generation == self.generation
-                                && self.host.as_ref().is_some_and(|host| host.present(drawable))
-                        }
-                    };
-                    if let Some(canvas) = &self.canvas { canvas.recycle_draw_list(frame.draw_list); }
-                    status.presented |= presented;
-                    status.retry |= !presented && !self.suspended && !self.closing;
-                }
-                WorkerEvent::Failed(error) => panic!("Aimer render worker failed: {error}"),
-                WorkerEvent::Stopped => self.ready = false,
-            }
+            self.apply_event(event, &mut status);
         }
         if self.waiting && self.can_begin_frame() {
             self.waiting = false;
             status.wake_frame = true;
         }
         status
+    }
+
+    /// Finishes one worker event on the UI thread, including presentation.
+    fn apply_event(&mut self, event: WorkerEvent<BackendOutput>, status: &mut CompletionStatus) {
+        match event {
+            WorkerEvent::Ready { max_texture_dimension } => {
+                self.max_dimension = max_texture_dimension;
+                self.size = self.clamp(self.size);
+                self.ready = true;
+            }
+            WorkerEvent::Completed(frame) => {
+                let presented = match frame.output {
+                    BackendOutput::Presented(presented) => presented && !self.suspended && !self.closing,
+                    #[cfg(all(not(feature = "wgpu"), any(target_os = "macos", target_os = "ios")))]
+                    BackendOutput::Metal(drawable) => {
+                        !self.suspended && !self.closing && frame.generation == self.generation
+                            && self.host.as_ref().is_some_and(|host| host.present(drawable))
+                    }
+                };
+                if let Some(canvas) = &self.canvas { canvas.recycle_draw_list(frame.draw_list); }
+                status.presented |= presented;
+                status.retry |= !presented && !self.suspended && !self.closing;
+            }
+            WorkerEvent::Failed(error) => panic!("Aimer render worker failed: {error}"),
+            WorkerEvent::Stopped => self.ready = false,
+        }
     }
 
     pub(crate) fn close(&mut self) {
@@ -300,6 +358,8 @@ impl NativeRenderContext {
     pub(crate) fn suspend(&mut self) {
         self.suspended = true;
         self.ready = false;
+        self.submitted_size = PhysicalSize::new(0, 0);
+        self.carried = CompletionStatus::default();
         if let Some(mut worker) = self.worker.take() {
             worker.stop();
             #[cfg(target_os = "windows")]

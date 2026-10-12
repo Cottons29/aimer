@@ -7,6 +7,7 @@ mod focus;
 mod animation_walks;
 mod backdrop_filter;
 mod magnification;
+mod light_edge;
 
 #[test]
 fn showcase_has_unique_registered_examples() {

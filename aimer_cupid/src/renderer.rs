@@ -92,10 +92,14 @@ fn resolve_material_request(
         (x2 - x1).abs(),
         (y2 - y1).abs(),
     ];
-    for radius in &mut request.corner_radii {
-        *radius *= scale;
+    // LightEdge keeps dimensions logical until uniform preparation, so bridge
+    // normalization cannot cap Retina-scaled widths or radii back to logical limits.
+    if request.kind != crate::pipeline::material::MaterialKind::LightEdge {
+        for radius in &mut request.corner_radii {
+            *radius *= scale;
+        }
+        request.border_width *= scale;
     }
-    request.border_width *= scale;
     request.shadow_blur *= scale;
     request.elevation *= scale;
     request.opacity = (request.opacity * alpha).clamp(0.0, 1.0);

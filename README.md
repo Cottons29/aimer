@@ -1,44 +1,23 @@
-# Aimer
+![Aimer Logo](.assets/aimer_rust_ui_framework.png)
 
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
+[![License: APACHE](https://img.shields.io/badge/License-APACHE-blue.svg)](LICENSE-APACHE)
 [![Rust Edition: 2024](https://img.shields.io/badge/Rust-2024%20Edition-orange.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20iOS%20%7C%20Android%20%7C%20Web%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#platform-support)
 
 **A high-performance, asynchronous, declarative GUI framework for Rust.**
-
-[Getting Started](#getting-started) •
-[Platform Support](#platform-support) •
-[Features](#key-features) •
-[Showcase](#running-the-showcase) •
-
 </div>
-
 ---
 
-## Overview
+Aimer is a new way to build the application with **Rust**, It's a toolset that take your declarative components and render it to the screen
+without relied on system UI or webview.
+>   **A**imer **I**s **M**ade **E**ntirely in **R**ust
 
-**Aimer** is a cross-platform GUI framework inspired by the declarative, composable widget tree architecture, engineered
-from the ground up for Rust's zero-cost abstractions, strict ownership model, and concurrent execution guarantees.
+## Installation
 
-Aimer renders directly through its custom
-hardware-accelerated 2D vector and typography engine (**Cupid**) on pluggable GPU backends. Native defaults use Metal on
-Apple platforms, Direct3D 12 on Windows, and Vulkan with OpenGL fallback on Linux and Android. Browser builds try WebGPU
-first and fall back to WebGL2. Rendering is driven by a frame-budget-aware async UI
-scheduler (**Venus**) and small-object optimized memory buffers (**Rubick**).
-
-### Core Philosophy
-
-- **Zero-Waste Ownership:** Widgets are consumed and moved directly into retained elements without unnecessary cloning
-  or hidden reference cycles.
-- **Microsecond Allocation Profile:** Dynamic widgets and elements utilize inline memory buffers and thread-local
-  pooling (`Rubick`) to eliminate heap churn on frame rebuilds.
-- **Frame-Budgeted Async Concurrency:** Long-running I/O and CPU tasks offload seamlessly to background threads, while
-  frame-critical tasks, animations, and microtasks coordinate within strict 60/120 Hz render deadlines via `Venus`.
-- **Self-Implemented Typography & 2D Vector Engine:** 100% self-contained text rendering and vector rasterization inside
-  `Cupid` without any third-party dependencies—featuring an in-house TrueType/OpenType parser, complex script shaper
-  (GSUB/GPOS), and subpixel curve rasterizer.
+Aimer has been design to make the 
 
 ---
 
@@ -105,8 +84,8 @@ Aimer provides modern procedural and declarative macros focused on developer erg
 - **`#[aimer::main]`:** Unified application entry point attribute for desktop, Android, and WebAssembly targets.
 - **`#[derive(StatelessWidget)]` & `#[derive(StatefulWidget)]`:** Automatically implements the `Widget` trait, registers
   element lifecycle hooks, and manages element caching.
-- **`#[derive(Router)]`:** Type-safe, declarative enum-based router with path route annotations
-  (`#[route("/user/{id}")]`), route guards, and deep-link parsing.
+- **`#[derive(Router)]`:** Type-safe, declarative enum-based router with path route annotations (`#[route("/user/{id}")]`), route guards,
+  and deep-link parsing.
 - **`key!()`:** Generates compile-time unique callsite keys (`Key::Static`) for stable widget identity across rebuilds
   without runtime overhead.
 - **`#[derive(Animatable)]` & `#[derive(Theme)]`:** Automated interpolation of custom data structures and ergonomic
@@ -142,14 +121,13 @@ Supports shell routes, nested route hierarchies, positional or named parameters,
 
 - **Layout & Positioning:** `Flex`, `Row`, `Column`, `Container`, `Grid`, `Stack`, `Positioned`, `SizedBox`,
   `ZeroSizedBox`, `Scrollable`, `Padding`, `Space`.
-- **Text & Input:** Single-line `TextField`, multiline `TextArea`, `TextEditingController`, focus management
-  (`FocusNode`, `FocusTrap`), IME composition, and clipboard integration.
+- **Text & Input:** Single-line `TextField`, multiline `TextArea`, `TextEditingController`, focus management (`FocusNode`, `FocusTrap`), IME
+  composition, and clipboard integration.
 - **Controls & Form Elements:** `Button`, `Checkbox`, `Radio`, `Switch`, `Slider`, `Picker`, `SegmentedControl`.
-- **Overlays & Gestures:** `ModalHost`, `Dialog`, `ContextMenu`, `Tooltip`, `Dropdown`, `GestureDetector`, drag-and-drop
-  (`Dnd`).
+- **Overlays & Gestures:** `ModalHost`, `Dialog`, `ContextMenu`, `Tooltip`, `Dropdown`, `GestureDetector`, drag-and-drop (`Dnd`).
 - **Rich Media & Content:** `MarkdownViewer` (with syntax highlighting), `SvgImage`, `Image`, custom `Canvas2D`.
-- **Theming & Effects:** `ThemeData`, dark/light mode palette transitions, blurred backdrop glass materials
-  (`BackdropFilter`), and spring animations.
+- **Theming & Effects:** `ThemeData`, dark/light mode palette transitions, blurred backdrop glass materials (`BackdropFilter`), and spring
+  animations.
 
 ---
 
@@ -311,8 +289,7 @@ fn main() {
 
 ## Running the Showcase
 
-Explore the interactive widget suite, components, and layout capabilities in the included desktop demo application
-(`jaime`):
+Explore the interactive widget suite, components, and layout capabilities in the included desktop demo application (`jaime`):
 
 ```bash
 # Clone the repository

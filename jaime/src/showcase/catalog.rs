@@ -24,6 +24,7 @@ pub(super) enum ExampleId {
     GlassLiquid,
     BackdropFilter,
     Magnification,
+    LightEdge,
     Storage,
     CustomShape,
     AnimatedLayout,
@@ -84,6 +85,7 @@ pub(super) const EXAMPLES: &[ExampleId] = &[
     ExampleId::GlassLiquid,
     ExampleId::BackdropFilter,
     ExampleId::Magnification,
+    ExampleId::LightEdge,
     ExampleId::Storage,
     ExampleId::CustomShape,
     ExampleId::AnimatedLayout,
@@ -200,6 +202,7 @@ pub(super) const EXAMPLE_CATEGORIES: &[ExampleCategory] = &[
             ExampleId::GlassLiquid,
             ExampleId::BackdropFilter,
             ExampleId::Magnification,
+            ExampleId::LightEdge,
             ExampleId::CustomShape,
             ExampleId::SystemTheme,
             ExampleId::AnimatedTheme,
@@ -247,6 +250,7 @@ impl ExampleId {
             Self::GlassLiquid => "Glass/Liquid",
             Self::BackdropFilter => "Backdrop filter",
             Self::Magnification => "Magnification",
+            Self::LightEdge => "Light edge",
             Self::Storage => "Durable storage",
             Self::CustomShape => "Custom shapes",
             Self::AnimatedLayout => "Animated layout",
@@ -309,6 +313,7 @@ impl ExampleId {
             Self::GlassLiquid => "◌",
             Self::BackdropFilter => "▧",
             Self::Magnification => "⊕",
+            Self::LightEdge => "◒",
             Self::Storage => "▣",
             Self::AnimatedLayout => "↗",
             Self::TextProperties
@@ -364,6 +369,7 @@ impl ExampleId {
             Self::GlassLiquid => "glass-liquid",
             Self::BackdropFilter => "backdrop-filter",
             Self::Magnification => "magnification",
+            Self::LightEdge => "light-edge",
             Self::Storage => "storage",
             Self::CustomShape => "custom-shape",
             Self::AnimatedLayout => "animated-layout",
@@ -461,6 +467,9 @@ impl ExampleId {
             }
             Self::Magnification => {
                 "Zoom background text through a rounded lens with adjustable glass thickness and sharp foreground text."
+            }
+            Self::LightEdge => {
+                "Turn a glass highlight around rounded corners and adjust its width, strength, and shape."
             }
             Self::Storage => {
                 "Exercise namespaced preferences through the deterministic memory storage adapter."

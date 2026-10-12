@@ -2,6 +2,8 @@ use std::cell::Cell;
 
 mod backdrop_filter;
 mod magnification;
+mod light_edge;
+pub use light_edge::LightEdge;
 pub use magnification::{Magnification, MagnificationStyle};
 pub use backdrop_filter::BackdropFilter;
 
@@ -276,3 +278,6 @@ mod tests;
 
 #[cfg(test)]
 mod magnification_tests;
+
+#[cfg(test)]
+mod light_edge_tests;

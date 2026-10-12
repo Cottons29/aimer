@@ -16,7 +16,7 @@ fn recorded(lens: Magnification, size: ResolvedSize) -> Vec<DrawCommand> {
 fn request(lens: Magnification) -> MaterialRequest {
     let commands = recorded(lens, ResolvedSize { width: 80.0, height: 40.0 });
     let [DrawCommand::DrawCustom { data, .. }] = commands.as_slice() else { panic!("one lens packet") };
-    assert_eq!(data.len(), 252);
+    assert_eq!(data.len(), 256);
     MaterialRequest::decode(data).unwrap()
 }
 

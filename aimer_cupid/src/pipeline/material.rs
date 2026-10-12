@@ -8,9 +8,9 @@ pub use magnification_style::MagnificationStyle;
 pub const MATERIAL_PIPELINE_NAME: &str = "aimer.material";
 
 /// The packet version shared by the canvas bridge and Cupid.
-pub const MATERIAL_PACKET_VERSION: u8 = 2;
+pub const MATERIAL_PACKET_VERSION: u8 = 3;
 /// The exact size of one encoded material request.
-pub const MATERIAL_PACKET_LEN: usize = 252;
+pub const MATERIAL_PACKET_LEN: usize = 256;
 /// Maximum intermediate texture dimension used by one surface.
 pub const MAX_INTERMEDIATE_DIMENSION: u32 = 2_048;
 /// Maximum intermediate RGBA pixels used by one surface.
@@ -29,6 +29,8 @@ pub enum MaterialKind {
     BackdropFilter = 2,
     /// Magnifies the captured backdrop with optional rounded-edge refraction.
     Magnification = 3,
+    /// A directional analytic highlight with no backdrop sampling.
+    LightEdge = 4,
 }
 
 impl MaterialKind {
@@ -39,6 +41,7 @@ impl MaterialKind {
             1 => Some(Self::Liquid),
             2 => Some(Self::BackdropFilter),
             3 => Some(Self::Magnification),
+            4 => Some(Self::LightEdge),
             _ => None,
         }
     }
@@ -145,6 +148,8 @@ pub struct MaterialRequest {
     pub magnification_style: MagnificationStyle,
     /// Additional Magnification bulge strength in `0..=1`.
     pub bulge_strength: f32,
+    /// LightEdge light direction in degrees clockwise from screen-right.
+    pub light_angle: f32,
     /// Sampling quality in `1..=4`.
     pub quality: u8,
     /// Reduced-motion policy.
@@ -187,6 +192,7 @@ impl MaterialRequest {
             bevel_radius: if kind == MaterialKind::Magnification { 16.0 } else { 28.0 },
             magnification_style: if kind == MaterialKind::Magnification { MagnificationStyle::DEFAULT } else { MagnificationStyle::NONE },
             bulge_strength: if kind == MaterialKind::Magnification { 0.25 } else { 0.0 },
+            light_angle: 225.0,
             quality: 2,
             motion_policy: MaterialMotionPolicy::Full,
         }
@@ -244,6 +250,7 @@ impl MaterialRequest {
         }
         bytes.extend_from_slice(&request.magnification_style.bits().to_le_bytes());
         bytes.extend_from_slice(&request.bulge_strength.to_le_bytes());
+        bytes.extend_from_slice(&request.light_angle.to_le_bytes());
         debug_assert_eq!(bytes.len(), MATERIAL_PACKET_LEN);
         bytes
     }
@@ -290,6 +297,7 @@ impl MaterialRequest {
             self.magnification_style = MagnificationStyle::NONE;
             self.bulge_strength = 0.0;
         }
+        self.light_angle = if self.light_angle.is_finite() { self.light_angle.rem_euclid(360.0) } else { 225.0 };
         self.quality = self.quality.clamp(1, 4);
         if self.motion_policy == MaterialMotionPolicy::Reduced {
             self.distortion_strength = 0.0;
@@ -298,7 +306,7 @@ impl MaterialRequest {
         self
     }
 
-    /// Decodes current and legacy version-1 packets emitted by `aimer_canvas`.
+    /// Decodes current and legacy version-1 and version-2 canvas packets.
     pub fn decode(bytes: &[u8]) -> Result<Self, MaterialDecodeError> {
         if bytes.len() < 5 {
             return Err(MaterialDecodeError::InvalidLength {
@@ -313,6 +321,7 @@ impl MaterialRequest {
         let version = reader.u8()?;
         let expected = match version {
             1 => 244,
+            2 => 252,
             MATERIAL_PACKET_VERSION => MATERIAL_PACKET_LEN,
             _ => return Err(MaterialDecodeError::UnsupportedVersion),
         };
@@ -370,6 +379,7 @@ impl MaterialRequest {
                 .ok_or(MaterialDecodeError::InvalidMagnificationStyle)?;
             (style, reader.f32()?)
         };
+        let light_angle = if version >= 3 { reader.f32()? } else { 225.0 };
         debug_assert_eq!(reader.position(), expected);
 
         Ok(Self {
@@ -407,6 +417,7 @@ impl MaterialRequest {
             bevel_radius,
             magnification_style,
             bulge_strength,
+            light_angle,
             quality,
             motion_policy,
         }
@@ -521,7 +532,7 @@ impl Default for MaterialCapabilities {
 pub enum MaterialRenderPath {
     /// No pixels need to be emitted for a zero-sized surface.
     Skip,
-    /// Use the Cupid material shader and a bounded intermediate.
+    /// Use the Cupid material shader, with a bounded intermediate when needed.
     Gpu,
     /// Use the Cupid-owned translucent/border/shadow fallback.
     Fallback,
@@ -578,13 +589,23 @@ pub fn plan_material(request: MaterialRequest, capabilities: MaterialCapabilitie
         && !(request.magnification_style.contains(MagnificationStyle::UNIFORM) && request.magnification != 1.0
             || request.magnification_style.contains(MagnificationStyle::BULGE) && request.bulge_strength > 0.0
             || request.magnification_style.contains(MagnificationStyle::REFRACTION) && request.bevel_radius > 0.0);
-    if request.bounds[2] <= 0.0 || request.bounds[3] <= 0.0 || inert_lens {
+    let inert_edge = request.kind == MaterialKind::LightEdge
+        && (request.border_width == 0.0 || request.specular_highlight == 0.0
+            || request.border_color[3] == 0.0 || request.opacity == 0.0);
+    if request.bounds[2] <= 0.0 || request.bounds[3] <= 0.0 || inert_lens || inert_edge {
         return MaterialStagePlan {
             path: MaterialRenderPath::Skip,
             fallback_reason: None,
             intermediate: None,
             phase: 0.0,
             distortion_strength: 0.0,
+        };
+    }
+
+    if request.kind == MaterialKind::LightEdge {
+        return MaterialStagePlan {
+            path: MaterialRenderPath::Gpu, fallback_reason: None, intermediate: None,
+            phase: 0.0, distortion_strength: 0.0,
         };
     }
 
@@ -635,6 +656,7 @@ pub fn bounded_intermediate_extent(
     capabilities: MaterialCapabilities,
 ) -> Option<IntermediateExtent> {
     let request = request.normalized();
+    if request.kind == MaterialKind::LightEdge { return None; }
     let full_resolution = matches!(request.kind, MaterialKind::BackdropFilter | MaterialKind::Magnification);
     let max_dimension = if full_resolution {
         capabilities.max_surface_dimension

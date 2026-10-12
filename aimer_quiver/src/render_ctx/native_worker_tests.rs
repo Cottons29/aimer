@@ -102,3 +102,75 @@ fn closing_does_not_report_a_late_frame_as_a_first_visible_frame() {
     assert!(!completed.retry && !completed.wake_frame);
     assert!(context.is_stopped());
 }
+
+fn ready_context(sync_resize: bool) -> (NativeRenderContext, mpsc::Sender<()>, mpsc::Receiver<(u32, u32)>) {
+    let (release, gate) = mpsc::channel();
+    let (started, rendering) = mpsc::channel();
+    let (wake, wakes) = mpsc::channel();
+    let worker = FrameWorker::spawn(move || Ok(Presenter { gate, started,
+        size: PhysicalSize::new(0, 0) }), move || { let _ = wake.send(()); });
+    let mut context = NativeRenderContext::with_test_worker(worker, PhysicalSize::new(8, 8));
+    wakes.recv_timeout(Duration::from_secs(5)).unwrap();
+    context.poll_completions();
+    context.sync_resize = sync_resize;
+    (context, release, rendering)
+}
+
+fn outstanding(context: &NativeRenderContext) -> usize {
+    context.worker.as_ref().unwrap().outstanding()
+}
+
+#[test]
+fn a_frame_that_changes_the_size_is_presented_before_the_call_returns() {
+    let (mut context, release, rendering) = ready_context(true);
+    release.send(()).unwrap();
+    assert_eq!(context.render_frame(|_, _, _| {}), PresentOutcome::Deferred);
+    assert_eq!(rendering.recv_timeout(Duration::from_secs(5)).unwrap(), (8, 8));
+    assert_eq!(outstanding(&context), 0, "a resize must not leave its frame for a later turn");
+    // The outcome the call consumed is still reported to whoever polls next.
+    let status = context.poll_completions();
+    assert!(status.presented && !status.retry);
+    context.close();
+    context.suspend();
+}
+
+#[test]
+fn a_frame_of_unchanged_size_is_left_to_the_worker() {
+    let (mut context, release, rendering) = ready_context(true);
+    release.send(()).unwrap();
+    context.render_frame(|_, _, _| {});
+    rendering.recv_timeout(Duration::from_secs(5)).unwrap();
+    // Same size again, with the presenter held: the call must not wait for it.
+    let before = std::time::Instant::now();
+    assert_eq!(context.render_frame(|_, _, _| {}), PresentOutcome::Deferred);
+    assert!(before.elapsed() < Duration::from_millis(50), "only a resize may wait for the worker");
+    assert_eq!(outstanding(&context), 1);
+    release.send(()).unwrap();
+    context.close();
+    context.suspend();
+}
+
+#[test]
+fn a_stalled_worker_cannot_hold_a_resize_forever() {
+    let (mut context, release, rendering) = ready_context(true);
+    let before = std::time::Instant::now();
+    assert_eq!(context.render_frame(|_, _, _| {}), PresentOutcome::Deferred);
+    assert!(before.elapsed() < Duration::from_secs(2));
+    assert_eq!(rendering.recv_timeout(Duration::from_secs(5)).unwrap(), (8, 8));
+    assert_eq!(outstanding(&context), 1, "the frame stays with the worker once the wait gives up");
+    release.send(()).unwrap();
+    context.close();
+    context.suspend();
+}
+
+#[test]
+fn contexts_that_do_not_opt_in_never_wait_for_a_resize() {
+    let (mut context, release, rendering) = ready_context(false);
+    let before = std::time::Instant::now();
+    assert_eq!(context.render_frame(|_, _, _| {}), PresentOutcome::Deferred);
+    assert!(before.elapsed() < Duration::from_millis(50));
+    assert_eq!(rendering.recv_timeout(Duration::from_secs(5)).unwrap(), (8, 8));
+    release.send(()).unwrap();
+    context.close();
+    context.suspend();
+}

@@ -414,11 +414,31 @@ static float3 lens_bevel_normal(float2 point, float2 half_size, float4 radii, fl
     return normalize(float3(outward * slope, 1.0));
 }
 
+static float4 light_edge(constant MaterialUniform& material, float2 pixel) {
+    float2 half_size = material.bounds.zw * 0.5;
+    float2 point = pixel - material.bounds.xy - half_size;
+    float radius = min(selected_radius(point, material.radii), min(half_size.x, half_size.y));
+    float2 q = abs(point) - half_size + float2(radius, radius);
+    float2 outer = max(q, float2(0.0, 0.0));
+    float2 outward = q.x > q.y ? float2(1.0, 0.0) : float2(0.0, 1.0);
+    if (dot(outer, outer) > 0.0) outward = normalize(outer);
+    outward *= sign(point);
+    float distance = length(outer) + min(max(q.x, q.y), 0.0) - radius;
+    float coverage = max(sdf_alpha(distance) - sdf_alpha(distance + material.detail.w), 0.0);
+    float facing = pow(max(dot(outward, material.effect.zw), 0.0), 2.4);
+    float alpha = clamp(coverage * facing * material.detail.x * material.border_color.a
+        * material.effect.y * clip_alpha(material, pixel), 0.0, 1.0);
+    float3 rgb = material.border_color.rgb;
+    float3 converted = material.viewport.z > 0.5 ? srgb_rgb_to_linear(rgb) : rgb;
+    return float4(converted * alpha, alpha);
+}
+
 fragment float4 fs_main(MaterialVaryings varyings [[stage_in]],
                         constant MaterialUniform& material [[buffer(0)]],
                         texture2d<float> backdrop [[texture(1)]],
                         sampler backdrop_sampler [[sampler(2)]],
                         texture2d<float> horizontal_blur [[texture(3)]]) {
+    if (material.effect.x > 3.5) return light_edge(material, varyings.pixel_pos);
     if (material.effect.x > 1.5 && material.viewport.w < 0.5) {
         discard_fragment();
     }

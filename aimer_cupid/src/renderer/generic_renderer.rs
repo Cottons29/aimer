@@ -1,3 +1,7 @@
+#[path = "generic_renderer/material_detection.rs"]
+mod material_detection;
+use material_detection::{draw_list_uses_material, render_plan_uses_material};
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -2757,12 +2761,6 @@ fn flush_image_batch<'pass, B: GpuBackend>(
     }
 }
 
-fn draw_list_uses_material(draw_list: &DrawList) -> bool {
-    draw_list.commands().iter().any(|command| {
-        matches!(command, DrawCommand::Custom { pipeline_name, .. } if pipeline_name == MATERIAL_PIPELINE_NAME)
-    })
-}
-
 fn draw_list_uses_custom_pipeline(draw_list: &DrawList) -> bool {
     draw_list
         .commands()
@@ -2783,25 +2781,12 @@ fn render_plan_uses_custom_pipeline(plan: &RetainedRenderPlan, width: u32, heigh
         })
 }
 
-fn render_plan_uses_material(plan: &RetainedRenderPlan, width: u32, height: u32) -> bool {
-    plan.operations_for_region(crate::damage_region::DamageRect::new(0, 0, width, height))
-        .any(|operation| match &operation.kind {
-            crate::frame::RetainedRenderOperationKind::LocalV2(item) => item.commands.iter().any(
-                |command| {
-                    matches!(
-                        command,
-                        crate::draw_cmd_v2::DrawCommand::DrawCustom { pipeline_name, .. }
-                            if pipeline_name.as_ref() == MATERIAL_PIPELINE_NAME
-                    )
-                },
-            ),
-            crate::frame::RetainedRenderOperationKind::OpacityGroupBegin { .. }
-            | crate::frame::RetainedRenderOperationKind::OpacityGroupEnd { .. } => false,
-        })
-}
-
 /// Compatibility name for the backend-generic [`Renderer`].
 pub type RendererImpl<B = crate::backend::DefaultGpuBackend> = Renderer<B>;
+
+#[cfg(test)]
+#[path = "generic_renderer/material_detection_tests.rs"]
+mod material_detection_tests;
 
 #[cfg(test)]
 mod tests {
