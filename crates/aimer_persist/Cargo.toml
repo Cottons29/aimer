@@ -1,0 +1,18 @@
+[package]
+name = "aimer_persist"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+description = "Aimer's unified persistence layer: platform data locations, typed preferences, versioned documents, and persisted provider state"
+
+[dependencies]
+aimer_provider.workspace = true
+aimer_storage.workspace = true
+aimer_venus.workspace = true
+
+# Browser tests: `scripts/web_tests.sh` runs them in headless Chrome.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+wasm-bindgen-test.workspace = true
